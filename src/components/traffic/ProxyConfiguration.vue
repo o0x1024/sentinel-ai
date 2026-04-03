@@ -1474,10 +1474,13 @@
         <span>{{ $t('trafficAnalysis.proxyConfiguration.saving') }}</span>
       </div>
     </div>
+
+    <TrafficDisplaySettingsPanel />
   </div>
 </template>
 
 <script setup lang="ts">
+import TrafficDisplaySettingsPanel from './TrafficDisplaySettingsPanel.vue'
 import { useI18n } from 'vue-i18n'
 import { useProxyConfiguration } from './useProxyConfiguration'
 

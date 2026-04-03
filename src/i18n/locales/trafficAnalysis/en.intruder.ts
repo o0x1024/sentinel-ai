@@ -189,6 +189,12 @@ export default {
     pitchfork: 'Pitchfork',
     clusterBomb: 'Cluster Bomb',
   },
+  attackTypeDescriptions: {
+    sniper: 'Replaces one attack position at a time and iterates payloads per position. Best for testing a single parameter.',
+    batteringRam: 'Uses the same payload value for every attack position in the request. Best when multiple fields should share one value.',
+    pitchfork: 'Pairs payloads by index across positions. Best for one-to-one combinations such as username/password lists.',
+    clusterBomb: 'Builds the Cartesian product across payload sets and tries every combination. Most exhaustive, but generates the most requests.',
+  },
   placeholders: {
     host: 'example.com',
     targetUrl: 'https://example.com',

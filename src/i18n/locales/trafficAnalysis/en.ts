@@ -10,7 +10,7 @@ export default {
     intruder: 'Intruder',
     proxifier: 'Proxifier',
     capture: 'Capture',
-    proxyConfig: 'Proxy Configuration'
+    proxyConfig: 'Settings'
   },
   ariaLabels: {
     trafficAnalysisTabs: 'Traffic analysis tabs'
@@ -23,7 +23,7 @@ export default {
     intruder: 'Intruder',
     proxifier: 'Proxifier',
     capture: 'Capture',
-    proxyConfig: 'Proxy Configuration'
+    proxyConfig: 'Settings'
   },
   icons: {
     control: 'fa-sliders-h',
@@ -299,14 +299,22 @@ export default {
       method: 'Method',
       host: 'Host',
       url: 'URL',
+      params: 'Params',
       status: 'Status',
       length: 'Length',
       mimeType: 'MIME Type',
+      extension: 'Extension',
+      title: 'Title',
+      tls: 'TLS',
+      ip: 'IP',
+      listener: 'Listener',
+      responseTimer: 'Response Time',
       actions: 'Actions'
     },
     detailsPanel: {
       requestDetails: 'Request Details',
       responseDetails: 'Response Details',
+      empty: 'Select a request to view details',
       tabs: {
         headers: 'Headers',
         raw: 'Raw',
@@ -380,7 +388,26 @@ export default {
       export: 'Export',
       searchPlaceholder: 'Search requests...'
     },
+    protocol: {
+      all: 'All',
+    },
+    filters: 'Filters',
+    multiSelect: 'Multi-select',
+    selectAll: 'Select all',
+    clearSelection: 'Clear selection',
+    sendToAssistant: 'Send to AI Assistant',
+    refresh: 'Refresh',
+    clear: 'Clear',
+    filterBar: {
+      label: 'Filter settings',
+      on: 'Filter on',
+      off: 'Filter off',
+      showAllContent: 'Showing all content',
+    },
     export: {
+      export: 'Export',
+      requests: 'Requests',
+      responses: 'Responses',
       sendToAssistant: 'Send to AI Assistant',
       exportToFile: 'Export to File',
       exportRequest: 'Export Request',
@@ -706,6 +733,19 @@ export default {
     autoStartProxyDesc: 'When enabled, the proxy listener will start automatically when the application launches, without requiring manual intervention',
     trafficAnalysisSettings: 'Traffic Analysis Settings',
     trafficAnalysisSettingsDesc: 'Configure traffic analysis scanning and filtering options',
+    httpMessageDisplayTitle: 'HTTP message display',
+    httpMessageDisplayDesc: 'Use these settings to control how HTTP messages are displayed.',
+    characterSetsTitle: 'Character sets',
+    characterSetsDesc: 'Use these settings to control how raw HTTP messages are displayed.',
+    userSettingBadge: 'User setting',
+    font: 'Font',
+    highlightRequestSyntax: 'Highlight request syntax',
+    highlightResponseSyntax: 'Highlight response syntax',
+    prettyPrintByDefault: 'Pretty print by default',
+    recognizeCharsetAutomatically: 'Recognize automatically based on message headers',
+    usePlatformDefaultCharset: 'Use the platform default (UTF-8)',
+    displayAsRawBytes: 'Display as raw bytes',
+    useSpecificCharset: 'Use a specific character set',
     excludeSelfTraffic: 'Exclude self traffic from scanning',
     excludeSelfTrafficDesc: 'When enabled, HTTP requests from this application will not be scanned by traffic analysis plugins, but will still appear in traffic history',
     enableTrafficAnalysisPlugin: 'Enable traffic analysis plugin scanning',

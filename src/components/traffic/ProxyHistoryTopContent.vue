@@ -46,26 +46,45 @@
     </div>
   </div>
   <div v-else-if="filteredRequests.length > 0" :style="{ height: totalHeight + 'px', position: 'relative' }">
-    <div class="sticky top-0 z-10 flex bg-base-200 border-b-2 border-base-300 font-semibold table-row-text" :style="{ height: headerHeight + 'px', minWidth: 'max-content' }">
-      <div v-if="isMultiSelectMode" class="flex items-center justify-center px-2 border-r border-base-300" style="width: 40px; min-width: 40px;">
+    <div class="sticky top-0 z-10 flex bg-base-200 font-semibold table-row-text" :style="{ height: headerHeight + 'px', minWidth: 'max-content' }">
+      <div v-if="isMultiSelectMode" class="flex items-center justify-center px-1.5" style="width: 34px; min-width: 34px;">
         <input type="checkbox" class="checkbox checkbox-xs checkbox-primary" :checked="selectedRequests.size > 0 && selectedRequests.size === filteredRequests.length" :indeterminate="selectedRequests.size > 0 && selectedRequests.size < filteredRequests.length" @change="selectedRequests.size === filteredRequests.length ? clearSelection() : selectAllVisible()" />
       </div>
-      <div v-for="col in visibleColumns" :key="col.id" class="flex items-center px-2 border-r border-base-300 relative" :style="{ width: col.width + 'px', minWidth: col.minWidth + 'px' }">
-        <span class="truncate">{{ col.label }}</span>
-        <div class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30" @mousedown="startResize(col.id, $event)"></div>
+      <div
+        v-for="col in visibleColumns"
+        :key="col.id"
+        class="group relative flex items-center"
+        :style="{ width: col.width + 'px', minWidth: col.minWidth + 'px' }"
+      >
+        <button
+          type="button"
+          class="flex min-w-0 flex-1 items-center gap-1 px-1.5 py-0 text-left"
+          @click="toggleSort(col.id)"
+        >
+          <span class="truncate">{{ col.label }}</span>
+          <i
+            v-if="sortState.columnId === col.id"
+            :class="['fas text-[10px] text-primary', sortState.direction === 'asc' ? 'fa-sort-up' : 'fa-sort-down']"
+          ></i>
+          <i
+            v-else
+            class="fas fa-sort text-[10px] text-base-content/30 opacity-0 transition-opacity group-hover:opacity-100"
+          ></i>
+        </button>
+        <div class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/25" @mousedown.stop="startResize(col.id, $event)"></div>
       </div>
     </div>
-    <div v-for="item in visibleItems" :key="item.data.id" class="absolute left-0 right-0 flex hover:bg-base-200 cursor-pointer border-b border-base-300 table-row-text" :class="{ 'bg-primary/10': selectedRequest?.id === item.data.id, 'bg-accent/10': isMultiSelectMode && isRequestSelected(item.data), 'bg-error/10 hover:bg-error/20': item.data.status_code === 0 }" :style="{ top: (item.offset + headerHeight) + 'px', height: itemHeight + 'px', minWidth: 'max-content' }" @click="isMultiSelectMode ? toggleSelectRequest(item.data) : (item.data.status_code === 0 ? showCertificateError(item.data) : selectRequest(item.data))" @contextmenu.prevent="showContextMenu($event, item.data)">
-      <div v-if="isMultiSelectMode" class="flex items-center justify-center px-2 border-r border-base-300" style="width: 40px; min-width: 40px;" @click.stop="toggleSelectRequest(item.data)">
+    <div v-for="item in visibleRows" :key="item.data.id" class="absolute left-0 right-0 flex cursor-pointer table-row-text hover:bg-base-200/60" :class="{ 'bg-primary/10': selectedRequest?.id === item.data.id, 'bg-accent/10': isMultiSelectMode && isRequestSelected(item.data), 'bg-error/10 hover:bg-error/20': item.data.status_code === 0 }" :style="{ top: (item.offset + headerHeight) + 'px', height: itemHeight + 'px', minWidth: 'max-content' }" @click="isMultiSelectMode ? toggleSelectRequest(item.data) : (item.data.status_code === 0 ? showCertificateError(item.data) : selectRequest(item.data))" @contextmenu.prevent="showContextMenu($event, item.data)">
+      <div v-if="isMultiSelectMode" class="flex items-center justify-center px-1.5" style="width: 34px; min-width: 34px;" @click.stop="toggleSelectRequest(item.data)">
         <input type="checkbox" class="checkbox checkbox-xs checkbox-accent" :checked="isRequestSelected(item.data)" @click.stop @change="toggleSelectRequest(item.data)" />
       </div>
-      <div v-for="col in visibleColumns" :key="col.id" class="flex items-center px-2 border-r border-base-300 overflow-hidden" :style="{ width: col.width + 'px', minWidth: col.minWidth + 'px' }">
+      <div v-for="col in visibleColumns" :key="col.id" class="flex items-center overflow-hidden px-1.5" :style="{ width: col.width + 'px', minWidth: col.minWidth + 'px' }">
         <template v-if="col.id === 'method'">
-          <span :class="['badge badge-xs', getMethodClass(item.data.method)]">{{ item.data.method }}</span>
+          <span :class="['history-pill', getMethodClass(item.data.method)]">{{ item.data.method }}</span>
         </template>
         <template v-else-if="col.id === 'status'">
           <div class="flex items-center gap-1">
-            <span :class="['badge badge-xs', getStatusClass(item.data.status_code)]" :title="getStatusTitle(item.data.status_code)">{{ getStatusText(item.data.status_code) }}</span>
+            <span :class="['history-pill', getStatusClass(item.data.status_code)]" :title="getStatusTitle(item.data.status_code)">{{ getStatusText(item.data.status_code) }}</span>
             <i v-if="item.data.status_code === 0" class="fas fa-exclamation-circle text-error text-xs cursor-help" :title="$t('trafficAnalysis.history.certificateError.title')" @click.stop="showCertificateError(item.data)"></i>
           </div>
         </template>
@@ -76,7 +95,7 @@
           <span v-if="item.data.protocol === 'https'" class="text-success">✓</span>
         </template>
         <template v-else>
-          <span class="truncate" :title="getColumnValue(item.data, col.id)">{{ getColumnValue(item.data, col.id) }}</span>
+          <span class="truncate" :title="item.cellValues[col.id]">{{ item.cellValues[col.id] }}</span>
         </template>
       </div>
     </div>
@@ -90,7 +109,11 @@
 </template>
 
 <script setup lang="ts">
-import type { Column, ProxyHistoryProtocolFilter, ProxyHistoryWsTab, ProxyRequest, VirtualItem, WebSocketConnection, WebSocketMessage } from './proxyHistoryTypes'
+import type { Column, ProxyHistoryProtocolFilter, ProxyHistorySortState, ProxyHistoryWsTab, ProxyRequest, VirtualItem, WebSocketConnection, WebSocketMessage } from './proxyHistoryTypes'
+type VisibleRow = VirtualItem & {
+  cellValues: Record<string, string>
+}
+
 defineProps<{
   isLoading: boolean
   isLoadingWs: boolean
@@ -112,8 +135,10 @@ defineProps<{
   clearSelection: () => void
   selectAllVisible: () => void
   visibleColumns: Column[]
+  sortState: ProxyHistorySortState
+  toggleSort: (columnId: string) => void
   startResize: (columnId: string, event: MouseEvent) => void
-  visibleItems: VirtualItem[]
+  visibleRows: VisibleRow[]
   selectedRequest: ProxyRequest | null
   isRequestSelected: (request: ProxyRequest) => boolean
   toggleSelectRequest: (request: ProxyRequest) => void
@@ -125,6 +150,23 @@ defineProps<{
   getStatusTitle: (statusCode: number) => string
   getStatusText: (statusCode: number) => string
   hasParams: (url: string) => boolean
-  getColumnValue: (request: ProxyRequest, columnId: string) => string
 }>()
 </script>
+
+<style scoped>
+.table-row-text {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.history-pill {
+  display: inline-flex;
+  min-height: 14px;
+  align-items: center;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+</style>

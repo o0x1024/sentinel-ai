@@ -43,7 +43,7 @@
         class="absolute left-0 right-0 flex cursor-pointer packet-row"
         :class="[
           getProtocolRowClass(item.data.protocol),
-          { 'selected-row': selectedPacket?.id === item.data.id },
+          { 'selected-row': selectedPacketId === item.data.id },
           { 'marked-row': markedPackets.has(item.data.id) },
           { 'ignored-row': ignoredPackets.has(item.data.id) },
         ]"
@@ -94,19 +94,19 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { Packet, VirtualItem } from './packetCaptureTypes'
+import type { PacketSummary, VirtualItem } from './packetCaptureTypes'
 
 const scrollContainerEl = ref<HTMLElement | null>(null)
 
 defineProps<{
-  filteredPackets: Packet[]
-  visibleItems: VirtualItem[]
+  filteredPackets: PacketSummary[]
+  visibleItems: VirtualItem<PacketSummary>[]
   totalHeight: number
   headerHeight: number
   rowHeight: number
   listHeight: number
   columnWidths: Record<'mark' | 'no' | 'time' | 'source' | 'dest' | 'protocol' | 'length', number>
-  selectedPacket: Packet | null
+  selectedPacketId: number | null
   markedPackets: Set<number>
   ignoredPackets: Set<number>
   isLoading: boolean
@@ -117,8 +117,8 @@ defineProps<{
   getProtocolBadgeClass: (protocol: string) => string
   onHandleScroll: (event: Event) => void
   onStartColumnResize: (event: MouseEvent, column: 'mark' | 'no' | 'time' | 'source' | 'dest' | 'protocol' | 'length') => void
-  onSelectPacket: (packet: Packet) => void
-  onShowContextMenu: (event: MouseEvent, packet: Packet) => void
+  onSelectPacket: (packet: PacketSummary) => void
+  onShowContextMenu: (event: MouseEvent, packet: PacketSummary) => void
 }>()
 
 defineExpose({

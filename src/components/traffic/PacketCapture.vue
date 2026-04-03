@@ -32,7 +32,7 @@
                 :row-height="rowHeight"
                 :list-height="listHeight"
                 :column-widths="columnWidths"
-                :selected-packet="selectedPacket"
+                :selected-packet-id="selectedPacketSummary?.id ?? null"
                 :marked-packets="markedPackets"
                 :ignored-packets="ignoredPackets"
                 :is-loading="isLoading"
@@ -47,18 +47,17 @@
                 :on-show-context-menu="showContextMenu"
             />
 
-            <div v-if="selectedPacket" class="resize-handle" @mousedown="startResize">
+            <div v-if="selectedPacketSummary" class="resize-handle" @mousedown="startResize">
                 <div class="resize-bar"></div>
             </div>
 
             <PacketCaptureDetails
-                :selected-packet="selectedPacket"
+                :selected-packet="selectedPacketDetails"
                 :expanded-layers="expandedLayers"
                 :expanded-fields="expandedFields"
                 :hex-view-mode="hexViewMode"
                 :get-layer-bg-class="getLayerBgClass"
                 :is-highlight-field="isHighlightField"
-                :get-hex-view="getHexView"
                 :on-toggle-layer="toggleLayer"
                 :on-toggle-field="toggleField"
                 :on-show-field-context-menu="showFieldContextMenu"
@@ -77,7 +76,7 @@
                 </span>
             </div>
             <div class="flex items-center gap-4">
-                <span v-if="selectedPacket">{{ $t('trafficAnalysis.packetCapture.statusBar.selected') }}: #{{ selectedPacket.id }}</span>
+                <span v-if="selectedPacketSummary">{{ $t('trafficAnalysis.packetCapture.statusBar.selected') }}: #{{ selectedPacketSummary.id }}</span>
                 <span>{{ $t('trafficAnalysis.packetCapture.statusBar.captured') }}: {{ packets.length }} {{ $t('trafficAnalysis.packetCapture.statusBar.packets') }}</span>
             </div>
         </div>
@@ -137,7 +136,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick, shallowRef, triggerRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -146,7 +145,11 @@ import PacketCaptureDetails from './PacketCaptureDetails.vue'
 import PacketCaptureDialogs from './PacketCaptureDialogs.vue'
 import PacketCapturePacketList from './PacketCapturePacketList.vue'
 import PacketCaptureToolbar from './PacketCaptureToolbar.vue'
-import type { AdvancedFilter, ExtractedFileInfo, NetworkInterface, Packet, StreamSegment, VirtualItem } from './packetCaptureTypes'
+import type { AdvancedFilter, ExtractedFileInfo, NetworkInterface, Packet, PacketSummary, StreamSegment, VirtualItem } from './packetCaptureTypes'
+import {
+    appendPacketsWithLimit,
+    formatPacketTime,
+} from './packetCapturePerformanceSupport'
 
 const { t } = useI18n()
 
@@ -154,8 +157,9 @@ const { t } = useI18n()
 const interfaces = ref<NetworkInterface[]>([])
 const selectedInterface = ref('')
 const isCapturing = ref(false)
-const packets = ref<Packet[]>([])
-const selectedPacket = ref<Packet | null>(null)
+const packets = shallowRef<PacketSummary[]>([])
+const selectedPacketSummary = ref<PacketSummary | null>(null)
+const selectedPacketDetails = ref<Packet | null>(null)
 const filterText = ref('')
 const appliedFilter = ref('')
 const loadError = ref<string | null>(null)
@@ -226,6 +230,11 @@ const advancedFilter = reactive<AdvancedFilter>({
     tcpFlags: []
 })
 const advancedFilterApplied = ref(false)
+const filterMatches = ref<Set<number> | null>(null)
+let filterRequestToken = 0
+const FILTER_REFRESH_DEBOUNCE_MS = 80
+let filterRefreshTimer: number | null = null
+let pendingFilterRefresh: Set<number> | 'all' | null = null
 
 // 追踪流对话框
 const streamDialog = reactive({
@@ -238,11 +247,153 @@ const streamDialog = reactive({
 })
 
 // 右键菜单
-const contextMenu = reactive({ visible: false, x: 0, y: 0, packet: null as Packet | null })
+const contextMenu = reactive({ visible: false, x: 0, y: 0, packet: null as PacketSummary | null })
 const fieldContextMenu = reactive({ visible: false, x: 0, y: 0, key: '', value: '' })
 
 let unlistenPacket: UnlistenFn | null = null
-let packetCounter = 0
+let selectedPacketRequestToken = 0
+
+function syncSelectionAfterTrim(removedIds: Set<number>) {
+    if (removedIds.size === 0) {
+        return
+    }
+
+    if (selectedPacketSummary.value && removedIds.has(selectedPacketSummary.value.id)) {
+        selectedPacketSummary.value = null
+        selectedPacketDetails.value = null
+    }
+
+    if (contextMenu.packet && removedIds.has(contextMenu.packet.id)) {
+        contextMenu.packet = null
+        contextMenu.visible = false
+    }
+}
+
+function appendCapturedPacketBatch(batch: PacketSummary[]) {
+    if (batch.length === 0) {
+        return
+    }
+
+    const removedIds = appendPacketsWithLimit(
+        packets.value,
+        batch,
+        markedPackets,
+        ignoredPackets,
+    )
+
+    syncSelectionAfterTrim(removedIds)
+    triggerRef(packets)
+
+    if (removedIds.size > 0 && filterMatches.value) {
+        removedIds.forEach(id => filterMatches.value?.delete(id))
+    }
+
+    if (hasActiveServerFilterCriteria()) {
+        scheduleFilterRefresh(batch.map(packet => packet.id))
+    }
+}
+
+function hasActiveServerFilterCriteria() {
+    return (
+        appliedFilter.value !== '' ||
+        advancedFilter.protocols.length > 0 ||
+        advancedFilter.srcIp !== '' ||
+        advancedFilter.dstIp !== '' ||
+        advancedFilter.srcPort !== '' ||
+        advancedFilter.dstPort !== '' ||
+        advancedFilter.containsString !== '' ||
+        advancedFilter.containsHex !== '' ||
+        advancedFilter.minLength !== null ||
+        advancedFilter.maxLength !== null ||
+        advancedFilter.tcpFlags.length > 0
+    )
+}
+
+function clearScheduledFilterRefresh() {
+    if (filterRefreshTimer !== null) {
+        window.clearTimeout(filterRefreshTimer)
+        filterRefreshTimer = null
+    }
+    pendingFilterRefresh = null
+}
+
+function resetFilterMatchState() {
+    filterMatches.value = null
+    filterRequestToken++
+    clearScheduledFilterRefresh()
+}
+
+function scheduleFilterRefresh(packetIds?: number[]) {
+    if (!hasActiveServerFilterCriteria()) {
+        resetFilterMatchState()
+        return
+    }
+
+    if (!packetIds) {
+        pendingFilterRefresh = 'all'
+    } else if (pendingFilterRefresh !== 'all') {
+        const next = pendingFilterRefresh instanceof Set ? pendingFilterRefresh : new Set<number>()
+        packetIds.forEach(id => next.add(id))
+        pendingFilterRefresh = next
+    }
+
+    if (filterRefreshTimer !== null) {
+        window.clearTimeout(filterRefreshTimer)
+    }
+
+    filterRefreshTimer = window.setTimeout(() => {
+        const scheduled = pendingFilterRefresh
+        filterRefreshTimer = null
+        pendingFilterRefresh = null
+
+        if (scheduled === 'all') {
+            void runFilterRefresh()
+            return
+        }
+
+        void runFilterRefresh(scheduled ? Array.from(scheduled) : undefined)
+    }, FILTER_REFRESH_DEBOUNCE_MS)
+}
+
+async function runFilterRefresh(packetIds?: number[]) {
+    clearScheduledFilterRefresh()
+
+    if (!hasActiveServerFilterCriteria()) {
+        resetFilterMatchState()
+        return
+    }
+
+    const requestToken = ++filterRequestToken
+    const matches = await invoke<number[]>('match_packet_advanced_filter', {
+        packetIds: packetIds ?? packets.value.map(packet => packet.id),
+        filter: {
+            searchText: appliedFilter.value,
+            protocols: advancedFilter.protocols,
+            srcIp: advancedFilter.srcIp,
+            dstIp: advancedFilter.dstIp,
+            srcPort: advancedFilter.srcPort,
+            dstPort: advancedFilter.dstPort,
+            containsString: advancedFilter.containsString,
+            containsHex: advancedFilter.containsHex,
+            minLength: advancedFilter.minLength,
+            maxLength: advancedFilter.maxLength,
+            tcpFlags: advancedFilter.tcpFlags,
+        },
+    })
+
+    if (requestToken !== filterRequestToken) {
+        return
+    }
+
+    if (packetIds) {
+        const next = filterMatches.value ? new Set(filterMatches.value) : new Set<number>()
+        matches.forEach(id => next.add(id))
+        filterMatches.value = next
+        return
+    }
+
+    filterMatches.value = new Set(matches)
+}
 
 // 计算属性
 const filterPlaceholder = computed(() => appliedFilter.value ? `${t('trafficAnalysis.packetCapture.toolbar.filtering')}: ${appliedFilter.value}` : t('trafficAnalysis.packetCapture.toolbar.filterPlaceholder'))
@@ -271,57 +422,12 @@ const canFollowHttp = computed(() => {
 // 过滤后的数据包
 const filteredPackets = computed(() => {
     let result = packets.value.filter(p => !ignoredPackets.has(p.id))
-    
-    // 简单文本过滤
-    if (appliedFilter.value) {
-        const filter = appliedFilter.value.toLowerCase()
-        result = result.filter(p => {
-            const text = `${p.src} ${p.dst} ${p.protocol} ${p.info}`.toLowerCase()
-            return text.includes(filter)
-        })
-    }
-    
-    // 高级过滤
-    if (advancedFilterApplied.value) {
-        result = result.filter(p => {
-            // 协议过滤
-            if (advancedFilter.protocols.length > 0 && !advancedFilter.protocols.includes(p.protocol)) {
-                return false
-            }
-            
-            // IP过滤
-            if (advancedFilter.srcIp && !p.src.startsWith(advancedFilter.srcIp)) return false
-            if (advancedFilter.dstIp && !p.dst.startsWith(advancedFilter.dstIp)) return false
-            
-            // 端口过滤
-            if (advancedFilter.srcPort && !matchPort(p.src, advancedFilter.srcPort)) return false
-            if (advancedFilter.dstPort && !matchPort(p.dst, advancedFilter.dstPort)) return false
-            
-            // 长度过滤
-            if (advancedFilter.minLength !== null && p.length < advancedFilter.minLength) return false
-            if (advancedFilter.maxLength !== null && p.length > advancedFilter.maxLength) return false
-            
-            // 字符串过滤
-            if (advancedFilter.containsString) {
-                const ascii = p.raw.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '').join('')
-                if (!ascii.toLowerCase().includes(advancedFilter.containsString.toLowerCase())) return false
-            }
-            
-            // 十六进制过滤
-            if (advancedFilter.containsHex) {
-                const hexPattern = advancedFilter.containsHex.replace(/\s/g, '').toLowerCase()
-                const packetHex = p.raw.map(b => b.toString(16).padStart(2, '0')).join('')
-                if (!packetHex.includes(hexPattern)) return false
-            }
-            
-            // TCP标志过滤
-            if (advancedFilter.tcpFlags.length > 0) {
-                const flagsStr = p.info.toLowerCase()
-                if (!advancedFilter.tcpFlags.some(f => flagsStr.includes(f.toLowerCase()))) return false
-            }
-            
-            return true
-        })
+
+    if (appliedFilter.value || advancedFilterApplied.value) {
+        const matches = filterMatches.value
+        if (matches) {
+            result = result.filter(p => matches.has(p.id))
+        }
     }
     
     return result
@@ -333,12 +439,12 @@ const totalHeight = computed(() => {
 })
 
 // 虚拟滚动 - 可见项
-const visibleItems = computed((): VirtualItem[] => {
+const visibleItems = computed((): VirtualItem<PacketSummary>[] => {
     const startIndex = Math.max(0, Math.floor(scrollTop.value / rowHeight) - bufferSize)
     const visibleCount = Math.ceil(containerHeight.value / rowHeight)
     const endIndex = Math.min(filteredPackets.value.length, startIndex + visibleCount + bufferSize * 2)
     
-    const items: VirtualItem[] = []
+    const items: VirtualItem<PacketSummary>[] = []
     for (let i = startIndex; i < endIndex; i++) {
         items.push({
             data: filteredPackets.value[i],
@@ -370,16 +476,6 @@ function updateContainerHeight() {
     if (containerEl) {
         containerHeight.value = containerEl.clientHeight
     }
-}
-
-// 端口匹配
-function matchPort(addr: string, portFilter: string): boolean {
-    const port = parseInt(addr.split(':')[1] || '0')
-    if (portFilter.includes('-')) {
-        const [min, max] = portFilter.split('-').map(Number)
-        return port >= min && port <= max
-    }
-    return port === parseInt(portFilter)
 }
 
 // 列宽拖动调整
@@ -461,10 +557,8 @@ async function toggleCapture() {
 async function startCapture() {
     if (!selectedInterface.value) return
     try {
-        unlistenPacket = await listen<Packet>('packet-captured', (event) => {
-            packetCounter++
-            packets.value.push({ ...event.payload, id: packetCounter })
-            if (packets.value.length > 10000) packets.value = packets.value.slice(-5000)
+        unlistenPacket = await listen<PacketSummary[]>('packet-captured-batch', (event) => {
+            appendCapturedPacketBatch(event.payload)
         })
         await invoke('start_packet_capture', { interfaceName: selectedInterface.value })
         isCapturing.value = true
@@ -485,22 +579,40 @@ async function stopCapture() {
 
 function clearPackets() {
     packets.value = []
-    selectedPacket.value = null
-    packetCounter = 0
+    selectedPacketSummary.value = null
+    selectedPacketDetails.value = null
+    selectedPacketRequestToken++
+    resetFilterMatchState()
     markedPackets.clear()
     ignoredPackets.clear()
     scrollTop.value = 0
+    contextMenu.packet = null
+    contextMenu.visible = false
     const containerEl = getScrollContainerElement()
     if (containerEl) {
         containerEl.scrollTop = 0
     }
+    void invoke('clear_packet_capture_cache')
 }
 
-function selectPacket(packet: Packet) {
-    selectedPacket.value = packet
+async function selectPacket(packet: PacketSummary) {
+    selectedPacketSummary.value = packet
+    selectedPacketDetails.value = null
+    const requestToken = ++selectedPacketRequestToken
     // 清空展开状态，默认全部折叠
     Object.keys(expandedLayers).forEach(k => delete expandedLayers[k])
     Object.keys(expandedFields).forEach(k => delete expandedFields[k])
+
+    try {
+        const details = await invoke<Packet>('get_packet_details', { packetId: packet.id })
+        if (requestToken === selectedPacketRequestToken && selectedPacketSummary.value?.id === packet.id) {
+            selectedPacketDetails.value = details
+        }
+    } catch (e) {
+        if (requestToken === selectedPacketRequestToken) {
+            console.error('Failed to load packet details:', e)
+        }
+    }
 }
 
 function toggleLayer(key: string) {
@@ -514,6 +626,7 @@ function toggleField(key: string) {
 // 过滤
 function applyFilter() {
     appliedFilter.value = filterText.value
+    void runFilterRefresh()
     // 重置滚动位置
     scrollTop.value = 0
     const containerEl = getScrollContainerElement()
@@ -528,9 +641,15 @@ function clearAllFilters() {
     resetAdvancedFilter()
 }
 
-function applyAdvancedFilter() {
+async function applyAdvancedFilter() {
     advancedFilterApplied.value = true
     showFilterDialog.value = false
+    try {
+        await runFilterRefresh()
+    } catch (e) {
+        console.error('Failed to refresh filter matches:', e)
+        filterMatches.value = null
+    }
 }
 
 function resetAdvancedFilter() {
@@ -545,10 +664,11 @@ function resetAdvancedFilter() {
     advancedFilter.maxLength = null
     advancedFilter.tcpFlags = []
     advancedFilterApplied.value = false
+    resetFilterMatchState()
 }
 
 // 右键菜单
-function showContextMenu(e: MouseEvent, packet: Packet) {
+function showContextMenu(e: MouseEvent, packet: PacketSummary) {
     contextMenu.visible = true
     contextMenu.x = Math.min(e.clientX, window.innerWidth - 250)
     contextMenu.y = Math.min(e.clientY, window.innerHeight - 300)
@@ -620,7 +740,8 @@ async function copyPacketInfo() {
 
 async function copyPacketHex() {
     if (!contextMenu.packet) return
-    await navigator.clipboard.writeText(formatHex(contextMenu.packet.raw))
+    const details = await invoke<Packet>('get_packet_details', { packetId: contextMenu.packet.id })
+    await navigator.clipboard.writeText(formatHex(details.raw))
     hideMenus()
 }
 
@@ -631,35 +752,12 @@ async function copyField(field: 'src' | 'dst') {
 }
 
 // 追踪流
-function followStream(type: string) {
+async function followStream(type: string) {
     if (!contextMenu.packet) return
     const p = contextMenu.packet
-    const srcIp = p.src.split(':')[0]
-    const dstIp = p.dst.split(':')[0]
-    const srcPort = p.src.split(':')[1] || ''
-    const dstPort = p.dst.split(':')[1] || ''
-    
-    // 根据类型确定要追踪的协议
-    let protocolFilter: string[] = []
-    if (type === 'tcp') protocolFilter = ['TCP', 'HTTP', 'HTTPS', 'TLS']
-    else if (type === 'udp') protocolFilter = ['UDP', 'DNS', 'DHCP', 'NTP', 'QUIC', 'mDNS', 'LLMNR']
-    else if (type === 'http') protocolFilter = ['HTTP', 'HTTPS']
-    
-    const streamPackets = packets.value.filter(pk => {
-        const pSrcIp = pk.src.split(':')[0]
-        const pDstIp = pk.dst.split(':')[0]
-        const pSrcPort = pk.src.split(':')[1] || ''
-        const pDstPort = pk.dst.split(':')[1] || ''
-        
-        // 检查协议
-        if (!protocolFilter.some(proto => pk.protocol.includes(proto) || proto.includes(pk.protocol))) {
-            return false
-        }
-        
-        // 双向匹配会话
-        const match1 = pSrcIp === srcIp && pDstIp === dstIp && pSrcPort === srcPort && pDstPort === dstPort
-        const match2 = pSrcIp === dstIp && pDstIp === srcIp && pSrcPort === dstPort && pDstPort === srcPort
-        return match1 || match2
+    const streamPackets = await invoke<Packet[]>('get_packet_stream_packets', {
+        packetId: p.id,
+        streamType: type,
     })
     
     streamDialog.visible = true
@@ -807,23 +905,27 @@ async function openPcapFile() {
         
         if (selected) {
             const filePath = typeof selected === 'string' ? selected : selected
-            const loadedPackets = await invoke<Packet[]>('open_pcap_file', { filePath })
+            const loadedPackets = await invoke<PacketSummary[]>('open_pcap_file', { filePath })
             
             // Clear existing and load new packets
-            packets.value = []
-            packetCounter = 0
+            packets.value = loadedPackets
+            selectedPacketSummary.value = null
+            selectedPacketDetails.value = null
+            selectedPacketRequestToken++
+            resetFilterMatchState()
             markedPackets.clear()
             ignoredPackets.clear()
-            
-            for (const pkt of loadedPackets) {
-                packetCounter++
-                packets.value.push({ ...pkt, id: packetCounter })
-            }
+            contextMenu.packet = null
+            contextMenu.visible = false
             
             scrollTop.value = 0
             const containerEl = getScrollContainerElement()
             if (containerEl) {
                 containerEl.scrollTop = 0
+            }
+
+            if (hasActiveServerFilterCriteria()) {
+                void runFilterRefresh()
             }
         }
     } catch (e) {
@@ -846,10 +948,7 @@ async function savePcapFile() {
         })
         
         if (selected) {
-            await invoke('save_pcap_file', { 
-                filePath: selected, 
-                packets: packets.value 
-            })
+            await invoke('save_pcap_file', { filePath: selected })
             alert('保存成功')
         }
     } catch (e) {
@@ -868,9 +967,7 @@ async function showExtractDialogFn() {
     clearExtractFilter()
     
     try {
-        extractedFiles.value = await invoke<ExtractedFileInfo[]>('extract_files_preview', {
-            packets: packets.value
-        })
+        extractedFiles.value = await invoke<ExtractedFileInfo[]>('extract_files_preview')
     } catch (e) {
         console.error('Failed to extract files:', e)
     } finally {
@@ -972,10 +1069,7 @@ async function downloadSingleFile(file: ExtractedFileInfo) {
 // Follow the stream that contains the file
 async function followFileStream(file: ExtractedFileInfo) {
     try {
-        const streamPackets = await invoke<Packet[]>('get_file_stream_packets', {
-            fileId: file.id,
-            packets: packets.value
-        })
+        const streamPackets = await invoke<Packet[]>('get_file_stream_packets', { fileId: file.id })
         
         if (streamPackets.length === 0) {
             alert('未找到相关流量')
@@ -1019,7 +1113,7 @@ async function locateFilePackets(file: ExtractedFileInfo) {
         
         // Select first packet
         const firstPacket = packets.value[firstPacketIdx]
-        selectPacket(firstPacket)
+        await selectPacket(firstPacket)
         
         // Scroll to the packet
         scrollTop.value = firstPacketIdx * rowHeight
@@ -1194,7 +1288,7 @@ function formatFileSize(bytes: number): string {
 
 // 格式化
 function formatTime(ts: number): string {
-    return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 } as Intl.DateTimeFormatOptions)
+    return formatPacketTime(ts)
 }
 
 function formatFullTime(ts: number): string {
@@ -1211,14 +1305,6 @@ function formatHex(raw: number[]): string {
         lines.push(`${i.toString(16).padStart(8, '0')}  ${hex.padEnd(48)}  ${ascii}`)
     }
     return lines.join('\n')
-}
-
-function getHexView(): string {
-    if (!selectedPacket.value) return ''
-    const raw = selectedPacket.value.raw
-    if (hexViewMode.value === 'hex') return formatHex(raw)
-    if (hexViewMode.value === 'ascii') return raw.map(b => (b >= 32 && b <= 126) || b === 10 || b === 13 ? String.fromCharCode(b) : '.').join('')
-    return raw.map(b => b.toString(16).padStart(2, '0')).join(' ')
 }
 
 function getInterfaceDisplayName(iface: NetworkInterface): string {
@@ -1260,8 +1346,8 @@ function isHighlightField(key: string): boolean {
 
 // 键盘快捷键
 function handleKeydown(e: KeyboardEvent) {
-    if (e.ctrlKey && e.key === 'm' && selectedPacket.value) {
-        contextMenu.packet = selectedPacket.value
+    if (e.ctrlKey && e.key === 'm' && selectedPacketSummary.value) {
+        contextMenu.packet = selectedPacketSummary.value
         toggleMark()
     }
     if (e.key === 'Escape') hideMenus()
@@ -1303,6 +1389,7 @@ onUnmounted(() => {
     if (scrollTimer !== null) {
         window.clearTimeout(scrollTimer)
     }
+    clearScheduledFilterRefresh()
 })
 </script>
 

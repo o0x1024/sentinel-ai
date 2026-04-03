@@ -1,15 +1,20 @@
 <template>
-  <div ref="containerRef" class="h-full min-h-0 overflow-hidden rounded-lg border border-base-300 bg-base-100"></div>
+  <div
+    ref="containerRef"
+    class="h-full min-h-0 overflow-hidden rounded-lg border border-base-300 bg-base-100"
+    :style="editorStyle"
+  ></div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { EditorView, basicSetup } from 'codemirror'
 import { EditorState } from '@codemirror/state'
 import { MergeView } from '@codemirror/merge'
 import { StreamLanguage } from '@codemirror/language'
 import { http } from '@codemirror/legacy-modes/mode/http'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { shouldHighlightTrafficMessageSyntax, useTrafficDisplaySettings } from './trafficDisplaySettings'
 
 const httpLanguage = StreamLanguage.define(http)
 
@@ -23,6 +28,11 @@ const props = withDefaults(defineProps<{
 
 const containerRef = ref<HTMLDivElement | null>(null)
 let mergeView: MergeView | null = null
+const { settings } = useTrafficDisplaySettings()
+const editorStyle = computed(() => ({
+  '--traffic-editor-font-size': `${settings.value.fontSize}px`,
+  '--traffic-editor-font-family': settings.value.fontFamily,
+}))
 
 const diffTheme = EditorView.theme({
   '&': {
@@ -36,7 +46,8 @@ const diffTheme = EditorView.theme({
   },
   '.cm-scroller': {
     overflow: 'auto',
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    fontFamily: 'var(--traffic-editor-font-family)',
+    fontSize: 'var(--traffic-editor-font-size)',
   },
 }, { dark: true })
 
@@ -52,11 +63,25 @@ function initMergeView() {
   mergeView = new MergeView({
     a: {
       doc: props.leftText,
-      extensions: [basicSetup, httpLanguage, oneDark, diffTheme, EditorState.readOnly.of(true), EditorView.lineWrapping],
+      extensions: [
+        basicSetup,
+        ...(shouldHighlightTrafficMessageSyntax('generic') ? [httpLanguage] : []),
+        oneDark,
+        diffTheme,
+        EditorState.readOnly.of(true),
+        EditorView.lineWrapping,
+      ],
     },
     b: {
       doc: props.rightText,
-      extensions: [basicSetup, httpLanguage, oneDark, diffTheme, EditorState.readOnly.of(true), EditorView.lineWrapping],
+      extensions: [
+        basicSetup,
+        ...(shouldHighlightTrafficMessageSyntax('generic') ? [httpLanguage] : []),
+        oneDark,
+        diffTheme,
+        EditorState.readOnly.of(true),
+        EditorView.lineWrapping,
+      ],
     },
     parent: containerRef.value,
     collapseUnchanged: { margin: 3, minSize: 4 },
@@ -68,6 +93,13 @@ onMounted(initMergeView)
 
 watch(
   () => [props.leftText, props.rightText],
+  () => {
+    initMergeView()
+  },
+)
+
+watch(
+  () => [settings.value.highlightRequestSyntax, settings.value.highlightResponseSyntax],
   () => {
     initMergeView()
   },

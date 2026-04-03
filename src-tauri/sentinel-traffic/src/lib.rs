@@ -27,6 +27,7 @@ pub use error::{Result, TrafficError};
 // Re-export traffic database types from sentinel-db
 pub use history_cache::{
     HistoryCacheConfig, HistoryCacheStats, HttpRequestFilters, HttpRequestRecord,
+    HttpRequestSummary,
     ProxyHistoryCache, ProxyHistoryFilters, ProxyHistoryItem, WebSocketConnectionRecord,
     WebSocketConnectionStatus, WebSocketDirection, WebSocketFilters, WebSocketMessageRecord,
     WebSocketMessageType,

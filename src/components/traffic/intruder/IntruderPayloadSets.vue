@@ -23,16 +23,10 @@
       <div class="grid gap-3 md:grid-cols-2">
         <label class="form-control">
           <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.attackType') }}</span>
-          <select
-            :value="attackType"
-            class="select select-bordered select-sm"
-            @change="$emit('update:attackType', ($event.target as HTMLSelectElement).value as IntruderAttackType)"
-          >
-            <option value="sniper">{{ $t('trafficAnalysis.intruder.attackTypes.sniper') }}</option>
-            <option value="batteringRam">{{ $t('trafficAnalysis.intruder.attackTypes.batteringRam') }}</option>
-            <option value="pitchfork">{{ $t('trafficAnalysis.intruder.attackTypes.pitchfork') }}</option>
-            <option value="clusterBomb">{{ $t('trafficAnalysis.intruder.attackTypes.clusterBomb') }}</option>
-          </select>
+          <IntruderAttackTypeSelect
+            :model-value="attackType"
+            @update:model-value="$emit('update:attackType', $event)"
+          />
         </label>
 
         <div class="flex items-end">
@@ -144,6 +138,7 @@
 </template>
 
 <script setup lang="ts">
+import IntruderAttackTypeSelect from './IntruderAttackTypeSelect.vue'
 import type { IntruderAttackOptions, IntruderAttackType, IntruderPayloadSet } from './types'
 
 const props = defineProps<{

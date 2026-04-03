@@ -144,17 +144,26 @@
             @view-details="handleViewSubagentDetails"
           />
           <!-- Message flow -->
-          <MessageFlow
-            ref="messageFlowRef"
-            :messages="visibleMessages"
-            :is-executing="isExecuting"
-            :is-streaming="isStreaming"
-            :streaming-content="streamingContent"
-            class="flex-1"
-            @resend="handleResendMessage"
-            @edit="handleEditMessage"
-            @render-html="handleRenderHtml"
-          />
+          <div class="relative flex-1 min-h-0">
+            <MessageFlow
+              ref="messageFlowRef"
+              :messages="visibleMessages"
+              :is-executing="isExecuting"
+              :is-streaming="isStreaming"
+              :streaming-content="streamingContent"
+              class="h-full"
+              @resend="handleResendMessage"
+              @edit="handleEditMessage"
+              @render-html="handleRenderHtml"
+            />
+            <div
+              v-if="isHistoryLoading"
+              class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-base-100/85 backdrop-blur-sm text-base-content/70"
+            >
+              <span class="loading loading-spinner loading-lg text-primary"></span>
+              <p class="text-sm">{{ t('agent.loadingConversation', '正在加载历史对话...') }}</p>
+            </div>
+          </div>
           
           <!-- {{ t('agent.inputArea') }} -->
           <InputAreaComponent
@@ -399,6 +408,7 @@ const showToolConfig = ref(false)
 const currentConversationTitle = ref(t('agent.newConversationTitle'))
 const conversationExecutionState = ref<PersistedAgentExecutionState | null>(null)
 const historyLoadToken = ref(0)
+const isHistoryLoading = ref(false)
 const autoTitleGeneratingConversationIds = new Set<string>()
 
 const conversationExecutionStateBadgeText = computed(() => {
@@ -1150,6 +1160,7 @@ const {
   handleStopTeamState: applyTeamState,
   historyLoadToken,
   inputValue,
+  isHistoryLoading,
   isExecuting,
   isTeamModeEnabled: teamModeEnabled,
   isToolConfigEnabled: toolsEnabled,
@@ -1250,20 +1261,21 @@ onMounted(async () => {
     void handleTeamAssistantMessageSaved(event.payload)
   })
   
-  // Load saved tool configuration from database
-  await loadToolConfig()
-  
   // Load saved sidebar width
   loadSidebarWidth()
   
+  const startupTasks: Promise<unknown>[] = [loadToolConfig()]
+
   // Load conversation history if executionId is provided
   if (props.executionId) {
     conversationId.value = props.executionId
-    await loadConversationHistory(props.executionId)
+    startupTasks.push(loadConversationHistory(props.executionId))
   } else {
     // Default load the last conversation
-    await loadLatestConversation()
+    startupTasks.push(loadLatestConversation())
   }
+
+  await Promise.allSettled(startupTasks)
   
   // Preconnect terminal server in background (non-blocking)
   terminalComposable.preconnect()

@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { Ref } from 'vue'
 import { dialog } from '@/composables/useDialog'
+import { clearProxyHistoryDerivedCache, pruneProxyHistoryDerivedCache } from './proxyHistoryDerivedSupport'
 import type { ProxyHistoryWsTab, ProxyRequest, WebSocketConnection, WebSocketMessage } from './proxyHistoryTypes'
 
 type ProxyHistoryStats = {
@@ -36,18 +37,53 @@ export const useProxyHistoryData = (params: Params) => {
   let updateTimer: number | null = null
   let unlistenRequest: (() => void) | null = null
 
-  const updateStats = () => {
-    const total = params.requests.value.length
-    const https = params.requests.value.filter((request) => request.protocol === 'https').length
-    const http = params.requests.value.filter((request) => request.protocol === 'http').length
-    const totalResponseTime = params.requests.value.reduce((sum, request) => sum + request.response_time, 0)
+  const normalizeRequest = (request: ProxyRequest): ProxyRequest => ({
+    ...request,
+    has_full_details: request.has_full_details ?? Boolean(
+      request.request_body
+      || request.response_body
+      || request.edited_request_body
+      || request.edited_response_body,
+    ),
+  })
 
-    params.stats.value = {
-      total,
+  const normalizeRequests = (requests: ProxyRequest[]) => requests.map(normalizeRequest)
+
+  const collectStats = (requests: ProxyRequest[]) => {
+    let http = 0
+    let https = 0
+    let totalResponseTime = 0
+
+    requests.forEach((request) => {
+      if (request.protocol === 'https') {
+        https += 1
+      } else if (request.protocol === 'http') {
+        http += 1
+      }
+      totalResponseTime += request.response_time
+    })
+
+    return {
+      total: requests.length,
       http,
       https,
-      avgResponseTime: total > 0 ? Math.round(totalResponseTime / total) : 0,
+      avgResponseTime: requests.length > 0 ? Math.round(totalResponseTime / requests.length) : 0,
     }
+  }
+
+  const mergeRequestIntoList = (request: ProxyRequest) => {
+    const index = params.requests.value.findIndex((item) => item.id === request.id)
+    if (index === -1) {
+      return request
+    }
+
+    const merged = { ...params.requests.value[index], ...request }
+    params.requests.value.splice(index, 1, merged)
+    return merged
+  }
+
+  const updateStats = () => {
+    params.stats.value = collectStats(params.requests.value)
   }
 
   const updateStatsIncremental = (request: ProxyRequest) => {
@@ -65,6 +101,10 @@ export const useProxyHistoryData = (params: Params) => {
     }
   }
 
+  const updateStatsIncrementalBatch = (requests: ProxyRequest[]) => {
+    requests.forEach(updateStatsIncremental)
+  }
+
   const refreshRequests = async () => {
     params.isLoading.value = true
     try {
@@ -74,10 +114,12 @@ export const useProxyHistoryData = (params: Params) => {
       })
 
       if (response.success && response.data) {
-        params.requests.value = response.data
-        params.hasMore.value = response.data.length === params.initialLoadLimit
+        const normalizedRequests = normalizeRequests(response.data as ProxyRequest[])
+        params.requests.value = normalizedRequests
+        params.hasMore.value = normalizedRequests.length === params.initialLoadLimit
         params.requestIdSet.value.clear()
-        response.data.forEach((request: ProxyRequest) => params.requestIdSet.value.add(request.id))
+        normalizedRequests.forEach((request) => params.requestIdSet.value.add(request.id))
+        pruneProxyHistoryDerivedCache(params.requestIdSet.value)
         updateStats()
       }
     } catch (error: any) {
@@ -88,8 +130,8 @@ export const useProxyHistoryData = (params: Params) => {
     }
   }
 
-  const loadMoreRequests = async () => {
-    if (params.isLoadingMore.value || !params.hasMore.value) return
+  const loadMoreRequests = async (): Promise<number> => {
+    if (params.isLoadingMore.value || !params.hasMore.value) return 0
 
     params.isLoadingMore.value = true
     try {
@@ -99,13 +141,21 @@ export const useProxyHistoryData = (params: Params) => {
       })
 
       if (response.success && response.data) {
-        if (response.data.length > 0) {
-          params.requests.value = [...params.requests.value, ...response.data]
-          params.hasMore.value = response.data.length === params.loadMoreSize
+        const normalizedRequests = normalizeRequests(response.data as ProxyRequest[])
+        if (normalizedRequests.length > 0) {
+          params.requests.value.push(...normalizedRequests)
+          normalizedRequests.forEach((request) => params.requestIdSet.value.add(request.id))
+          params.hasMore.value = normalizedRequests.length === params.loadMoreSize
           if (params.requests.value.length > params.maxRequestsInMemory) {
             params.requests.value = params.requests.value.slice(0, params.maxRequestsInMemory)
+            params.requestIdSet.value = new Set(params.requests.value.map((request) => request.id))
             params.hasMore.value = false
+            updateStats()
+          } else {
+            updateStatsIncrementalBatch(normalizedRequests)
           }
+          pruneProxyHistoryDerivedCache(params.requestIdSet.value)
+          return normalizedRequests.length
         } else {
           params.hasMore.value = false
         }
@@ -115,6 +165,24 @@ export const useProxyHistoryData = (params: Params) => {
       dialog.toast.error(`加载更多失败: ${error}`)
     } finally {
       params.isLoadingMore.value = false
+    }
+
+    return 0
+  }
+
+  const fetchRequestDetails = async (requestId: number): Promise<ProxyRequest | null> => {
+    try {
+      const response = await invoke<any>('get_proxy_request', { id: requestId })
+      if (!response.success || !response.data) {
+        return null
+      }
+      return mergeRequestIntoList({
+        ...response.data,
+        has_full_details: true,
+      } as ProxyRequest)
+    } catch (error) {
+      console.error(`Failed to load request details for #${requestId}:`, error)
+      return null
     }
   }
 
@@ -205,15 +273,17 @@ export const useProxyHistoryData = (params: Params) => {
   const processPendingUpdates = () => {
     if (pendingUpdates.length === 0) return
 
-    const newRequests = pendingUpdates.filter((request) => !params.requestIdSet.value.has(request.id))
+    const newRequests = pendingUpdates
+      .map(normalizeRequest)
+      .filter((request) => !params.requestIdSet.value.has(request.id))
     if (newRequests.length > 0) {
-      params.requests.value = [...newRequests, ...params.requests.value]
+      params.requests.value.unshift(...newRequests)
       newRequests.forEach((request) => params.requestIdSet.value.add(request.id))
       if (params.requests.value.length > params.maxRequestsInMemory) {
-        const removed = params.requests.value.slice(params.maxRequestsInMemory)
-        params.requests.value = params.requests.value.slice(0, params.maxRequestsInMemory)
+        const removed = params.requests.value.splice(params.maxRequestsInMemory)
         removed.forEach((request) => params.requestIdSet.value.delete(request.id))
       }
+      pruneProxyHistoryDerivedCache(params.requestIdSet.value)
       newRequests.forEach(updateStatsIncremental)
     }
 
@@ -251,6 +321,7 @@ export const useProxyHistoryData = (params: Params) => {
     params.wsMessagesCache.value.clear()
     params.expandedWsConnections.value.clear()
     params.activeWsTabs.value.clear()
+    clearProxyHistoryDerivedCache()
   }
 
   return {
@@ -260,6 +331,7 @@ export const useProxyHistoryData = (params: Params) => {
     getWsMessagesForConnection,
     loadMoreRequests,
     loadWsConnections,
+    fetchRequestDetails,
     refreshRequests,
     setWsActiveTab,
     setupEventListeners,

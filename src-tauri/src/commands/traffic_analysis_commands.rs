@@ -2074,7 +2074,7 @@ pub async fn list_proxy_requests(
     host: Option<String>,
     status_code_min: Option<i32>,
     status_code_max: Option<i32>,
-) -> Result<CommandResponse<Vec<sentinel_traffic::HttpRequestRecord>>, String> {
+) -> Result<CommandResponse<Vec<sentinel_traffic::HttpRequestSummary>>, String> {
     let cache = state.get_history_cache();
 
     let filters = sentinel_traffic::HttpRequestFilters {
@@ -2088,7 +2088,7 @@ pub async fn list_proxy_requests(
         offset: offset.map(|o| o as usize),
     };
 
-    let requests = cache.list_http_requests(filters).await;
+    let requests = cache.list_http_request_summaries(filters).await;
 
     Ok(CommandResponse::ok(requests))
 }

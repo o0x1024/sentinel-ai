@@ -160,7 +160,7 @@
               {{ $t('trafficAnalysis.intruder.labels.request') }}
             </div>
             <div class="h-[calc(100%-2.5rem)]">
-              <HttpCodeEditor :model-value="selectedResult?.rawRequest || ''" readonly />
+              <HttpMessageSurface :model-value="selectedResult?.rawRequest || ''" message-type="request" readonly display-mode="raw" :state-key="selectedResult ? `intruder:request:${selectedResult.id}` : ''" />
             </div>
           </div>
 
@@ -177,7 +177,7 @@
               </div>
             </div>
             <div class="h-[calc(100%-2.5rem)]">
-              <HttpCodeEditor :model-value="selectedResult?.rawResponse || selectedResult?.error || ''" readonly />
+              <HttpMessageSurface :model-value="selectedResult?.rawResponse || selectedResult?.error || ''" message-type="response" readonly display-mode="raw" :state-key="selectedResult ? `intruder:response:${selectedResult.id}` : ''" />
             </div>
           </div>
         </div>
@@ -202,7 +202,7 @@
           </div>
         </div>
         <div class="min-h-0">
-          <HttpCodeEditor :model-value="requestText" readonly />
+          <HttpMessageSurface :model-value="requestText" message-type="request" readonly display-mode="raw" :state-key="`intruder:positions:${workspaceName}`" />
         </div>
       </div>
     </div>
@@ -212,7 +212,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import HttpCodeEditor from '@/components/HttpCodeEditor.vue'
+import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import IntruderResultFilterCard from './IntruderResultFilterCard.vue'
 import { INTRUDER_BASE_RESULT_COLUMNS, getIntruderResultColumnValue, getIntruderResultColumns } from './analysis'
 import {

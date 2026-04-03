@@ -85,8 +85,16 @@
           @error="handleAgentError"
         />
         
+        <div
+          v-if="isBootstrapping && sessions.length === 0"
+          class="flex flex-col items-center justify-center h-full text-base-content/50 gap-4"
+        >
+          <span class="loading loading-spinner loading-lg text-primary"></span>
+          <p>{{ t('aiAssistant.loadingSessions', '正在恢复历史会话...') }}</p>
+        </div>
+
         <!-- Empty State -->
-        <div v-if="sessions.length === 0" class="flex flex-col items-center justify-center h-full text-base-content/40 gap-4">
+        <div v-else-if="sessions.length === 0" class="flex flex-col items-center justify-center h-full text-base-content/40 gap-4">
           <i class="fas fa-robot text-6xl"></i>
           <p>{{ t('aiAssistant.noActiveSessions', '暂无活跃对话，请开启新标签页') }}</p>
           <button class="btn btn-primary btn-sm" @click="handleNewTab">
@@ -128,6 +136,7 @@ import { useRoleManagement } from '@/composables/useRoleManagement'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import { dialog } from '@/composables/useDialog'
 import type { AiConversationSummary } from '@/components/Agent/conversationTypes'
+import { pickLatestConversation } from '@/components/Agent/agentConversationSessionSupport'
 
 // {{ t('aiAssistant.trafficReferenceType') }}
 interface ReferencedTraffic {
@@ -174,9 +183,10 @@ const {
 const showRoleManagement = ref(false)
 const showForcedRulesModal = ref(false)
 const showTurnLogsModal = ref(false)
+const isBootstrapping = ref(true)
 
 // --- 会话管理 ---
-const { sessions, activeSessionId, addSession } = useAgentSessionManager()
+const { sessions, activeSessionId, addSession, syncSessionsWithConversations } = useAgentSessionManager()
 const agentViewRefs = ref<Record<string, any>>({})
 
 const setAgentViewRef = (sessionId: string, el: any | null) => {
@@ -234,14 +244,14 @@ const handleOpenConversationFromLog = async (entry: AiTurnLogSummaryEntry) => {
 
 const openConversationById = async (conversationId: string, fallbackTitle?: string) => {
   const normalizedConversationId = String(conversationId || '').trim()
-  if (!normalizedConversationId) return
+  if (!normalizedConversationId) return false
 
   const existing = sessions.value.find(session => session.id === normalizedConversationId)
   if (existing) {
     addSession(existing.id, existing.title)
     await nextTick()
     getActiveAgentViewRef()?.focusInput?.()
-    return
+    return true
   }
 
   try {
@@ -250,15 +260,18 @@ const openConversationById = async (conversationId: string, fallbackTitle?: stri
       ? conversations.find(item => String(item?.id || '').trim() === normalizedConversationId)
       : null
 
+    if (!matched) return false
+
     addSession(
       normalizedConversationId,
-      matched?.title || fallbackTitle || t('agent.unnamedConversation'),
+      matched.title || fallbackTitle || t('agent.unnamedConversation'),
     )
     await nextTick()
     getActiveAgentViewRef()?.focusInput?.()
+    return true
   } catch (error) {
     console.error('Failed to open conversation by route:', error)
-    addSession(normalizedConversationId, fallbackTitle || t('agent.unnamedConversation'))
+    return false
   }
 }
 
@@ -271,11 +284,10 @@ const syncConversationFromRoute = async () => {
 
   if (!conversationId) return false
 
-  await openConversationById(
+  return await openConversationById(
     conversationId,
     `${t('agent.unnamedConversation')} ${String(conversationId).slice(0, 8)}`,
   )
-  return true
 }
 
 // --- 事件处理 ---
@@ -293,19 +305,20 @@ const handleAgentError = (error: string) => {
 
 // 初始化
 onMounted(async () => {
+  let roleLoadPromise: Promise<void> | null = null
   try {
-    // 加载角色列表
-    await loadRoles()
+    // 角色列表后台恢复，不阻塞会话恢复
+    roleLoadPromise = loadRoles()
+
+    const conversations = await invoke<AiConversationSummary[]>('get_ai_conversations')
+    syncSessionsWithConversations(conversations || [])
 
     const openedFromRoute = await syncConversationFromRoute()
 
-    // 如果没有任何会话，尝试加载最近的一个或创建一个
+    // 如果没有任何会话，尝试恢复最近的一个或创建一个
     if (!openedFromRoute && sessions.value.length === 0) {
-      const conversations = await invoke<AiConversationSummary[]>('get_ai_conversations')
-      if (conversations && conversations.length > 0) {
-        const latest = conversations.sort((a, b) => 
-          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-        )[0]
+      const latest = pickLatestConversation(conversations || [])
+      if (latest) {
         addSession(latest.id, latest.title || t('agent.unnamedConversation'))
       } else {
         await handleNewTab()
@@ -331,6 +344,11 @@ onMounted(async () => {
     })
   } catch (error) {
     console.error('Failed to initialize AI Assistant:', error)
+  } finally {
+    isBootstrapping.value = false
+    if (roleLoadPromise) {
+      await roleLoadPromise
+    }
   }
 })
 

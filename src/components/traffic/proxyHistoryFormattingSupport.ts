@@ -1,4 +1,5 @@
-import { getExtension, hasParams } from './proxyHistoryFilterSupport'
+import { detectHttpBodyLanguage } from '@/components/http-editor/httpDocument'
+import { getProxyHistoryDerived } from './proxyHistoryDerivedSupport'
 import type {
   ProxyHistoryRequestTab,
   ProxyHistoryResponseTab,
@@ -34,37 +35,7 @@ export const truncateText = (text: string, maxLength: number) => {
 export const formatTime = (timestamp: string) => new Date(timestamp).toLocaleString('zh-CN')
 
 export const getMimeType = (request: ProxyRequest): string => {
-  if (request.response_headers) {
-    try {
-      const headers = JSON.parse(request.response_headers)
-      const contentType = headers['content-type'] || headers['Content-Type']
-      if (contentType) {
-        return String(contentType).split(';')[0].trim()
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  const ext = getExtension(request.url)
-  const mimeMap: Record<string, string> = {
-    html: 'HTML',
-    htm: 'HTML',
-    json: 'JSON',
-    xml: 'XML',
-    js: 'JavaScript',
-    css: 'CSS',
-    png: 'image',
-    jpg: 'image',
-    jpeg: 'image',
-    gif: 'image',
-    svg: 'image',
-    ico: 'image',
-    pdf: 'application/pdf',
-    txt: 'text',
-  }
-
-  return mimeMap[ext] || ''
+  return getProxyHistoryDerived(request).mimeType
 }
 
 export const getMethodClass = (method: string) => {
@@ -107,6 +78,8 @@ export const getStatusTitle = (statusCode: number) => {
 }
 
 export const getColumnValue = (request: ProxyRequest, columnId: string): string => {
+  const derived = getProxyHistoryDerived(request)
+
   switch (columnId) {
     case 'id':
       return String(request.id)
@@ -117,15 +90,15 @@ export const getColumnValue = (request: ProxyRequest, columnId: string): string 
     case 'url':
       return request.url
     case 'params':
-      return hasParams(request.url) ? '✓' : ''
+      return derived.hasParams ? '✓' : ''
     case 'status':
       return String(request.status_code)
     case 'length':
       return formatBytes(request.response_size)
     case 'mime':
-      return request.mime_type || getMimeType(request)
+      return derived.mimeType
     case 'extension':
-      return request.extension || getExtension(request.url)
+      return derived.extension
     case 'title':
       return request.title || ''
     case 'tls':
@@ -133,9 +106,9 @@ export const getColumnValue = (request: ProxyRequest, columnId: string): string 
     case 'ip':
       return request.ip || ''
     case 'time':
-      return formatTime(request.timestamp)
+      return derived.formattedTime
     case 'listener':
-      return request.listener || 'Proxy'
+      return derived.listenerValue
     case 'responseTimer':
       return `${request.response_time}ms`
     default:
@@ -326,13 +299,15 @@ export const formatResponse = (
   if (body) {
     result += '\n'
     const contentType = getResponseContentType(request, viewMode)
-    if (contentType.includes('json') || contentType.includes('application/json')) {
+    const bodyFormat = detectHttpBodyLanguage(body, contentType)
+
+    if (bodyFormat === 'json') {
       try {
         result += JSON.stringify(JSON.parse(body), null, 2)
       } catch {
         result += body
       }
-    } else if (contentType.includes('html') || contentType.includes('xml') || contentType.includes('text/')) {
+    } else if (bodyFormat === 'html' || bodyFormat === 'xml' || bodyFormat === 'text') {
       result += body
     } else {
       const bodySize = new Blob([body]).size

@@ -43,10 +43,13 @@
     </div>
 
     <div class="min-h-0 flex-1">
-      <HttpCodeEditor
+      <HttpMessageSurface
         ref="requestEditor"
         :model-value="requestText"
+        message-type="request"
         height="100%"
+        display-mode="raw"
+        :state-key="`intruder:editor:${targetUrl || 'default'}`"
         @update:model-value="$emit('update:requestText', $event)"
       />
     </div>
@@ -62,7 +65,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
-import HttpCodeEditor from '@/components/HttpCodeEditor.vue'
+import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import type { IntruderPosition } from './types'
 
 const { t } = useI18n()
@@ -83,7 +86,7 @@ const emit = defineEmits<{
   (e: 'clearMarkers'): void
 }>()
 
-const requestEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null)
+const requestEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null)
 
 const requestLengthLabel = computed(() => {
   const length = props.requestText.length

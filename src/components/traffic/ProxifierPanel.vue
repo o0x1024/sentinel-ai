@@ -296,6 +296,19 @@ function addLog(type: 'info' | 'warning' | 'error', message: string) {
   }
 }
 
+function upsertConnection(conn: Connection) {
+  const existing = connections.value.findIndex(c => c.id === conn.id)
+  if (existing >= 0) {
+    connections.value[existing] = conn
+    return
+  }
+
+  connections.value.unshift(conn)
+  if (connections.value.length > 1000) {
+    connections.value.pop()
+  }
+}
+
 async function toggleProxifier() {
   isToggling.value = true
   try {
@@ -303,6 +316,8 @@ async function toggleProxifier() {
       const result = await invoke<any>('stop_proxifier')
       if (result.success) {
         isEnabled.value = false
+        connections.value = []
+        selectedConnection.value = null
         addLog('info', 'Proxifier stopped, system proxy cleared')
       } else {
         addLog('error', `Failed to stop: ${result.error}`)
@@ -327,8 +342,11 @@ async function toggleProxifier() {
   }
 }
 
-async function saveProxies() {
+async function saveProxies(nextProxies?: ProxyServer[]) {
   try {
+    if (nextProxies) {
+      proxies.value = [...nextProxies]
+    }
     // 保存到内存
     await invoke('save_proxifier_proxies', { proxies: proxies.value })
     // 保存到数据库
@@ -340,8 +358,11 @@ async function saveProxies() {
   }
 }
 
-async function saveRules() {
+async function saveRules(nextRules?: ProxifierRule[]) {
   try {
+    if (nextRules) {
+      rules.value = [...nextRules]
+    }
     // 保存到内存
     await invoke('save_proxifier_rules', { rules: rules.value })
     // 保存到数据库
@@ -421,45 +442,21 @@ onMounted(async () => {
   await loadRulesFromDb()
   await loadConfig()
   
-  // 如果数据库没有数据，添加默认配置
-  if (proxies.value.length === 0) {
-    proxies.value = [
-      { id: '1', name: '127.0.0.1', host: '127.0.0.1', port: 8080, type: 'HTTP', enabled: true },
-    ]
-  }
-  if (rules.value.length === 0) {
-    rules.value = [
-      { id: '1', name: 'Localhost', enabled: false, applications: 'Any', targetHosts: 'localhost; 127.0.0.1; ::1', targetPorts: 'Any', action: 'Direct' },
-      { id: '2', name: 'Default', enabled: true, applications: 'Any', targetHosts: 'Any', targetPorts: 'Any', action: 'Direct' },
-    ]
-  }
-  
   // 监听代理请求事件（从 TrafficProxy 发送）
   unlistenProxyRequest = await listen<ProxyRequest>('proxy:request', (event) => {
-    const conn = proxyRequestToConnection(event.payload)
-    const existing = connections.value.findIndex(c => c.id === conn.id)
-    if (existing >= 0) {
-      connections.value[existing] = conn
-    } else {
-      connections.value.unshift(conn)
-      if (connections.value.length > 1000) {
-        connections.value.pop()
-      }
+    if (!isEnabled.value) {
+      return
     }
+    const conn = proxyRequestToConnection(event.payload)
+    upsertConnection(conn)
   })
   
   // 监听连接事件（保留兼容）
   unlistenConnection = await listen<Connection>('proxifier:connection', (event) => {
-    const conn = event.payload
-    const existing = connections.value.findIndex(c => c.id === conn.id)
-    if (existing >= 0) {
-      connections.value[existing] = conn
-    } else {
-      connections.value.unshift(conn)
-      if (connections.value.length > 1000) {
-        connections.value.pop()
-      }
+    if (!isEnabled.value) {
+      return
     }
+    upsertConnection(event.payload)
   })
   
   // 监听日志事件

@@ -1329,6 +1329,7 @@ pub fn run() {
             packet_capture_commands::start_packet_capture,
             packet_capture_commands::stop_packet_capture,
             packet_capture_commands::is_capture_running,
+            packet_capture_commands::clear_packet_capture_cache,
             packet_capture_commands::open_pcap_file,
             packet_capture_commands::save_pcap_file,
             packet_capture_commands::extract_files_preview,
@@ -1336,6 +1337,9 @@ pub fn run() {
             packet_capture_commands::save_extracted_file,
             packet_capture_commands::get_file_related_packets,
             packet_capture_commands::get_file_stream_packets,
+            packet_capture_commands::get_packet_details,
+            packet_capture_commands::get_packet_stream_packets,
+            packet_capture_commands::match_packet_advanced_filter,
             packet_capture_commands::save_selected_files,
             // Test commands
             commands::test_proxy::test_proxy_connection,

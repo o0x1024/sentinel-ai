@@ -408,19 +408,25 @@
             <template v-if="currentItem">
               <!-- Raw View -->
               <div v-if="activeTab === 'raw'" class="flex-1 min-h-0 flex flex-col">
-                <HttpCodeEditor
+                <HttpMessageSurface
                   v-model="requestContent"
                   :readonly="!isEditable"
+                  :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
                   height="100%"
+                  display-mode="raw"
+                  :state-key="currentItem ? `intercept:${currentItem.type}:${currentItemIndex}:raw` : ''"
                 />
               </div>
 
               <!-- Pretty View -->
               <div v-else-if="activeTab === 'pretty'" class="flex-1 min-h-0 flex flex-col">
-                <HttpCodeEditor
+                <HttpMessageSurface
                   v-model="prettyContent"
                   :readonly="!isEditable"
+                  :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
                   height="100%"
+                  display-mode="pretty"
+                  :state-key="currentItem ? `intercept:${currentItem.type}:${currentItemIndex}:pretty` : ''"
                 />
               </div>
 
@@ -545,7 +551,8 @@ import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
-import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
+import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue';
+import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
 import {
   convertInterceptedItemToProxyRequest as convertToProxyRequest,
   formatInterceptBody as formatBody,
@@ -603,7 +610,7 @@ const interceptedWebsockets = ref<InterceptedWebSocketMessage[]>([]);
 
 const currentItemIndex = ref(0);
 const currentItemType = ref<'request' | 'response' | 'websocket'>('request');
-const activeTab = ref<'raw' | 'pretty' | 'hex'>('pretty');
+const activeTab = ref<'raw' | 'pretty' | 'hex'>(getDefaultTrafficMessageViewTab());
 const isEditable = ref(true); // 默认可编辑
 const isProcessing = ref(false);
 const requestContent = ref('');

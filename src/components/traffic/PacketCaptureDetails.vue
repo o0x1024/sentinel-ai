@@ -41,12 +41,17 @@
         <a class="tab tab-sm" :class="{ 'tab-active': hexViewMode === 'ascii' }" @click="$emit('update:hexViewMode', 'ascii')">ASCII</a>
         <a class="tab tab-sm" :class="{ 'tab-active': hexViewMode === 'raw' }" @click="$emit('update:hexViewMode', 'raw')">Raw</a>
       </div>
-      <pre class="text-xs font-mono bg-base-100 p-2 rounded-lg overflow-auto">{{ getHexView() }}</pre>
+      <PacketCaptureByteView
+        class="text-xs font-mono"
+        :raw-data="selectedPacket.raw"
+        :mode="hexViewMode"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import PacketCaptureByteView from './PacketCaptureByteView.vue'
 import type { Packet } from './packetCaptureTypes'
 
 defineProps<{
@@ -56,7 +61,6 @@ defineProps<{
   hexViewMode: 'hex' | 'ascii' | 'raw'
   getLayerBgClass: (name: string) => string
   isHighlightField: (key: string) => boolean
-  getHexView: () => string
   onToggleLayer: (key: string) => void
   onToggleField: (key: string) => void
   onShowFieldContextMenu: (event: MouseEvent, key: string, value: string) => void

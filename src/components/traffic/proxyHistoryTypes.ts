@@ -25,6 +25,7 @@ export interface ProxyRequest {
   edited_response_headers?: string
   edited_response_body?: string
   edited_status_code?: number
+  has_full_details?: boolean
 }
 
 export interface VirtualItem {
@@ -38,6 +39,13 @@ export interface Column {
   visible: boolean
   width: number
   minWidth: number
+}
+
+export type ProxyHistorySortDirection = 'asc' | 'desc'
+
+export interface ProxyHistorySortState {
+  columnId: string
+  direction: ProxyHistorySortDirection
 }
 
 export interface WebSocketConnection {

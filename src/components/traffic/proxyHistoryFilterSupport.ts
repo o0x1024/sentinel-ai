@@ -3,6 +3,7 @@ import type {
   ProxyHistoryFilterConfig,
   ProxyRequest,
 } from './proxyHistoryTypes'
+import { getProxyHistoryDerived } from './proxyHistoryDerivedSupport'
 
 export const buildDefaultProxyHistoryFilterConfig = (): ProxyHistoryFilterConfig => ({
   requestType: {
@@ -72,63 +73,7 @@ export const getExtension = (url: string): string => {
 }
 
 export const getMimeTypeCategory = (request: ProxyRequest): string => {
-  let contentType = ''
-
-  if (request.response_headers) {
-    try {
-      const headers = JSON.parse(request.response_headers)
-      contentType = (headers['content-type'] || headers['Content-Type'] || '').toLowerCase()
-    } catch {
-      // ignore
-    }
-  }
-
-  if (!contentType) {
-    const ext = getExtension(request.url).toLowerCase()
-    const extMap: Record<string, string> = {
-      html: 'html',
-      htm: 'html',
-      js: 'script',
-      mjs: 'script',
-      xml: 'xml',
-      css: 'css',
-      png: 'image',
-      jpg: 'image',
-      jpeg: 'image',
-      gif: 'image',
-      webp: 'image',
-      svg: 'image',
-      ico: 'image',
-      swf: 'flash',
-      txt: 'text',
-      json: 'text',
-      woff: 'binary',
-      woff2: 'binary',
-      ttf: 'binary',
-      eot: 'binary',
-      pdf: 'binary',
-      zip: 'binary',
-    }
-    return extMap[ext] || 'unknown'
-  }
-
-  if (contentType.includes('html')) return 'html'
-  if (contentType.includes('javascript') || contentType.includes('ecmascript')) return 'script'
-  if (contentType.includes('xml')) return 'xml'
-  if (contentType.includes('css')) return 'css'
-  if (contentType.includes('image')) return 'image'
-  if (contentType.includes('flash') || contentType.includes('shockwave')) return 'flash'
-  if (contentType.includes('text') || contentType.includes('json')) return 'text'
-  if (
-    contentType.includes('octet-stream') ||
-    contentType.includes('binary') ||
-    contentType.includes('font') ||
-    contentType.includes('application')
-  ) {
-    return 'binary'
-  }
-
-  return 'unknown'
+  return getProxyHistoryDerived(request).mimeTypeCategory
 }
 
 export const buildProxyHistoryFilterCache = (
@@ -168,73 +113,85 @@ export const filterProxyRequests = (
   requests: ProxyRequest[],
   config: ProxyHistoryFilterConfig,
   cache: ProxyHistoryFilterCache,
-) =>
-  requests.filter((request) => {
-    if (config.requestType.showOnlyWithParams && !hasParams(request.url)) {
-      return false
+) => {
+  const filtered: ProxyRequest[] = []
+
+  requests.forEach((request) => {
+    if (matchesProxyHistoryRequest(request, config, cache)) {
+      filtered.push(request)
     }
-    if (config.requestType.hideWithoutResponse && request.status_code === 0) {
-      return false
-    }
-
-    const code = request.status_code
-    if (code !== 0) {
-      if (code >= 200 && code < 300 && !config.statusCode.s2xx) return false
-      if (code >= 300 && code < 400 && !config.statusCode.s3xx) return false
-      if (code >= 400 && code < 500 && !config.statusCode.s4xx) return false
-      if (code >= 500 && code < 600 && !config.statusCode.s5xx) return false
-    }
-
-    const mime = getMimeTypeCategory(request)
-    if (mime === 'html' && !config.mimeType.html) return false
-    if (mime === 'script' && !config.mimeType.script) return false
-    if (mime === 'xml' && !config.mimeType.xml) return false
-    if (mime === 'css' && !config.mimeType.css) return false
-    if (mime === 'image' && !config.mimeType.images) return false
-    if (mime === 'flash' && !config.mimeType.flash) return false
-    if (mime === 'text' && !config.mimeType.otherText) return false
-    if (mime === 'binary' && !config.mimeType.otherBinary) return false
-
-    const ext = getExtension(request.url).toLowerCase()
-    if (cache.showExts && ext && !cache.showExts.has(ext)) {
-      return false
-    }
-    if (cache.hideExts && ext && cache.hideExts.has(ext)) {
-      return false
-    }
-
-    if (cache.searchTerm) {
-      const text = `${request.url} ${request.host}`
-      let match = false
-
-      if (cache.searchRegex) {
-        match = cache.searchRegex.test(text)
-      } else if (config.search.caseSensitive) {
-        match = text.includes(cache.searchTerm)
-      } else {
-        match = text.toLowerCase().includes(cache.searchTerm)
-      }
-
-      if (config.search.negative ? match : !match) {
-        return false
-      }
-    }
-
-    if (config.listener.port) {
-      const listenerPort = request.listener || ''
-      if (!listenerPort.includes(config.listener.port)) {
-        return false
-      }
-    }
-
-    return true
   })
+  return filtered
+}
+
+export const matchesProxyHistoryRequest = (
+  request: ProxyRequest,
+  config: ProxyHistoryFilterConfig,
+  cache: ProxyHistoryFilterCache,
+) => {
+  const derived = getProxyHistoryDerived(request)
+
+  if (config.requestType.showOnlyWithParams && !derived.hasParams) {
+    return false
+  }
+  if (config.requestType.hideWithoutResponse && request.status_code === 0) {
+    return false
+  }
+
+  const code = request.status_code
+  if (code !== 0) {
+    if (code >= 200 && code < 300 && !config.statusCode.s2xx) return false
+    if (code >= 300 && code < 400 && !config.statusCode.s3xx) return false
+    if (code >= 400 && code < 500 && !config.statusCode.s4xx) return false
+    if (code >= 500 && code < 600 && !config.statusCode.s5xx) return false
+  }
+
+  const mime = derived.mimeTypeCategory
+  if (mime === 'html' && !config.mimeType.html) return false
+  if (mime === 'script' && !config.mimeType.script) return false
+  if (mime === 'xml' && !config.mimeType.xml) return false
+  if (mime === 'css' && !config.mimeType.css) return false
+  if (mime === 'image' && !config.mimeType.images) return false
+  if (mime === 'flash' && !config.mimeType.flash) return false
+  if (mime === 'text' && !config.mimeType.otherText) return false
+  if (mime === 'binary' && !config.mimeType.otherBinary) return false
+
+  const ext = derived.extension
+  if (cache.showExts && ext && !cache.showExts.has(ext)) {
+    return false
+  }
+  if (cache.hideExts && ext && cache.hideExts.has(ext)) {
+    return false
+  }
+
+  if (cache.searchTerm) {
+    let match = false
+
+    if (cache.searchRegex) {
+      match = cache.searchRegex.test(derived.searchText)
+    } else if (config.search.caseSensitive) {
+      match = derived.searchText.includes(cache.searchTerm)
+    } else {
+      match = derived.searchTextLower.includes(cache.searchTerm)
+    }
+
+    if (config.search.negative ? match : !match) {
+      return false
+    }
+  }
+
+  if (config.listener.port && !derived.listenerValue.includes(config.listener.port)) {
+    return false
+  }
+
+  return true
+}
 
 export const hasActiveProxyHistoryFilters = (config: ProxyHistoryFilterConfig) => {
-  const def = buildDefaultProxyHistoryFilterConfig()
   return (
-    config.requestType.showOnlyWithParams !== def.requestType.showOnlyWithParams ||
-    config.requestType.hideWithoutResponse !== def.requestType.hideWithoutResponse ||
+    config.requestType.showOnlyInScope ||
+    config.requestType.showOnlyWithParams ||
+    config.requestType.hideWithoutResponse ||
     !config.statusCode.s2xx ||
     !config.statusCode.s3xx ||
     !config.statusCode.s4xx ||
@@ -242,38 +199,75 @@ export const hasActiveProxyHistoryFilters = (config: ProxyHistoryFilterConfig) =
     !config.mimeType.html ||
     !config.mimeType.script ||
     !config.mimeType.xml ||
-    config.mimeType.css ||
-    config.mimeType.images ||
+    !config.mimeType.css ||
+    !config.mimeType.images ||
+    !config.mimeType.flash ||
     !config.mimeType.otherText ||
-    config.mimeType.otherBinary ||
+    !config.mimeType.otherBinary ||
     config.search.term !== '' ||
-    config.extension.showOnlyEnabled ||
-    config.listener.port !== ''
+    (config.extension.showOnlyEnabled && config.extension.showOnly.trim() !== '') ||
+    (config.extension.hideEnabled && config.extension.hide.trim() !== '') ||
+    config.annotation.showOnlyWithNotes ||
+    config.annotation.showOnlyHighlighted ||
+    config.listener.port !== '' ||
+    config.bambdaExpression.trim() !== ''
   )
 }
 
 export const buildProxyHistoryFilterSummary = (config: ProxyHistoryFilterConfig) => {
   const parts: string[] = []
-  const hiddenMime: string[] = []
+  const hiddenContent: string[] = []
 
-  if (!config.mimeType.css) hiddenMime.push('CSS')
-  if (!config.mimeType.images) hiddenMime.push('image')
-  if (!config.mimeType.otherBinary) hiddenMime.push('binary')
-  if (hiddenMime.length > 0) {
-    parts.push(`Hiding ${hiddenMime.join(', ')}`)
+  if (!config.mimeType.html) hiddenContent.push('HTML')
+  if (!config.mimeType.otherText) hiddenContent.push('text')
+  if (!config.mimeType.script) hiddenContent.push('script')
+  if (!config.mimeType.css) hiddenContent.push('CSS')
+  if (!config.mimeType.images) hiddenContent.push('image')
+  if (!config.mimeType.xml) hiddenContent.push('XML')
+  if (!config.mimeType.flash) hiddenContent.push('Flash')
+  if (!config.mimeType.otherBinary) hiddenContent.push('binary')
+  if (hiddenContent.length > 0) {
+    parts.push(`Hiding ${hiddenContent.join(' and ')} content`)
   }
 
-  if (config.extension.hideEnabled && config.extension.hide) {
-    parts.push('hiding extensions')
+  if (config.extension.showOnlyEnabled && config.extension.showOnly.trim()) {
+    parts.push('showing only specific extensions')
+  }
+  if (config.extension.hideEnabled && config.extension.hide.trim()) {
+    parts.push('hiding specific extensions')
+  }
+  if (config.requestType.showOnlyInScope) {
+    parts.push('showing only in-scope items')
+  }
+  if (config.requestType.showOnlyWithParams) {
+    parts.push('showing only requests with parameters')
+  }
+  if (config.requestType.hideWithoutResponse) {
+    parts.push('hiding items without responses')
+  }
+  if (!config.statusCode.s2xx || !config.statusCode.s3xx || !config.statusCode.s4xx || !config.statusCode.s5xx) {
+    parts.push('filtering specific status codes')
   }
   if (config.search.term) {
-    parts.push(`search: "${config.search.term}"`)
+    parts.push(`searching for "${config.search.term}"`)
+  }
+  if (config.annotation.showOnlyWithNotes) {
+    parts.push('showing only items with notes')
+  }
+  if (config.annotation.showOnlyHighlighted) {
+    parts.push('showing only highlighted items')
+  }
+  if (config.listener.port) {
+    parts.push(`matching listener port "${config.listener.port}"`)
+  }
+  if (config.bambdaExpression.trim()) {
+    parts.push('using a custom Bambda expression')
   }
 
   if (parts.length === 0) {
-    return 'Filter settings: Showing all content'
+    return 'Showing all content'
   }
-  return `Filter settings: ${parts.join(' and ')}`
+  return parts.join('; ')
 }
 
 export const showAllProxyHistoryFilters = (config: ProxyHistoryFilterConfig): ProxyHistoryFilterConfig => ({
@@ -310,6 +304,16 @@ export const showAllProxyHistoryFilters = (config: ProxyHistoryFilterConfig): Pr
     showOnlyWithNotes: false,
     showOnlyHighlighted: false,
   },
+  search: {
+    term: '',
+    regex: false,
+    caseSensitive: false,
+    negative: false,
+  },
+  listener: {
+    port: '',
+  },
+  bambdaExpression: '',
 })
 
 export const hideAllProxyHistoryFilters = (config: ProxyHistoryFilterConfig): ProxyHistoryFilterConfig => ({

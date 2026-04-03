@@ -10,7 +10,7 @@ export default {
     intruder: 'Intruder',
     proxifier: '代理工具',
     capture: '抓包',
-    proxyConfig: '代理配置'
+    proxyConfig: '配置'
   },
   ariaLabels: {
     trafficAnalysisTabs: '流量分析标签页'
@@ -23,7 +23,7 @@ export default {
     intruder: 'Intruder',
     proxifier: '代理工具',
     capture: '抓包',
-    proxyConfig: '代理配置'
+    proxyConfig: '配置'
   },
   icons: {
     control: 'fa-sliders-h',
@@ -191,7 +191,26 @@ export default {
       export: '导出',
       searchPlaceholder: '搜索请求...'
     },
+    protocol: {
+      all: '全部',
+    },
+    filters: '过滤器',
+    multiSelect: '多选',
+    selectAll: '全选',
+    clearSelection: '清除选择',
+    sendToAssistant: '发送到 AI 助手',
+    refresh: '刷新',
+    clear: '清空',
+    filterBar: {
+      label: '过滤设置',
+      on: '筛选开启',
+      off: '筛选关闭',
+      showAllContent: '显示全部内容',
+    },
     export: {
+      export: '导出',
+      requests: '请求',
+      responses: '响应',
       sendToAssistant: '发送到 AI 助手',
       exportToFile: '导出到文件',
       exportRequest: '导出请求',
@@ -268,6 +287,7 @@ export default {
     detailsPanel: {
       requestDetails: '请求详情',
       responseDetails: '响应详情',
+      empty: '请选择一条请求以查看详情',
       tabs: {
         headers: '请求头',
         raw: '原始',
@@ -290,9 +310,16 @@ export default {
       method: '方法',
       host: '主机',
       url: 'URL',
+      params: '参数',
       status: '状态',
       length: '长度',
       mimeType: 'MIME类型',
+      extension: '扩展名',
+      title: '标题',
+      tls: 'TLS',
+      ip: 'IP',
+      listener: '监听器',
+      responseTimer: '响应时间',
       actions: '操作',
     },
     contextMenu: {
@@ -301,6 +328,7 @@ export default {
       sendRequestToAssistant: '发送请求到助手',
       sendResponseToAssistant: '发送响应到助手',
       copyUrl: '复制 URL',
+      copyRequest: '复制请求',
       copyAsCurl: '复制为 cURL',
       openInBrowser: '在浏览器中打开',
       clearHistory: '清空历史记录',
@@ -650,6 +678,19 @@ export default {
     autoStartProxyDesc: '启用后，应用启动时将自动开启代理监听器，无需手动操作',
     trafficAnalysisSettings: '流量分析设置',
     trafficAnalysisSettingsDesc: '配置流量分析相关的扫描和过滤选项',
+    httpMessageDisplayTitle: 'HTTP 消息显示',
+    httpMessageDisplayDesc: '使用这些设置控制 HTTP 消息的显示方式。',
+    characterSetsTitle: '字符集',
+    characterSetsDesc: '使用这些设置控制显示原始 HTTP 消息时的字符集策略。',
+    userSettingBadge: '用户设置',
+    font: '字体',
+    highlightRequestSyntax: '高亮请求语法',
+    highlightResponseSyntax: '高亮响应语法',
+    prettyPrintByDefault: '默认格式化显示',
+    recognizeCharsetAutomatically: '根据消息头自动识别',
+    usePlatformDefaultCharset: '使用平台默认值 (UTF-8)',
+    displayAsRawBytes: '按原始字节显示',
+    useSpecificCharset: '使用特定字符集',
     excludeSelfTraffic: '排除本应用流量的扫描',
     excludeSelfTrafficDesc: '启用后，本应用自己发出的 HTTP 请求将不会被流量分析插件扫描，但仍会显示在流量历史中',
     enableTrafficAnalysisPlugin: '开启流量分析插件扫描',

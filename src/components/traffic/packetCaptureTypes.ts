@@ -29,6 +29,16 @@ export interface Packet {
   raw: number[]
 }
 
+export interface PacketSummary {
+  id: number
+  timestamp: number
+  src: string
+  dst: string
+  protocol: string
+  length: number
+  info: string
+}
+
 export interface AdvancedFilter {
   protocols: string[]
   srcIp: string
@@ -54,8 +64,8 @@ export interface ExtractedFileInfo {
   source_type: string
 }
 
-export interface VirtualItem {
-  data: Packet
+export interface VirtualItem<T = PacketSummary> {
+  data: T
   offset: number
 }
 

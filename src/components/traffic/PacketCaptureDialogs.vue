@@ -314,10 +314,10 @@
 </template>
 
 <script setup lang="ts">
-import type { AdvancedFilter, ExtractedFileInfo, Packet, StreamSegment } from './packetCaptureTypes'
+import type { AdvancedFilter, ExtractedFileInfo, Packet, PacketSummary, StreamSegment } from './packetCaptureTypes'
 
 defineProps<{
-  contextMenu: { visible: boolean; x: number; y: number; packet: Packet | null }
+  contextMenu: { visible: boolean; x: number; y: number; packet: PacketSummary | null }
   fieldContextMenu: { visible: boolean; x: number; y: number; key: string; value: string }
   isCurrentPacketMarked: boolean
   isCurrentPacketIgnored: boolean

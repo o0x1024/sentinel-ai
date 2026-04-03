@@ -59,6 +59,35 @@ pub struct HttpRequestRecord {
     pub edited_status_code: Option<i32>,
 }
 
+/// HTTP 请求摘要（列表页使用，不包含正文）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpRequestSummary {
+    pub id: i64,
+    pub url: String,
+    pub host: String,
+    pub protocol: String,
+    pub method: String,
+    pub status_code: i32,
+    pub request_headers: Option<String>,
+    pub response_headers: Option<String>,
+    pub response_size: i64,
+    pub response_time: i64,
+    pub timestamp: DateTime<Utc>,
+    #[serde(default)]
+    pub was_edited: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_request_headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_response_headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_status_code: Option<i32>,
+    pub has_full_details: bool,
+}
+
 /// WebSocket 连接记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSocketConnectionRecord {
@@ -225,8 +254,6 @@ pub struct ProxyHistoryCache {
     http_requests: Arc<RwLock<VecDeque<HttpRequestRecord>>>,
     /// HTTP ID 计数器
     http_id_counter: AtomicI64,
-    /// HTTP 请求索引（ID -> 位置），用于快速查找
-    http_index: Arc<RwLock<HashMap<i64, usize>>>,
 
     /// WebSocket 连接缓存 (connection_id -> record)
     ws_connections: Arc<RwLock<HashMap<String, WebSocketConnectionRecord>>>,
@@ -261,7 +288,6 @@ impl ProxyHistoryCache {
             config,
             http_requests: Arc::new(RwLock::new(VecDeque::new())),
             http_id_counter: AtomicI64::new(1),
-            http_index: Arc::new(RwLock::new(HashMap::new())),
             ws_connections: Arc::new(RwLock::new(HashMap::new())),
             ws_connection_order: Arc::new(RwLock::new(VecDeque::new())),
             ws_messages: Arc::new(RwLock::new(HashMap::new())),
@@ -289,15 +315,12 @@ impl ProxyHistoryCache {
 
         // 清理 HTTP 请求
         let mut requests = self.http_requests.write().await;
-        let mut index = self.http_index.write().await;
         let original_len = requests.len();
 
         // 从后往前删除过期数据
         while let Some(record) = requests.back() {
             if record.timestamp < cutoff_time {
-                if let Some(removed) = requests.pop_back() {
-                    index.remove(&removed.id);
-                }
+                requests.pop_back();
             } else {
                 break;
             }
@@ -324,22 +347,13 @@ impl ProxyHistoryCache {
         record.id = id;
 
         let mut requests = self.http_requests.write().await;
-        let mut index = self.http_index.write().await;
 
         // 添加到队列前端（最新的）
         requests.push_front(record);
-        index.insert(id, 0);
-
-        // 更新索引位置
-        for (pos, req) in requests.iter().enumerate().skip(1) {
-            index.insert(req.id, pos);
-        }
 
         // 超出容量时移除最旧的
         while requests.len() > self.config.max_http_requests {
-            if let Some(removed) = requests.pop_back() {
-                index.remove(&removed.id);
-            }
+            requests.pop_back();
         }
 
         // 使统计缓存失效
@@ -356,45 +370,7 @@ impl ProxyHistoryCache {
 
         let mut results: Vec<_> = requests
             .iter()
-            .filter(|r| {
-                // 协议过滤
-                if let Some(ref protocol) = filters.protocol {
-                    if &r.protocol != protocol {
-                        return false;
-                    }
-                }
-                // 方法过滤
-                if let Some(ref method) = filters.method {
-                    if &r.method != method {
-                        return false;
-                    }
-                }
-                // 主机过滤
-                if let Some(ref host) = filters.host {
-                    if !r.host.contains(host) {
-                        return false;
-                    }
-                }
-                // 状态码范围过滤
-                if let Some(min) = filters.status_code_min {
-                    if r.status_code < min {
-                        return false;
-                    }
-                }
-                if let Some(max) = filters.status_code_max {
-                    if r.status_code > max {
-                        return false;
-                    }
-                }
-                // 搜索过滤
-                if let Some(ref search) = filters.search {
-                    let search_lower = search.to_lowercase();
-                    if !r.url.to_lowercase().contains(&search_lower) {
-                        return false;
-                    }
-                }
-                true
-            })
+            .filter(|r| Self::matches_http_filters(r, &filters))
             .cloned()
             .collect();
 
@@ -410,13 +386,34 @@ impl ProxyHistoryCache {
         results
     }
 
-    /// 根据 ID 获取 HTTP 请求（优化：使用索引）
-    pub async fn get_http_request_by_id(&self, id: i64) -> Option<HttpRequestRecord> {
-        let index = self.http_index.read().await;
-        let pos = index.get(&id)?;
-
+    /// 获取 HTTP 请求摘要列表（列表页使用）
+    pub async fn list_http_request_summaries(
+        &self,
+        filters: HttpRequestFilters,
+    ) -> Vec<HttpRequestSummary> {
         let requests = self.http_requests.read().await;
-        requests.get(*pos).cloned()
+
+        let mut results: Vec<_> = requests
+            .iter()
+            .filter(|r| Self::matches_http_filters(r, &filters))
+            .map(HttpRequestSummary::from)
+            .collect();
+
+        let offset = filters.offset.unwrap_or(0);
+        let limit = filters.limit.unwrap_or(100);
+
+        if offset > 0 {
+            results = results.into_iter().skip(offset).collect();
+        }
+        results.truncate(limit);
+
+        results
+    }
+
+    /// 根据 ID 获取 HTTP 请求
+    pub async fn get_http_request_by_id(&self, id: i64) -> Option<HttpRequestRecord> {
+        let requests = self.http_requests.read().await;
+        requests.iter().find(|request| request.id == id).cloned()
     }
 
     /// 统计 HTTP 请求数量
@@ -427,16 +424,55 @@ impl ProxyHistoryCache {
     /// 清空 HTTP 请求
     pub async fn clear_http_requests(&self) {
         let mut requests = self.http_requests.write().await;
-        let mut index = self.http_index.write().await;
         let count = requests.len();
         requests.clear();
-        index.clear();
 
         // 使统计缓存失效
         let mut stats_cache = self.cached_stats.write().await;
         *stats_cache = None;
 
         info!("Cleared {} HTTP requests", count);
+    }
+
+    fn matches_http_filters(record: &HttpRequestRecord, filters: &HttpRequestFilters) -> bool {
+        if let Some(ref protocol) = filters.protocol {
+            if &record.protocol != protocol {
+                return false;
+            }
+        }
+
+        if let Some(ref method) = filters.method {
+            if &record.method != method {
+                return false;
+            }
+        }
+
+        if let Some(ref host) = filters.host {
+            if !record.host.contains(host) {
+                return false;
+            }
+        }
+
+        if let Some(min) = filters.status_code_min {
+            if record.status_code < min {
+                return false;
+            }
+        }
+
+        if let Some(max) = filters.status_code_max {
+            if record.status_code > max {
+                return false;
+            }
+        }
+
+        if let Some(ref search) = filters.search {
+            let search_lower = search.to_lowercase();
+            if !record.url.to_lowercase().contains(&search_lower) {
+                return false;
+            }
+        }
+
+        true
     }
 
     // ============================================================
@@ -822,6 +858,31 @@ pub struct HistoryCacheStats {
     pub ws_message_count: usize,
     pub max_http_requests: usize,
     pub max_ws_connections: usize,
+}
+
+impl From<&HttpRequestRecord> for HttpRequestSummary {
+    fn from(record: &HttpRequestRecord) -> Self {
+        Self {
+            id: record.id,
+            url: record.url.clone(),
+            host: record.host.clone(),
+            protocol: record.protocol.clone(),
+            method: record.method.clone(),
+            status_code: record.status_code,
+            request_headers: record.request_headers.clone(),
+            response_headers: record.response_headers.clone(),
+            response_size: record.response_size,
+            response_time: record.response_time,
+            timestamp: record.timestamp.clone(),
+            was_edited: record.was_edited,
+            edited_request_headers: record.edited_request_headers.clone(),
+            edited_method: record.edited_method.clone(),
+            edited_url: record.edited_url.clone(),
+            edited_response_headers: record.edited_response_headers.clone(),
+            edited_status_code: record.edited_status_code,
+            has_full_details: false,
+        }
+    }
 }
 
 #[cfg(test)]

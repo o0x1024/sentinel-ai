@@ -499,58 +499,32 @@
       </form>
     </dialog>
 
-    <ProxyHistoryToolbar
-      :protocol-filter="protocolFilter"
-      :has-active-filters="hasActiveFilters"
-      :filter-summary="filterSummary"
-      :is-multi-select-mode="isMultiSelectMode"
-      :open-filter-dialog="openFilterDialog"
-      :toggle-multi-select-mode="toggleMultiSelectMode"
-      :select-all-visible="selectAllVisible"
-      :clear-selection="clearSelection"
-      :send-selected-to-assistant="sendSelectedToAssistant"
-      :export-selected-to-file="exportSelectedToFile"
-      :export-as-har="exportAsHAR"
-      :refresh-requests="refreshRequests"
-      :clear-history="clearHistory"
-      @update:protocol-filter="protocolFilter = $event"
-    />
-
     <!-- 可调整大小的上下分割布局 -->
     <div ref="mainContainer" class="flex-1 flex flex-col min-h-0 overflow-hidden">
       <!-- 上半部分：请求历史列表 -->
       <div 
         ref="topPanel"
         class="bg-base-100 border-b border-base-300 overflow-hidden flex flex-col flex-shrink-0"
-        :style="{ height: selectedRequest ? topPanelHeight + 'px' : '100%' }"
+        :style="{ height: topPanelHeight + 'px' }"
       >
-        <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-shrink-0">
-          <h3 class="font-semibold text-sm">
-            <template v-if="protocolFilter === 'websocket'">
-              <i class="fas fa-plug mr-2"></i>
-              WebSocket Connections ({{ wsConnections.length }})
-            </template>
-            <template v-else>
-              <i class="fas fa-history mr-2"></i>
-              {{ $t('trafficAnalysis.history.title') }} ({{ filteredRequests.length }})
-            </template>
-          </h3>
-          <div class="dropdown dropdown-end">
-            <label tabindex="0" class="btn btn-xs btn-ghost">
-              <i class="fas fa-cog"></i>
-            </label>
-            <div tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 mt-2 max-h-96 overflow-y-auto">
-              <li class="menu-title"><span>{{ $t('trafficAnalysis.history.table.actions') }}</span></li>
-              <li v-for="col in columns" :key="col.id">
-                <label class="label cursor-pointer justify-start gap-2">
-                  <input type="checkbox" :checked="col.visible" @change="toggleColumn(col.id)" class="checkbox checkbox-xs" />
-                  <span class="label-text text-xs">{{ col.label }}</span>
-                </label>
-              </li>
-              <li><a @click="resetColumns" class="text-xs"><i class="fas fa-undo mr-1"></i>{{ $t('trafficAnalysis.history.filterDialog.reset') }}</a></li>
-            </div>
-          </div>
-        </div>
+        <ProxyHistoryToolbar
+          :protocol-filter="protocolFilter"
+          :has-active-filters="hasActiveFilters"
+          :filters-enabled="filtersEnabled"
+          :filter-summary="filterSummary"
+          :is-multi-select-mode="isMultiSelectMode"
+          :open-filter-dialog="openFilterDialog"
+          :toggle-filters-enabled="toggleFiltersEnabled"
+          :toggle-multi-select-mode="toggleMultiSelectMode"
+          :select-all-visible="selectAllVisible"
+          :clear-selection="clearSelection"
+          :send-selected-to-assistant="sendSelectedToAssistant"
+          :export-selected-to-file="exportSelectedToFile"
+          :exportAsHAR="exportAsHAR"
+          :refresh-requests="refreshRequests"
+          :clear-history="clearHistory"
+          @update:protocol-filter="protocolFilter = $event"
+        />
 
         <!-- 虚拟滚动列表容器 -->
         <div ref="scrollContainer" class="flex-1 overflow-auto min-h-0" @scroll="handleScroll">
@@ -575,8 +549,10 @@
             :clear-selection="clearSelection"
             :select-all-visible="selectAllVisible"
             :visible-columns="visibleColumns"
+            :sort-state="sortState"
+            :toggle-sort="toggleSort"
             :start-resize="startResize"
-            :visible-items="visibleItems"
+            :visible-rows="visibleRows"
             :selected-request="selectedRequest"
             :is-request-selected="isRequestSelected"
             :toggle-select-request="toggleSelectRequest"
@@ -588,14 +564,12 @@
             :get-status-title="getStatusTitle"
             :get-status-text="getStatusText"
             :has-params="hasParams"
-            :get-column-value="getColumnValue"
           />
         </div>
       </div>
 
       <!-- 水平分割条 -->
       <div 
-        v-if="selectedRequest"
         ref="horizontalResizer"
         class="h-1 bg-base-300 cursor-row-resize hover:bg-primary/50 transition-colors flex-shrink-0"
         @mousedown="startHorizontalResize"
@@ -603,18 +577,17 @@
 
       <!-- 下半部分：请求/响应详情 -->
       <div 
-        v-if="selectedRequest"
         ref="bottomPanel"
         class="bg-base-100 overflow-hidden flex flex-col flex-1 min-h-0"
       >
         <ProxyHistoryDetailsPanel
           :selected-request="selectedRequest"
+          :is-loading-selected-request="isSelectedRequestLoading"
           :left-panel-width="leftPanelWidth"
           :request-tab="requestTab"
           :response-tab="responseTab"
           :request-view-mode="requestViewMode"
           :response-view-mode="responseViewMode"
-          :close-details="closeDetails"
           :show-detail-context-menu="showDetailContextMenu"
           :start-vertical-resize="startVerticalResize"
           @update:request-tab="requestTab = $event"
@@ -634,15 +607,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
 import { useRouter } from 'vue-router';
 import { dialog } from '@/composables/useDialog';
-import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
+import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
 import ProxyHistoryDetailsPanel from './ProxyHistoryDetailsPanel.vue';
 import ProxyHistoryTopContent from './ProxyHistoryTopContent.vue';
+import ProxyHistoryToolbar from './ProxyHistoryToolbar.vue';
+import { useProxyHistoryDerivedList } from './useProxyHistoryDerivedList';
 import {
   buildDefaultProxyHistoryFilterConfig,
   buildProxyHistoryFilterCache,
   buildProxyHistoryFilterSummary,
   convertProxyHistoryFilterConfigToBambda,
-  filterProxyRequests,
   getExtension,
   getMimeTypeCategory,
   hasActiveProxyHistoryFilters,
@@ -671,11 +645,14 @@ import {
 import {
   buildProxyHistoryVisibleItems,
   defaultProxyHistoryColumns,
+  getProxyHistoryDefaultSortDirection,
   loadProxyHistoryColumnsFromStorage,
+  loadProxyHistorySortFromStorage,
   PROXY_HISTORY_BUFFER_SIZE,
   PROXY_HISTORY_COLUMNS_STORAGE_KEY,
   PROXY_HISTORY_HEADER_HEIGHT,
   PROXY_HISTORY_ITEM_HEIGHT,
+  PROXY_HISTORY_SORT_STORAGE_KEY,
   translateProxyHistoryColumns,
 } from './proxyHistoryTableSupport';
 import { useProxyHistoryActions } from './useProxyHistoryActions';
@@ -686,6 +663,7 @@ import type {
   ProxyHistoryProtocolFilter,
   ProxyHistoryRequestTab,
   ProxyHistoryResponseTab,
+  ProxyHistorySortState,
   ProxyHistoryViewMode,
   ProxyHistoryWsTab,
   ProxyRequest,
@@ -737,6 +715,7 @@ const detailContextMenu = ref({
 // 响应式状态
 const requests = ref<ProxyRequest[]>([]);
 const selectedRequest = ref<ProxyRequest | null>(null);
+const isSelectedRequestLoading = ref(false);
 // 协议类型过滤: 'all' | 'http' | 'websocket'
 const protocolFilter = ref<ProxyHistoryProtocolFilter>('all');
 
@@ -790,8 +769,8 @@ const isLoadingMore = ref(false); // 是否正在加载更多
 const requestIdSet = ref<Set<number>>(new Set());
 
 // 详情面板的标签页
-const requestTab = ref<ProxyHistoryRequestTab>('pretty');
-const responseTab = ref<ProxyHistoryResponseTab>('pretty');
+const requestTab = ref<ProxyHistoryRequestTab>(getDefaultTrafficMessageViewTab());
+const responseTab = ref<ProxyHistoryResponseTab>(getDefaultTrafficMessageViewTab());
 
 // Original/Edited 切换（类似 Burp Suite）
 const requestViewMode = ref<ProxyHistoryViewMode>('edited');
@@ -823,6 +802,7 @@ const filterConfig = ref(defaultFilterConfig());
 const appliedFilterConfig = ref(defaultFilterConfig());
 // 备份配置（用于 revert）
 const backupFilterConfig = ref(defaultFilterConfig());
+const filtersEnabled = ref(localStorage.getItem('proxyHistory.filtersEnabled') !== 'false');
 
 // 旧的 filters 保留用于兼容
 const filters = ref({
@@ -834,6 +814,7 @@ const filters = ref({
 
 // 列配置（从 localStorage 恢复或使用默认值）
 const columns = ref<Column[]>(loadProxyHistoryColumnsFromStorage());
+const sortState = ref<ProxyHistorySortState>(loadProxyHistorySortFromStorage());
 
 // 列调整相关
 const resizingColumn = ref<string | null>(null);
@@ -846,21 +827,59 @@ const headerHeight = PROXY_HISTORY_HEADER_HEIGHT;
 const scrollTop = ref(0);
 const containerHeight = ref(600);
 const bufferSize = PROXY_HISTORY_BUFFER_SIZE;
+const PREFETCH_VIEWPORT_MULTIPLIER = 2;
+let scrollFrameId: number | null = null;
+let pendingScrollTop = 0;
+let prefetchTimer: number | null = null;
+let isPrefetching = false;
 
-const filterCache = computed<ProxyHistoryFilterCache>(() => buildProxyHistoryFilterCache(appliedFilterConfig.value));
-const filteredRequests = computed(() =>
-  filterProxyRequests(requests.value, appliedFilterConfig.value, filterCache.value),
+const effectiveFilterConfig = computed(() =>
+  filtersEnabled.value ? appliedFilterConfig.value : showAllProxyHistoryFilters(appliedFilterConfig.value),
 );
+const filterCache = computed<ProxyHistoryFilterCache>(() => buildProxyHistoryFilterCache(effectiveFilterConfig.value));
+const shouldBypassFrontendFilters = computed(() =>
+  !filtersEnabled.value || !hasActiveProxyHistoryFilters(appliedFilterConfig.value),
+)
 const hasActiveFilters = computed(() => hasActiveProxyHistoryFilters(appliedFilterConfig.value));
-const filterSummary = computed(() => buildProxyHistoryFilterSummary(appliedFilterConfig.value));
+const filterSummary = computed(() =>
+  filtersEnabled.value && hasActiveFilters.value
+    ? buildProxyHistoryFilterSummary(appliedFilterConfig.value)
+    : t('trafficAnalysis.history.filterBar.showAllContent'),
+);
 const translatedColumns = computed(() => translateProxyHistoryColumns(columns.value, t));
 const visibleColumns = computed(() => translatedColumns.value.filter((col) => col.visible));
-const totalHeight = computed(() => filteredRequests.value.length * itemHeight + headerHeight);
+const {
+  filteredRequests,
+  sortedRequests,
+} = useProxyHistoryDerivedList({
+  requests,
+  shouldBypassFrontendFilters,
+  effectiveFilterConfig,
+  filterCache,
+  sortState,
+})
+const totalHeight = computed(() => sortedRequests.value.length * itemHeight + headerHeight);
 const visibleItems = computed((): VirtualItem[] =>
-  buildProxyHistoryVisibleItems(filteredRequests.value, scrollTop.value, containerHeight.value),
+  buildProxyHistoryVisibleItems(sortedRequests.value, scrollTop.value, containerHeight.value),
 );
+const visibleRows = computed(() =>
+  visibleItems.value.map((item) => {
+    const cellValues: Record<string, string> = {}
+    visibleColumns.value.forEach((column) => {
+      if (['method', 'status', 'params', 'tls'].includes(column.id)) {
+        return
+      }
+      cellValues[column.id] = getColumnValue(item.data, column.id)
+    })
+    return {
+      ...item,
+      cellValues,
+    }
+  }),
+)
 const {
   cleanupDataRuntime,
+  fetchRequestDetails,
   formatWsTime,
   getWsActiveTab,
   getWsMessagesForConnection,
@@ -900,7 +919,6 @@ const {
   clearHistory,
   clearHistoryFromMenu,
   clearSelection,
-  closeDetails,
   copyAsCurl,
   copyUrl,
   detailCopyAsCurl,
@@ -947,6 +965,7 @@ const {
   emitSendToIntruder: (request) => emit('sendToIntruder', request),
   emitSendToAssistant: (requests) => emit('sendToAssistant', requests),
   emitAddFilterRule: (rule) => emit('addFilterRule', rule),
+  fetchRequestDetails,
   updateStats,
   t,
 });
@@ -954,14 +973,72 @@ const {
 // 方法
 function handleScroll(event: Event) {
   const target = event.target as HTMLElement;
-  scrollTop.value = target.scrollTop;
+  pendingScrollTop = target.scrollTop;
 
-  const scrollHeight = target.scrollHeight;
-  const clientHeight = target.clientHeight;
-  const scrollBottom = scrollHeight - scrollTop.value - clientHeight;
+  if (scrollFrameId !== null) {
+    return;
+  }
 
-  if (scrollBottom < 200 && hasMore.value && !isLoadingMore.value) {
-    loadMoreRequests();
+  scrollFrameId = window.requestAnimationFrame(() => {
+    scrollTop.value = pendingScrollTop;
+    scrollFrameId = null;
+    schedulePrefetchCheck();
+  });
+}
+
+function schedulePrefetchCheck() {
+  if (prefetchTimer !== null) {
+    clearTimeout(prefetchTimer);
+  }
+
+  prefetchTimer = window.setTimeout(() => {
+    prefetchTimer = null;
+    void ensurePrefetchBuffer();
+  }, 60);
+}
+
+async function ensurePrefetchBuffer() {
+  if (
+    isPrefetching ||
+    protocolFilter.value === 'websocket' ||
+    isLoading.value ||
+    isLoadingMore.value ||
+    !hasMore.value
+  ) {
+    return;
+  }
+
+  const visibleCount = Math.max(1, Math.ceil(containerHeight.value / itemHeight));
+  const desiredRemainingRows = Math.max(loadMoreSize, visibleCount * PREFETCH_VIEWPORT_MULTIPLIER);
+  const currentLastVisibleIndex = Math.ceil((scrollTop.value + containerHeight.value) / itemHeight);
+  const remainingRows = sortedRequests.value.length - currentLastVisibleIndex;
+
+  if (remainingRows > desiredRemainingRows) {
+    return;
+  }
+
+  isPrefetching = true;
+  try {
+    for (let attempts = 0; attempts < 3; attempts += 1) {
+      if (!hasMore.value || isLoadingMore.value) {
+        break;
+      }
+
+      const loadedCount = await loadMoreRequests();
+      if (loadedCount <= 0) {
+        break;
+      }
+
+      await nextTick();
+
+      const nextLastVisibleIndex = Math.ceil((scrollTop.value + containerHeight.value) / itemHeight);
+      const nextRemainingRows = sortedRequests.value.length - nextLastVisibleIndex;
+      if (nextRemainingRows > desiredRemainingRows) {
+        break;
+      }
+    }
+  } finally {
+    isPrefetching = false;
   }
 }
 
@@ -969,6 +1046,7 @@ function handleScroll(event: Event) {
 function updateContainerHeight() {
   if (scrollContainer.value) {
     containerHeight.value = scrollContainer.value.clientHeight;
+    schedulePrefetchCheck();
   }
 }
 
@@ -1007,6 +1085,26 @@ function handleResize(event: MouseEvent) {
   const diff = event.clientX - columnResizeStartX.value;
   const newWidth = Math.max(column.minWidth, resizeStartWidth.value + diff);
   column.width = newWidth;
+}
+
+function toggleSort(columnId: string) {
+  if (sortState.value.columnId === columnId) {
+    sortState.value = {
+      columnId,
+      direction: sortState.value.direction === 'asc' ? 'desc' : 'asc',
+    };
+  } else {
+    sortState.value = {
+      columnId,
+      direction: getProxyHistoryDefaultSortDirection(columnId),
+    };
+  }
+
+  localStorage.setItem(PROXY_HISTORY_SORT_STORAGE_KEY, JSON.stringify(sortState.value));
+  scrollTop.value = 0;
+  if (scrollContainer.value) {
+    scrollContainer.value.scrollTop = 0;
+  }
 }
 
 function stopResize() {
@@ -1137,6 +1235,12 @@ function applyFilters() {
   }
 }
 
+function toggleFiltersEnabled() {
+  filtersEnabled.value = !filtersEnabled.value;
+  localStorage.setItem('proxyHistory.filtersEnabled', String(filtersEnabled.value));
+  applyFilters();
+}
+
 
 // 筛选器弹窗相关方法
 function openFilterDialog() {
@@ -1230,7 +1334,7 @@ function setupMainContainerResizeObserver() {
 }
 
 // 键盘快捷键处理
-function handleKeydown(event: KeyboardEvent) {
+async function handleKeydown(event: KeyboardEvent) {
   if (event.defaultPrevented || event.repeat) return;
   if (!mainContainer.value || mainContainer.value.offsetParent === null) return;
 
@@ -1243,20 +1347,24 @@ function handleKeydown(event: KeyboardEvent) {
       
       const req = selectedRequest.value;
       let headers: Record<string, string> = {};
-      
-      if (req.request_headers) {
+
+      const detailedRequest = req.has_full_details === false
+        ? await fetchRequestDetails(req.id) || req
+        : req
+
+      if (detailedRequest.request_headers) {
         try {
-          headers = JSON.parse(req.request_headers);
+          headers = JSON.parse(detailedRequest.request_headers);
         } catch {
           // ignore
         }
       }
       
       emit('sendToRepeater', {
-        method: req.method,
-        url: req.url,
+        method: detailedRequest.method,
+        url: detailedRequest.url,
         headers,
-        body: req.request_body || undefined,
+        body: detailedRequest.request_body || undefined,
       });
     }
   }
@@ -1276,6 +1384,7 @@ onMounted(async () => {
   setupResizeObserver();
   setupMainContainerResizeObserver();
   initPanelHeights();
+  schedulePrefetchCheck();
   
   // 添加键盘快捷键监听
   document.addEventListener('keydown', handleKeydown);
@@ -1283,6 +1392,14 @@ onMounted(async () => {
 
 onUnmounted(() => {
   cleanupDataRuntime();
+  if (scrollFrameId !== null) {
+    cancelAnimationFrame(scrollFrameId);
+    scrollFrameId = null;
+  }
+  if (prefetchTimer !== null) {
+    clearTimeout(prefetchTimer);
+    prefetchTimer = null;
+  }
   
   // 清理 ResizeObserver
   if (resizeObserver && scrollContainer.value) {
@@ -1312,10 +1429,41 @@ watch(selectedRequest, async () => {
   updateContainerHeight();
 });
 
+watch(
+  () => [sortedRequests.value.length, containerHeight.value, protocolFilter.value] as const,
+  () => {
+    schedulePrefetchCheck();
+  },
+);
+
+watch(
+  () => [selectedRequest.value?.id, selectedRequest.value?.has_full_details] as const,
+  async ([requestId, hasFullDetails]) => {
+    if (!requestId || hasFullDetails !== false) {
+      isSelectedRequestLoading.value = false
+      return
+    }
+
+    isSelectedRequestLoading.value = true
+    try {
+      const detailedRequest = await fetchRequestDetails(requestId)
+      if (detailedRequest && selectedRequest.value?.id === requestId) {
+        selectedRequest.value = detailedRequest
+      }
+    } finally {
+      if (selectedRequest.value?.id === requestId) {
+        isSelectedRequestLoading.value = false
+      }
+    }
+  },
+)
+
 // 监听父组件的刷新触发器
 watch(refreshTrigger, async () => {
   console.log('[ProxyHistory] Refresh triggered by parent');
   await refreshRequests();
+  await nextTick();
+  schedulePrefetchCheck();
 });
 
 // 监听协议类型切换
@@ -1332,6 +1480,8 @@ watch(protocolFilter, async (newFilter) => {
   } else {
     // 切换到 HTTP 时刷新请求
     await refreshRequests();
+    await nextTick();
+    schedulePrefetchCheck();
   }
 });
 
@@ -1471,11 +1621,6 @@ defineExpose({
 </script>
 
 <style scoped>
-/* 表格行文字使用系统字体大小 */
-.table-row-text {
-  font-size: var(--font-size-base, 14px);
-}
-
 pre {
   margin: 0;
   white-space: pre-wrap;

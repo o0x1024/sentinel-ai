@@ -1,10 +1,11 @@
-import { computed, type ComputedRef, type Ref } from 'vue'
+import { computed, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit as tauriEmit } from '@tauri-apps/api/event'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useRouter } from 'vue-router'
 import { dialog } from '@/composables/useDialog'
+import { clearProxyHistoryDerivedCache } from './proxyHistoryDerivedSupport'
 import {
   formatRequest,
   formatRequestRaw,
@@ -46,7 +47,7 @@ type Params = {
   selectedRequest: Ref<ProxyRequest | null>
   selectedRequests: Ref<Set<number>>
   isMultiSelectMode: Ref<boolean>
-  filteredRequests: ComputedRef<ProxyRequest[]>
+  filteredRequests: Ref<ProxyRequest[]>
   requests: Ref<ProxyRequest[]>
   stats: Ref<ProxyHistoryStats>
   requestTab: Ref<ProxyHistoryRequestTab>
@@ -60,6 +61,7 @@ type Params = {
   emitSendToIntruder: (request: { method: string; url: string; headers: Record<string, string>; body?: string }) => void
   emitSendToAssistant: (requests: ProxyRequest[]) => void
   emitAddFilterRule: (rule: { matchType: string; condition: string; relationship?: string }) => void
+  fetchRequestDetails: (requestId: number) => Promise<ProxyRequest | null>
   updateStats: () => void
   t: (key: string, params?: Record<string, unknown>) => string
 }
@@ -90,6 +92,17 @@ const buildCurlCommand = (request: ProxyRequest) => {
 export const useProxyHistoryActions = (params: Params) => {
   const router = useRouter()
 
+  const needsFullRequestDetails = (request: ProxyRequest) => request.has_full_details === false
+
+  const resolveRequestDetails = async (request: ProxyRequest | null): Promise<ProxyRequest | null> => {
+    if (!request) return null
+    if (!needsFullRequestDetails(request)) return request
+    return (await params.fetchRequestDetails(request.id)) || request
+  }
+
+  const resolveRequestDetailsBatch = async (requests: ProxyRequest[]) =>
+    Promise.all(requests.map(async (request) => (await resolveRequestDetails(request)) || request))
+
   const clearSelection = () => {
     params.selectedRequests.value.clear()
   }
@@ -119,6 +132,7 @@ export const useProxyHistoryActions = (params: Params) => {
       const response = await invoke<any>('clear_proxy_requests')
       if (response.success) {
         params.requests.value = []
+        clearProxyHistoryDerivedCache()
         params.updateStats()
         closeDetails()
         dialog.toast.success('请求历史已清空')
@@ -172,10 +186,10 @@ export const useProxyHistoryActions = (params: Params) => {
     }, 0)
   }
 
-  const detailSendToRepeater = () => {
+  const detailSendToRepeater = async () => {
     hideDetailContextMenu()
-    if (!params.selectedRequest.value) return
-    const request = params.selectedRequest.value
+    const request = await resolveRequestDetails(params.selectedRequest.value)
+    if (!request) return
     params.emitSendToRepeater({
       method: request.method,
       url: request.url,
@@ -184,10 +198,10 @@ export const useProxyHistoryActions = (params: Params) => {
     })
   }
 
-  const detailSendToIntruder = () => {
+  const detailSendToIntruder = async () => {
     hideDetailContextMenu()
-    if (!params.selectedRequest.value) return
-    const request = params.selectedRequest.value
+    const request = await resolveRequestDetails(params.selectedRequest.value)
+    if (!request) return
     params.emitSendToIntruder({
       method: request.method,
       url: request.url,
@@ -204,11 +218,12 @@ export const useProxyHistoryActions = (params: Params) => {
       .catch(() => dialog.toast.error('复制失败'))
   }
 
-  const detailCopyRequest = () => {
+  const detailCopyRequest = async () => {
     hideDetailContextMenu()
-    if (!params.selectedRequest.value) return
+    const request = await resolveRequestDetails(params.selectedRequest.value)
+    if (!request) return
     const requestText = formatRequest(
-      params.selectedRequest.value,
+      request,
       params.requestTab.value,
       params.requestViewMode.value,
     )
@@ -217,17 +232,18 @@ export const useProxyHistoryActions = (params: Params) => {
       .catch(() => dialog.toast.error('复制失败'))
   }
 
-  const detailCopyAsCurl = () => {
+  const detailCopyAsCurl = async () => {
     hideDetailContextMenu()
-    if (!params.selectedRequest.value) return
-    navigator.clipboard.writeText(buildCurlCommand(params.selectedRequest.value))
+    const request = await resolveRequestDetails(params.selectedRequest.value)
+    if (!request) return
+    navigator.clipboard.writeText(buildCurlCommand(request))
       .then(() => dialog.toast.success('cURL 命令已复制'))
       .catch(() => dialog.toast.error('复制失败'))
   }
 
-  const sendToRepeater = () => {
-    if (!params.contextMenu.value.request) return
-    const request = params.contextMenu.value.request
+  const sendToRepeater = async () => {
+    const request = await resolveRequestDetails(params.contextMenu.value.request)
+    if (!request) return
     params.emitSendToRepeater({
       method: request.method,
       url: request.url,
@@ -237,9 +253,9 @@ export const useProxyHistoryActions = (params: Params) => {
     hideContextMenu()
   }
 
-  const sendToIntruder = () => {
-    if (!params.contextMenu.value.request) return
-    const request = params.contextMenu.value.request
+  const sendToIntruder = async () => {
+    const request = await resolveRequestDetails(params.contextMenu.value.request)
+    if (!request) return
     params.emitSendToIntruder({
       method: request.method,
       url: request.url,
@@ -257,9 +273,10 @@ export const useProxyHistoryActions = (params: Params) => {
     hideContextMenu()
   }
 
-  const copyAsCurl = () => {
-    if (!params.contextMenu.value.request) return
-    navigator.clipboard.writeText(buildCurlCommand(params.contextMenu.value.request))
+  const copyAsCurl = async () => {
+    const request = await resolveRequestDetails(params.contextMenu.value.request)
+    if (!request) return
+    navigator.clipboard.writeText(buildCurlCommand(request))
       .then(() => dialog.toast.success('cURL 命令已复制'))
       .catch(() => dialog.toast.error('复制失败'))
     hideContextMenu()
@@ -367,18 +384,20 @@ export const useProxyHistoryActions = (params: Params) => {
       dialog.toast.warning('请先选择要发送的请求')
       return
     }
-    await tauriEmit('traffic:send-to-assistant', { requests: selected, type })
-    params.emitSendToAssistant(selected)
+    const detailedSelected = await resolveRequestDetailsBatch(selected)
+    await tauriEmit('traffic:send-to-assistant', { requests: detailedSelected, type })
+    params.emitSendToAssistant(detailedSelected)
     const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量'
-    dialog.toast.success(`已发送 ${selected.length} 条${typeText}到 AI 助手`)
+    dialog.toast.success(`已发送 ${detailedSelected.length} 条${typeText}到 AI 助手`)
     clearSelection()
     params.isMultiSelectMode.value = false
     router.push('/ai-assistant')
   }
 
   const sendSingleToAssistant = async (request: ProxyRequest, type: SendType = 'both') => {
-    await tauriEmit('traffic:send-to-assistant', { requests: [request], type })
-    params.emitSendToAssistant([request])
+    const detailedRequest = (await resolveRequestDetails(request)) || request
+    await tauriEmit('traffic:send-to-assistant', { requests: [detailedRequest], type })
+    params.emitSendToAssistant([detailedRequest])
     const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量'
     dialog.toast.success(`已发送${typeText}到 AI 助手`)
     router.push('/ai-assistant')
@@ -416,6 +435,7 @@ export const useProxyHistoryActions = (params: Params) => {
     }
 
     try {
+      const detailedSelected = await resolveRequestDetailsBatch(selected)
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
       const filePath = await save({
         defaultPath: `${type}-export-${timestamp}.txt`,
@@ -430,7 +450,7 @@ export const useProxyHistoryActions = (params: Params) => {
 
       let content = ''
       if (filePath.endsWith('.json')) {
-        content = JSON.stringify(selected.map((request) => ({
+        content = JSON.stringify(detailedSelected.map((request) => ({
           id: request.id,
           url: request.url,
           method: request.method,
@@ -447,11 +467,11 @@ export const useProxyHistoryActions = (params: Params) => {
           was_edited: request.was_edited,
         })), null, 2)
       } else {
-        selected.forEach((request, index) => {
+        detailedSelected.forEach((request, index) => {
           if (index > 0) {
             content += `\n\n${'='.repeat(80)}\n\n`
           }
-          content += `# ${type.toUpperCase()} ${index + 1}/${selected.length}\n`
+          content += `# ${type.toUpperCase()} ${index + 1}/${detailedSelected.length}\n`
           content += `# URL: ${request.url}\n`
           content += `# Method: ${request.method}\n`
           content += `# Status: ${request.status_code || 'N/A'}\n`
@@ -471,7 +491,7 @@ export const useProxyHistoryActions = (params: Params) => {
         ? params.t('trafficAnalysis.history.export.request')
         : params.t('trafficAnalysis.history.export.response')
       dialog.toast.success(params.t('trafficAnalysis.history.export.success', {
-        count: selected.length,
+        count: detailedSelected.length,
         type: typeText,
       }))
       clearSelection()
@@ -492,6 +512,7 @@ export const useProxyHistoryActions = (params: Params) => {
     }
 
     try {
+      const detailedSelected = await resolveRequestDetailsBatch(selected)
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
       const filePath = await save({
         defaultPath: `traffic-export-${timestamp}.har`,
@@ -506,7 +527,7 @@ export const useProxyHistoryActions = (params: Params) => {
         log: {
           version: '1.2',
           creator: { name: 'Sentinel AI', version: '1.0.0' },
-          entries: selected.map((request) => {
+          entries: detailedSelected.map((request) => {
             const requestHeaders = buildHeaders(request)
             let responseHeaders: Record<string, string> = {}
             if (request.response_headers) {

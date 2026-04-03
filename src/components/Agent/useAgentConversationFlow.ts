@@ -54,6 +54,7 @@ export const useAgentConversationFlow = (params: {
   handleStopTeamState: (nextState: string) => void
   historyLoadToken: Ref<number>
   inputValue: Ref<string>
+  isHistoryLoading: Ref<boolean>
   isExecuting: ComputedRef<boolean>
   isTeamModeEnabled: Ref<boolean>
   isToolConfigEnabled: Ref<boolean>
@@ -209,58 +210,66 @@ export const useAgentConversationFlow = (params: {
 
   const loadConversationHistory = async (conversationId: string) => {
     const currentLoadToken = ++params.historyLoadToken.value
-    await loadConversationHistorySupport({
-      buildToolCallCompletedLabel: params.getToolCallCompletedLabel,
-      clearMessages: params.clearAgentMessages,
-      conversationId,
-      getConversation: (targetConversationId) =>
-        invoke<AiConversationDetail | null>('get_ai_conversation', {
-          conversationId: targetConversationId,
-        }),
-      getMessages: (targetConversationId) =>
-        invoke<PersistedConversationMessageRow[]>('get_ai_messages_by_conversation', {
-          conversationId: targetConversationId,
-        }),
-      isStale: () => currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId,
-      loadSubagentRuns: async () => {
-        await params.loadSubagentRuns(conversationId, currentLoadToken)
-      },
-      log: (message, ...args) => {
-        console.log(message, ...args)
-      },
-      onConversationLoaded: ({ executionState, title }) => {
-        params.currentConversationTitle.value = title
-        params.conversationExecutionState.value = executionState || null
-      },
-      onEmptyHistoryLoaded: async () => {
-        params.setMirroredConversationMessageIds(new Set())
-        await params.syncActiveTeamSession()
-        if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
-        if (params.activeTeamSessionId.value) {
-          await params.syncTeamMessagesToMainFlow(params.activeTeamSessionId.value)
+    params.isHistoryLoading.value = true
+
+    try {
+      await loadConversationHistorySupport({
+        buildToolCallCompletedLabel: params.getToolCallCompletedLabel,
+        clearMessages: params.clearAgentMessages,
+        conversationId,
+        getConversation: (targetConversationId) =>
+          invoke<AiConversationDetail | null>('get_ai_conversation', {
+            conversationId: targetConversationId,
+          }),
+        getMessages: (targetConversationId) =>
+          invoke<PersistedConversationMessageRow[]>('get_ai_messages_by_conversation', {
+            conversationId: targetConversationId,
+          }),
+        isStale: () => currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId,
+        loadSubagentRuns: async () => {
+          await params.loadSubagentRuns(conversationId, currentLoadToken)
+        },
+        log: (message, ...args) => {
+          console.log(message, ...args)
+        },
+        onConversationLoaded: ({ executionState, title }) => {
+          params.currentConversationTitle.value = title
+          params.conversationExecutionState.value = executionState || null
+        },
+        onEmptyHistoryLoaded: async () => {
+          params.setMirroredConversationMessageIds(new Set())
+          await params.syncActiveTeamSession()
           if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
-        }
-      },
-      onMessagesLoaded: async ({ messageCount, mirroredConversationMessageIds, timeline }) => {
-        params.setMirroredConversationMessageIds(mirroredConversationMessageIds)
-        params.agentMessages.value = timeline
-        await params.syncActiveTeamSession()
-        if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
-        if (params.activeTeamSessionId.value) {
-          await params.syncTeamMessagesToMainFlow(params.activeTeamSessionId.value)
+          if (params.activeTeamSessionId.value) {
+            await params.syncTeamMessagesToMainFlow(params.activeTeamSessionId.value)
+            if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
+          }
+        },
+        onMessagesLoaded: async ({ messageCount, mirroredConversationMessageIds, timeline }) => {
+          params.setMirroredConversationMessageIds(mirroredConversationMessageIds)
+          params.agentMessages.value = timeline
+          await params.syncActiveTeamSession()
           if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
-        }
-        console.log('[useAgentConversationFlow] Loaded', messageCount, 'messages from conversation:', conversationId)
-        nextTick(() => {
-          params.scrollMessageViewportToBottom()
-        })
-      },
-      onLoadFailed: (error) => {
-        console.error('[useAgentConversationFlow] Failed to load conversation history:', error)
-      },
-      shouldSuppressTeamMirrorNoiseMessage,
-      unnamedConversationTitle: params.getUnnamedConversationTitle(),
-    })
+          if (params.activeTeamSessionId.value) {
+            await params.syncTeamMessagesToMainFlow(params.activeTeamSessionId.value)
+            if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
+          }
+          console.log('[useAgentConversationFlow] Loaded', messageCount, 'messages from conversation:', conversationId)
+          nextTick(() => {
+            params.scrollMessageViewportToBottom()
+          })
+        },
+        onLoadFailed: (error) => {
+          console.error('[useAgentConversationFlow] Failed to load conversation history:', error)
+        },
+        shouldSuppressTeamMirrorNoiseMessage,
+        unnamedConversationTitle: params.getUnnamedConversationTitle(),
+      })
+    } finally {
+      if (currentLoadToken === params.historyLoadToken.value) {
+        params.isHistoryLoading.value = false
+      }
+    }
   }
 
   const handleSelectConversation = async (conversationId: string) => {

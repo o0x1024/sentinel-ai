@@ -23,17 +23,14 @@
     </div>
 
     <div v-if="currentWorkspace" class="flex min-h-0 flex-1 flex-col">
-      <div class="flex flex-wrap items-center gap-3 border-b border-base-300 px-4 py-3">
-        <select
-          :value="currentWorkspace.attackType"
-          class="select select-bordered select-sm min-w-64"
-          @change="updateAttackType(currentWorkspace.id, ($event.target as HTMLSelectElement).value as IntruderAttackType)"
-        >
-          <option value="sniper">{{ $t('trafficAnalysis.intruder.attackTypes.sniper') }}</option>
-          <option value="batteringRam">{{ $t('trafficAnalysis.intruder.attackTypes.batteringRam') }}</option>
-          <option value="pitchfork">{{ $t('trafficAnalysis.intruder.attackTypes.pitchfork') }}</option>
-          <option value="clusterBomb">{{ $t('trafficAnalysis.intruder.attackTypes.clusterBomb') }}</option>
-        </select>
+      <div class="flex flex-wrap items-start gap-3 border-b border-base-300 px-4 py-3">
+        <div class="min-w-[28rem]">
+          <IntruderAttackTypeSelect
+            :model-value="currentWorkspace.attackType"
+            variant="toolbar"
+            @update:model-value="updateAttackType(currentWorkspace.id, $event)"
+          />
+        </div>
 
         <button class="btn btn-primary btn-sm" type="button" :disabled="currentWorkspace.isRunning" @click="startAttack">
           <i :class="['fas', currentWorkspace.isRunning ? 'fa-spinner fa-spin' : 'fa-play']"></i>
@@ -176,6 +173,7 @@ import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
 import IntruderAttackResults from './intruder/IntruderAttackResults.vue'
+import IntruderAttackTypeSelect from './intruder/IntruderAttackTypeSelect.vue'
 import IntruderAttackTemplateManager from './intruder/IntruderAttackTemplateManager.vue'
 import IntruderRequestEditor from './intruder/IntruderRequestEditor.vue'
 import IntruderSidePanel from './intruder/IntruderSidePanel.vue'

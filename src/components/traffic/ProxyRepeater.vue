@@ -266,20 +266,26 @@
           <!-- Request Content -->
           <div class="flex-1 overflow-hidden" @contextmenu.prevent="showContextMenu($event)">
             <template v-if="currentTab.requestTab === 'pretty'">
-              <HttpCodeEditor
+              <HttpMessageSurface
                 ref="requestEditor"
                 :modelValue="formatPrettyRequest()"
                 @update:modelValue="onPrettyRequestUpdate"
                 :readonly="false"
+                message-type="request"
                 height="100%"
+                display-mode="pretty"
+                :state-key="`repeater:${currentTab.id}:request:pretty`"
               />
             </template>
             <template v-else-if="currentTab.requestTab === 'raw'">
-              <HttpCodeEditor
+              <HttpMessageSurface
                 ref="requestEditor"
                 v-model="currentTab.rawRequest"
                 :readonly="false"
+                message-type="request"
                 height="100%"
+                display-mode="raw"
+                :state-key="`repeater:${currentTab.id}:request:raw`"
               />
             </template>
             <template v-else>
@@ -338,11 +344,14 @@
             <template v-if="currentTab.response || currentTab.rawResponse">
               <!-- Pretty/Raw View -->
               <template v-if="currentTab.responseTab === 'pretty' || currentTab.responseTab === 'raw'">
-                <HttpCodeEditor
+                <HttpMessageSurface
                   ref="responseEditor"
                   :modelValue="currentTab.responseTab === 'pretty' ? formatPrettyResponse() : currentTab.rawResponse"
                   :readonly="true"
+                  message-type="response"
                   height="100%"
+                  :display-mode="currentTab.responseTab === 'pretty' ? 'pretty' : 'raw'"
+                  :state-key="`repeater:${currentTab.id}:response:${currentTab.responseTab}`"
                 />
               </template>
               
@@ -388,7 +397,8 @@ import { emit as tauriEmit } from '@tauri-apps/api/event';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { dialog } from '@/composables/useDialog';
-import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
+import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue';
+import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
 import {
   formatRepeaterBytes as formatBytes,
   generateRepeaterId,
@@ -438,8 +448,8 @@ const tabs = ref<RepeaterTab[]>([]);
 const activeTabIndex = ref(0);
 const showTargetDialog = ref(false);
 const repeaterRoot = ref<HTMLElement | null>(null);
-const requestEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null);
-const responseEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null);
+const requestEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null);
+const responseEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null);
 
 // 请求取消控制器映射（每个 tab 一个）
 const abortControllers = new Map<string, { cancelled: boolean }>();
@@ -548,8 +558,8 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
     sniHost: '',
     rawRequest,
     rawResponse: '',
-    requestTab: 'pretty',
-    responseTab: 'pretty',
+    requestTab: getDefaultTrafficMessageViewTab(),
+    responseTab: getDefaultTrafficMessageViewTab(),
     response: null,
     isSending: false,
     modified: false,

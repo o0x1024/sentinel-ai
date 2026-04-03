@@ -1,10 +1,9 @@
 <template>
-  <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-shrink-0">
-    <h3 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.requestDetails') }} - ID: {{ selectedRequest.id }}</h3>
-    <button @click="closeDetails" class="btn btn-xs btn-ghost"><i class="fas fa-times"></i></button>
-  </div>
-  <div class="flex-1 flex min-h-0 overflow-hidden relative">
-    <div class="flex flex-col overflow-hidden" :style="{ width: leftPanelWidth + 'px' }">
+  <div v-if="selectedRequest" class="flex-1 flex min-h-0 overflow-hidden relative">
+    <div v-if="isLoadingSelectedRequest" class="absolute inset-0 z-10 flex items-center justify-center bg-base-100/40 backdrop-blur-[1px] pointer-events-none">
+      <span class="loading loading-spinner loading-sm text-primary"></span>
+    </div>
+    <div class="flex flex-col overflow-hidden border-r border-base-300" :style="{ width: leftPanelWidth + 'px' }">
       <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
         <div class="flex items-center gap-2">
           <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.request') }}</h4>
@@ -26,7 +25,14 @@
         </div>
       </div>
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event)">
-        <HttpCodeEditor v-if="requestTab !== 'hex'" :modelValue="formatRequest(selectedRequest, requestTab, requestViewMode)" :readonly="true" height="100%" />
+        <HttpMessageSurface
+          v-if="requestTab !== 'hex'"
+          :model-value="requestContent"
+          readonly
+          message-type="request"
+          :display-mode="requestTab"
+          :state-key="selectedRequest ? `history:request:${selectedRequest.id}:${requestTab}:${requestViewMode}` : ''"
+        />
         <div v-else class="h-full overflow-auto p-2 font-mono text-xs bg-base-100"><pre>{{ stringToHex(formatRequestRaw(selectedRequest, requestViewMode)) }}</pre></div>
       </div>
     </div>
@@ -57,16 +63,38 @@
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent>
         <iframe v-if="responseTab === 'render'" :srcdoc="getResponseBody(selectedRequest, responseViewMode)" class="w-full h-full border-0 bg-white" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"></iframe>
         <div v-else-if="responseTab === 'hex'" class="h-full overflow-auto p-2 font-mono text-xs bg-base-100"><pre>{{ stringToHex(formatResponseRaw(selectedRequest, responseViewMode)) }}</pre></div>
-        <HttpCodeEditor v-else :modelValue="formatResponse(selectedRequest, responseTab, responseViewMode)" :readonly="true" height="100%" />
+        <HttpMessageSurface
+          v-else
+          :model-value="responseContent"
+          readonly
+          message-type="response"
+          :display-mode="responseTab === 'pretty' ? 'pretty' : 'raw'"
+          :state-key="selectedRequest ? `history:response:${selectedRequest.id}:${responseTab}:${responseViewMode}` : ''"
+        />
       </div>
+    </div>
+  </div>
+  <div v-else class="flex h-full items-center justify-center bg-base-100 text-base-content/50">
+    <div class="text-center">
+      <i class="fas fa-file-alt mb-2 text-3xl"></i>
+      <p class="text-sm">{{ $t('trafficAnalysis.history.detailsPanel.empty') }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import HttpCodeEditor from '@/components/HttpCodeEditor.vue'
+import { computed } from 'vue'
 import { formatRequest, formatRequestRaw, formatResponse, formatResponseRaw, getResponseBody, hasEditedResponse, isResponseCompressed, stringToHex } from './proxyHistoryFormattingSupport'
+import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import type { ProxyHistoryRequestTab, ProxyHistoryResponseTab, ProxyHistoryViewMode, ProxyRequest } from './proxyHistoryTypes'
-defineProps<{ selectedRequest: ProxyRequest; leftPanelWidth: number; requestTab: ProxyHistoryRequestTab; responseTab: ProxyHistoryResponseTab; requestViewMode: ProxyHistoryViewMode; responseViewMode: ProxyHistoryViewMode; closeDetails: () => void; showDetailContextMenu: (event: MouseEvent) => void; startVerticalResize: (event: MouseEvent) => void }>()
+const props = defineProps<{ selectedRequest: ProxyRequest | null; isLoadingSelectedRequest: boolean; leftPanelWidth: number; requestTab: ProxyHistoryRequestTab; responseTab: ProxyHistoryResponseTab; requestViewMode: ProxyHistoryViewMode; responseViewMode: ProxyHistoryViewMode; showDetailContextMenu: (event: MouseEvent) => void; startVerticalResize: (event: MouseEvent) => void }>()
 defineEmits<{ 'update:requestTab': [value: ProxyHistoryRequestTab]; 'update:responseTab': [value: ProxyHistoryResponseTab]; 'update:requestViewMode': [value: ProxyHistoryViewMode]; 'update:responseViewMode': [value: ProxyHistoryViewMode] }>()
+
+const requestContent = computed(() =>
+  props.selectedRequest ? formatRequest(props.selectedRequest, props.requestTab, props.requestViewMode) : '',
+)
+
+const responseContent = computed(() =>
+  props.selectedRequest ? formatResponse(props.selectedRequest, props.responseTab, props.responseViewMode) : '',
+)
 </script>
