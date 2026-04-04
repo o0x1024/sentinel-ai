@@ -21,6 +21,9 @@ use crate::log::{
 use crate::message::{build_user_message, convert_chat_history, ChatMessage, ImageAttachment};
 use sentinel_tools::DynamicTool;
 
+const RETRYABLE_INCOMPLETE_STREAM_BEFORE_OUTPUT_MARKER: &str =
+    "__retryable_incomplete_stream_before_output__";
+
 /// 流式内容类型
 #[derive(Debug, Clone)]
 pub enum StreamContent {
@@ -492,164 +495,44 @@ impl StreamingLlmClient {
             on_content(chunk)
         };
 
-        // 根据 provider 创建带动态工具的 agent
-        let content_result: Result<String> = match provider_for_agent.as_str() {
-            "openai" => {
-                let tool_count = dynamic_tools.len();
-                info!(
-                    "OpenAI-compatible call context: base_url={:?}, bigmodel_compat={}, temperature={:?}, max_tokens={:?}, tools={}",
-                    self.config.base_url,
+        let mut content_result = Err(anyhow!("stream attempt not started"));
+        for attempt in 1..=2 {
+            let attempt_result = self
+                .run_provider_stream_attempt(
+                    &provider_for_agent,
+                    model,
+                    preamble,
+                    user_message.clone(),
+                    chat_history.clone(),
+                    timeout,
+                    dynamic_tools.clone(),
                     is_bigmodel_compat,
-                    self.config.temperature,
-                    self.config.max_tokens,
-                    tool_count
-                );
+                    &mut emit_content,
+                )
+                .await;
 
-                let retry_user_message = user_message.clone();
-                let retry_chat_history = chat_history.clone();
-                match self
-                    .stream_with_openai(
-                        model,
-                        preamble,
-                        user_message,
-                        chat_history,
-                        timeout,
-                        dynamic_tools,
-                        &mut emit_content,
-                    )
-                    .await
+            match attempt_result {
+                Ok(content) => {
+                    content_result = Ok(content);
+                    break;
+                }
+                Err(err)
+                    if attempt == 1
+                        && Self::is_retryable_incomplete_stream_before_output_error(&err) =>
                 {
-                    Ok(content) => Ok(content),
-                    Err(e) if is_bigmodel_compat && Self::is_bigmodel_1210_error(&e) => {
-                        warn!(
-                            "BigModel returned 1210 (parameter error). Retrying once in minimal compatibility mode: no tools, no generation overrides."
-                        );
-                        self.stream_with_openai_minimal_compat(
-                            model,
-                            preamble,
-                            retry_user_message,
-                            retry_chat_history,
-                            timeout,
-                            &mut emit_content,
-                        )
-                        .await
-                    }
-                    Err(e) => Err(e),
+                    warn!(
+                        "Retrying stream once after incomplete JSON stream before any output: provider={}, model={}, attempt={}",
+                        provider_for_agent,
+                        model,
+                        attempt
+                    );
+                }
+                Err(err) => {
+                    content_result = Err(err);
+                    break;
                 }
             }
-            "moonshot" => {
-                self.stream_with_moonshot(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut emit_content,
-                )
-                .await
-            }
-            "anthropic" => {
-                self.stream_with_anthropic(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut emit_content,
-                )
-                .await
-            }
-            "gemini" | "google" => {
-                self.stream_with_gemini(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut emit_content,
-                )
-                .await
-            }
-            "deepseek" => {
-                self.stream_with_deepseek(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut emit_content,
-                )
-                .await
-            }
-            "ollama" => {
-                self.stream_with_ollama(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut emit_content,
-                )
-                .await
-            }
-            "openrouter" => {
-                self.stream_with_openrouter(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut emit_content,
-                )
-                .await
-            }
-            "xai" => {
-                self.stream_with_xai(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut emit_content,
-                )
-                .await
-            }
-            "groq" => {
-                self.stream_with_groq(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut emit_content,
-                )
-                .await
-            }
-            _ => {
-                info!(
-                    "Unknown provider '{}', trying OpenAI compatible mode (via Generic Client)",
-                    provider_for_agent
-                );
-                self.stream_with_generic_openai(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut emit_content,
-                )
-                .await
-            }
-        };
+        }
         let content = match content_result {
             Ok(content) => content,
             Err(err) => {
@@ -773,6 +656,180 @@ impl StreamingLlmClient {
             content.len()
         );
         Ok(content)
+    }
+
+    async fn run_provider_stream_attempt<F>(
+        &self,
+        provider_for_agent: &str,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
+        is_bigmodel_compat: bool,
+        on_content: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamContent) -> bool,
+    {
+        match provider_for_agent {
+            "openai" => {
+                let tool_count = dynamic_tools.len();
+                info!(
+                    "OpenAI-compatible call context: base_url={:?}, bigmodel_compat={}, temperature={:?}, max_tokens={:?}, tools={}",
+                    self.config.base_url,
+                    is_bigmodel_compat,
+                    self.config.temperature,
+                    self.config.max_tokens,
+                    tool_count
+                );
+
+                let retry_user_message = user_message.clone();
+                let retry_chat_history = chat_history.clone();
+                match self
+                    .stream_with_openai(
+                        model,
+                        preamble,
+                        user_message,
+                        chat_history,
+                        timeout,
+                        dynamic_tools,
+                        on_content,
+                    )
+                    .await
+                {
+                    Ok(content) => Ok(content),
+                    Err(e) if is_bigmodel_compat && Self::is_bigmodel_1210_error(&e) => {
+                        warn!(
+                            "BigModel returned 1210 (parameter error). Retrying once in minimal compatibility mode: no tools, no generation overrides."
+                        );
+                        self.stream_with_openai_minimal_compat(
+                            model,
+                            preamble,
+                            retry_user_message,
+                            retry_chat_history,
+                            timeout,
+                            on_content,
+                        )
+                        .await
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            "moonshot" => {
+                self.stream_with_moonshot(
+                    model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    dynamic_tools,
+                    on_content,
+                )
+                .await
+            }
+            "anthropic" => {
+                self.stream_with_anthropic(
+                    model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    dynamic_tools,
+                    on_content,
+                )
+                .await
+            }
+            "gemini" | "google" => {
+                self.stream_with_gemini(
+                    model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    dynamic_tools,
+                    on_content,
+                )
+                .await
+            }
+            "deepseek" => {
+                self.stream_with_deepseek(
+                    model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    dynamic_tools,
+                    on_content,
+                )
+                .await
+            }
+            "ollama" => {
+                self.stream_with_ollama(
+                    model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    dynamic_tools,
+                    on_content,
+                )
+                .await
+            }
+            "openrouter" => {
+                self.stream_with_openrouter(
+                    model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    dynamic_tools,
+                    on_content,
+                )
+                .await
+            }
+            "xai" => {
+                self.stream_with_xai(
+                    model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    dynamic_tools,
+                    on_content,
+                )
+                .await
+            }
+            "groq" => {
+                self.stream_with_groq(
+                    model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    dynamic_tools,
+                    on_content,
+                )
+                .await
+            }
+            _ => {
+                info!(
+                    "Unknown provider '{}', trying OpenAI compatible mode (via Generic Client)",
+                    provider_for_agent
+                );
+                self.stream_with_generic_openai(
+                    model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    dynamic_tools,
+                    on_content,
+                )
+                .await
+            }
+        }
     }
 
     // ==================== Provider 实现 ====================
@@ -1255,6 +1312,7 @@ impl StreamingLlmClient {
 
         let mut content = String::new();
         let mut chunk_count = 0;
+        let mut emitted_output = false;
 
         loop {
             let item = match stream_iter.next().await {
@@ -1269,6 +1327,7 @@ impl StreamingLlmClient {
                     let piece = t.text;
                     if !piece.is_empty() {
                         content.push_str(&piece);
+                        emitted_output = true;
                         if !on_content(StreamContent::Text(piece)) {
                             info!("Stream cancelled by callback");
                             break;
@@ -1280,15 +1339,19 @@ impl StreamingLlmClient {
                     StreamedAssistantContent::Reasoning(r),
                 )) => {
                     let piece = r.display_text();
-                    if !piece.is_empty() && !on_content(StreamContent::Reasoning(piece)) {
-                        info!("Stream cancelled by callback");
-                        break;
+                    if !piece.is_empty() {
+                        emitted_output = true;
+                        if !on_content(StreamContent::Reasoning(piece)) {
+                            info!("Stream cancelled by callback");
+                            break;
+                        }
                     }
                 }
                 // 完整的工具调用
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCall { tool_call, .. },
                 )) => {
+                    emitted_output = true;
                     // info!(
                     //     "Tool call received: id={}, name={}, args={}",
                     //     tool_call.id, tool_call.function.name, tool_call.function.arguments
@@ -1312,6 +1375,7 @@ impl StreamingLlmClient {
                         ToolCallDeltaContent::Name(n) => n.clone(),
                         ToolCallDeltaContent::Delta(d) => d.clone(),
                     };
+                    emitted_output = true;
                     tool_call_args
                         .entry(id.clone())
                         .or_default()
@@ -1330,6 +1394,7 @@ impl StreamingLlmClient {
                         user_content;
                     let result_str =
                         serde_json::to_string(&tool_result.content).unwrap_or_default();
+                    emitted_output = true;
                     // info!(
                     //     "Tool result received: id={}, result_len={}, content_preview={}",
                     //     tool_result.id,
@@ -1367,7 +1432,38 @@ impl StreamingLlmClient {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    error!("LLM stream error: {}", e);
+                    let err_text = e.to_string();
+                    let content_tail = Self::tail_preview(&content, 200);
+                    error!(
+                        "LLM stream error after {} chunks (content_len={}, emitted_output={}, tool_call_count={}, tail={:?}): {}",
+                        chunk_count,
+                        content.len(),
+                        emitted_output,
+                        tool_call_names.len(),
+                        content_tail,
+                        err_text
+                    );
+                    if Self::is_incomplete_stream_json_error_message(&err_text) {
+                        if !emitted_output {
+                            warn!(
+                                "Retryable incomplete stream detected before any output was emitted"
+                            );
+                            return Err(anyhow!(
+                                "{}: {}",
+                                RETRYABLE_INCOMPLETE_STREAM_BEFORE_OUTPUT_MARKER,
+                                err_text
+                            ));
+                        }
+                        if !content.trim().is_empty() {
+                            warn!(
+                                "Returning partial content after incomplete stream JSON error (content_len={}, chunk_count={})",
+                                content.len(),
+                                chunk_count
+                            );
+                            let _ = on_content(StreamContent::Done);
+                            break;
+                        }
+                    }
                     return Err(anyhow!("LLM stream error: {}", e));
                 }
             }
@@ -1394,5 +1490,58 @@ impl StreamingLlmClient {
         msg.contains("\"code\":\"1210\"")
             || msg.contains("\"code\": \"1210\"")
             || (msg.contains("1210") && msg.contains("API 调用参数有误"))
+    }
+
+    fn is_incomplete_stream_json_error_message(message: &str) -> bool {
+        let lower = message.to_lowercase();
+        lower.contains("jsonerror: eof while parsing a string")
+            || lower.contains("jsonerror: eof while parsing a value")
+            || lower.contains("jsonerror: eof while parsing an object")
+            || lower.contains("jsonerror: eof while parsing a list")
+            || lower.contains("error decoding response body") && lower.contains("eof while parsing")
+    }
+
+    fn is_retryable_incomplete_stream_before_output_error(err: &anyhow::Error) -> bool {
+        err.to_string()
+            .contains(RETRYABLE_INCOMPLETE_STREAM_BEFORE_OUTPUT_MARKER)
+    }
+
+    fn tail_preview(content: &str, max_chars: usize) -> String {
+        let collected: Vec<char> = content.chars().collect();
+        let total = collected.len();
+        let start = total.saturating_sub(max_chars);
+        let preview: String = collected[start..].iter().collect();
+        if start > 0 {
+            format!("...{}", preview)
+        } else {
+            preview
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StreamingLlmClient;
+
+    #[test]
+    fn detects_incomplete_stream_json_error_message() {
+        assert!(StreamingLlmClient::is_incomplete_stream_json_error_message(
+            "CompletionError: JsonError: EOF while parsing a string at line 1 column 5516"
+        ));
+        assert!(StreamingLlmClient::is_incomplete_stream_json_error_message(
+            "error decoding response body: JsonError: EOF while parsing a value"
+        ));
+        assert!(
+            !StreamingLlmClient::is_incomplete_stream_json_error_message(
+                "CompletionError: Unauthorized"
+            )
+        );
+    }
+
+    #[test]
+    fn builds_tail_preview_with_ellipsis_when_trimmed() {
+        let preview = StreamingLlmClient::tail_preview("abcdefghij", 4);
+        assert_eq!(preview, "...ghij");
+        assert_eq!(StreamingLlmClient::tail_preview("abc", 10), "abc");
     }
 }

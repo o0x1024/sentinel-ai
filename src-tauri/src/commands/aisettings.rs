@@ -370,9 +370,16 @@ pub async fn delete_ai_provider(
         .values()
         .find(|provider| provider.provider.eq_ignore_ascii_case("openai"))
         .map(|provider| provider.provider.to_lowercase())
-        .or_else(|| providers.values().next().map(|provider| provider.provider.to_lowercase()));
+        .or_else(|| {
+            providers
+                .values()
+                .next()
+                .map(|provider| provider.provider.to_lowercase())
+        });
 
-    if let Ok(Some(default_llm_provider)) = db.get_config_internal("ai", "default_llm_provider").await {
+    if let Ok(Some(default_llm_provider)) =
+        db.get_config_internal("ai", "default_llm_provider").await
+    {
         if default_llm_provider.eq_ignore_ascii_case(&deleted_provider_lower) {
             if let Some(fallback_provider) = &fallback_provider {
                 db.set_config_internal(
@@ -385,7 +392,10 @@ pub async fn delete_ai_provider(
                 .map_err(|e| format!("Failed to update default LLM provider: {}", e))?;
 
                 if let Err(e) = app.emit("ai_default_llm_provider_updated", fallback_provider) {
-                    tracing::warn!("Failed to emit ai_default_llm_provider_updated event: {}", e);
+                    tracing::warn!(
+                        "Failed to emit ai_default_llm_provider_updated event: {}",
+                        e
+                    );
                 }
             } else {
                 db.delete_config_internal("ai", "default_llm_provider")
@@ -395,7 +405,9 @@ pub async fn delete_ai_provider(
         }
     }
 
-    if let Ok(Some(default_vlm_provider)) = db.get_config_internal("ai", "default_vlm_provider").await {
+    if let Ok(Some(default_vlm_provider)) =
+        db.get_config_internal("ai", "default_vlm_provider").await
+    {
         if default_vlm_provider.eq_ignore_ascii_case(&deleted_provider_lower) {
             if let Some(fallback_provider) = &fallback_provider {
                 db.set_config_internal(
@@ -436,7 +448,10 @@ pub async fn delete_ai_provider(
 
     if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
         if let Err(e) = ai_manager.reload_services().await {
-            tracing::error!("Failed to reload AI services after deleting provider: {}", e);
+            tracing::error!(
+                "Failed to reload AI services after deleting provider: {}",
+                e
+            );
         } else if let Some(fallback_provider) = &fallback_provider {
             if let Err(e) = ai_manager.set_default_alias_to(fallback_provider).await {
                 tracing::warn!(
@@ -485,8 +500,10 @@ pub async fn restore_builtin_ai_provider(
     let provider_value = matched_entry.1.clone();
 
     let mut providers = match db.get_config_internal("ai", "providers_config").await {
-        Ok(Some(config_str)) => serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&config_str)
-            .unwrap_or_default(),
+        Ok(Some(config_str)) => {
+            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&config_str)
+                .unwrap_or_default()
+        }
         _ => serde_json::Map::new(),
     };
 
@@ -513,7 +530,10 @@ pub async fn restore_builtin_ai_provider(
 
     if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
         if let Err(e) = ai_manager.reload_services().await {
-            tracing::error!("Failed to reload AI services after restoring provider: {}", e);
+            tracing::error!(
+                "Failed to reload AI services after restoring provider: {}",
+                e
+            );
         }
     }
 
@@ -1618,7 +1638,8 @@ fn default_providers_config() -> serde_json::Value {
 }
 
 fn provider_model_belongs_to(model: &str, provider: &str) -> bool {
-    model.split_once('/')
+    model
+        .split_once('/')
         .map(|(model_provider, _)| model_provider.eq_ignore_ascii_case(provider))
         .unwrap_or(false)
 }

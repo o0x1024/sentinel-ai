@@ -16,6 +16,24 @@ export interface ProxyConfigState {
   max_response_body_size: number
   upstream_proxy: UpstreamProxyConfig | null
   exclude_self_traffic: boolean
+  scope_include_rules: ProxyScopeRule[]
+  scope_exclude_rules: ProxyScopeRule[]
+}
+
+export interface ProxyScopeRule {
+  enabled: boolean
+  protocol: string
+  host_or_ip_range: string
+  port: string
+  file: string
+}
+
+export type TrafficBehaviorSignalMode = 'proxy_inferred' | 'browser_extension'
+
+export interface TrafficBehaviorSignalSettings {
+  mode: TrafficBehaviorSignalMode
+  browserExtensionConnected: boolean
+  browserExtensionLastSeenAt: string | null
 }
 
 export interface ProxyListener {
@@ -136,6 +154,26 @@ export function createDefaultProxyConfig(): ProxyConfigState {
     max_response_body_size: 2 * 1024 * 1024,
     upstream_proxy: null,
     exclude_self_traffic: true,
+    scope_include_rules: [],
+    scope_exclude_rules: [],
+  }
+}
+
+export function createDefaultProxyScopeRule(): ProxyScopeRule {
+  return {
+    enabled: true,
+    protocol: 'any',
+    host_or_ip_range: '',
+    port: '',
+    file: '',
+  }
+}
+
+export function createDefaultTrafficBehaviorSignalSettings(): TrafficBehaviorSignalSettings {
+  return {
+    mode: 'proxy_inferred',
+    browserExtensionConnected: false,
+    browserExtensionLastSeenAt: null,
   }
 }
 

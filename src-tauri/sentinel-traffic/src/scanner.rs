@@ -6,6 +6,7 @@
 //! - 收集 Finding 并去重
 
 use crate::history_cache::{HttpRequestRecord, ProxyHistoryCache};
+use crate::scope::{url_is_in_scope, ProxyScopeRule};
 use crate::{Finding, InterceptFilterRule, RequestContext, ResponseContext, Result, TrafficError};
 use sentinel_db::DatabaseService;
 use sentinel_plugins::{types::HttpTransaction, PluginExecutor};
@@ -42,12 +43,17 @@ pub struct ScanPipeline {
     history_cache: Option<Arc<ProxyHistoryCache>>,
     /// App Handle (用于发送事件到前端)
     app_handle: Option<tauri::AppHandle>,
+    /// 历史记录写入后的回调（用于上层系统 Agent 等异步处理）
+    request_record_hook: Option<Arc<dyn Fn(HttpRequestRecord) + Send + Sync>>,
     /// 请求拦截过滤规则（用于过滤流量分析）
     request_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
     /// 响应拦截过滤规则（用于过滤流量分析）
     response_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
     /// 是否排除本应用流量的扫描
     exclude_self_traffic: Arc<RwLock<bool>>,
+    /// 全局流量范围限制（Burp 风格 include/exclude 规则）
+    scope_include_rules: Arc<RwLock<Vec<ProxyScopeRule>>>,
+    scope_exclude_rules: Arc<RwLock<Vec<ProxyScopeRule>>>,
     /// 是否启用流量分析插件扫描
     plugin_scanning_enabled: Arc<RwLock<bool>>,
     /// 并发控制信号量（限制同时执行的插件数量）
@@ -65,9 +71,12 @@ impl ScanPipeline {
             db_service: None,
             history_cache: None,
             app_handle: None,
+            request_record_hook: None,
             request_filter_rules: Arc::new(RwLock::new(Vec::new())),
             response_filter_rules: Arc::new(RwLock::new(Vec::new())),
             exclude_self_traffic: Arc::new(RwLock::new(true)),
+            scope_include_rules: Arc::new(RwLock::new(Vec::new())),
+            scope_exclude_rules: Arc::new(RwLock::new(Vec::new())),
             plugin_scanning_enabled: Arc::new(RwLock::new(true)),
             plugin_semaphore: Arc::new(tokio::sync::Semaphore::new(20)), // 最多20个并发插件执行
         }
@@ -97,6 +106,16 @@ impl ScanPipeline {
         self
     }
 
+    pub fn with_scope_rules(
+        mut self,
+        include_rules: Arc<RwLock<Vec<ProxyScopeRule>>>,
+        exclude_rules: Arc<RwLock<Vec<ProxyScopeRule>>>,
+    ) -> Self {
+        self.scope_include_rules = include_rules;
+        self.scope_exclude_rules = exclude_rules;
+        self
+    }
+
     /// 设置是否启用流量分析插件扫描
     pub fn with_plugin_scanning_enabled(mut self, enabled: Arc<RwLock<bool>>) -> Self {
         self.plugin_scanning_enabled = enabled;
@@ -118,6 +137,14 @@ impl ScanPipeline {
     /// 设置 App Handle
     pub fn with_app_handle(mut self, app_handle: tauri::AppHandle) -> Self {
         self.app_handle = Some(app_handle);
+        self
+    }
+
+    pub fn with_request_record_hook(
+        mut self,
+        hook: Arc<dyn Fn(HttpRequestRecord) + Send + Sync>,
+    ) -> Self {
+        self.request_record_hook = Some(hook);
         self
     }
 
@@ -198,16 +225,21 @@ impl ScanPipeline {
 
     /// 处理请求上下文
     async fn process_request(&self, req_ctx: RequestContext) {
-        // 无论是否有插件，都先缓存请求上下文（用于后续响应匹配和历史记录）
-        {
-            let mut cache = self.request_cache.write().await;
-            cache.insert(req_ctx.id.clone(), req_ctx.clone());
-        }
-
         // 跳过 CONNECT 请求（HTTPS 隧道），不记录也不扫描
         if req_ctx.method == "CONNECT" {
             debug!("Skipping CONNECT request: {}", req_ctx.url);
             return;
+        }
+
+        if !self.is_in_scope_url(&req_ctx.url).await {
+            debug!("Request {} skipped by global scope", req_ctx.url);
+            return;
+        }
+
+        // 无论是否有插件，都先缓存请求上下文（用于后续响应匹配和历史记录）
+        {
+            let mut cache = self.request_cache.write().await;
+            cache.insert(req_ctx.id.clone(), req_ctx.clone());
         }
 
         // 检查流量分析插件扫描是否启用
@@ -369,6 +401,13 @@ impl ScanPipeline {
                 return;
             }
         };
+
+        if !self.is_in_scope_url(&req_ctx.url).await {
+            let mut cache = self.request_cache.write().await;
+            cache.remove(&resp_ctx.request_id);
+            debug!("Response for request {} skipped by global scope", req_ctx.url);
+            return;
+        }
 
         // 检查流量分析插件扫描是否启用
         let plugin_scanning_enabled = *self.plugin_scanning_enabled.read().await;
@@ -533,6 +572,10 @@ impl ScanPipeline {
         &self,
         ws_conn: crate::proxy::WebSocketConnectionContext,
     ) {
+        if !self.is_in_scope_url(&ws_conn.url).await {
+            debug!("WebSocket connection {} skipped by global scope", ws_conn.url);
+            return;
+        }
         debug!(
             "WebSocket connection: id={}, url={}, host={}",
             ws_conn.id, ws_conn.url, ws_conn.host
@@ -626,6 +669,12 @@ impl ScanPipeline {
                 }
             }
         }
+    }
+
+    async fn is_in_scope_url(&self, url: &str) -> bool {
+        let include_rules = self.scope_include_rules.read().await.clone();
+        let exclude_rules = self.scope_exclude_rules.read().await.clone();
+        url_is_in_scope(url, &include_rules, &exclude_rules)
     }
 
     /// 添加插件到启用列表（供 PluginManager 或测试调用）
@@ -1258,6 +1307,13 @@ impl ScanPipeline {
                 if let Err(e) = app_handle.emit("proxy:request", &record_with_id) {
                     warn!("Failed to emit proxy:request event: {}", e);
                 }
+                if let Some(hook) = &self.request_record_hook {
+                    hook(record_with_id.clone());
+                }
+            } else if let Some(hook) = &self.request_record_hook {
+                let mut record_with_id = record;
+                record_with_id.id = inserted_id;
+                hook(record_with_id);
             }
         }
     }

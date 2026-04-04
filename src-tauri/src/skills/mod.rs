@@ -222,7 +222,24 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
 // ── Built-in Skills ─────────────────────────────────────────────────────────
 
 /// Embedded built-in skills that ship with the binary.
-const BUILTIN_SKILLS: &[(&str, &str)] = &[];
+const BUILTIN_SKILLS: &[(&str, &str)] = &[
+    (
+        "payment-flow",
+        include_str!("builtin/payment-flow.SKILL.md"),
+    ),
+    (
+        "approval-workflow",
+        include_str!("builtin/approval-workflow.SKILL.md"),
+    ),
+    (
+        "resource-ownership",
+        include_str!("builtin/resource-ownership.SKILL.md"),
+    ),
+    (
+        "single-use-consumption",
+        include_str!("builtin/single-use-consumption.SKILL.md"),
+    ),
+];
 
 /// Install built-in skills to the skills directory if not already present.
 fn install_builtin_skills(skills_root: &Path) {

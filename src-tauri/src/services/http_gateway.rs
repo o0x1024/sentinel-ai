@@ -1731,12 +1731,12 @@ async fn run_chat_completion(
 
     let llm_config =
         apply_generation_settings_from_db(state.db.as_ref(), service.service.to_llm_config()).await;
-    let streaming_client = sentinel_llm::StreamingLlmClient::new(llm_config);
+    let llm_client = sentinel_llm::LlmClient::new(llm_config);
 
-    streaming_client
-        .stream_chat(system_prompt, message, history, None, |_| true)
+    llm_client
+        .chat(system_prompt, message, history, None)
         .await
-        .map_err(|e| format!("LLM stream error: {}", e))
+        .map_err(|e| format!("LLM completion error: {}", e))
 }
 
 async fn create_session(State(state): State<GatewayAppState>) -> Response {
@@ -3817,31 +3817,22 @@ async fn chat_stream(
                 service.service.to_llm_config(),
             )
             .await;
-            let streaming_client = sentinel_llm::StreamingLlmClient::new(llm_config);
-            let completion = streaming_client
-                .stream_chat(
-                    system_prompt.as_deref(),
-                    &user_message,
-                    &history,
-                    None,
-                    |chunk| {
-                        let evt = match chunk {
-                            sentinel_llm::StreamContent::Text(text) => json!({"type":"assistant_delta","role":"assistant","content": text, "request_id": request_id_for_task}),
-                            sentinel_llm::StreamContent::Reasoning(text) => json!({"type":"reasoning","content": text}),
-                            sentinel_llm::StreamContent::ToolCallStart { id, name } => json!({"type":"tool_call_start","id":id,"name":name, "request_id": request_id_for_task}),
-                            sentinel_llm::StreamContent::ToolCallDelta { id, delta } => json!({"type":"tool_call_delta","id":id,"delta":delta, "request_id": request_id_for_task}),
-                            sentinel_llm::StreamContent::ToolCallComplete { id, name, arguments } => json!({"type":"tool_call_complete","id":id,"name":name,"arguments":arguments, "request_id": request_id_for_task}),
-                            sentinel_llm::StreamContent::ToolResult { id, result } => json!({"type":"tool_result","id":id,"result":result, "request_id": request_id_for_task}),
-                            sentinel_llm::StreamContent::Usage { input_tokens, output_tokens } => json!({"type":"usage","input_tokens":input_tokens,"output_tokens":output_tokens, "request_id": request_id_for_task}),
-                            sentinel_llm::StreamContent::Done => json!({"type":"task_status","status":"stream_done","request_id": request_id_for_task}),
-                        };
-                        tx.send(evt.to_string()).is_ok()
-                    },
-                )
+            let llm_client = sentinel_llm::LlmClient::new(llm_config);
+            let completion = llm_client
+                .chat(system_prompt.as_deref(), &user_message, &history, None)
                 .await;
 
             match completion {
                 Ok(final_text) => {
+                    let _ = tx.send(
+                        json!({
+                            "type":"assistant_delta",
+                            "role":"assistant",
+                            "content": final_text,
+                            "request_id": request_id_for_task,
+                        })
+                        .to_string(),
+                    );
                     let _ = persist_message(
                         &state_for_task,
                         &session_id_for_task,
@@ -3866,7 +3857,7 @@ async fn chat_stream(
                         json!({
                             "type":"error",
                             "code":"INTERNAL_ERROR",
-                            "message": format!("LLM stream error: {}", e),
+                            "message": format!("LLM completion error: {}", e),
                             "request_id": request_id_for_task,
                         })
                         .to_string(),

@@ -52,6 +52,27 @@ export interface CommandResponse<T> {
   error?: string
 }
 
+export interface PluginFixAgentResult {
+  runId: string
+  profileId: string
+  fixedCode: string
+  model: string
+  validation: {
+    is_valid: boolean
+    syntax_valid: boolean
+    has_required_functions: boolean
+    security_check_passed: boolean
+    errors: string[]
+    warnings: string[]
+  }
+  executionTest: {
+    success: boolean
+    error_message?: string | null
+    error_details?: string | null
+  }
+  promptPatchApplied: boolean
+}
+
 export interface TestResult {
   success: boolean
   message?: string

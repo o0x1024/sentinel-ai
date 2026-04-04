@@ -13,7 +13,7 @@ use sentinel_db::Database;
 use sentinel_plugins::{HttpTransaction, Severity};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
 
 use sentinel_traffic::{
@@ -21,7 +21,7 @@ use sentinel_traffic::{
     InterceptAction as TrafficInterceptAction, InterceptFilterRule as TrafficInterceptFilterRule,
     InterceptState, PendingInterceptRequest, PendingInterceptResponse,
     PendingInterceptWebSocketMessage, PluginManager, PluginMetadata, PluginRecord, PluginStatus,
-    ProxyConfig, ProxyService, ProxyStats, ProxyStatus, ScanPipeline, ScanTask,
+    ProxyConfig, ProxyScopeRule, ProxyService, ProxyStats, ProxyStatus, ScanPipeline, ScanTask,
     VulnerabilityFilters, VulnerabilityRecord,
 };
 
@@ -35,6 +35,11 @@ use crate::events::{
 use crate::events::{
     FindingEvent, InterceptRequestEvent, InterceptResponseEvent, PluginChangedEvent,
     ProxyStatusEvent, ScanStatsEvent,
+};
+use crate::services::SystemAgentRuntime;
+use crate::services::system_agents::{
+    behavior_extension::BrowserBehaviorEvent, BehaviorExtensionEventStore,
+    TrafficBehaviorSignalSettings,
 };
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
@@ -121,8 +126,15 @@ pub struct TrafficAnalysisState {
     pub dedupe_cache: Arc<RwLock<std::collections::HashSet<String>>>,
     /// 是否排除本应用流量的扫描
     pub exclude_self_traffic: Arc<RwLock<bool>>,
+    /// 全局流量范围限制（Burp 风格 include/exclude 规则）
+    pub scope_include_rules: Arc<RwLock<Vec<ProxyScopeRule>>>,
+    pub scope_exclude_rules: Arc<RwLock<Vec<ProxyScopeRule>>>,
     /// 是否启用流量分析插件扫描
     pub plugin_scanning_enabled: Arc<RwLock<bool>>,
+    /// 行为特征来源设置
+    pub behavior_signal_settings: Arc<RwLock<TrafficBehaviorSignalSettings>>,
+    /// 浏览器扩展行为事件缓存
+    pub behavior_extension_events: Arc<RwLock<BehaviorExtensionEventStore>>,
 }
 
 /// 内部使用的拦截 WebSocket 消息结构（包含响应通道）
@@ -160,7 +172,11 @@ impl Clone for TrafficAnalysisState {
             response_filter_rules: self.response_filter_rules.clone(),
             dedupe_cache: self.dedupe_cache.clone(),
             exclude_self_traffic: self.exclude_self_traffic.clone(),
+            scope_include_rules: self.scope_include_rules.clone(),
+            scope_exclude_rules: self.scope_exclude_rules.clone(),
             plugin_scanning_enabled: self.plugin_scanning_enabled.clone(),
+            behavior_signal_settings: self.behavior_signal_settings.clone(),
+            behavior_extension_events: self.behavior_extension_events.clone(),
         }
     }
 }
@@ -208,7 +224,11 @@ impl TrafficAnalysisState {
             response_filter_rules: Arc::new(RwLock::new(Vec::new())),
             dedupe_cache: Arc::new(RwLock::new(std::collections::HashSet::new())),
             exclude_self_traffic: Arc::new(RwLock::new(true)),
+            scope_include_rules: Arc::new(RwLock::new(Vec::new())),
+            scope_exclude_rules: Arc::new(RwLock::new(Vec::new())),
             plugin_scanning_enabled: Arc::new(RwLock::new(true)), // 默认启用
+            behavior_signal_settings: Arc::new(RwLock::new(TrafficBehaviorSignalSettings::default())),
+            behavior_extension_events: Arc::new(RwLock::new(BehaviorExtensionEventStore::default())),
         }
     }
 
@@ -235,6 +255,23 @@ impl TrafficAnalysisState {
     /// 公开方法：获取代理历史记录缓存（用于工具提供者和命令）
     pub fn get_history_cache(&self) -> Arc<sentinel_traffic::ProxyHistoryCache> {
         self.history_cache.clone()
+    }
+
+    pub fn get_behavior_signal_settings(
+        &self,
+    ) -> Arc<RwLock<TrafficBehaviorSignalSettings>> {
+        self.behavior_signal_settings.clone()
+    }
+
+    pub fn get_behavior_extension_events(
+        &self,
+    ) -> Arc<RwLock<BehaviorExtensionEventStore>> {
+        self.behavior_extension_events.clone()
+    }
+
+    pub async fn record_behavior_extension_event(&self, event: BrowserBehaviorEvent) {
+        let mut events = self.behavior_extension_events.write().await;
+        events.record_event(event);
     }
 
     /// Public method: Get scan_tx (for tool providers)
@@ -480,6 +517,22 @@ pub async fn start_traffic_analysis_internal(
     }
 
     let config = config.unwrap_or_default();
+    {
+        let mut scope_include_rules = state.scope_include_rules.write().await;
+        *scope_include_rules = config.scope_include_rules.clone();
+        tracing::info!(
+            "Loaded traffic scope include rules into runtime: {:?}",
+            config.scope_include_rules
+        );
+    }
+    {
+        let mut scope_exclude_rules = state.scope_exclude_rules.write().await;
+        *scope_exclude_rules = config.scope_exclude_rules.clone();
+        tracing::info!(
+            "Loaded traffic scope exclude rules into runtime: {:?}",
+            config.scope_exclude_rules
+        );
+    }
 
     // 证书目录固定在用户数据目录下
     let ca_dir = dirs::data_dir()
@@ -616,15 +669,23 @@ pub async fn start_traffic_analysis_internal(
 
     // 获取历史记录缓存
     let history_cache = state.get_history_cache();
+    let system_agent_runtime: Option<Arc<SystemAgentRuntime>> = app
+        .try_state::<Arc<SystemAgentRuntime>>()
+        .map(|state| state.inner().clone());
 
     // 将非 Send 的 ScanPipeline 放入独立线程 + current-thread tokio runtime 中运行
     let db_for_pipeline = db_service.clone();
     let cache_for_pipeline = history_cache.clone();
     let app_for_pipeline = app.clone();
+    let system_agent_runtime_for_pipeline = system_agent_runtime.clone();
     let request_filter_rules = state.request_filter_rules.clone();
     let response_filter_rules = state.response_filter_rules.clone();
     let exclude_self_traffic = state.exclude_self_traffic.clone();
+    let scope_include_rules = state.scope_include_rules.clone();
+    let scope_exclude_rules = state.scope_exclude_rules.clone();
     let plugin_scanning_enabled = state.plugin_scanning_enabled.clone();
+    let behavior_signal_settings = state.behavior_signal_settings.clone();
+    let behavior_extension_events = state.behavior_extension_events.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -639,9 +700,37 @@ pub async fn start_traffic_analysis_internal(
                         .with_db_service(db_for_pipeline.clone())
                         .with_history_cache(cache_for_pipeline)
                         .with_app_handle(app_for_pipeline)
+                        .with_request_record_hook(Arc::new(move |record| {
+                            if let Some(runtime) = &system_agent_runtime_for_pipeline {
+                                let runtime = runtime.clone();
+                                let behavior_signal_settings = behavior_signal_settings.clone();
+                                let behavior_extension_events = behavior_extension_events.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    let behavior_signal = behavior_signal_settings.read().await.clone();
+                                    let behavior_extension_context = {
+                                        let events = behavior_extension_events.read().await;
+                                        events.build_context_for_request(&record)
+                                    };
+                                    if let Err(error) = runtime
+                                        .handle_history_record(
+                                            record,
+                                            behavior_signal,
+                                            behavior_extension_context,
+                                        )
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            "System agent history hook failed: {}",
+                                            error
+                                        );
+                                    }
+                                });
+                            }
+                        }))
                         .with_request_filter_rules(request_filter_rules)
                         .with_response_filter_rules(response_filter_rules)
                         .with_exclude_self_traffic(exclude_self_traffic)
+                        .with_scope_rules(scope_include_rules, scope_exclude_rules)
                         .with_plugin_scanning_enabled(plugin_scanning_enabled);
                     match pipeline
                         .load_enabled_plugins_from_db(&db_for_pipeline)
@@ -1083,9 +1172,13 @@ pub async fn list_findings(
     limit: Option<i64>,
     offset: Option<i64>,
     severity_filter: Option<String>,
+    plugin_id: Option<String>,
+    status_filter: Option<String>,
 ) -> Result<CommandResponse<Vec<sentinel_traffic::VulnerabilityWithEvidence>>, String> {
     let filters = VulnerabilityFilters {
         severity: severity_filter,
+        plugin_id,
+        status: status_filter,
         limit: Some(limit.unwrap_or(10)), // 默认每页10条
         offset,
         ..Default::default()
@@ -1115,9 +1208,13 @@ pub async fn list_findings(
 pub async fn count_findings(
     state: State<'_, TrafficAnalysisState>,
     severity_filter: Option<String>,
+    plugin_id: Option<String>,
+    status_filter: Option<String>,
 ) -> Result<CommandResponse<i64>, String> {
     let filters = VulnerabilityFilters {
         severity: severity_filter,
+        plugin_id,
+        status: status_filter,
         ..Default::default()
     };
 
@@ -3633,6 +3730,8 @@ pub async fn start_proxy_listener(
                     mitm_bypass_fail_threshold: 3,
                     upstream_proxy: None,
                     exclude_self_traffic: true,
+                    scope_include_rules: Vec::new(),
+                    scope_exclude_rules: Vec::new(),
                 }
             }
         },
@@ -3647,6 +3746,8 @@ pub async fn start_proxy_listener(
                 mitm_bypass_fail_threshold: 3,
                 upstream_proxy: None,
                 exclude_self_traffic: true,
+                scope_include_rules: Vec::new(),
+                scope_exclude_rules: Vec::new(),
             }
         }
         Err(e) => {
@@ -3660,6 +3761,8 @@ pub async fn start_proxy_listener(
                 mitm_bypass_fail_threshold: 3,
                 upstream_proxy: None,
                 exclude_self_traffic: true,
+                scope_include_rules: Vec::new(),
+                scope_exclude_rules: Vec::new(),
             }
         }
     };
@@ -3752,6 +3855,22 @@ pub async fn save_proxy_config(
         tracing::info!(
             "Updated exclude_self_traffic to: {}",
             config.exclude_self_traffic
+        );
+    }
+    {
+        let mut scope_include_rules = state.scope_include_rules.write().await;
+        *scope_include_rules = config.scope_include_rules.clone();
+        tracing::info!(
+            "Updated traffic scope include rules to: {:?}",
+            config.scope_include_rules
+        );
+    }
+    {
+        let mut scope_exclude_rules = state.scope_exclude_rules.write().await;
+        *scope_exclude_rules = config.scope_exclude_rules.clone();
+        tracing::info!(
+            "Updated traffic scope exclude rules to: {:?}",
+            config.scope_exclude_rules
         );
     }
 

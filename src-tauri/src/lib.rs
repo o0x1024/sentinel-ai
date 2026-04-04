@@ -29,7 +29,11 @@ use tauri_plugin_dialog::{
 };
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
-use services::{ai::AiServiceManager, database::DatabaseService};
+use services::{
+    ai::AiServiceManager, database::DatabaseService,
+    system_agents::{ensure_default_system_agent_profiles, start_behavior_extension_bridge},
+    SystemAgentRuntime,
+};
 
 use crate::skills::scan_and_upsert_skills;
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
@@ -42,6 +46,7 @@ use commands::{
     performance,
     proxifier_commands::{self, ProxifierState},
     rag_commands, scan_session_commands, scan_task_commands, set_cache, tool_commands,
+    traffic_behavior_commands,
     traffic_analysis_commands::{self, TrafficAnalysisState},
     window,
 };
@@ -620,6 +625,28 @@ pub fn run() {
 
                 let ai_manager = Arc::new(ai_manager);
 
+                if let Err(e) = ensure_default_system_agent_profiles(db_service.clone()).await {
+                    tracing::warn!("Failed to seed default system agent profiles: {}", e);
+                }
+
+                let system_agent_runtime = Arc::new(SystemAgentRuntime::new(
+                    db_service.clone(),
+                    ai_manager.clone(),
+                    handle.clone(),
+                ));
+                if let Err(e) = start_behavior_extension_bridge(
+                    db_service.clone(),
+                    traffic_state.clone(),
+                    handle.clone(),
+                )
+                .await
+                {
+                    tracing::warn!("Failed to start browser behavior extension bridge: {}", e);
+                }
+                if let Err(e) = system_agent_runtime.recover_pending_runs().await {
+                    tracing::warn!("Failed to recover pending system agent runs: {}", e);
+                }
+
                 let asset_service = crate::services::AssetService::new(db_service.clone());
                 let vulnerability_service = Arc::new(crate::services::VulnerabilityService::new(
                     db_service.clone(),
@@ -655,6 +682,7 @@ pub fn run() {
                 let db_trait_obj: Arc<dyn Database> = db_service.clone();
                 handle.manage(db_trait_obj);
                 handle.manage(ai_manager);
+                handle.manage(system_agent_runtime.clone());
                 handle.manage(asset_service);
                 handle.manage(vulnerability_service);
                 handle.manage(traffic_state_for_manage);
@@ -878,6 +906,19 @@ pub fn run() {
             commands::set_rag_collection_active,
             // Plugin generation commands
             commands::get_combined_plugin_prompt_api,
+            // System Agent commands
+            commands::list_system_agent_profiles,
+            commands::get_system_agent_profile,
+            commands::save_system_agent_profile,
+            commands::delete_system_agent_profile,
+            commands::list_system_agent_runs,
+            commands::list_system_agent_profile_versions,
+            commands::trigger_system_agent_profile,
+            commands::dispatch_system_agent_event,
+            commands::seed_system_agent_profiles,
+            commands::fix_plugin_with_system_agent,
+            commands::verify_finding_with_system_agent,
+            commands::submit_system_agent_finding_feedback,
             // Database commands
             db_commands::execute_query,
             db_commands::get_query_history,
@@ -1251,6 +1292,10 @@ pub fn run() {
             traffic_analysis_commands::get_proxy_auto_start,
             traffic_analysis_commands::set_traffic_analysis_plugin_enabled,
             traffic_analysis_commands::get_traffic_analysis_plugin_enabled,
+            traffic_behavior_commands::get_traffic_behavior_signal_settings,
+            traffic_behavior_commands::get_traffic_behavior_extension_installation,
+            traffic_behavior_commands::read_traffic_clipboard_text,
+            traffic_behavior_commands::set_traffic_behavior_signal_settings,
             traffic_analysis_commands::set_intercept_enabled,
             traffic_analysis_commands::get_intercept_enabled,
             traffic_analysis_commands::get_intercepted_requests,

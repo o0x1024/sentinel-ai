@@ -354,6 +354,163 @@ impl DatabaseService {
                 .await?;
         }
 
+        let system_agent_profiles_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'system_agent_profiles')"
+        )
+        .fetch_one(pool)
+        .await?;
+
+        if !system_agent_profiles_exists {
+            sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS system_agent_profiles (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    mode TEXT NOT NULL,
+                    capability TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    trigger_mode TEXT NOT NULL,
+                    base_prompt_id TEXT,
+                    prompt_patch TEXT,
+                    input_schema_json TEXT NOT NULL DEFAULT '{}',
+                    output_schema_json TEXT NOT NULL DEFAULT '{}',
+                    required_tools_json TEXT NOT NULL DEFAULT '[]',
+                    optional_tools_json TEXT NOT NULL DEFAULT '[]',
+                    forbidden_tools_json TEXT NOT NULL DEFAULT '[]',
+                    trigger_events_json TEXT NOT NULL DEFAULT '[]',
+                    budget_json TEXT NOT NULL DEFAULT '{}',
+                    safety_policy_json TEXT NOT NULL DEFAULT '{}',
+                    cooldown_secs BIGINT NOT NULL DEFAULT 0,
+                    max_concurrency BIGINT NOT NULL DEFAULT 1,
+                    risk_level TEXT NOT NULL DEFAULT 'medium',
+                    visibility TEXT NOT NULL DEFAULT 'system',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )"#,
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_system_agent_profiles_mode_enabled ON system_agent_profiles(mode, enabled)",
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        let system_agent_bindings_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'system_agent_bindings')"
+        )
+        .fetch_one(pool)
+        .await?;
+
+        if !system_agent_bindings_exists {
+            sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS system_agent_bindings (
+                    id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    event_name TEXT NOT NULL,
+                    filter_json TEXT NOT NULL DEFAULT '{}',
+                    priority BIGINT NOT NULL DEFAULT 0,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )"#,
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_system_agent_bindings_profile_id ON system_agent_bindings(profile_id)",
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_system_agent_bindings_event_name ON system_agent_bindings(event_name)",
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        let system_agent_runs_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'system_agent_runs')"
+        )
+        .fetch_one(pool)
+        .await?;
+
+        if !system_agent_runs_exists {
+            sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS system_agent_runs (
+                    id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    trigger_event TEXT,
+                    status TEXT NOT NULL,
+                    input_summary_json TEXT NOT NULL DEFAULT '{}',
+                    output_json TEXT,
+                    error_message TEXT,
+                    started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    finished_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )"#,
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        let system_agent_profile_versions_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'system_agent_profile_versions')"
+        )
+        .fetch_one(pool)
+        .await?;
+
+        if !system_agent_profile_versions_exists {
+            sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS system_agent_profile_versions (
+                    id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    snapshot_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )"#,
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_system_agent_profile_versions_profile_id ON system_agent_profile_versions(profile_id, created_at DESC)",
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_profiles_mode_enabled ON system_agent_profiles(mode, enabled)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_bindings_profile_id ON system_agent_bindings(profile_id)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_bindings_event_name ON system_agent_bindings(event_name)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_profile_versions_profile_id ON system_agent_profile_versions(profile_id, created_at DESC)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_runs_profile_id ON system_agent_runs(profile_id)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_runs_started_at ON system_agent_runs(started_at)",
+        )
+        .execute(pool)
+        .await?;
+
         // Ensure memory_executions table exists
         let memory_table_exists: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'memory_executions')"
@@ -984,6 +1141,60 @@ impl DatabaseService {
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS system_agent_profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                mode TEXT NOT NULL,
+                capability TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                trigger_mode TEXT NOT NULL,
+                base_prompt_id TEXT,
+                prompt_patch TEXT,
+                input_schema_json TEXT NOT NULL DEFAULT '{}',
+                output_schema_json TEXT NOT NULL DEFAULT '{}',
+                required_tools_json TEXT NOT NULL DEFAULT '[]',
+                optional_tools_json TEXT NOT NULL DEFAULT '[]',
+                forbidden_tools_json TEXT NOT NULL DEFAULT '[]',
+                trigger_events_json TEXT NOT NULL DEFAULT '[]',
+                budget_json TEXT NOT NULL DEFAULT '{}',
+                safety_policy_json TEXT NOT NULL DEFAULT '{}',
+                cooldown_secs BIGINT NOT NULL DEFAULT 0,
+                max_concurrency BIGINT NOT NULL DEFAULT 1,
+                risk_level TEXT NOT NULL DEFAULT 'medium',
+                visibility TEXT NOT NULL DEFAULT 'system',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS system_agent_bindings (
+                id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                event_name TEXT NOT NULL,
+                filter_json TEXT NOT NULL DEFAULT '{}',
+                priority BIGINT NOT NULL DEFAULT 0,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS system_agent_runs (
+                id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                trigger_event TEXT,
+                status TEXT NOT NULL,
+                input_summary_json TEXT NOT NULL DEFAULT '{}',
+                output_json TEXT,
+                error_message TEXT,
+                started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                finished_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS system_agent_profile_versions (
+                id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL DEFAULT '{}',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"#,
         ];
 
         for sql in statements {
@@ -1007,6 +1218,11 @@ impl DatabaseService {
         .await?;
         self.execute_runtime_ddl(
             runtime,
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_profile_versions_profile_id ON system_agent_profile_versions(profile_id, created_at DESC)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
             "ALTER TABLE ai_roles ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'",
         )
         .await
@@ -1014,6 +1230,31 @@ impl DatabaseService {
         self.execute_runtime_ddl(
             runtime,
             "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_vuln_id ON traffic_evidence(vuln_id)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_profiles_mode_enabled ON system_agent_profiles(mode, enabled)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_bindings_profile_id ON system_agent_bindings(profile_id)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_bindings_event_name ON system_agent_bindings(event_name)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_runs_profile_id ON system_agent_runs(profile_id)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_system_agent_runs_started_at ON system_agent_runs(started_at)",
         )
         .await?;
         SurfaceGraphMigration::apply_runtime(runtime).await?;

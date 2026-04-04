@@ -32,7 +32,8 @@ fn parse_run_metadata(run: &SurfaceDiscoveryRunRow) -> Value {
 }
 
 fn string_value(value: &Value, key: &str) -> Option<String> {
-    value.get(key)
+    value
+        .get(key)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())

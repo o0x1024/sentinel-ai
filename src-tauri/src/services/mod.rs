@@ -9,6 +9,7 @@ pub mod database {
 }
 pub mod http_gateway;
 pub mod mcp;
+pub mod system_agents;
 pub mod vulnerability;
 
 // Re-export from sentinel-services
@@ -33,6 +34,7 @@ pub mod ai {
 // Other services
 pub use asset_service::AssetService;
 pub use database::DatabaseService;
+pub use system_agents::SystemAgentRuntime;
 
 // Re-export from sentinel-services
 pub use sentinel_services::dictionary::DictionaryService;

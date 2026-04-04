@@ -17,6 +17,10 @@ use crate::core::models::workflow::WorkflowStepDetail;
 use crate::database_service::proxifier::{ProxifierProxyRecord, ProxifierRuleRecord};
 use crate::database_service::rag::{RagChunkRow, RagCollectionRow, RagDocumentSourceRow};
 use crate::database_service::skills::{CreateSkill, Skill, SkillDetail, SkillSummary, UpdateSkill};
+use crate::database_service::system_agent::{
+    SystemAgentBindingRecord, SystemAgentProfileRecord, SystemAgentProfileVersionRecord,
+    SystemAgentRunRecord,
+};
 use chrono::DateTime;
 use chrono::Utc;
 use sentinel_plugins::PluginRecord;
@@ -1061,6 +1065,68 @@ impl Database for DatabaseService {
     }
     async fn save_all_rules(&self, rules: &[ProxifierRuleRecord]) -> Result<()> {
         Self::save_all_rules_internal(self, rules).await
+    }
+
+    // System Agent
+    async fn list_system_agent_profiles(&self) -> Result<Vec<SystemAgentProfileRecord>> {
+        Self::list_system_agent_profiles_internal(self).await
+    }
+    async fn get_system_agent_profile(&self, id: &str) -> Result<Option<SystemAgentProfileRecord>> {
+        Self::get_system_agent_profile_internal(self, id).await
+    }
+    async fn save_system_agent_profile(
+        &self,
+        profile: &SystemAgentProfileRecord,
+        bindings: &[SystemAgentBindingRecord],
+    ) -> Result<()> {
+        Self::save_system_agent_profile_internal(self, profile, bindings).await
+    }
+    async fn delete_system_agent_profile(&self, id: &str) -> Result<()> {
+        Self::delete_system_agent_profile_internal(self, id).await
+    }
+    async fn list_system_agent_bindings(
+        &self,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<SystemAgentBindingRecord>> {
+        Self::list_system_agent_bindings_internal(self, profile_id).await
+    }
+    async fn list_system_agent_runs(
+        &self,
+        profile_id: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<Vec<SystemAgentRunRecord>> {
+        Self::list_system_agent_runs_internal(self, profile_id, limit).await
+    }
+    async fn list_system_agent_profile_versions(
+        &self,
+        profile_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<SystemAgentProfileVersionRecord>> {
+        Self::list_system_agent_profile_versions_internal(self, profile_id, limit).await
+    }
+    async fn get_system_agent_run(&self, id: &str) -> Result<Option<SystemAgentRunRecord>> {
+        Self::get_system_agent_run_internal(self, id).await
+    }
+    async fn create_system_agent_run(&self, run: &SystemAgentRunRecord) -> Result<()> {
+        Self::create_system_agent_run_internal(self, run).await
+    }
+    async fn update_system_agent_run(
+        &self,
+        id: &str,
+        status: &str,
+        output_json: Option<&str>,
+        error_message: Option<&str>,
+        finished_at: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        Self::update_system_agent_run_internal(
+            self,
+            id,
+            status,
+            output_json,
+            error_message,
+            finished_at,
+        )
+        .await
     }
 
     // Stats

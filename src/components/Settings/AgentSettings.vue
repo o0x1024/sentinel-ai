@@ -700,8 +700,6 @@
         </div>
       </div>
 
-      <!-- Future sections can be added here -->
-      <!-- Example: Tool Settings, Memory Settings, etc. -->
     </template>
   </div>
 </template>

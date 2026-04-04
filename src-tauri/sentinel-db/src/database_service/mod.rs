@@ -37,6 +37,7 @@ pub mod surface_migrations;
 pub mod surface_overview;
 pub mod surface_runs;
 pub mod surface_topology;
+pub mod system_agent;
 pub mod task_tool;
 pub mod todos;
 pub mod traffic;
@@ -117,6 +118,8 @@ pub use surface_overview::*;
 pub use surface_runs::*;
 #[allow(unused_imports)]
 pub use surface_topology::*;
+#[allow(unused_imports)]
+pub use system_agent::*;
 #[allow(unused_imports)]
 pub use todos::*;
 #[allow(unused_imports)]

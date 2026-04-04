@@ -117,7 +117,17 @@
                 </span>
               </td>
               <td class="font-medium max-w-xs">
-                <div class="line-clamp-2">{{ finding?.title || 'N/A' }}</div>
+                <div class="space-y-1">
+                  <div class="line-clamp-2">{{ finding?.title || 'N/A' }}</div>
+                  <div class="flex flex-wrap gap-1">
+                    <span :class="getFindingSourceBadgeClass(finding)" class="badge badge-xs">
+                      {{ getFindingSourceLabel(finding) }}
+                    </span>
+                    <span :class="getFindingStageBadgeClass(finding)" class="badge badge-xs">
+                      {{ getFindingStageLabel(finding) }}
+                    </span>
+                  </div>
+                </div>
               </td>
               <td><span class="badge badge-outline badge-xs">{{ finding?.vuln_type || 'N/A' }}</span></td>
               <td class="font-mono text-xs max-w-xs">
@@ -135,6 +145,16 @@
                       <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"></path>
                       <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"></path>
                     </svg>
+                  </button>
+                  <button
+                    v-if="canVerifyFinding(finding)"
+                    @click="verifyWithSystemAgent(finding.id)"
+                    class="btn btn-xs btn-info btn-outline"
+                    :disabled="verifyingId === finding.id"
+                    title="系统 Agent 验证"
+                  >
+                    <span v-if="verifyingId === finding.id" class="loading loading-spinner loading-xs"></span>
+                    <span v-else>验证</span>
                   </button>
                   <button @click="deleteSingle(finding.id)" class="btn btn-xs btn-error btn-outline" title="删除">
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -230,6 +250,23 @@
               </div>
             </div>
 
+            <div v-if="isSystemAgentFinding(selectedFinding)" class="flex flex-wrap gap-2">
+              <button
+                @click="submitSystemAgentFeedback(selectedFinding.id, 'confirm')"
+                class="btn btn-sm btn-success btn-outline"
+                :disabled="feedbackingId === selectedFinding.id"
+              >
+                确认有效
+              </button>
+              <button
+                @click="submitSystemAgentFeedback(selectedFinding.id, 'false_positive')"
+                class="btn btn-sm btn-warning btn-outline"
+                :disabled="feedbackingId === selectedFinding.id"
+              >
+                标记误报
+              </button>
+            </div>
+
             <!-- CWE 和 OWASP -->
             <div class="grid grid-cols-2 gap-4" v-if="selectedFinding.cwe || selectedFinding.owasp">
               <div v-if="selectedFinding.cwe">
@@ -276,11 +313,130 @@
                 <div class="collapse-title font-medium">
                   <div class="flex items-center gap-2">
                     <span class="badge badge-sm">证据 #{{ idx + 1 }}</span>
+                    <span v-if="isSystemAgentContextEvidence(evidence)" class="badge badge-info badge-sm">Agent 上下文</span>
+                    <span v-else-if="isSystemAgentVerificationEvidence(evidence)" class="badge badge-success badge-sm">Agent 验证</span>
+                    <span v-else-if="isSystemAgentFeedbackEvidence(evidence)" class="badge badge-warning badge-sm">人工反馈</span>
                     <span class="badge badge-outline badge-sm">{{ evidence.method }}</span>
                     <span class="text-xs opacity-70">{{ evidence.location }}</span>
                   </div>
                 </div>
                 <div class="collapse-content space-y-3">
+                  <div v-if="isSystemAgentContextEvidence(evidence)" class="space-y-3">
+                    <div>
+                      <p class="text-sm font-semibold text-info mb-2">Agent 判定摘要</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ evidence.evidence_snippet }}</pre>
+                    </div>
+                    <div v-if="parseSystemAgentMeta(evidence.response_headers)">
+                      <p class="text-sm font-semibold text-base-content/70 mb-2">事件元信息</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ formatStructuredValue(parseSystemAgentMeta(evidence.response_headers)) }}</pre>
+                    </div>
+                    <div v-if="parseStructuredPayload(evidence.request_body)">
+                      <p class="text-sm font-semibold text-primary mb-2">触发上下文</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto max-h-80 whitespace-pre-wrap break-words">{{ formatStructuredValue(parseStructuredPayload(evidence.request_body)) }}</pre>
+                    </div>
+                    <div v-if="getContextSkillEntries(evidence).length > 0">
+                      <p class="text-sm font-semibold text-accent mb-2">命中 Skills</p>
+                      <div class="space-y-2">
+                        <div
+                          v-for="skill in getContextSkillEntries(evidence)"
+                          :key="skill.id"
+                          class="bg-base-300 p-3 rounded-lg space-y-2"
+                        >
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="badge badge-accent badge-sm">{{ skill.id }}</span>
+                            <span v-if="typeof skill.score === 'number'" class="badge badge-outline badge-sm">
+                              score {{ skill.score.toFixed(2) }}
+                            </span>
+                          </div>
+                          <p class="text-sm font-medium">{{ skill.description || skill.name || skill.id }}</p>
+                          <p v-if="skill.whenToUse" class="text-xs opacity-70 whitespace-pre-wrap break-words">{{ skill.whenToUse }}</p>
+                          <div v-if="Array.isArray(skill.reasons) && skill.reasons.length > 0" class="text-xs">
+                            <p class="font-semibold mb-1">推荐理由</p>
+                            <ul class="list-disc list-inside space-y-1">
+                              <li v-for="reason in skill.reasons" :key="reason">{{ reason }}</li>
+                            </ul>
+                          </div>
+                          <div v-if="skill.guidance" class="text-xs">
+                            <p class="font-semibold mb-1">Skill 指导</p>
+                            <pre class="bg-base-200 p-2 rounded whitespace-pre-wrap break-words overflow-x-auto max-h-40">{{ skill.guidance }}</pre>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="getContextInvariantEntries(evidence).length > 0">
+                      <p class="text-sm font-semibold text-warning mb-2">命中不变量</p>
+                      <div class="flex flex-col gap-2">
+                        <div
+                          v-for="invariant in getContextInvariantEntries(evidence)"
+                          :key="invariant.id || invariant.summary"
+                          class="bg-base-300 p-3 rounded-lg"
+                        >
+                          <div class="flex flex-wrap items-center gap-2 mb-1">
+                            <span class="badge badge-warning badge-sm">{{ invariant.id || 'invariant' }}</span>
+                            <span v-if="invariant.severity" class="badge badge-outline badge-sm">{{ invariant.severity }}</span>
+                          </div>
+                          <p class="text-sm whitespace-pre-wrap break-words">{{ invariant.summary || formatStructuredValue(invariant) }}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="getContextProcessGraph(evidence)">
+                      <p class="text-sm font-semibold text-secondary mb-2">过程图摘要</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto max-h-80 whitespace-pre-wrap break-words">{{ formatStructuredValue(getContextProcessGraph(evidence)) }}</pre>
+                    </div>
+                    <div v-if="parseStructuredPayload(evidence.response_body)">
+                      <p class="text-sm font-semibold text-secondary mb-2">Agent 输出</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto max-h-80 whitespace-pre-wrap break-words">{{ formatStructuredValue(parseStructuredPayload(evidence.response_body)) }}</pre>
+                    </div>
+                    <div class="text-xs opacity-70">
+                      <span>记录时间: {{ formatTime(evidence.timestamp) }}</span>
+                    </div>
+                  </div>
+
+                  <div v-else-if="isSystemAgentVerificationEvidence(evidence)" class="space-y-3">
+                    <div>
+                      <p class="text-sm font-semibold text-success mb-2">验证摘要</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ evidence.evidence_snippet }}</pre>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                      <div>
+                        <p class="text-xs text-base-content/70 mb-1">请求 URL</p>
+                        <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ evidence.url }}</pre>
+                      </div>
+                      <div v-if="evidence.response_status">
+                        <p class="text-xs text-base-content/70 mb-1">重放状态码</p>
+                        <span :class="['badge badge-sm', evidence.response_status >= 400 ? 'badge-error' : 'badge-success']">
+                          {{ evidence.response_status }}
+                        </span>
+                      </div>
+                    </div>
+                    <div v-if="formatJson(evidence.response_headers)">
+                      <p class="text-sm font-semibold text-base-content/70 mb-2">响应头</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto max-h-60 whitespace-pre-wrap break-words">{{ formatJson(evidence.response_headers) }}</pre>
+                    </div>
+                    <div v-if="evidence.response_body">
+                      <p class="text-sm font-semibold text-base-content/70 mb-2">重放响应体</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto max-h-80 whitespace-pre-wrap break-words">{{ evidence.response_body.length > 3000 ? truncateText(evidence.response_body, 3000) : evidence.response_body }}</pre>
+                    </div>
+                    <div class="text-xs opacity-70">
+                      <span>记录时间: {{ formatTime(evidence.timestamp) }}</span>
+                    </div>
+                  </div>
+
+                  <div v-else-if="isSystemAgentFeedbackEvidence(evidence)" class="space-y-3">
+                    <div>
+                      <p class="text-sm font-semibold text-warning mb-2">反馈摘要</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ evidence.evidence_snippet }}</pre>
+                    </div>
+                    <div v-if="parseStructuredPayload(evidence.request_body)">
+                      <p class="text-sm font-semibold text-base-content/70 mb-2">反馈内容</p>
+                      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto max-h-80 whitespace-pre-wrap break-words">{{ formatStructuredValue(parseStructuredPayload(evidence.request_body)) }}</pre>
+                    </div>
+                    <div class="text-xs opacity-70">
+                      <span>记录时间: {{ formatTime(evidence.timestamp) }}</span>
+                    </div>
+                  </div>
+
+                  <div v-else class="space-y-3">
                   <!-- 证据片段 -->
                   <div>
                     <p class="text-sm font-semibold text-base-content/70 mb-2">证据片段</p>
@@ -327,6 +483,7 @@
                   <!-- 时间戳 -->
                   <div class="text-xs opacity-70">
                     <span>记录时间: {{ formatTime(evidence.timestamp) }}</span>
+                  </div>
                   </div>
                 </div>
               </div>
@@ -385,6 +542,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 const { t } = useI18n();
 const emit = defineEmits<{
@@ -434,6 +592,8 @@ const showDetailsModal = ref(false);
 const showDeleteAllModal = ref(false);
 const selectedFinding = ref<Finding | null>(null);
 const selectedIds = ref<Set<string>>(new Set());
+const verifyingId = ref<string | null>(null);
+const feedbackingId = ref<string | null>(null);
 
 const stats = ref({
   critical: 0,
@@ -514,6 +674,7 @@ const refreshFindings = async () => {
       console.log(`Loaded ${findings.value.length} findings with evidence`);
       console.log('First finding:', findings.value[0]);
       updateStats();
+      syncSelectedFinding();
     }
   } catch (error) {
     console.error('Failed to refresh findings:', error);
@@ -588,6 +749,60 @@ const deleteSingle = async (id: string) => {
   }
 };
 
+const canVerifyFinding = (finding: Finding) => {
+  return finding.plugin_id?.startsWith('agent:');
+};
+
+const verifyWithSystemAgent = async (findingId: string) => {
+  if (verifyingId.value) return;
+  verifyingId.value = findingId;
+  try {
+    const response = await invoke<any>('verify_finding_with_system_agent', {
+      request: { findingId },
+    });
+    if (!response.success) {
+      throw new Error(response.error || '系统 Agent 验证失败');
+    }
+    await refreshFindings();
+  } catch (error) {
+    console.error('Failed to verify finding with system agent:', error);
+    alert('验证失败: ' + error);
+  } finally {
+    verifyingId.value = null;
+  }
+};
+
+const syncSelectedFinding = () => {
+  if (!selectedFinding.value) return;
+  const nextFinding = findings.value.find(item => item.id === selectedFinding.value?.id);
+  if (nextFinding) {
+    selectedFinding.value = nextFinding;
+  }
+};
+
+const submitSystemAgentFeedback = async (findingId: string, feedbackType: 'confirm' | 'false_positive') => {
+  if (feedbackingId.value) return;
+  feedbackingId.value = findingId;
+  try {
+    const response = await invoke<any>('submit_system_agent_finding_feedback', {
+      request: {
+        findingId,
+        feedbackType,
+      },
+    });
+    if (!response.success) {
+      throw new Error(response.error || '反馈提交失败');
+    }
+    await refreshFindings();
+    syncSelectedFinding();
+  } catch (error) {
+    console.error('Failed to submit system agent finding feedback:', error);
+    alert('反馈提交失败: ' + error);
+  } finally {
+    feedbackingId.value = null;
+  }
+};
+
 const deleteSelected = async () => {
   if (selectedIds.value.size === 0) return;
   
@@ -646,6 +861,42 @@ const getSeverityBadgeClass = (severity?: string) => {
   }
 };
 
+const hasSystemAgentVerificationEvidence = (finding: Finding) => {
+  return !!finding.evidence?.some(evidence => evidence.location === 'system_agent_verification');
+};
+
+const isSystemAgentFinding = (finding: Finding) => {
+  return finding.plugin_id?.startsWith('agent:');
+};
+
+const getFindingSourceLabel = (finding: Finding) => {
+  return isSystemAgentFinding(finding) ? 'System Agent' : 'Plugin';
+};
+
+const getFindingSourceBadgeClass = (finding: Finding) => {
+  return isSystemAgentFinding(finding) ? 'badge-info' : 'badge-ghost';
+};
+
+const getFindingStageLabel = (finding: Finding) => {
+  if (hasSystemAgentVerificationEvidence(finding)) {
+    return 'Agent 已验证';
+  }
+  if (isSystemAgentFinding(finding)) {
+    return '被动分诊';
+  }
+  return '规则发现';
+};
+
+const getFindingStageBadgeClass = (finding: Finding) => {
+  if (hasSystemAgentVerificationEvidence(finding)) {
+    return 'badge-success';
+  }
+  if (isSystemAgentFinding(finding)) {
+    return 'badge-warning';
+  }
+  return 'badge-outline';
+};
+
 const truncateUrl = (url: string, maxLength = 50) => {
   if (!url || url.length <= maxLength) return url;
   return url.substring(0, maxLength) + '...';
@@ -674,9 +925,65 @@ const formatJson = (jsonString?: string) => {
   }
 };
 
+const parseStructuredPayload = (raw?: string) => {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const parseSystemAgentMeta = (raw?: string) => {
+  return parseStructuredPayload(raw);
+};
+
+const parseSystemAgentContextPayload = (evidence: Evidence) => {
+  if (!isSystemAgentContextEvidence(evidence)) return null;
+  return parseStructuredPayload(evidence.request_body);
+};
+
+const formatStructuredValue = (value: unknown) => {
+  if (value == null) return '';
+  return JSON.stringify(value, null, 2);
+};
+
+const isSystemAgentContextEvidence = (evidence: Evidence) => {
+  return evidence.location === 'system_agent_context';
+};
+
+const isSystemAgentVerificationEvidence = (evidence: Evidence) => {
+  return evidence.location === 'system_agent_verification';
+};
+
+const isSystemAgentFeedbackEvidence = (evidence: Evidence) => {
+  return evidence.location === 'system_agent_feedback';
+};
+
+const getContextSkillEntries = (evidence: Evidence) => {
+  const payload = parseSystemAgentContextPayload(evidence);
+  const skills = payload?.logicSkillContext;
+  return Array.isArray(skills) ? skills : [];
+};
+
+const getContextInvariantEntries = (evidence: Evidence) => {
+  const payload = parseSystemAgentContextPayload(evidence);
+  const invariants = payload?.logicInvariants;
+  return Array.isArray(invariants) ? invariants : [];
+};
+
+const getContextProcessGraph = (evidence: Evidence) => {
+  const payload = parseSystemAgentContextPayload(evidence);
+  return payload?.processGraph ?? null;
+};
+
 const handleRefresh = () => {
   refreshFindings();
 };
+
+let unlistenFinding: UnlistenFn | null = null;
+let unlistenVerification: UnlistenFn | null = null;
+let unlistenRunUpdate: UnlistenFn | null = null;
 
 // 监听页码变化
 watch(currentPage, () => {
@@ -689,14 +996,28 @@ const handleKeyDown = (e: KeyboardEvent) => {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
   refreshFindings();
   window.addEventListener('security-center-refresh', handleRefresh);
   window.addEventListener('keydown', handleKeyDown);
+  unlistenFinding = await listen('scan:finding', () => {
+    refreshFindings();
+  });
+  unlistenVerification = await listen('system-agent:verification-complete', () => {
+    refreshFindings();
+  });
+  unlistenRunUpdate = await listen<any>('system-agent:run-updated', (event) => {
+    if (event.payload?.profileId === 'traffic_active_verifier') {
+      refreshFindings();
+    }
+  });
 });
 
 onUnmounted(() => {
   window.removeEventListener('security-center-refresh', handleRefresh);
   window.removeEventListener('keydown', handleKeyDown);
+  unlistenFinding?.();
+  unlistenVerification?.();
+  unlistenRunUpdate?.();
 });
 </script>

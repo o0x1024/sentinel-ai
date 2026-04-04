@@ -118,6 +118,7 @@ futures = "0.3"
 
 # URL 解析
 url = "2"
+ipnet = "2"
 
 # 证书相关
 pem = "3"

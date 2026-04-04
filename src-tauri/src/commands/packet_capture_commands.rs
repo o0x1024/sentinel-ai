@@ -101,7 +101,10 @@ fn match_port(addr: &str, port_filter: &str) -> bool {
     port == port_filter.parse::<u16>().unwrap_or(0)
 }
 
-fn packet_matches_advanced_filter(packet: &CapturedPacket, filter: &AdvancedPacketFilterRequest) -> bool {
+fn packet_matches_advanced_filter(
+    packet: &CapturedPacket,
+    filter: &AdvancedPacketFilterRequest,
+) -> bool {
     if !filter.search_text.is_empty() {
         let search_text = filter.search_text.to_lowercase();
         let packet_text = format!(
@@ -115,7 +118,12 @@ fn packet_matches_advanced_filter(packet: &CapturedPacket, filter: &AdvancedPack
         }
     }
 
-    if !filter.protocols.is_empty() && !filter.protocols.iter().any(|protocol| protocol == &packet.protocol) {
+    if !filter.protocols.is_empty()
+        && !filter
+            .protocols
+            .iter()
+            .any(|protocol| protocol == &packet.protocol)
+    {
         return false;
     }
 
@@ -339,7 +347,9 @@ pub async fn is_capture_running(state: State<'_, PacketCaptureState>) -> Result<
 }
 
 #[tauri::command]
-pub async fn clear_packet_capture_cache(state: State<'_, PacketCaptureState>) -> Result<(), String> {
+pub async fn clear_packet_capture_cache(
+    state: State<'_, PacketCaptureState>,
+) -> Result<(), String> {
     {
         let mut cache = state.packet_cache.write().await;
         cache.clear();
@@ -609,10 +619,9 @@ pub async fn get_packet_stream_packets(
     let stream_packets = packets
         .into_iter()
         .filter(|candidate| {
-            if !protocol_filter
-                .iter()
-                .any(|proto| candidate.protocol.contains(proto) || proto.contains(&candidate.protocol))
-            {
+            if !protocol_filter.iter().any(|proto| {
+                candidate.protocol.contains(proto) || proto.contains(&candidate.protocol)
+            }) {
                 return false;
             }
 

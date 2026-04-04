@@ -75,6 +75,7 @@ const IntruderResultsWindow = () => import('./views/IntruderResultsWindow.vue');
 const PluginManagement = () => import('./views/PluginManagement.vue');
 const BugBounty = () => import('./views/BugBounty.vue');
 const CyberChef = () => import('./views/CyberChef.vue');
+const AgentManagement = () => import('./views/AgentManagement.vue');
 
 const Settings = () => import('./views/Settings.vue');
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
@@ -177,6 +178,12 @@ const routes = [
     name: 'Settings',
     component: Settings,
     meta: { title: '系统设置' }
+  },
+  {
+    path: '/agent-management',
+    name: 'AgentManagement',
+    component: AgentManagement,
+    meta: { title: 'Agent 管理' }
   },
   {
     path: '/performance',

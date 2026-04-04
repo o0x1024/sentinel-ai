@@ -37,6 +37,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "../extensions/chrome-behavior-capture"
+    ],
     "macOS": {
       "entitlements": "macos-extension/MainApp.entitlements"
     },

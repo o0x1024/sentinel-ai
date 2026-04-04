@@ -3,13 +3,16 @@ use crate::commands::traffic_analysis_commands::TrafficAnalysisState;
 use crate::models::database::{AiMessage, SubagentMessage, SubagentRun};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::DatabaseService;
+use crate::services::system_agents::tool_policy::SystemAgentToolPolicy;
+use crate::services::SystemAgentRuntime;
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 use crate::utils::ordered_message::ChunkType;
 use anyhow::Result;
 use chrono::Utc;
 use sentinel_db::Database;
 use sentinel_llm::{
-    parse_image_from_json, ChatMessage as LlmChatMessage, StreamContent, StreamingLlmClient,
+    parse_image_from_json, ChatMessage as LlmChatMessage, LlmClient, StreamContent,
+    StreamingLlmClient,
 };
 use sentinel_rag;
 use sentinel_workflow::WorkflowGraph;
@@ -28,6 +31,31 @@ use uuid::Uuid;
 const MAX_SAFE_OUTPUT_STORAGE_THRESHOLD: usize = 50_000;
 const USER_FORCED_RULES_CONFIG_CATEGORY: &str = "agent";
 const USER_FORCED_RULES_CONFIG_KEY: &str = "user_forced_rules";
+
+async fn get_system_agent_prompt_patch(
+    runtime: &Arc<SystemAgentRuntime>,
+    profile_id: &str,
+) -> Option<String> {
+    runtime
+        .get_profile(profile_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|profile| profile.prompt_patch)
+        .filter(|patch| !patch.trim().is_empty())
+}
+
+async fn get_system_agent_tool_policy(
+    runtime: &Arc<SystemAgentRuntime>,
+    profile_id: &str,
+) -> Option<SystemAgentToolPolicy> {
+    runtime
+        .get_profile(profile_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|profile| SystemAgentToolPolicy::from_profile(&profile))
+}
 
 // Re-export AI settings related types for backward compatibility
 pub use crate::commands::aisettings::{
@@ -959,6 +987,7 @@ pub async fn generate_plugin_stream(
     request: GenerateStreamRequest,
     app_handle: AppHandle,
     ai_manager: State<'_, Arc<AiServiceManager>>,
+    system_agent_runtime: State<'_, Arc<SystemAgentRuntime>>,
 ) -> Result<String, String> {
     // Get actual default LLM provider and model from database config
     let mut service_name = request
@@ -1015,14 +1044,59 @@ pub async fn generate_plugin_stream(
         model_to_use
     );
 
+    let tool_policy = get_system_agent_tool_policy(
+        system_agent_runtime.inner(),
+        "traffic_plugin_generator_agent",
+    )
+    .await;
+    if let Some(policy) = &tool_policy {
+        policy.validate().map_err(|e| e.to_string())?;
+    }
+
+    let prompt_patch = get_system_agent_prompt_patch(
+        system_agent_runtime.inner(),
+        "traffic_plugin_generator_agent",
+    )
+    .await;
+
     let stream_id = request.stream_id.clone();
     let user_message = request.message.clone();
-    let system_prompt = request.system_prompt.clone();
+    let mut system_prompt = match (request.system_prompt.clone(), prompt_patch) {
+        (Some(prompt), Some(patch)) => Some(format!(
+            "{}\n\nAdditional system-agent guidance:\n{}",
+            prompt, patch
+        )),
+        (Some(prompt), None) => Some(prompt),
+        (None, Some(patch)) => Some(patch),
+        (None, None) => None,
+    };
+    if let (Some(prompt), Some(policy_note)) = (
+        system_prompt.as_mut(),
+        tool_policy.and_then(|policy| policy.prompt_note()),
+    ) {
+        prompt.push_str("\n\n");
+        prompt.push_str(&policy_note);
+    }
+    let tracked_run = system_agent_runtime
+        .start_external_run(
+            "traffic_plugin_generator_agent",
+            serde_json::json!({
+                "streamId": stream_id,
+                "messagePreview": user_message.chars().take(400).collect::<String>(),
+                "hasCustomSystemPrompt": system_prompt.is_some(),
+                "historyLength": request.history.as_ref().map(|history| history.len()).unwrap_or(0),
+            }),
+            Some("manual".to_string()),
+        )
+        .await
+        .ok()
+        .map(|run| (run.id, run.profile_id));
 
     let (_cancellation_token, cancel_gen) = create_cancellation_token(&stream_id);
     let app_clone = app_handle.clone();
     let sid = stream_id.clone();
     let history = request.history.unwrap_or_default();
+    let runtime_for_tracking = system_agent_runtime.inner().clone();
 
     // Build LLM config with correct model
     let mut llm_config = if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
@@ -1037,50 +1111,26 @@ pub async fn generate_plugin_stream(
         // Start event
         let _ = app_clone.emit("plugin_gen_start", &serde_json::json!({ "stream_id": sid }));
 
-        // Create LLM client with configured model
-        let streaming_client = StreamingLlmClient::new(llm_config);
-        let app_for_callback = app_clone.clone();
-        let sid_for_callback = sid.clone();
-
-        let result = streaming_client
-            .stream_chat(
-                system_prompt.as_deref(),
-                &user_message,
-                &history,
-                None,
-                move |chunk| {
-                    if is_conversation_cancelled(&sid_for_callback) {
-                        return false;
-                    }
-                    match chunk {
-                        StreamContent::Text(text) => {
-                            let _ = app_for_callback.emit(
-                                "plugin_gen_delta",
-                                serde_json::json!({
-                                    "stream_id": sid_for_callback,
-                                    "delta": text
-                                }),
-                            );
-                        }
-                        StreamContent::Reasoning(text) => {
-                            let _ = app_for_callback.emit(
-                                "plugin_gen_thinking",
-                                serde_json::json!({
-                                    "stream_id": sid_for_callback,
-                                    "delta": text
-                                }),
-                            );
-                        }
-                        StreamContent::Done => {}
-                        _ => {}
-                    }
-                    true
-                },
-            )
+        // 非助手型插件生成改为真正的非流式调用，避免 DeepSeek SSE 中途断流。
+        let llm_client = LlmClient::new(llm_config);
+        let result = llm_client
+            .chat(system_prompt.as_deref(), &user_message, &history, None)
             .await;
 
         match result {
             Ok(content) => {
+                if let Some((run_id, profile_id)) = &tracked_run {
+                    let _ = runtime_for_tracking
+                        .complete_external_run_success(
+                            run_id,
+                            profile_id,
+                            serde_json::json!({
+                                "content": content,
+                                "streamId": sid,
+                            }),
+                        )
+                        .await;
+                }
                 let _ = app_clone.emit(
                     "plugin_gen_complete",
                     serde_json::json!({
@@ -1090,6 +1140,11 @@ pub async fn generate_plugin_stream(
                 );
             }
             Err(e) => {
+                if let Some((run_id, profile_id)) = &tracked_run {
+                    let _ = runtime_for_tracking
+                        .complete_external_run_failure(run_id, profile_id, e.to_string())
+                        .await;
+                }
                 let _ = app_clone.emit(
                     "plugin_gen_error",
                     serde_json::json!({
@@ -2055,10 +2110,23 @@ pub async fn generate_workflow_from_nl(
     description: String,
     ai_manager: State<'_, Arc<AiServiceManager>>,
     traffic_state: State<'_, TrafficAnalysisState>,
+    system_agent_runtime: State<'_, Arc<SystemAgentRuntime>>,
 ) -> Result<WorkflowGraph, String> {
     let desc = description.trim();
     if desc.is_empty() {
         return Err("description is empty".to_string());
+    }
+
+    let tool_policy =
+        get_system_agent_tool_policy(system_agent_runtime.inner(), "workflow_designer_agent").await;
+    if let Some(policy) = &tool_policy {
+        policy.validate().map_err(|e| e.to_string())?;
+        policy
+            .ensure_tool_allowed("tool_catalog_reader")
+            .map_err(|e| e.to_string())?;
+        policy
+            .ensure_tool_allowed("workflow_catalog_reader")
+            .map_err(|e| e.to_string())?;
     }
 
     // Use default LLM AI configuration
@@ -2116,7 +2184,19 @@ pub async fn generate_workflow_from_nl(
         Err(_) => "".to_string(),
     };
 
-    let system_prompt = format!(
+    let tracked_run = system_agent_runtime
+        .start_external_run(
+            "workflow_designer_agent",
+            serde_json::json!({
+                "description": desc,
+            }),
+            Some("manual".to_string()),
+        )
+        .await
+        .ok()
+        .map(|run| (run.id, run.profile_id));
+
+    let mut system_prompt = format!(
         r#"You are a workflow design assistant for Sentinel AI.
 Based on the user's natural language description, output a WorkflowGraph that strictly conforms to the following JSON Schema.
 Only output JSON, do not explain, do not include Markdown.
@@ -2195,12 +2275,33 @@ CRITICAL RULES:
         tools_summary, catalog_summary
     );
 
+    if let Some(prompt_patch) =
+        get_system_agent_prompt_patch(system_agent_runtime.inner(), "workflow_designer_agent").await
+    {
+        system_prompt.push_str("\n\nAdditional system-agent guidance:\n");
+        system_prompt.push_str(&prompt_patch);
+    }
+    if let Some(policy_note) = tool_policy.and_then(|policy| policy.prompt_note()) {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(&policy_note);
+    }
+
     let user_prompt = format!("用户描述：{}\n请生成 WorkflowGraph JSON。", desc);
 
-    let raw = llm_client
+    let raw = match llm_client
         .completion(Some(&system_prompt), &user_prompt)
         .await
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(raw) => raw,
+        Err(e) => {
+            if let Some((run_id, profile_id)) = &tracked_run {
+                let _ = system_agent_runtime
+                    .complete_external_run_failure(run_id, profile_id, e.to_string())
+                    .await;
+            }
+            return Err(e.to_string());
+        }
+    };
 
     let json_str = raw.trim();
     let parsed_value: serde_json::Value = match serde_json::from_str(json_str) {
@@ -2210,13 +2311,29 @@ CRITICAL RULES:
                 serde_json::from_str(&json_str[s..=e])
                     .map_err(|e| format!("Failed to parse extracted JSON: {}", e))?
             } else {
-                return Err(format!("Failed to parse LLM output as JSON: {}", e0));
+                let error = format!("Failed to parse LLM output as JSON: {}", e0);
+                if let Some((run_id, profile_id)) = &tracked_run {
+                    let _ = system_agent_runtime
+                        .complete_external_run_failure(run_id, profile_id, &error)
+                        .await;
+                }
+                return Err(error);
             }
         }
     };
 
-    let mut graph: WorkflowGraph = serde_json::from_value(parsed_value)
-        .map_err(|e| format!("Failed to parse workflow graph: {}", e))?;
+    let mut graph: WorkflowGraph = match serde_json::from_value(parsed_value) {
+        Ok(graph) => graph,
+        Err(e) => {
+            let error = format!("Failed to parse workflow graph: {}", e);
+            if let Some((run_id, profile_id)) = &tracked_run {
+                let _ = system_agent_runtime
+                    .complete_external_run_failure(run_id, profile_id, &error)
+                    .await;
+            }
+            return Err(error);
+        }
+    };
 
     if graph.id.trim().is_empty() {
         graph.id = format!("wf_{}", Utc::now().timestamp_millis());
@@ -2233,6 +2350,18 @@ CRITICAL RULES:
     }
     if graph.credentials.is_empty() {
         graph.credentials = vec![];
+    }
+
+    if let Some((run_id, profile_id)) = &tracked_run {
+        let _ = system_agent_runtime
+            .complete_external_run_success(
+                run_id,
+                profile_id,
+                serde_json::json!({
+                    "workflowGraph": &graph,
+                }),
+            )
+            .await;
     }
 
     Ok(graph)

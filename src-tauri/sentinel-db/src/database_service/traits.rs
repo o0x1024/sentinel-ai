@@ -17,6 +17,10 @@ use crate::core::models::workflow::WorkflowStepDetail;
 use crate::database_service::proxifier::{ProxifierProxyRecord, ProxifierRuleRecord};
 use crate::database_service::rag::{RagChunkRow, RagCollectionRow, RagDocumentSourceRow};
 use crate::database_service::skills::{CreateSkill, Skill, SkillDetail, SkillSummary, UpdateSkill};
+use crate::database_service::system_agent::{
+    SystemAgentBindingRecord, SystemAgentProfileRecord, SystemAgentProfileVersionRecord,
+    SystemAgentRunRecord,
+};
 use sentinel_plugins::PluginRecord;
 
 #[async_trait]
@@ -532,6 +536,40 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     ) -> Result<()>;
     async fn delete_rule(&self, id: &str) -> Result<()>;
     async fn save_all_rules(&self, rules: &[ProxifierRuleRecord]) -> Result<()>;
+
+    // System Agent相关方法
+    async fn list_system_agent_profiles(&self) -> Result<Vec<SystemAgentProfileRecord>>;
+    async fn get_system_agent_profile(&self, id: &str) -> Result<Option<SystemAgentProfileRecord>>;
+    async fn save_system_agent_profile(
+        &self,
+        profile: &SystemAgentProfileRecord,
+        bindings: &[SystemAgentBindingRecord],
+    ) -> Result<()>;
+    async fn delete_system_agent_profile(&self, id: &str) -> Result<()>;
+    async fn list_system_agent_bindings(
+        &self,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<SystemAgentBindingRecord>>;
+    async fn list_system_agent_runs(
+        &self,
+        profile_id: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<Vec<SystemAgentRunRecord>>;
+    async fn list_system_agent_profile_versions(
+        &self,
+        profile_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<SystemAgentProfileVersionRecord>>;
+    async fn get_system_agent_run(&self, id: &str) -> Result<Option<SystemAgentRunRecord>>;
+    async fn create_system_agent_run(&self, run: &SystemAgentRunRecord) -> Result<()>;
+    async fn update_system_agent_run(
+        &self,
+        id: &str,
+        status: &str,
+        output_json: Option<&str>,
+        error_message: Option<&str>,
+        finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<()>;
 
     // Plan-and-Execute
     async fn save_execution_plan(

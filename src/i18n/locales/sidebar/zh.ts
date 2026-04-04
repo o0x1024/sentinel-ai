@@ -100,6 +100,7 @@ export default {
   // Notifications
   notifications: '通知',
   notificationCenter: '消息中心',
+  agentManagement: 'Agent管理',
   notificationRules: '通知中心',
   unreadNotifications: '未读通知',
   markAsRead: '标记为已读',

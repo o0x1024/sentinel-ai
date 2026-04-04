@@ -1,0 +1,1402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Assistant Message Block Concepts</title>
+  <style>
+    :root {
+      --bg: #ede7dc;
+      --bg-strong: #e3dacd;
+      --paper: rgba(255, 252, 245, 0.78);
+      --paper-strong: #fffdf8;
+      --ink: #1d222b;
+      --muted: #667085;
+      --line: rgba(39, 48, 66, 0.12);
+      --line-strong: rgba(39, 48, 66, 0.22);
+      --accent: #0b6e65;
+      --accent-soft: rgba(11, 110, 101, 0.12);
+      --rust: #ab5a28;
+      --rust-soft: rgba(171, 90, 40, 0.13);
+      --gold: #9a6b05;
+      --gold-soft: rgba(154, 107, 5, 0.14);
+      --blue: #165d92;
+      --blue-soft: rgba(22, 93, 146, 0.12);
+      --green: #2f7b46;
+      --green-soft: rgba(47, 123, 70, 0.14);
+      --red: #b0432f;
+      --red-soft: rgba(176, 67, 47, 0.12);
+      --shadow-lg: 0 24px 80px rgba(34, 40, 49, 0.14);
+      --shadow-md: 0 16px 48px rgba(34, 40, 49, 0.1);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+      --sans: "Space Grotesk", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --body: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "IBM Plex Mono", "JetBrains Mono", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+    }
+
+    body {
+      color: var(--ink);
+      font-family: var(--body);
+      background:
+        radial-gradient(circle at left top, rgba(11, 110, 101, 0.14), transparent 24%),
+        radial-gradient(circle at right top, rgba(171, 90, 40, 0.16), transparent 18%),
+        linear-gradient(180deg, #f4efe6 0%, #ece3d7 100%);
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .page {
+      width: min(1480px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.75fr);
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+
+    .hero-card,
+    .hero-side,
+    .concept {
+      background: var(--paper);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.66);
+      box-shadow: var(--shadow-lg);
+      border-radius: var(--radius-xl);
+    }
+
+    .hero-card {
+      padding: 28px 30px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-card::after {
+      content: "";
+      position: absolute;
+      right: -48px;
+      bottom: -88px;
+      width: 280px;
+      height: 280px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(171, 90, 40, 0.16), transparent 66%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(29, 34, 43, 0.06);
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 5px rgba(11, 110, 101, 0.12);
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    .scheme-name {
+      margin: 0;
+      font-family: var(--sans);
+      letter-spacing: -0.03em;
+    }
+
+    h1 {
+      margin-top: 18px;
+      font-size: clamp(34px, 4vw, 54px);
+      line-height: 0.98;
+      max-width: 860px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-copy {
+      max-width: 760px;
+      margin: 16px 0 0;
+      color: var(--muted);
+      line-height: 1.75;
+      font-size: 15px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-points {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .point-card {
+      padding: 16px 18px;
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.74);
+      border: 1px solid var(--line);
+    }
+
+    .point-card strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .point-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+      margin-top: 8px;
+    }
+
+    .hero-side {
+      padding: 22px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .hero-side h2 {
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .index-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .index-item {
+      border-radius: var(--radius-md);
+      padding: 13px 14px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+    }
+
+    .index-item strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .index-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      margin-top: 6px;
+    }
+
+    .concept-grid {
+      display: grid;
+      gap: 20px;
+    }
+
+    .concept {
+      padding: 22px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .concept-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .scheme-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: rgba(29, 34, 43, 0.06);
+    }
+
+    .scheme-name {
+      margin-top: 12px;
+      font-size: 28px;
+      line-height: 1.04;
+    }
+
+    .scheme-note {
+      margin-top: 10px;
+      color: var(--muted);
+      max-width: 820px;
+      font-size: 14px;
+      line-height: 1.72;
+    }
+
+    .scheme-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .meta-chip {
+      padding: 8px 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .concept-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.75fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .preview-shell,
+    .notes {
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }
+
+    .preview-shell {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 253, 248, 0.94));
+      box-shadow: var(--shadow-md);
+    }
+
+    .preview-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.7);
+    }
+
+    .preview-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .preview-icon {
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      font-size: 16px;
+      color: #fff;
+      background: linear-gradient(135deg, #0b6e65, #368e84);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+
+    .preview-title strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .preview-title span,
+    .preview-head code {
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+
+    .preview-body {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 251, 245, 0.72)),
+        repeating-linear-gradient(
+          180deg,
+          transparent 0,
+          transparent 26px,
+          rgba(29, 34, 43, 0.025) 27px
+        );
+    }
+
+    .thread-row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .thread-row.user {
+      justify-content: flex-end;
+    }
+
+    .avatar {
+      width: 38px;
+      height: 38px;
+      flex: none;
+      border-radius: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      color: #fff;
+      background: linear-gradient(135deg, #20324a, #324f74);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+
+    .avatar.user {
+      background: linear-gradient(135deg, #ab5a28, #cd7a45);
+    }
+
+    .bubble-wrap {
+      max-width: min(760px, 92%);
+      min-width: 0;
+    }
+
+    .message-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .message-meta strong {
+      color: var(--ink);
+    }
+
+    .meta-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: rgba(29, 34, 43, 0.05);
+    }
+
+    .bubble {
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.9);
+      padding: 16px 18px;
+      color: var(--ink);
+      line-height: 1.72;
+      font-size: 14px;
+      box-shadow: 0 8px 24px rgba(34, 40, 49, 0.06);
+    }
+
+    .user .bubble {
+      background: linear-gradient(180deg, rgba(171, 90, 40, 0.12), rgba(171, 90, 40, 0.06));
+      border-color: rgba(171, 90, 40, 0.18);
+    }
+
+    .bubble h4 {
+      font-size: 15px;
+      margin: 0 0 10px;
+    }
+
+    .bubble p {
+      margin: 0;
+    }
+
+    .bubble p + p,
+    .bubble ul,
+    .bubble .tool-stack,
+    .bubble .evidence-list,
+    .bubble .code-card,
+    .bubble .footer-row {
+      margin-top: 12px;
+    }
+
+    .bubble ul {
+      margin-bottom: 0;
+      padding-left: 18px;
+    }
+
+    .bubble li + li {
+      margin-top: 8px;
+    }
+
+    .tool-stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .tool-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 13px;
+      border-radius: 14px;
+      background: rgba(11, 110, 101, 0.06);
+      border: 1px solid rgba(11, 110, 101, 0.12);
+    }
+
+    .tool-item.warn {
+      background: rgba(154, 107, 5, 0.08);
+      border-color: rgba(154, 107, 5, 0.14);
+    }
+
+    .tool-item strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .tool-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      margin-top: 4px;
+    }
+
+    .status-chip {
+      flex: none;
+      align-self: start;
+      padding: 6px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: rgba(47, 123, 70, 0.12);
+      color: var(--green);
+    }
+
+    .status-chip.warn {
+      background: rgba(154, 107, 5, 0.14);
+      color: var(--gold);
+    }
+
+    .evidence-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .evidence-chip {
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: rgba(22, 93, 146, 0.08);
+      border: 1px solid rgba(22, 93, 146, 0.14);
+      color: #134f7b;
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+
+    .code-card {
+      border-radius: 16px;
+      border: 1px solid rgba(29, 34, 43, 0.1);
+      overflow: hidden;
+      background: #16212f;
+    }
+
+    .code-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.07);
+      color: rgba(255, 255, 255, 0.76);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      padding: 14px 16px;
+      color: #d6e6fb;
+      font-size: 12px;
+      line-height: 1.7;
+      font-family: var(--mono);
+    }
+
+    .footer-row {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .ghost-btn,
+    .primary-btn {
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+    }
+
+    .primary-btn {
+      color: var(--accent);
+      background: rgba(11, 110, 101, 0.09);
+      border-color: rgba(11, 110, 101, 0.16);
+    }
+
+    .notes {
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.82);
+      display: grid;
+      gap: 12px;
+    }
+
+    .notes h3 {
+      font-size: 16px;
+    }
+
+    .note-card {
+      padding: 13px 14px;
+      border-radius: 14px;
+      background: rgba(29, 34, 43, 0.04);
+      border: 1px solid var(--line);
+    }
+
+    .note-card strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .note-card p {
+      margin: 8px 0 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--muted);
+    }
+
+    .rail-preview .assistant-bubble {
+      position: relative;
+      padding-left: 20px;
+      overflow: hidden;
+    }
+
+    .rail-preview .assistant-bubble::before {
+      content: "";
+      position: absolute;
+      top: 12px;
+      bottom: 12px;
+      left: 8px;
+      width: 4px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #0b6e65, #66b8ad);
+    }
+
+    .rail-preview .assistant-bubble::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(11, 110, 101, 0.06), transparent 34%);
+      pointer-events: none;
+    }
+
+    .deck-preview {
+      background:
+        radial-gradient(circle at top left, rgba(11, 110, 101, 0.1), transparent 22%),
+        linear-gradient(180deg, #1a212a, #202933);
+    }
+
+    .deck-preview .preview-head {
+      background: rgba(17, 23, 32, 0.78);
+      border-bottom-color: rgba(214, 230, 251, 0.1);
+    }
+
+    .deck-preview .preview-title strong,
+    .deck-preview .preview-title span,
+    .deck-preview .preview-head code {
+      color: rgba(232, 239, 248, 0.82);
+    }
+
+    .deck-preview .preview-body {
+      background: transparent;
+    }
+
+    .deck-preview .message-meta,
+    .deck-preview .message-meta strong {
+      color: rgba(232, 239, 248, 0.82);
+    }
+
+    .deck-preview .meta-pill {
+      background: rgba(214, 230, 251, 0.08);
+    }
+
+    .deck-preview .bubble {
+      color: #edf4ff;
+      background: linear-gradient(180deg, rgba(29, 37, 47, 0.96), rgba(21, 27, 35, 0.98));
+      border-color: rgba(138, 172, 196, 0.18);
+      box-shadow: 0 20px 40px rgba(3, 8, 16, 0.28);
+    }
+
+    .deck-preview .user .bubble {
+      background: linear-gradient(180deg, rgba(171, 90, 40, 0.2), rgba(103, 57, 28, 0.22));
+      border-color: rgba(220, 155, 110, 0.22);
+    }
+
+    .deck-preview .tool-item {
+      background: rgba(11, 110, 101, 0.12);
+      border-color: rgba(111, 185, 176, 0.18);
+    }
+
+    .deck-preview .tool-item.warn {
+      background: rgba(154, 107, 5, 0.14);
+      border-color: rgba(223, 180, 89, 0.2);
+    }
+
+    .deck-preview .tool-item span,
+    .deck-preview .footer-row,
+    .deck-preview .ghost-btn,
+    .deck-preview .primary-btn {
+      color: rgba(214, 230, 251, 0.76);
+    }
+
+    .deck-preview .ghost-btn,
+    .deck-preview .primary-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(214, 230, 251, 0.12);
+    }
+
+    .deck-preview .primary-btn {
+      color: #86d2c9;
+      background: rgba(11, 110, 101, 0.16);
+    }
+
+    .deck-preview .evidence-chip {
+      color: #95cbfb;
+      background: rgba(22, 93, 146, 0.16);
+      border-color: rgba(107, 173, 219, 0.16);
+    }
+
+    .ledger-preview .bubble {
+      border-radius: 18px 22px 18px 18px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(252, 247, 240, 0.96)),
+        repeating-linear-gradient(
+          180deg,
+          transparent 0,
+          transparent 31px,
+          rgba(171, 90, 40, 0.04) 32px
+        );
+    }
+
+    .ledger-preview .assistant-bubble {
+      border-left: 6px solid rgba(176, 67, 47, 0.36);
+      padding-left: 16px;
+    }
+
+    .review-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .review-item {
+      padding: 11px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 251, 245, 0.86);
+    }
+
+    .review-item strong {
+      display: block;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .review-item span {
+      display: block;
+      margin-top: 7px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .compact-preview .preview-body {
+      gap: 10px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.75);
+    }
+
+    .compact-preview .thread-row {
+      gap: 10px;
+    }
+
+    .compact-preview .avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 10px;
+      font-size: 13px;
+    }
+
+    .compact-preview .message-meta {
+      margin-bottom: 5px;
+      gap: 6px;
+      font-size: 11px;
+    }
+
+    .compact-preview .bubble {
+      border-radius: 16px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.64;
+    }
+
+    .compact-preview .tool-stack {
+      gap: 6px;
+    }
+
+    .compact-preview .tool-item {
+      padding: 10px 11px;
+      border-radius: 12px;
+    }
+
+    .compact-preview .bubble-wrap {
+      max-width: min(820px, 96%);
+    }
+
+    .compact-preview .message-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .compact-preview .mini-footer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .compact-preview .mini-chip {
+      padding: 6px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      color: var(--muted);
+      background: rgba(29, 34, 43, 0.05);
+    }
+
+    .summary-table {
+      display: grid;
+      gap: 8px;
+    }
+
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 10px;
+      border-radius: 10px;
+      background: rgba(29, 34, 43, 0.04);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .summary-row strong {
+      color: var(--ink);
+    }
+
+    @media (max-width: 1120px) {
+      .hero,
+      .concept-body {
+        grid-template-columns: 1fr;
+      }
+
+      .scheme-meta {
+        justify-content: flex-start;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100vw - 20px, 100%);
+        padding-top: 18px;
+      }
+
+      .hero-card,
+      .hero-side,
+      .concept {
+        border-radius: 22px;
+      }
+
+      .hero-card,
+      .concept {
+        padding: 18px;
+      }
+
+      .hero-points,
+      .review-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .thread-row {
+        gap: 10px;
+      }
+
+      .bubble-wrap {
+        max-width: 100%;
+      }
+
+      .notes {
+        padding: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="hero-card">
+        <div class="eyebrow">
+          <span class="eyebrow-dot"></span>
+          Assistant UI Refactor Concepts
+        </div>
+        <h1>AI 助手消息块重构参考，先把信息结构拉清楚，再决定视觉语言。</h1>
+        <p class="hero-copy">
+          这页不是单纯换皮，而是围绕消息块的第一性问题来拆：用户需要先看见什么，工具执行感要不要前置，引用和下一步动作要不要显式，长对话里垂直密度怎么控。下面四套方案分别对应四种产品取向，方便你判断要偏“会话体验”还是偏“分析工作台”。
+        </p>
+        <div class="hero-points">
+          <div class="point-card">
+            <strong>信息优先级</strong>
+            <span>先决定标题、状态、正文、引用、工具回执谁先被看到，视觉层级才有依据。</span>
+          </div>
+          <div class="point-card">
+            <strong>执行感设计</strong>
+            <span>AI 消息不是纯文本块，它通常包含思考、调用、证据和后续动作。</span>
+          </div>
+          <div class="point-card">
+            <strong>长对话可读性</strong>
+            <span>样式要能扛几十轮排查，而不是只在单条消息截图里好看。</span>
+          </div>
+        </div>
+      </div>
+
+      <aside class="hero-side">
+        <h2>四套方向</h2>
+        <div class="index-list">
+          <div class="index-item">
+            <strong>01 Signal Rail</strong>
+            <span>左侧状态轨突出“正在执行”和“已完成”。适合工具调用频繁的助手。</span>
+          </div>
+          <div class="index-item">
+            <strong>02 Command Deck</strong>
+            <span>暗色控制台卡面，更强操作氛围。适合安全分析、终端代理、系统监控。</span>
+          </div>
+          <div class="index-item">
+            <strong>03 Review Ledger</strong>
+            <span>偏审阅工单，把风险、证据、建议动作拆开看。适合审计和报告场景。</span>
+          </div>
+          <div class="index-item">
+            <strong>04 Compact Thread</strong>
+            <span>高密度消息流，弱化装饰。适合长会话、排障、多轮追问。</span>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="concept-grid">
+      <article class="concept">
+        <div class="concept-head">
+          <div>
+            <div class="scheme-tag">Concept 01</div>
+            <h2 class="scheme-name">Signal Rail</h2>
+            <p class="scheme-note">
+              这套把“消息块”当作一次执行单元，不只是正文容器。左侧色轨持续提醒当前阶段，适合模型会频繁暴露 reasoning、tool call、tool result 的场景。
+            </p>
+          </div>
+          <div class="scheme-meta">
+            <span class="meta-chip">适合: 工具型助手</span>
+            <span class="meta-chip">优点: 状态明确</span>
+            <span class="meta-chip">风险: 视觉占比偏强</span>
+          </div>
+        </div>
+
+        <div class="concept-body">
+          <div class="preview-shell rail-preview">
+            <div class="preview-head">
+              <div class="preview-title">
+                <div class="preview-icon">A</div>
+                <div>
+                  <strong>方案预览</strong>
+                  <span>Assistant bubble as execution unit</span>
+                </div>
+              </div>
+              <code>latency 1.8s / 3 tools</code>
+            </div>
+
+            <div class="preview-body">
+              <div class="thread-row user">
+                <div class="bubble-wrap">
+                  <div class="message-meta">
+                    <strong>你</strong>
+                    <span class="meta-pill">扫描结果解读</span>
+                    <span>15:34</span>
+                  </div>
+                  <div class="bubble">
+                    帮我快速判断这个接口是否存在未授权访问风险，如果有，给出下一步验证动作。
+                  </div>
+                </div>
+                <div class="avatar user">你</div>
+              </div>
+
+              <div class="thread-row">
+                <div class="avatar">AI</div>
+                <div class="bubble-wrap">
+                  <div class="message-meta">
+                    <strong>Sentinel Assistant</strong>
+                    <span class="meta-pill">分析中</span>
+                    <span class="meta-pill">高可信</span>
+                    <span>15:34</span>
+                  </div>
+                  <div class="bubble assistant-bubble">
+                    <h4>初步判断：存在未授权访问嫌疑，但还差一步身份边界验证。</h4>
+                    <p>
+                      当前响应直接返回了用户对象和权限字段，且请求里没有看到显式 session 绑定信息。第一性问题不是“像不像漏洞”，而是“这个资源是否真的绑定到了调用者身份”。因此建议先复现最小验证链路。
+                    </p>
+
+                    <div class="tool-stack">
+                      <div class="tool-item">
+                        <div>
+                          <strong>proxy.inspect_response</strong>
+                          <span>提取响应中的用户标识、角色字段和缓存头，确认服务端是否返回敏感主体数据。</span>
+                        </div>
+                        <span class="status-chip">done</span>
+                      </div>
+                      <div class="tool-item warn">
+                        <div>
+                          <strong>repeater.replay_without_cookie</strong>
+                          <span>去掉 cookie 和 bearer token 再发一次，验证资源是否仍可访问。</span>
+                        </div>
+                        <span class="status-chip warn">next</span>
+                      </div>
+                    </div>
+
+                    <div class="evidence-list">
+                      <span class="evidence-chip">GET /api/account/profile</span>
+                      <span class="evidence-chip">200 OK without nonce</span>
+                      <span class="evidence-chip">role=admin in payload</span>
+                    </div>
+
+                    <div class="footer-row">
+                      <div class="action-row">
+                        <button class="primary-btn">继续验证</button>
+                        <button class="ghost-btn">复制结论</button>
+                      </div>
+                      <span>建议下一步只验证身份耦合，不要先跑字典。</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="notes">
+            <h3>适用建议</h3>
+            <div class="note-card">
+              <strong>为什么成立</strong>
+              <p>用户真正要理解的是这条回复现在处于什么阶段，而不是只看一大段字。状态轨把执行感直接嵌进消息块。</p>
+            </div>
+            <div class="note-card">
+              <strong>建议落地点</strong>
+              <p>适合替换现在的 `assistant/final + tool_call` 分散结构，收成“单条主消息 + 子步骤”。</p>
+            </div>
+            <div class="note-card">
+              <strong>注意点</strong>
+              <p>如果每条消息都上色轨，视觉疲劳会比较快。建议只给 AI 主回复和运行态消息启用。</p>
+            </div>
+          </aside>
+        </div>
+      </article>
+
+      <article class="concept">
+        <div class="concept-head">
+          <div>
+            <div class="scheme-tag">Concept 02</div>
+            <h2 class="scheme-name">Command Deck</h2>
+            <p class="scheme-note">
+              这套明显更像分析控制台。主消息块保留对话属性，但把工具回执、代码片段、操作按钮全部压到同一张卡内，适合安全助手、系统代理、终端集成类界面。
+            </p>
+          </div>
+          <div class="scheme-meta">
+            <span class="meta-chip">适合: 安全/终端代理</span>
+            <span class="meta-chip">优点: 氛围强</span>
+            <span class="meta-chip">风险: 不适合轻聊天</span>
+          </div>
+        </div>
+
+        <div class="concept-body">
+          <div class="preview-shell deck-preview">
+            <div class="preview-head">
+              <div class="preview-title">
+                <div class="preview-icon">B</div>
+                <div>
+                  <strong>方案预览</strong>
+                  <span>Console-grade assistant surface</span>
+                </div>
+              </div>
+              <code>focus: tool-heavy workflows</code>
+            </div>
+
+            <div class="preview-body">
+              <div class="thread-row user">
+                <div class="bubble-wrap">
+                  <div class="message-meta">
+                    <strong>Operator</strong>
+                    <span class="meta-pill">Investigate</span>
+                    <span>15:37</span>
+                  </div>
+                  <div class="bubble">
+                    把这段漏洞 PoC 改成最小复现请求，保持请求体不变，只替换必要头部。
+                  </div>
+                </div>
+                <div class="avatar user">U</div>
+              </div>
+
+              <div class="thread-row">
+                <div class="avatar">AI</div>
+                <div class="bubble-wrap">
+                  <div class="message-meta">
+                    <strong>Sentinel Agent</strong>
+                    <span class="meta-pill">rewrite</span>
+                    <span class="meta-pill">toolchain stable</span>
+                    <span>15:37</span>
+                  </div>
+                  <div class="bubble">
+                    <p>
+                      我把请求缩减到“认证头 + 关键 content-type + 原始 body”三部分。目标不是保留所有浏览器噪音，而是保留服务器真正判定所需的最小条件。
+                    </p>
+
+                    <div class="code-card">
+                      <div class="code-head">
+                        <span>minimal-repro.http</span>
+                        <span>reduced headers: 11 -> 4</span>
+                      </div>
+                      <pre>POST /api/internal/export HTTP/1.1
+Host: target.local
+Authorization: Bearer &lt;token&gt;
+Content-Type: application/json
+
+{"job":"report","scope":"all-users","format":"csv"}</pre>
+                    </div>
+
+                    <div class="tool-stack">
+                      <div class="tool-item">
+                        <div>
+                          <strong>request.normalize_headers</strong>
+                          <span>剔除了 `sec-fetch-*`、`origin`、`pragma` 等非必要浏览器头。</span>
+                        </div>
+                        <span class="status-chip">ok</span>
+                      </div>
+                      <div class="tool-item">
+                        <div>
+                          <strong>traffic.diff_against_original</strong>
+                          <span>确认 body、path、method 未变化，只改动头部集合。</span>
+                        </div>
+                        <span class="status-chip">ok</span>
+                      </div>
+                    </div>
+
+                    <div class="footer-row">
+                      <div class="action-row">
+                        <button class="primary-btn">发送到 Repeater</button>
+                        <button class="ghost-btn">复制 HTTP</button>
+                        <button class="ghost-btn">查看差异</button>
+                      </div>
+                      <span>适合在暗色工作台里承载代码、命令、diff。</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="notes">
+            <h3>适用建议</h3>
+            <div class="note-card">
+              <strong>为什么成立</strong>
+              <p>当消息内容本身就是“操作指令 + 代码 + 工具回执”时，暗色卡面会比传统聊天气泡更稳。</p>
+            </div>
+            <div class="note-card">
+              <strong>建议落地点</strong>
+              <p>可以只在开发者模式、系统代理、工作流执行页启用，不必覆盖所有聊天入口。</p>
+            </div>
+            <div class="note-card">
+              <strong>注意点</strong>
+              <p>如果主产品整体是明亮主题，这套更适合作为局部嵌套面板，而不是整页风格反转。</p>
+            </div>
+          </aside>
+        </div>
+      </article>
+
+      <article class="concept">
+        <div class="concept-head">
+          <div>
+            <div class="scheme-tag">Concept 03</div>
+            <h2 class="scheme-name">Review Ledger</h2>
+            <p class="scheme-note">
+              这套把 AI 回复当作“审阅条目”而不是聊天泡泡。核心思路是把风险判断、证据、建议动作拆开放，让用户扫一眼就知道结论、依据、下一步分别是什么。
+            </p>
+          </div>
+          <div class="scheme-meta">
+            <span class="meta-chip">适合: 审计/报告</span>
+            <span class="meta-chip">优点: 可扫读</span>
+            <span class="meta-chip">风险: 聊天感较弱</span>
+          </div>
+        </div>
+
+        <div class="concept-body">
+          <div class="preview-shell ledger-preview">
+            <div class="preview-head">
+              <div class="preview-title">
+                <div class="preview-icon">C</div>
+                <div>
+                  <strong>方案预览</strong>
+                  <span>Review-oriented message block</span>
+                </div>
+              </div>
+              <code>focus: findings and next action</code>
+            </div>
+
+            <div class="preview-body">
+              <div class="thread-row">
+                <div class="avatar">AI</div>
+                <div class="bubble-wrap">
+                  <div class="message-meta">
+                    <strong>Security Review</strong>
+                    <span class="meta-pill">finding draft</span>
+                    <span>15:41</span>
+                  </div>
+                  <div class="bubble assistant-bubble">
+                    <h4>结论：更像 IDOR，而不是简单信息泄露。</h4>
+                    <p>
+                      决定性信号不是字段多，而是对象选择权落在客户端传入的 `userId=1842` 上。只要服务端没有把该对象重新绑定到当前会话，这就是典型越权路径。
+                    </p>
+
+                    <div class="review-strip">
+                      <div class="review-item">
+                        <strong>风险级别</strong>
+                        <span>High，直接暴露他人账户资料。</span>
+                      </div>
+                      <div class="review-item">
+                        <strong>证据要点</strong>
+                        <span>修改 `userId` 后仍返回 200，响应主体随参数变化。</span>
+                      </div>
+                      <div class="review-item">
+                        <strong>下一步</strong>
+                        <span>换低权限账号重放，确认是否跨租户也可命中。</span>
+                      </div>
+                    </div>
+
+                    <div class="evidence-list">
+                      <span class="evidence-chip">param:userId controls subject</span>
+                      <span class="evidence-chip">response subject switched</span>
+                      <span class="evidence-chip">no ownership check observed</span>
+                    </div>
+
+                    <div class="footer-row">
+                      <div class="action-row">
+                        <button class="primary-btn">生成漏洞草稿</button>
+                        <button class="ghost-btn">复制审阅结论</button>
+                      </div>
+                      <span>适合把回答沉淀成 finding，而不是停留在会话文本。</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="notes">
+            <h3>适用建议</h3>
+            <div class="note-card">
+              <strong>为什么成立</strong>
+              <p>用户经常不是想“继续聊天”，而是想把 AI 输出转成一个可执行的判断条目。这套结构天然更适合。</p>
+            </div>
+            <div class="note-card">
+              <strong>建议落地点</strong>
+              <p>适合漏洞分析、RAG 证据归纳、审计报告草稿、任务结论页。</p>
+            </div>
+            <div class="note-card">
+              <strong>注意点</strong>
+              <p>如果所有消息都这样排，会显得太重。适合只用于高价值回复或“生成结论”模式。</p>
+            </div>
+          </aside>
+        </div>
+      </article>
+
+      <article class="concept">
+        <div class="concept-head">
+          <div>
+            <div class="scheme-tag">Concept 04</div>
+            <h2 class="scheme-name">Compact Thread</h2>
+            <p class="scheme-note">
+              这套优先解决长对话的密度问题。保留角色、状态、结果摘要，但把边框、头像、留白都压缩。适合一屏要看很多轮上下文的场景。
+            </p>
+          </div>
+          <div class="scheme-meta">
+            <span class="meta-chip">适合: 长对话排障</span>
+            <span class="meta-chip">优点: 高密度</span>
+            <span class="meta-chip">风险: 仪式感较弱</span>
+          </div>
+        </div>
+
+        <div class="concept-body">
+          <div class="preview-shell compact-preview">
+            <div class="preview-head">
+              <div class="preview-title">
+                <div class="preview-icon">D</div>
+                <div>
+                  <strong>方案预览</strong>
+                  <span>Dense conversation stream</span>
+                </div>
+              </div>
+              <code>focus: long sessions</code>
+            </div>
+
+            <div class="preview-body">
+              <div class="thread-row user">
+                <div class="bubble-wrap">
+                  <div class="message-meta">
+                    <strong>你</strong>
+                    <span class="meta-pill">追问</span>
+                    <span>15:44</span>
+                  </div>
+                  <div class="bubble">
+                    再说得更具体一点，我应该先验证缓存污染还是先验证鉴权缺失？
+                  </div>
+                </div>
+                <div class="avatar user">你</div>
+              </div>
+
+              <div class="thread-row">
+                <div class="avatar">AI</div>
+                <div class="bubble-wrap">
+                  <div class="message-meta">
+                    <strong>Assistant</strong>
+                    <span class="meta-pill">compact answer</span>
+                    <span>15:44</span>
+                  </div>
+                  <div class="bubble">
+                    <div class="message-grid">
+                      <p>
+                        先测鉴权缺失。原因很简单，缓存污染成立的前提通常是“本不该给你的内容先被返回给你”。如果第一步就证明资源访问控制不存在，缓存问题就变成次级放大器。
+                      </p>
+                      <div class="tool-stack">
+                        <div class="tool-item">
+                          <div>
+                            <strong>step 1</strong>
+                            <span>移除认证信息重放请求，看是否仍返回目标对象。</span>
+                          </div>
+                          <span class="status-chip">run</span>
+                        </div>
+                        <div class="tool-item">
+                          <div>
+                            <strong>step 2</strong>
+                            <span>如果 401，再比较不同账号对同一资源的返回差异。</span>
+                          </div>
+                          <span class="status-chip">then</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="mini-footer">
+                      <span class="mini-chip">最短验证链</span>
+                      <span class="mini-chip">减少无效分支</span>
+                      <span class="mini-chip">适合长线程连续追问</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="notes">
+            <h3>适用建议</h3>
+            <div class="note-card">
+              <strong>为什么成立</strong>
+              <p>消息块真正的稀缺资源是一屏可见上下文。高密度方案会直接提升排障节奏，尤其是多轮问答。</p>
+            </div>
+            <div class="note-card">
+              <strong>建议落地点</strong>
+              <p>适合默认聊天流，另外可以把“重点回答”升级成更重的卡片样式，形成轻重配合。</p>
+            </div>
+            <div class="note-card">
+              <strong>注意点</strong>
+              <p>因为装饰被削弱，所以要特别注意标题、状态、按钮文案的语义准确性。</p>
+            </div>
+          </aside>
+        </div>
+      </article>
+    </section>
+
+    <section class="concept" style="margin-top: 20px;">
+      <div class="concept-head">
+        <div>
+          <div class="scheme-tag">Recommendation</div>
+          <h2 class="scheme-name">如果你要落到当前 Sentinel 项目里</h2>
+          <p class="scheme-note">
+            从现有组件结构看，当前项目已经有 `message block + tool panel + markdown` 的基础，最稳的路径不是推倒重做，而是先收敛消息信息架构，再替换视觉壳子。
+          </p>
+        </div>
+      </div>
+
+      <div class="summary-table">
+        <div class="summary-row">
+          <span><strong>优先建议</strong></span>
+          <span>先试 `Signal Rail + Compact Thread` 混合版，保留执行感，同时不牺牲长对话密度。</span>
+        </div>
+        <div class="summary-row">
+          <span><strong>高价值增强</strong></span>
+          <span>把工具调用、证据引用、下一步动作从“附属区块”提升为 AI 回复中的一等元素。</span>
+        </div>
+        <div class="summary-row">
+          <span><strong>不建议</strong></span>
+          <span>不要单纯只改圆角、边框和背景色。那不会解决“消息块到底承载什么”的问题。</span>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

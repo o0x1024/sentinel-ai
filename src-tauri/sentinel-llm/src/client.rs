@@ -1,16 +1,13 @@
 //! 基础 LLM 客户端
 
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
-use rig::agent::MultiTurnStreamItem;
 use rig::client::{CompletionClient, ProviderClient};
-use rig::completion::Message;
+use rig::completion::{Chat, Message, Prompt};
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
-use rig::streaming::{StreamedAssistantContent, StreamingChat, StreamingPrompt};
 use serde_json::json;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::config::LlmConfig;
 use crate::log::{build_log_session_id, log_error_response, log_request_with_image, log_response};
@@ -548,59 +545,35 @@ impl LlmClient {
     ) -> Result<String>
     where
         M: rig::completion::CompletionModel + 'static,
-        M::StreamingResponse: Clone + Unpin + rig::completion::GetTokenUsage,
     {
         self.validate_moonshot_temperature()?;
-        // Get max_turns from config
-        let max_turns = self.config.get_max_turns();
-        info!("Using max_turns: {}", max_turns);
-
-        // 根据是否有历史消息选择调用方式
-        let stream_result = if chat_history.is_empty() {
-            tokio::time::timeout(
-                timeout,
-                agent.stream_prompt(user_message).multi_turn(max_turns),
-            )
-            .await
+        // 非助手场景统一走真正的非流式 completion，避免 SSE/chunked 中途断流。
+        let content = if chat_history.is_empty() {
+            match tokio::time::timeout(timeout, agent.prompt(user_message)).await {
+                Ok(result) => result.map_err(|e| {
+                    error!("LLM prompt error: {}", e);
+                    anyhow!("LLM prompt error: {}", e)
+                })?,
+                Err(_) => {
+                    error!("LLM request timeout");
+                    return Err(anyhow!("LLM request timeout"));
+                }
+            }
         } else {
-            tokio::time::timeout(
-                timeout,
-                agent
-                    .stream_chat(user_message, chat_history)
-                    .multi_turn(max_turns),
-            )
-            .await
-        };
-
-        let mut stream_iter = match stream_result {
-            Ok(iter) => iter,
-            Err(_) => {
-                error!("LLM request timeout");
-                return Err(anyhow!("LLM request timeout"));
-            }
-        };
-
-        // 收集响应
-        let mut content = String::new();
-        while let Some(item) = stream_iter.next().await {
-            match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t))) => {
-                    content.push_str(&t.text);
-                }
-                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                    debug!("LLM stream completed");
-                    break;
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    error!("LLM stream error: {}", e);
-                    return Err(anyhow!("LLM stream error: {}", e));
+            match tokio::time::timeout(timeout, agent.chat(user_message, chat_history)).await {
+                Ok(result) => result.map_err(|e| {
+                    error!("LLM chat error: {}", e);
+                    anyhow!("LLM chat error: {}", e)
+                })?,
+                Err(_) => {
+                    error!("LLM request timeout");
+                    return Err(anyhow!("LLM request timeout"));
                 }
             }
-        }
+        };
 
         if content.trim().is_empty() {
-            return Err(anyhow!("LLM stream finished without textual response"));
+            return Err(anyhow!("LLM finished without textual response"));
         }
 
         Ok(content)

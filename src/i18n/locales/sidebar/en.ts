@@ -23,6 +23,7 @@ export default {
   workflowStudio: 'Workflow Studio',
   notifications: 'Notifications',
   notificationCenter: 'Message Center',
+  agentManagement: 'Agent Management',
   notificationRules: 'Notification Center',
   bugBounty: 'BBounty',
 

@@ -7,6 +7,7 @@
 //! - 忽略上游证书验证（用于抓取证书异常的站点）
 
 use crate::{ProxyStats, RequestContext, ResponseContext, Result, TrafficError};
+use crate::scope::ProxyScopeRule;
 use brotli::Decompressor;
 use flate2::read::GzDecoder;
 use http_body_util::{BodyExt, Full};
@@ -505,6 +506,11 @@ pub struct ProxyConfig {
     /// 是否排除本应用流量的扫描（默认 true）
     #[serde(default = "default_exclude_self_traffic")]
     pub exclude_self_traffic: bool,
+    /// Burp 风格全局范围：仅命中 include 且未命中 exclude 的流量会进入历史和后续处理
+    #[serde(default)]
+    pub scope_include_rules: Vec<ProxyScopeRule>,
+    #[serde(default)]
+    pub scope_exclude_rules: Vec<ProxyScopeRule>,
 }
 
 fn default_bypass_threshold() -> u32 {
@@ -526,6 +532,8 @@ impl Default for ProxyConfig {
             mitm_bypass_fail_threshold: 3,
             upstream_proxy: None,
             exclude_self_traffic: true,
+            scope_include_rules: Vec::new(),
+            scope_exclude_rules: Vec::new(),
         }
     }
 }

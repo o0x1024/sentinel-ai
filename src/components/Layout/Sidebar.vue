@@ -271,6 +271,13 @@ const systemMenuItems = computed(() => [
     badgeClass: ''
   },
   {
+    path: '/agent-management',
+    name: t('sidebar.agentManagement', 'Agent管理'),
+    icon: 'fas fa-robot',
+    badge: null,
+    badgeClass: ''
+  },
+  {
     path: '/notifications',
     name: t('sidebar.notificationRules', '通知中心'),
     icon: 'fas fa-sliders',

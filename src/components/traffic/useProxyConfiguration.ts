@@ -6,11 +6,13 @@ import {
   createDefaultEditingListener,
   createDefaultEditingMatchReplace,
   createDefaultEditingRule,
+  createDefaultProxyScopeRule,
   createDefaultEditingTlsPassThrough,
   createDefaultEditingUpstream,
   createDefaultMatchReplaceRules,
   createDefaultProxyConfig,
   createDefaultProxyListener,
+  createDefaultTrafficBehaviorSignalSettings,
   createDefaultRequestRules,
   createDefaultResponseRules,
   createDefaultTlsPassThroughRules,
@@ -21,6 +23,9 @@ import {
   type InterceptionRule,
   type MatchReplaceRule,
   type ProxyListener,
+  type ProxyScopeRule,
+  type TrafficBehaviorSignalMode,
+  type TrafficBehaviorSignalSettings,
   type TlsPassThroughRule,
   type UpstreamProxyConfig,
 } from './proxyConfigurationTypes'
@@ -44,10 +49,28 @@ interface CommandResponse<T = unknown> {
   message?: string
 }
 
+interface TrafficBehaviorExtensionInstallation {
+  bridgeUrl: string
+  extensionDirectory: string
+  directorySource: string
+  bundledWithApp: boolean
+}
+
 function moveItem<T>(items: T[], index: number, nextIndex: number) {
   const temp = items[index]
   items[index] = items[nextIndex]
   items[nextIndex] = temp
+}
+
+function normalizeScopeRules(rules: unknown): ProxyScopeRule[] {
+  if (!Array.isArray(rules)) {
+    return []
+  }
+
+  return rules.map(rule => ({
+    ...createDefaultProxyScopeRule(),
+    ...(rule as Partial<ProxyScopeRule>),
+  }))
 }
 
 function buildRuntimeRulePayload(rules: InterceptionRule[]) {
@@ -75,6 +98,13 @@ export function useProxyConfiguration({
   const responseBodySizeMB = ref(2)
   const proxyAutoStart = ref(false)
   const trafficAnalysisPluginEnabled = ref(true)
+  const browserExtensionBridgeUrl = ref('http://127.0.0.1:18931')
+  const browserExtensionDirectoryPath = ref('')
+  const browserExtensionBundledWithApp = ref(false)
+  const behaviorSignalSettings = ref<TrafficBehaviorSignalSettings>(
+    createDefaultTrafficBehaviorSignalSettings(),
+  )
+  const lastSavedBehaviorSignalMode = ref<TrafficBehaviorSignalMode>('proxy_inferred')
 
   const proxyListeners = ref<ProxyListener[]>([createDefaultProxyListener()])
   const selectedListeners = ref<number[]>([])
@@ -929,13 +959,68 @@ export function useProxyConfiguration({
     }
   }
 
+  const saveTrafficBehaviorSignalSettings = async () => {
+    const previous = lastSavedBehaviorSignalMode.value
+    try {
+      const response = await invoke<CommandResponse<TrafficBehaviorSignalSettings>>(
+        'set_traffic_behavior_signal_settings',
+        {
+          payload: {
+            mode: behaviorSignalSettings.value.mode,
+          },
+        },
+      )
+
+      if (!response.success || !response.data) {
+        throw new Error(response.error || '保存失败')
+      }
+
+      behaviorSignalSettings.value = response.data
+      lastSavedBehaviorSignalMode.value = response.data.mode
+      dialog.toast.success(
+        behaviorSignalSettings.value.mode === 'browser_extension'
+          ? '已切换为浏览器扩展增强模式'
+          : '已切换为代理侧弱行为推断模式',
+      )
+    } catch (error: any) {
+      console.error('[ProxyConfiguration] Failed to save behavior signal settings:', error)
+      behaviorSignalSettings.value.mode = previous
+      dialog.toast.error(`保存配置失败: ${error}`)
+    }
+  }
+
+  const copyBrowserExtensionBridgeUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(browserExtensionBridgeUrl.value)
+      dialog.toast.success(t('trafficAnalysis.proxyConfiguration.copiedToClipboard'))
+    } catch (error) {
+      console.error('[ProxyConfiguration] Failed to copy bridge URL:', error)
+      dialog.toast.error(t('trafficAnalysis.proxyConfiguration.copyFailed', '复制失败'))
+    }
+  }
+
+  const copyBrowserExtensionDirectory = async () => {
+    try {
+      await navigator.clipboard.writeText(browserExtensionDirectoryPath.value)
+      dialog.toast.success(t('trafficAnalysis.proxyConfiguration.copiedToClipboard'))
+    } catch (error) {
+      console.error('[ProxyConfiguration] Failed to copy extension directory:', error)
+      dialog.toast.error(t('trafficAnalysis.proxyConfiguration.copyFailed', '复制失败'))
+    }
+  }
+
   const loadConfig = async () => {
     try {
       console.log('[ProxyConfiguration] Loading config...')
 
       const configResponse = await invoke<CommandResponse<typeof proxyConfig.value>>('get_proxy_config')
       if (configResponse.success && configResponse.data) {
-        proxyConfig.value = configResponse.data
+        proxyConfig.value = {
+          ...createDefaultProxyConfig(),
+          ...configResponse.data,
+          scope_include_rules: normalizeScopeRules(configResponse.data.scope_include_rules),
+          scope_exclude_rules: normalizeScopeRules(configResponse.data.scope_exclude_rules),
+        }
         requestBodySizeMB.value = Math.round(configResponse.data.max_request_body_size / (1024 * 1024))
         responseBodySizeMB.value = Math.round(configResponse.data.max_response_body_size / (1024 * 1024))
         proxyListeners.value[0].interface = `127.0.0.1:${configResponse.data.start_port}`
@@ -963,6 +1048,33 @@ export function useProxyConfiguration({
           '[ProxyConfiguration] Loaded traffic analysis plugin enabled:',
           trafficAnalysisPluginEnabled.value,
         )
+      }
+
+      const behaviorSignalResponse = await invoke<CommandResponse<TrafficBehaviorSignalSettings>>(
+        'get_traffic_behavior_signal_settings',
+      )
+      if (behaviorSignalResponse.success && behaviorSignalResponse.data) {
+        behaviorSignalSettings.value = behaviorSignalResponse.data
+        lastSavedBehaviorSignalMode.value = behaviorSignalResponse.data.mode
+        console.log(
+          '[ProxyConfiguration] Loaded traffic behavior signal settings:',
+          behaviorSignalSettings.value,
+        )
+      }
+
+      try {
+        const extensionInstallationResponse = await invoke<
+          CommandResponse<TrafficBehaviorExtensionInstallation>
+        >('get_traffic_behavior_extension_installation')
+        if (extensionInstallationResponse.success && extensionInstallationResponse.data) {
+          browserExtensionBridgeUrl.value = extensionInstallationResponse.data.bridgeUrl
+          browserExtensionDirectoryPath.value =
+            extensionInstallationResponse.data.extensionDirectory
+          browserExtensionBundledWithApp.value =
+            extensionInstallationResponse.data.bundledWithApp
+        }
+      } catch (error) {
+        console.warn('[ProxyConfiguration] Failed to load browser extension installation info:', error)
       }
 
       const statusResponse = await invoke<CommandResponse<{ running: boolean; port: number }>>('get_proxy_status')
@@ -1111,6 +1223,7 @@ export function useProxyConfiguration({
 
   let unlistenProxyStatus: (() => void) | null = null
   let unlistenFilterRule: (() => void) | null = null
+  let unlistenBehaviorStatus: (() => void) | null = null
 
   onMounted(async () => {
     await loadConfig()
@@ -1146,11 +1259,23 @@ export function useProxyConfiguration({
     unlistenFilterRule = await listen<FilterRulePayload>('intercept:add-filter-rule', event => {
       handleAddFilterRule(event.payload)
     })
+
+    unlistenBehaviorStatus = await listen<{
+      connected: boolean
+      lastSeenAt?: string | null
+    }>('traffic-behavior:extension-status', event => {
+      behaviorSignalSettings.value = {
+        ...behaviorSignalSettings.value,
+        browserExtensionConnected: event.payload.connected,
+        browserExtensionLastSeenAt: event.payload.lastSeenAt || null,
+      }
+    })
   })
 
   onUnmounted(() => {
     if (unlistenProxyStatus) unlistenProxyStatus()
     if (unlistenFilterRule) unlistenFilterRule()
+    if (unlistenBehaviorStatus) unlistenBehaviorStatus()
     if (saveTimeout.value) {
       clearTimeout(saveTimeout.value)
     }
@@ -1200,6 +1325,10 @@ export function useProxyConfiguration({
     responseBodySizeMB,
     proxyAutoStart,
     trafficAnalysisPluginEnabled,
+    browserExtensionBridgeUrl,
+    browserExtensionDirectoryPath,
+    browserExtensionBundledWithApp,
+    behaviorSignalSettings,
     proxyListeners,
     selectedListeners,
     masterInterceptionEnabled,
@@ -1327,6 +1456,9 @@ export function useProxyConfiguration({
     openCertDir,
     saveProxyAutoStart,
     saveTrafficAnalysisPluginEnabled,
+    saveTrafficBehaviorSignalSettings,
+    copyBrowserExtensionBridgeUrl,
+    copyBrowserExtensionDirectory,
     loadConfig,
     autoStartProxy,
     addRequestFilterRule,

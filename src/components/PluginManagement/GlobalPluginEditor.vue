@@ -184,7 +184,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '../../composables/useDialog'
-import type { SubCategory, CodeReference, CommandResponse, TestResult } from './types'
+import type { SubCategory, CodeReference, CommandResponse, PluginFixAgentResult, TestResult } from './types'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { EditorView, type ViewUpdate } from '@codemirror/view'
@@ -1132,7 +1132,109 @@ const finishAiChat = (content: string) => {
   })
 }
 
-const handleAiQuickAction = (action: string) => {
+const renderAssistantHtml = (content: string): string => {
+  marked.setOptions({ breaks: true, gfm: true })
+  return DOMPurify.sanitize(marked.parse(content) as string)
+}
+
+const handlePluginFixQuickAction = async () => {
+  const latestCode = store.pluginCode
+  if (!latestCode.trim()) {
+    showToast(t('plugins.noCode', '当前没有可修复的代码'), 'warning')
+    return
+  }
+
+  const testResultRef = store.selectedTestResultRef
+  const errorMessage = testResultRef?.error || testResultRef?.message || t('plugins.testFailed', '测试失败')
+  const errorDetails = testResultRef?.result ? JSON.stringify(testResultRef.result, null, 2) : undefined
+
+  store.aiChatMessages.push({
+    role: 'user',
+    content: t('plugins.fixWithAgentPrompt', '请基于当前测试失败信息修复这段插件代码'),
+    codeRef: {
+      code: latestCode,
+      preview: latestCode.substring(0, 100) + '...',
+      startLine: 1,
+      endLine: latestCode.split('\n').length,
+      isFullCode: true
+    },
+    testResultRef: testResultRef || undefined
+  })
+
+  store.aiChatStreaming = true
+  store.aiChatStreamingContent = t('plugins.fixingWithAgent', 'plugin_fix_agent 正在修复代码...')
+
+  try {
+    const resp = await invoke<CommandResponse<PluginFixAgentResult>>('fix_plugin_with_system_agent', {
+      request: {
+        originalCode: latestCode,
+        errorMessage,
+        errorDetails,
+        vulnType: store.newPluginMetadata.category || undefined,
+        attempt: 1
+      }
+    })
+
+    if (!resp.success || !resp.data) {
+      throw new Error(resp.error || t('plugins.fixFailed', '修复失败'))
+    }
+
+    store.pluginCode = resp.data.fixedCode
+    updateEditorsContent(store.pluginCode)
+
+    const validationLines = [
+      `- 模型: \`${resp.data.model}\``,
+      `- 静态校验: ${resp.data.validation.is_valid ? '通过' : '未通过'}`,
+      `- 执行测试: ${resp.data.executionTest.success ? '通过' : '未通过'}`,
+      `- Run ID: \`${resp.data.runId}\``
+    ]
+
+    if (!resp.data.executionTest.success && resp.data.executionTest.error_message) {
+      validationLines.push(`- 执行错误: ${resp.data.executionTest.error_message}`)
+    }
+
+    const content = [
+      '已通过 `plugin_fix_agent` 生成修复代码，并自动应用到当前编辑器。',
+      '',
+      ...validationLines,
+      '',
+      '```typescript',
+      resp.data.fixedCode,
+      '```'
+    ].join('\n')
+
+    store.aiChatMessages.push({
+      role: 'assistant',
+      content: renderAssistantHtml(content),
+      codeBlock: resp.data.fixedCode,
+      codeBlocks: [resp.data.fixedCode]
+    })
+
+    showToast(
+      resp.data.executionTest.success
+        ? t('plugins.fixApplied', '修复代码已应用')
+        : t('plugins.fixAppliedWithWarnings', '修复代码已应用，但仍有校验问题'),
+      resp.data.executionTest.success ? 'success' : 'warning'
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : t('plugins.fixFailed', '修复失败')
+    store.aiChatMessages.push({
+      role: 'assistant',
+      content: renderAssistantHtml(`❌ ${message}`)
+    })
+    showToast(message, 'error')
+  } finally {
+    store.aiChatStreaming = false
+    store.aiChatStreamingContent = ''
+  }
+}
+
+const handleAiQuickAction = async (action: string) => {
+  if (action === 'fix' && store.selectedTestResultRef && !store.selectedTestResultRef.success) {
+    await handlePluginFixQuickAction()
+    return
+  }
+
   const actions: Record<string, string> = {
     'explain': '请解释这段插件代码的功能和工作原理',
     'optimize': '请优化这段代码，提高性能和可读性',
@@ -1142,7 +1244,7 @@ const handleAiQuickAction = (action: string) => {
     'document': '请为这段代码添加详细的注释和文档说明',
     'test': '请为这段代码生成测试用例，覆盖主要功能和边界情况'
   }
-  handleSendAiMessage(actions[action] || action)
+  await handleSendAiMessage(actions[action] || action)
 }
 
 const handleApplyAiCode = async (code: string, context?: CodeReference | null) => {

@@ -1,7 +1,23 @@
 <template>
   <div class="space-y-4">
+    <div class="overflow-x-auto">
+      <div class="tabs tabs-boxed bg-base-200 p-1 min-w-max">
+        <button
+          v-for="tab in settingsTabs"
+          :key="tab.id"
+          type="button"
+          class="tab tab-lg gap-2"
+          :class="{ 'tab-active': activeSettingsTab === tab.id }"
+          @click="activeSettingsTab = tab.id"
+        >
+          <i :class="tab.icon"></i>
+          <span>{{ tab.label }}</span>
+        </button>
+      </div>
+    </div>
+
     <!-- Proxy Listeners Section -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-network-wired mr-2"></i>
@@ -250,7 +266,7 @@
     </dialog>
 
     <!-- Traffic Analysis Settings -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'analysis'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-chart-line mr-2"></i>
@@ -291,11 +307,109 @@
             </div>
           </label>
         </div>
+
+        <div class="mt-4">
+          <ProxyScopeRulesPanel
+            v-model:include-rules="proxyConfig.scope_include_rules"
+            v-model:exclude-rules="proxyConfig.scope_exclude_rules"
+          />
+        </div>
+
+        <div class="mt-4 rounded-lg border border-base-300 p-4 space-y-3">
+          <div>
+            <h3 class="font-medium">
+              {{ $t('trafficAnalysis.proxyConfiguration.behaviorSignalSource') }}
+            </h3>
+            <p class="text-xs text-base-content/60 mt-1">
+              {{ $t('trafficAnalysis.proxyConfiguration.behaviorSignalSourceDesc') }}
+            </p>
+          </div>
+
+          <label class="label cursor-pointer justify-start gap-3 py-2 items-start">
+            <input
+              v-model="behaviorSignalSettings.mode"
+              type="radio"
+              class="radio radio-primary mt-1"
+              value="proxy_inferred"
+              @change="saveTrafficBehaviorSignalSettings"
+            />
+            <div>
+              <span class="label-text font-medium">
+                {{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceProxyInferred') }}
+              </span>
+              <p class="text-xs text-base-content/60 mt-1">
+                {{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceProxyInferredDesc') }}
+              </p>
+            </div>
+          </label>
+
+          <label class="label cursor-pointer justify-start gap-3 py-2 items-start">
+            <input
+              v-model="behaviorSignalSettings.mode"
+              type="radio"
+              class="radio radio-primary mt-1"
+              value="browser_extension"
+              @change="saveTrafficBehaviorSignalSettings"
+            />
+            <div class="flex-1">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="label-text font-medium">
+                  {{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceBrowserExtension') }}
+                </span>
+                <span
+                  class="badge badge-sm"
+                  :class="behaviorSignalSettings.browserExtensionConnected ? 'badge-success' : 'badge-ghost'"
+                >
+                  {{
+                    behaviorSignalSettings.browserExtensionConnected
+                      ? $t('trafficAnalysis.proxyConfiguration.browserExtensionConnected')
+                      : $t('trafficAnalysis.proxyConfiguration.browserExtensionDisconnected')
+                  }}
+                </span>
+              </div>
+              <p class="text-xs text-base-content/60 mt-1">
+                {{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceBrowserExtensionDesc') }}
+              </p>
+              <div class="mt-2 text-[11px] text-base-content/50 space-y-1">
+                <div>
+                  {{ $t('trafficAnalysis.proxyConfiguration.browserExtensionBridgeUrl') }}:
+                  <code class="font-mono">{{ browserExtensionBridgeUrl }}</code>
+                </div>
+                <div>
+                  {{ $t('trafficAnalysis.proxyConfiguration.browserExtensionDirectory') }}:
+                  <code class="font-mono break-all">{{ browserExtensionDirectoryPath }}</code>
+                  <span
+                    class="badge badge-xs ml-2"
+                    :class="browserExtensionBundledWithApp ? 'badge-success' : 'badge-ghost'"
+                  >
+                    {{
+                      browserExtensionBundledWithApp
+                        ? $t('trafficAnalysis.proxyConfiguration.browserExtensionBundledWithApp')
+                        : $t('trafficAnalysis.proxyConfiguration.browserExtensionFromWorkspace')
+                    }}
+                  </span>
+                </div>
+                <div v-if="behaviorSignalSettings.browserExtensionLastSeenAt">
+                  {{ $t('trafficAnalysis.proxyConfiguration.browserExtensionLastSeenAt') }}:
+                  {{ new Date(behaviorSignalSettings.browserExtensionLastSeenAt).toLocaleString() }}
+                </div>
+              </div>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <button class="btn btn-xs btn-outline" type="button" @click.stop="copyBrowserExtensionBridgeUrl">
+                  {{ $t('trafficAnalysis.proxyConfiguration.copyBridgeUrl', '复制 Bridge 地址') }}
+                </button>
+                <button class="btn btn-xs btn-outline" type="button" @click.stop="copyBrowserExtensionDirectory">
+                  {{ $t('trafficAnalysis.proxyConfiguration.copyExtensionDirectory', '复制扩展目录') }}
+                </button>
+              </div>
+            </div>
+          </label>
+        </div>
       </div>
     </div>
 
     <!-- Request Interception Rules -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-filter mr-2"></i>
@@ -409,7 +523,7 @@
     </div>
 
     <!-- Response Interception Rules -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-reply mr-2"></i>
@@ -583,7 +697,7 @@
     </dialog>
 
     <!-- upstream proxy servers -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-server mr-2"></i>
@@ -662,7 +776,7 @@
       </div>
     </div>
     <!-- WebSocket Interception -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-exchange-alt mr-2"></i>
@@ -698,7 +812,7 @@
     </div>
 
     <!-- Response Modification Rules -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-edit mr-2"></i>
@@ -755,7 +869,7 @@
     </div>
 
     <!-- Match and Replace Rules -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-search-plus mr-2"></i>
@@ -1163,7 +1277,7 @@
     </dialog>
 
     <!-- TLS Pass Through -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-lock mr-2"></i>
@@ -1253,7 +1367,7 @@
     </div>
 
     <!-- Proxy History Logging -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'analysis'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-history mr-2"></i>
@@ -1308,7 +1422,7 @@
     </div>
 
     <!-- Default Proxy Interception State -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-power-off mr-2"></i>
@@ -1363,7 +1477,7 @@
     </div>
 
     <!-- Miscellaneous Settings -->
-    <div class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-cogs mr-2"></i>
@@ -1475,16 +1589,51 @@
       </div>
     </div>
 
-    <TrafficDisplaySettingsPanel />
+    <TrafficDisplaySettingsPanel v-if="activeSettingsTab === 'display'" />
   </div>
 </template>
 
 <script setup lang="ts">
 import TrafficDisplaySettingsPanel from './TrafficDisplaySettingsPanel.vue'
+import ProxyScopeRulesPanel from './ProxyScopeRulesPanel.vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProxyConfiguration } from './useProxyConfiguration'
 
 const { t } = useI18n()
+
+type SettingsTabId = 'listeners' | 'analysis' | 'display' | 'advanced'
+
+type SettingsTab = {
+  id: SettingsTabId
+  label: string
+  icon: string
+}
+
+const activeSettingsTab = ref<SettingsTabId>('listeners')
+
+const settingsTabs = computed<SettingsTab[]>(() => [
+  {
+    id: 'listeners',
+    label: t('trafficAnalysis.proxyConfiguration.settingsTabListeners'),
+    icon: 'fas fa-network-wired',
+  },
+  {
+    id: 'analysis',
+    label: t('trafficAnalysis.proxyConfiguration.settingsTabAnalysis'),
+    icon: 'fas fa-chart-line',
+  },
+  {
+    id: 'display',
+    label: t('trafficAnalysis.proxyConfiguration.settingsTabDisplay'),
+    icon: 'fas fa-font',
+  },
+  {
+    id: 'advanced',
+    label: t('trafficAnalysis.proxyConfiguration.settingsTabAdvanced'),
+    icon: 'fas fa-cogs',
+  },
+])
 
 // Emit declaration
 const emit = defineEmits<{
@@ -1498,6 +1647,10 @@ const {
   responseBodySizeMB,
   proxyAutoStart,
   trafficAnalysisPluginEnabled,
+  browserExtensionBridgeUrl,
+  browserExtensionDirectoryPath,
+  browserExtensionBundledWithApp,
+  behaviorSignalSettings,
   proxyListeners,
   selectedListeners,
   masterInterceptionEnabled,
@@ -1625,6 +1778,9 @@ const {
   openCertDir,
   saveProxyAutoStart,
   saveTrafficAnalysisPluginEnabled,
+  saveTrafficBehaviorSignalSettings,
+  copyBrowserExtensionBridgeUrl,
+  copyBrowserExtensionDirectory,
   loadConfig,
   autoStartProxy,
   addRequestFilterRule,

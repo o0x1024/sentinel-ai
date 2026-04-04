@@ -398,9 +398,11 @@ impl DictionaryService {
             *param_idx += 1;
             placeholder
         };
-        let marker_clause =
-            |params: &mut Vec<String>, param_idx: &mut i32, markers: &[&str]| -> String {
-                markers
+        let marker_clause = |params: &mut Vec<String>,
+                             param_idx: &mut i32,
+                             markers: &[&str]|
+         -> String {
+            markers
                     .iter()
                     .map(|marker| {
                         let placeholder =
@@ -412,7 +414,7 @@ impl DictionaryService {
                     })
                     .collect::<Vec<_>>()
                     .join(" OR ")
-            };
+        };
 
         let metadata_placeholder = push_param(params, param_idx, metadata_pattern);
 
@@ -448,7 +450,8 @@ impl DictionaryService {
                 ));
             }
             "risk_verification" => {
-                let verification_markers = marker_clause(params, param_idx, &["verification", "poc"]);
+                let verification_markers =
+                    marker_clause(params, param_idx, &["verification", "poc"]);
                 let category_placeholder = push_param(params, param_idx, "risk".to_string());
                 query.push_str(&format!(
                     " AND (LOWER(COALESCE(metadata, '')) LIKE {0} OR LOWER(COALESCE(category, '')) = {1} OR {2})",
@@ -1187,31 +1190,29 @@ impl DictionaryService {
         )
         .await?;
 
-        self.ensure_builtin_dictionary_metadata_only(
-            Dictionary {
-                id: "builtin_sensitive_files_web".to_string(),
-                name: "Sensitive Web Files".to_string(),
-                description: Some(
-                    "Common sensitive files, API docs, debug outputs, and exposed configuration paths"
-                        .to_string(),
-                ),
-                dict_type: DictionaryType::SensitiveFile.to_string(),
-                service_type: Some(ServiceType::Web.to_string()),
-                category: Some("risk".to_string()),
-                is_builtin: true,
-                is_active: true,
-                word_count: 0,
-                file_size: 0,
-                checksum: None,
-                version: "1.0.0".to_string(),
-                author: Some("Sentinel AI".to_string()),
-                source_url: None,
-                tags: Some("file,exposure,swagger,config,leak".to_string()),
-                metadata: None,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            },
-        )
+        self.ensure_builtin_dictionary_metadata_only(Dictionary {
+            id: "builtin_sensitive_files_web".to_string(),
+            name: "Sensitive Web Files".to_string(),
+            description: Some(
+                "Common sensitive files, API docs, debug outputs, and exposed configuration paths"
+                    .to_string(),
+            ),
+            dict_type: DictionaryType::SensitiveFile.to_string(),
+            service_type: Some(ServiceType::Web.to_string()),
+            category: Some("risk".to_string()),
+            is_builtin: true,
+            is_active: true,
+            word_count: 0,
+            file_size: 0,
+            checksum: None,
+            version: "1.0.0".to_string(),
+            author: Some("Sentinel AI".to_string()),
+            source_url: None,
+            tags: Some("file,exposure,swagger,config,leak".to_string()),
+            metadata: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        })
         .await?;
 
         self.ensure_builtin_dictionary(

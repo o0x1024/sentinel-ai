@@ -17,6 +17,7 @@ pub mod history_cache;
 pub mod packet_capture;
 pub mod proxy;
 pub mod scanner;
+pub mod scope;
 pub mod system_proxy;
 pub mod types;
 
@@ -27,10 +28,9 @@ pub use error::{Result, TrafficError};
 // Re-export traffic database types from sentinel-db
 pub use history_cache::{
     HistoryCacheConfig, HistoryCacheStats, HttpRequestFilters, HttpRequestRecord,
-    HttpRequestSummary,
-    ProxyHistoryCache, ProxyHistoryFilters, ProxyHistoryItem, WebSocketConnectionRecord,
-    WebSocketConnectionStatus, WebSocketDirection, WebSocketFilters, WebSocketMessageRecord,
-    WebSocketMessageType,
+    HttpRequestSummary, ProxyHistoryCache, ProxyHistoryFilters, ProxyHistoryItem,
+    WebSocketConnectionRecord, WebSocketConnectionStatus, WebSocketDirection, WebSocketFilters,
+    WebSocketMessageRecord, WebSocketMessageType,
 };
 pub use packet_capture::{
     CapturedPacket, ExtractedFile, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps,
@@ -43,6 +43,7 @@ pub use proxy::{
     WebSocketConnectionContext, WebSocketDirection as ProxyWebSocketDirection,
     WebSocketMessageContext,
 };
+pub use scope::ProxyScopeRule;
 pub use scanner::{FindingDeduplicator, FindingReceiver, FindingSender, ScanPipeline};
 pub use sentinel_db::{
     ProxyRequestFilters, ProxyRequestRecord, TrafficEvidenceRecord as EvidenceRecord,
