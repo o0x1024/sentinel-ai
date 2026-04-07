@@ -6,13 +6,12 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct ProxyScopeRule {
     #[serde(default = "default_rule_enabled")]
     pub enabled: bool,
     #[serde(default)]
     pub protocol: String,
-    #[serde(default)]
+    #[serde(rename = "host_or_ip_range", alias = "hostOrIpRange", default)]
     pub host_or_ip_range: String,
     #[serde(default)]
     pub port: String,
@@ -59,7 +58,11 @@ pub fn url_is_in_scope(
 fn build_scope_target(url: &str) -> Option<ScopeTarget> {
     let parsed = Url::parse(url).ok()?;
     let protocol = parsed.scheme().trim().to_ascii_lowercase();
-    let host = parsed.host_str()?.trim().trim_end_matches('.').to_ascii_lowercase();
+    let host = parsed
+        .host_str()?
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     let port = parsed
         .port_or_known_default()
         .map(|value| value.to_string())
@@ -200,6 +203,7 @@ fn exact_or_regex_matches(pattern: &str, actual: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{url_is_in_scope, ProxyScopeRule};
+    use serde_json::{json, Value};
 
     #[test]
     fn empty_scope_allows_all() {
@@ -252,5 +256,54 @@ mod tests {
             ..Default::default()
         }];
         assert!(url_is_in_scope("http://127.0.0.1:8080/test", &include, &[]));
+    }
+
+    #[test]
+    fn scope_rule_deserializes_snake_case_host_range() {
+        let rule: ProxyScopeRule = serde_json::from_value(json!({
+            "enabled": true,
+            "protocol": "https",
+            "host_or_ip_range": "*.example.com",
+            "port": "443",
+            "file": "/api"
+        }))
+        .expect("snake_case scope rule should deserialize");
+
+        assert_eq!(rule.host_or_ip_range, "*.example.com");
+        assert_eq!(rule.protocol, "https");
+        assert_eq!(rule.port, "443");
+        assert_eq!(rule.file, "/api");
+    }
+
+    #[test]
+    fn scope_rule_deserializes_legacy_camel_case_host_range() {
+        let rule: ProxyScopeRule = serde_json::from_value(json!({
+            "enabled": true,
+            "protocol": "https",
+            "hostOrIpRange": "*.example.com",
+            "port": "443",
+            "file": "/api"
+        }))
+        .expect("camelCase scope rule should deserialize");
+
+        assert_eq!(rule.host_or_ip_range, "*.example.com");
+    }
+
+    #[test]
+    fn scope_rule_serializes_host_range_as_snake_case() {
+        let value = serde_json::to_value(ProxyScopeRule {
+            enabled: true,
+            protocol: "https".to_string(),
+            host_or_ip_range: "*.example.com".to_string(),
+            port: "443".to_string(),
+            file: "/api".to_string(),
+        })
+        .expect("scope rule should serialize");
+
+        assert_eq!(
+            value.get("host_or_ip_range"),
+            Some(&Value::String("*.example.com".to_string()))
+        );
+        assert!(value.get("hostOrIpRange").is_none());
     }
 }

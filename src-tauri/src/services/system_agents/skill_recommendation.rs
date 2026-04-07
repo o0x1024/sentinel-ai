@@ -22,14 +22,19 @@ pub fn recommend_logic_skills(payload: &Value) -> Value {
         .get("logicInvariants")
         .and_then(Value::as_array)
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(|item| item.get("id").and_then(Value::as_str))
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
 
-    if path.contains("pay") || path.contains("refund") || action_kind == "pay" || action_kind == "refund" {
+    if path.contains("pay")
+        || path.contains("refund")
+        || action_kind == "pay"
+        || action_kind == "refund"
+    {
         recommendations.push(json!({
             "id": "payment-flow",
             "score": 0.86,
@@ -42,7 +47,9 @@ pub fn recommend_logic_skills(payload: &Value) -> Value {
     if path.contains("approve")
         || path.contains("reject")
         || action_kind == "approve"
-        || invariant_ids.iter().any(|id| id == "role_separation_invariant")
+        || invariant_ids
+            .iter()
+            .any(|id| id == "role_separation_invariant")
     {
         recommendations.push(json!({
             "id": "approval-workflow",
@@ -53,7 +60,9 @@ pub fn recommend_logic_skills(payload: &Value) -> Value {
         }));
     }
 
-    if resource_fields.iter().any(|field| field.ends_with("Id") || field.ends_with("_id"))
+    if resource_fields
+        .iter()
+        .any(|field| field.ends_with("Id") || field.ends_with("_id"))
         || invariant_ids.iter().any(|id| id == "ownership_invariant")
     {
         recommendations.push(json!({

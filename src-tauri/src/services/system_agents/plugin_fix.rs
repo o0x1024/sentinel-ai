@@ -2,12 +2,15 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use sentinel_llm::LlmClient;
-
+use crate::commands::ai_system_agent_support::{
+    build_virtual_tool_context, complete_external_tracked_run_failure,
+    complete_external_tracked_run_success, load_external_system_agent_context,
+    merge_external_system_prompt, resolve_external_llm_config, run_external_text_task,
+    start_external_tracked_run,
+};
 use crate::generators::{
     ExecutionTestResult, PluginValidator, PromptTemplateBuilder, ValidationResult,
 };
-use crate::services::system_agents::tool_policy::SystemAgentToolPolicy;
 use crate::services::{AiServiceManager, SystemAgentRuntime};
 
 const PLUGIN_FIX_PROFILE_ID: &str = "plugin_fix_agent";
@@ -40,22 +43,20 @@ pub async fn run_plugin_fix_agent(
     request: PluginFixAgentRequest,
 ) -> Result<PluginFixAgentResult> {
     let payload = serde_json::to_value(&request)?;
-    let run = runtime
-        .start_external_run(PLUGIN_FIX_PROFILE_ID, payload, Some("manual".to_string()))
-        .await?;
+    let tracked_run = start_external_tracked_run(runtime, PLUGIN_FIX_PROFILE_ID, payload).await;
+    let run_id = tracked_run
+        .as_ref()
+        .map(|run| run.run_id.clone())
+        .unwrap_or_else(|| format!("plugin-fix-{}", uuid::Uuid::new_v4()));
 
-    match execute_plugin_fix(ai_manager, runtime, &request, &run.id).await {
+    match execute_plugin_fix(ai_manager, runtime, &request, &run_id).await {
         Ok(result) => {
             let output = serde_json::to_value(&result)?;
-            runtime
-                .complete_external_run_success(&run.id, PLUGIN_FIX_PROFILE_ID, output)
-                .await?;
+            complete_external_tracked_run_success(runtime, &tracked_run, output).await;
             Ok(result)
         }
         Err(error) => {
-            runtime
-                .complete_external_run_failure(&run.id, PLUGIN_FIX_PROFILE_ID, error.to_string())
-                .await?;
+            complete_external_tracked_run_failure(runtime, &tracked_run, error.to_string()).await;
             Err(error)
         }
     }
@@ -67,14 +68,12 @@ async fn execute_plugin_fix(
     request: &PluginFixAgentRequest,
     run_id: &str,
 ) -> Result<PluginFixAgentResult> {
-    let profile = runtime
-        .get_profile(PLUGIN_FIX_PROFILE_ID)
-        .await?
-        .ok_or_else(|| anyhow!("System agent profile not found: {}", PLUGIN_FIX_PROFILE_ID))?;
-    let tool_policy = SystemAgentToolPolicy::from_profile(&profile);
-    tool_policy.validate()?;
-    tool_policy.ensure_tool_allowed("plugin_validator")?;
-    tool_policy.ensure_tool_allowed("plugin_test_result_reader")?;
+    let agent_context = load_external_system_agent_context(
+        runtime,
+        PLUGIN_FIX_PROFILE_ID,
+        &["plugin_validator", "plugin_test_result_reader"],
+    )
+    .await?;
 
     let vuln_type = request.vuln_type.as_deref().unwrap_or("generic");
     let attempt = request.attempt.unwrap_or(1);
@@ -87,26 +86,33 @@ async fn execute_plugin_fix(
         attempt,
     )?;
 
-    let prompt_patch = profile
-        .prompt_patch
-        .filter(|patch| !patch.trim().is_empty());
+    let virtual_tool_sections = build_virtual_tool_context(&agent_context, None).await?;
+    let prompt = merge_external_system_prompt(
+        Some(if virtual_tool_sections.is_empty() {
+            base_prompt
+        } else {
+            format!(
+                "{}\n\nVirtual tool context:\n{}",
+                base_prompt,
+                virtual_tool_sections.join("\n\n")
+            )
+        }),
+        &agent_context,
+    )
+    .unwrap_or_default();
 
-    let mut prompt_sections = vec![base_prompt];
-    if let Some(prompt_patch) = &prompt_patch {
-        prompt_sections.push(format!("Additional instructions:\n{prompt_patch}"));
-    }
-    if let Some(policy_note) = tool_policy.prompt_note() {
-        prompt_sections.push(policy_note);
-    }
-    let prompt = prompt_sections.join("\n\n");
-
-    let service = resolve_generation_service(ai_manager).await?;
-    let model = service.get_config().model.clone();
-    let llm_client = LlmClient::new(service.service.to_llm_config());
-    let response = llm_client
-        .completion(None, &prompt)
-        .await
-        .context("Failed to call LLM for plugin fix")?;
+    let response = run_external_text_task(
+        &runtime.app_handle(),
+        ai_manager,
+        PLUGIN_FIX_PROFILE_ID,
+        run_id,
+        &agent_context,
+        None,
+        prompt,
+    )
+    .await
+    .context("Failed to call LLM for plugin fix")?;
+    let (_, model) = resolve_external_llm_config(ai_manager, Some(&agent_context), None).await?;
     let fixed_code = extract_and_clean_code(&response);
 
     if fixed_code.trim().is_empty() {
@@ -124,42 +130,8 @@ async fn execute_plugin_fix(
         model,
         validation,
         execution_test,
-        prompt_patch_applied: prompt_patch.is_some(),
+        prompt_patch_applied: agent_context.prompt_patch.is_some(),
     })
-}
-
-async fn resolve_generation_service(
-    ai_manager: &Arc<AiServiceManager>,
-) -> Result<crate::services::ai::AiServiceWrapper> {
-    if let Ok(Some((provider, _model_name))) = ai_manager.get_default_llm_model().await {
-        let provider_lc = provider.to_lowercase();
-        let maybe_service = ai_manager
-            .list_services()
-            .into_iter()
-            .find_map(|service_name| {
-                let service = ai_manager.get_service(&service_name)?;
-                let service_provider = service.get_config().provider.to_lowercase();
-                if service_provider == provider_lc || service_name.to_lowercase() == provider_lc {
-                    Some(service)
-                } else {
-                    None
-                }
-            });
-
-        if let Some(service) = maybe_service {
-            return Ok(service);
-        }
-    }
-
-    ai_manager
-        .get_service("default")
-        .or_else(|| {
-            ai_manager
-                .list_services()
-                .first()
-                .and_then(|service_name| ai_manager.get_service(service_name))
-        })
-        .ok_or_else(|| anyhow!("No AI service available for plugin fix agent"))
 }
 
 fn extract_and_clean_code(response: &str) -> String {

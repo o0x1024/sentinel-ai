@@ -3,9 +3,14 @@
         <!-- Tab 切换 -->
         <div class="tabs tabs-boxed bg-base-200 flex-shrink-0 mb-4" role="tablist" :aria-label="$t('trafficAnalysis.ariaLabels.trafficAnalysisTabs')">
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'control'"
-                :class="{ 'tab-active': activeTab === 'control' }" @click="activeTab = 'control'">
+                :class="{
+                    'tab-active': activeTab === 'control',
+                    'text-error border border-error/40 bg-error/10': activeTab !== 'control' && controlInterceptCount > 0,
+                    'control-tab-pulse': controlTabPulse,
+                }" @click="activeTab = 'control'">
                 <i class="fas fa-sliders-h mr-2"></i>
                 {{ $t('trafficAnalysis.tabs.control') }}
+                <span v-if="controlInterceptCount > 0" class="badge badge-xs badge-error ml-1">{{ controlInterceptCount }}</span>
             </button>
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'proxyhistory'"
                 :class="{ 'tab-active': activeTab === 'proxyhistory' }" @click="activeTab = 'proxyhistory'">
@@ -51,7 +56,10 @@
         <div class="flex-1 min-h-0 relative">
             <TrafficControl 
                 v-show="activeTab === 'control'" 
+                @openResponseInterceptionSettings="handleOpenResponseInterceptionSettings"
+                @interceptQueueChanged="handleInterceptQueueChanged"
                 @sendToRepeater="handleSendToRepeater"
+                @sendDraftRequestToComparer="handleSendDraftRequestToComparer"
                 @sendToIntruder="handleSendToIntruder"
                 class="h-full absolute inset-0 overflow-auto"
             />
@@ -60,6 +68,8 @@
                 v-show="activeTab === 'proxyhistory'" 
                 @sendToRepeater="handleSendToRepeater"
                 @sendToIntruder="handleSendToIntruder"
+                @sendDraftRequestToComparer="handleSendDraftRequestToComparer"
+                @sendToComparer="handleSendToComparer"
                 @addFilterRule="handleAddFilterRule"
                 class="h-full absolute inset-0 overflow-auto"
             />
@@ -67,11 +77,15 @@
                 v-show="activeTab === 'repeater'" 
                 ref="repeaterRef"
                 :initialRequest="pendingRepeaterRequest"
+                @sendToComparer="handleSendToComparer"
+                @sendDraftRequestToComparer="handleSendDraftRequestToComparer"
+                @sendToIntruder="handleSendToIntruder"
                 class="h-full absolute inset-0 overflow-auto"
             />
             <ProxyComparer
                 v-show="activeTab === 'comparer'"
                 ref="comparerRef"
+                @sendToRepeater="handleSendToRepeater"
                 class="h-full absolute inset-0 overflow-auto"
             />
             <ProxyIntruder
@@ -80,6 +94,7 @@
                 :initialRequest="pendingIntruderRequest"
                 @sendToRepeater="handleSendToRepeater"
                 @sendToComparer="handleSendToComparer"
+                @sendDraftRequestToComparer="handleSendDraftRequestToComparer"
                 class="h-full absolute inset-0 overflow-auto"
             />
             <ProxifierPanel 
@@ -102,7 +117,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onActivated, onDeactivated, onErrorCaptured, onUnmounted, watch, provide } from 'vue'
+import { ref, onMounted, onActivated, onDeactivated, onErrorCaptured, onUnmounted, watch, provide, nextTick } from 'vue'
 import TrafficControl from '../components/traffic/ProxyIntercept.vue'
 import ProxyHistory from '../components/traffic/ProxyHistory.vue'
 import ProxyRepeater from '../components/traffic/ProxyRepeater.vue'
@@ -115,6 +130,7 @@ import {
     COMPARER_TRANSFER_STORAGE_KEY,
     parseTransferEnvelope,
     REPEATER_TRANSFER_STORAGE_KEY,
+    type TrafficComparerDraftRequestInput,
     type TrafficComparePayload,
 } from '../components/traffic/transfers'
 
@@ -140,6 +156,9 @@ const pendingIntruderRequest = ref<RepeaterRequest | undefined>(undefined)
 const repeaterCount = ref(0)
 const comparerCount = ref(0)
 const intruderCount = ref(0)
+const controlInterceptCount = ref(0)
+const controlTabPulse = ref(false)
+let controlTabPulseTimeout: ReturnType<typeof setTimeout> | null = null
 
 defineOptions({
   name: 'TrafficAnalysis'
@@ -189,6 +208,18 @@ function handleSendToComparer(payload: TrafficComparePayload) {
     }
 
     comparerCount.value++
+}
+
+function handleSendDraftRequestToComparer(payload: TrafficComparerDraftRequestInput) {
+    if (activeTab.value === 'comparer' && comparerRef.value) {
+        comparerRef.value.addDraftRequest(payload)
+        return
+    }
+
+    activeTab.value = 'comparer'
+    requestAnimationFrame(() => {
+        comparerRef.value?.addDraftRequest(payload)
+    })
 }
 
 function handleTransferStorage(event: StorageEvent) {
@@ -247,6 +278,31 @@ function handleFilterRuleAdded(rule: FilterRule) {
     }
 }
 
+async function handleOpenResponseInterceptionSettings() {
+    activeTab.value = 'proxyconfig'
+    await nextTick()
+    await proxyConfigRef.value?.openResponseInterceptionRules?.()
+}
+
+function handleInterceptQueueChanged(count: number) {
+    if (count > controlInterceptCount.value && activeTab.value !== 'control') {
+        controlTabPulse.value = false
+        if (controlTabPulseTimeout) {
+            clearTimeout(controlTabPulseTimeout)
+        }
+
+        requestAnimationFrame(() => {
+            controlTabPulse.value = true
+            controlTabPulseTimeout = setTimeout(() => {
+                controlTabPulse.value = false
+                controlTabPulseTimeout = null
+            }, 1200)
+        })
+    }
+
+    controlInterceptCount.value = count
+}
+
 // 监听 Tab 切换，清除待处理请求
 watch(activeTab, (newTab) => {
     console.log('[TrafficAnalysis] activeTab ->', newTab)
@@ -277,6 +333,9 @@ onDeactivated(() => {
 
 onUnmounted(() => {
     window.removeEventListener('storage', handleTransferStorage)
+    if (controlTabPulseTimeout) {
+        clearTimeout(controlTabPulseTimeout)
+    }
 })
 
 // 捕获子组件错误
@@ -306,5 +365,24 @@ onErrorCaptured((err, instance, info) => {
 .tab-active {
     background-color: hsl(var(--p));
     color: hsl(var(--pc));
+}
+
+.control-tab-pulse {
+    animation: control-tab-pulse 1.2s ease-out 1;
+}
+
+@keyframes control-tab-pulse {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 hsl(var(--er) / 0.55);
+    }
+    35% {
+        transform: scale(1.03);
+        box-shadow: 0 0 0 10px hsl(var(--er) / 0.18);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 hsl(var(--er) / 0);
+    }
 }
 </style>

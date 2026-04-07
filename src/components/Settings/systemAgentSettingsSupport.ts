@@ -31,6 +31,8 @@ export interface SystemAgentProfilePayload {
   capability: string
   enabled: boolean
   triggerMode: string
+  llmProviderOverride?: string | null
+  llmModelOverride?: string | null
   basePromptId?: string | null
   promptPatch?: string | null
   inputSchema?: Record<string, unknown> | null
@@ -95,6 +97,23 @@ export interface SystemAgentFindingSummary {
     request_body?: string | null
     response_body?: string | null
   }>
+}
+
+export interface SystemAgentBehaviorEffectStats {
+  window: string
+  totalFindings: number
+  behaviorContextFindings: number
+  browserExtensionFindings: number
+  proxyInferredFindings: number
+  unknownModeFindings: number
+  browserExtensionHypotheses: number
+  browserExtensionFormal: number
+  browserExtensionVerified: number
+  proxyInferredHypotheses: number
+  proxyInferredFormal: number
+  proxyInferredVerified: number
+  behaviorContextCoverageRate: number
+  browserExtensionShareRate: number
 }
 
 export interface SystemAgentToolMetadata {
@@ -224,6 +243,8 @@ export const createEmptySystemAgentProfile = (): SystemAgentProfilePayload => ({
   capability: 'designer',
   enabled: true,
   triggerMode: 'manual',
+  llmProviderOverride: null,
+  llmModelOverride: null,
   basePromptId: null,
   promptPatch: '',
   inputSchema: {},

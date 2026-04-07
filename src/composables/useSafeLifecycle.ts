@@ -4,9 +4,9 @@ import { onMounted as vueOnMounted, onUnmounted as vueOnUnmounted, onBeforeUnmou
 /**
  * Safely register onMounted hook only if component instance exists
  */
-export function onMounted(hook: () => void, flush?: 'pre' | 'post') {
+export function onMounted(hook: () => void) {
   if (getCurrentInstance()) {
-    vueOnMounted(hook, flush)
+    vueOnMounted(hook)
   }
 }
 

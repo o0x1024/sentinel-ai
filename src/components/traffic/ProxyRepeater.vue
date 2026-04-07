@@ -1,79 +1,16 @@
 <template>
   <div ref="repeaterRoot" class="flex flex-col h-full bg-base-100" @contextmenu.prevent>
     <!-- 右键菜单 -->
-    <div 
+    <div
       v-if="contextMenu.visible"
       class="fixed z-50 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-48"
       :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
       @click.stop
     >
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="contextMenuSend"
-      >
-        <i class="fas fa-paper-plane text-primary"></i>
-        {{ $t('trafficAnalysis.repeater.contextMenu.sendRequest') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="contextMenuSendToNewTab"
-      >
-        <i class="fas fa-plus text-success"></i>
-        {{ $t('trafficAnalysis.repeater.contextMenu.sendToNewTab') }}
-      </button>
-      <div class="divider my-1 h-0"></div>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="contextMenuCopyUrl"
-      >
-        <i class="fas fa-link text-info"></i>
-        {{ $t('trafficAnalysis.repeater.contextMenu.copyUrl') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="contextMenuCopyRequest"
-      >
-        <i class="fas fa-copy text-secondary"></i>
-        {{ $t('trafficAnalysis.repeater.contextMenu.copyRequest') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="contextMenuCopyCurl"
-      >
-        <i class="fas fa-terminal text-warning"></i>
-        {{ $t('trafficAnalysis.repeater.contextMenu.copyAsCurl') }}
-      </button>
-      <div class="divider my-1 h-0"></div>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="contextMenuSendRequestToAssistant"
-      >
-        <i class="fas fa-upload text-accent"></i>
-        {{ $t('trafficAnalysis.repeater.contextMenu.sendRequestToAssistant') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="contextMenuSendResponseToAssistant"
-        :disabled="!currentTab?.response"
-      >
-        <i class="fas fa-download text-accent"></i>
-        {{ $t('trafficAnalysis.repeater.contextMenu.sendResponseToAssistant') }}
-      </button>
-      <div class="divider my-1 h-0"></div>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="contextMenuPaste"
-      >
-        <i class="fas fa-paste text-accent"></i>
-        {{ $t('trafficAnalysis.repeater.contextMenu.paste') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="contextMenuClear"
-      >
-        <i class="fas fa-eraser text-error"></i>
-        {{ $t('trafficAnalysis.repeater.contextMenu.clear') }}
-      </button>
+      <TrafficContextMenuSections
+        :sections="repeaterContextMenuSections"
+        label-prefix="trafficAnalysis.repeater.contextMenu"
+      />
     </div>
     <!-- Tabs Header -->
     <div class="bg-base-200 border-b border-base-300 px-2 py-1 flex items-center gap-2">
@@ -246,20 +183,31 @@
         >
           <!-- Request Header -->
           <div class="bg-base-200 px-3 py-1 flex items-center justify-between border-b border-base-300">
-            <span class="font-semibold text-sm">{{ $t('trafficAnalysis.repeater.contextMenu.request') }}</span>
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-sm">{{ $t('trafficAnalysis.repeater.contextMenu.request') }}</span>
+              <button
+                class="btn btn-ghost btn-xs"
+                type="button"
+                :disabled="!canCompareCurrentRequestVersions"
+                @click="compareCurrentRequestVersions"
+              >
+                <i class="fas fa-not-equal"></i>
+                {{ $t('trafficAnalysis.repeater.actions.compareRequestVersions') }}
+              </button>
+            </div>
             <div class="tabs tabs-boxed tabs-xs bg-base-300">
-              <a 
+              <button
                 :class="['tab tab-xs', currentTab.requestTab === 'pretty' ? 'tab-active' : '']"
                 @click="currentTab.requestTab = 'pretty'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.pretty') }}</a>
-              <a 
+              >{{ $t('trafficAnalysis.repeater.contextMenu.pretty') }}</button>
+              <button
                 :class="['tab tab-xs', currentTab.requestTab === 'raw' ? 'tab-active' : '']"
                 @click="currentTab.requestTab = 'raw'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.raw') }}</a>
-              <a 
+              >{{ $t('trafficAnalysis.repeater.contextMenu.raw') }}</button>
+              <button
                 :class="['tab tab-xs', currentTab.requestTab === 'hex' ? 'tab-active' : '']"
                 @click="currentTab.requestTab = 'hex'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.hex') }}</a>
+              >{{ $t('trafficAnalysis.repeater.contextMenu.hex') }}</button>
             </div>
           </div>
 
@@ -271,6 +219,8 @@
                 :modelValue="formatPrettyRequest()"
                 @update:modelValue="onPrettyRequestUpdate"
                 :readonly="false"
+                custom-context-menu
+                @contextmenu="showContextMenu($event, 'request')"
                 message-type="request"
                 height="100%"
                 display-mode="pretty"
@@ -282,6 +232,8 @@
                 ref="requestEditor"
                 v-model="currentTab.rawRequest"
                 :readonly="false"
+                custom-context-menu
+                @contextmenu="showContextMenu($event, 'request')"
                 message-type="request"
                 height="100%"
                 display-mode="raw"
@@ -310,6 +262,15 @@
           <div class="bg-base-200 px-3 py-1 flex items-center justify-between border-b border-base-300">
             <div class="flex items-center gap-2">
               <span class="font-semibold text-sm">{{ $t('trafficAnalysis.repeater.contextMenu.response') }}</span>
+              <button
+                class="btn btn-ghost btn-xs"
+                type="button"
+                :disabled="!canCompareCurrentResponseVersions"
+                @click="compareCurrentResponseVersions"
+              >
+                <i class="fas fa-not-equal"></i>
+                {{ $t('trafficAnalysis.repeater.actions.compareResponseVersions') }}
+              </button>
               <template v-if="currentTab.response">
                 <span 
                   class="badge badge-sm"
@@ -320,27 +281,27 @@
               </template>
             </div>
             <div class="tabs tabs-boxed tabs-xs bg-base-300">
-              <a 
+              <button
                 :class="['tab tab-xs', currentTab.responseTab === 'pretty' ? 'tab-active' : '']"
                 @click="currentTab.responseTab = 'pretty'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.pretty') }}</a>
-              <a 
+              >{{ $t('trafficAnalysis.repeater.contextMenu.pretty') }}</button>
+              <button
                 :class="['tab tab-xs', currentTab.responseTab === 'raw' ? 'tab-active' : '']"
                 @click="currentTab.responseTab = 'raw'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.raw') }}</a>
-              <a 
+              >{{ $t('trafficAnalysis.repeater.contextMenu.raw') }}</button>
+              <button
                 :class="['tab tab-xs', currentTab.responseTab === 'hex' ? 'tab-active' : '']"
                 @click="currentTab.responseTab = 'hex'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.hex') }}</a>
-              <a 
+              >{{ $t('trafficAnalysis.repeater.contextMenu.hex') }}</button>
+              <button
                 :class="['tab tab-xs', currentTab.responseTab === 'render' ? 'tab-active' : '']"
                 @click="currentTab.responseTab = 'render'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.render') }}</a>
+              >{{ $t('trafficAnalysis.repeater.contextMenu.render') }}</button>
             </div>
           </div>
 
           <!-- Response Content -->
-          <div class="flex-1 overflow-hidden" @contextmenu.prevent>
+          <div class="flex-1 overflow-hidden" @contextmenu.prevent="showContextMenu($event, 'response')">
             <template v-if="currentTab.response || currentTab.rawResponse">
               <!-- Pretty/Raw View -->
               <template v-if="currentTab.responseTab === 'pretty' || currentTab.responseTab === 'raw'">
@@ -348,6 +309,8 @@
                   ref="responseEditor"
                   :modelValue="currentTab.responseTab === 'pretty' ? formatPrettyResponse() : currentTab.rawResponse"
                   :readonly="true"
+                  custom-context-menu
+                  @contextmenu="showContextMenu($event, 'response')"
                   message-type="response"
                   height="100%"
                   :display-mode="currentTab.responseTab === 'pretty' ? 'pretty' : 'raw'"
@@ -394,19 +357,40 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
-import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { dialog } from '@/composables/useDialog';
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue';
+import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
+import { buildSourceRequestFromRawRequest } from '@/components/traffic/intruder/http'
+import type {
+  TrafficComparePayload,
+  TrafficComparerDraftRequestInput,
+  TrafficTransferRequest,
+} from './transfers'
 import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
+import { useTrafficSendTargets } from './trafficSendTargets'
+import { buildTrafficRequestContextMenuSections } from './trafficRequestContextMenuSupport'
 import {
   formatRepeaterBytes as formatBytes,
   generateRepeaterId,
   getRepeaterStatusClass as getStatusClass,
 } from './proxyRepeaterUiSupport';
+import { buildTrafficRequestActionMenuItems } from './trafficRequestActionMenuSupport'
+import { buildTrafficRequestSendMenuItems } from './trafficSendMenuSupport'
+import {
+  buildRepeaterRequestVersionComparePayload,
+  buildRepeaterResponseVersionComparePayload,
+  canCompareRepeaterRequestVersions,
+  canCompareRepeaterResponseVersions,
+} from './trafficRepeaterComparerSupport'
 
-const router = useRouter();
 const { t } = useI18n();
+const { enabledTargets } = useTrafficSendTargets()
+const emit = defineEmits<{
+  (e: 'sendToComparer', payload: TrafficComparePayload): void
+  (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
+  (e: 'sendToIntruder', request: TrafficTransferRequest): void
+}>()
 
 // Props
 const props = defineProps<{
@@ -434,7 +418,9 @@ interface RepeaterTab {
   useTls: boolean;
   overrideSni: boolean;
   sniHost: string;
+  initialRawRequest: string;
   rawRequest: string;
+  previousRawResponse: string;
   rawResponse: string;
   requestTab: 'pretty' | 'raw' | 'hex';
   responseTab: 'pretty' | 'raw' | 'hex' | 'render';
@@ -464,6 +450,7 @@ const contextMenu = ref({
   y: 0,
   width: 0,
   height: 0,
+  pane: 'request' as 'request' | 'response',
 });
 
 // Layout
@@ -503,6 +490,85 @@ const showPort = computed(() => {
 
 // 向后兼容的 isSending（用于模板）
 const isSending = computed(() => currentTab.value?.isSending || false);
+const repeaterSendMenuItems = computed(() =>
+  buildTrafficRequestSendMenuItems({
+    enabledTargets: enabledTargets.value,
+    supportedTargets: ['comparer', 'intruder'],
+    actions: {
+      comparer: contextMenuSendToComparer,
+      intruder: contextMenu.value.pane === 'request' ? contextMenuSendToIntruder : undefined,
+    },
+  }),
+)
+const repeaterRequestActionMenuItems = computed(() =>
+  buildTrafficRequestActionMenuItems({
+    supportedActions: ['copyUrl', 'copyRequest', 'copyAsCurl'],
+    actions: {
+      copyUrl: contextMenuCopyUrl,
+      copyRequest: contextMenuCopyRequest,
+      copyAsCurl: contextMenuCopyCurl,
+    },
+  }),
+)
+const repeaterCompareMenuItems = computed(() =>
+  [
+    contextMenu.value.pane === 'request' ? {
+      key: 'compareRequestVersions',
+      iconClass: 'fas fa-not-equal text-accent',
+      labelKey: 'sendToComparer',
+      onClick: () => {
+        hideContextMenu()
+        compareCurrentRequestVersions()
+      },
+      disabled: !canCompareCurrentRequestVersions.value,
+    } : null,
+    contextMenu.value.pane === 'response' ? {
+      key: 'compareResponseVersions',
+      iconClass: 'fas fa-not-equal text-accent',
+      labelKey: 'sendToComparer',
+      onClick: () => {
+        hideContextMenu()
+        compareCurrentResponseVersions()
+      },
+      disabled: !canCompareCurrentResponseVersions.value,
+    } : null,
+  ],
+)
+const repeaterContextMenuSections = computed(() =>
+  buildTrafficRequestContextMenuSections({
+    sendItems: contextMenu.value.pane === 'request'
+      ? [
+          {
+            key: 'sendRequest',
+            iconClass: 'fas fa-paper-plane text-primary',
+            labelKey: 'sendRequest',
+            onClick: contextMenuSend,
+          },
+          {
+            key: 'sendToNewTab',
+            iconClass: 'fas fa-plus text-success',
+            labelKey: 'sendToNewTab',
+            onClick: contextMenuSendToNewTab,
+          },
+          ...repeaterSendMenuItems.value,
+        ]
+      : repeaterSendMenuItems.value.filter((item) => item.key === 'comparer'),
+    compareItems: repeaterCompareMenuItems.value,
+    requestItems: contextMenu.value.pane === 'request' ? repeaterRequestActionMenuItems.value : [],
+    assistantItems: contextMenu.value.pane === 'request'
+      ? [
+          {
+            key: 'sendToAssistant',
+            iconClass: 'fas fa-upload text-accent',
+            labelKey: 'sendToAssistant',
+            onClick: contextMenuSendRequestToAssistant,
+          },
+        ]
+      : [],
+  }),
+)
+const canCompareCurrentRequestVersions = computed(() => canCompareRepeaterRequestVersions(currentTab.value ?? null));
+const canCompareCurrentResponseVersions = computed(() => canCompareRepeaterResponseVersions(currentTab.value ?? null));
 
 // Methods
 function createTab(request?: { method: string; url: string; headers: Record<string, string>; body?: string }): RepeaterTab {
@@ -556,7 +622,9 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
     useTls,
     overrideSni: false,
     sniHost: '',
+    initialRawRequest: rawRequest,
     rawRequest,
+    previousRawResponse: '',
     rawResponse: '',
     requestTab: getDefaultTrafficMessageViewTab(),
     responseTab: getDefaultTrafficMessageViewTab(),
@@ -690,6 +758,7 @@ async function sendRequest() {
     if (!targetTab) return;
     
     if (response.success && response.data) {
+      targetTab.previousRawResponse = targetTab.rawResponse;
       targetTab.rawResponse = response.data.raw_response;
       
       // 检查响应体大小
@@ -952,7 +1021,7 @@ function toHex(str: string): string {
 }
 
 // 右键菜单
-function showContextMenu(event: MouseEvent) {
+function showContextMenu(event: MouseEvent, pane: 'request' | 'response' = 'request') {
   // 估算菜单尺寸（基于菜单项数量）
   const MENU_WIDTH = 220;
   const MENU_HEIGHT = 400;
@@ -979,6 +1048,7 @@ function showContextMenu(event: MouseEvent) {
     y: Math.max(0, y),
     width: MENU_WIDTH,
     height: MENU_HEIGHT,
+    pane,
   };
   
   setTimeout(() => {
@@ -1010,6 +1080,7 @@ function contextMenuSendToNewTab() {
   newTab.targetHost = currentTab.value.targetHost;
   newTab.targetPort = currentTab.value.targetPort;
   newTab.useTls = currentTab.value.useTls;
+  newTab.initialRawRequest = currentTab.value.rawRequest;
   newTab.rawRequest = currentTab.value.rawRequest;
   tabs.value.push(newTab);
   activeTabIndex.value = tabs.value.length - 1;
@@ -1025,11 +1096,76 @@ function contextMenuCopyUrl() {
   }
 }
 
+function buildCurrentRequestTransfer(): TrafficTransferRequest | null {
+  if (!currentTab.value) return null
+
+  return buildSourceRequestFromRawRequest(currentTab.value.rawRequest, {
+    host: currentTab.value.targetHost,
+    port: currentTab.value.targetPort || (currentTab.value.useTls ? 443 : 80),
+    useTls: currentTab.value.useTls,
+  })
+}
+
+function contextMenuSendToComparer() {
+  hideContextMenu();
+
+  if (!currentTab.value) {
+    return
+  }
+
+  if (contextMenu.value.pane === 'response') {
+    if (!currentTab.value.rawResponse.trim()) {
+      dialog.toast.warning(t('trafficAnalysis.repeater.messages.noResponseData'))
+      return
+    }
+
+    emit('sendDraftRequestToComparer', {
+      text: currentTab.value.rawResponse,
+      messageType: 'response',
+      name: currentTab.value.name || undefined,
+      label: t('trafficAnalysis.repeater.contextMenu.response'),
+    })
+    dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToComparer'))
+    return
+  }
+
+  const request = buildCurrentRequestTransfer()
+  if (!request) {
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.invalidRequestForComparer'))
+    return
+  }
+
+  emit('sendDraftRequestToComparer', {
+    request,
+    name: currentTab.value?.name || undefined,
+    label: t('trafficAnalysis.repeater.contextMenu.request'),
+  })
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToComparer'))
+}
+
+function contextMenuSendToIntruder() {
+  hideContextMenu();
+
+  const request = buildCurrentRequestTransfer()
+  if (!request) {
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.invalidRequestForIntruder'))
+    return
+  }
+
+  emit('sendToIntruder', request)
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToIntruder'))
+}
+
 function contextMenuCopyRequest() {
   hideContextMenu();
-  if (!currentTab.value?.rawRequest) return;
+  if (!currentTab.value) return;
+
+  const content = contextMenu.value.pane === 'response'
+    ? currentTab.value.rawResponse
+    : currentTab.value.rawRequest
+  if (!content) return;
   
-  navigator.clipboard.writeText(currentTab.value.rawRequest)
+  navigator.clipboard.writeText(content)
     .then(() => dialog.toast.success(t('trafficAnalysis.repeater.messages.requestCopied')))
     .catch(() => dialog.toast.error(t('trafficAnalysis.repeater.messages.copyFailed')));
 }
@@ -1044,35 +1180,46 @@ function contextMenuCopyCurl() {
   }
 }
 
-async function contextMenuPaste() {
-  hideContextMenu();
+
+function buildRepeaterCompareLabels() {
+  return {
+    defaultName: t('trafficAnalysis.tabs.repeater'),
+    requestVersions: t('trafficAnalysis.repeater.compare.requestVersions'),
+    responseVersions: t('trafficAnalysis.repeater.compare.responseVersions'),
+    originalRequest: t('trafficAnalysis.repeater.compare.originalRequest'),
+    currentRequest: t('trafficAnalysis.repeater.compare.currentRequest'),
+    previousResponse: t('trafficAnalysis.repeater.compare.previousResponse'),
+    currentResponse: t('trafficAnalysis.repeater.compare.currentResponse'),
+  };
+}
+
+function compareCurrentRequestVersions() {
   if (!currentTab.value) return;
-  
-  try {
-    const text = await navigator.clipboard.readText();
-    currentTab.value.rawRequest += text;
-    currentTab.value.modified = true;
-    
-    // 立即检测 Host（粘贴操作时不使用防抖）
-    autoDetectHostFromRequest(currentTab.value.rawRequest);
-    
-    dialog.toast.success(t('trafficAnalysis.repeater.messages.pasted'));
-  } catch {
-    dialog.toast.error(t('trafficAnalysis.repeater.messages.cannotReadClipboard'));
+
+  const payload = buildRepeaterRequestVersionComparePayload(currentTab.value, buildRepeaterCompareLabels());
+  if (!payload) {
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.noRequestVersionsToCompare'));
+    return;
   }
+
+  emit('sendToComparer', payload);
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToComparer'));
 }
 
-function contextMenuClear() {
-  hideContextMenu();
+function compareCurrentResponseVersions() {
   if (!currentTab.value) return;
-  currentTab.value.rawRequest = '';
-  currentTab.value.modified = true;
+
+  const payload = buildRepeaterResponseVersionComparePayload(currentTab.value, buildRepeaterCompareLabels());
+  if (!payload) {
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.noResponseVersionsToCompare'));
+    return;
+  }
+
+  emit('sendToComparer', payload);
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToComparer'));
 }
 
-// 发送到 AI 助手
-type SendType = 'request' | 'response' | 'both';
-
-async function sendToAssistant(type: SendType) {
+async function sendRequestToAssistant() {
   if (!currentTab.value) return;
   
   // 从 rawRequest 解析请求信息
@@ -1122,28 +1269,18 @@ async function sendToAssistant(type: SendType) {
   };
   
   // 发送全局事件
-  await tauriEmit('traffic:send-to-assistant', { requests: [trafficData], type });
-  
-  const typeKey = type === 'request' ? 'request' : type === 'response' ? 'response' : 'both';
-  const typeText = t(`trafficAnalysis.repeater.types.${typeKey}`);
-  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToAssistant', { type: typeText }));
+  await tauriEmit('traffic:send-to-assistant', { requests: [trafficData], type: 'request' });
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToAssistant', {
+    type: t('trafficAnalysis.repeater.types.request'),
+  }));
   
   // 跳转到 AI 助手页面
-  router.push('/ai-assistant');
+  window.location.hash = '#/ai-assistant';
 }
 
 function contextMenuSendRequestToAssistant() {
   hideContextMenu();
-  sendToAssistant('request');
-}
-
-function contextMenuSendResponseToAssistant() {
-  hideContextMenu();
-  if (!currentTab.value?.response) {
-    dialog.toast.warning(t('trafficAnalysis.repeater.messages.noResponseData'));
-    return;
-  }
-  sendToAssistant('response');
+  sendRequestToAssistant();
 }
 
 function buildFullUrl(): string {
@@ -1244,6 +1381,7 @@ function saveTabs() {
       rawRequest: tab.rawRequest,
       requestTab: tab.requestTab,
       responseTab: tab.responseTab,
+      initialRawRequest: tab.initialRawRequest,
       // 不保存响应数据和发送状态
     }));
     
@@ -1263,6 +1401,8 @@ function loadTabs() {
     
     tabs.value = tabsData.map(data => ({
       ...data,
+      initialRawRequest: data.initialRawRequest || data.rawRequest,
+      previousRawResponse: '',
       rawResponse: '',
       response: null,
       isSending: false,

@@ -113,6 +113,7 @@
                 class="cursor-pointer"
                 :class="{ 'bg-primary/10': result.id === selectedResultId }"
                 @click="$emit('selectResult', result.id)"
+                @contextmenu.prevent="showResultContextMenu($event, result.id)"
               >
                 <td v-for="column in displayedColumns" :key="`${result.id}-${column.key}`">
                   <template v-if="column.key === 'index'">
@@ -154,17 +155,40 @@
           </table>
         </div>
 
+        <div
+          v-if="resultContextMenu.visible"
+          class="fixed z-50 min-w-48 rounded-lg border border-base-300 bg-base-100 py-1 shadow-xl"
+          :style="{ left: `${resultContextMenu.x}px`, top: `${resultContextMenu.y}px` }"
+          @click.stop
+        >
+          <TrafficContextMenuSections
+            :sections="resultContextMenuSections"
+            label-prefix="trafficAnalysis.intruder.contextMenu"
+          />
+        </div>
+
         <div class="grid h-[calc(100%-18rem)] min-h-0 grid-cols-2">
-          <div class="min-h-0 border-r border-base-300">
+          <div
+            class="min-h-0 border-r border-base-300"
+            @contextmenu.capture.prevent="showSelectedResultContextMenu($event)"
+          >
             <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
               {{ $t('trafficAnalysis.intruder.labels.request') }}
             </div>
             <div class="h-[calc(100%-2.5rem)]">
-              <HttpMessageSurface :model-value="selectedResult?.rawRequest || ''" message-type="request" readonly display-mode="raw" :state-key="selectedResult ? `intruder:request:${selectedResult.id}` : ''" />
+              <HttpMessageSurface
+                :model-value="selectedResult?.rawRequest || ''"
+                custom-context-menu
+                message-type="request"
+                readonly
+                display-mode="raw"
+                :state-key="selectedResult ? `intruder:request:${selectedResult.id}` : ''"
+                @contextmenu.capture.prevent="showSelectedResultContextMenu($event)"
+              />
             </div>
           </div>
 
-          <div class="min-h-0">
+          <div class="min-h-0" @contextmenu.capture.prevent="showSelectedResultContextMenu($event)">
             <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
               <div class="flex items-center justify-between gap-2">
                 <span>{{ $t('trafficAnalysis.intruder.labels.response') }}</span>
@@ -174,10 +198,32 @@
                   <span class="badge badge-outline" :class="deltaClass(diffSummary.timeDelta)">{{ $t('trafficAnalysis.intruder.labels.time') }} {{ formatDelta(diffSummary.timeDelta) }}</span>
                   <span class="badge badge-outline">{{ $t('trafficAnalysis.intruder.labels.changedLines') }} {{ diffSummary.changedLines }}</span>
                 </div>
+                <div
+                  v-if="selectedResult?.redirectCount"
+                  class="flex flex-wrap gap-2 text-[11px] normal-case tracking-normal"
+                >
+                  <span class="badge badge-outline">
+                    {{ $t('trafficAnalysis.intruder.labels.redirects') }} {{ selectedResult.redirectCount }}
+                  </span>
+                  <span
+                    class="badge badge-outline max-w-72 truncate"
+                    :title="selectedResult.finalUrl"
+                  >
+                    {{ selectedResult.finalUrl }}
+                  </span>
+                </div>
               </div>
             </div>
             <div class="h-[calc(100%-2.5rem)]">
-              <HttpMessageSurface :model-value="selectedResult?.rawResponse || selectedResult?.error || ''" message-type="response" readonly display-mode="raw" :state-key="selectedResult ? `intruder:response:${selectedResult.id}` : ''" />
+              <HttpMessageSurface
+                :model-value="selectedResult?.rawResponse || selectedResult?.error || ''"
+                custom-context-menu
+                message-type="response"
+                readonly
+                display-mode="raw"
+                :state-key="selectedResult ? `intruder:response:${selectedResult.id}` : ''"
+                @contextmenu.capture.prevent="showSelectedResultContextMenu($event)"
+              />
             </div>
           </div>
         </div>
@@ -210,9 +256,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
+import { dialog } from '@/composables/useDialog'
+import TrafficContextMenuSections from '@/components/traffic/TrafficContextMenuSections.vue'
+import { buildTrafficRequestActionMenuItems } from '@/components/traffic/trafficRequestActionMenuSupport'
+import { buildTrafficRequestContextMenuSections } from '@/components/traffic/trafficRequestContextMenuSupport'
+import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
+import { buildTrafficRequestSendMenuItems } from '@/components/traffic/trafficSendMenuSupport'
+import {
+  buildIntruderResultCurlCommand,
+  resolveIntruderResultRequestUrl,
+} from '@/components/traffic/trafficIntruderResultRequestSupport'
 import IntruderResultFilterCard from './IntruderResultFilterCard.vue'
 import { INTRUDER_BASE_RESULT_COLUMNS, getIntruderResultColumnValue, getIntruderResultColumns } from './analysis'
 import {
@@ -226,6 +282,7 @@ import type {
   IntruderAttackResult,
   IntruderGrepExtractRule,
   IntruderGrepMatchRule,
+  IntruderGrepPayloadSettings,
   IntruderPosition,
   IntruderResultFilter,
   IntruderResultSort,
@@ -245,6 +302,7 @@ const props = defineProps<{
   sort: IntruderResultSort
   grepMatchRules: IntruderGrepMatchRule[]
   grepExtractRules: IntruderGrepExtractRule[]
+  grepPayloadSettings: IntruderGrepPayloadSettings
   visibleColumns: string[]
 }>()
 
@@ -254,15 +312,24 @@ const emit = defineEmits<{
   (e: 'update:viewFilter', value: IntruderResultFilter): void
   (e: 'update:sort', value: IntruderResultSort): void
   (e: 'update:visibleColumns', value: string[]): void
+  (e: 'sendToRepeater', resultId: string): void
+  (e: 'sendToComparer', resultId: string): void
 }>()
 
 const { t } = useI18n()
+const { enabledTargets } = useTrafficSendTargets()
 const activeView = ref<'results' | 'positions'>('results')
+const resultContextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  resultId: null as string | null,
+})
 
 const captureSummary = computed(() => summarizeIntruderResultFilter(props.captureFilter, 'capture'))
 const viewSummary = computed(() => summarizeIntruderResultFilter(props.viewFilter, 'view'))
 const allColumns = computed(() =>
-  getIntruderResultColumns(props.grepMatchRules, props.grepExtractRules).map((column) => ({
+  getIntruderResultColumns(props.grepMatchRules, props.grepExtractRules, props.grepPayloadSettings).map((column) => ({
     ...column,
     label: getColumnLabel(column.key, column.label),
   })),
@@ -289,6 +356,46 @@ const visibleResults = computed(() =>
   ),
 )
 const diffSummary = computed(() => buildIntruderDiffSummary(baselineResult.value, props.selectedResult))
+const contextMenuResult = computed(() =>
+  props.results.find((result) => result.id === resultContextMenu.value.resultId) ?? null,
+)
+const resultContextSendMenuItems = computed(() =>
+  buildTrafficRequestSendMenuItems({
+    enabledTargets: enabledTargets.value,
+    supportedTargets: ['repeater', 'comparer'],
+    actions: {
+      repeater: contextMenuResult.value?.rawRequest
+        ? () => emit('sendToRepeater', contextMenuResult.value!.id)
+        : undefined,
+      comparer: contextMenuResult.value && !contextMenuResult.value.isBaseline
+        ? () => emit('sendToComparer', contextMenuResult.value!.id)
+        : undefined,
+    },
+  }),
+)
+const resultContextRequestActionMenuItems = computed(() =>
+  buildTrafficRequestActionMenuItems({
+    supportedActions: ['copyUrl', 'copyRequest', 'copyAsCurl', 'openInBrowser'],
+    actions: {
+      copyUrl: contextMenuResult.value ? copyResultUrl : undefined,
+      copyRequest: contextMenuResult.value?.rawRequest ? copyResultRequest : undefined,
+      copyAsCurl: contextMenuResult.value ? copyResultCurl : undefined,
+      openInBrowser: contextMenuResult.value ? openResultInBrowser : undefined,
+    },
+  }),
+)
+const resultContextMenuSections = computed(() =>
+  buildTrafficRequestContextMenuSections({
+    sendItems: resultContextSendMenuItems.value.map((item) => ({
+      ...item,
+      onClick: () => handleResultContextMenuAction(item.onClick),
+    })),
+    requestItems: resultContextRequestActionMenuItems.value.map((item) => ({
+      ...item,
+      onClick: () => handleResultContextMenuAction(item.onClick),
+    })),
+  }),
+)
 
 function getColumnLabel(key: string, fallbackLabel: string): string {
   switch (key) {
@@ -296,6 +403,10 @@ function getColumnLabel(key: string, fallbackLabel: string): string {
       return t('trafficAnalysis.intruder.labels.requestNumber')
     case 'payloadSummary':
       return t('trafficAnalysis.intruder.labels.payloads')
+    case 'payloadReflectionCount':
+      return t('trafficAnalysis.intruder.labels.payloadReflections')
+    case 'redirectCount':
+      return t('trafficAnalysis.intruder.labels.redirects')
     case 'statusCode':
       return t('trafficAnalysis.intruder.labels.status')
     case 'responseTimeMs':
@@ -370,6 +481,9 @@ function getColumnDisplayValue(result: IntruderAttackResult, key: string): strin
   if (typeof value === 'boolean') {
     return value ? 'Hit' : '-'
   }
+  if (typeof value === 'number' && key.startsWith('match:')) {
+    return value > 0 ? String(value) : '-'
+  }
   return String(value ?? '')
 }
 
@@ -386,4 +500,103 @@ function deltaClass(value: number | null): string {
   if (value == null || value === 0) return 'badge-ghost'
   return value > 0 ? 'badge-warning' : 'badge-success'
 }
+
+function hideResultContextMenu() {
+  resultContextMenu.value.visible = false
+  resultContextMenu.value.resultId = null
+  document.removeEventListener('click', hideResultContextMenu)
+  document.removeEventListener('contextmenu', hideResultContextMenu)
+}
+
+function showResultContextMenu(event: MouseEvent, resultId: string) {
+  event.preventDefault()
+  event.stopPropagation()
+  emit('selectResult', resultId)
+  resultContextMenu.value = {
+    visible: true,
+    x: Math.min(event.clientX, window.innerWidth - 220),
+    y: Math.min(event.clientY, window.innerHeight - 280),
+    resultId,
+  }
+  setTimeout(() => {
+    document.addEventListener('click', hideResultContextMenu)
+    document.addEventListener('contextmenu', hideResultContextMenu)
+  }, 0)
+}
+
+function showSelectedResultContextMenu(event: MouseEvent) {
+  if (!props.selectedResult) return
+  showResultContextMenu(event, props.selectedResult.id)
+}
+
+async function copyResultUrl() {
+  const result = contextMenuResult.value
+  if (!result) return
+
+  const url = resolveIntruderResultRequestUrl(result)
+  if (!url) {
+    dialog.toast.warning(t('trafficAnalysis.intruder.messages.invalidResultRequestUrl'))
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(url)
+    dialog.toast.success(t('trafficAnalysis.intruder.messages.urlCopied'))
+  } catch {
+    dialog.toast.error(t('trafficAnalysis.intruder.messages.copyFailed'))
+  }
+}
+
+async function copyResultRequest() {
+  const result = contextMenuResult.value
+  if (!result?.rawRequest) return
+
+  try {
+    await navigator.clipboard.writeText(result.rawRequest)
+    dialog.toast.success(t('trafficAnalysis.intruder.messages.requestCopied'))
+  } catch {
+    dialog.toast.error(t('trafficAnalysis.intruder.messages.copyFailed'))
+  }
+}
+
+async function copyResultCurl() {
+  const result = contextMenuResult.value
+  if (!result) return
+
+  const curl = buildIntruderResultCurlCommand(result)
+  if (!curl) {
+    dialog.toast.warning(t('trafficAnalysis.intruder.messages.invalidStoredRequest'))
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(curl)
+    dialog.toast.success(t('trafficAnalysis.intruder.messages.curlCopied'))
+  } catch {
+    dialog.toast.error(t('trafficAnalysis.intruder.messages.copyFailed'))
+  }
+}
+
+function openResultInBrowser() {
+  const result = contextMenuResult.value
+  if (!result) return
+
+  const url = resolveIntruderResultRequestUrl(result)
+  if (!url) {
+    dialog.toast.warning(t('trafficAnalysis.intruder.messages.invalidResultRequestUrl'))
+    return
+  }
+
+  window.open(url, '_blank')
+}
+
+function handleResultContextMenuAction(action: () => void | Promise<void>) {
+  hideResultContextMenu()
+  void action()
+}
+
+onUnmounted(() => {
+  document.removeEventListener('click', hideResultContextMenu)
+  document.removeEventListener('contextmenu', hideResultContextMenu)
+})
 </script>

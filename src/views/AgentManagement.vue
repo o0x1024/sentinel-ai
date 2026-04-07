@@ -1,9 +1,9 @@
 <template>
   <div class="page-content-padded safe-top">
     <div class="mb-3">
-      <h2 class="text-2xl font-bold">Agent 管理</h2>
+      <h2 class="text-2xl font-bold">智能体库</h2>
       <p class="text-sm text-base-content/70 mt-2">
-        管理系统中的主动类和被动类 Agent，支持配置、手动触发和查看运行记录。
+        集中查看系统智能体的状态、配置、运行记录与安全洞察。
       </p>
     </div>
 

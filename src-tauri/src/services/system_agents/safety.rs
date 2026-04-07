@@ -31,7 +31,8 @@ impl SystemAgentSafetyPolicy {
             .or_else(|| value.get("hostAllowlist"))
             .and_then(Value::as_array)
             .map(|items| {
-                items.iter()
+                items
+                    .iter()
                     .filter_map(Value::as_str)
                     .map(str::trim)
                     .filter(|item| !item.is_empty())
@@ -69,7 +70,9 @@ impl SystemAgentSafetyPolicy {
         if self.allow_active_replay {
             Ok(())
         } else {
-            Err(anyhow!("Active replay is disabled by system-agent safety policy"))
+            Err(anyhow!(
+                "Active replay is disabled by system-agent safety policy"
+            ))
         }
     }
 
@@ -78,13 +81,17 @@ impl SystemAgentSafetyPolicy {
             return Ok(());
         }
 
-        let parsed =
-            Url::parse(url).map_err(|error| anyhow!("Invalid target URL for scope guard: {error}"))?;
+        let parsed = Url::parse(url)
+            .map_err(|error| anyhow!("Invalid target URL for scope guard: {error}"))?;
         let host = parsed
             .host_str()
             .ok_or_else(|| anyhow!("Missing host in target URL for scope guard"))?;
 
-        if self.scope_hosts.iter().any(|pattern| host_matches_pattern(host, pattern)) {
+        if self
+            .scope_hosts
+            .iter()
+            .any(|pattern| host_matches_pattern(host, pattern))
+        {
             Ok(())
         } else {
             Err(anyhow!(

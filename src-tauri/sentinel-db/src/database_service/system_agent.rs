@@ -15,6 +15,8 @@ pub struct SystemAgentProfileRecord {
     pub capability: String,
     pub enabled: bool,
     pub trigger_mode: String,
+    pub llm_provider_override: Option<String>,
+    pub llm_model_override: Option<String>,
     pub base_prompt_id: Option<String>,
     pub prompt_patch: Option<String>,
     pub input_schema_json: String,
@@ -165,22 +167,24 @@ impl DatabaseService {
                             capability = $4,
                             enabled = $5,
                             trigger_mode = $6,
-                            base_prompt_id = $7,
-                            prompt_patch = $8,
-                            input_schema_json = $9,
-                            output_schema_json = $10,
-                            required_tools_json = $11,
-                            optional_tools_json = $12,
-                            forbidden_tools_json = $13,
-                            trigger_events_json = $14,
-                            budget_json = $15,
-                            safety_policy_json = $16,
-                            cooldown_secs = $17,
-                            max_concurrency = $18,
-                            risk_level = $19,
-                            visibility = $20,
+                            llm_provider_override = $7,
+                            llm_model_override = $8,
+                            base_prompt_id = $9,
+                            prompt_patch = $10,
+                            input_schema_json = $11,
+                            output_schema_json = $12,
+                            required_tools_json = $13,
+                            optional_tools_json = $14,
+                            forbidden_tools_json = $15,
+                            trigger_events_json = $16,
+                            budget_json = $17,
+                            safety_policy_json = $18,
+                            cooldown_secs = $19,
+                            max_concurrency = $20,
+                            risk_level = $21,
+                            visibility = $22,
                             updated_at = CURRENT_TIMESTAMP
-                        WHERE id = $21
+                        WHERE id = $23
                         "#,
                     )
                     .bind(&profile.name)
@@ -189,6 +193,8 @@ impl DatabaseService {
                     .bind(&profile.capability)
                     .bind(profile.enabled)
                     .bind(&profile.trigger_mode)
+                    .bind(&profile.llm_provider_override)
+                    .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
                     .bind(&profile.input_schema_json)
@@ -211,15 +217,16 @@ impl DatabaseService {
                         r#"
                         INSERT INTO system_agent_profiles (
                             id, name, description, mode, capability, enabled, trigger_mode,
+                            llm_provider_override, llm_model_override,
                             base_prompt_id, prompt_patch, input_schema_json, output_schema_json,
                             required_tools_json, optional_tools_json, forbidden_tools_json,
                             trigger_events_json, budget_json, safety_policy_json, cooldown_secs,
                             max_concurrency, risk_level, visibility
                         ) VALUES (
                             $1, $2, $3, $4, $5, $6, $7,
-                            $8, $9, $10, $11,
-                            $12, $13, $14, $15, $16, $17, $18,
-                            $19, $20, $21
+                            $8, $9, $10, $11, $12, $13,
+                            $14, $15, $16, $17, $18, $19, $20,
+                            $21, $22, $23
                         )
                         "#,
                     )
@@ -230,6 +237,8 @@ impl DatabaseService {
                     .bind(&profile.capability)
                     .bind(profile.enabled)
                     .bind(&profile.trigger_mode)
+                    .bind(&profile.llm_provider_override)
+                    .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
                     .bind(&profile.input_schema_json)
@@ -282,6 +291,8 @@ impl DatabaseService {
                             capability = ?,
                             enabled = ?,
                             trigger_mode = ?,
+                            llm_provider_override = ?,
+                            llm_model_override = ?,
                             base_prompt_id = ?,
                             prompt_patch = ?,
                             input_schema_json = ?,
@@ -306,6 +317,8 @@ impl DatabaseService {
                     .bind(&profile.capability)
                     .bind(profile.enabled)
                     .bind(&profile.trigger_mode)
+                    .bind(&profile.llm_provider_override)
+                    .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
                     .bind(&profile.input_schema_json)
@@ -328,11 +341,12 @@ impl DatabaseService {
                         r#"
                         INSERT INTO system_agent_profiles (
                             id, name, description, mode, capability, enabled, trigger_mode,
+                            llm_provider_override, llm_model_override,
                             base_prompt_id, prompt_patch, input_schema_json, output_schema_json,
                             required_tools_json, optional_tools_json, forbidden_tools_json,
                             trigger_events_json, budget_json, safety_policy_json, cooldown_secs,
                             max_concurrency, risk_level, visibility
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         "#,
                     )
                     .bind(&profile.id)
@@ -342,6 +356,8 @@ impl DatabaseService {
                     .bind(&profile.capability)
                     .bind(profile.enabled)
                     .bind(&profile.trigger_mode)
+                    .bind(&profile.llm_provider_override)
+                    .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
                     .bind(&profile.input_schema_json)
@@ -394,6 +410,8 @@ impl DatabaseService {
                             capability = ?,
                             enabled = ?,
                             trigger_mode = ?,
+                            llm_provider_override = ?,
+                            llm_model_override = ?,
                             base_prompt_id = ?,
                             prompt_patch = ?,
                             input_schema_json = ?,
@@ -418,6 +436,8 @@ impl DatabaseService {
                     .bind(&profile.capability)
                     .bind(profile.enabled)
                     .bind(&profile.trigger_mode)
+                    .bind(&profile.llm_provider_override)
+                    .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
                     .bind(&profile.input_schema_json)
@@ -440,11 +460,12 @@ impl DatabaseService {
                         r#"
                         INSERT INTO system_agent_profiles (
                             id, name, description, mode, capability, enabled, trigger_mode,
+                            llm_provider_override, llm_model_override,
                             base_prompt_id, prompt_patch, input_schema_json, output_schema_json,
                             required_tools_json, optional_tools_json, forbidden_tools_json,
                             trigger_events_json, budget_json, safety_policy_json, cooldown_secs,
                             max_concurrency, risk_level, visibility
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         "#,
                     )
                     .bind(&profile.id)
@@ -454,6 +475,8 @@ impl DatabaseService {
                     .bind(&profile.capability)
                     .bind(profile.enabled)
                     .bind(&profile.trigger_mode)
+                    .bind(&profile.llm_provider_override)
+                    .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
                     .bind(&profile.input_schema_json)

@@ -64,6 +64,42 @@
         <div class="flex items-start justify-between gap-3">
           <div>
             <h2 class="card-title mb-2 text-base">
+              <i class="fas fa-share-square mr-2"></i>
+              {{ $t('trafficAnalysis.proxyConfiguration.sendTargetsTitle') }}
+            </h2>
+            <p class="text-sm text-base-content/70">
+              {{ $t('trafficAnalysis.proxyConfiguration.sendTargetsDesc') }}
+            </p>
+          </div>
+          <span class="badge badge-info badge-outline">
+            {{ $t('trafficAnalysis.proxyConfiguration.userSettingBadge') }}
+          </span>
+        </div>
+
+        <div class="mt-5 space-y-3">
+          <label class="label cursor-pointer justify-start gap-3 py-1">
+            <input v-model="settings.showSendToRepeater" type="checkbox" class="checkbox checkbox-primary checkbox-sm" />
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.showSendToRepeater') }}</span>
+          </label>
+
+          <label class="label cursor-pointer justify-start gap-3 py-1">
+            <input v-model="settings.showSendToComparer" type="checkbox" class="checkbox checkbox-primary checkbox-sm" />
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.showSendToComparer') }}</span>
+          </label>
+
+          <label class="label cursor-pointer justify-start gap-3 py-1">
+            <input v-model="settings.showSendToIntruder" type="checkbox" class="checkbox checkbox-primary checkbox-sm" />
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.showSendToIntruder') }}</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="card bg-base-100 shadow-xl">
+      <div class="card-body">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 class="card-title mb-2 text-base">
               <i class="fas fa-language mr-2"></i>
               {{ $t('trafficAnalysis.proxyConfiguration.characterSetsTitle') }}
             </h2>

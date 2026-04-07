@@ -21,6 +21,8 @@ use tracing::{debug, info};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpRequestRecord {
     pub id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_request_id: Option<i64>,
     pub url: String,
     pub host: String,
     pub protocol: String,
@@ -63,6 +65,8 @@ pub struct HttpRequestRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpRequestSummary {
     pub id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_request_id: Option<i64>,
     pub url: String,
     pub host: String,
     pub protocol: String,
@@ -270,8 +274,6 @@ pub struct ProxyHistoryCache {
 
     /// 上次持久化时间
     last_persistence_time: Arc<RwLock<std::time::Instant>>,
-    /// 持久化计数器（用于跟踪已持久化的记录数）
-    persisted_count: Arc<RwLock<usize>>,
 }
 
 impl ProxyHistoryCache {
@@ -279,7 +281,7 @@ impl ProxyHistoryCache {
     pub fn new(config: HistoryCacheConfig) -> Self {
         info!(
             "Creating ProxyHistoryCache with max_http={}, max_ws_conn={}, max_msg_per_conn={}, retention={}s, auto_persist={}",
-            config.max_http_requests, config.max_ws_connections, 
+            config.max_http_requests, config.max_ws_connections,
             config.max_messages_per_connection, config.retention_seconds,
             config.enable_auto_persistence
         );
@@ -294,7 +296,6 @@ impl ProxyHistoryCache {
             ws_message_id_counter: AtomicI64::new(1),
             cached_stats: Arc::new(RwLock::new(None)),
             last_persistence_time: Arc::new(RwLock::new(std::time::Instant::now())),
-            persisted_count: Arc::new(RwLock::new(0)),
         }
     }
 
@@ -774,9 +775,10 @@ impl ProxyHistoryCache {
         }
 
         let requests = self.http_requests.read().await;
-        let current_count = requests.len();
-        let persisted = *self.persisted_count.read().await;
-        let unpersisted = current_count.saturating_sub(persisted);
+        let unpersisted = requests
+            .iter()
+            .filter(|record| record.db_request_id.is_none())
+            .count();
 
         // 检查阈值
         if unpersisted >= self.config.auto_persistence_threshold {
@@ -796,24 +798,32 @@ impl ProxyHistoryCache {
     /// 获取未持久化的记录（用于批量保存）
     pub async fn get_unpersisted_records(&self) -> Vec<HttpRequestRecord> {
         let requests = self.http_requests.read().await;
-        let persisted = *self.persisted_count.read().await;
+        requests
+            .iter()
+            .filter(|record| record.db_request_id.is_none())
+            .cloned()
+            .collect()
+    }
 
-        // 获取未持久化的记录
-        requests.iter().skip(persisted).cloned().collect()
+    /// 回填数据库主键，建立内存记录和 proxy_requests.id 的映射
+    pub async fn set_http_request_db_id(&self, cache_request_id: i64, db_request_id: i64) -> bool {
+        let mut requests = self.http_requests.write().await;
+        let Some(record) = requests
+            .iter_mut()
+            .find(|record| record.id == cache_request_id)
+        else {
+            return false;
+        };
+        record.db_request_id = Some(db_request_id);
+        true
     }
 
     /// 标记记录已持久化
     pub async fn mark_persisted(&self, count: usize) {
-        let mut persisted = self.persisted_count.write().await;
-        *persisted += count;
-
         let mut last_time = self.last_persistence_time.write().await;
         *last_time = std::time::Instant::now();
 
-        info!(
-            "Marked {} records as persisted, total persisted: {}",
-            count, *persisted
-        );
+        info!("Marked {} records as persisted", count);
     }
 
     /// 获取缓存统计信息（带缓存，5秒有效期）
@@ -864,6 +874,7 @@ impl From<&HttpRequestRecord> for HttpRequestSummary {
     fn from(record: &HttpRequestRecord) -> Self {
         Self {
             id: record.id,
+            db_request_id: record.db_request_id,
             url: record.url.clone(),
             host: record.host.clone(),
             protocol: record.protocol.clone(),

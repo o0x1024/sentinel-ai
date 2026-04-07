@@ -6,13 +6,27 @@ import type {
   IntruderPosition,
 } from './types'
 import { applyPayloadProcessingRules } from './payloadProcessing'
-import { expandPayloadSet, parsePayloadLines } from './payloads'
+import { expandPayloadSet } from './payloads'
 
 const MARKER = '§'
 
 interface TemplateParts {
   segments: string[]
   tokens: string[]
+}
+
+export interface IntruderPayloadResolutionContext {
+  template: string
+  positions: IntruderPosition[]
+}
+
+export interface IntruderPayloadPluginProcessingContext {
+  payloadSet: IntruderPayloadSet | undefined
+  originalPayload: string
+  baseValue: string
+  positionIndex: number
+  template: string
+  positions: IntruderPosition[]
 }
 
 export function clearIntruderMarkers(input: string): string {
@@ -100,14 +114,47 @@ export function getRequiredPayloadSetCount(attackType: IntruderAttackType, posit
   return Math.max(positionCount, 1)
 }
 
-function encodePayload(
+export function encodeSelectedPayloadCharacters(payload: string, characters: string): string {
+  if (!characters) return payload
+
+  const selected = new Set(Array.from(characters))
+  let output = ''
+
+  for (const char of Array.from(payload)) {
+    output += selected.has(char) ? encodeURIComponent(char) : char
+  }
+
+  return output
+}
+
+async function encodePayload(
   payload: string,
   payloadSet: IntruderPayloadSet | undefined,
   processingRules: IntruderPayloadProcessingRule[],
-): string {
-  const processed = applyPayloadProcessingRules(payload, processingRules)
-  if (!payloadSet?.urlEncode) return processed
-  return encodeURIComponent(processed)
+  baseValue: string,
+  positionIndex: number,
+  context: IntruderPayloadResolutionContext,
+  pluginProcessor?: (payload: string, context: IntruderPayloadPluginProcessingContext) => Promise<string | null>,
+): Promise<string | null> {
+  const processed = await applyPayloadProcessingRules(payload, processingRules, {
+    originalPayload: payload,
+    baseValue,
+  })
+  if (processed == null) return null
+
+  const pluginProcessed = pluginProcessor
+    ? await pluginProcessor(processed, {
+      payloadSet,
+      originalPayload: payload,
+      baseValue,
+      positionIndex,
+      template: context.template,
+      positions: context.positions,
+    })
+    : processed
+  if (pluginProcessed == null) return null
+  if (!payloadSet?.urlEncode) return pluginProcessed
+  return encodeSelectedPayloadCharacters(pluginProcessed, payloadSet.urlEncodeCharacters)
 }
 
 export function estimateAttackCount(
@@ -199,24 +246,48 @@ function markJsonPrimitiveValues(body: string): string {
   )
 }
 
-export function buildIntruderAttackPlan(options: {
+export async function buildIntruderAttackPlan(options: {
   template: string
   attackType: IntruderAttackType
   payloadSets: IntruderPayloadSet[]
   payloadProcessingRules?: IntruderPayloadProcessingRule[]
   maxRequests: number
-}): IntruderAttackPlan {
-  const { template, attackType, payloadSets, payloadProcessingRules = [], maxRequests } = options
+  payloadResolver?: (
+    payloadSet: IntruderPayloadSet,
+    context: IntruderPayloadResolutionContext,
+  ) => Promise<string[]>
+  payloadPluginProcessor?: (
+    payload: string,
+    context: IntruderPayloadPluginProcessingContext,
+  ) => Promise<string | null>
+}): Promise<IntruderAttackPlan> {
+  const {
+    template,
+    attackType,
+    payloadSets,
+    payloadProcessingRules = [],
+    maxRequests,
+    payloadResolver,
+    payloadPluginProcessor,
+  } = options
   const positions = extractIntruderPositions(template)
 
   if (!positions.length) {
     return { requests: [], totalGenerated: 0, truncated: false }
   }
 
-  const payloadLists = payloadSets.map((payloadSet) => expandPayloadSet(payloadSet))
+  const payloadContext = { template, positions }
+  const payloadLists = await Promise.all(
+    payloadSets.map(async (payloadSet) => {
+      if (payloadSet.payloadType === 'extensionGenerated' && payloadResolver) {
+        return payloadResolver(payloadSet, payloadContext)
+      }
+      return expandPayloadSet(payloadSet)
+    }),
+  )
   const { segments, tokens } = splitTemplate(template)
   const requests: IntruderAttackPlan['requests'] = []
-  const totalGenerated = estimateAttackCount(attackType, positions.length, payloadSets)
+  const totalGenerated = estimateAttackCountFromPayloadLists(attackType, positions.length, payloadLists)
   let truncated = false
 
   const pushRequest = (values: string[], payloadValues: string[]) => {
@@ -236,13 +307,15 @@ export function buildIntruderAttackPlan(options: {
     const payloadSet = payloadSets[0]
     const payloads = payloadLists[0] ?? []
 
-    positions.forEach((_, positionIndex) => {
-      payloads.forEach((payload) => {
+    for (const [positionIndex] of positions.entries()) {
+      for (const payload of payloads) {
         const values = [...tokens]
-        values[positionIndex] = encodePayload(payload, payloadSet, payloadProcessingRules)
+        const encoded = await encodePayload(payload, payloadSet, payloadProcessingRules, tokens[positionIndex] ?? '', positionIndex, payloadContext, payloadPluginProcessor)
+        if (encoded == null) continue
+        values[positionIndex] = encoded
         pushRequest(values, [payload])
-      })
-    })
+      }
+    }
 
     return { requests, totalGenerated, truncated }
   }
@@ -251,10 +324,22 @@ export function buildIntruderAttackPlan(options: {
     const payloadSet = payloadSets[0]
     const payloads = payloadLists[0] ?? []
 
-    payloads.forEach((payload) => {
-      const encoded = encodePayload(payload, payloadSet, payloadProcessingRules)
-      pushRequest(tokens.map(() => encoded), [payload])
-    })
+    for (const payload of payloads) {
+      const values: string[] = []
+      let shouldSkip = false
+
+      for (const token of tokens) {
+        const encoded = await encodePayload(payload, payloadSet, payloadProcessingRules, token, values.length, payloadContext, payloadPluginProcessor)
+        if (encoded == null) {
+          shouldSkip = true
+          break
+        }
+        values.push(encoded)
+      }
+
+      if (shouldSkip) continue
+      pushRequest(values, [payload])
+    }
 
     return { requests, totalGenerated, truncated }
   }
@@ -269,9 +354,19 @@ export function buildIntruderAttackPlan(options: {
     const iterations = Math.min(...relevantLists.map((payloads) => payloads.length))
     for (let iteration = 0; iteration < iterations; iteration += 1) {
       const rawPayloads = relevantLists.map((payloads) => payloads[iteration] ?? '')
-      const values = rawPayloads.map((payload, index) =>
-        encodePayload(payload, relevantSets[index], payloadProcessingRules),
-      )
+      const values: string[] = []
+      let shouldSkip = false
+
+      for (const [index, payload] of rawPayloads.entries()) {
+        const encoded = await encodePayload(payload, relevantSets[index], payloadProcessingRules, tokens[index] ?? '', index, payloadContext, payloadPluginProcessor)
+        if (encoded == null) {
+          shouldSkip = true
+          break
+        }
+        values.push(encoded)
+      }
+
+      if (shouldSkip) continue
       pushRequest(values, rawPayloads)
     }
 
@@ -284,7 +379,7 @@ export function buildIntruderAttackPlan(options: {
     return { requests: [], totalGenerated: 0, truncated: false }
   }
 
-  const walk = (depth: number, values: string[], rawValues: string[]) => {
+  const walk = async (depth: number, values: string[], rawValues: string[]): Promise<void> => {
     if (truncated && requests.length >= maxRequests) {
       return
     }
@@ -296,11 +391,37 @@ export function buildIntruderAttackPlan(options: {
 
     const payloads = relevantLists[depth]
     for (const payload of payloads) {
-      const encoded = encodePayload(payload, relevantSets[depth], payloadProcessingRules)
-      walk(depth + 1, [...values, encoded], [...rawValues, payload])
+      const encoded = await encodePayload(payload, relevantSets[depth], payloadProcessingRules, tokens[depth] ?? '', depth, payloadContext, payloadPluginProcessor)
+      if (encoded == null) continue
+      await walk(depth + 1, [...values, encoded], [...rawValues, payload])
     }
   }
 
-  walk(0, [], [])
+  await walk(0, [], [])
   return { requests, totalGenerated, truncated }
+}
+
+function estimateAttackCountFromPayloadLists(
+  attackType: IntruderAttackType,
+  positionCount: number,
+  payloadLists: string[][],
+): number {
+  if (!positionCount) return 0
+
+  if (attackType === 'sniper') {
+    return positionCount * (payloadLists[0]?.length ?? 0)
+  }
+
+  if (attackType === 'batteringRam') {
+    return payloadLists[0]?.length ?? 0
+  }
+
+  const relevant = payloadLists.slice(0, positionCount)
+  if (!relevant.length || relevant.some((payloads) => payloads.length === 0)) return 0
+
+  if (attackType === 'pitchfork') {
+    return Math.min(...relevant.map((payloads) => payloads.length))
+  }
+
+  return relevant.reduce((total, payloads) => total * payloads.length, 1)
 }

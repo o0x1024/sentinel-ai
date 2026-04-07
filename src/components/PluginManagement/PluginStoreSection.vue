@@ -59,8 +59,9 @@
       
       <select v-model="categoryFilter" class="select select-bordered select-sm">
         <option value="">{{ $t('plugins.store.allCategories') }}</option>
-        <option value="traffic">{{ $t('plugins.categories.trafficAnalysis') }}</option>
-        <option value="agent">{{ $t('plugins.categories.agents') }}</option>
+        <option v-for="category in storeMainCategories" :key="category.value" :value="category.value">
+          {{ category.label }}
+        </option>
       </select>
     </div>
 
@@ -91,8 +92,13 @@
               </h3>
               <p class="text-xs text-base-content/60">{{ plugin.id }}</p>
             </div>
-            <div class="badge" :class="getCategoryBadgeClass(plugin.main_category)">
-              {{ getCategoryLabel(plugin.main_category) }}
+            <div class="flex flex-wrap items-center justify-end gap-1">
+              <div class="badge" :class="getMainCategoryBadgeClass(plugin.main_category)">
+                {{ getMainCategoryLabel(plugin.main_category) }}
+              </div>
+              <div v-if="plugin.category" class="badge badge-outline">
+                {{ getSubCategoryLabel(plugin.main_category, plugin.category) }}
+              </div>
             </div>
           </div>
 
@@ -168,8 +174,11 @@
               <span v-if="isInstalled(plugin.id)" class="badge badge-success badge-sm">
                 {{ $t('plugins.store.installed') }}
               </span>
-              <div class="badge badge-sm" :class="getCategoryBadgeClass(plugin.main_category)">
-                {{ getCategoryLabel(plugin.main_category) }}
+              <div class="badge badge-sm" :class="getMainCategoryBadgeClass(plugin.main_category)">
+                {{ getMainCategoryLabel(plugin.main_category) }}
+              </div>
+              <div v-if="plugin.category" class="badge badge-outline badge-sm">
+                {{ getSubCategoryLabel(plugin.main_category, plugin.category) }}
               </div>
             </div>
             <p class="text-xs text-base-content/60 mb-2">{{ plugin.id }}</p>
@@ -251,8 +260,11 @@
             </div>
             <div>
               <span class="text-sm text-base-content/60">{{ $t('plugins.category') }}:</span>
-              <span class="ml-2 badge" :class="getCategoryBadgeClass(selectedPlugin.main_category)">
-                {{ getCategoryLabel(selectedPlugin.main_category) }}
+              <span class="ml-2 badge" :class="getMainCategoryBadgeClass(selectedPlugin.main_category)">
+                {{ getMainCategoryLabel(selectedPlugin.main_category) }}
+              </span>
+              <span v-if="selectedPlugin.category" class="ml-2 badge badge-outline">
+                {{ getSubCategoryLabel(selectedPlugin.main_category, selectedPlugin.category) }}
               </span>
             </div>
           </div>
@@ -313,6 +325,7 @@ import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import type { PluginRecord, CommandResponse } from './types'
+import { agentsCategories, intruderCategories, trafficCategories } from './types'
 import { PluginStoreCache, ViewModeStorage } from '@/services/cache'
 
 // Store plugin interface
@@ -378,7 +391,17 @@ const hasFetched = ref(false)
 const lastCacheTime = ref<number>(0)
 const viewMode = ref<'list' | 'card'>('list')
 
+const trafficCategoryKeys = new Set(trafficCategories)
+const agentCategoryKeys = new Set(agentsCategories)
+const intruderCategoryKeys = new Set(intruderCategories)
+
 // Computed
+const storeMainCategories = computed(() => [
+  { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件') },
+  { value: 'agent', label: t('plugins.categories.agents', 'Agent插件') },
+  { value: 'intruder', label: t('plugins.categories.intruder', 'Intruder插件') },
+])
+
 const filteredPlugins = computed(() => {
   let plugins = storePlugins.value
 
@@ -433,15 +456,33 @@ const hasUpdate = (plugin: StorePlugin): boolean => {
   return compareVersions(plugin.version, localVersion) > 0
 }
 
-const getCategoryLabel = (category: string): string => {
-  if (category === 'traffic') return t('plugins.categories.trafficAnalysis')
-  if (category === 'agent') return t('plugins.categories.agents')
+const getMainCategoryLabel = (mainCategory: string): string => {
+  if (mainCategory === 'traffic') return t('plugins.categories.trafficAnalysis', 'Traffic Analysis Plugins')
+  if (mainCategory === 'agent') return t('plugins.categories.agents', 'Agent Tool Plugins')
+  if (mainCategory === 'intruder') return t('plugins.categories.intruder', 'Intruder Plugins')
+  return mainCategory
+}
+
+const getSubCategoryLabel = (mainCategory: string, category: string): string => {
+  if (trafficCategoryKeys.has(category) || mainCategory === 'traffic') {
+    return t(`plugins.trafficCategories.${category}`, category)
+  }
+
+  if (agentCategoryKeys.has(category) || mainCategory === 'agent') {
+    return t(`plugins.agentCategories.${category}`, category)
+  }
+
+  if (intruderCategoryKeys.has(category) || mainCategory === 'intruder') {
+    return t(`plugins.intruderCategories.${category}`, category)
+  }
+
   return category
 }
 
-const getCategoryBadgeClass = (category: string): string => {
-  if (category === 'traffic') return 'badge-info'
-  if (category === 'agent') return 'badge-warning'
+const getMainCategoryBadgeClass = (mainCategory: string): string => {
+  if (mainCategory === 'traffic') return 'badge-info'
+  if (mainCategory === 'agent') return 'badge-warning'
+  if (mainCategory === 'intruder') return 'badge-secondary'
   return 'badge-ghost'
 }
 
@@ -696,4 +737,3 @@ defineExpose({
   line-clamp: 2;
 }
 </style>
-

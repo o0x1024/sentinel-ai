@@ -24,14 +24,16 @@
           <button :class="['btn btn-xs', requestTab === 'hex' ? 'btn-active' : '']" @click="$emit('update:requestTab', 'hex')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.hex') }}</button>
         </div>
       </div>
-      <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event)">
+      <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'request')">
         <HttpMessageSurface
           v-if="requestTab !== 'hex'"
           :model-value="requestContent"
           readonly
+          custom-context-menu
           message-type="request"
           :display-mode="requestTab"
           :state-key="selectedRequest ? `history:request:${selectedRequest.id}:${requestTab}:${requestViewMode}` : ''"
+          @contextmenu="showDetailContextMenu($event, 'request')"
         />
         <div v-else class="h-full overflow-auto p-2 font-mono text-xs bg-base-100"><pre>{{ stringToHex(formatRequestRaw(selectedRequest, requestViewMode)) }}</pre></div>
       </div>
@@ -60,16 +62,18 @@
           <button :class="['btn btn-xs', responseTab === 'render' ? 'btn-active' : '']" @click="$emit('update:responseTab', 'render')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.render') }}</button>
         </div>
       </div>
-      <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent>
+      <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'response')">
         <iframe v-if="responseTab === 'render'" :srcdoc="getResponseBody(selectedRequest, responseViewMode)" class="w-full h-full border-0 bg-white" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"></iframe>
         <div v-else-if="responseTab === 'hex'" class="h-full overflow-auto p-2 font-mono text-xs bg-base-100"><pre>{{ stringToHex(formatResponseRaw(selectedRequest, responseViewMode)) }}</pre></div>
         <HttpMessageSurface
           v-else
           :model-value="responseContent"
           readonly
+          custom-context-menu
           message-type="response"
           :display-mode="responseTab === 'pretty' ? 'pretty' : 'raw'"
           :state-key="selectedRequest ? `history:response:${selectedRequest.id}:${responseTab}:${responseViewMode}` : ''"
+          @contextmenu="showDetailContextMenu($event, 'response')"
         />
       </div>
     </div>
@@ -87,7 +91,7 @@ import { computed } from 'vue'
 import { formatRequest, formatRequestRaw, formatResponse, formatResponseRaw, getResponseBody, hasEditedResponse, isResponseCompressed, stringToHex } from './proxyHistoryFormattingSupport'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import type { ProxyHistoryRequestTab, ProxyHistoryResponseTab, ProxyHistoryViewMode, ProxyRequest } from './proxyHistoryTypes'
-const props = defineProps<{ selectedRequest: ProxyRequest | null; isLoadingSelectedRequest: boolean; leftPanelWidth: number; requestTab: ProxyHistoryRequestTab; responseTab: ProxyHistoryResponseTab; requestViewMode: ProxyHistoryViewMode; responseViewMode: ProxyHistoryViewMode; showDetailContextMenu: (event: MouseEvent) => void; startVerticalResize: (event: MouseEvent) => void }>()
+const props = defineProps<{ selectedRequest: ProxyRequest | null; isLoadingSelectedRequest: boolean; leftPanelWidth: number; requestTab: ProxyHistoryRequestTab; responseTab: ProxyHistoryResponseTab; requestViewMode: ProxyHistoryViewMode; responseViewMode: ProxyHistoryViewMode; showDetailContextMenu: (event: MouseEvent, pane: 'request' | 'response') => void; startVerticalResize: (event: MouseEvent) => void }>()
 defineEmits<{ 'update:requestTab': [value: ProxyHistoryRequestTab]; 'update:responseTab': [value: ProxyHistoryResponseTab]; 'update:requestViewMode': [value: ProxyHistoryViewMode]; 'update:responseViewMode': [value: ProxyHistoryViewMode] }>()
 
 const requestContent = computed(() =>

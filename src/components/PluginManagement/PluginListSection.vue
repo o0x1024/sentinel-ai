@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- View Mode Toggle -->
-    <div v-if="['all', 'traffic', 'agents'].includes(selectedCategory)" class="flex gap-2 mb-4">
+    <div v-if="selectedCategory === 'all'" class="mb-4 flex flex-wrap items-center gap-2">
       <button class="btn btn-sm" :class="pluginViewMode === 'favorited' ? 'btn-primary' : 'btn-ghost'"
         @click="$emit('update:pluginViewMode', 'favorited')">
         <i class="fas fa-star mr-1"></i>
@@ -12,21 +12,32 @@
         <i class="fas fa-list mr-1"></i>
         {{ $t('plugins.allPlugins', '全部插件') }}
       </button>
+
+      <div class="mx-1 hidden h-6 w-px bg-base-300 sm:block"></div>
+
+      <button
+        class="btn btn-sm"
+        :class="selectedMainCategory === '' ? 'btn-secondary' : 'btn-ghost'"
+        @click="$emit('update:mainCategory', '')"
+      >
+        {{ $t('plugins.allMainCategories', '全部分类') }}
+      </button>
+      <button
+        v-for="mainCat in availableMainCategories"
+        :key="mainCat.value"
+        class="btn btn-sm"
+        :class="selectedMainCategory === mainCat.value ? 'btn-secondary' : 'btn-ghost'"
+        @click="$emit('update:mainCategory', mainCat.value)"
+      >
+        <i :class="mainCat.icon" class="mr-1"></i>
+        {{ mainCat.label }}
+      </button>
     </div>
 
     <!-- Search and Filter Bar -->
     <div class="flex gap-2 mb-4 flex-wrap items-center">
       <input v-model="localSearchText" type="text" :placeholder="$t('plugins.searchPlugins', '搜索插件...')"
         class="input input-bordered input-sm flex-1 min-w-48" @input="onSearchInput" />
-
-      <!-- Category Filter Dropdown -->
-      <select v-if="selectedCategory !== 'all'" v-model="localSubCategory"
-        class="select select-bordered select-sm" @change="onSubCategoryChange">
-        <option value="">全部子分类</option>
-        <option v-for="subCat in availableSubCategories" :key="subCat" :value="subCat">
-          {{ subCat }}
-        </option>
-      </select>
 
       <!-- Tag Filter Dropdown -->
       <select v-model="localTag" class="select select-bordered select-sm" @change="onTagChange">
@@ -37,14 +48,14 @@
       </select>
 
       <!-- Clear Filters Button -->
-      <button v-if="pluginSearchText || selectedSubCategory || selectedTag" class="btn btn-sm btn-ghost"
+      <button v-if="pluginSearchText || selectedMainCategory || selectedSubCategory || selectedTag" class="btn btn-sm btn-ghost"
         @click="$emit('clearFilters')">
         <i class="fas fa-times mr-1"></i>
-        清除筛选
+        {{ $t('plugins.clearFilters', '清除筛选') }}
       </button>
 
       <!-- Batch Toggle Buttons -->
-      <div v-if="['all', 'traffic', 'agents'].includes(selectedCategory)" class="ml-auto flex gap-2">
+      <div v-if="selectedCategory === 'all'" class="ml-auto flex gap-2">
         <button class="btn btn-sm btn-success" :disabled="filteredPlugins.length === 0 || pluginBatchProcessing"
           @click="$emit('batchEnable')">
           <span v-if="batchToggling" class="loading loading-spinner"></span>
@@ -56,6 +67,25 @@
           全部停止
         </button>
       </div>
+    </div>
+
+    <div v-if="availableSubCategories.length" class="mb-4 flex flex-wrap items-center gap-2">
+      <button
+        class="btn btn-sm"
+        :class="selectedSubCategory === '' ? 'btn-accent' : 'btn-ghost'"
+        @click="$emit('update:subCategory', '')"
+      >
+        {{ $t('plugins.allSubCategories', '全部子分类') }}
+      </button>
+      <button
+        v-for="subCat in availableSubCategories"
+        :key="subCat"
+        class="btn btn-sm"
+        :class="selectedSubCategory === subCat ? 'btn-accent' : 'btn-ghost'"
+        @click="$emit('update:subCategory', subCat)"
+      >
+        {{ subCat }}
+      </button>
     </div>
 
     <div
@@ -136,7 +166,7 @@
             <th class="w-12">{{ $t('common.status', '状态') }}</th>
             <th class="w-40">{{ $t('plugins.pluginName', '插件名称') }}</th>
             <th class="w-24">{{ $t('plugins.version', '版本') }}</th>
-            <th class="w-16 text-center">{{ $t('plugins.category', '分类') }}</th>
+            <th class="w-44">{{ $t('plugins.category', '分类') }}</th>
             <th class="w-32">{{ $t('plugins.author', '作者') }}</th>
             <th class="w-48">{{ $t('plugins.tags', '标签') }}</th>
             <th class="w-80">{{ $t('common.actions', '操作') }}</th>
@@ -192,9 +222,15 @@
             </td>
 
             <!-- Category -->
-            <td class="text-center">
-              <div class="tooltip" :data-tip="getCategoryLabel(plugin.metadata.category)">
-                <i :class="getCategoryIcon(plugin.metadata.category)" class="text-primary text-lg"></i>
+            <td>
+              <div class="flex flex-wrap gap-2">
+                <span class="badge gap-1" :class="getMainCategoryBadgeClass(plugin.metadata.main_category)">
+                  <i :class="getMainCategoryIcon(plugin.metadata.main_category)"></i>
+                  {{ getMainCategoryLabel(plugin.metadata.main_category) }}
+                </span>
+                <span class="badge badge-outline whitespace-nowrap">
+                  {{ getCategoryLabel(plugin.metadata.category) }}
+                </span>
               </div>
             </td>
 
@@ -309,8 +345,10 @@ const props = defineProps<{
   pageSize: number
   totalPages: number
   pluginSearchText: string
+  selectedMainCategory: string
   selectedSubCategory: string
   selectedTag: string
+  availableMainCategories: Array<{ value: string; label: string; icon: string }>
   availableSubCategories: string[]
   availableTags: string[]
   batchToggling: boolean
@@ -318,6 +356,9 @@ const props = defineProps<{
   pluginBatchProcessing: boolean
   isAllCurrentPageSelected: boolean
   getStatusText: (status: string) => string
+  getMainCategoryLabel: (mainCategory: string) => string
+  getMainCategoryIcon: (mainCategory: string) => string
+  getMainCategoryBadgeClass: (mainCategory: string) => string
   getCategoryLabel: (category: string) => string
   getCategoryIcon: (category: string) => string
   isPluginSelected: (plugin: PluginRecord) => boolean
@@ -329,6 +370,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:pluginViewMode': [value: 'favorited' | 'all']
   'update:searchText': [value: string]
+  'update:mainCategory': [value: string]
   'update:subCategory': [value: string]
   'update:tag': [value: string]
   clearFilters: []
@@ -350,19 +392,13 @@ const emit = defineEmits<{
 }>()
 
 const localSearchText = ref(props.pluginSearchText)
-const localSubCategory = ref(props.selectedSubCategory)
 const localTag = ref(props.selectedTag)
 
 watch(() => props.pluginSearchText, (val) => { localSearchText.value = val })
-watch(() => props.selectedSubCategory, (val) => { localSubCategory.value = val })
 watch(() => props.selectedTag, (val) => { localTag.value = val })
 
 const onSearchInput = () => {
   emit('update:searchText', localSearchText.value)
-}
-
-const onSubCategoryChange = () => {
-  emit('update:subCategory', localSubCategory.value)
 }
 
 const onTagChange = () => {

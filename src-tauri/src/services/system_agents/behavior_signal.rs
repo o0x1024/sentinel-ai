@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use chrono::{DateTime, Utc};
 
 pub const TRAFFIC_BEHAVIOR_SIGNAL_SETTINGS_KEY: &str = "traffic_behavior_signal_settings";
 pub const BEHAVIOR_SOURCE_PROXY_INFERRED: &str = "proxy_inferred";

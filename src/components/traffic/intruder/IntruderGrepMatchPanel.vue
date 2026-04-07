@@ -88,6 +88,16 @@
           </label>
 
           <div class="flex flex-wrap gap-4">
+            <label class="form-control flex-1">
+              <span class="label-text">{{ $t('trafficAnalysis.intruder.labels.patternType') }}</span>
+              <select v-model="draftRule.patternType" class="select select-bordered">
+                <option value="literal">{{ $t('trafficAnalysis.intruder.labels.literalPattern') }}</option>
+                <option value="regex">{{ $t('trafficAnalysis.intruder.labels.regexPattern') }}</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="flex flex-wrap gap-4">
             <label class="flex items-center gap-2">
               <input v-model="draftRule.enabled" type="checkbox" class="checkbox checkbox-sm" />
               <span>{{ $t('trafficAnalysis.intruder.labels.enabled') }}</span>
@@ -99,6 +109,10 @@
             <label class="flex items-center gap-2">
               <input v-model="draftRule.invert" type="checkbox" class="checkbox checkbox-sm" />
               <span>{{ $t('trafficAnalysis.intruder.labels.invert') }}</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input v-model="draftRule.excludeHeaders" type="checkbox" class="checkbox checkbox-sm" />
+              <span>{{ $t('trafficAnalysis.intruder.labels.excludeResponseHeaders') }}</span>
             </label>
           </div>
         </div>
@@ -213,7 +227,9 @@ function moveSelectedRule(direction: 'up' | 'down') {
 
 function describeRule(rule: IntruderGrepMatchRule): string {
   const fragments = [rule.name || t('trafficAnalysis.intruder.labels.grepMatch'), rule.pattern || '-']
+  if (rule.patternType === 'regex') fragments.push(t('trafficAnalysis.intruder.labels.regexPattern'))
   if (rule.caseSensitive) fragments.push(t('trafficAnalysis.intruder.labels.caseSensitive'))
+  if (rule.excludeHeaders) fragments.push(t('trafficAnalysis.intruder.labels.excludeResponseHeaders'))
   if (rule.invert) fragments.push(t('trafficAnalysis.intruder.labels.invert'))
   return fragments.join(' | ')
 }

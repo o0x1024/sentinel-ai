@@ -104,7 +104,7 @@
           </label>
           <select :value="newPluginMetadata.mainCategory" @change="updateMetadata('mainCategory', ($event.target as HTMLSelectElement).value)"
             class="select select-bordered select-sm" :disabled="editingPlugin && !isEditing">
-            <option v-for="cat in mainCategories" :key="cat.value" :value="cat.value">{{ cat.label }}</option>
+            <option v-for="cat in localizedMainCategories" :key="cat.value" :value="cat.value">{{ cat.label }}</option>
           </select>
         </div>
 
@@ -182,6 +182,12 @@
           <div ref="codeEditorContainerRef"></div>
         </div>
       </div>
+
+      <PluginValidationReportPanel
+        v-if="validationReport"
+        :report="validationReport"
+        @focus-issue="(sectionKey, issueCode, message) => emit('focusValidationIssue', sectionKey, issueCode, message)"
+      />
 
       <div v-if="codeError" class="alert alert-error mt-4">
         <i class="fas fa-exclamation-circle"></i><span>{{ codeError }}</span>
@@ -379,15 +385,27 @@
           <i class="fas fa-exclamation-circle"></i><span>{{ codeError }}</span>
         </div>
       </div>
+      <div
+        v-else-if="validationReport && validationSummary"
+        class="fullscreen-editor-error toast toast-bottom toast-center"
+      >
+        <div class="alert alert-warning shadow-lg">
+          <i class="fas fa-triangle-exclamation"></i><span>{{ validationSummary }}</span>
+        </div>
+      </div>
     </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { PluginRecord, NewPluginMetadata, SubCategory, CodeReference, TestResultReference, AiChatMessage } from './types'
+import type { AiValidationReport } from './aiGeneratedPluginGate'
+import { summarizeAiValidationReport } from './aiGeneratedPluginGate'
 import { mainCategories } from './types'
 import AiAssistantPanel from './AiAssistantPanel.vue'
+import PluginValidationReportPanel from './PluginValidationReportPanel.vue'
 
 // Type extension for click outside handler
 declare module '@vue/runtime-core' {
@@ -425,6 +443,7 @@ const props = defineProps<{
   isEditing: boolean
   saving: boolean
   codeError: string
+  validationReport: AiValidationReport | null
   isFullscreenEditor: boolean
   isMinimized?: boolean
   subCategories: SubCategory[]
@@ -440,6 +459,15 @@ const props = defineProps<{
   // Preview related props
   isPreviewMode?: boolean
 }>()
+
+const { t } = useI18n()
+
+const localizedMainCategories = computed(() => mainCategories.map(category => ({
+  ...category,
+  label: t(`plugins.categories.${category.value}`, category.label),
+})))
+
+const validationSummary = computed(() => summarizeAiValidationReport(props.validationReport))
 
 const emit = defineEmits<{
   'update:newPluginMetadata': [value: NewPluginMetadata]
@@ -469,6 +497,7 @@ const emit = defineEmits<{
   'clearHistory': []
   // Test related emits
   'testCurrentPlugin': []
+  'focusValidationIssue': [sectionKey: string, issueCode: string, message: string]
 }>()
 
 const codeEditorDialogRef = ref<HTMLDialogElement>()

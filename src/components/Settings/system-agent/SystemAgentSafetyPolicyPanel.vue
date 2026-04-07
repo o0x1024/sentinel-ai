@@ -2,14 +2,16 @@
   <div class="border border-base-300 rounded-lg p-4 space-y-4">
     <div>
       <div class="font-semibold text-sm">安全策略</div>
-      <p class="text-xs text-base-content/60 mt-1">
-        只显示当前 Agent 实际相关的安全控制项。
-      </p>
+      <p class="text-xs text-base-content/60 mt-1">只显示当前智能体实际相关的安全控制项。</p>
     </div>
 
     <template v-if="isVerifierAgent">
       <label class="label cursor-pointer justify-start gap-3">
-        <input v-model="localValue.allowActiveReplay" type="checkbox" class="toggle toggle-primary" />
+        <input
+          v-model="localValue.allowActiveReplay"
+          type="checkbox"
+          class="toggle toggle-primary"
+        />
         <div>
           <div class="label-text font-medium">允许主动重放</div>
           <div class="text-xs text-base-content/60">仅建议在明确授权范围内开启。</div>
@@ -47,17 +49,23 @@
         <input v-model="localValue.shadowMode" type="checkbox" class="toggle toggle-primary" />
         <div>
           <div class="label-text font-medium">仅记录影子结果</div>
-          <div class="text-xs text-base-content/60">开启后只保留运行痕迹，不会把分诊结果写入安全中心。</div>
+          <div class="text-xs text-base-content/60">
+            开启后只保留运行痕迹，不会把分诊结果写入安全中心。
+          </div>
         </div>
       </label>
-      <div class="rounded-lg bg-base-200/50 border border-base-300 p-3 text-sm text-base-content/70">
+      <div
+        class="rounded-lg bg-base-200/50 border border-base-300 p-3 text-sm text-base-content/70"
+      >
         被动分诊的处理范围现在由“流量分析 -> 配置”中的全局 Scope 控制。
       </div>
     </template>
 
     <template v-else>
-      <div class="rounded-lg bg-base-200/50 border border-base-300 p-3 text-sm text-base-content/70">
-        当前 Agent 没有额外的专属安全策略项，使用默认安全边界即可。
+      <div
+        class="rounded-lg bg-base-200/50 border border-base-300 p-3 text-sm text-base-content/70"
+      >
+        当前智能体没有额外的专属安全策略项，使用默认安全边界即可。
       </div>
     </template>
   </div>

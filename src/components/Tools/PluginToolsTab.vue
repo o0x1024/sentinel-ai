@@ -249,6 +249,7 @@
       :is-editing="isEditing"
       :saving="isSavingWait"
       :code-error="codeError"
+      :validation-report="null"
       :is-fullscreen-editor="isFullscreenEditor"
       :sub-categories="subCategories"
       :show-ai-panel="showAiPanel"
@@ -524,6 +525,7 @@ async function editPlugin(plugin: PluginRecord) {
          author: plugin.metadata.author,
          mainCategory: plugin.metadata.main_category,
          category: plugin.metadata.category,
+         monitorType: '',
          default_severity: 'medium',
          description: plugin.metadata.description,
          tagsString: (plugin.metadata.permissions || []).join(', ')
@@ -548,6 +550,7 @@ const editingPlugin = ref<any>(null)
 const editPluginMetadata = ref<NewPluginMetadata>({
   id: '', name: '', version: '1.0.0', author: '',
   mainCategory: 'traffic', category: 'custom',
+  monitorType: '',
   default_severity: 'medium', description: '', tagsString: ''
 })
 const isEditing = ref(false)

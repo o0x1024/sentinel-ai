@@ -126,7 +126,7 @@ export function usePluginManagement() {
   const categories = computed(() => [
     { value: 'all', label: t('plugins.categories.all', '全部'), icon: 'fas fa-th' },
     { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件'), icon: 'fas fa-shield-alt' },
-    { value: 'agents', label: t('plugins.categories.agents', 'Agent工具插件'), icon: 'fas fa-robot' },
+    { value: 'agents', label: t('plugins.categories.agents', 'Agent插件'), icon: 'fas fa-robot' },
   ])
 
   // Filtered Plugins

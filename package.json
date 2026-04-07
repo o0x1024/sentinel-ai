@@ -25,6 +25,8 @@
     "test:integration": "vitest run src/tests/integration",
     "test:watch": "vitest watch",
     "demo:biz-service": "node scripts/demo-business-service.mjs",
+    "demo:eval": "node scripts/system-agent-eval.mjs",
+    "demo:eval:compare": "node scripts/system-agent-eval-compare.mjs",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore",
     "format": "prettier --write src/",
     "type-check": "vue-tsc --noEmit",

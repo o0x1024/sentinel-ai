@@ -5,7 +5,10 @@ const MAX_INTENT_HINTS: usize = 6;
 
 pub fn build_behavior_session(payload: &Value) -> Option<Value> {
     let host = payload.get("host")?.as_str()?;
-    let path_template = payload.get("pathTemplate").and_then(Value::as_str).unwrap_or("/");
+    let path_template = payload
+        .get("pathTemplate")
+        .and_then(Value::as_str)
+        .unwrap_or("/");
     let action_kind = payload
         .get("actionKind")
         .and_then(Value::as_str)
@@ -31,7 +34,8 @@ pub fn build_behavior_session(payload: &Value) -> Option<Value> {
         .get("recentSequence")
         .and_then(Value::as_array)
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(Value::as_str)
                 .map(str::to_string)
                 .collect::<Vec<_>>()
@@ -42,7 +46,8 @@ pub fn build_behavior_session(payload: &Value) -> Option<Value> {
         .and_then(|value| value.get("behaviorSteps"))
         .and_then(Value::as_array)
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(Value::as_str)
                 .map(str::to_string)
                 .collect::<Vec<_>>()
@@ -78,7 +83,8 @@ pub fn build_behavior_session(payload: &Value) -> Option<Value> {
         .and_then(|value| value.get("queryKeys"))
         .and_then(Value::as_array)
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(Value::as_str)
                 .take(MAX_INTENT_HINTS)
                 .map(str::to_string)

@@ -41,7 +41,16 @@
       <template v-if="isMultiSelectMode">
         <button class="btn btn-xs btn-ghost" @click="selectAllVisible"><i class="fas fa-check-double mr-1"></i>{{ $t('trafficAnalysis.history.selectAll') }}</button>
         <button class="btn btn-xs btn-ghost" @click="clearSelection"><i class="fas fa-times mr-1"></i>{{ $t('trafficAnalysis.history.clearSelection') }}</button>
-        <button class="btn btn-xs btn-primary" @click="sendSelectedToAssistant('both')"><i class="fas fa-robot mr-1"></i>{{ $t('trafficAnalysis.history.sendToAssistant') }}</button>
+        <div class="dropdown dropdown-end">
+          <label tabindex="0" class="btn btn-xs btn-ghost">
+            <i class="fas fa-not-equal mr-1"></i>{{ $t('trafficAnalysis.history.sendToComparer') }}
+          </label>
+          <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56 mt-1">
+            <li><a @click="sendSelectedRequestVersionsToComparer">{{ $t('trafficAnalysis.history.batchCompare.requestVersions') }}</a></li>
+            <li><a @click="sendSelectedResponseVersionsToComparer">{{ $t('trafficAnalysis.history.batchCompare.responseVersions') }}</a></li>
+          </ul>
+        </div>
+        <button class="btn btn-xs btn-primary" @click="sendSelectedToAssistant('request')"><i class="fas fa-robot mr-1"></i>{{ $t('trafficAnalysis.history.sendToAssistant') }}</button>
         <div class="dropdown dropdown-end">
           <label tabindex="0" class="btn btn-xs btn-ghost"><i class="fas fa-download mr-1"></i>{{ $t('trafficAnalysis.history.export.export') }}</label>
           <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 mt-1">
@@ -59,6 +68,6 @@
 
 <script setup lang="ts">
 import type { ProxyHistoryProtocolFilter } from './proxyHistoryTypes'
-defineProps<{ protocolFilter: ProxyHistoryProtocolFilter; hasActiveFilters: boolean; filtersEnabled: boolean; filterSummary: string; isMultiSelectMode: boolean; openFilterDialog: () => void; toggleFiltersEnabled: () => void; toggleMultiSelectMode: () => void; selectAllVisible: () => void; clearSelection: () => void; sendSelectedToAssistant: (type?: 'request' | 'response' | 'both') => void; exportSelectedToFile: (type: 'request' | 'response') => void; exportAsHAR: () => void; refreshRequests: () => void; clearHistory: () => void }>()
+defineProps<{ protocolFilter: ProxyHistoryProtocolFilter; hasActiveFilters: boolean; filtersEnabled: boolean; filterSummary: string; isMultiSelectMode: boolean; openFilterDialog: () => void; toggleFiltersEnabled: () => void; toggleMultiSelectMode: () => void; selectAllVisible: () => void; clearSelection: () => void; sendSelectedToAssistant: (type?: 'request') => void; sendSelectedRequestVersionsToComparer: () => void; sendSelectedResponseVersionsToComparer: () => void; exportSelectedToFile: (type: 'request' | 'response') => void; exportAsHAR: () => void; refreshRequests: () => void; clearHistory: () => void }>()
 defineEmits<{ 'update:protocolFilter': [value: ProxyHistoryProtocolFilter] }>()
 </script>

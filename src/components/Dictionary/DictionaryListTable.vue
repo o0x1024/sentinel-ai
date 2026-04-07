@@ -231,7 +231,26 @@ const handleMenuAction = (
   if (!menuDictionary.value) return
   const dictionary = menuDictionary.value
   closeMenu()
-  emit(action, dictionary)
+  switch (action) {
+    case 'edit':
+      emit('edit', dictionary)
+      break
+    case 'export':
+      emit('export', dictionary)
+      break
+    case 'duplicate':
+      emit('duplicate', dictionary)
+      break
+    case 'mark-default':
+      emit('mark-default', dictionary)
+      break
+    case 'clear-default':
+      emit('clear-default', dictionary)
+      break
+    case 'delete':
+      emit('delete', dictionary)
+      break
+  }
 }
 
 const handleKeydown = (event: KeyboardEvent) => {

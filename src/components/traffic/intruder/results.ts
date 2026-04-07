@@ -54,6 +54,9 @@ export function matchesIntruderResultFilter(
   const haystack = [
     result.index,
     result.payloadSummary,
+    result.payloadReflectionCount,
+    result.redirectCount,
+    result.finalUrl,
     result.statusCode ?? '',
     result.responseLength,
     result.responseTimeMs ?? '',
@@ -207,6 +210,10 @@ function getSortValue(result: IntruderAttackResult, key: string): string | numbe
       return result.index
     case 'statusCode':
       return result.statusCode
+    case 'payloadReflectionCount':
+      return result.payloadReflectionCount
+    case 'redirectCount':
+      return result.redirectCount
     case 'responseTimeMs':
       return result.responseTimeMs
     case 'responseLength':

@@ -23,7 +23,7 @@ export default {
   workflowStudio: 'Workflow Studio',
   notifications: 'Notifications',
   notificationCenter: 'Message Center',
-  agentManagement: 'Agent Management',
+  agentManagement: 'Agent Hub',
   notificationRules: 'Notification Center',
   bugBounty: 'BBounty',
 
@@ -39,7 +39,7 @@ export default {
   scanning: 'Scanning',
 
   // Statistics
-  todayStats: 'Today\'s Stats',
+  todayStats: "Today's Stats",
   vulnerabilitiesFound: 'Vulnerabilities Found',
   completedTasks: 'Completed Tasks',
 

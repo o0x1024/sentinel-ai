@@ -1,5 +1,5 @@
 export default {
-  title: 'BBounty',
+  title: '漏洞赏金',
   createProgram: '创建项目',
   editProgram: '编辑项目',
   createFirstProgram: '创建第一个项目',

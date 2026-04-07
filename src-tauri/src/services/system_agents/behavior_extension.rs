@@ -89,19 +89,42 @@ impl BehaviorExtensionEventStore {
 
     pub fn build_context_for_request(&self, record: &HttpRequestRecord) -> Option<Value> {
         let request_host = normalize_host(Some(&record.host))?;
+        let request_url = record.edited_url.as_deref().unwrap_or(&record.url);
+        let request_path = normalized_url_path(request_url);
         let cutoff = record.timestamp - Duration::seconds(EVENT_WINDOW_SECS);
-        let mut matched = self
+        let mut matched_scored = self
             .events
             .iter()
             .rev()
             .filter(|event| {
                 event.received_at >= cutoff
-                    && normalize_host(event.host.as_deref()).as_deref() == Some(request_host.as_str())
+                    && normalize_host(event.host.as_deref()).as_deref()
+                        == Some(request_host.as_str())
             })
-            .take(MAX_MATCHED_EVENTS)
-            .cloned()
+            .map(|event| {
+                (
+                    score_event_match(event, request_path.as_deref(), record.timestamp),
+                    event.clone(),
+                )
+            })
             .collect::<Vec<_>>();
-        matched.reverse();
+        if matched_scored.is_empty() {
+            return None;
+        }
+
+        matched_scored.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| right.1.received_at.cmp(&left.1.received_at))
+        });
+
+        let mut matched = matched_scored
+            .into_iter()
+            .take(MAX_MATCHED_EVENTS)
+            .map(|(_, event)| event)
+            .collect::<Vec<_>>();
+        matched.sort_by(|left, right| left.received_at.cmp(&right.received_at));
 
         if matched.is_empty() {
             return None;
@@ -112,15 +135,15 @@ impl BehaviorExtensionEventStore {
             .map(|event| describe_event(event))
             .filter(|step| !step.is_empty())
             .collect::<Vec<_>>();
-        let intent_hints = matched
-            .iter()
-            .flat_map(event_intent_hints)
-            .fold(Vec::<String>::new(), |mut items, value| {
+        let intent_hints = matched.iter().flat_map(event_intent_hints).fold(
+            Vec::<String>::new(),
+            |mut items, value| {
                 if !value.is_empty() && !items.iter().any(|item| item == &value) {
                     items.push(value);
                 }
                 items
-            });
+            },
+        );
 
         let last_title = matched
             .iter()
@@ -169,7 +192,10 @@ pub async fn start_behavior_extension_bridge(
     };
     let router = Router::new()
         .route("/health", get(bridge_health).options(bridge_options))
-        .route("/v1/events", post(ingest_behavior_events).options(bridge_options))
+        .route(
+            "/v1/events",
+            post(ingest_behavior_events).options(bridge_options),
+        )
         .with_state(state);
 
     tauri::async_runtime::spawn(async move {
@@ -182,10 +208,13 @@ pub async fn start_behavior_extension_bridge(
 }
 
 async fn bridge_health() -> Response {
-    cors_json(StatusCode::OK, json!({
-        "ok": true,
-        "bridgeUrl": format!("http://127.0.0.1:{TRAFFIC_BEHAVIOR_EXTENSION_BRIDGE_PORT}"),
-    }))
+    cors_json(
+        StatusCode::OK,
+        json!({
+            "ok": true,
+            "bridgeUrl": format!("http://127.0.0.1:{TRAFFIC_BEHAVIOR_EXTENSION_BRIDGE_PORT}"),
+        }),
+    )
 }
 
 async fn bridge_options() -> Response {
@@ -307,7 +336,11 @@ fn normalize_host(raw: Option<&str>) -> Option<String> {
             if normalized.starts_with('[') {
                 normalized
             } else {
-                normalized.split(':').next().unwrap_or(&normalized).to_string()
+                normalized
+                    .split(':')
+                    .next()
+                    .unwrap_or(&normalized)
+                    .to_string()
             }
         })
 }
@@ -315,6 +348,110 @@ fn normalize_host(raw: Option<&str>) -> Option<String> {
 fn parse_occurred_at(raw: Option<&str>) -> Option<DateTime<Utc>> {
     raw.and_then(|value| DateTime::parse_from_rfc3339(value).ok())
         .map(|value| value.with_timezone(&Utc))
+}
+
+fn normalized_url_path(raw: &str) -> Option<String> {
+    Url::parse(raw)
+        .ok()
+        .map(|value| normalize_path_text(value.path()))
+        .filter(|value| !value.is_empty())
+}
+
+fn normalize_path_text(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return "/".to_string();
+    }
+
+    let normalized = trimmed
+        .trim_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", normalized)
+    }
+}
+
+fn path_segments(path: &str) -> Vec<&str> {
+    path.trim_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+fn shared_prefix_segments(left: &str, right: &str) -> usize {
+    path_segments(left)
+        .into_iter()
+        .zip(path_segments(right))
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
+fn score_event_match(
+    event: &BrowserBehaviorEvent,
+    request_path: Option<&str>,
+    request_timestamp: DateTime<Utc>,
+) -> i64 {
+    let mut score = 1i64;
+    let mut matched_path = false;
+
+    if let Some(request_path) = request_path {
+        let event_paths = [
+            normalized_url_path(&event.url),
+            event.route.as_deref().map(normalize_path_text),
+        ];
+        for event_path in event_paths.into_iter().flatten() {
+            if event_path == request_path {
+                score += 12;
+                matched_path = true;
+                continue;
+            }
+
+            let shared_prefix = shared_prefix_segments(request_path, &event_path);
+            if shared_prefix > 0 {
+                score += (shared_prefix as i64) * 3;
+                matched_path = true;
+            } else if request_path != "/" && event_path != "/" {
+                let request_leaf = path_segments(request_path)
+                    .last()
+                    .copied()
+                    .unwrap_or_default();
+                let event_leaf = path_segments(&event_path)
+                    .last()
+                    .copied()
+                    .unwrap_or_default();
+                if !request_leaf.is_empty() && request_leaf == event_leaf {
+                    score += 2;
+                    matched_path = true;
+                }
+            }
+        }
+    }
+
+    let recency_secs = request_timestamp
+        .signed_duration_since(event.received_at)
+        .num_seconds()
+        .abs();
+    if recency_secs <= 5 {
+        score += 4;
+    } else if recency_secs <= 15 {
+        score += 3;
+    } else if recency_secs <= 60 {
+        score += 2;
+    } else {
+        score += 1;
+    }
+
+    if matched_path {
+        score += 2;
+    }
+
+    score
 }
 
 fn trim_small_text(raw: String) -> String {
@@ -328,18 +465,35 @@ fn trim_small_text(raw: String) -> String {
 
 fn describe_event(event: &BrowserBehaviorEvent) -> String {
     match event.event_type.as_str() {
-        "page_load" => format!("打开页面 {}", event.title.clone().unwrap_or_else(|| event.url.clone())),
-        "route_change" => format!("切换路由 {}", event.route.clone().unwrap_or_else(|| event.url.clone())),
+        "page_load" => format!(
+            "打开页面 {}",
+            event.title.clone().unwrap_or_else(|| event.url.clone())
+        ),
+        "route_change" => format!(
+            "切换路由 {}",
+            event.route.clone().unwrap_or_else(|| event.url.clone())
+        ),
         "click" => {
-            let label = event.text.clone().or(event.role.clone()).unwrap_or_else(|| "页面元素".to_string());
+            let label = event
+                .text
+                .clone()
+                .or(event.role.clone())
+                .unwrap_or_else(|| "页面元素".to_string());
             format!("点击 {label}")
         }
         "submit" => {
-            let label = event.text.clone().or(event.role.clone()).unwrap_or_else(|| "表单".to_string());
+            let label = event
+                .text
+                .clone()
+                .or(event.role.clone())
+                .unwrap_or_else(|| "表单".to_string());
             format!("提交 {label}")
         }
         "input_change" => {
-            let label = event.input_name.clone().unwrap_or_else(|| "输入项".to_string());
+            let label = event
+                .input_name
+                .clone()
+                .unwrap_or_else(|| "输入项".to_string());
             format!("填写 {label}")
         }
         "heartbeat" => "浏览器扩展保持连接".to_string(),
@@ -362,4 +516,86 @@ fn event_intent_hints(event: &BrowserBehaviorEvent) -> Vec<String> {
         hints.push(name.trim().to_ascii_lowercase());
     }
     hints
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_request(url: &str) -> HttpRequestRecord {
+        HttpRequestRecord {
+            id: 1,
+            db_request_id: Some(101),
+            url: url.to_string(),
+            host: "example.com".to_string(),
+            protocol: "https".to_string(),
+            method: "POST".to_string(),
+            status_code: 200,
+            request_headers: None,
+            request_body: None,
+            response_headers: None,
+            response_body: None,
+            response_size: 0,
+            response_time: 120,
+            timestamp: Utc::now(),
+            was_edited: false,
+            edited_request_headers: None,
+            edited_request_body: None,
+            edited_method: None,
+            edited_url: None,
+            edited_response_headers: None,
+            edited_response_body: None,
+            edited_status_code: None,
+        }
+    }
+
+    fn build_event(url: &str, route: Option<&str>, seconds_ago: i64) -> BrowserBehaviorEvent {
+        BrowserBehaviorEvent {
+            event_type: "click".to_string(),
+            url: url.to_string(),
+            title: None,
+            host: Some("example.com".to_string()),
+            tab_id: Some(1),
+            frame_id: Some(0),
+            text: Some("submit".to_string()),
+            role: None,
+            input_name: None,
+            route: route.map(str::to_string),
+            selector: None,
+            metadata: None,
+            received_at: Utc::now() - Duration::seconds(seconds_ago),
+        }
+    }
+
+    #[test]
+    fn request_context_prefers_path_aligned_events() {
+        let mut store = BehaviorExtensionEventStore::default();
+        store.record_event(build_event(
+            "https://example.com/projects/9",
+            Some("/projects/9"),
+            2,
+        ));
+        store.record_event(build_event(
+            "https://example.com/orders/7/approve",
+            Some("/orders/7/approve"),
+            1,
+        ));
+
+        let request = build_request("https://example.com/orders/7/approve");
+        let context = store
+            .build_context_for_request(&request)
+            .expect("expected browser behavior context");
+        let steps = context
+            .get("behaviorSteps")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        assert_eq!(steps.len(), 2);
+        assert!(context
+            .get("lastPageUrl")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("/orders/7/approve"));
+    }
 }

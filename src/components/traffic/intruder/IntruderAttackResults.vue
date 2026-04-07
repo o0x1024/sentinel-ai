@@ -15,19 +15,34 @@
         :sort="sort"
         :grep-match-rules="grepMatchRules"
         :grep-extract-rules="grepExtractRules"
+        :grep-payload-settings="grepPayloadSettings"
         :visible-columns="visibleColumns"
         @select-result="$emit('selectResult', $event)"
         @update:capture-filter="$emit('update:captureFilter', $event)"
         @update:view-filter="$emit('update:viewFilter', $event)"
         @update:sort="$emit('update:sort', $event)"
         @update:visible-columns="$emit('update:visibleColumns', $event)"
+        @send-to-repeater="$emit('sendToRepeater', $event)"
+        @send-to-comparer="$emit('sendToComparer', $event)"
       >
         <template #actions>
-          <button class="btn btn-sm btn-ghost" type="button" :disabled="!selectedResult || selectedResult.isBaseline" @click="$emit('sendToComparer')">
+          <button
+            v-if="enabledTargets.comparer"
+            class="btn btn-sm btn-ghost"
+            type="button"
+            :disabled="!selectedResult || selectedResult.isBaseline"
+            @click="selectedResult?.id && $emit('sendToComparer', selectedResult.id)"
+          >
             <i class="fas fa-not-equal"></i>
             {{ $t('trafficAnalysis.tabs.comparer') }}
           </button>
-          <button class="btn btn-sm btn-ghost" type="button" :disabled="!selectedResult?.rawRequest" @click="$emit('sendToRepeater')">
+          <button
+            v-if="enabledTargets.repeater"
+            class="btn btn-sm btn-ghost"
+            type="button"
+            :disabled="!selectedResult?.rawRequest"
+            @click="selectedResult?.id && $emit('sendToRepeater', selectedResult.id)"
+          >
             <i class="fas fa-redo"></i>
             {{ $t('trafficAnalysis.history.contextMenu.sendToRepeater') }}
           </button>
@@ -46,12 +61,14 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
 import IntruderResultsContent from './IntruderResultsContent.vue'
 import type {
   IntruderAttackProgress,
   IntruderAttackResult,
   IntruderGrepExtractRule,
   IntruderGrepMatchRule,
+  IntruderGrepPayloadSettings,
   IntruderPosition,
   IntruderResultFilter,
   IntruderResultSort,
@@ -72,6 +89,7 @@ const props = defineProps<{
   sort: IntruderResultSort
   grepMatchRules: IntruderGrepMatchRule[]
   grepExtractRules: IntruderGrepExtractRule[]
+  grepPayloadSettings: IntruderGrepPayloadSettings
   visibleColumns: string[]
 }>()
 
@@ -82,10 +100,11 @@ const emit = defineEmits<{
   (e: 'update:viewFilter', value: IntruderResultFilter): void
   (e: 'update:sort', value: IntruderResultSort): void
   (e: 'update:visibleColumns', value: string[]): void
-  (e: 'sendToRepeater'): void
-  (e: 'sendToComparer'): void
+  (e: 'sendToRepeater', resultId: string): void
+  (e: 'sendToComparer', resultId: string): void
 }>()
 
+const { enabledTargets } = useTrafficSendTargets()
 const dialogRef = ref<HTMLDialogElement | null>(null)
 
 watch(

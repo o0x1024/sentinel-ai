@@ -12,17 +12,24 @@ use sentinel_db::{Database, DatabaseService, SystemAgentProfileRecord, SystemAge
 use sentinel_traffic::HttpRequestRecord;
 
 use crate::agents::executor::{execute_agent, AgentExecuteParams};
-use crate::services::system_agents::behavior_signal::TrafficBehaviorSignalSettings;
 use crate::services::system_agents::behavior_session::build_behavior_session;
+use crate::services::system_agents::behavior_signal::TrafficBehaviorSignalSettings;
 use crate::services::system_agents::clusters::TrafficClusterStore;
 use crate::services::system_agents::context::build_traffic_context_snapshot;
+use crate::services::system_agents::context_settings::TrafficContextExtractionSettings;
 use crate::services::system_agents::filters::matches_event_filter;
 use crate::services::system_agents::findings::persist_passive_agent_finding;
+use crate::services::system_agents::logic_hypotheses::build_logic_hypotheses;
 use crate::services::system_agents::logic_invariants::evaluate_logic_invariants;
 use crate::services::system_agents::logic_skill_context::build_logic_skill_context;
-use crate::services::system_agents::prompts::resolve_base_prompt;
 use crate::services::system_agents::process_graph::build_process_graph;
+use crate::services::system_agents::prompts::resolve_base_prompt;
 use crate::services::system_agents::safety::SystemAgentSafetyPolicy;
+use crate::services::system_agents::semantic_mapper::{
+    build_semantic_feature_payload, build_semantic_signature, deterministic_semantic_abstraction,
+    normalize_semantic_abstraction_output, semantic_mapper_prompt,
+    should_attempt_ai_semantic_mapping,
+};
 use crate::services::system_agents::skill_recommendation::recommend_logic_skills;
 use crate::services::system_agents::tool_policy::SystemAgentToolPolicy;
 use crate::services::system_agents::types::{
@@ -41,6 +48,7 @@ pub struct SystemAgentRuntime {
     pending_runs: Arc<RwLock<HashMap<String, VecDeque<QueuedSystemAgentRun>>>>,
     recent_sequences: Arc<RwLock<HashMap<String, Vec<String>>>>,
     cluster_store: Arc<RwLock<TrafficClusterStore>>,
+    semantic_cache: Arc<RwLock<HashMap<String, Value>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +96,7 @@ impl SystemAgentRuntime {
             pending_runs: Arc::new(RwLock::new(HashMap::new())),
             recent_sequences: Arc::new(RwLock::new(HashMap::new())),
             cluster_store: Arc::new(RwLock::new(TrafficClusterStore::default())),
+            semantic_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -96,7 +105,10 @@ impl SystemAgentRuntime {
     }
 
     pub async fn recover_pending_runs(&self) -> Result<usize> {
-        let runs = self.db.list_incomplete_system_agent_runs_internal(Some(200)).await?;
+        let runs = self
+            .db
+            .list_incomplete_system_agent_runs_internal(Some(200))
+            .await?;
         let mut recovered = 0usize;
 
         for run in runs {
@@ -209,7 +221,8 @@ impl SystemAgentRuntime {
             .await?;
 
         let run_id = format!("sar-{}", Uuid::new_v4());
-        let run = self.build_initial_run(&run_id, &profile, payload, trigger_event, "running", None)?;
+        let run =
+            self.build_initial_run(&run_id, &profile, payload, trigger_event, "running", None)?;
         self.db.create_system_agent_run(&run).await?;
         self.mark_run_started(&profile.id, &cooldown_key, run.started_at)
             .await;
@@ -300,7 +313,9 @@ impl SystemAgentRuntime {
             if profile.capability == "triage" {
                 let payload_url = event.payload.get("url").and_then(Value::as_str);
                 let payload_host = event.payload.get("host").and_then(Value::as_str);
-                if let Err(error) = safety_policy.ensure_url_or_host_in_scope(payload_url, payload_host) {
+                if let Err(error) =
+                    safety_policy.ensure_url_or_host_in_scope(payload_url, payload_host)
+                {
                     tracing::debug!(
                         "Skipping passive system agent {} for event {} due to scope guard: {}",
                         profile.id,
@@ -325,7 +340,9 @@ impl SystemAgentRuntime {
                     }
 
                     match serde_json::from_str::<Value>(&binding.filter_json) {
-                        Ok(filter) => matches_event_filter(&filter, &event).then_some(binding.priority),
+                        Ok(filter) => {
+                            matches_event_filter(&filter, &event).then_some(binding.priority)
+                        }
                         Err(error) => {
                             tracing::warn!(
                                 "Invalid system agent binding filter for {}: {}",
@@ -407,12 +424,15 @@ impl SystemAgentRuntime {
         record: HttpRequestRecord,
         behavior_signal: TrafficBehaviorSignalSettings,
         browser_extension_behavior: Option<Value>,
+        context_extraction_settings: TrafficContextExtractionSettings,
     ) -> Result<()> {
-        let initial_snapshot = build_traffic_context_snapshot(&record, &[]);
+        let initial_snapshot =
+            build_traffic_context_snapshot(&record, &[], &context_extraction_settings);
         let recent_sequence = self
             .get_recent_sequence(&initial_snapshot.sequence_key)
             .await;
-        let mut snapshot = build_traffic_context_snapshot(&record, &recent_sequence);
+        let mut snapshot =
+            build_traffic_context_snapshot(&record, &recent_sequence, &context_extraction_settings);
         if let Some(payload) = snapshot.payload.as_object_mut() {
             payload.insert("behaviorSignal".to_string(), behavior_signal.to_payload());
             if let Some(browser_extension_behavior) = browser_extension_behavior {
@@ -439,9 +459,17 @@ impl SystemAgentRuntime {
                 payload.insert("processGraph".to_string(), process_graph);
             }
         }
+        let semantic_abstraction = self.build_semantic_abstraction(&snapshot.payload).await;
+        if let Some(payload) = snapshot.payload.as_object_mut() {
+            payload.insert("semanticAbstraction".to_string(), semantic_abstraction);
+        }
         let logic_invariants = evaluate_logic_invariants(&snapshot.payload);
         if let Some(payload) = snapshot.payload.as_object_mut() {
             payload.insert("logicInvariants".to_string(), logic_invariants);
+        }
+        let logic_hypotheses = build_logic_hypotheses(&snapshot.payload);
+        if let Some(payload) = snapshot.payload.as_object_mut() {
+            payload.insert("logicHypotheses".to_string(), logic_hypotheses);
         }
         let skill_recommendations = recommend_logic_skills(&snapshot.payload);
         if let Some(payload) = snapshot.payload.as_object_mut() {
@@ -509,7 +537,15 @@ impl SystemAgentRuntime {
 
         tauri::async_runtime::spawn(async move {
             if let Err(error) = runtime
-                .complete_background_run(profile, payload, trigger_event, event, run_id_for_task, 0, priority)
+                .complete_background_run(
+                    profile,
+                    payload,
+                    trigger_event,
+                    event,
+                    run_id_for_task,
+                    0,
+                    priority,
+                )
                 .await
             {
                 tracing::error!("System agent background run failed: {}", error);
@@ -541,6 +577,7 @@ impl SystemAgentRuntime {
 
         match run_result {
             Ok(output_json) => {
+                let mut persistence_warning: Option<String> = None;
                 if profile.mode == "passive" && profile.capability == "triage" {
                     match serde_json::from_str::<Value>(&output_json) {
                         Ok(output_value) => {
@@ -588,6 +625,8 @@ impl SystemAgentRuntime {
                                         profile.id,
                                         error
                                     );
+                                    persistence_warning =
+                                        Some(format!("finding persistence failed: {}", error));
                                 }
                             }
                         }
@@ -606,7 +645,7 @@ impl SystemAgentRuntime {
                         &run_id,
                         "completed",
                         Some(&output_json),
-                        None,
+                        persistence_warning.as_deref(),
                         Some(finished_at),
                     )
                     .await?;
@@ -791,29 +830,36 @@ impl SystemAgentRuntime {
             return Ok(serde_json::to_string(&json_output)?);
         }
 
-        let service_names = self.ai_manager.list_services();
-        let maybe_service = self.ai_manager.get_service("default").or_else(|| {
-            service_names
-                .first()
-                .and_then(|name| self.ai_manager.get_service(name))
-        });
-
-        if let Some(service) = maybe_service {
-            let llm_config = service.service.to_llm_config();
-            let client = sentinel_llm::LlmClient::new(llm_config);
-            let raw = client.completion(Some(&system_prompt), &user_input).await?;
-            let json_output = match serde_json::from_str::<Value>(raw.trim()) {
-                Ok(value) => value,
-                Err(_) => {
-                    if let (Some(start), Some(end)) = (raw.find('{'), raw.rfind('}')) {
-                        serde_json::from_str::<Value>(&raw[start..=end])
-                            .unwrap_or_else(|_| json!({ "raw": raw }))
-                    } else {
-                        json!({ "raw": raw })
+        match self
+            .ai_manager
+            .resolve_generation_llm_config(
+                profile.llm_provider_override.as_deref(),
+                profile.llm_model_override.as_deref(),
+            )
+            .await
+        {
+            Ok(llm_config) => {
+                let client = sentinel_llm::LlmClient::new(llm_config);
+                let raw = client.completion(Some(&system_prompt), &user_input).await?;
+                let json_output = match serde_json::from_str::<Value>(raw.trim()) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        if let (Some(start), Some(end)) = (raw.find('{'), raw.rfind('}')) {
+                            serde_json::from_str::<Value>(&raw[start..=end])
+                                .unwrap_or_else(|_| json!({ "raw": raw }))
+                        } else {
+                            json!({ "raw": raw })
+                        }
                     }
-                }
-            };
-            return Ok(serde_json::to_string(&json_output)?);
+                };
+                return Ok(serde_json::to_string(&json_output)?);
+            }
+            Err(error)
+                if profile.llm_provider_override.is_some() || profile.llm_model_override.is_some() =>
+            {
+                return Err(error);
+            }
+            Err(_) => {}
         }
 
         Ok(serde_json::to_string(&json!({
@@ -826,6 +872,42 @@ impl SystemAgentRuntime {
         }))?)
     }
 
+    async fn build_semantic_abstraction(&self, payload: &Value) -> Value {
+        let signature = build_semantic_signature(payload);
+        if let Some(cached) = self.semantic_cache.read().await.get(&signature).cloned() {
+            return cached;
+        }
+
+        let fallback = deterministic_semantic_abstraction(payload);
+        let result = if should_attempt_ai_semantic_mapping(payload) {
+            match self.run_semantic_mapper_llm(payload, &fallback).await {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::debug!("Semantic mapper fallback used: {}", error);
+                    fallback
+                }
+            }
+        } else {
+            fallback
+        };
+
+        let mut cache = self.semantic_cache.write().await;
+        cache.insert(signature, result.clone());
+        result
+    }
+
+    async fn run_semantic_mapper_llm(&self, payload: &Value, fallback: &Value) -> Result<Value> {
+        let llm_config = self.ai_manager.resolve_generation_llm_config(None, None).await?;
+        let client = sentinel_llm::LlmClient::new(llm_config);
+        let user_input = serde_json::to_string_pretty(&build_semantic_feature_payload(payload))?;
+        let raw = client
+            .completion(Some(semantic_mapper_prompt()), &user_input)
+            .await?;
+        Ok(normalize_semantic_abstraction_output(
+            &raw, payload, fallback,
+        ))
+    }
+
     async fn run_profile_with_agent_executor(
         &self,
         profile: &SystemAgentProfileRecord,
@@ -834,8 +916,13 @@ impl SystemAgentRuntime {
         task: String,
         tool_config: crate::agents::ToolConfig,
     ) -> Result<String> {
-        let service = self.resolve_generation_service().await?;
-        let config = service.get_config().clone();
+        let config = self
+            .ai_manager
+            .resolve_generation_llm_config(
+                profile.llm_provider_override.as_deref(),
+                profile.llm_model_override.as_deref(),
+            )
+            .await?;
         let params = AgentExecuteParams {
             execution_id: run_id.to_string(),
             model: config.model.clone(),
@@ -846,7 +933,7 @@ impl SystemAgentRuntime {
                 .clone()
                 .unwrap_or_else(|| config.provider.clone()),
             api_key: config.api_key.clone(),
-            api_base: config.api_base.clone(),
+            api_base: config.base_url.clone(),
             max_iterations: 6,
             timeout_secs: 120,
             tool_config: Some(tool_config),
@@ -863,41 +950,6 @@ impl SystemAgentRuntime {
         execute_agent(&self.app_handle, params)
             .await
             .map_err(|error| anyhow!("System agent '{}' execution failed: {}", profile.id, error))
-    }
-
-    async fn resolve_generation_service(&self) -> Result<crate::services::ai::AiServiceWrapper> {
-        if let Ok(Some((provider, _model_name))) = self.ai_manager.get_default_llm_model().await {
-            let provider_lc = provider.to_lowercase();
-            let maybe_service =
-                self.ai_manager
-                    .list_services()
-                    .into_iter()
-                    .find_map(|service_name| {
-                        let service = self.ai_manager.get_service(&service_name)?;
-                        let service_provider = service.get_config().provider.to_lowercase();
-                        if service_provider == provider_lc
-                            || service_name.to_lowercase() == provider_lc
-                        {
-                            Some(service)
-                        } else {
-                            None
-                        }
-                    });
-
-            if let Some(service) = maybe_service {
-                return Ok(service);
-            }
-        }
-
-        self.ai_manager
-            .get_service("default")
-            .or_else(|| {
-                self.ai_manager
-                    .list_services()
-                    .first()
-                    .and_then(|service_name| self.ai_manager.get_service(service_name))
-            })
-            .ok_or_else(|| anyhow!("No AI service available for system agent runtime"))
     }
 
     async fn check_runtime_limits(
@@ -1017,7 +1069,11 @@ impl SystemAgentRuntime {
         insert_queued_run(queue, queued.clone());
         drop(pending_runs);
         if let Err(error) = self.persist_queued_run(&queued, false, None, None).await {
-            tracing::warn!("Failed to persist queued system agent run {}: {}", run_id, error);
+            tracing::warn!(
+                "Failed to persist queued system agent run {}: {}",
+                run_id,
+                error
+            );
         }
         true
     }
@@ -1042,11 +1098,15 @@ impl SystemAgentRuntime {
                 Ok(_) => {}
                 Err(error) => {
                     if is_queueable_runtime_error(&error) {
-                        let wait_secs =
-                            runtime.cooldown_wait_seconds(&queued.profile, &queued.payload, &queued.cooldown_key)
-                                .await
-                                .unwrap_or(1)
-                                .max(1);
+                        let wait_secs = runtime
+                            .cooldown_wait_seconds(
+                                &queued.profile,
+                                &queued.payload,
+                                &queued.cooldown_key,
+                            )
+                            .await
+                            .unwrap_or(1)
+                            .max(1);
                         runtime.enqueue_existing_run(queued).await;
                         runtime.spawn_delayed_schedule_next(profile_id.clone(), wait_secs as u64);
                     } else {
@@ -1069,7 +1129,10 @@ impl SystemAgentRuntime {
         });
     }
 
-    async fn start_background_run_from_queue(&self, queued: QueuedSystemAgentRun) -> Result<String> {
+    async fn start_background_run_from_queue(
+        &self,
+        queued: QueuedSystemAgentRun,
+    ) -> Result<String> {
         self.check_runtime_limits(&queued.profile, &queued.payload, &queued.cooldown_key)
             .await?;
 
@@ -1306,7 +1369,10 @@ impl SystemAgentRuntime {
     async fn enqueue_existing_run(&self, queued: QueuedSystemAgentRun) {
         let mut pending_runs = self.pending_runs.write().await;
         let queue = pending_runs.entry(queued.profile.id.clone()).or_default();
-        if queue.iter().any(|item| item.cooldown_key == queued.cooldown_key) {
+        if queue
+            .iter()
+            .any(|item| item.cooldown_key == queued.cooldown_key)
+        {
             return;
         }
         insert_queued_run(queue, queued);
@@ -1351,6 +1417,7 @@ impl Clone for SystemAgentRuntime {
             pending_runs: self.pending_runs.clone(),
             recent_sequences: self.recent_sequences.clone(),
             cluster_store: self.cluster_store.clone(),
+            semantic_cache: self.semantic_cache.clone(),
         }
     }
 }
@@ -1363,7 +1430,10 @@ fn is_queueable_runtime_error(error: &anyhow::Error) -> bool {
 
 fn is_retryable_background_error(error: &anyhow::Error) -> bool {
     let category = categorize_runtime_error(error);
-    matches!(category, "llm_service" | "verification_execution" | "runtime_recovery" | "unknown")
+    matches!(
+        category,
+        "llm_service" | "verification_execution" | "runtime_recovery" | "unknown"
+    )
 }
 
 fn categorize_runtime_error(error: &anyhow::Error) -> &'static str {

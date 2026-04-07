@@ -14,6 +14,8 @@ pub mod certificate_authority;
 pub mod error;
 pub mod finding;
 pub mod history_cache;
+pub mod intercept_rules;
+pub mod intercept_tracking;
 pub mod packet_capture;
 pub mod proxy;
 pub mod scanner;
@@ -43,8 +45,8 @@ pub use proxy::{
     WebSocketConnectionContext, WebSocketDirection as ProxyWebSocketDirection,
     WebSocketMessageContext,
 };
-pub use scope::ProxyScopeRule;
 pub use scanner::{FindingDeduplicator, FindingReceiver, FindingSender, ScanPipeline};
+pub use scope::ProxyScopeRule;
 pub use sentinel_db::{
     ProxyRequestFilters, ProxyRequestRecord, TrafficEvidenceRecord as EvidenceRecord,
     TrafficVulnerabilityFilters as VulnerabilityFilters,

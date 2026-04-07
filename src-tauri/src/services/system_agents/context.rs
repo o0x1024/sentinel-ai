@@ -1,3 +1,4 @@
+use crate::services::system_agents::TrafficContextExtractionSettings;
 use serde_json::{json, Map, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -7,52 +8,6 @@ use sentinel_traffic::HttpRequestRecord;
 
 const MAX_TOP_LEVEL_KEYS: usize = 12;
 const MAX_RECENT_SEQUENCE: usize = 6;
-const CANDIDATE_ID_KEYS: &[&str] = &[
-    "id",
-    "uid",
-    "userId",
-    "user_id",
-    "accountId",
-    "account_id",
-    "memberId",
-    "member_id",
-    "orderId",
-    "order_id",
-    "projectId",
-    "project_id",
-    "tenantId",
-    "tenant_id",
-    "orgId",
-    "org_id",
-    "roleId",
-    "role_id",
-];
-const PRINCIPAL_KEYS: &[&str] = &[
-    "userId",
-    "user_id",
-    "uid",
-    "username",
-    "email",
-    "sub",
-    "subject",
-    "tenantId",
-    "tenant_id",
-    "orgId",
-    "org_id",
-    "role",
-    "roleId",
-    "role_id",
-];
-const AUTH_HEADER_KEYS: &[&str] = &[
-    "authorization",
-    "x-api-key",
-    "x-auth-token",
-    "x-access-token",
-    "x-session-id",
-];
-const COOKIE_HINT_KEYS: &[&str] = &[
-    "session", "sess", "sid", "token", "jwt", "auth", "bearer", "phpessid",
-];
 
 #[derive(Debug, Clone)]
 pub struct TrafficContextSnapshot {
@@ -62,9 +17,44 @@ pub struct TrafficContextSnapshot {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone)]
+struct ExtractionMatch {
+    configured_key: String,
+    matched_key: String,
+    source: String,
+}
+
+impl ExtractionMatch {
+    fn to_value(&self) -> Value {
+        json!({
+            "configuredKey": self.configured_key,
+            "matchedKey": self.matched_key,
+            "source": self.source,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ActionInferenceExplanation {
+    kind: String,
+    matched_alias: Option<String>,
+    source: String,
+}
+
+impl ActionInferenceExplanation {
+    fn to_value(&self) -> Value {
+        json!({
+            "kind": self.kind,
+            "matchedAlias": self.matched_alias,
+            "source": self.source,
+        })
+    }
+}
+
 pub fn build_traffic_context_snapshot(
     record: &HttpRequestRecord,
     recent_sequence: &[String],
+    settings: &TrafficContextExtractionSettings,
 ) -> TrafficContextSnapshot {
     let method = effective_method(record);
     let raw_url = effective_url(record);
@@ -85,19 +75,23 @@ pub fn build_traffic_context_snapshot(
     let response_body = effective_response_body(record);
     let query_params = extract_query_params(parsed_url.as_ref());
     let body_params = extract_body_params(request_body.as_deref());
-    let auth_context = extract_auth_context(&request_headers, &query_params, &body_params);
-    let principal_context =
-        extract_principal_context(&request_headers, &query_params, &body_params);
-    let resource_keys = extract_resource_keys(&path, &query_params, &body_params);
+    let (auth_context, auth_matches) =
+        extract_auth_context(&request_headers, &query_params, &body_params, settings);
+    let (principal_context, principal_matches) =
+        extract_principal_context(&request_headers, &query_params, &body_params, settings);
+    let (resource_keys, resource_matches) =
+        extract_resource_keys(&path, &query_params, &body_params, settings);
     let response_fingerprint = build_response_fingerprint(
         effective_status_code(record),
         &response_headers,
         response_body.as_deref(),
     );
     let body_schema = build_body_schema(request_body.as_deref());
-    let action_kind = infer_action_kind(&method, &path, request_body.as_deref());
+    let action_inference = infer_action_kind(&method, &path, request_body.as_deref(), settings);
+    let action_kind = action_inference.kind.clone();
     let sequence_key = format!("{}::{}", host, auth_context.fingerprint);
-    let cluster_key = format!("{} {} {}", host, method, path_template);
+    let cluster_key =
+        build_cluster_key(&host, &method, &path_template, &action_kind, &resource_keys);
 
     let payload = json!({
         "clusterKey": cluster_key,
@@ -106,7 +100,9 @@ pub fn build_traffic_context_snapshot(
         "rawPath": path,
         "method": method,
         "statusCode": effective_status_code(record),
-        "requestId": record.id,
+        // requestId in HttpRequestRecord is the in-memory history id, not proxy_requests.id.
+        "historyRequestId": record.id,
+        "dbRequestId": record.db_request_id,
         "url": raw_url,
         "protocol": record.protocol,
         "timestamp": record.timestamp.to_rfc3339(),
@@ -119,6 +115,14 @@ pub fn build_traffic_context_snapshot(
         "principalContext": principal_context,
         "resourceKeys": resource_keys,
         "actionKind": action_kind,
+        "contextExtraction": {
+            "principalMatches": principal_matches.iter().map(ExtractionMatch::to_value).collect::<Vec<_>>(),
+            "resourceMatches": resource_matches.iter().map(ExtractionMatch::to_value).collect::<Vec<_>>(),
+            "authHeaderMatches": auth_matches.header_matches.iter().map(ExtractionMatch::to_value).collect::<Vec<_>>(),
+            "authTokenMatches": auth_matches.token_matches.iter().map(ExtractionMatch::to_value).collect::<Vec<_>>(),
+            "cookieMatches": auth_matches.cookie_matches.iter().map(ExtractionMatch::to_value).collect::<Vec<_>>(),
+            "actionInference": action_inference.to_value(),
+        },
         "requestFingerprint": {
             "queryKeys": sorted_keys(&query_params),
             "bodySchema": body_schema,
@@ -140,6 +144,13 @@ struct AuthContext {
     fingerprint: String,
     header_sources: Vec<String>,
     cookie_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AuthExtractionMatches {
+    header_matches: Vec<ExtractionMatch>,
+    token_matches: Vec<ExtractionMatch>,
+    cookie_matches: Vec<ExtractionMatch>,
 }
 
 impl AuthContext {
@@ -234,19 +245,26 @@ fn extract_auth_context(
     headers: &Map<String, Value>,
     query: &Map<String, Value>,
     body: &Map<String, Value>,
-) -> AuthContext {
+    settings: &TrafficContextExtractionSettings,
+) -> (AuthContext, AuthExtractionMatches) {
     let mut header_sources = Vec::new();
     let mut cookie_keys = Vec::new();
     let mut fingerprint_sources = Vec::new();
+    let mut matches = AuthExtractionMatches::default();
 
-    for header_name in AUTH_HEADER_KEYS {
-        if let Some(value) = get_case_insensitive(headers, header_name) {
+    for header_name in settings.auth_header_keys() {
+        if let Some((matched_name, value)) = get_case_insensitive_entry(headers, &header_name) {
             let rendered = render_value(value);
             if !rendered.is_empty() {
-                header_sources.push(header_name.to_string());
+                header_sources.push(matched_name.to_string());
+                matches.header_matches.push(ExtractionMatch {
+                    configured_key: header_name,
+                    matched_key: matched_name.to_string(),
+                    source: "header".to_string(),
+                });
                 fingerprint_sources.push(format!(
                     "{}:{}",
-                    header_name,
+                    matched_name.to_ascii_lowercase(),
                     stable_fingerprint(&rendered)
                 ));
             }
@@ -260,8 +278,17 @@ fn extract_auth_context(
                 continue;
             }
             let name_lc = name.to_ascii_lowercase();
-            if COOKIE_HINT_KEYS.iter().any(|hint| name_lc.contains(hint)) {
+            if let Some(hint) = settings
+                .cookie_hint_keys()
+                .iter()
+                .find(|hint| name_lc.contains(hint.as_str()))
+            {
                 cookie_keys.push(name.to_string());
+                matches.cookie_matches.push(ExtractionMatch {
+                    configured_key: hint.clone(),
+                    matched_key: name.to_string(),
+                    source: "cookie".to_string(),
+                });
                 fingerprint_sources.push(format!(
                     "cookie:{}:{}",
                     name_lc,
@@ -271,11 +298,26 @@ fn extract_auth_context(
         }
     }
 
-    for key in ["access_token", "token", "session", "session_id"] {
-        if let Some(value) = query.get(key).or_else(|| body.get(key)) {
+    for key in settings.auth_token_keys() {
+        if let Some((matched_key, value)) =
+            get_normalized_value(query, &key).or_else(|| get_normalized_value(body, &key))
+        {
             let rendered = render_value(value);
             if !rendered.is_empty() {
-                fingerprint_sources.push(format!("{}:{}", key, stable_fingerprint(&rendered)));
+                matches.token_matches.push(ExtractionMatch {
+                    configured_key: key,
+                    matched_key: matched_key.to_string(),
+                    source: if query.contains_key(matched_key) {
+                        "query".to_string()
+                    } else {
+                        "body".to_string()
+                    },
+                });
+                fingerprint_sources.push(format!(
+                    "{}:{}",
+                    matched_key,
+                    stable_fingerprint(&rendered)
+                ));
             }
         }
     }
@@ -284,40 +326,60 @@ fn extract_auth_context(
         fingerprint_sources.push("anonymous".to_string());
     }
 
-    AuthContext {
-        fingerprint: stable_fingerprint(&fingerprint_sources.join("|")),
-        header_sources,
-        cookie_keys,
-    }
+    (
+        AuthContext {
+            fingerprint: stable_fingerprint(&fingerprint_sources.join("|")),
+            header_sources,
+            cookie_keys,
+        },
+        matches,
+    )
 }
 
 fn extract_principal_context(
     headers: &Map<String, Value>,
     query: &Map<String, Value>,
     body: &Map<String, Value>,
-) -> Value {
+    settings: &TrafficContextExtractionSettings,
+) -> (Value, Vec<ExtractionMatch>) {
     let mut values = Map::new();
-    for key in PRINCIPAL_KEYS {
-        if let Some(value) = query
-            .get(*key)
-            .or_else(|| body.get(*key))
-            .or_else(|| get_case_insensitive(headers, key))
+    let mut matches = Vec::new();
+    for key in settings.principal_keys() {
+        if let Some((matched_key, value, source)) = get_normalized_value(query, &key)
+            .map(|(matched_key, value)| (matched_key, value, "query"))
+            .or_else(|| {
+                get_normalized_value(body, &key)
+                    .map(|(matched_key, value)| (matched_key, value, "body"))
+            })
+            .or_else(|| {
+                get_case_insensitive_entry(headers, &key)
+                    .map(|(matched_key, value)| (matched_key, value, "header"))
+            })
         {
             let rendered = render_value(value);
             if !rendered.is_empty() {
-                values.insert((*key).to_string(), Value::String(rendered));
+                if !values.contains_key(matched_key) {
+                    matches.push(ExtractionMatch {
+                        configured_key: key,
+                        matched_key: matched_key.to_string(),
+                        source: source.to_string(),
+                    });
+                }
+                values.insert(matched_key.to_string(), Value::String(rendered));
             }
         }
     }
-    Value::Object(values)
+    (Value::Object(values), matches)
 }
 
 fn extract_resource_keys(
     path: &str,
     query: &Map<String, Value>,
     body: &Map<String, Value>,
-) -> Value {
+    settings: &TrafficContextExtractionSettings,
+) -> (Value, Vec<ExtractionMatch>) {
     let mut values = Map::new();
+    let mut matches = Vec::new();
 
     let path_ids = path
         .split('/')
@@ -326,18 +388,36 @@ fn extract_resource_keys(
         .collect::<Vec<_>>();
     if !path_ids.is_empty() {
         values.insert("pathSegments".to_string(), Value::Array(path_ids));
+        matches.push(ExtractionMatch {
+            configured_key: "dynamic_path_segment".to_string(),
+            matched_key: "pathSegments".to_string(),
+            source: "path".to_string(),
+        });
     }
 
-    for key in CANDIDATE_ID_KEYS {
-        if let Some(value) = query.get(*key).or_else(|| body.get(*key)) {
+    for key in settings.resource_key_hints() {
+        if let Some((matched_key, value, source)) = get_normalized_value(query, &key)
+            .map(|(matched_key, value)| (matched_key, value, "query"))
+            .or_else(|| {
+                get_normalized_value(body, &key)
+                    .map(|(matched_key, value)| (matched_key, value, "body"))
+            })
+        {
             let rendered = render_value(value);
             if !rendered.is_empty() {
-                values.insert((*key).to_string(), Value::String(rendered));
+                if !values.contains_key(matched_key) {
+                    matches.push(ExtractionMatch {
+                        configured_key: key,
+                        matched_key: matched_key.to_string(),
+                        source: source.to_string(),
+                    });
+                }
+                values.insert(matched_key.to_string(), Value::String(rendered));
             }
         }
     }
 
-    Value::Object(values)
+    (Value::Object(values), matches)
 }
 
 fn build_response_fingerprint(
@@ -397,34 +477,107 @@ fn describe_json_shape(value: &Value) -> Value {
     }
 }
 
-fn infer_action_kind(method: &str, path: &str, body: Option<&str>) -> String {
+fn infer_action_kind(
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    settings: &TrafficContextExtractionSettings,
+) -> ActionInferenceExplanation {
     let path_lc = path.to_ascii_lowercase();
     let body_lc = body.unwrap_or_default().to_ascii_lowercase();
-    if path_lc.contains("login") || path_lc.contains("signin") || path_lc.contains("auth") {
-        return "authenticate".to_string();
-    }
-    if path_lc.contains("approve") || path_lc.contains("review") {
-        return "approve".to_string();
-    }
-    if path_lc.contains("pay") || path_lc.contains("payment") {
-        return "pay".to_string();
-    }
-    if path_lc.contains("refund") {
-        return "refund".to_string();
-    }
-    if path_lc.contains("export") || path_lc.contains("download") {
-        return "export".to_string();
-    }
-    if path_lc.contains("search") || body_lc.contains("keyword") {
-        return "search".to_string();
+    for (action, aliases) in settings.ordered_action_aliases() {
+        if contains_any(&path_lc, &aliases) {
+            return ActionInferenceExplanation {
+                kind: action,
+                matched_alias: aliases.into_iter().find(|alias| path_lc.contains(alias)),
+                source: "path".to_string(),
+            };
+        }
+        if action == "search" && body_lc.contains("keyword") {
+            return ActionInferenceExplanation {
+                kind: action,
+                matched_alias: Some("keyword".to_string()),
+                source: "body".to_string(),
+            };
+        }
     }
 
     match method {
-        "POST" => "create".to_string(),
-        "PUT" | "PATCH" => "update".to_string(),
-        "DELETE" => "delete".to_string(),
-        _ => "read".to_string(),
+        "POST" => {
+            if looks_like_create_path(&path_lc) {
+                ActionInferenceExplanation {
+                    kind: "create".to_string(),
+                    matched_alias: None,
+                    source: "method_fallback".to_string(),
+                }
+            } else {
+                ActionInferenceExplanation {
+                    kind: "invoke".to_string(),
+                    matched_alias: None,
+                    source: "method_fallback".to_string(),
+                }
+            }
+        }
+        "PUT" | "PATCH" => ActionInferenceExplanation {
+            kind: "update".to_string(),
+            matched_alias: None,
+            source: "method_fallback".to_string(),
+        },
+        "DELETE" => ActionInferenceExplanation {
+            kind: "delete".to_string(),
+            matched_alias: None,
+            source: "method_fallback".to_string(),
+        },
+        _ => ActionInferenceExplanation {
+            kind: "read".to_string(),
+            matched_alias: None,
+            source: "method_fallback".to_string(),
+        },
     }
+}
+
+fn contains_any(text: &str, needles: &[String]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
+}
+
+fn looks_like_create_path(path: &str) -> bool {
+    if path.ends_with("/create") || path.ends_with("/draft") {
+        return true;
+    }
+
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let Some(last_segment) = segments.last() else {
+        return false;
+    };
+
+    if matches!(*last_segment, "api" | "v1" | "v2" | "v3") {
+        return false;
+    }
+
+    if looks_like_identifier(last_segment) {
+        return false;
+    }
+
+    is_plural_resource_name(last_segment)
+}
+
+fn looks_like_identifier(segment: &str) -> bool {
+    let compact = segment.trim();
+    if compact.is_empty() {
+        return false;
+    }
+    compact.chars().all(|ch| ch.is_ascii_digit())
+        || compact.contains('-')
+        || compact.contains('_')
+        || compact.len() > 12
+}
+
+fn is_plural_resource_name(segment: &str) -> bool {
+    let normalized = segment.trim_matches('/');
+    normalized.ends_with('s') && normalized.len() > 2
 }
 
 fn infer_body_kind(body: Option<&str>, content_type: &str) -> &'static str {
@@ -464,6 +617,31 @@ fn derive_path_template(path: &str) -> String {
     segments.join("/")
 }
 
+fn build_cluster_key(
+    host: &str,
+    method: &str,
+    path_template: &str,
+    action_kind: &str,
+    resource_keys: &Value,
+) -> String {
+    let resource_shape = resource_keys
+        .as_object()
+        .map(|items| {
+            let mut keys = items.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            if keys.is_empty() {
+                "none".to_string()
+            } else {
+                keys.join("+")
+            }
+        })
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "{} {} {} action:{} resources:{}",
+        host, method, path_template, action_kind, resource_shape
+    )
+}
+
 fn is_dynamic_identifier(segment: &str) -> bool {
     if segment.is_empty() {
         return false;
@@ -480,9 +658,41 @@ fn is_dynamic_identifier(segment: &str) -> bool {
 }
 
 fn get_case_insensitive<'a>(map: &'a Map<String, Value>, target: &str) -> Option<&'a Value> {
+    get_case_insensitive_entry(map, target).map(|(_, value)| value)
+}
+
+fn get_case_insensitive_entry<'a>(
+    map: &'a Map<String, Value>,
+    target: &str,
+) -> Option<(&'a str, &'a Value)> {
     map.iter()
         .find(|(key, _)| key.eq_ignore_ascii_case(target))
-        .map(|(_, value)| value)
+        .map(|(key, value)| (key.as_str(), value))
+}
+
+fn get_normalized_value<'a>(
+    map: &'a Map<String, Value>,
+    target: &str,
+) -> Option<(&'a str, &'a Value)> {
+    if let Some((key, value)) = map.iter().find(|(key, _)| key.as_str() == target) {
+        return Some((key.as_str(), value));
+    }
+
+    let target_key = normalize_lookup_key(target);
+    if target_key.is_empty() {
+        return None;
+    }
+
+    map.iter()
+        .find(|(key, _)| normalize_lookup_key(key) == target_key)
+        .map(|(key, value)| (key.as_str(), value))
+}
+
+fn normalize_lookup_key(raw: &str) -> String {
+    raw.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
 }
 
 fn render_value(value: &Value) -> String {
@@ -506,4 +716,112 @@ fn stable_fingerprint(input: &str) -> String {
     let mut hasher = DefaultHasher::new();
     input.hash(&mut hasher);
     format!("{:x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_traffic_context_snapshot;
+    use crate::services::system_agents::TrafficContextExtractionSettings;
+    use chrono::Utc;
+    use sentinel_traffic::HttpRequestRecord;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    fn build_record(url: &str, headers: &str, body: &str) -> HttpRequestRecord {
+        HttpRequestRecord {
+            id: 1,
+            db_request_id: Some(101),
+            url: url.to_string(),
+            host: "api.example.com".to_string(),
+            protocol: "https".to_string(),
+            method: "POST".to_string(),
+            status_code: 200,
+            request_headers: Some(headers.to_string()),
+            request_body: Some(body.to_string()),
+            response_headers: None,
+            response_body: None,
+            response_size: 0,
+            response_time: 12,
+            timestamp: Utc::now(),
+            was_edited: false,
+            edited_request_headers: None,
+            edited_request_body: None,
+            edited_method: None,
+            edited_url: None,
+            edited_response_headers: None,
+            edited_response_body: None,
+            edited_status_code: None,
+        }
+    }
+
+    #[test]
+    fn custom_settings_extract_custom_identity_resource_and_action_aliases() {
+        let mut action_aliases = BTreeMap::new();
+        action_aliases.insert("complete".to_string(), vec!["finalize".to_string()]);
+        let settings = TrafficContextExtractionSettings {
+            principal_keys: vec!["operatorCode".to_string()],
+            resource_key_hints: vec!["caseRef".to_string()],
+            auth_header_keys: vec!["x-tenant-token".to_string()],
+            action_aliases,
+            ..TrafficContextExtractionSettings::default()
+        }
+        .sanitized();
+        let record = build_record(
+            "https://api.example.com/workflows/finalize?case-ref=CASE-9",
+            r#"{"X-Tenant-Token":"tenant-secret"}"#,
+            r#"{"operator_code":"op-7"}"#,
+        );
+
+        let snapshot = build_traffic_context_snapshot(&record, &[], &settings);
+
+        assert_eq!(snapshot.action_kind, "complete");
+        assert_eq!(
+            snapshot.payload.get("principalContext"),
+            Some(&json!({"operator_code":"op-7"}))
+        );
+        assert_eq!(
+            snapshot.payload.get("resourceKeys"),
+            Some(&json!({"case-ref":"CASE-9"}))
+        );
+        assert_eq!(
+            snapshot
+                .payload
+                .get("authContext")
+                .and_then(|value| value.get("headerSources")),
+            Some(&json!(["X-Tenant-Token"]))
+        );
+        assert_eq!(
+            snapshot.payload.get("contextExtraction"),
+            Some(&json!({
+                "principalMatches": [
+                    {
+                        "configuredKey": "operatorCode",
+                        "matchedKey": "operator_code",
+                        "source": "body",
+                    }
+                ],
+                "resourceMatches": [
+                    {
+                        "configuredKey": "caseRef",
+                        "matchedKey": "case-ref",
+                        "source": "query",
+                    }
+                ],
+                "authHeaderMatches": [
+                    {
+                        "configuredKey": "x-tenant-token",
+                        "matchedKey": "X-Tenant-Token",
+                        "source": "header",
+                    }
+                ],
+                "authTokenMatches": [],
+                "cookieMatches": [],
+                "actionInference": {
+                    "kind": "complete",
+                    "matchedAlias": "finalize",
+                    "source": "path",
+                },
+            }))
+        );
+    }
 }

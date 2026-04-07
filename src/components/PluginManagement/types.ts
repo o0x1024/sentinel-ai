@@ -161,7 +161,8 @@ export interface SubCategory {
 // Main categories
 export const mainCategories: Category[] = [
   { value: 'traffic', label: '流量分析插件', icon: 'fas fa-shield-alt' },
-  { value: 'agent', label: 'Agent插件', icon: 'fas fa-robot' }
+  { value: 'agent', label: 'Agent插件', icon: 'fas fa-robot' },
+  { value: 'intruder', label: 'Intruder插件', icon: 'fas fa-crosshairs' },
 ]
 
 // Traffic analysis plugin subcategories
@@ -184,6 +185,13 @@ export const agentsCategories = [
   'analyzer',   // Analysis Tools (legacy)
   'reporter',   // Reporting (legacy)
   'custom'      // Custom
+]
+
+// Intruder plugin subcategories
+export const intruderCategories = [
+  'payload_generator',
+  'payload_processor',
+  'request_processor',
 ]
 
 // Code reference type for AI assistant

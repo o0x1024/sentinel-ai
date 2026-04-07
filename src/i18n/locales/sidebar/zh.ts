@@ -19,7 +19,7 @@ export default {
   Tools: '应用工具',
   cyberChef: '编码解码',
   performance: '性能监控',
-  bugBounty: 'BBounty',
+  bugBounty: '漏洞赏金',
 
   // Settings submenu
   aiSettings: 'AI服务',
@@ -69,7 +69,7 @@ export default {
   mcp: 'MCP管理',
   rolesManagement: '角色管理',
   scanSessions: '扫描会话',
-  agents: 'Agent管理',
+  agents: '智能体库',
   agentCreator: 'Agent创建器',
   plugins: '插件管理',
   license: '许可证管理',
@@ -94,13 +94,13 @@ export default {
     offline: '离线',
     busy: '忙碌',
     available: '可用',
-    unavailable: '不可用'
+    unavailable: '不可用',
   },
 
   // Notifications
   notifications: '通知',
   notificationCenter: '消息中心',
-  agentManagement: 'Agent管理',
+  agentManagement: '智能体库',
   notificationRules: '通知中心',
   unreadNotifications: '未读通知',
   markAsRead: '标记为已读',
@@ -173,7 +173,7 @@ export default {
     viewer: '查看者',
     editor: '编辑者',
     moderator: '版主',
-    owner: '所有者'
+    owner: '所有者',
   },
 
   // Access levels
@@ -184,6 +184,6 @@ export default {
     execute: '执行访问',
     delete: '删除访问',
     admin: '管理员访问',
-    none: '无访问权限'
-  }
+    none: '无访问权限',
+  },
 }

@@ -370,6 +370,8 @@ impl DatabaseService {
                     capability TEXT NOT NULL,
                     enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     trigger_mode TEXT NOT NULL,
+                    llm_provider_override TEXT,
+                    llm_model_override TEXT,
                     base_prompt_id TEXT,
                     prompt_patch TEXT,
                     input_schema_json TEXT NOT NULL DEFAULT '{}',
@@ -395,6 +397,28 @@ impl DatabaseService {
             )
             .execute(pool)
             .await?;
+        }
+
+        let system_agent_profiles_has_llm_provider_override: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'system_agent_profiles' AND column_name = 'llm_provider_override')"
+        )
+        .fetch_one(pool)
+        .await?;
+        if !system_agent_profiles_has_llm_provider_override {
+            sqlx::query("ALTER TABLE system_agent_profiles ADD COLUMN llm_provider_override TEXT")
+                .execute(pool)
+                .await?;
+        }
+
+        let system_agent_profiles_has_llm_model_override: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'system_agent_profiles' AND column_name = 'llm_model_override')"
+        )
+        .fetch_one(pool)
+        .await?;
+        if !system_agent_profiles_has_llm_model_override {
+            sqlx::query("ALTER TABLE system_agent_profiles ADD COLUMN llm_model_override TEXT")
+                .execute(pool)
+                .await?;
         }
 
         let system_agent_bindings_exists: bool = sqlx::query_scalar(
@@ -1141,17 +1165,19 @@ impl DatabaseService {
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL
             )"#,
-            r#"CREATE TABLE IF NOT EXISTS system_agent_profiles (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                mode TEXT NOT NULL,
-                capability TEXT NOT NULL,
-                enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                trigger_mode TEXT NOT NULL,
-                base_prompt_id TEXT,
-                prompt_patch TEXT,
-                input_schema_json TEXT NOT NULL DEFAULT '{}',
+                r#"CREATE TABLE IF NOT EXISTS system_agent_profiles (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    mode TEXT NOT NULL,
+                    capability TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    trigger_mode TEXT NOT NULL,
+                    llm_provider_override TEXT,
+                    llm_model_override TEXT,
+                    base_prompt_id TEXT,
+                    prompt_patch TEXT,
+                    input_schema_json TEXT NOT NULL DEFAULT '{}',
                 output_schema_json TEXT NOT NULL DEFAULT '{}',
                 required_tools_json TEXT NOT NULL DEFAULT '[]',
                 optional_tools_json TEXT NOT NULL DEFAULT '[]',
@@ -1224,6 +1250,18 @@ impl DatabaseService {
         self.execute_runtime_ddl(
             runtime,
             "ALTER TABLE ai_roles ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE system_agent_profiles ADD COLUMN llm_provider_override TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE system_agent_profiles ADD COLUMN llm_model_override TEXT",
         )
         .await
         .ok();

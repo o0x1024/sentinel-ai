@@ -15,6 +15,12 @@ pub struct VerificationPlan {
     #[serde(default)]
     pub candidate_parameters: Vec<String>,
     #[serde(default)]
+    pub replay_count: Option<u32>,
+    #[serde(default)]
+    pub concurrent_requests: Option<u32>,
+    #[serde(default)]
+    pub sequence_request_ids: Vec<i64>,
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -63,7 +69,11 @@ pub fn extract_target_request_id(output: Option<&Value>, payload: Option<&Value>
     output
         .and_then(extract_verification_plan)
         .and_then(|plan| plan.target_request_id)
-        .or_else(|| payload.and_then(|value| value.get("requestId")).and_then(Value::as_i64))
+        .or_else(|| {
+            payload
+                .and_then(|value| value.get("dbRequestId"))
+                .and_then(Value::as_i64)
+        })
 }
 
 pub fn build_baseline_from_proxy_request(record: &ProxyRequestRecord) -> VerificationBaseline {

@@ -39,15 +39,52 @@
         浏览器扩展未连接时，系统会自动回退到代理侧弱行为推断。
       </div>
     </div>
+
+    <div
+      v-if="stats"
+      class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3"
+    >
+      <div class="rounded-lg bg-base-200/60 border border-base-300 p-3">
+        <div class="text-xs text-base-content/60">浏览器增强命中</div>
+        <div class="mt-1 text-lg font-semibold">{{ stats.browserExtensionFindings }}</div>
+        <div class="text-xs text-base-content/60 mt-1">
+          候选 {{ stats.browserExtensionHypotheses }} / 正式 {{ stats.browserExtensionFormal }}
+        </div>
+      </div>
+      <div class="rounded-lg bg-base-200/60 border border-base-300 p-3">
+        <div class="text-xs text-base-content/60">代理推断命中</div>
+        <div class="mt-1 text-lg font-semibold">{{ stats.proxyInferredFindings }}</div>
+        <div class="text-xs text-base-content/60 mt-1">
+          候选 {{ stats.proxyInferredHypotheses }} / 正式 {{ stats.proxyInferredFormal }}
+        </div>
+      </div>
+      <div class="rounded-lg bg-base-200/60 border border-base-300 p-3">
+        <div class="text-xs text-base-content/60">行为上下文覆盖率</div>
+        <div class="mt-1 text-lg font-semibold">{{ formatPercent(stats.behaviorContextCoverageRate) }}</div>
+        <div class="text-xs text-base-content/60 mt-1">
+          {{ stats.behaviorContextFindings }} / {{ stats.totalFindings }}（{{ windowLabel }}）
+        </div>
+      </div>
+      <div class="rounded-lg bg-base-200/60 border border-base-300 p-3">
+        <div class="text-xs text-base-content/60">浏览器增强占比</div>
+        <div class="mt-1 text-lg font-semibold">{{ formatPercent(stats.browserExtensionShareRate) }}</div>
+        <div class="text-xs text-base-content/60 mt-1">
+          已验证 {{ stats.browserExtensionVerified }} / 代理 {{ stats.proxyInferredVerified }}
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { TrafficBehaviorSignalSettings } from '@/components/traffic/proxyConfigurationTypes'
+import type { SystemAgentBehaviorEffectStats } from '../systemAgentSettingsSupport'
 import { computed } from 'vue'
 
 const props = defineProps<{
   settings: TrafficBehaviorSignalSettings
+  stats?: SystemAgentBehaviorEffectStats | null
+  window?: '24h' | '7d' | '30d'
   bridgeUrl?: string
 }>()
 
@@ -55,6 +92,12 @@ const selectedMode = computed(() => props.settings.mode)
 const connected = computed(() => props.settings.browserExtensionConnected)
 const lastSeenAt = computed(() => props.settings.browserExtensionLastSeenAt)
 const bridgeUrl = computed(() => props.bridgeUrl || 'http://127.0.0.1:18931')
+const stats = computed(() => props.stats || null)
+const windowLabel = computed(() => {
+  if (props.window === '7d') return '近 7 天'
+  if (props.window === '30d') return '近 30 天'
+  return '近 24 小时'
+})
 
 const selectedModeLabel = computed(() => {
   if (selectedMode.value === 'browser_extension') return '浏览器扩展行为采集'
@@ -82,5 +125,10 @@ function formatDate(value?: string | null) {
   } catch {
     return value
   }
+}
+
+function formatPercent(value?: number | null) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '0%'
+  return `${Math.round(value * 100)}%`
 }
 </script>

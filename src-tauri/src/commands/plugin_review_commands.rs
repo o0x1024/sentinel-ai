@@ -8,6 +8,7 @@ use tauri::State;
 use crate::generators::validator::{PluginValidator, ValidationResult};
 use crate::services::database::DatabaseService;
 use sentinel_db::Database;
+use sentinel_plugins::{PluginMetadata, Severity};
 
 /// Response for plugin review operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +16,37 @@ pub struct PluginReviewResponse {
     pub success: bool,
     pub message: String,
     pub data: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeSchemaValidationMetadata {
+    pub id: String,
+    pub name: String,
+    pub main_category: String,
+    pub category: String,
+    pub author: Option<String>,
+    pub description: Option<String>,
+    pub default_severity: Option<String>,
+    pub monitor_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeSchemaValidationResult {
+    pub success: bool,
+    pub schema: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub issue_code: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+fn parse_plugin_severity(value: Option<&str>) -> Severity {
+    match value.unwrap_or("medium").to_ascii_lowercase().as_str() {
+        "critical" => Severity::Critical,
+        "high" => Severity::High,
+        "low" => Severity::Low,
+        "info" => Severity::Info,
+        _ => Severity::Medium,
+    }
 }
 
 /// Get plugins for review (from plugin_registry table)
@@ -545,5 +577,43 @@ pub async fn validate_plugin_code(code: String) -> Result<ValidationResult, Stri
             log::error!("Plugin validation failed: {}", e);
             Err(format!("Validation error: {}", e))
         }
+    }
+}
+
+/// Validate plugin runtime get_input_schema execution from raw code and metadata
+#[tauri::command]
+pub async fn validate_plugin_runtime_schema(
+    code: String,
+    metadata: RuntimeSchemaValidationMetadata,
+) -> Result<RuntimeSchemaValidationResult, String> {
+    let plugin_metadata = PluginMetadata {
+        id: metadata.id,
+        name: metadata.name,
+        version: "1.0.0".to_string(),
+        author: metadata.author,
+        main_category: metadata.main_category,
+        category: metadata.category,
+        default_severity: parse_plugin_severity(metadata.default_severity.as_deref()),
+        tags: vec![],
+        description: metadata.description,
+        monitor_type: metadata.monitor_type,
+        target_asset_types: Vec::new(),
+    };
+
+    match sentinel_plugins::get_input_schema_from_code(&code, plugin_metadata).await {
+        Ok(schema) => Ok(RuntimeSchemaValidationResult {
+            success: true,
+            schema: Some(schema),
+            error: None,
+            issue_code: None,
+            warnings: Vec::new(),
+        }),
+        Err(error) => Ok(RuntimeSchemaValidationResult {
+            success: false,
+            schema: None,
+            error: Some(error.to_string()),
+            issue_code: Some("runtime_schema_execution_failed".to_string()),
+            warnings: Vec::new(),
+        }),
     }
 }

@@ -42,15 +42,29 @@
       </div>
     </div>
 
-    <div class="min-h-0 flex-1">
+    <div class="min-h-0 flex-1" @contextmenu.capture.prevent="showContextMenu($event)">
       <HttpMessageSurface
         ref="requestEditor"
         :model-value="requestText"
+        custom-context-menu
         message-type="request"
         height="100%"
         display-mode="raw"
         :state-key="`intruder:editor:${targetUrl || 'default'}`"
         @update:model-value="$emit('update:requestText', $event)"
+        @contextmenu="showContextMenu($event)"
+      />
+    </div>
+
+    <div
+      v-if="contextMenu.visible"
+      class="fixed z-50 min-w-48 rounded-lg border border-base-300 bg-base-100 py-1 shadow-xl"
+      :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+      @click.stop
+    >
+      <TrafficContextMenuSections
+        :sections="contextMenuSections"
+        label-prefix="trafficAnalysis.intruder.contextMenu"
       />
     </div>
 
@@ -62,13 +76,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
+import TrafficContextMenuSections from '@/components/traffic/TrafficContextMenuSections.vue'
+import { buildTrafficRequestActionMenuItems } from '@/components/traffic/trafficRequestActionMenuSupport'
+import { buildTrafficRequestContextMenuSections } from '@/components/traffic/trafficRequestContextMenuSupport'
+import { buildTrafficRequestSendMenuItems } from '@/components/traffic/trafficSendMenuSupport'
+import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
 import type { IntruderPosition } from './types'
+import { buildFullUrl, buildSourceRequestFromRawRequest, extractTargetFromRequest } from './http'
 
 const { t } = useI18n()
+const { enabledTargets } = useTrafficSendTargets()
 
 const props = defineProps<{
   requestText: string
@@ -84,14 +105,57 @@ const emit = defineEmits<{
   (e: 'markSelection', payload: { start: number; end: number }): void
   (e: 'autoMark'): void
   (e: 'clearMarkers'): void
+  (e: 'sendToRepeater'): void
+  (e: 'sendDraftRequestToComparer'): void
 }>()
 
 const requestEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null)
+const contextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+})
 
 const requestLengthLabel = computed(() => {
   const length = props.requestText.length
   return `${t('trafficAnalysis.intruder.labels.length')}: ${length}`
 })
+const currentTarget = computed(() => extractTargetFromRequest(props.requestText, props.targetUrl))
+const currentRequest = computed(() => buildSourceRequestFromRawRequest(props.requestText, currentTarget.value))
+const currentUrl = computed(() => buildFullUrl(props.requestText, currentTarget.value))
+const sendMenuItems = computed(() =>
+  buildTrafficRequestSendMenuItems({
+    enabledTargets: enabledTargets.value,
+    supportedTargets: ['repeater', 'comparer'],
+    actions: {
+      repeater: currentRequest.value ? () => emit('sendToRepeater') : undefined,
+      comparer: currentRequest.value ? () => emit('sendDraftRequestToComparer') : undefined,
+    },
+  }),
+)
+const requestActionMenuItems = computed(() =>
+  buildTrafficRequestActionMenuItems({
+    supportedActions: ['copyUrl', 'copyRequest', 'copyAsCurl', 'openInBrowser'],
+    actions: {
+      copyUrl: currentUrl.value ? copyUrl : undefined,
+      copyRequest: props.requestText ? copyRequest : undefined,
+      copyAsCurl: currentRequest.value ? copyAsCurl : undefined,
+      openInBrowser: currentUrl.value ? openInBrowser : undefined,
+    },
+  }),
+)
+const contextMenuSections = computed(() =>
+  buildTrafficRequestContextMenuSections({
+    sendItems: sendMenuItems.value.map((item) => ({
+      ...item,
+      onClick: () => handleContextMenuAction(item.onClick),
+    })),
+    requestItems: requestActionMenuItems.value.map((item) => ({
+      ...item,
+      onClick: () => handleContextMenuAction(item.onClick),
+    })),
+  }),
+)
 
 function markSelection() {
   const selection = requestEditor.value?.getSelectionRange()
@@ -105,4 +169,84 @@ function markSelection() {
     end: selection.to,
   })
 }
+
+function hideContextMenu() {
+  contextMenu.value.visible = false
+  document.removeEventListener('click', hideContextMenu)
+  document.removeEventListener('contextmenu', hideContextMenu)
+}
+
+function showContextMenu(event: MouseEvent) {
+  event.preventDefault()
+  event.stopPropagation()
+  contextMenu.value = {
+    visible: true,
+    x: Math.min(event.clientX, window.innerWidth - 220),
+    y: Math.min(event.clientY, window.innerHeight - 240),
+  }
+  setTimeout(() => {
+    document.addEventListener('click', hideContextMenu)
+    document.addEventListener('contextmenu', hideContextMenu)
+  }, 0)
+}
+
+function handleContextMenuAction(action: () => void | Promise<void>) {
+  hideContextMenu()
+  void action()
+}
+
+async function copyUrl() {
+  if (!currentUrl.value) return
+  try {
+    await navigator.clipboard.writeText(currentUrl.value)
+    dialog.toast.success(t('trafficAnalysis.intruder.messages.urlCopied'))
+  } catch {
+    dialog.toast.error(t('trafficAnalysis.intruder.messages.copyFailed'))
+  }
+}
+
+async function copyRequest() {
+  if (!props.requestText) return
+  try {
+    await navigator.clipboard.writeText(props.requestText)
+    dialog.toast.success(t('trafficAnalysis.intruder.messages.requestCopied'))
+  } catch {
+    dialog.toast.error(t('trafficAnalysis.intruder.messages.copyFailed'))
+  }
+}
+
+async function copyAsCurl() {
+  const request = currentRequest.value
+  if (!request) return
+
+  const parts = [`curl -X ${request.method}`]
+  for (const [key, value] of Object.entries(request.headers)) {
+    parts.push(`-H ${quoteForShell(`${key}: ${value}`)}`)
+  }
+  if (request.body) {
+    parts.push(`--data-raw ${quoteForShell(request.body)}`)
+  }
+  parts.push(quoteForShell(request.url))
+
+  try {
+    await navigator.clipboard.writeText(parts.join(' '))
+    dialog.toast.success(t('trafficAnalysis.intruder.messages.curlCopied'))
+  } catch {
+    dialog.toast.error(t('trafficAnalysis.intruder.messages.copyFailed'))
+  }
+}
+
+function openInBrowser() {
+  if (!currentUrl.value) return
+  window.open(currentUrl.value, '_blank')
+}
+
+function quoteForShell(value: string) {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`
+}
+
+onUnmounted(() => {
+  document.removeEventListener('click', hideContextMenu)
+  document.removeEventListener('contextmenu', hideContextMenu)
+})
 </script>

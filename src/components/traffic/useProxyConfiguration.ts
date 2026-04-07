@@ -1,6 +1,7 @@
 import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { open } from '@tauri-apps/plugin-dialog'
 import { dialog } from '@/composables/useDialog'
 import {
   createDefaultEditingListener,
@@ -30,7 +31,7 @@ import {
   type UpstreamProxyConfig,
 } from './proxyConfigurationTypes'
 
-type TranslateFn = (key: string, fallback?: string) => string
+type TranslateFn = (key: string, ...args: any[]) => string
 type FilterRuleAddedPayload = {
   matchType: string
   condition: string
@@ -54,6 +55,10 @@ interface TrafficBehaviorExtensionInstallation {
   extensionDirectory: string
   directorySource: string
   bundledWithApp: boolean
+}
+
+interface CopyTrafficBehaviorExtensionResult {
+  copiedDirectory: string
 }
 
 function moveItem<T>(items: T[], index: number, nextIndex: number) {
@@ -101,6 +106,7 @@ export function useProxyConfiguration({
   const browserExtensionBridgeUrl = ref('http://127.0.0.1:18931')
   const browserExtensionDirectoryPath = ref('')
   const browserExtensionBundledWithApp = ref(false)
+  const isCopyingBrowserExtension = ref(false)
   const behaviorSignalSettings = ref<TrafficBehaviorSignalSettings>(
     createDefaultTrafficBehaviorSignalSettings(),
   )
@@ -1009,6 +1015,47 @@ export function useProxyConfiguration({
     }
   }
 
+  const copyBrowserExtensionToDirectory = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: t('trafficAnalysis.proxyConfiguration.selectExtensionCopyTarget'),
+      })
+
+      if (!selected || Array.isArray(selected)) {
+        return
+      }
+
+      isCopyingBrowserExtension.value = true
+      const response = await invoke<CommandResponse<CopyTrafficBehaviorExtensionResult>>(
+        'copy_traffic_behavior_extension_to_directory',
+        {
+          targetDirectory: selected,
+        },
+      )
+
+      if (!response.success || !response.data) {
+        throw new Error(response.error || '复制失败')
+      }
+
+      dialog.toast.success(
+        t('trafficAnalysis.proxyConfiguration.copyExtensionToDirectorySuccess', {
+          path: response.data.copiedDirectory,
+        }),
+      )
+    } catch (error) {
+      console.error('[ProxyConfiguration] Failed to copy browser extension to directory:', error)
+      dialog.toast.error(
+        t('trafficAnalysis.proxyConfiguration.copyExtensionToDirectoryFailed', {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    } finally {
+      isCopyingBrowserExtension.value = false
+    }
+  }
+
   const loadConfig = async () => {
     try {
       console.log('[ProxyConfiguration] Loading config...')
@@ -1097,6 +1144,19 @@ export function useProxyConfiguration({
           })
           console.log('[ProxyConfiguration] Proxy is not running')
         }
+      }
+
+      const interceptResponse = await invoke<CommandResponse<boolean>>('get_intercept_enabled')
+      if (interceptResponse.success) {
+        const enabled = Boolean(interceptResponse.data)
+        masterInterceptionEnabled.value = enabled
+        console.log('[ProxyConfiguration] Master intercept:', interceptResponse.data)
+      }
+
+      const requestInterceptResponse = await invoke<CommandResponse<boolean>>('get_request_intercept_enabled')
+      if (requestInterceptResponse.success) {
+        interceptRequests.value = Boolean(requestInterceptResponse.data)
+        console.log('[ProxyConfiguration] Request intercept:', requestInterceptResponse.data)
       }
 
       const responseInterceptResponse = await invoke<CommandResponse<boolean>>('get_response_intercept_enabled')
@@ -1295,6 +1355,17 @@ export function useProxyConfiguration({
     debouncedSave()
   }, { deep: true })
 
+  watch(interceptRequests, async newValue => {
+    if (isInitialLoad.value) return
+
+    console.log('[ProxyConfiguration] Request intercept changed:', newValue)
+    try {
+      await invoke('set_request_intercept_enabled', { enabled: newValue })
+    } catch (error) {
+      console.error('[ProxyConfiguration] Failed to set request intercept:', error)
+    }
+  })
+
   watch(interceptResponses, async newValue => {
     if (isInitialLoad.value) return
 
@@ -1328,6 +1399,7 @@ export function useProxyConfiguration({
     browserExtensionBridgeUrl,
     browserExtensionDirectoryPath,
     browserExtensionBundledWithApp,
+    isCopyingBrowserExtension,
     behaviorSignalSettings,
     proxyListeners,
     selectedListeners,
@@ -1459,6 +1531,7 @@ export function useProxyConfiguration({
     saveTrafficBehaviorSignalSettings,
     copyBrowserExtensionBridgeUrl,
     copyBrowserExtensionDirectory,
+    copyBrowserExtensionToDirectory,
     loadConfig,
     autoStartProxy,
     addRequestFilterRule,

@@ -106,8 +106,10 @@
           :page-size="pluginPageSize"
           :total-pages="pluginTotalPages"
           :plugin-search-text="pluginSearchText"
+          :selected-main-category="selectedMainCategory"
           :selected-sub-category="selectedSubCategory"
           :selected-tag="selectedTag"
+          :available-main-categories="availableMainCategories"
           :available-sub-categories="getAvailableSubCategories()"
           :available-tags="getAvailableTags()"
           :batch-toggling="batchToggling"
@@ -115,6 +117,9 @@
           :plugin-batch-processing="pluginBatchProcessing"
           :is-all-current-page-selected="isAllCurrentPageSelected"
           :get-status-text="getStatusText"
+          :get-main-category-label="getMainCategoryLabel"
+          :get-main-category-icon="getMainCategoryIcon"
+          :get-main-category-badge-class="getMainCategoryBadgeClass"
           :get-category-label="getCategoryLabel"
           :get-category-icon="getCategoryIcon"
           :is-plugin-selected="isRegularPluginSelected"
@@ -123,6 +128,7 @@
           :is-agent-plugin-type="isAgentPluginType"
           @update:plugin-view-mode="pluginViewMode = $event"
           @update:search-text="pluginSearchText = $event"
+          @update:main-category="selectedMainCategory = $event"
           @update:sub-category="selectedSubCategory = $event"
           @update:tag="selectedTag = $event"
           @clear-filters="clearFilters"
@@ -158,6 +164,7 @@
       :deleting="deleting"
       :ai-prompt="aiPrompt"
       :ai-plugin-type="aiPluginType"
+      :ai-plugin-category="aiPluginCategory"
       :ai-severity="aiSeverity"
       :ai-generating="aiGenerating"
       :ai-generate-error="aiGenerateError"
@@ -181,6 +188,7 @@
       @delete-plugin="deletePlugin"
       @update:ai-prompt="aiPrompt = $event"
       @update:ai-plugin-type="aiPluginType = $event"
+      @update:ai-plugin-category="aiPluginCategory = $event"
       @update:ai-severity="aiSeverity = $event"
       @generate-plugin-with-ai="generatePluginWithAI"
       @run-advanced-test="runAdvancedTest"
@@ -211,12 +219,22 @@ import PluginListSection from '@/components/PluginManagement/PluginListSection.v
 import PluginReviewSection from '@/components/PluginManagement/PluginReviewSection.vue'
 import PluginStoreSection from '@/components/PluginManagement/PluginStoreSection.vue'
 import PluginDialogs from '@/components/PluginManagement/PluginDialogs.vue'
+import {
+  buildAiValidationReport,
+  combineAiValidationResults,
+  formatAiGeneratedPluginGateMessage,
+  normalizePluginValidationIssues,
+  normalizeRuntimeSchemaValidationResult,
+  type PluginCodeValidationResult,
+  type PluginRuntimeSchemaValidationResult,
+  validateAiGeneratedPluginCode,
+} from '@/components/PluginManagement/aiGeneratedPluginGate'
 import { usePluginEditorStore } from '@/stores/pluginEditor'
 import type {
   PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult,
   CommandResponse, BatchToggleResult, NewPluginMetadata, AdvancedForm
 } from '@/components/PluginManagement/types'
-import { trafficCategories, agentsCategories } from '@/components/PluginManagement/types'
+import { trafficCategories, agentsCategories, mainCategories, intruderCategories } from '@/components/PluginManagement/types'
 
 const { t } = useI18n()
 const pluginEditorStore = usePluginEditorStore()
@@ -253,10 +271,11 @@ const reviewTotalPagesCount = ref(0)
 const reviewStatsData = ref({ total: 0, pending: 0, approved: 0, rejected: 0, failed: 0 })
 
 // Plugin List State
-const pluginViewMode = ref<'favorited' | 'all'>('favorited')
+const pluginViewMode = ref<'favorited' | 'all'>('all')
 const pluginCurrentPage = ref(1)
 const pluginPageSize = ref(10)
 const pluginSearchText = ref('')
+const selectedMainCategory = ref('')
 const selectedSubCategory = ref('')
 const selectedTag = ref('')
 const selectedPluginIds = ref<string[]>([])
@@ -275,6 +294,7 @@ const deleting = ref(false)
 // AI Generate State
 const aiPrompt = ref('')
 const aiPluginType = ref('traffic')
+const aiPluginCategory = ref('custom')
 const aiSeverity = ref('medium')
 const aiGenerating = ref(false)
 const aiGenerateError = ref('')
@@ -296,35 +316,69 @@ const advancedForm = ref<AdvancedForm>({
 
 let pluginChangedUnlisten: UnlistenFn | null = null
 
+const getDefaultAiPluginCategory = (pluginType: string): string => {
+  if (pluginType === 'agent') return 'utility'
+  if (pluginType === 'intruder') return 'payload_generator'
+  return 'custom'
+}
+
+watch(aiPluginType, (nextType) => {
+  const validCategories = nextType === 'traffic'
+    ? trafficCategories
+    : nextType === 'agent'
+      ? agentsCategories
+      : nextType === 'intruder'
+        ? intruderCategories
+        : []
+
+  if (!validCategories.includes(aiPluginCategory.value)) {
+    aiPluginCategory.value = getDefaultAiPluginCategory(nextType)
+  }
+}, { immediate: true })
+
 // Computed Properties
 const categories = computed(() => [
   { value: 'all', label: t('plugins.categories.all', '全部'), icon: 'fas fa-th' },
-  { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件'), icon: 'fas fa-shield-alt' },
-  { value: 'agents', label: t('plugins.categories.agents', 'Agent工具插件'), icon: 'fas fa-robot' },
 ])
 
-const filteredPlugins = computed(() => {
-  let filtered = plugins.value
+const availableMainCategories = computed(() => {
+  const available = new Set(plugins.value.map(plugin => plugin.metadata.main_category).filter(Boolean))
+  return mainCategories
+    .filter(category => available.has(category.value))
+    .map(category => ({
+      ...category,
+      label: getMainCategoryLabel(category.value),
+    }))
+})
 
-  if (selectedCategory.value === 'traffic') {
-    filtered = plugins.value.filter(p => {
-      if (p.metadata.main_category === 'traffic') return true
-      if (trafficCategories.includes(p.metadata.category)) return true
-      if (p.metadata.category === 'traffic') return true
-      return false
-    })
-  } else if (selectedCategory.value === 'agents') {
-    filtered = plugins.value.filter(p => {
-      if (p.metadata.main_category === 'agent') return true
-      if (agentsCategories.includes(p.metadata.category)) return true
-      return false
-    })
-  } else if (selectedCategory.value !== 'all') {
-    filtered = plugins.value.filter(p => p.metadata.category === selectedCategory.value)
+const matchesMainCategory = (plugin: PluginRecord, mainCategory: string): boolean => {
+  if (!mainCategory) return true
+  if (plugin.metadata.main_category === mainCategory) return true
+
+  if (mainCategory === 'traffic') {
+    return trafficCategories.includes(plugin.metadata.category) || plugin.metadata.category === 'traffic'
   }
 
-  if (['all', 'traffic', 'agents'].includes(selectedCategory.value) && pluginViewMode.value === 'favorited') {
+  if (mainCategory === 'agent') {
+    return agentsCategories.includes(plugin.metadata.category)
+  }
+
+  if (mainCategory === 'intruder') {
+    return intruderCategories.includes(plugin.metadata.category)
+  }
+
+  return false
+}
+
+const baseFilteredPlugins = computed(() => {
+  let filtered = plugins.value
+
+  if (pluginViewMode.value === 'favorited') {
     filtered = filtered.filter(p => isPluginFavorited(p))
+  }
+
+  if (selectedMainCategory.value) {
+    filtered = filtered.filter(p => matchesMainCategory(p, selectedMainCategory.value))
   }
 
   if (pluginSearchText.value.trim()) {
@@ -336,12 +390,17 @@ const filteredPlugins = computed(() => {
     )
   }
 
-  if (selectedSubCategory.value) {
-    filtered = filtered.filter(p => p.metadata.category === selectedSubCategory.value)
-  }
-
   if (selectedTag.value) {
     filtered = filtered.filter(p => p.metadata.tags.includes(selectedTag.value))
+  }
+
+  return filtered
+})
+
+const filteredPlugins = computed(() => {
+  let filtered = baseFilteredPlugins.value
+  if (selectedSubCategory.value) {
+    filtered = filtered.filter(p => p.metadata.category === selectedSubCategory.value)
   }
 
   return filtered
@@ -386,7 +445,7 @@ const sortedRuns = computed(() => {
   return [...advancedResult.value.runs].sort((a, b) => a.run_index - b.run_index)
 })
 
-const isAdvancedAgent = computed(() => advancedPlugin.value?.metadata?.main_category === 'agent')
+const isAdvancedAgent = computed(() => ['agent', 'intruder'].includes(advancedPlugin.value?.metadata?.main_category || ''))
 
 // Installed plugin IDs for store section
 const installedPluginIds = computed(() => plugins.value.map(p => p.metadata.id))
@@ -407,7 +466,7 @@ const isTrafficPluginType = (plugin: PluginRecord): boolean => {
 }
 
 const isAgentPluginType = (plugin: PluginRecord): boolean => {
-  if (plugin.metadata.main_category === 'agent') return true
+  if (['agent', 'intruder'].includes(plugin.metadata.main_category)) return true
   return agentsCategories.includes(plugin.metadata.category)
 }
 
@@ -416,7 +475,42 @@ const getStatusText = (status: string): string => {
   return map[status] || status
 }
 
+const getMainCategoryLabel = (mainCategory: string): string => {
+  if (mainCategory === 'traffic') return t('plugins.categories.trafficAnalysis', 'Traffic Analysis Plugins')
+  if (mainCategory === 'agent') return t('plugins.categories.agents', 'Agent Tool Plugins')
+  if (mainCategory === 'intruder') return t('plugins.categories.intruder', 'Intruder Plugins')
+  return mainCategory
+}
+
+const getMainCategoryIcon = (mainCategory: string): string => {
+  const cat = mainCategories.find(c => c.value === mainCategory)
+  return cat?.icon || 'fas fa-puzzle-piece'
+}
+
+const getMainCategoryBadgeClass = (mainCategory: string): string => {
+  if (mainCategory === 'traffic') return 'badge-info'
+  if (mainCategory === 'agent') return 'badge-warning'
+  if (mainCategory === 'intruder') return 'badge-secondary'
+  return 'badge-ghost'
+}
+
 const getCategoryLabel = (category: string): string => {
+  const trafficCategoryKeys = new Set(trafficCategories)
+  const agentCategoryKeys = new Set(agentsCategories)
+  const intruderCategoryKeys = new Set(intruderCategories)
+
+  if (trafficCategoryKeys.has(category)) {
+    return t(`plugins.trafficCategories.${category}`, category)
+  }
+
+  if (agentCategoryKeys.has(category)) {
+    return t(`plugins.agentCategories.${category}`, category)
+  }
+
+  if (intruderCategoryKeys.has(category)) {
+    return t(`plugins.intruderCategories.${category}`, category)
+  }
+
   const cat = categories.value.find(c => c.value === category)
   return cat ? cat.label : category
 }
@@ -433,12 +527,6 @@ const getCategoryIcon = (category: string): string => {
 
 const getCategoryCount = (category: string): number => {
   if (category === 'all') return plugins.value.length
-  if (category === 'traffic') {
-    return plugins.value.filter(p => p.metadata.main_category === 'traffic' || trafficCategories.includes(p.metadata.category)).length
-  }
-  if (category === 'agents') {
-    return plugins.value.filter(p => p.metadata.main_category === 'agent' || agentsCategories.includes(p.metadata.category)).length
-  }
   return plugins.value.filter(p => p.metadata.category === category).length
 }
 
@@ -714,22 +802,20 @@ const changePluginPageSize = (size: number) => {
 
 const clearFilters = () => {
   pluginSearchText.value = ''
+  selectedMainCategory.value = ''
   selectedSubCategory.value = ''
   selectedTag.value = ''
   pluginCurrentPage.value = 1
 }
 
 const getAvailableSubCategories = (): string[] => {
-  if (selectedCategory.value === 'traffic' || selectedCategory.value === 'agents') {
-    const cats = new Set(filteredPlugins.value.map(p => p.metadata.category))
-    return Array.from(cats).sort()
-  }
-  return []
+  const cats = new Set(baseFilteredPlugins.value.map(p => p.metadata.category))
+  return Array.from(cats).sort()
 }
 
 const getAvailableTags = (): string[] => {
   const tags = new Set<string>()
-  filteredPlugins.value.forEach(p => p.metadata.tags.forEach(tag => tags.add(tag)))
+  baseFilteredPlugins.value.forEach(p => p.metadata.tags.forEach(tag => tags.add(tag)))
   return Array.from(tags).sort()
 }
 
@@ -1031,6 +1117,9 @@ const deletePlugin = async () => {
 const openAIGenerateDialog = () => {
   aiPrompt.value = ''
   aiGenerateError.value = ''
+  aiPluginType.value = 'traffic'
+  aiPluginCategory.value = getDefaultAiPluginCategory('traffic')
+  aiSeverity.value = 'medium'
   pluginDialogsRef.value?.showAIGenerateDialog()
 }
 
@@ -1039,22 +1128,76 @@ const closeAIGenerateDialog = () => {
   aiGenerateError.value = ''
 }
 
+const validateGeneratedPluginCode = async (
+  code: string,
+  metadata: NewPluginMetadata,
+): Promise<PluginCodeValidationResult> => {
+  try {
+    const result = await invoke<PluginCodeValidationResult>('validate_plugin_code', { code })
+    return result
+  } catch (error) {
+    return {
+      is_valid: true,
+      syntax_valid: true,
+      has_required_functions: true,
+      security_check_passed: true,
+      errors: [],
+      warnings: [error instanceof Error ? error.message : String(error)],
+    }
+  }
+}
+
+const validateGeneratedPluginRuntimeSchema = async (
+  code: string,
+  metadata: NewPluginMetadata,
+): Promise<PluginRuntimeSchemaValidationResult> => {
+  if (metadata.mainCategory === 'traffic') {
+    return { success: true, schema: null, warnings: [] }
+  }
+
+  try {
+    return await invoke<PluginRuntimeSchemaValidationResult>('validate_plugin_runtime_schema', {
+      code,
+      metadata: {
+        id: metadata.id,
+        name: metadata.name,
+        main_category: metadata.mainCategory,
+        category: metadata.category,
+        author: metadata.author || null,
+        description: metadata.description || null,
+        default_severity: metadata.default_severity,
+        monitor_type: metadata.monitorType || null,
+      },
+    })
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      warnings: [],
+    }
+  }
+}
+
 const generatePluginWithAI = async () => {
   if (!aiPrompt.value.trim()) return
   aiGenerating.value = true
   aiGenerateError.value = ''
-  
-  const isAgentPlugin = aiPluginType.value === 'agent'
+
   const streamId = `plugin_gen_${Date.now()}`
   
   try {
     const systemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
-      pluginType: isAgentPlugin ? 'agent' : 'traffic',
-      vulnType: 'custom',
+      pluginType: aiPluginType.value,
+      vulnType: aiPluginCategory.value,
       severity: aiSeverity.value
     })
-    
-    const userPrompt = `please generate ${isAgentPlugin ? 'Agent tool' : 'traffic analysis'} plugin code based on the following requirements:\n\n${aiPrompt.value}`
+
+    const pluginTypeDescription = aiPluginType.value === 'traffic'
+      ? 'traffic analysis'
+      : aiPluginType.value === 'intruder'
+        ? 'intruder'
+        : 'agent tool'
+    const userPrompt = `please generate ${pluginTypeDescription} plugin code for the "${aiPluginCategory.value}" category based on the following requirements:\n\n${aiPrompt.value}`
 
     let generatedCode = ''
     let streamCompleted = false
@@ -1111,15 +1254,53 @@ const generatePluginWithAI = async () => {
         name: aiPrompt.value.substring(0, 50),
         version: '1.0.0',
         author: 'AI Generated',
-        mainCategory: isAgentPlugin ? 'agent' : 'traffic',
-        category: '',
+        mainCategory: aiPluginType.value,
+        category: aiPluginCategory.value,
+        monitorType: '',
         default_severity: aiSeverity.value,
         description: aiPrompt.value,
-        tagsString: `ai-generated, ${aiPluginType.value}`
+        tagsString: `ai-generated, ${aiPluginType.value}, ${aiPluginCategory.value}`
       }
+
+      const gateResult = validateAiGeneratedPluginCode(generatedCode, metadata)
+      const staticValidation = await validateGeneratedPluginCode(generatedCode, metadata)
+      const staticValidationIssues = normalizePluginValidationIssues(staticValidation, metadata)
+      const runtimeSchemaValidation = await validateGeneratedPluginRuntimeSchema(generatedCode, metadata)
+      const runtimeSchemaResult = normalizeRuntimeSchemaValidationResult(runtimeSchemaValidation, metadata)
+      const combinedValidation = combineAiValidationResults(gateResult, staticValidationIssues, runtimeSchemaResult)
+      const validationReport = buildAiValidationReport([
+        {
+          key: 'structure',
+          title: '结构校验',
+          errors: gateResult.errors,
+          warnings: gateResult.warnings,
+        },
+        {
+          key: 'static',
+          title: '静态校验',
+          errors: staticValidationIssues.errors,
+          warnings: staticValidationIssues.warnings,
+        },
+        {
+          key: 'runtime-schema',
+          title: '运行时 Schema 校验',
+          errors: runtimeSchemaResult.errors,
+          warnings: runtimeSchemaResult.warnings,
+        },
+      ])
 
       pluginDialogsRef.value?.closeAIGenerateDialog()
       pluginEditorStore.openEditor(null, generatedCode, metadata)
+      pluginEditorStore.aiValidationReport = validationReport
+      pluginEditorStore.codeError = ''
+
+      if (combinedValidation.errors.length > 0) {
+        showToast(`AI 生成完成，但发现 ${combinedValidation.errors.length} 个问题，已在校验面板中标出`, 'warning')
+      } else if (combinedValidation.warnings.length > 0) {
+        showToast(`AI 生成完成，发现 ${combinedValidation.warnings.length} 个提示`, 'warning')
+      } else {
+        showToast('AI 生成完成', 'success')
+      }
     } finally {
       unlistenDelta()
       unlistenComplete()
@@ -1157,7 +1338,7 @@ const referTestResultToAi = () => {
 // Test methods
 const testPlugin = async (plugin: PluginRecord) => {
   if (!plugin?.metadata?.id) return
-  const isAgentPlugin = plugin.metadata.main_category === 'agent'
+  const isAgentPlugin = ['agent', 'intruder'].includes(plugin.metadata.main_category)
   testing.value = true
   testResult.value = null
 
@@ -1226,7 +1407,7 @@ const openAdvancedDialog = async (plugin: PluginRecord) => {
   advancedError.value = ''
   advancedResult.value = null
   
-  const isAgent = plugin.metadata.main_category === 'agent'
+  const isAgent = ['agent', 'intruder'].includes(plugin.metadata.main_category)
   if (isAgent) {
     try {
       const schemaResp = await invoke<CommandResponse<any>>('get_plugin_input_schema', {
@@ -1282,7 +1463,7 @@ const runAdvancedTest = async () => {
   advancedResult.value = null
 
   try {
-    const isAgent = advancedPlugin.value.metadata.main_category === 'agent'
+    const isAgent = ['agent', 'intruder'].includes(advancedPlugin.value.metadata.main_category)
     
     if (isAgent) {
       let inputs: Record<string, any> = {}

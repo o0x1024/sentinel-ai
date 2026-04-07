@@ -401,6 +401,15 @@
                 <button class="btn btn-xs btn-outline" type="button" @click.stop="copyBrowserExtensionDirectory">
                   {{ $t('trafficAnalysis.proxyConfiguration.copyExtensionDirectory', '复制扩展目录') }}
                 </button>
+                <button
+                  class="btn btn-xs btn-outline"
+                  type="button"
+                  :disabled="isCopyingBrowserExtension"
+                  @click.stop="copyBrowserExtensionToDirectory"
+                >
+                  <i :class="isCopyingBrowserExtension ? 'fas fa-spinner fa-spin' : 'fas fa-folder-plus'"></i>
+                  <span>{{ $t('trafficAnalysis.proxyConfiguration.copyExtensionToSpecificDirectory') }}</span>
+                </button>
               </div>
             </div>
           </label>
@@ -421,14 +430,23 @@
 
         <div class="form-control">
           <label class="label cursor-pointer justify-start gap-2">
-            <input 
-              type="checkbox" 
+            <input
+              type="checkbox"
               class="checkbox checkbox-sm"
               v-model="interceptRequests"
             />
             <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.interceptRequests') }}</span>
-            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm italic">{{ $t('trafficAnalysis.proxyConfiguration.masterInterceptionDisabled') }}</span>
+            <span
+              v-if="!masterInterceptionEnabled"
+              class="text-warning text-sm italic"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.masterInterceptionDisabled') }}
+            </span>
           </label>
+        </div>
+
+        <div class="mb-2 text-xs text-base-content/60">
+          {{ $t('trafficAnalysis.proxyConfiguration.masterInterceptionManagedInInterceptTab') }}
         </div>
 
         <div class="flex gap-4 mt-2">
@@ -523,7 +541,7 @@
     </div>
 
     <!-- Response Interception Rules -->
-    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" ref="responseInterceptionRulesRef" class="card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-reply mr-2"></i>
@@ -541,8 +559,16 @@
               v-model="interceptResponses"
             />
             <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.interceptResponses') }}</span>
-            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm italic">{{ $t('trafficAnalysis.proxyConfiguration.masterInterceptionDisabled') }}</span>
+            <span
+              v-if="!masterInterceptionEnabled"
+              class="text-warning text-sm italic"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.masterInterceptionManagedInInterceptTab') }}
+            </span>
           </label>
+        </div>
+        <div class="mb-2 text-xs text-base-content/60">
+          {{ $t('trafficAnalysis.proxyConfiguration.responseInterceptionDependsOnMaster') }}
         </div>
 
         <div class="flex gap-4 mt-2">
@@ -1596,7 +1622,7 @@
 <script setup lang="ts">
 import TrafficDisplaySettingsPanel from './TrafficDisplaySettingsPanel.vue'
 import ProxyScopeRulesPanel from './ProxyScopeRulesPanel.vue'
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProxyConfiguration } from './useProxyConfiguration'
 
@@ -1611,6 +1637,7 @@ type SettingsTab = {
 }
 
 const activeSettingsTab = ref<SettingsTabId>('listeners')
+const responseInterceptionRulesRef = ref<HTMLElement | null>(null)
 
 const settingsTabs = computed<SettingsTab[]>(() => [
   {
@@ -1650,6 +1677,7 @@ const {
   browserExtensionBridgeUrl,
   browserExtensionDirectoryPath,
   browserExtensionBundledWithApp,
+  isCopyingBrowserExtension,
   behaviorSignalSettings,
   proxyListeners,
   selectedListeners,
@@ -1781,6 +1809,7 @@ const {
   saveTrafficBehaviorSignalSettings,
   copyBrowserExtensionBridgeUrl,
   copyBrowserExtensionDirectory,
+  copyBrowserExtensionToDirectory,
   loadConfig,
   autoStartProxy,
   addRequestFilterRule,
@@ -1790,7 +1819,15 @@ const {
 })
 
 defineExpose({
-  addRequestFilterRule
+  addRequestFilterRule,
+  async openResponseInterceptionRules() {
+    activeSettingsTab.value = 'listeners'
+    await nextTick()
+    responseInterceptionRulesRef.value?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    })
+  },
 })
 </script>
 

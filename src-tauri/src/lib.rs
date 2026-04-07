@@ -30,7 +30,8 @@ use tauri_plugin_dialog::{
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 use services::{
-    ai::AiServiceManager, database::DatabaseService,
+    ai::AiServiceManager,
+    database::DatabaseService,
     system_agents::{ensure_default_system_agent_profiles, start_behavior_extension_bridge},
     SystemAgentRuntime,
 };
@@ -46,9 +47,8 @@ use commands::{
     performance,
     proxifier_commands::{self, ProxifierState},
     rag_commands, scan_session_commands, scan_task_commands, set_cache, tool_commands,
-    traffic_behavior_commands,
     traffic_analysis_commands::{self, TrafficAnalysisState},
-    window,
+    traffic_behavior_commands, traffic_context_commands, window,
 };
 
 // Workflow engine and scheduler
@@ -627,6 +627,9 @@ pub fn run() {
 
                 if let Err(e) = ensure_default_system_agent_profiles(db_service.clone()).await {
                     tracing::warn!("Failed to seed default system agent profiles: {}", e);
+                }
+                if let Err(e) = traffic_state.hydrate_system_agent_proxy_settings().await {
+                    tracing::warn!("Failed to hydrate traffic system-agent settings: {}", e);
                 }
 
                 let system_agent_runtime = Arc::new(SystemAgentRuntime::new(
@@ -1247,12 +1250,18 @@ pub fn run() {
             traffic_analysis_commands::reload_plugin_in_pipeline,
             traffic_analysis_commands::list_findings,
             traffic_analysis_commands::count_findings,
+            commands::get_finding_lifecycle_stats,
+            commands::get_traffic_behavior_effect_stats,
 
             traffic_analysis_commands::enable_plugin,
             traffic_analysis_commands::disable_plugin,
             traffic_analysis_commands::batch_enable_plugins,
             traffic_analysis_commands::batch_disable_plugins,
             traffic_analysis_commands::list_plugins,
+            traffic_analysis_commands::intruder_list_plugins,
+            traffic_analysis_commands::intruder_generate_payloads,
+            traffic_analysis_commands::intruder_process_payload,
+            traffic_analysis_commands::intruder_transform_request,
             traffic_analysis_commands::download_ca_cert,
             traffic_analysis_commands::get_ca_cert_path,
             traffic_analysis_commands::trust_ca_cert,
@@ -1270,6 +1279,7 @@ pub fn run() {
             traffic_analysis_commands::clear_proxy_requests,
             traffic_analysis_commands::count_proxy_requests,
             traffic_analysis_commands::create_plugin_in_db,
+            commands::upload_plugin,
             traffic_analysis_commands::update_plugin,
             traffic_analysis_commands::get_plugin_code,
             traffic_analysis_commands::get_plugin_by_id,
@@ -1294,10 +1304,15 @@ pub fn run() {
             traffic_analysis_commands::get_traffic_analysis_plugin_enabled,
             traffic_behavior_commands::get_traffic_behavior_signal_settings,
             traffic_behavior_commands::get_traffic_behavior_extension_installation,
+            traffic_behavior_commands::copy_traffic_behavior_extension_to_directory,
             traffic_behavior_commands::read_traffic_clipboard_text,
             traffic_behavior_commands::set_traffic_behavior_signal_settings,
+            traffic_context_commands::get_traffic_context_extraction_settings,
+            traffic_context_commands::set_traffic_context_extraction_settings,
             traffic_analysis_commands::set_intercept_enabled,
             traffic_analysis_commands::get_intercept_enabled,
+            traffic_analysis_commands::set_request_intercept_enabled,
+            traffic_analysis_commands::get_request_intercept_enabled,
             traffic_analysis_commands::get_intercepted_requests,
             traffic_analysis_commands::forward_intercepted_request,
             traffic_analysis_commands::drop_intercepted_request,
@@ -1347,6 +1362,7 @@ pub fn run() {
             commands::plugin_review_commands::reject_plugin,
             commands::plugin_review_commands::review_update_plugin_code,
             commands::plugin_review_commands::validate_plugin_code,
+            commands::plugin_review_commands::validate_plugin_runtime_schema,
             commands::config_commands::get_auto_approval_config,
             commands::config_commands::update_auto_approval_config,
             commands::config_commands::get_config_presets,

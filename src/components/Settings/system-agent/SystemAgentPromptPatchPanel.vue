@@ -5,7 +5,7 @@
         <span class="label-text">名称</span>
         <input :value="name" class="input input-bordered" disabled />
         <span class="label-text-alt text-base-content/60 mt-1">
-          内置 Agent 名称固定，不建议修改。
+          内置智能体名称固定，不建议修改。
         </span>
       </label>
     </div>

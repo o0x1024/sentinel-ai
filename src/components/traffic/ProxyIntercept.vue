@@ -15,6 +15,17 @@
               HTTP
             </div>
           </div>
+          <div class="tooltip" :data-tip="$t('trafficAnalysis.intercept.tooltip.response')">
+            <button
+              type="button"
+              class="badge badge-sm cursor-pointer border-0"
+              :class="responseInterceptActive ? 'badge-success' : responseInterceptEnabled ? 'badge-warning' : 'badge-neutral'"
+              @click="openResponseInterceptionSettings"
+            >
+              <i :class="['fas fa-circle mr-2', responseInterceptActive ? 'text-success-content' : responseInterceptEnabled ? 'text-warning-content' : 'text-neutral-content']"></i>
+              RESP
+            </button>
+          </div>
           <!-- WebSocket Intercept Status -->
           <div class="tooltip" :data-tip="$t('trafficAnalysis.intercept.tooltip.websocket')">
             <div class="badge badge-sm cursor-help" :class="websocketInterceptEnabled ? 'badge-success' : 'badge-neutral'">
@@ -180,133 +191,25 @@
           
           <div class="divider my-1 h-px"></div>
           
-          <!-- Send to -->
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="contextMenuSendToRepeater"
-            :disabled="contextMenu.item?.type !== 'request'"
-            :class="{ 'opacity-50 cursor-not-allowed': contextMenu.item?.type !== 'request' }"
-          >
-            <i class="fas fa-redo w-4 text-primary"></i>
-            {{ $t('trafficAnalysis.intercept.contextMenu.sendToRepeater') }}
-          </button>
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="contextMenuSendToIntruder"
-            :disabled="contextMenu.item?.type !== 'request'"
-            :class="{ 'opacity-50 cursor-not-allowed': contextMenu.item?.type !== 'request' }"
-          >
-            <i class="fas fa-crosshairs w-4 text-secondary"></i>
-            {{ $t('trafficAnalysis.intercept.contextMenu.sendToIntruder') }}
-          </button>
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="contextMenuSendToAI"
-          >
-            <i class="fas fa-robot w-4 text-secondary"></i>
-            {{ $t('trafficAnalysis.intercept.contextMenu.sendToAI') }}
-          </button>
+          <TrafficContextMenuSections
+            :sections="interceptSendContextMenuSections"
+            label-prefix="trafficAnalysis.intercept.contextMenu"
+          />
           
           <div class="divider my-1 h-px"></div>
           
-          <!-- Filter submenu -->
-          <div class="relative group">
-            <button 
-              class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2 justify-between"
-            >
-              <span class="flex items-center gap-2">
-                <i class="fas fa-filter w-4 text-warning"></i>
-                {{ $t('trafficAnalysis.intercept.contextMenu.addFilter') }}
-              </span>
-              <i class="fas fa-chevron-right text-xs"></i>
-            </button>
-            <!-- Filter submenu -->
-            <div class="absolute left-full top-0 ml-1 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-56 hidden group-hover:block">
-              <template v-if="contextMenu.item?.type === 'request'">
-                <button 
-                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
-                  @click="addFilterByDomain"
-                >
-                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByDomain') }}: {{ getItemDomain() }}
-                </button>
-                <button 
-                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
-                  @click="addFilterByUrl"
-                >
-                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByUrl') }}
-                </button>
-                <button 
-                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
-                  @click="addFilterByMethod"
-                >
-                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByMethod') }}: {{ getItemMethod() }}
-                </button>
-                <button 
-                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
-                  @click="addFilterByFileExt"
-                >
-                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByFileExt') }}
-                </button>
-              </template>
-              <template v-else-if="contextMenu.item?.type === 'response'">
-                <button 
-                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
-                  @click="addFilterByStatus"
-                >
-                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByStatus') }}: {{ getItemStatus() }}
-                </button>
-                <button 
-                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
-                  @click="addFilterByContentType"
-                >
-                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByContentType') }}
-                </button>
-              </template>
-              <template v-else-if="contextMenu.item?.type === 'websocket'">
-                <button 
-                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
-                  @click="addFilterByWsDirection"
-                >
-                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByDirection') }}: {{ getItemDirection() }}
-                </button>
-              </template>
-              <div class="divider my-1 h-px"></div>
-              <button 
-                class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
-                @click="openFilterDialog"
-              >
-                <i class="fas fa-cog mr-2"></i>
-                {{ $t('trafficAnalysis.intercept.contextMenu.customFilter') }}
-              </button>
-            </div>
-          </div>
+          <TrafficContextSubmenu
+            v-if="interceptFilterSubmenu"
+            :submenu="interceptFilterSubmenu"
+            label-prefix="trafficAnalysis.intercept.contextMenu"
+          />
           
           <div class="divider my-1 h-px"></div>
           
-          <!-- Copy -->
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="contextMenuCopyUrl"
-            v-if="contextMenu.item?.type === 'request'"
-          >
-            <i class="fas fa-copy w-4"></i>
-            {{ $t('trafficAnalysis.intercept.contextMenu.copyUrl') }}
-          </button>
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="contextMenuCopyAsCurl"
-            v-if="contextMenu.item?.type === 'request'"
-          >
-            <i class="fas fa-terminal w-4"></i>
-            {{ $t('trafficAnalysis.intercept.contextMenu.copyAsCurl') }}
-          </button>
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="contextMenuCopyRaw"
-          >
-            <i class="fas fa-file-alt w-4"></i>
-            {{ $t('trafficAnalysis.intercept.contextMenu.copyRaw') }}
-          </button>
+          <TrafficContextMenuSections
+            :sections="interceptRequestContextMenuSections"
+            label-prefix="trafficAnalysis.intercept.contextMenu"
+          />
         </div>
 
         <!-- 分割条 -->
@@ -348,21 +251,15 @@
             
             <div class="divider divider-horizontal mx-1"></div>
             
-            <button 
-              @click="sendToRepeater"
+            <button
+              v-for="item in interceptToolbarSendMenuItems"
+              :key="`intercept-toolbar-send-${item.key}`"
+              @click="item.onClick"
               class="btn btn-outline btn-sm"
-              :disabled="!currentItem || currentItem.type !== 'request'"
+              :disabled="!currentItem"
             >
-              <i class="fas fa-redo mr-1"></i>
-              {{ $t('trafficAnalysis.intercept.buttons.sendToRepeater') }}
-            </button>
-            <button 
-              @click="sendToIntruder"
-              class="btn btn-outline btn-sm"
-              :disabled="!currentItem || currentItem.type !== 'request'"
-            >
-              <i class="fas fa-crosshairs mr-1"></i>
-              {{ $t('trafficAnalysis.intercept.buttons.sendToIntruder') }}
+              <i :class="`${item.iconClass.replace(' text-primary', '').replace(' text-accent', '').replace(' text-secondary', '')} mr-1`"></i>
+              {{ $t(`trafficAnalysis.intercept.buttons.${item.labelKey}`) }}
             </button>
             
             <div class="flex-1"></div>
@@ -407,26 +304,38 @@
           <div class="flex-1 overflow-hidden bg-base-100 min-h-0 flex flex-col">
             <template v-if="currentItem">
               <!-- Raw View -->
-              <div v-if="activeTab === 'raw'" class="flex-1 min-h-0 flex flex-col">
+              <div
+                v-if="activeTab === 'raw'"
+                class="flex-1 min-h-0 flex flex-col"
+                @contextmenu.capture.prevent="showCurrentItemContextMenu($event)"
+              >
                 <HttpMessageSurface
                   v-model="requestContent"
                   :readonly="!isEditable"
+                  custom-context-menu
                   :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
                   height="100%"
                   display-mode="raw"
                   :state-key="currentItem ? `intercept:${currentItem.type}:${currentItemIndex}:raw` : ''"
+                  @contextmenu="showCurrentItemContextMenu($event)"
                 />
               </div>
 
               <!-- Pretty View -->
-              <div v-else-if="activeTab === 'pretty'" class="flex-1 min-h-0 flex flex-col">
+              <div
+                v-else-if="activeTab === 'pretty'"
+                class="flex-1 min-h-0 flex flex-col"
+                @contextmenu.capture.prevent="showCurrentItemContextMenu($event)"
+              >
                 <HttpMessageSurface
                   v-model="prettyContent"
                   :readonly="!isEditable"
+                  custom-context-menu
                   :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
                   height="100%"
                   display-mode="pretty"
                   :state-key="currentItem ? `intercept:${currentItem.type}:${currentItemIndex}:pretty` : ''"
+                  @contextmenu="showCurrentItemContextMenu($event)"
                 />
               </div>
 
@@ -552,7 +461,15 @@ import { dialog } from '@/composables/useDialog';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue';
+import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
+import TrafficContextSubmenu from './TrafficContextSubmenu.vue'
+import type { TrafficComparerDraftRequestInput } from './transfers'
 import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
+import { buildTrafficRequestActionMenuItems } from './trafficRequestActionMenuSupport'
+import { buildTrafficContextMenuSections } from './trafficContextMenuSectionSupport'
+import { buildTrafficContextSubmenu } from './trafficContextSubmenuSupport'
+import { useTrafficSendTargets } from './trafficSendTargets'
+import { buildTrafficRequestSendMenuItems } from './trafficSendMenuSupport'
 import {
   convertInterceptedItemToProxyRequest as convertToProxyRequest,
   formatInterceptBody as formatBody,
@@ -575,13 +492,17 @@ import {
 
 const { t } = useI18n();
 const router = useRouter();
+const { enabledTargets } = useTrafficSendTargets()
 
 // 注入父组件的刷新触发器
 const refreshTrigger = inject<any>('refreshTrigger', ref(0));
 
 // 发送到 Repeater 的事件
 const emit = defineEmits<{
+  (e: 'openResponseInterceptionSettings'): void
+  (e: 'interceptQueueChanged', count: number): void
   (e: 'sendToRepeater', request: InterceptedRequest): void
+  (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
   (e: 'sendToIntruder', request: InterceptedRequest): void
   (e: 'sendToAssistant', requests: any[]): void
 }>();
@@ -603,6 +524,7 @@ const proxyStatus = ref<ProxyStatus>({
 const interceptEnabled = ref(false);
 const responseInterceptEnabled = ref(false);
 const websocketInterceptEnabled = ref(false);
+const responseInterceptActive = computed(() => interceptEnabled.value && responseInterceptEnabled.value);
 
 const interceptedRequests = ref<InterceptedRequest[]>([]);
 const interceptedResponses = ref<InterceptedResponse[]>([]);
@@ -679,6 +601,172 @@ const currentRequest = computed(() => {
   if (!item || item.type !== 'request') return null;
   return item.data as InterceptedRequest;
 });
+const currentSendTargets = computed(() => {
+  if (currentItem.value?.type === 'request') {
+    return ['repeater', 'comparer', 'intruder'] as const
+  }
+  if (currentItem.value?.type === 'response') {
+    return ['comparer'] as const
+  }
+  return [] as const
+})
+const interceptContextSendMenuItems = computed(() =>
+  buildTrafficRequestSendMenuItems({
+    enabledTargets: enabledTargets.value,
+    supportedTargets: contextMenu.value.item?.type === 'request'
+      ? ['repeater', 'comparer', 'intruder']
+      : contextMenu.value.item?.type === 'response'
+        ? ['comparer']
+        : [],
+    actions: {
+      repeater: contextMenu.value.item?.type === 'request' ? contextMenuSendToRepeater : undefined,
+      comparer: contextMenuSendToComparer,
+      intruder: contextMenu.value.item?.type === 'request' ? contextMenuSendToIntruder : undefined,
+    },
+  }),
+)
+const interceptToolbarSendMenuItems = computed(() =>
+  buildTrafficRequestSendMenuItems({
+    enabledTargets: enabledTargets.value,
+    supportedTargets: [...currentSendTargets.value],
+    actions: {
+      repeater: currentItem.value?.type === 'request' ? sendToRepeater : undefined,
+      comparer: sendToComparer,
+      intruder: currentItem.value?.type === 'request' ? sendToIntruder : undefined,
+    },
+  }),
+)
+const interceptContextRequestActionMenuItems = computed(() =>
+  buildTrafficRequestActionMenuItems({
+    supportedActions: ['copyUrl', 'copyRequest', 'copyAsCurl', 'openInBrowser'],
+    actions: {
+      copyUrl: contextMenuCopyUrl,
+      copyRequest: contextMenuCopyRequest,
+      copyAsCurl: contextMenuCopyAsCurl,
+      openInBrowser: contextMenuOpenInBrowser,
+    },
+  }),
+)
+const interceptSendContextMenuSections = computed(() =>
+  buildTrafficContextMenuSections([
+    {
+      key: 'send',
+      items: [
+        ...interceptContextSendMenuItems.value,
+        contextMenu.value.item?.type === 'request'
+          ? {
+              key: 'sendToAI',
+              iconClass: 'fas fa-robot text-secondary',
+              labelKey: 'sendToAI',
+              onClick: contextMenuSendToAI,
+            }
+          : null,
+      ],
+    },
+  ]),
+)
+const interceptRequestContextMenuSections = computed(() =>
+  buildTrafficContextMenuSections([
+    {
+      key: 'request',
+      items: contextMenu.value.item?.type === 'request'
+        ? interceptContextRequestActionMenuItems.value.map((item) => ({
+            ...item,
+            iconClass: `${item.iconClass} w-4`,
+          }))
+        : [],
+    },
+    {
+      key: 'raw',
+      items: [
+        {
+          key: 'copyRaw',
+          iconClass: 'fas fa-file-alt w-4',
+          labelKey: 'copyRaw',
+          onClick: contextMenuCopyRaw,
+        },
+      ],
+    },
+  ]),
+)
+const interceptFilterSubmenu = computed(() =>
+  buildTrafficContextSubmenu({
+    key: 'intercept-filter',
+    triggerLabelKey: 'addFilter',
+    triggerIconClass: 'fas fa-filter w-4 text-warning',
+    submenuClass: 'absolute left-full top-0 ml-1 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-56 z-50 hidden group-hover:block',
+    items: [
+      contextMenu.value.item?.type === 'request'
+        ? {
+            key: 'filterByDomain',
+            iconClass: '',
+            labelKey: 'filterByDomain',
+            suffixText: getItemDomain(),
+            onClick: addFilterByDomain,
+          }
+        : null,
+      contextMenu.value.item?.type === 'request'
+        ? {
+            key: 'filterByUrl',
+            iconClass: '',
+            labelKey: 'filterByUrl',
+            onClick: addFilterByUrl,
+          }
+        : null,
+      contextMenu.value.item?.type === 'request'
+        ? {
+            key: 'filterByMethod',
+            iconClass: '',
+            labelKey: 'filterByMethod',
+            suffixText: getItemMethod(),
+            onClick: addFilterByMethod,
+          }
+        : null,
+      contextMenu.value.item?.type === 'request'
+        ? {
+            key: 'filterByFileExt',
+            iconClass: '',
+            labelKey: 'filterByFileExt',
+            onClick: addFilterByFileExt,
+          }
+        : null,
+      contextMenu.value.item?.type === 'response'
+        ? {
+            key: 'filterByStatus',
+            iconClass: '',
+            labelKey: 'filterByStatus',
+            suffixText: String(getItemStatus()),
+            onClick: addFilterByStatus,
+          }
+        : null,
+      contextMenu.value.item?.type === 'response'
+        ? {
+            key: 'filterByContentType',
+            iconClass: '',
+            labelKey: 'filterByContentType',
+            onClick: addFilterByContentType,
+          }
+        : null,
+      contextMenu.value.item?.type === 'websocket'
+        ? {
+            key: 'filterByDirection',
+            iconClass: '',
+            labelKey: 'filterByDirection',
+            suffixText: getItemDirection(),
+            onClick: addFilterByWsDirection,
+          }
+        : null,
+    ],
+    footerItems: [
+      {
+        key: 'customFilter',
+        iconClass: 'fas fa-cog',
+        labelKey: 'customFilter',
+        onClick: openFilterDialog,
+      },
+    ],
+  }),
+)
 
 // 拖拽调整高度
 const queuePanelHeight = ref(180);
@@ -775,6 +863,8 @@ function stopResize() {
 
 // Context Menu Methods
 function showContextMenu(event: MouseEvent, item: InterceptedItem, index: number) {
+  event.preventDefault();
+  event.stopPropagation();
   selectItem(index);
   contextMenu.value = {
     visible: true,
@@ -785,6 +875,11 @@ function showContextMenu(event: MouseEvent, item: InterceptedItem, index: number
   };
   // Close menu on click outside
   document.addEventListener('click', closeContextMenu);
+}
+
+function showCurrentItemContextMenu(event: MouseEvent) {
+  if (!currentItem.value) return;
+  showContextMenu(event, currentItem.value, currentItemIndex.value);
 }
 
 function closeContextMenu() {
@@ -821,7 +916,7 @@ async function contextMenuDrop() {
 function contextMenuSendToRepeater() {
   if (contextMenu.value.item?.type === 'request') {
     emit('sendToRepeater', contextMenu.value.item.data as InterceptedRequest);
-    dialog.toast.success('Sent to Repeater');
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToRepeater'));
   }
   closeContextMenu();
 }
@@ -829,14 +924,32 @@ function contextMenuSendToRepeater() {
 function contextMenuSendToIntruder() {
   if (contextMenu.value.item?.type === 'request') {
     emit('sendToIntruder', contextMenu.value.item.data as InterceptedRequest);
-    dialog.toast.success('Sent to Intruder');
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToIntruder'));
+  }
+  closeContextMenu();
+}
+
+function contextMenuSendToComparer() {
+  if (contextMenu.value.item?.type === 'request') {
+    emit('sendDraftRequestToComparer', {
+      request: contextMenu.value.item.data as InterceptedRequest,
+      label: t('trafficAnalysis.comparer.draft.leftLabel'),
+    });
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
+  } else if (contextMenu.value.item?.type === 'response') {
+    emit('sendDraftRequestToComparer', {
+      text: buildInterceptResponseText(contextMenu.value.item.data as InterceptedResponse),
+      messageType: 'response',
+      label: t('trafficAnalysis.intercept.response'),
+    })
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
   }
   closeContextMenu();
 }
 
 async function contextMenuSendToAI() {
   const item = contextMenu.value.item;
-  if (!item) {
+  if (!item || item.type !== 'request') {
     closeContextMenu();
     return;
   }
@@ -847,9 +960,6 @@ async function contextMenuSendToAI() {
     closeContextMenu();
     return;
   }
-  
-  // Determine send type based on item type
-  const sendType = item.type === 'response' ? 'response' : 'request';
   
   closeContextMenu();
   
@@ -862,12 +972,13 @@ async function contextMenuSendToAI() {
   // Send event to AI assistant
   await tauriEmit('traffic:send-to-assistant', { 
     requests: [proxyRequest], 
-    type: sendType 
+    type: 'request',
   });
   emit('sendToAssistant', [proxyRequest]);
   
-  const typeText = sendType === 'request' ? t('trafficAnalysis.intercept.request') : t('trafficAnalysis.intercept.response');
-  dialog.toast.success(t('trafficAnalysis.intercept.sentToAssistant', { type: typeText }));
+  dialog.toast.success(t('trafficAnalysis.intercept.sentToAssistant', {
+    type: t('trafficAnalysis.intercept.request'),
+  }));
 }
 
 // Filter methods
@@ -1090,6 +1201,23 @@ async function contextMenuCopyAsCurl() {
   closeContextMenu();
 }
 
+async function contextMenuCopyRequest() {
+  const item = contextMenu.value.item;
+  if (item?.type === 'request') {
+    await navigator.clipboard.writeText(requestContent.value);
+    dialog.toast.success('Request copied');
+  }
+  closeContextMenu();
+}
+
+function contextMenuOpenInBrowser() {
+  const item = contextMenu.value.item;
+  if (item?.type === 'request') {
+    window.open((item.data as InterceptedRequest).url, '_blank');
+  }
+  closeContextMenu();
+}
+
 async function contextMenuCopyRaw() {
   await navigator.clipboard.writeText(requestContent.value);
   dialog.toast.success('Raw content copied');
@@ -1116,6 +1244,10 @@ async function toggleIntercept() {
     console.error('[ProxyIntercept] Failed to toggle intercept:', error);
     dialog.toast.error(`切换拦截状态失败: ${error}`);
   }
+}
+
+function openResponseInterceptionSettings() {
+  emit('openResponseInterceptionSettings');
 }
 
 async function toggleWebSocketIntercept() {
@@ -1249,6 +1381,26 @@ function sendToIntruder() {
   emit('sendToIntruder', currentRequest.value);
 }
 
+function sendToComparer() {
+  if (currentItem.value?.type === 'request' && currentRequest.value) {
+    emit('sendDraftRequestToComparer', {
+      request: currentRequest.value,
+      label: t('trafficAnalysis.comparer.draft.leftLabel'),
+    });
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
+    return
+  }
+
+  if (currentItem.value?.type === 'response') {
+    emit('sendDraftRequestToComparer', {
+      text: buildInterceptResponseText(currentItem.value.data as InterceptedResponse),
+      messageType: 'response',
+      label: t('trafficAnalysis.intercept.response'),
+    })
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
+  }
+}
+
 function loadRequestContent(request: InterceptedRequest) {
   let content = `${request.method} ${request.path} ${request.protocol}\n`;
   for (const [key, value] of Object.entries(request.headers)) {
@@ -1260,7 +1412,7 @@ function loadRequestContent(request: InterceptedRequest) {
   requestContent.value = content;
 }
 
-function loadResponseContent(response: InterceptedResponse) {
+function buildInterceptResponseText(response: InterceptedResponse) {
   let content = `HTTP/1.1 ${response.status}\n`;
   for (const [key, value] of Object.entries(response.headers)) {
     content += `${key}: ${value}\n`;
@@ -1268,7 +1420,11 @@ function loadResponseContent(response: InterceptedResponse) {
   if (response.body) {
     content += `\n${response.body}`;
   }
-  requestContent.value = content;
+  return content
+}
+
+function loadResponseContent(response: InterceptedResponse) {
+  requestContent.value = buildInterceptResponseText(response);
 }
 
 function loadWebSocketContent(msg: InterceptedWebSocketMessage) {
@@ -1471,6 +1627,14 @@ watch(currentItem, (newItem) => {
     loadCurrentItemContent();
   }
 });
+
+watch(
+  () => interceptedItems.value.length,
+  (count) => {
+    emit('interceptQueueChanged', count);
+  },
+  { immediate: true },
+);
 
 // 生命周期
 onMounted(async () => {

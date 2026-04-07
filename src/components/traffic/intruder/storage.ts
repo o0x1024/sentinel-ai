@@ -6,6 +6,8 @@ import type {
   IntruderAttackType,
   IntruderGrepExtractRule,
   IntruderGrepMatchRule,
+  IntruderGrepPayloadSettings,
+  IntruderPluginProcessorBinding,
   IntruderPayloadProcessingRule,
   IntruderPayloadSet,
   IntruderResourcePool,
@@ -25,8 +27,11 @@ export interface IntruderAttackTemplate {
   attackType: IntruderAttackType
   payloadSets: IntruderPayloadSet[]
   payloadProcessingRules: IntruderPayloadProcessingRule[]
+  payloadProcessorPlugins: IntruderPluginProcessorBinding[]
+  requestProcessorPlugins: IntruderPluginProcessorBinding[]
   grepMatchRules: IntruderGrepMatchRule[]
   grepExtractRules: IntruderGrepExtractRule[]
+  grepPayloadSettings: IntruderGrepPayloadSettings
   selectedResourcePoolId: string
   attackOptions: IntruderAttackOptions
   captureFilter: IntruderResultFilter
@@ -37,10 +42,44 @@ export interface IntruderAttackTemplate {
 
 export function createBuiltInResourcePools(): IntruderResourcePool[] {
   return [
-    { id: 'default', name: 'Default resource pool', concurrency: 10, delayMs: 0, randomDelayMs: 0, builtIn: true },
-    { id: 'gentle', name: 'Gentle', concurrency: 3, delayMs: 250, randomDelayMs: 50, builtIn: true },
-    { id: 'slow', name: 'Slow and safe', concurrency: 1, delayMs: 1000, randomDelayMs: 150, builtIn: true },
+    {
+      id: 'default',
+      name: 'Default resource pool',
+      concurrencyEnabled: true,
+      concurrency: 10,
+      delayEnabled: false,
+      delayMs: 0,
+      randomDelayEnabled: false,
+      randomDelayMs: 0,
+      delayIncrementEnabled: false,
+      delayIncrementMs: 0,
+      autoThrottleEnabled: false,
+      autoThrottleStatusCodes: [429, 503],
+      builtIn: true,
+    },
   ]
+}
+
+function normalizeIntruderResourcePool(pool: Partial<IntruderResourcePool>): IntruderResourcePool {
+  return {
+    id: String(pool.id || '').trim() || createIntruderId('resource-pool'),
+    name: String(pool.name || '').trim() || 'Resource pool',
+    concurrencyEnabled: pool.concurrencyEnabled ?? true,
+    concurrency: Math.max(1, Number(pool.concurrency) || 1),
+    delayEnabled: pool.delayEnabled ?? false,
+    delayMs: Math.max(0, Number(pool.delayMs) || 0),
+    randomDelayEnabled: pool.randomDelayEnabled ?? false,
+    randomDelayMs: Math.max(0, Number(pool.randomDelayMs) || 0),
+    delayIncrementEnabled: pool.delayIncrementEnabled ?? false,
+    delayIncrementMs: Math.max(0, Number(pool.delayIncrementMs) || 0),
+    autoThrottleEnabled: pool.autoThrottleEnabled ?? false,
+    autoThrottleStatusCodes: Array.isArray(pool.autoThrottleStatusCodes)
+      ? pool.autoThrottleStatusCodes
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 100 && value <= 999)
+      : [],
+    builtIn: Boolean(pool.builtIn),
+  }
 }
 
 export function loadIntruderResourcePools(defaultPools: IntruderResourcePool[]): IntruderResourcePool[] {
@@ -48,7 +87,7 @@ export function loadIntruderResourcePools(defaultPools: IntruderResourcePool[]):
   if (!raw) return defaultPools
 
   try {
-    const customPools = JSON.parse(raw) as IntruderResourcePool[]
+    const customPools = (JSON.parse(raw) as Partial<IntruderResourcePool>[]).map((pool) => normalizeIntruderResourcePool(pool))
     const builtIns = defaultPools.map((pool) => ({ ...pool, builtIn: true }))
     return [...builtIns, ...customPools.filter((pool) => !builtIns.some((item) => item.id === pool.id))]
   } catch {
@@ -61,13 +100,35 @@ export function persistIntruderResourcePools(resourcePools: IntruderResourcePool
   localStorage.setItem(RESOURCE_POOLS_STORAGE_KEY, JSON.stringify(customPools))
 }
 
-export function createIntruderResourcePool(name: string, options: Pick<IntruderAttackOptions, 'concurrency' | 'delayMs' | 'randomDelayMs'>): IntruderResourcePool {
+export function createIntruderResourcePool(
+  name: string,
+  options: Pick<
+    IntruderResourcePool,
+    | 'concurrencyEnabled'
+    | 'concurrency'
+    | 'delayEnabled'
+    | 'delayMs'
+    | 'randomDelayEnabled'
+    | 'randomDelayMs'
+    | 'delayIncrementEnabled'
+    | 'delayIncrementMs'
+    | 'autoThrottleEnabled'
+    | 'autoThrottleStatusCodes'
+  >,
+): IntruderResourcePool {
   return {
     id: createIntruderId('resource-pool'),
     name,
+    concurrencyEnabled: options.concurrencyEnabled,
     concurrency: options.concurrency,
+    delayEnabled: options.delayEnabled,
     delayMs: options.delayMs,
+    randomDelayEnabled: options.randomDelayEnabled,
     randomDelayMs: options.randomDelayMs,
+    delayIncrementEnabled: options.delayIncrementEnabled,
+    delayIncrementMs: options.delayIncrementMs,
+    autoThrottleEnabled: options.autoThrottleEnabled,
+    autoThrottleStatusCodes: options.autoThrottleStatusCodes,
     builtIn: false,
   }
 }
@@ -102,9 +163,10 @@ export function exportIntruderResultsCsv(
   results: IntruderAttackResult[],
   grepMatchRules: IntruderGrepMatchRule[],
   grepExtractRules: IntruderGrepExtractRule[],
+  grepPayloadSettings: IntruderGrepPayloadSettings,
   visibleColumns?: string[],
 ): string {
-  const allColumns = getIntruderResultColumns(grepMatchRules, grepExtractRules)
+  const allColumns = getIntruderResultColumns(grepMatchRules, grepExtractRules, grepPayloadSettings)
   const selectedColumns = visibleColumns?.length
     ? visibleColumns
       .map((key) => allColumns.find((column) => column.key === key))
@@ -130,8 +192,9 @@ export function normalizeVisibleColumns(
   visibleColumns: string[] | undefined,
   grepMatchRules: IntruderGrepMatchRule[],
   grepExtractRules: IntruderGrepExtractRule[],
+  grepPayloadSettings: IntruderGrepPayloadSettings,
 ): string[] {
-  const availableColumns = createDefaultVisibleColumns(grepMatchRules, grepExtractRules)
+  const availableColumns = createDefaultVisibleColumns(grepMatchRules, grepExtractRules, grepPayloadSettings)
   if (!visibleColumns?.length) {
     return availableColumns
   }

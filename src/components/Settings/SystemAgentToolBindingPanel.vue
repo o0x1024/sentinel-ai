@@ -7,7 +7,7 @@
           <span>工具绑定</span>
         </div>
         <p class="text-xs text-base-content/60 mt-1">
-          为系统 Agent 选择 `required / optional / forbidden` 工具。
+          为系统智能体选择 `required / optional / forbidden` 工具。
         </p>
       </div>
       <button class="btn btn-xs btn-ghost" @click="loadTools">
@@ -50,7 +50,9 @@
           v-for="category in allCategories"
           :key="category"
           class="btn btn-xs"
-          :class="selectedCategories.includes(category) ? getCategoryBadgeClass(category) : 'btn-ghost'"
+          :class="
+            selectedCategories.includes(category) ? getCategoryBadgeClass(category) : 'btn-ghost'
+          "
           @click="toggleCategory(category)"
         >
           <i :class="getCategoryIcon(category)" class="mr-1"></i>
@@ -72,12 +74,7 @@
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-medium text-sm truncate">{{ tool.name }}</span>
-                <span
-                  v-if="tool.virtual"
-                  class="badge badge-xs badge-outline"
-                >
-                  System
-                </span>
+                <span v-if="tool.virtual" class="badge badge-xs badge-outline"> System </span>
                 <span class="badge badge-xs" :class="getCategoryBadgeClass(tool.category)">
                   {{ getCategoryDisplayName(tool.category) }}
                 </span>
@@ -125,7 +122,10 @@
           </div>
         </div>
 
-        <div v-if="filteredTools.length === 0" class="py-10 text-center text-sm text-base-content/60">
+        <div
+          v-if="filteredTools.length === 0"
+          class="py-10 text-center text-sm text-base-content/60"
+        >
           没有匹配的工具
         </div>
       </div>
@@ -182,9 +182,10 @@ const filteredTools = computed(() => {
   let tools = [...allTools.value].sort((left, right) => left.name.localeCompare(right.name))
   if (searchQuery.value.trim()) {
     const keyword = searchQuery.value.trim().toLowerCase()
-    tools = tools.filter(tool =>
-      tool.name.toLowerCase().includes(keyword) ||
-      tool.description.toLowerCase().includes(keyword)
+    tools = tools.filter(
+      tool =>
+        tool.name.toLowerCase().includes(keyword) ||
+        tool.description.toLowerCase().includes(keyword)
     )
   }
   if (selectedCategories.value.length > 0) {

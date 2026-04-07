@@ -1,4 +1,5 @@
 export type IntruderAttackType = 'sniper' | 'batteringRam' | 'pitchfork' | 'clusterBomb'
+export type IntruderPatternType = 'literal' | 'regex'
 
 export interface IntruderSourceRequest {
   method: string
@@ -23,6 +24,7 @@ export interface IntruderPosition {
 
 export type IntruderPayloadType =
   | 'simpleList'
+  | 'extensionGenerated'
   | 'numbers'
   | 'dates'
   | 'runtimeFile'
@@ -37,6 +39,10 @@ export interface IntruderPayloadSet {
   payloadType: IntruderPayloadType
   payloadsText: string
   urlEncode: boolean
+  urlEncodeCharacters: string
+  pluginId: string
+  pluginPresetName: string
+  pluginConfig: string
   filePath: string
   characterList: string
   substitutionSource: string
@@ -56,20 +62,41 @@ export interface IntruderPayloadSet {
   usernameFormats: string
 }
 
+export type IntruderPluginProcessorCategory = 'payload_processor' | 'request_processor'
+
+export interface IntruderPluginProcessorBinding {
+  id: string
+  pluginId: string
+  presetName: string
+  enabled: boolean
+  config: string
+}
+
 export type IntruderPayloadProcessingRuleType =
   | 'prefix'
   | 'suffix'
   | 'replace'
   | 'replaceRegex'
+  | 'substring'
+  | 'reverseSubstring'
   | 'lowercase'
   | 'uppercase'
   | 'trim'
   | 'base64'
   | 'urlEncode'
+  | 'decode'
+  | 'hash'
+  | 'addRawPayload'
+  | 'replaceBaseValue'
   | 'reverse'
   | 'removeWhitespace'
   | 'repeat'
   | 'hexEncode'
+  | 'skipRegex'
+
+export type IntruderPayloadProcessingCodec = 'url' | 'base64' | 'hex'
+export type IntruderPayloadProcessingHashAlgorithm = 'sha1' | 'sha256'
+export type IntruderPayloadProcessingRawPayloadPlacement = 'before' | 'after'
 
 export type IntruderPayloadProcessingConditionType = 'always' | 'contains' | 'notContains' | 'regex'
 
@@ -82,6 +109,11 @@ export interface IntruderPayloadProcessingRule {
   caseSensitive?: boolean
   conditionType?: IntruderPayloadProcessingConditionType
   conditionValue?: string
+  substringStart?: number
+  substringLength?: number | null
+  codecType?: IntruderPayloadProcessingCodec
+  hashAlgorithm?: IntruderPayloadProcessingHashAlgorithm
+  rawPayloadPlacement?: IntruderPayloadProcessingRawPayloadPlacement
 }
 
 export interface IntruderGrepMatchRule {
@@ -89,7 +121,9 @@ export interface IntruderGrepMatchRule {
   name: string
   enabled: boolean
   pattern: string
+  patternType: IntruderPatternType
   caseSensitive: boolean
+  excludeHeaders: boolean
   invert: boolean
 }
 
@@ -100,6 +134,20 @@ export interface IntruderGrepExtractRule {
   pattern: string
   groupIndex: number
   caseSensitive: boolean
+}
+
+export interface IntruderGrepPayloadSettings {
+  enabled: boolean
+  caseSensitive: boolean
+  excludeHeaders: boolean
+  matchUrlEncoded: boolean
+}
+
+export interface IntruderRedirectHop {
+  url: string
+  statusCode: number
+  location: string | null
+  setCookieCount: number
 }
 
 export type IntruderResultColumnFilterOperator =
@@ -136,9 +184,16 @@ export interface IntruderResultSort {
 export interface IntruderResourcePool {
   id: string
   name: string
+  concurrencyEnabled: boolean
   concurrency: number
+  delayEnabled: boolean
   delayMs: number
+  randomDelayEnabled: boolean
   randomDelayMs: number
+  delayIncrementEnabled: boolean
+  delayIncrementMs: number
+  autoThrottleEnabled: boolean
+  autoThrottleStatusCodes: number[]
   builtIn?: boolean
 }
 
@@ -146,11 +201,17 @@ export interface IntruderAttackOptions {
   concurrency: number
   delayMs: number
   randomDelayMs: number
+  delayIncrementMs: number
+  autoThrottleEnabled: boolean
+  autoThrottleStatusCodes: number[]
   timeoutSecs: number
   maxRequests: number
   updateHostHeader: boolean
   updateContentLength: boolean
   setConnectionClose: boolean
+  followRedirects: boolean
+  maxRedirects: number
+  processCookiesInRedirects: boolean
   retryCount: number
   retryPauseMs: number
   storeRequests: boolean
@@ -212,8 +273,12 @@ export interface IntruderAttackResult {
   responseTimeMs: number | null
   rawRequest: string
   rawResponse: string
+  redirectCount: number
+  finalUrl: string
+  redirectChain: IntruderRedirectHop[]
   isBaseline?: boolean
-  grepMatches: Record<string, boolean>
+  payloadReflectionCount: number
+  grepMatches: Record<string, number>
   grepExtracts: Record<string, string>
   error?: string
 }
@@ -233,5 +298,6 @@ export interface IntruderResultsWindowState {
   sort: IntruderResultSort
   grepMatchRules: IntruderGrepMatchRule[]
   grepExtractRules: IntruderGrepExtractRule[]
+  grepPayloadSettings: IntruderGrepPayloadSettings
   visibleColumns: string[]
 }

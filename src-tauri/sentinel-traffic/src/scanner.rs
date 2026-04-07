@@ -405,7 +405,10 @@ impl ScanPipeline {
         if !self.is_in_scope_url(&req_ctx.url).await {
             let mut cache = self.request_cache.write().await;
             cache.remove(&resp_ctx.request_id);
-            debug!("Response for request {} skipped by global scope", req_ctx.url);
+            debug!(
+                "Response for request {} skipped by global scope",
+                req_ctx.url
+            );
             return;
         }
 
@@ -573,7 +576,10 @@ impl ScanPipeline {
         ws_conn: crate::proxy::WebSocketConnectionContext,
     ) {
         if !self.is_in_scope_url(&ws_conn.url).await {
-            debug!("WebSocket connection {} skipped by global scope", ws_conn.url);
+            debug!(
+                "WebSocket connection {} skipped by global scope",
+                ws_conn.url
+            );
             return;
         }
         debug!(
@@ -1272,6 +1278,7 @@ impl ScanPipeline {
 
             let record = HttpRequestRecord {
                 id: 0,
+                db_request_id: None,
                 url: req_ctx.url.clone(),
                 host,
                 protocol,

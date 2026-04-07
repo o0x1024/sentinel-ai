@@ -3,6 +3,7 @@
 
 pub mod ai;
 pub(crate) mod ai_execution_state_support;
+pub(crate) mod ai_system_agent_support;
 pub mod aisettings;
 pub mod api_inventory_commands;
 pub mod asset;
@@ -36,6 +37,7 @@ pub mod packet_capture_commands;
 pub mod performance;
 pub mod plugin_generation_commands;
 pub mod plugin_review_commands;
+pub mod plugin_upload_commands;
 pub mod proxifier_commands;
 pub mod rag_commands;
 pub mod role;
@@ -52,8 +54,14 @@ pub mod terminal_commands;
 pub mod test_proxy;
 pub mod test_tracking_commands;
 pub mod tool_commands;
-pub mod traffic_behavior_commands;
 pub mod traffic_analysis_commands;
+pub mod traffic_behavior_commands;
+pub mod traffic_behavior_effect_commands;
+pub mod traffic_context_commands;
+pub mod traffic_finding_commands;
+pub(crate) mod traffic_finding_support;
+pub(crate) mod traffic_finding_query_support;
+pub(crate) mod traffic_replay_support;
 pub mod window;
 pub(crate) mod workflow_notification_support;
 
@@ -83,6 +91,7 @@ pub use packet_capture_commands::*;
 pub use performance::*;
 pub use plugin_generation_commands::*;
 pub use plugin_review_commands::*;
+pub use plugin_upload_commands::*;
 #[allow(ambiguous_glob_reexports)]
 pub use proxifier_commands::*;
 pub use rag_commands::*;
@@ -98,8 +107,11 @@ pub use team_v3_commands::*;
 pub use terminal_commands::*;
 pub use test_tracking_commands::*;
 pub use tool_commands::*;
-pub use traffic_behavior_commands::*;
 pub use traffic_analysis_commands::*;
+pub use traffic_behavior_commands::*;
+pub use traffic_behavior_effect_commands::*;
+pub use traffic_context_commands::*;
+pub use traffic_finding_commands::*;
 pub use window::*;
 
 use std::process::Command;

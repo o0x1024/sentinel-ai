@@ -253,6 +253,7 @@ export default {
       all: 'All',
       trafficAnalysis: 'Traffic Analysis Plugins',
       agents: 'Agent Tool Plugins',
+      intruder: 'Intruder Plugins',
       builtinTools: 'Built-in Tool Plugins',
       mcpTools: 'MCP Tool Plugins',
       security: 'Security',
@@ -485,6 +486,29 @@ export default {
       analyzer: 'Analyzer',
       reporter: 'Reporter',
       custom: 'Custom'
+    },
+
+    trafficCategories: {
+      sqli: 'SQL Injection',
+      command_injection: 'Command Injection',
+      xss: 'Cross-Site Scripting',
+      idor: 'IDOR',
+      auth_bypass: 'Authentication Bypass',
+      csrf: 'CSRF',
+      info_leak: 'Information Disclosure',
+      file_upload: 'File Upload',
+      file_inclusion: 'File Inclusion',
+      path_traversal: 'Path Traversal',
+      xxe: 'XXE',
+      ssrf: 'SSRF',
+      report: 'Report',
+      custom: 'Custom'
+    },
+
+    intruderCategories: {
+      payload_generator: 'Payload Generator',
+      payload_processor: 'Payload Processor',
+      request_processor: 'Request Processor'
     }
   },
 

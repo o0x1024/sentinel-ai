@@ -63,109 +63,16 @@
       :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
       @click.stop
     >
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="sendToRepeater"
-      >
-        <i class="fas fa-redo text-primary"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.sendToRepeater') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="sendToIntruder"
-      >
-        <i class="fas fa-crosshairs text-secondary"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.sendToIntruder') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="sendRequestToAssistantFromMenu"
-      >
-        <i class="fas fa-upload text-accent"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.sendRequestToAssistant') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="sendResponseToAssistantFromMenu"
-      >
-        <i class="fas fa-download text-accent"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.sendResponseToAssistant') }}
-      </button>
+      <TrafficContextMenuSections
+        :sections="historyContextMenuSections"
+        label-prefix="trafficAnalysis.history.contextMenu"
+      />
       <div class="divider my-1 h-0"></div>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="copyUrl"
-      >
-        <i class="fas fa-link text-info"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.copyUrl') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="copyAsCurl"
-      >
-        <i class="fas fa-terminal text-warning"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.copyAsCurl') }}
-      </button>
-      <div class="divider my-1 h-0"></div>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="openInBrowser"
-      >
-        <i class="fas fa-external-link-alt text-success"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.openInBrowser') }}
-      </button>
-      <div class="divider my-1 h-0"></div>
-      <!-- 过滤规则子菜单 -->
-      <div 
-        class="relative"
-        @mouseenter="showFilterSubmenu = true"
-        @mouseleave="showFilterSubmenu = false"
-      >
-        <button 
-          class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center justify-between gap-2"
-        >
-          <div class="flex items-center gap-2">
-            <i class="fas fa-filter text-primary"></i>
-            {{ $t('trafficAnalysis.history.contextMenu.addToFilter') }}
-          </div>
-          <i class="fas fa-chevron-right text-xs"></i>
-        </button>
-        <!-- 子菜单 -->
-        <div 
-          v-if="showFilterSubmenu"
-          class="absolute left-full top-0 ml-1 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-40 z-50"
-          @click.stop
-        >
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="addFilterToDomain"
-          >
-            <i class="fas fa-globe text-xs"></i>
-            {{ $t('trafficAnalysis.history.contextMenu.filterByDomain') }}
-          </button>
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="addFilterToUrl"
-          >
-            <i class="fas fa-link text-xs"></i>
-            {{ $t('trafficAnalysis.history.contextMenu.filterByUrl') }}
-          </button>
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="addFilterToMethod"
-          >
-            <i class="fas fa-code text-xs"></i>
-            {{ $t('trafficAnalysis.history.contextMenu.filterByMethod') }}
-          </button>
-          <button 
-            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-            @click="addFilterToExtension"
-          >
-            <i class="fas fa-file text-xs"></i>
-            {{ $t('trafficAnalysis.history.contextMenu.filterByExtension') }}
-          </button>
-        </div>
-      </div>
+      <TrafficContextSubmenu
+        v-if="historyFilterSubmenu"
+        :submenu="historyFilterSubmenu"
+        label-prefix="trafficAnalysis.history.contextMenu"
+      />
       <div class="divider my-1 h-0"></div>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2 text-error"
@@ -183,56 +90,10 @@
       :style="{ left: detailContextMenu.x + 'px', top: detailContextMenu.y + 'px' }"
       @click.stop
     >
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="detailSendToRepeater"
-      >
-        <i class="fas fa-redo text-primary"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.sendToRepeater') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="detailSendToIntruder"
-      >
-        <i class="fas fa-crosshairs text-secondary"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.sendToIntruder') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="detailSendRequestToAssistant"
-      >
-        <i class="fas fa-upload text-accent"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.sendRequestToAssistant') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="detailSendResponseToAssistant"
-      >
-        <i class="fas fa-download text-accent"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.sendResponseToAssistant') }}
-      </button>
-      <div class="divider my-1 h-0"></div>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="detailCopyUrl"
-      >
-        <i class="fas fa-link text-info"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.copyUrl') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="detailCopyRequest"
-      >
-        <i class="fas fa-copy text-secondary"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.copyRequest') }}
-      </button>
-      <button 
-        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
-        @click="detailCopyAsCurl"
-      >
-        <i class="fas fa-terminal text-warning"></i>
-        {{ $t('trafficAnalysis.history.contextMenu.copyAsCurl') }}
-      </button>
+      <TrafficContextMenuSections
+        :sections="historyDetailContextMenuSections"
+        label-prefix="trafficAnalysis.history.contextMenu"
+      />
     </div>
 
     <!-- 筛选器配置弹窗 -->
@@ -519,6 +380,8 @@
           :select-all-visible="selectAllVisible"
           :clear-selection="clearSelection"
           :send-selected-to-assistant="sendSelectedToAssistant"
+          :send-selected-request-versions-to-comparer="sendSelectedRequestVersionsToComparer"
+          :send-selected-response-versions-to-comparer="sendSelectedResponseVersionsToComparer"
           :export-selected-to-file="exportSelectedToFile"
           :exportAsHAR="exportAsHAR"
           :refresh-requests="refreshRequests"
@@ -605,9 +468,14 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch, inject } from '
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
-import { useRouter } from 'vue-router';
 import { dialog } from '@/composables/useDialog';
+import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
+import TrafficContextSubmenu from './TrafficContextSubmenu.vue'
 import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
+import { buildTrafficRequestActionMenuItems } from './trafficRequestActionMenuSupport'
+import { buildTrafficContextSubmenu } from './trafficContextSubmenuSupport'
+import { useTrafficSendTargets } from './trafficSendTargets'
+import { buildTrafficRequestSendMenuItems } from './trafficSendMenuSupport'
 import ProxyHistoryDetailsPanel from './ProxyHistoryDetailsPanel.vue';
 import ProxyHistoryTopContent from './ProxyHistoryTopContent.vue';
 import ProxyHistoryToolbar from './ProxyHistoryToolbar.vue';
@@ -657,6 +525,12 @@ import {
 } from './proxyHistoryTableSupport';
 import { useProxyHistoryActions } from './useProxyHistoryActions';
 import { useProxyHistoryData } from './useProxyHistoryData';
+import {
+  canCompareRequestVersions,
+  canCompareResponseVersions,
+} from './trafficHistoryComparerSupport';
+import { buildTrafficRequestContextMenuSections } from './trafficRequestContextMenuSupport';
+import type { TrafficComparePayload, TrafficComparerDraftRequestInput } from './transfers';
 import type {
   Column,
   ProxyHistoryFilterCache,
@@ -672,7 +546,6 @@ import type {
   WebSocketMessage,
 } from './proxyHistoryTypes';
 
-const router = useRouter();
 const { t } = useI18n();
 
 // 注入父组件的刷新触发器
@@ -687,6 +560,8 @@ defineOptions({
 const emit = defineEmits<{
   (e: 'sendToRepeater', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
   (e: 'sendToIntruder', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
+  (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
+  (e: 'sendToComparer', payload: TrafficComparePayload): void
   (e: 'sendToAssistant', requests: ProxyRequest[]): void
   (e: 'addFilterRule', rule: { matchType: string; condition: string; relationship?: string }): void
 }>();
@@ -703,13 +578,14 @@ const contextMenu = ref({
   request: null as ProxyRequest | null,
 });
 const contextMenuRef = ref<HTMLElement | null>(null);
-const showFilterSubmenu = ref(false);
+const { enabledTargets } = useTrafficSendTargets()
 
 // 请求详情区域右键菜单状态
 const detailContextMenu = ref({
   visible: false,
   x: 0,
   y: 0,
+  pane: 'request' as 'request' | 'response',
 });
 
 // 响应式状态
@@ -919,13 +795,19 @@ const {
   clearHistory,
   clearHistoryFromMenu,
   clearSelection,
+  compareRequestVersions,
+  compareResponseVersions,
   copyAsCurl,
+  copyRequest,
   copyUrl,
+  detailCompareRequestVersions,
+  detailCompareResponseVersions,
   detailCopyAsCurl,
   detailCopyRequest,
   detailCopyUrl,
+  detailOpenInBrowser,
   detailSendRequestToAssistant,
-  detailSendResponseToAssistant,
+  detailSendToComparer,
   detailSendToIntruder,
   detailSendToRepeater,
   exportAsHAR,
@@ -938,8 +820,10 @@ const {
   selectAllVisible,
   selectRequest,
   sendRequestToAssistantFromMenu,
-  sendResponseToAssistantFromMenu,
+  sendSelectedRequestVersionsToComparer,
+  sendSelectedResponseVersionsToComparer,
   sendSelectedToAssistant,
+  sendToComparer,
   sendToIntruder,
   sendToRepeater,
   showContextMenu,
@@ -949,7 +833,6 @@ const {
 } = useProxyHistoryActions({
   contextMenu,
   detailContextMenu,
-  showFilterSubmenu,
   selectedRequest,
   selectedRequests,
   isMultiSelectMode,
@@ -959,16 +842,169 @@ const {
   requestTab,
   responseTab,
   requestViewMode,
+  responseViewMode,
   topPanelHeight,
   mainContainer,
   emitSendToRepeater: (request) => emit('sendToRepeater', request),
   emitSendToIntruder: (request) => emit('sendToIntruder', request),
+  emitSendDraftRequestToComparer: (payload) => emit('sendDraftRequestToComparer', payload),
+  emitSendToComparer: (payload) => emit('sendToComparer', payload),
   emitSendToAssistant: (requests) => emit('sendToAssistant', requests),
   emitAddFilterRule: (rule) => emit('addFilterRule', rule),
   fetchRequestDetails,
   updateStats,
   t,
 });
+
+const canCompareRequestFromContext = computed(() => canCompareRequestVersions(contextMenu.value.request))
+const canCompareResponseFromContext = computed(() => canCompareResponseVersions(contextMenu.value.request))
+const canCompareRequestFromDetail = computed(() => canCompareRequestVersions(selectedRequest.value))
+const canCompareResponseFromDetail = computed(() => canCompareResponseVersions(selectedRequest.value))
+const contextRequestSendMenuItems = computed(() =>
+  buildTrafficRequestSendMenuItems({
+    enabledTargets: enabledTargets.value,
+    supportedTargets: ['repeater', 'comparer', 'intruder'],
+    actions: {
+      repeater: sendToRepeater,
+      comparer: sendToComparer,
+      intruder: sendToIntruder,
+    },
+  }),
+)
+const detailRequestSendMenuItems = computed(() =>
+  buildTrafficRequestSendMenuItems({
+    enabledTargets: enabledTargets.value,
+    supportedTargets: ['repeater', 'comparer', 'intruder'],
+    actions: {
+      repeater: detailSendToRepeater,
+      comparer: detailSendToComparer,
+      intruder: detailSendToIntruder,
+    },
+  }),
+)
+const contextRequestActionMenuItems = computed(() =>
+  buildTrafficRequestActionMenuItems({
+    supportedActions: ['copyUrl', 'copyRequest', 'copyAsCurl', 'openInBrowser'],
+    actions: {
+      copyUrl,
+      copyRequest,
+      copyAsCurl,
+      openInBrowser,
+    },
+  }),
+)
+const detailRequestActionMenuItems = computed(() =>
+  buildTrafficRequestActionMenuItems({
+    supportedActions: ['copyUrl', 'copyRequest', 'copyAsCurl', 'openInBrowser'],
+    actions: {
+      copyUrl: detailCopyUrl,
+      copyRequest: detailCopyRequest,
+      copyAsCurl: detailCopyAsCurl,
+      openInBrowser: detailOpenInBrowser,
+    },
+  }),
+)
+const historyContextMenuSections = computed(() =>
+  buildTrafficRequestContextMenuSections({
+    sendItems: contextRequestSendMenuItems.value,
+    compareItems: [
+      canCompareRequestFromContext.value
+        ? {
+            key: 'compareRequestVersions',
+            iconClass: 'fas fa-not-equal text-accent',
+            labelKey: 'sendToComparer',
+            onClick: compareRequestVersions,
+          }
+        : null,
+      canCompareResponseFromContext.value
+        ? {
+            key: 'compareResponseVersions',
+            iconClass: 'fas fa-not-equal text-accent',
+            labelKey: 'sendToComparer',
+            onClick: compareResponseVersions,
+          }
+        : null,
+    ],
+    requestItems: contextRequestActionMenuItems.value,
+    assistantItems: [
+      {
+        key: 'sendToAssistant',
+        iconClass: 'fas fa-upload text-accent',
+        labelKey: 'sendToAssistant',
+        onClick: sendRequestToAssistantFromMenu,
+      },
+    ],
+  }),
+)
+const historyDetailContextMenuSections = computed(() =>
+  buildTrafficRequestContextMenuSections({
+    sendItems: detailContextMenu.value.pane === 'request'
+      ? detailRequestSendMenuItems.value
+      : detailRequestSendMenuItems.value.filter((item) => item.key === 'comparer'),
+    compareItems: [
+      detailContextMenu.value.pane === 'request' && canCompareRequestFromDetail.value
+        ? {
+            key: 'detailCompareRequestVersions',
+            iconClass: 'fas fa-not-equal text-accent',
+            labelKey: 'sendToComparer',
+            onClick: detailCompareRequestVersions,
+          }
+        : null,
+      detailContextMenu.value.pane === 'response' && canCompareResponseFromDetail.value
+        ? {
+            key: 'detailCompareResponseVersions',
+            iconClass: 'fas fa-not-equal text-accent',
+            labelKey: 'sendToComparer',
+            onClick: detailCompareResponseVersions,
+          }
+        : null,
+    ],
+    requestItems: detailContextMenu.value.pane === 'request' ? detailRequestActionMenuItems.value : [],
+    assistantItems: detailContextMenu.value.pane === 'request'
+      ? [
+          {
+            key: 'detailSendToAssistant',
+            iconClass: 'fas fa-upload text-accent',
+            labelKey: 'sendToAssistant',
+            onClick: detailSendRequestToAssistant,
+          },
+        ]
+      : [],
+  }),
+)
+const historyFilterSubmenu = computed(() =>
+  buildTrafficContextSubmenu({
+    key: 'history-filter',
+    triggerLabelKey: 'addToFilter',
+    triggerIconClass: 'fas fa-filter text-primary',
+    items: [
+      {
+        key: 'filterByDomain',
+        iconClass: 'fas fa-globe text-xs',
+        labelKey: 'filterByDomain',
+        onClick: addFilterToDomain,
+      },
+      {
+        key: 'filterByUrl',
+        iconClass: 'fas fa-link text-xs',
+        labelKey: 'filterByUrl',
+        onClick: addFilterToUrl,
+      },
+      {
+        key: 'filterByMethod',
+        iconClass: 'fas fa-code text-xs',
+        labelKey: 'filterByMethod',
+        onClick: addFilterToMethod,
+      },
+      {
+        key: 'filterByExtension',
+        iconClass: 'fas fa-file text-xs',
+        labelKey: 'filterByExtension',
+        onClick: addFilterToExtension,
+      },
+    ],
+  }),
+)
 
 // 方法
 function handleScroll(event: Event) {

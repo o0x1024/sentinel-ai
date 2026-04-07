@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::database::Database;
+use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 use crate::utils::ordered_message::ChunkType;
-use sentinel_llm::{AiConfig, AiService};
+use sentinel_llm::{AiConfig, AiService, LlmConfig};
 
 /// AI 服务管理器
 #[derive(Debug, Clone)]
@@ -746,6 +747,70 @@ impl AiServiceManager {
             }
         }
         Ok(None)
+    }
+
+    pub fn find_service_by_provider(&self, provider: &str) -> Option<AiServiceWrapper> {
+        let provider_lc = provider.trim().to_lowercase();
+        if provider_lc.is_empty() {
+            return None;
+        }
+
+        self.get_service(&provider_lc).or_else(|| {
+            self.list_services().into_iter().find_map(|service_name| {
+                let service = self.get_service(&service_name)?;
+                let service_provider = service.get_config().provider.to_lowercase();
+                if service_provider == provider_lc || service_name.to_lowercase() == provider_lc {
+                    Some(service)
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
+    pub async fn resolve_generation_service(
+        &self,
+        provider_override: Option<&str>,
+    ) -> Result<AiServiceWrapper> {
+        if let Some(provider) = provider_override
+            .map(str::trim)
+            .filter(|provider| !provider.is_empty())
+        {
+            return self.find_service_by_provider(provider).ok_or_else(|| {
+                anyhow::anyhow!("No AI service available for provider override '{}'", provider)
+            });
+        }
+
+        if let Ok(Some((provider, _model_name))) = self.get_default_llm_model().await {
+            if let Some(service) = self.find_service_by_provider(&provider) {
+                return Ok(service);
+            }
+        }
+
+        self.get_service("default")
+            .or_else(|| {
+                self.list_services()
+                    .first()
+                    .and_then(|service_name| self.get_service(service_name))
+            })
+            .ok_or_else(|| anyhow::anyhow!("No AI service available"))
+    }
+
+    pub async fn resolve_generation_llm_config(
+        &self,
+        provider_override: Option<&str>,
+        model_override: Option<&str>,
+    ) -> Result<LlmConfig> {
+        let service = self.resolve_generation_service(provider_override).await?;
+        let mut llm_config =
+            apply_generation_settings_from_db(self.get_db_arc().as_ref(), service.service.to_llm_config())
+                .await;
+
+        if let Some(model) = model_override.map(str::trim).filter(|model| !model.is_empty()) {
+            llm_config = llm_config.with_model(model);
+        }
+
+        Ok(llm_config)
     }
 
     pub async fn set_default_llm_model(&self, provider: &str, model_name: &str) -> Result<()> {

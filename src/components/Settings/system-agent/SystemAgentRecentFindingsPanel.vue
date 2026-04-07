@@ -8,7 +8,7 @@
       </button>
     </div>
     <div v-if="windowedRecentFindings.length === 0" class="p-4 text-sm text-base-content/60">
-      当前没有与该 Agent 关联的发现。
+      当前没有与该智能体关联的发现。
     </div>
     <div v-else class="divide-y divide-base-300 max-h-[320px] overflow-y-auto">
       <div v-for="finding in windowedRecentFindings" :key="finding.id" class="p-4">
@@ -21,7 +21,10 @@
             <span class="badge badge-xs" :class="severityClass(finding.severity)">
               {{ finding.severity }}
             </span>
-            <span class="badge badge-xs" :class="hasVerificationEvidence(finding) ? 'badge-success' : 'badge-warning'">
+            <span
+              class="badge badge-xs"
+              :class="hasVerificationEvidence(finding) ? 'badge-success' : 'badge-warning'"
+            >
               {{ hasVerificationEvidence(finding) ? '已验证' : '分诊中' }}
             </span>
           </div>

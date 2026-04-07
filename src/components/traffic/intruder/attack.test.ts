@@ -3,6 +3,7 @@ import {
   autoMarkIntruderPositions,
   buildIntruderAttackPlan,
   clearIntruderMarkers,
+  encodeSelectedPayloadCharacters,
   extractIntruderPositions,
   wrapSelectionWithMarkers,
 } from './attack'
@@ -15,6 +16,10 @@ function createPayloadSet(overrides: Partial<IntruderPayloadSet> = {}): Intruder
     payloadType: 'simpleList',
     payloadsText: '',
     urlEncode: false,
+    urlEncodeCharacters: String.raw`./\=<>?+&*;:"' {}|^#`,
+    pluginId: '',
+    pluginPresetName: '',
+    pluginConfig: '{}',
     filePath: '',
     characterList: '',
     substitutionSource: '',
@@ -56,8 +61,8 @@ describe('intruder attack helpers', () => {
     expect(marked).toContain('lang=§zh§')
   })
 
-  it('builds sniper attack requests', () => {
-    const plan = buildIntruderAttackPlan({
+  it('builds sniper attack requests', async () => {
+    const plan = await buildIntruderAttackPlan({
       template: 'GET /?q=§test§&role=§user§ HTTP/1.1',
       attackType: 'sniper',
       payloadSets: [
@@ -71,8 +76,13 @@ describe('intruder attack helpers', () => {
     expect(plan.requests[2].requestText).toContain('role=admin')
   })
 
-  it('truncates cluster bomb plans above the limit', () => {
-    const plan = buildIntruderAttackPlan({
+  it('encodes only selected payload characters', () => {
+    const encoded = encodeSelectedPayloadCharacters('a+b/c=', '+/=')
+    expect(encoded).toBe('a%2Bb%2Fc%3D')
+  })
+
+  it('truncates cluster bomb plans above the limit', async () => {
+    const plan = await buildIntruderAttackPlan({
       template: 'POST /login HTTP/1.1\r\nHost: example.com\r\n\r\nusername=§admin§&password=§pass§',
       attackType: 'clusterBomb',
       payloadSets: [
@@ -91,8 +101,8 @@ describe('intruder attack helpers', () => {
     expect(clearIntruderMarkers('a§b§c')).toBe('abc')
   })
 
-  it('applies payload processing rules before substitution', () => {
-    const plan = buildIntruderAttackPlan({
+  it('applies payload processing rules before substitution', async () => {
+    const plan = await buildIntruderAttackPlan({
       template: 'GET /?q=§test§ HTTP/1.1',
       attackType: 'sniper',
       payloadSets: [
@@ -119,5 +129,147 @@ describe('intruder attack helpers', () => {
 
     expect(plan.requests).toHaveLength(1)
     expect(plan.requests[0].requestText).toContain('q=PRE-ADMIN')
+  })
+
+  it('skips payloads removed by processing rules', async () => {
+    const plan = await buildIntruderAttackPlan({
+      template: 'GET /?q=§test§ HTTP/1.1',
+      attackType: 'sniper',
+      payloadSets: [
+        createPayloadSet({ payloadsText: 'admin\nroot' }),
+      ],
+      payloadProcessingRules: [
+        {
+          id: 'rule-1',
+          enabled: true,
+          type: 'skipRegex',
+          matchValue: '^admin$',
+          replaceValue: '',
+          caseSensitive: false,
+        },
+      ],
+      maxRequests: 10,
+    })
+
+    expect(plan.requests).toHaveLength(1)
+    expect(plan.requests[0].requestText).toContain('q=root')
+  })
+
+  it('replaces {base} using the original value of each attack position', async () => {
+    const plan = await buildIntruderAttackPlan({
+      template: 'GET /?q=§admin§&role=§user§ HTTP/1.1',
+      attackType: 'batteringRam',
+      payloadSets: [
+        createPayloadSet({ payloadsText: 'pre-{base}-post' }),
+      ],
+      payloadProcessingRules: [
+        {
+          id: 'rule-1',
+          enabled: true,
+          type: 'replaceBaseValue',
+          matchValue: '',
+          replaceValue: '',
+        },
+      ],
+      maxRequests: 10,
+    })
+
+    expect(plan.requests).toHaveLength(1)
+    expect(plan.requests[0].requestText).toContain('q=pre-admin-post')
+    expect(plan.requests[0].requestText).toContain('role=pre-user-post')
+  })
+
+  it('can include both hashed and raw payload forms in one request', async () => {
+    const plan = await buildIntruderAttackPlan({
+      template: 'GET /?q=§seed§ HTTP/1.1',
+      attackType: 'sniper',
+      payloadSets: [
+        createPayloadSet({ payloadsText: 'abc' }),
+      ],
+      payloadProcessingRules: [
+        {
+          id: 'rule-1',
+          enabled: true,
+          type: 'hash',
+          matchValue: '',
+          replaceValue: '',
+          hashAlgorithm: 'sha1',
+        },
+        {
+          id: 'rule-2',
+          enabled: true,
+          type: 'addRawPayload',
+          matchValue: '',
+          replaceValue: '',
+          rawPayloadPlacement: 'after',
+        },
+      ],
+      maxRequests: 10,
+    })
+
+    expect(plan.requests).toHaveLength(1)
+    expect(plan.requests[0].requestText).toContain('q=a9993e364706816aba3e25717850c26c9cd0d89dabc')
+  })
+
+  it('applies selective URL encoding to the final payload', async () => {
+    const plan = await buildIntruderAttackPlan({
+      template: 'GET /?q=§seed§ HTTP/1.1',
+      attackType: 'sniper',
+      payloadSets: [
+        createPayloadSet({
+          payloadsText: 'a+b/c=',
+          urlEncode: true,
+          urlEncodeCharacters: '+/=',
+        }),
+      ],
+      maxRequests: 10,
+    })
+
+    expect(plan.requests).toHaveLength(1)
+    expect(plan.requests[0].requestText).toContain('q=a%2Bb%2Fc%3D')
+  })
+
+  it('uses async resolver for extension-generated payloads', async () => {
+    const plan = await buildIntruderAttackPlan({
+      template: 'GET /?q=§test§ HTTP/1.1',
+      attackType: 'sniper',
+      payloadSets: [
+        createPayloadSet({
+          payloadType: 'extensionGenerated',
+          pluginId: 'intruder.demo',
+        }),
+      ],
+      payloadResolver: async () => ['alpha', 'beta'],
+      maxRequests: 10,
+    })
+
+    expect(plan.totalGenerated).toBe(2)
+    expect(plan.requests).toHaveLength(2)
+    expect(plan.requests[0].requestText).toContain('q=alpha')
+    expect(plan.requests[1].requestText).toContain('q=beta')
+  })
+
+  it('runs payload plugin processors after built-in payload rules', async () => {
+    const plan = await buildIntruderAttackPlan({
+      template: 'GET /?q=§test§ HTTP/1.1',
+      attackType: 'sniper',
+      payloadSets: [
+        createPayloadSet({ payloadsText: 'admin' }),
+      ],
+      payloadProcessingRules: [
+        {
+          id: 'rule-1',
+          enabled: true,
+          type: 'uppercase',
+          matchValue: '',
+          replaceValue: '',
+        },
+      ],
+      payloadPluginProcessor: async (payload) => `${payload}-plugin`,
+      maxRequests: 10,
+    })
+
+    expect(plan.requests).toHaveLength(1)
+    expect(plan.requests[0].requestText).toContain('q=ADMIN-plugin')
   })
 })

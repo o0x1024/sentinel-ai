@@ -6,13 +6,13 @@ use tauri::command;
 #[command]
 pub fn get_combined_plugin_prompt_api(
     plugin_type: String,
-    _vuln_type: String,
+    vuln_type: String,
     _severity: String,
 ) -> Result<String, String> {
-    if plugin_type == "agent" {
-        Ok(get_agent_plugin_prompt())
-    } else {
-        Ok(get_traffic_plugin_prompt())
+    match plugin_type.as_str() {
+        "agent" => Ok(get_agent_plugin_prompt()),
+        "intruder" => Ok(get_intruder_plugin_prompt(&vuln_type)),
+        _ => Ok(get_traffic_plugin_prompt()),
     }
 }
 
@@ -368,4 +368,381 @@ globalThis.analyze = analyze;
 
 Now generate the Agent Tool Plugin.
 "#.to_string()
+}
+
+fn get_intruder_plugin_prompt(category: &str) -> String {
+    let category = match category {
+        "payload_processor" => "payload_processor",
+        "request_processor" => "request_processor",
+        _ => "payload_generator",
+    };
+
+    let (category_guidance, input_example, implementation_example) = match category {
+        "payload_processor" => (
+            r#"Generate an Intruder payload processor plugin.
+
+The plugin must:
+1. Export `get_input_schema()`.
+2. Export `analyze(input)` and assign both to `globalThis`.
+3. Accept a payload-oriented input object.
+4. Return `ToolOutput` with `data.payload?: string` and optional `data.skip?: boolean`.
+5. Never mutate external state. Operate only on the provided payload/context.
+
+Expected output shape:
+
+```typescript
+interface ToolOutput {
+  success: boolean;
+  data?: {
+    payload?: string;
+    skip?: boolean;
+  };
+  error?: string;
+}
+```
+"#,
+            r#"```json
+{
+  "payload": "admin",
+  "originalPayload": "admin",
+  "baseValue": "admin",
+  "positionIndex": 0,
+  "config": {
+    "prefix": "pre-",
+    "suffix": "-post",
+    "skipIfContains": "forbidden"
+  }
+}
+```"#,
+            r#"```typescript
+interface ToolInput {
+  payload: string;
+  originalPayload?: string;
+  baseValue?: string;
+  positionIndex?: number;
+  config?: {
+    prefix?: string;
+    suffix?: string;
+    skipIfContains?: string;
+  };
+}
+
+interface ToolOutput {
+  success: boolean;
+  data?: {
+    payload?: string;
+    skip?: boolean;
+  };
+  error?: string;
+}
+
+export function get_input_schema() {
+  return {
+    type: 'object',
+    properties: {
+      config: {
+        type: 'object',
+        properties: {
+          prefix: { type: 'string' },
+          suffix: { type: 'string' },
+          skipIfContains: { type: 'string' }
+        }
+      }
+    }
+  };
+}
+
+export async function analyze(input: ToolInput): Promise<ToolOutput> {
+  const skipIfContains = input?.config?.skipIfContains || '';
+  if (skipIfContains && input.payload.includes(skipIfContains)) {
+    return { success: true, data: { skip: true } };
+  }
+
+  const prefix = input?.config?.prefix || '';
+  const suffix = input?.config?.suffix || '';
+
+  return {
+    success: true,
+    data: {
+      payload: `${prefix}${input.payload}${suffix}`
+    }
+  };
+}
+
+globalThis.get_input_schema = get_input_schema;
+globalThis.analyze = analyze;
+```"#,
+        ),
+        "request_processor" => (
+            r#"Generate an Intruder request processor plugin.
+
+The plugin must:
+1. Export `get_input_schema()`.
+2. Export `analyze(input)` and assign both to `globalThis`.
+3. Accept a request-oriented input object that includes `rawRequest`.
+4. Return `ToolOutput` with `data.rawRequest` containing the transformed raw HTTP request.
+5. Keep the request syntactically valid and deterministic when possible.
+
+Expected output shape:
+
+```typescript
+interface ToolOutput {
+  success: boolean;
+  data?: {
+    rawRequest: string;
+  };
+  error?: string;
+}
+```
+"#,
+            r#"```json
+{
+  "rawRequest": "POST /login HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nuser=alice&ts=1700000000&sign=old",
+  "payloadValues": ["alice"],
+  "payloadSummary": "position[0]=alice",
+  "requestIndex": 0,
+  "config": {
+    "headerName": "X-Debug",
+    "headerValue": "1"
+  }
+}
+```"#,
+            r#"```typescript
+interface ToolInput {
+  rawRequest: string;
+  payloadValues?: string[];
+  payloadSummary?: string;
+  requestIndex?: number;
+  config?: {
+    headerName?: string;
+    headerValue?: string;
+  };
+}
+
+interface ToolOutput {
+  success: boolean;
+  data?: {
+    rawRequest: string;
+  };
+  error?: string;
+}
+
+export function get_input_schema() {
+  return {
+    type: 'object',
+    properties: {
+      config: {
+        type: 'object',
+        properties: {
+          headerName: { type: 'string' },
+          headerValue: { type: 'string' }
+        }
+      }
+    }
+  };
+}
+
+export async function analyze(input: ToolInput): Promise<ToolOutput> {
+  const separator = '\r\n\r\n';
+  const [head, body = ''] = input.rawRequest.split(separator);
+  const lines = head.split('\r\n');
+  const requestLine = lines.shift() || 'GET / HTTP/1.1';
+  const headerName = input?.config?.headerName || '';
+  const headerValue = input?.config?.headerValue || '';
+
+  if (headerName) {
+    lines.push(`${headerName}: ${headerValue}`);
+  }
+
+  return {
+    success: true,
+    data: {
+      rawRequest: [requestLine, ...lines].join('\r\n') + separator + body
+    }
+  };
+}
+
+globalThis.get_input_schema = get_input_schema;
+globalThis.analyze = analyze;
+```"#,
+        ),
+        _ => (
+            r#"Generate an Intruder payload generator plugin.
+
+The plugin must:
+1. Export `get_input_schema()`.
+2. Export `analyze(input)` and assign both to `globalThis`.
+3. Accept a request/context input object.
+4. Return `ToolOutput` with `data.payloads: string[]`.
+5. Keep the generator deterministic unless randomness is explicitly required by the prompt.
+
+Expected output shape:
+
+```typescript
+interface ToolOutput {
+  success: boolean;
+  data?: {
+    payloads: string[];
+  };
+  error?: string;
+}
+```
+"#,
+            r#"```json
+{
+  "request": {
+    "method": "GET",
+    "url": "https://target.test/search?q=§payload§",
+    "headers": {}
+  },
+  "rawRequest": "GET /search?q=test HTTP/1.1\r\nHost: target.test\r\n\r\n",
+  "target": {
+    "host": "target.test",
+    "port": 443,
+    "useTls": true
+  },
+  "positions": [
+    { "index": 0, "value": "test" }
+  ],
+  "config": {
+    "values": ["admin", "root", "guest"],
+    "limit": 100
+  },
+  "options": {
+    "limit": 100
+  }
+}
+```"#,
+            r#"```typescript
+interface ToolInput {
+  request?: { method: string; url: string; headers: Record<string, string>; body?: string };
+  rawRequest?: string;
+  target?: { host: string; port: number; useTls: boolean };
+  positions?: Array<{ index: number; value: string }>;
+  config?: {
+    values?: string[];
+    limit?: number;
+  };
+  options?: {
+    limit?: number;
+  };
+}
+
+interface ToolOutput {
+  success: boolean;
+  data?: {
+    payloads: string[];
+  };
+  error?: string;
+}
+
+export function get_input_schema() {
+  return {
+    type: 'object',
+    properties: {
+      config: {
+        type: 'object',
+        properties: {
+          values: {
+            type: 'array',
+            items: { type: 'string' }
+          },
+          limit: {
+            type: 'integer',
+            default: 100
+          }
+        }
+      }
+    }
+  };
+}
+
+export async function analyze(input: ToolInput): Promise<ToolOutput> {
+  const values = Array.isArray(input?.config?.values) ? input.config.values.filter(Boolean) : [];
+  const limit = Math.max(1, Number(input?.config?.limit ?? input?.options?.limit ?? 100));
+
+  return {
+    success: true,
+    data: {
+      payloads: values.slice(0, limit)
+    }
+  };
+}
+
+globalThis.get_input_schema = get_input_schema;
+globalThis.analyze = analyze;
+```"#,
+        ),
+    };
+
+    let mut prompt = String::from(
+        r#"# Intruder Plugin Generation Task
+
+You are a professional security researcher and TypeScript developer. Your task is to generate a high-quality Intruder plugin for Sentinel.
+
+## Task Overview
+
+Intruder plugins are active request-preparation helpers. They run before requests are sent and must return structured JSON results that Sentinel can consume directly.
+
+## Core Rules
+
+1. The code must be written in TypeScript.
+2. The plugin must export `get_input_schema()` and `analyze(input)`.
+3. The plugin must assign both exports to `globalThis`.
+4. Return a `ToolOutput` object shaped exactly as required by the category.
+5. Use defensive input validation and explicit error messages.
+6. Do not depend on global mutable state.
+7. If the plugin edits a request, return the full updated raw request string.
+
+## Category
+
+Target category: `"#,
+    );
+    prompt.push_str(category);
+    prompt.push_str("`\n\n");
+    prompt.push_str(category_guidance);
+    prompt.push_str(
+        r#"
+
+## Input Shape Example
+"#,
+    );
+    prompt.push_str(input_example);
+    prompt.push_str(
+        r#"
+
+## Minimal Runnable Example
+"#,
+    );
+    prompt.push_str(implementation_example);
+    prompt.push_str(
+        r#"
+
+## Implementation Guidelines
+
+- Keep logic reusable and generic.
+- Use descriptive variable names.
+- Prefer pure helper functions.
+- Add brief comments only where the logic is non-obvious.
+- Handle missing optional fields safely.
+- Do not return markdown, explanations, or prose inside `data`.
+- Preserve the exact `ToolOutput` shape for the selected category.
+- Prefer built-in JavaScript or `require()` imports only when necessary.
+- For `request_processor`, preserve CRLF line endings and return the full request.
+
+## Output Format
+
+Return ONLY the TypeScript plugin code wrapped in a markdown code block.
+
+The generated code must end with:
+
+```typescript
+globalThis.get_input_schema = get_input_schema;
+globalThis.analyze = analyze;
+```
+
+Now generate the Intruder plugin.
+"#,
+    );
+    prompt
 }

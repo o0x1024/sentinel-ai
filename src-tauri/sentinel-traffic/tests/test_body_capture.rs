@@ -16,6 +16,7 @@ async fn test_proxy_body_capture() {
         max_response_body_size: 1024 * 1024,
         mitm_bypass_fail_threshold: 3,
         upstream_proxy: None,
+        ..ProxyConfig::default()
     };
 
     // 创建临时 CA 目录

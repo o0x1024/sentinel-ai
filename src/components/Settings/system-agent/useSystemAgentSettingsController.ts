@@ -3,7 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 import { dialog } from '@/composables/useDialog'
-import type { TrafficBehaviorSignalSettings } from '@/components/traffic/proxyConfigurationTypes'
+import {
+  createDefaultTrafficContextExtractionSettings,
+  type TrafficBehaviorSignalSettings,
+  type TrafficContextExtractionSettings,
+} from '@/components/traffic/proxyConfigurationTypes'
 import {
   getSystemAgentDescription,
   getSystemAgentModeBadge,
@@ -19,6 +23,7 @@ import {
   cloneProfile,
   parseJsonText,
   type CommandResponse,
+  type SystemAgentBehaviorEffectStats,
   type SystemAgentFindingSummary,
   type SystemAgentListItem,
   type SystemAgentProfilePayload,
@@ -40,14 +45,22 @@ export function useSystemAgentSettingsController() {
   const recentFindings = ref<SystemAgentFindingSummary[]>([])
   const totalFindingsCount = ref(0)
   const falsePositiveFindingsCount = ref(0)
+  const behaviorEffectStats = ref<SystemAgentBehaviorEffectStats | null>(null)
   const statsWindow = ref<'24h' | '7d' | '30d'>('24h')
   const selectedProfileId = ref('')
   const selectedProfile = ref<SystemAgentProfilePayload | null>(null)
+  const llmProviderOptions = ref<Array<{ value: string; label: string }>>([])
+  const llmProviderModelsMap = ref<Record<string, string[]>>({})
+  const globalDefaultLlmLabel = ref('未配置')
   const behaviorSignalSettings = ref<TrafficBehaviorSignalSettings>({
     mode: 'proxy_inferred',
     browserExtensionConnected: false,
     browserExtensionLastSeenAt: null,
   })
+  const contextExtractionSettings = ref<TrafficContextExtractionSettings>(
+    createDefaultTrafficContextExtractionSettings()
+  )
+  const contextExtractionSaving = ref(false)
 
   const safetyPolicyValue = ref<SystemAgentSafetyPolicyForm>({
     allowActiveReplay: false,
@@ -56,7 +69,9 @@ export function useSystemAgentSettingsController() {
     scopeHostsText: '',
   })
   const manualInputText = ref('{\n  "summary": "手动审计目标"\n}')
-  const dispatchPayloadText = ref('{\n  "clusterKey": "demo-cluster",\n  "host": "example.com",\n  "pathTemplate": "/api/demo",\n  "method": "GET"\n}')
+  const dispatchPayloadText = ref(
+    '{\n  "clusterKey": "demo-cluster",\n  "host": "example.com",\n  "pathTemplate": "/api/demo",\n  "method": "GET"\n}'
+  )
 
   const toolBindingValue = ref({
     requiredTools: [] as string[],
@@ -149,6 +164,12 @@ export function useSystemAgentSettingsController() {
     }))
   })
 
+  const llmModelSuggestions = computed(() => {
+    const provider = selectedProfile.value?.llmProviderOverride?.trim().toLowerCase()
+    if (!provider) return []
+    return llmProviderModelsMap.value[provider] || []
+  })
+
   const editableProfileSnapshot = computed(() => buildProfileSnapshot(buildProfilePayload()))
 
   const syncTextFieldsFromProfile = (profile: SystemAgentProfilePayload | null) => {
@@ -183,29 +204,96 @@ export function useSystemAgentSettingsController() {
   const loadProfiles = async () => {
     loading.value = true
     try {
-      const response = await invoke<CommandResponse<SystemAgentProfileSummary[]>>('list_system_agent_profiles')
-      profiles.value = (response.data ?? []).filter(profile => profile.visibility !== 'hidden' && profile.id !== 'traffic_idor_triage')
+      const response = await invoke<CommandResponse<SystemAgentProfileSummary[]>>(
+        'list_system_agent_profiles'
+      )
+      profiles.value = (response.data ?? []).filter(
+        profile => profile.visibility !== 'hidden' && profile.id !== 'traffic_idor_triage'
+      )
       if (!selectedProfileId.value && profiles.value.length > 0) {
         await selectProfile(profiles.value[0].id)
       }
     } catch (error) {
       console.error('Failed to load system agent profiles', error)
-      dialog.toast.error('加载系统 Agent 列表失败')
+      dialog.toast.error('加载系统智能体列表失败')
     } finally {
       loading.value = false
+    }
+  }
+
+  const loadLlmOptions = async () => {
+    try {
+      const aiConfig = await invoke<any>('get_ai_config')
+      const providers = aiConfig?.providers && typeof aiConfig.providers === 'object'
+        ? aiConfig.providers
+        : {}
+      const providerOptions: Array<{ value: string; label: string }> = []
+      const providerModelsMap: Record<string, string[]> = {}
+
+      Object.entries(providers).forEach(([providerKey, providerValue]) => {
+        const config = providerValue as any
+        if (config?.enabled === false) return
+
+        const providerRaw = String(config?.provider || providerKey).trim()
+        if (!providerRaw) return
+
+        const providerValueNormalized = providerRaw.toLowerCase()
+        providerOptions.push({
+          value: providerValueNormalized,
+          label: normalizeProviderName(providerRaw),
+        })
+
+        const modelIds = new Set<string>()
+        const models = Array.isArray(config?.models) ? config.models : []
+        models.forEach((item: any) => {
+          const modelId = extractModelId(item)
+          if (modelId) modelIds.add(modelId)
+        })
+        if (typeof config?.default_model === 'string' && config.default_model.trim()) {
+          modelIds.add(config.default_model.trim())
+        }
+        providerModelsMap[providerValueNormalized] = Array.from(modelIds).sort((a, b) => a.localeCompare(b))
+      })
+
+      providerOptions.sort((a, b) => a.label.localeCompare(b.label))
+      llmProviderOptions.value = providerOptions
+      llmProviderModelsMap.value = providerModelsMap
+
+      const defaultModel = typeof aiConfig?.default_llm_model === 'string'
+        ? aiConfig.default_llm_model.trim()
+        : ''
+      globalDefaultLlmLabel.value = defaultModel || '未配置'
+    } catch (error) {
+      console.error('Failed to load LLM options for system agents', error)
+      llmProviderOptions.value = []
+      llmProviderModelsMap.value = {}
+      globalDefaultLlmLabel.value = '未配置'
     }
   }
 
   const loadBehaviorSignalSettings = async () => {
     try {
       const response = await invoke<CommandResponse<TrafficBehaviorSignalSettings>>(
-        'get_traffic_behavior_signal_settings',
+        'get_traffic_behavior_signal_settings'
       )
       if (response.data) {
         behaviorSignalSettings.value = response.data
       }
     } catch (error) {
       console.error('Failed to load traffic behavior signal settings', error)
+    }
+  }
+
+  const loadContextExtractionSettings = async () => {
+    try {
+      const response = await invoke<CommandResponse<TrafficContextExtractionSettings>>(
+        'get_traffic_context_extraction_settings'
+      )
+      if (response.data) {
+        contextExtractionSettings.value = response.data
+      }
+    } catch (error) {
+      console.error('Failed to load traffic context extraction settings', error)
     }
   }
 
@@ -216,10 +304,13 @@ export function useSystemAgentSettingsController() {
     }
 
     try {
-      const response = await invoke<CommandResponse<SystemAgentRunPayload[]>>('list_system_agent_runs', {
-        profileId: selectedProfileId.value,
-        limit: 100,
-      })
+      const response = await invoke<CommandResponse<SystemAgentRunPayload[]>>(
+        'list_system_agent_runs',
+        {
+          profileId: selectedProfileId.value,
+          limit: 100,
+        }
+      )
       runs.value = response.data ?? []
     } catch (error) {
       console.error('Failed to load system agent runs', error)
@@ -234,10 +325,13 @@ export function useSystemAgentSettingsController() {
     }
 
     try {
-      const response = await invoke<CommandResponse<SystemAgentProfileVersionPayload[]>>('list_system_agent_profile_versions', {
-        profileId: selectedProfileId.value,
-        limit: 10,
-      })
+      const response = await invoke<CommandResponse<SystemAgentProfileVersionPayload[]>>(
+        'list_system_agent_profile_versions',
+        {
+          profileId: selectedProfileId.value,
+          limit: 10,
+        }
+      )
       versions.value = response.data ?? []
     } catch (error) {
       console.error('Failed to load system agent profile versions', error)
@@ -281,7 +375,28 @@ export function useSystemAgentSettingsController() {
       console.error('Failed to load recent findings for system agent', error)
       totalFindingsCount.value = 0
       falsePositiveFindingsCount.value = 0
-      dialog.toast.error('加载 Agent 最近发现失败')
+      dialog.toast.error('加载智能体最近发现失败')
+    }
+  }
+
+  const loadBehaviorEffectStats = async () => {
+    if (!selectedProfile.value?.id || !showBehaviorSourcePanel.value) {
+      behaviorEffectStats.value = null
+      return
+    }
+
+    try {
+      const response = await invoke<CommandResponse<SystemAgentBehaviorEffectStats>>(
+        'get_traffic_behavior_effect_stats',
+        {
+          profileId: selectedProfile.value.id,
+          window: statsWindow.value,
+        }
+      )
+      behaviorEffectStats.value = response.data ?? null
+    } catch (error) {
+      console.error('Failed to load traffic behavior effect stats', error)
+      behaviorEffectStats.value = null
     }
   }
 
@@ -289,9 +404,12 @@ export function useSystemAgentSettingsController() {
     selectedProfileId.value = profileId
     try {
       suspendAutoSave.value = true
-      const response = await invoke<CommandResponse<SystemAgentProfilePayload | null>>('get_system_agent_profile', {
-        id: profileId,
-      })
+      const response = await invoke<CommandResponse<SystemAgentProfilePayload | null>>(
+        'get_system_agent_profile',
+        {
+          id: profileId,
+        }
+      )
       selectedProfile.value = response.data ? cloneProfile(response.data) : null
       syncTextFieldsFromProfile(selectedProfile.value)
       lastSavedSnapshot.value = buildProfileSnapshot(selectedProfile.value)
@@ -299,6 +417,7 @@ export function useSystemAgentSettingsController() {
       await loadRuns()
       await loadVersions()
       await loadRecentFindings()
+      await loadBehaviorEffectStats()
     } catch (error) {
       console.error('Failed to load system agent profile detail', error)
       dialog.toast.error('加载 Profile 详情失败')
@@ -311,6 +430,10 @@ export function useSystemAgentSettingsController() {
     if (!selectedProfile.value) return null
 
     const profile = cloneProfile(selectedProfile.value)
+    const providerOverride = profile.llmProviderOverride?.trim() || null
+    const modelOverride = profile.llmModelOverride?.trim() || null
+    profile.llmProviderOverride = providerOverride
+    profile.llmModelOverride = providerOverride ? modelOverride : null
     profile.requiredTools = [...toolBindingValue.value.requiredTools]
     profile.optionalTools = [...toolBindingValue.value.optionalTools]
     profile.forbiddenTools = [...toolBindingValue.value.forbiddenTools]
@@ -324,6 +447,8 @@ export function useSystemAgentSettingsController() {
       id: profile.id,
       name: profile.name,
       enabled: profile.enabled,
+      llmProviderOverride: profile.llmProviderOverride || '',
+      llmModelOverride: profile.llmModelOverride || '',
       promptPatch: profile.promptPatch || '',
       requiredTools: profile.requiredTools,
       optionalTools: profile.optionalTools,
@@ -345,7 +470,10 @@ export function useSystemAgentSettingsController() {
 
       saving.value = true
       autoSaveState.value = 'saving'
-      const response = await invoke<CommandResponse<SystemAgentProfilePayload>>('save_system_agent_profile', { profile })
+      const response = await invoke<CommandResponse<SystemAgentProfilePayload>>(
+        'save_system_agent_profile',
+        { profile }
+      )
       if (!response.data) throw new Error(response.error || '保存失败')
       suspendAutoSave.value = true
       selectedProfile.value = cloneProfile(response.data)
@@ -356,7 +484,7 @@ export function useSystemAgentSettingsController() {
       autoSaveState.value = 'saved'
       await loadVersions()
       if (!options?.silent) {
-        dialog.toast.success('Agent 配置已保存')
+        dialog.toast.success('智能体配置已保存')
       }
     } catch (error) {
       console.error('Failed to save system agent profile', error)
@@ -365,7 +493,10 @@ export function useSystemAgentSettingsController() {
     } finally {
       suspendAutoSave.value = false
       saving.value = false
-      if (editableProfileSnapshot.value && editableProfileSnapshot.value !== lastSavedSnapshot.value) {
+      if (
+        editableProfileSnapshot.value &&
+        editableProfileSnapshot.value !== lastSavedSnapshot.value
+      ) {
         queueAutoSave()
       }
     }
@@ -389,10 +520,13 @@ export function useSystemAgentSettingsController() {
     running.value = true
     try {
       const inputSummary = parseJsonText(manualInputText.value)
-      const response = await invoke<CommandResponse<SystemAgentRunPayload>>('trigger_system_agent_profile', {
-        profileId: selectedProfile.value.id,
-        inputSummary,
-      })
+      const response = await invoke<CommandResponse<SystemAgentRunPayload>>(
+        'trigger_system_agent_profile',
+        {
+          profileId: selectedProfile.value.id,
+          inputSummary,
+        }
+      )
       if (!response.data) throw new Error(response.error || '运行失败')
       await loadRuns()
       dialog.toast.success('System Agent 已执行')
@@ -430,38 +564,67 @@ export function useSystemAgentSettingsController() {
     try {
       await invoke<CommandResponse<number>>('seed_system_agent_profiles')
       await refreshAll()
-      dialog.toast.success('默认系统 Agent 已初始化')
+      dialog.toast.success('默认系统智能体已初始化')
     } catch (error) {
       console.error('Failed to seed system agents', error)
-      dialog.toast.error('初始化默认 Agent 失败')
+      dialog.toast.error('初始化默认智能体失败')
     }
   }
 
   const refreshAll = async () => {
     await loadProfiles()
+    await loadLlmOptions()
     await loadRuns()
     await loadVersions()
     await loadRecentFindings()
+    await loadBehaviorEffectStats()
+    await loadContextExtractionSettings()
+  }
+
+  const saveContextExtractionSettings = async () => {
+    contextExtractionSaving.value = true
+    try {
+      const response = await invoke<CommandResponse<TrafficContextExtractionSettings>>(
+        'set_traffic_context_extraction_settings',
+        {
+          payload: {
+            settings: contextExtractionSettings.value,
+          },
+        }
+      )
+      if (!response.data) throw new Error(response.error || '保存失败')
+      contextExtractionSettings.value = response.data
+      dialog.toast.success('上下文抽取词典已保存')
+    } catch (error) {
+      console.error('Failed to save traffic context extraction settings', error)
+      dialog.toast.error(`保存上下文抽取词典失败: ${String(error)}`)
+    } finally {
+      contextExtractionSaving.value = false
+    }
   }
 
   onMounted(async () => {
     await loadProfiles()
+    await loadLlmOptions()
     await loadBehaviorSignalSettings()
+    await loadContextExtractionSettings()
     unlisten = await listen('system-agent:run-updated', async () => {
       await loadRuns()
     })
     unlistenFinding = await listen('scan:finding', async () => {
       await loadRecentFindings()
+      await loadBehaviorEffectStats()
     })
     unlistenBehaviorStatus = await listen<{
       connected: boolean
       lastSeenAt?: string | null
-    }>('traffic-behavior:extension-status', event => {
+    }>('traffic-behavior:extension-status', async event => {
       behaviorSignalSettings.value = {
         ...behaviorSignalSettings.value,
         browserExtensionConnected: event.payload.connected,
         browserExtensionLastSeenAt: event.payload.lastSeenAt || null,
       }
+      await loadBehaviorEffectStats()
     })
   })
 
@@ -475,11 +638,15 @@ export function useSystemAgentSettingsController() {
     }
   })
 
-  watch(editableProfileSnapshot, (snapshot) => {
+  watch(editableProfileSnapshot, snapshot => {
     if (!snapshot || suspendAutoSave.value || !selectedProfile.value) return
     if (snapshot === lastSavedSnapshot.value) return
     autoSaveState.value = 'idle'
     queueAutoSave()
+  })
+
+  watch(statsWindow, async () => {
+    await loadBehaviorEffectStats()
   })
 
   return {
@@ -495,6 +662,9 @@ export function useSystemAgentSettingsController() {
     statsWindow,
     selectedProfileId,
     selectedProfile,
+    llmProviderOptions,
+    llmModelSuggestions,
+    globalDefaultLlmLabel,
     safetyPolicyValue,
     manualInputText,
     dispatchPayloadText,
@@ -505,6 +675,9 @@ export function useSystemAgentSettingsController() {
     autoSaveStatusText,
     autoSaveStatusClass,
     behaviorSignalSettings,
+    contextExtractionSettings,
+    contextExtractionSaving,
+    behaviorEffectStats,
     showBehaviorSourcePanel,
     showRecentFindingsPanel,
     selectedProfileModeBadge,
@@ -518,6 +691,7 @@ export function useSystemAgentSettingsController() {
     dispatchSelectedProfileEvent,
     seedDefaults,
     refreshAll,
+    saveContextExtractionSettings,
     loadRuns,
     loadVersions,
     loadRecentFindings,
@@ -527,7 +701,7 @@ export function useSystemAgentSettingsController() {
 function getProfileDescription(
   profile:
     | Pick<SystemAgentProfileSummary, 'id' | 'description' | 'mode' | 'capability'>
-    | Pick<SystemAgentProfilePayload, 'id' | 'description' | 'mode' | 'capability'>,
+    | Pick<SystemAgentProfilePayload, 'id' | 'description' | 'mode' | 'capability'>
 ) {
   return getSystemAgentDescription(profile)
 }
@@ -535,12 +709,14 @@ function getProfileDescription(
 function getModeBadge(
   profile:
     | Pick<SystemAgentProfileSummary, 'id' | 'description' | 'mode' | 'capability'>
-    | Pick<SystemAgentProfilePayload, 'id' | 'description' | 'mode' | 'capability'>,
+    | Pick<SystemAgentProfilePayload, 'id' | 'description' | 'mode' | 'capability'>
 ) {
   return getSystemAgentModeBadge(profile)
 }
 
-function normalizeSafetyPolicy(value: Record<string, unknown> | null | undefined): SystemAgentSafetyPolicyForm {
+function normalizeSafetyPolicy(
+  value: Record<string, unknown> | null | undefined
+): SystemAgentSafetyPolicyForm {
   return {
     allowActiveReplay: value?.allowActiveReplay === true,
     autoMode: value?.autoMode === true,
@@ -564,4 +740,35 @@ function buildSafetyPolicyPayload(safetyPolicyValue: Ref<SystemAgentSafetyPolicy
       .map(item => item.trim())
       .filter(Boolean),
   }
+}
+
+function normalizeProviderName(provider: string) {
+  const lower = provider.toLowerCase()
+  const names: Record<string, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    gemini: 'Gemini',
+    deepseek: 'DeepSeek',
+    moonshot: 'Moonshot',
+    ollama: 'Ollama',
+    openrouter: 'OpenRouter',
+    modelscope: 'ModelScope',
+    groq: 'Groq',
+    perplexity: 'Perplexity',
+    togetherai: 'TogetherAI',
+    xai: 'xAI',
+    cohere: 'Cohere',
+    'lm studio': 'LM Studio',
+    lmstudio: 'LM Studio',
+    lm_studio: 'LM Studio',
+  }
+  return names[lower] || provider
+}
+
+function extractModelId(item: any): string {
+  if (!item) return ''
+  if (typeof item === 'string') return item.trim()
+  if (typeof item.id === 'string') return item.id.trim()
+  if (typeof item.name === 'string') return item.name.trim()
+  return ''
 }

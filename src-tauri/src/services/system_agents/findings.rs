@@ -6,6 +6,10 @@ use uuid::Uuid;
 
 use sentinel_db::{DatabaseService, TrafficEvidenceRecord, TrafficFinding};
 
+use crate::services::system_agents::finding_lifecycle::{
+    initial_lifecycle_for_detection, TrafficFindingLifecycle,
+};
+use crate::services::system_agents::finding_observation::TrafficFindingObservation;
 use crate::services::system_agents::safety::SystemAgentSafetyPolicy;
 use crate::services::system_agents::types::SystemAgentEvent;
 
@@ -54,6 +58,16 @@ pub async fn persist_passive_agent_finding(
     let summary = format!("{} - {}", finding.title, finding.description);
 
     db.insert_traffic_vulnerability(&finding).await?;
+    let initial_lifecycle = initial_lifecycle_for_detection(profile_id, &finding.vuln_type);
+    let initial_status = initial_lifecycle.vulnerability_status();
+    if initial_status != "open" {
+        db.update_traffic_vulnerability_status(&finding.id, initial_status)
+            .await?;
+    }
+    let observation = build_observation_from_output(db, profile_id, event, output)
+        .await?
+        .expect("observation must exist when finding is built");
+    insert_system_agent_observation_evidence(db, &finding.id, &observation).await?;
     insert_system_agent_context_evidence(
         db,
         &finding.id,
@@ -61,6 +75,7 @@ pub async fn persist_passive_agent_finding(
         &finding.method,
         event,
         output,
+        initial_status,
     )
     .await?;
 
@@ -70,6 +85,8 @@ pub async fn persist_passive_agent_finding(
             "vuln_id": vuln_id,
             "vuln_type": vuln_type,
             "severity": severity,
+            "status": initial_status,
+            "analysisStage": initial_lifecycle.key(),
             "url": url,
             "summary": summary,
             "timestamp": Utc::now().to_rfc3339(),
@@ -79,6 +96,38 @@ pub async fn persist_passive_agent_finding(
     Ok(Some(finding.id))
 }
 
+async fn insert_system_agent_observation_evidence(
+    db: &DatabaseService,
+    vuln_id: &str,
+    observation: &TrafficFindingObservation,
+) -> Result<()> {
+    let evidence = TrafficEvidenceRecord {
+        id: format!("{}-obs-{}", vuln_id, Uuid::new_v4()),
+        vuln_id: vuln_id.to_string(),
+        url: observation.url.clone(),
+        method: observation.method.clone(),
+        location: "system_agent_observation".to_string(),
+        evidence_snippet: observation.summary.clone(),
+        request_headers: None,
+        request_body: Some(serde_json::to_string_pretty(observation)?),
+        response_status: None,
+        response_headers: Some(
+            serde_json::json!({
+                "analysisStage": "observation",
+                "riskType": observation.risk_type,
+                "actionKind": observation.action_kind,
+                "totalRequests": observation.total_requests,
+                "distinctAuthContexts": observation.distinct_auth_contexts,
+            })
+            .to_string(),
+        ),
+        response_body: None,
+        timestamp: Utc::now(),
+    };
+
+    db.insert_traffic_evidence(&evidence).await
+}
+
 async fn insert_system_agent_context_evidence(
     db: &DatabaseService,
     vuln_id: &str,
@@ -86,6 +135,7 @@ async fn insert_system_agent_context_evidence(
     method: &str,
     event: &SystemAgentEvent,
     output: &Value,
+    status: &str,
 ) -> Result<()> {
     let event_payload =
         serde_json::to_string_pretty(&event.payload).unwrap_or_else(|_| event.payload.to_string());
@@ -95,6 +145,8 @@ async fn insert_system_agent_context_evidence(
         "sourceEvent": event.event_name,
         "eventSource": event.source,
         "capturedAt": event.timestamp.to_rfc3339(),
+        "analysisStage": TrafficFindingLifecycle::Hypothesis.key(),
+        "findingStatus": status,
     });
 
     let evidence = TrafficEvidenceRecord {
@@ -125,102 +177,48 @@ async fn build_finding_from_output(
     event: &SystemAgentEvent,
     output: &Value,
 ) -> Result<Option<TrafficFinding>> {
-    let risk_type = output
-        .get("riskType")
-        .and_then(Value::as_str)
-        .unwrap_or("none");
-    if matches!(risk_type, "" | "none") {
+    let observation = match build_observation_from_output(db, profile_id, event, output).await? {
+        Some(observation) => observation,
+        None => return Ok(None),
+    };
+
+    if !observation.should_promote_to_hypothesis() {
         return Ok(None);
     }
 
-    let confidence = output
-        .get("confidence")
-        .and_then(Value::as_str)
-        .unwrap_or("low")
-        .to_lowercase();
-    if confidence == "low" {
-        return Ok(None);
-    }
+    let title = build_title(
+        &observation.risk_type,
+        &observation.method,
+        observation.path_template.as_deref(),
+    );
+    let description = if observation.signals.is_empty() {
+        observation.summary.to_string()
+    } else {
+        format!(
+            "{}\n\nSignals:\n- {}",
+            observation.summary,
+            observation.signals.join("\n- ")
+        )
+    };
 
-    let summary = output
-        .get("summary")
-        .and_then(Value::as_str)
-        .unwrap_or("Passive system agent detected a potential security risk.");
-    let signals = output
-        .get("signals")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let evidence = if observation.signals.is_empty() {
+        observation.summary.to_string()
+    } else {
+        observation.signals.join(" | ")
+    };
 
-    let payload = &event.payload;
-    let request_id = payload.get("requestId").and_then(Value::as_i64);
-    let proxy_request = match request_id {
+    let (severity, confidence_label) = map_confidence(&observation.confidence);
+    let (cwe, owasp, remediation) = map_risk_metadata(&observation.risk_type);
+
+    let proxy_request = match observation.db_request_id {
         Some(request_id) => db.get_proxy_request_by_id(request_id).await?,
         None => None,
     };
 
-    let url = proxy_request
-        .as_ref()
-        .map(|record| record.url.clone())
-        .or_else(|| {
-            payload
-                .get("url")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "unknown".to_string());
-    let method = proxy_request
-        .as_ref()
-        .map(|record| record.method.clone())
-        .or_else(|| {
-            payload
-                .get("method")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "GET".to_string());
-    let location = payload
-        .get("clusterKey")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| {
-            payload
-                .get("pathTemplate")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| url.clone());
-
-    let title = build_title(
-        risk_type,
-        &method,
-        payload.get("pathTemplate").and_then(Value::as_str),
-    );
-    let description = if signals.is_empty() {
-        summary.to_string()
-    } else {
-        format!("{summary}\n\nSignals:\n- {}", signals.join("\n- "))
-    };
-
-    let evidence = if signals.is_empty() {
-        summary.to_string()
-    } else {
-        signals.join(" | ")
-    };
-
-    let (severity, confidence_label) = map_confidence(&confidence);
-    let (cwe, owasp, remediation) = map_risk_metadata(risk_type);
-
     Ok(Some(TrafficFinding {
         id: format!("saf-{}", Uuid::new_v4()),
         plugin_id: format!("agent:{profile_id}"),
-        vuln_type: risk_type.to_string(),
+        vuln_type: observation.risk_type.clone(),
         severity: severity.to_string(),
         confidence: confidence_label.to_string(),
         title,
@@ -228,9 +226,9 @@ async fn build_finding_from_output(
         cwe,
         owasp,
         remediation,
-        url,
-        method,
-        location,
+        url: observation.url.clone(),
+        method: observation.method.clone(),
+        location: observation.location.clone(),
         evidence,
         request_headers: proxy_request
             .as_ref()
@@ -246,6 +244,117 @@ async fn build_finding_from_output(
             .as_ref()
             .and_then(|record| record.response_body.clone()),
         created_at: Utc::now(),
+    }))
+}
+
+async fn build_observation_from_output(
+    db: &DatabaseService,
+    profile_id: &str,
+    event: &SystemAgentEvent,
+    output: &Value,
+) -> Result<Option<TrafficFindingObservation>> {
+    let risk_type = output
+        .get("riskType")
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        .to_string();
+    if matches!(risk_type.as_str(), "" | "none") {
+        return Ok(None);
+    }
+
+    let confidence = output
+        .get("confidence")
+        .and_then(Value::as_str)
+        .unwrap_or("low")
+        .to_lowercase();
+    let summary = output
+        .get("summary")
+        .and_then(Value::as_str)
+        .unwrap_or("Passive system agent detected a potential security risk.")
+        .to_string();
+    let signals = output
+        .get("signals")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let verification_plan = output
+        .get("verificationPlan")
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    let payload = &event.payload;
+    let payload_url = payload
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| "unknown".to_string());
+    let payload_method = payload
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| "GET".to_string());
+    let db_request_id = payload.get("dbRequestId").and_then(Value::as_i64);
+    let proxy_request = match db_request_id {
+        Some(request_id) => db.get_proxy_request_by_id(request_id).await?,
+        None => None,
+    };
+
+    let url = proxy_request
+        .as_ref()
+        .map(|record| record.url.clone())
+        .unwrap_or(payload_url);
+    let method = proxy_request
+        .as_ref()
+        .map(|record| record.method.clone())
+        .unwrap_or(payload_method);
+    let path_template = payload
+        .get("pathTemplate")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let location = payload
+        .get("clusterKey")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| path_template.clone())
+        .unwrap_or_else(|| url.clone());
+    let action_kind = payload
+        .get("actionKind")
+        .and_then(Value::as_str)
+        .unwrap_or("inspect")
+        .to_string();
+    let total_requests = payload
+        .get("clusterSummary")
+        .and_then(|value| value.get("totalRequests"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let distinct_auth_contexts = payload
+        .get("clusterSummary")
+        .and_then(|value| value.get("distinctAuthContexts"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+
+    Ok(Some(TrafficFindingObservation {
+        observed_at: event.timestamp,
+        profile_id: profile_id.to_string(),
+        risk_type,
+        confidence,
+        summary,
+        signals,
+        verification_plan,
+        url,
+        method,
+        location,
+        action_kind,
+        total_requests,
+        distinct_auth_contexts,
+        path_template,
+        db_request_id,
     }))
 }
 

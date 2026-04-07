@@ -107,6 +107,92 @@
             </label>
           </div>
 
+          <div v-else-if="draftRule.type === 'substring' || draftRule.type === 'reverseSubstring'" class="grid gap-4 md:grid-cols-2">
+            <label class="form-control">
+              <span class="label-text">
+                {{
+                  draftRule.type === 'reverseSubstring'
+                    ? $t('trafficAnalysis.intruder.labels.reverseSubstringEndOffset')
+                    : $t('trafficAnalysis.intruder.labels.substringStart')
+                }}
+              </span>
+              <input
+                :value="draftRule.substringStart ?? 0"
+                type="number"
+                min="0"
+                class="input input-bordered"
+                @input="updateSubstringStart(($event.target as HTMLInputElement).value)"
+              />
+            </label>
+            <label class="form-control">
+              <span class="label-text">
+                {{
+                  draftRule.type === 'reverseSubstring'
+                    ? $t('trafficAnalysis.intruder.labels.reverseSubstringLength')
+                    : $t('trafficAnalysis.intruder.labels.substringLength')
+                }}
+              </span>
+              <input
+                :value="draftRule.substringLength ?? ''"
+                type="number"
+                min="0"
+                class="input input-bordered"
+                :placeholder="
+                  draftRule.type === 'reverseSubstring'
+                    ? $t('trafficAnalysis.intruder.placeholders.reverseSubstringLength')
+                    : $t('trafficAnalysis.intruder.placeholders.substringLength')
+                "
+                @input="updateSubstringLength(($event.target as HTMLInputElement).value)"
+              />
+            </label>
+          </div>
+
+          <div v-else-if="draftRule.type === 'decode'" class="grid gap-4">
+            <label class="form-control">
+              <span class="label-text">{{ $t('trafficAnalysis.intruder.labels.decodeType') }}</span>
+              <select v-model="draftRule.codecType" class="select select-bordered">
+                <option v-for="option in codecOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <div v-else-if="draftRule.type === 'hash'" class="grid gap-4">
+            <label class="form-control">
+              <span class="label-text">{{ $t('trafficAnalysis.intruder.labels.hashAlgorithm') }}</span>
+              <select v-model="draftRule.hashAlgorithm" class="select select-bordered">
+                <option v-for="option in hashOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <div v-else-if="draftRule.type === 'addRawPayload'" class="grid gap-4">
+            <label class="form-control">
+              <span class="label-text">{{ $t('trafficAnalysis.intruder.labels.rawPayloadPlacement') }}</span>
+              <select v-model="draftRule.rawPayloadPlacement" class="select select-bordered">
+                <option v-for="option in rawPayloadPlacementOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <div v-else-if="draftRule.type === 'replaceBaseValue'" class="grid gap-4">
+            <p class="text-sm text-base-content/70">
+              {{ $t('trafficAnalysis.intruder.help.replaceBaseValueHint') }}
+            </p>
+          </div>
+
+          <div v-else-if="draftRule.type === 'skipRegex'" class="grid gap-4">
+            <label class="form-control">
+              <span class="label-text">{{ $t('trafficAnalysis.intruder.labels.skipRegexPattern') }}</span>
+              <input v-model="draftRule.matchValue" type="text" class="input input-bordered" />
+            </label>
+          </div>
+
           <div class="grid gap-4 md:grid-cols-[12rem_1fr]">
             <label class="form-control">
               <span class="label-text">{{ $t('trafficAnalysis.intruder.labels.condition') }}</span>
@@ -162,11 +248,17 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   createDefaultPayloadProcessingRule,
+  getPayloadProcessingCodecLabel,
   getPayloadProcessingConditionLabel,
+  getPayloadProcessingHashLabel,
+  getPayloadProcessingRawPayloadPlacementLabel,
   getPayloadProcessingRuleLabel,
 } from './payloadProcessing'
 import type {
+  IntruderPayloadProcessingCodec,
   IntruderPayloadProcessingConditionType,
+  IntruderPayloadProcessingHashAlgorithm,
+  IntruderPayloadProcessingRawPayloadPlacement,
   IntruderPayloadProcessingRule,
   IntruderPayloadProcessingRuleType,
 } from './types'
@@ -214,18 +306,43 @@ const ruleTypeOptions = computed(() =>
     'suffix',
     'replace',
     'replaceRegex',
+    'substring',
+    'reverseSubstring',
     'lowercase',
     'uppercase',
     'trim',
     'base64',
     'urlEncode',
+    'decode',
+    'hash',
+    'addRawPayload',
+    'replaceBaseValue',
     'reverse',
     'removeWhitespace',
     'repeat',
     'hexEncode',
+    'skipRegex',
   ] as IntruderPayloadProcessingRuleType[]).map((value) => ({
     value,
     label: getPayloadProcessingRuleLabel(value),
+  })),
+)
+const codecOptions = computed(() =>
+  (['url', 'base64', 'hex'] as IntruderPayloadProcessingCodec[]).map((value) => ({
+    value,
+    label: getPayloadProcessingCodecLabel(value),
+  })),
+)
+const hashOptions = computed(() =>
+  (['sha256', 'sha1'] as IntruderPayloadProcessingHashAlgorithm[]).map((value) => ({
+    value,
+    label: getPayloadProcessingHashLabel(value),
+  })),
+)
+const rawPayloadPlacementOptions = computed(() =>
+  (['after', 'before'] as IntruderPayloadProcessingRawPayloadPlacement[]).map((value) => ({
+    value,
+    label: getPayloadProcessingRawPayloadPlacementLabel(value),
   })),
 )
 const conditionOptions = computed(() =>
@@ -264,12 +381,31 @@ function closeDialog() {
   dialogRef.value?.close()
 }
 
+function updateSubstringStart(value: string) {
+  draftRule.value = {
+    ...draftRule.value,
+    substringStart: Math.max(0, Number(value) || 0),
+  }
+}
+
+function updateSubstringLength(value: string) {
+  draftRule.value = {
+    ...draftRule.value,
+    substringLength: value.trim() === '' ? null : Math.max(0, Number(value) || 0),
+  }
+}
+
 function saveRule() {
   const nextRule: IntruderPayloadProcessingRule = {
     ...draftRule.value,
     conditionType: draftRule.value.conditionType ?? 'always',
     conditionValue: (draftRule.value.conditionType ?? 'always') === 'always' ? '' : draftRule.value.conditionValue ?? '',
     caseSensitive: Boolean(draftRule.value.caseSensitive),
+    substringStart: Math.max(0, Number(draftRule.value.substringStart) || 0),
+    substringLength: draftRule.value.substringLength == null ? null : Math.max(0, Number(draftRule.value.substringLength) || 0),
+    codecType: draftRule.value.codecType ?? 'url',
+    hashAlgorithm: draftRule.value.hashAlgorithm ?? 'sha256',
+    rawPayloadPlacement: draftRule.value.rawPayloadPlacement ?? 'after',
   }
 
   if (editingMode.value === 'create') {
@@ -312,6 +448,22 @@ function describeRule(rule: IntruderPayloadProcessingRule): string {
     detail = rule.replaceValue || '-'
   } else if (rule.type === 'replace' || rule.type === 'replaceRegex') {
     detail = `${rule.matchValue || '-'} -> ${rule.replaceValue || '-'}`
+  } else if (rule.type === 'substring') {
+    const length = rule.substringLength == null ? t('trafficAnalysis.intruder.labels.substringToEnd') : String(rule.substringLength)
+    detail = `${rule.substringStart ?? 0}, ${length}`
+  } else if (rule.type === 'reverseSubstring') {
+    const length = rule.substringLength == null ? t('trafficAnalysis.intruder.labels.substringToEnd') : String(rule.substringLength)
+    detail = `${rule.substringStart ?? 0}, ${length}`
+  } else if (rule.type === 'decode') {
+    detail = getPayloadProcessingCodecLabel(rule.codecType ?? 'url')
+  } else if (rule.type === 'hash') {
+    detail = getPayloadProcessingHashLabel(rule.hashAlgorithm ?? 'sha256')
+  } else if (rule.type === 'addRawPayload') {
+    detail = getPayloadProcessingRawPayloadPlacementLabel(rule.rawPayloadPlacement ?? 'after')
+  } else if (rule.type === 'replaceBaseValue') {
+    detail = '{base}'
+  } else if (rule.type === 'skipRegex') {
+    detail = rule.matchValue || '-'
   }
 
   if (conditionType === 'always') {

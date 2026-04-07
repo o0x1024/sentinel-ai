@@ -13,32 +13,154 @@ const uiHtmlPath = path.join(__dirname, 'demo-business-service-ui.html')
 const uiHtml = fs.readFileSync(uiHtmlPath, 'utf8')
 
 const users = {
-  alice: { id: 'u-alice', username: 'alice', role: 'user', tenantId: 'tenant-a' },
-  bob: { id: 'u-bob', username: 'bob', role: 'user', tenantId: 'tenant-b' },
-  admin: { id: 'u-admin', username: 'admin', role: 'admin', tenantId: 'tenant-a' },
-  finance: { id: 'u-finance', username: 'finance', role: 'finance', tenantId: 'tenant-a' },
+  alice: { id: 'u-alice', username: 'alice', role: 'employee', tenantId: 'tenant-a', department: 'sales' },
+  bob: { id: 'u-bob', username: 'bob', role: 'employee', tenantId: 'tenant-b', department: 'ops' },
+  manager: { id: 'u-manager', username: 'manager', role: 'manager', tenantId: 'tenant-a', department: 'sales' },
+  finance: { id: 'u-finance', username: 'finance', role: 'finance', tenantId: 'tenant-a', department: 'finance' },
+  admin: { id: 'u-admin', username: 'admin', role: 'admin', tenantId: 'tenant-a', department: 'security' },
 }
 
 const orders = new Map([
-  ['ord-1001', { id: 'ord-1001', tenantId: 'tenant-a', ownerId: 'u-alice', amount: 199, status: 'draft', item: 'Laptop Bag' }],
-  ['ord-1002', { id: 'ord-1002', tenantId: 'tenant-a', ownerId: 'u-admin', amount: 599, status: 'submitted', item: 'Monitor' }],
-  ['ord-2001', { id: 'ord-2001', tenantId: 'tenant-b', ownerId: 'u-bob', amount: 88, status: 'submitted', item: 'Keyboard' }],
+  [
+    'ord-a-1001',
+    {
+      id: 'ord-a-1001',
+      orderNo: 'SO-A-2026-1001',
+      tenantId: 'tenant-a',
+      ownerId: 'u-alice',
+      customerId: 'cust-cn-1088',
+      serviceDeskCaseId: 'csr-a-3001',
+      amount: 199,
+      status: 'awaiting_dispatch',
+      item: '华东渠道样品包',
+      businessUnit: 'east-sales',
+    },
+  ],
+  [
+    'ord-b-2001',
+    {
+      id: 'ord-b-2001',
+      orderNo: 'SO-B-2026-2001',
+      tenantId: 'tenant-b',
+      ownerId: 'u-bob',
+      customerId: 'cust-eu-2081',
+      serviceDeskCaseId: 'csr-b-9008',
+      amount: 88,
+      status: 'submitted',
+      item: '售后备件键盘',
+      businessUnit: 'global-ops',
+    },
+  ],
 ])
 
-const projects = new Map([
-  ['proj-100', { id: 'proj-100', tenantId: 'tenant-a', ownerId: 'u-alice', name: 'Apollo', members: ['alice', 'admin'] }],
-  ['proj-200', { id: 'proj-200', tenantId: 'tenant-b', ownerId: 'u-bob', name: 'Borealis', members: ['bob'] }],
-])
-
-const invoices = new Map([
-  ['inv-100', { id: 'inv-100', tenantId: 'tenant-a', ownerId: 'u-alice', amount: 320, paidCount: 0 }],
-  ['inv-200', { id: 'inv-200', tenantId: 'tenant-b', ownerId: 'u-bob', amount: 450, paidCount: 0 }],
-])
-
-const couponRedemptions = []
+const reimbursements = new Map()
 const transfers = new Map()
-let couponUseSequence = 0
-let transferSequence = 0
+const payments = new Map()
+const coupons = new Map([
+  ['SPRING-2026', { code: 'SPRING-2026', singleUse: true, uses: [] }],
+  ['OPS-BONUS', { code: 'OPS-BONUS', singleUse: true, uses: [] }],
+])
+let reimbursementSeq = 1
+let transferSeq = 1
+let paymentSeq = 1
+
+function padSequence(value, width = 4) {
+  return String(value).padStart(width, '0')
+}
+
+function seedPlatformState() {
+  reimbursements.clear()
+  transfers.clear()
+  payments.clear()
+
+  for (const coupon of coupons.values()) {
+    coupon.uses = []
+  }
+
+  reimbursements.set('ec-a-0901', {
+    id: 'ec-a-0901',
+    claimNo: 'EXP-2026-0901',
+    tenantId: 'tenant-a',
+    applicantId: users.alice.id,
+    applicant: users.alice.username,
+    claimType: 'travel',
+    item: '季度客户拜访机酒',
+    amount: 2860,
+    costCenter: 'CC-SALES-01',
+    expensePolicyId: 'POL-TRAVEL-2026',
+    vendorId: 'vendor-air-cn',
+    businessLine: 'regional-sales',
+    approvalTaskId: 'task-rb-0901',
+    treasuryDisbursementRef: 'dj-rb-0901',
+    settlementBatchId: 'TB-20260407-001',
+    payoutChannel: 'cmb-corporate',
+    status: 'paid',
+    approvalHistory: [{ by: 'manager', at: '2026-04-03T09:20:00.000Z', mode: 'standard' }],
+    createdAt: '2026-04-03T08:30:00.000Z',
+    submittedAt: '2026-04-03T08:50:00.000Z',
+    paidAt: '2026-04-03T10:10:00.000Z',
+    paidCount: 1,
+  })
+  reimbursements.set('ec-a-0902', {
+    id: 'ec-a-0902',
+    claimNo: 'EXP-2026-0902',
+    tenantId: 'tenant-a',
+    applicantId: users.alice.id,
+    applicant: users.alice.username,
+    claimType: 'entertainment',
+    item: '渠道伙伴招待费',
+    amount: 1680,
+    costCenter: 'CC-SALES-02',
+    expensePolicyId: 'POL-ENT-2026',
+    vendorId: 'vendor-hotel-hz',
+    businessLine: 'channel-growth',
+    approvalTaskId: 'task-rb-0902',
+    treasuryDisbursementRef: 'dj-rb-0902',
+    settlementBatchId: null,
+    payoutChannel: 'cmb-corporate',
+    status: 'submitted',
+    approvalHistory: [],
+    createdAt: '2026-04-06T07:15:00.000Z',
+    submittedAt: '2026-04-06T07:45:00.000Z',
+  })
+
+  transfers.set('pr-a-0701', {
+    id: 'pr-a-0701',
+    paymentRequestNo: 'PAYREQ-2026-0701',
+    tenantId: 'tenant-a',
+    createdBy: 'manager',
+    fromAccount: 'treasury-main',
+    toAccount: 'vendor-clearing',
+    amount: 62000,
+    status: 'reviewed',
+    paymentCategory: 'channel-rebate',
+    beneficiaryVendorId: 'vendor-ic-301',
+    cashPoolId: 'cashpool-east-01',
+    settlementChannel: 'cmb-enterprise',
+    reviewTaskId: 'task-pr-0701',
+    approvals: [{ by: 'manager', at: '2026-04-02T09:10:00.000Z', mode: 'standard' }],
+    createdAt: '2026-04-02T08:40:00.000Z',
+  })
+
+  payments.set('pay-0901', {
+    id: 'pay-0901',
+    transferId: null,
+    reimbursementId: 'ec-a-0901',
+    actor: 'finance',
+    amount: 2860,
+    treasuryBatchNo: 'TB-20260407-001',
+    disbursementReference: 'dj-rb-0901',
+    createdAt: '2026-04-03T10:10:00.000Z',
+  })
+
+  reimbursementSeq = 903
+  transferSeq = 702
+  paymentSeq = 902
+}
+
+function resetPlatformState() {
+  seedPlatformState()
+}
 
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
@@ -64,6 +186,14 @@ function notFound(res, message = 'Not Found') {
 
 function unauthorized(res, message = 'Unauthorized') {
   sendJson(res, 401, { success: false, message })
+}
+
+function forbidden(res, message = 'Forbidden') {
+  sendJson(res, 403, { success: false, message })
+}
+
+function badRequest(res, message = 'Bad Request') {
+  sendJson(res, 400, { success: false, message })
 }
 
 function parseBody(req) {
@@ -99,8 +229,8 @@ function getUserFromRequest(req) {
   const authorization = req.headers.authorization
   if (typeof authorization === 'string' && authorization.startsWith('Bearer ')) {
     const token = authorization.slice('Bearer '.length).trim()
-    if (token.startsWith('demo-')) {
-      const username = token.slice('demo-'.length)
+    if (token.startsWith('portal-') && token.endsWith('-session')) {
+      const username = token.slice('portal-'.length, '-session'.length * -1)
       if (users[username]) {
         return users[username]
       }
@@ -120,6 +250,7 @@ function summarizeUser(user) {
     username: user.username,
     role: user.role,
     tenantId: user.tenantId,
+    department: user.department,
   }
 }
 
@@ -132,6 +263,93 @@ function logRequest(req, statusCode, user) {
     user ? `${user.username}/${user.role}/${user.tenantId}` : 'anonymous',
   ]
   console.log(line.join(' | '))
+}
+
+function createReimbursement(actor, body) {
+  const sequence = padSequence(reimbursementSeq++)
+  const id = `ec-a-${sequence}`
+  const item = typeof body.item === 'string' ? body.item : '差旅报销'
+  const amount = Number(body.amount || 0)
+  const record = {
+    id,
+    claimNo: `EXP-2026-${sequence}`,
+    tenantId: actor.tenantId,
+    applicantId: actor.id,
+    applicant: actor.username,
+    claimType: typeof body.claimType === 'string' ? body.claimType : 'travel',
+    item,
+    amount,
+    costCenter: typeof body.costCenter === 'string' ? body.costCenter : 'CC-SALES-01',
+    expensePolicyId:
+      typeof body.expensePolicyId === 'string' ? body.expensePolicyId : 'POL-TRAVEL-2026',
+    vendorId: typeof body.vendorId === 'string' ? body.vendorId : 'vendor-air-cn',
+    businessLine: typeof body.businessLine === 'string' ? body.businessLine : actor.department,
+    approvalTaskId: `task-rb-${sequence}`,
+    treasuryDisbursementRef: `dj-rb-${sequence}`,
+    settlementBatchId: null,
+    payoutChannel: 'cmb-corporate',
+    status: 'draft',
+    approvalHistory: [],
+    createdAt: new Date().toISOString(),
+  }
+  reimbursements.set(id, record)
+  return record
+}
+
+function createTransfer(actor, body) {
+  const sequence = padSequence(transferSeq++)
+  const id = `pr-a-${sequence}`
+  const record = {
+    id,
+    paymentRequestNo: `PAYREQ-2026-${sequence}`,
+    tenantId: actor.tenantId,
+    createdBy: actor.username,
+    fromAccount: body.fromAccount || `${actor.username}-wallet`,
+    toAccount: body.toAccount || 'merchant-main',
+    amount: Number(body.amount || 0),
+    paymentCategory: body.paymentCategory || 'vendor-settlement',
+    beneficiaryVendorId: body.beneficiaryVendorId || 'vendor-default',
+    cashPoolId: body.cashPoolId || 'cashpool-east-01',
+    settlementChannel: body.settlementChannel || 'cmb-enterprise',
+    reviewTaskId: `task-pr-${sequence}`,
+    status: 'draft',
+    approvals: [],
+    createdAt: new Date().toISOString(),
+  }
+  transfers.set(id, record)
+  return record
+}
+
+function createPayment(body, actor) {
+  const sequence = padSequence(paymentSeq++)
+  const id = `pay-${sequence}`
+  const record = {
+    id,
+    transferId: body.transferId,
+    reimbursementId: body.reimbursementId,
+    actor: actor.username,
+    amount: Number(body.amount || 0),
+    treasuryBatchNo: `TB-20260407-${sequence}`,
+    disbursementReference: body.disbursementReference || `dj-${sequence}`,
+    createdAt: new Date().toISOString(),
+  }
+  payments.set(id, record)
+  return record
+}
+
+function getPathId(pathname, regex) {
+  const match = pathname.match(regex)
+  return match ? match[1] : null
+}
+
+function respondScenario(res, req, statusCode, user, scenario, data) {
+  sendJson(res, statusCode, {
+    success: statusCode >= 200 && statusCode < 300,
+    scenario,
+    actor: summarizeUser(user),
+    ...(data || {}),
+  })
+  logRequest(req, statusCode, user)
 }
 
 async function handleRequest(req, res) {
@@ -157,8 +375,9 @@ async function handleRequest(req, res) {
   if (req.method === 'GET' && url.pathname === '/health') {
     sendJson(res, 200, {
       success: true,
-      service: 'demo-business-service',
-      scenarios: ['idor', 'approval-bypass', 'double-redeem', 'skip-step', 'double-pay'],
+      service: 'enterprise-finance-service',
+      operationModes: ['portal', 'mobile-workbench', 'partner-integration', 'customer-service'],
+      businessDomains: ['reimbursement', 'transfer', 'coupon', 'order'],
     })
     logRequest(req, 200, user)
     return
@@ -167,7 +386,7 @@ async function handleRequest(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/auth/login') {
     const body = await parseBody(req).catch(error => ({ __error: error.message }))
     if (body.__error) {
-      sendJson(res, 400, { success: false, message: body.__error })
+      badRequest(res, body.__error)
       logRequest(req, 400, user)
       return
     }
@@ -175,14 +394,14 @@ async function handleRequest(req, res) {
     const username = typeof body.username === 'string' ? body.username : ''
     const targetUser = users[username]
     if (!targetUser) {
-      unauthorized(res, 'Unknown demo user')
+      unauthorized(res, 'Unknown account')
       logRequest(req, 401, user)
       return
     }
 
     sendJson(res, 200, {
       success: true,
-      token: `demo-${targetUser.username}`,
+      token: `portal-${targetUser.username}-session`,
       user: summarizeUser(targetUser),
     })
     logRequest(req, 200, targetUser)
@@ -190,211 +409,389 @@ async function handleRequest(req, res) {
   }
 
   if (!user) {
-    unauthorized(res, 'Use x-demo-user or Bearer demo-{username}')
+    unauthorized(res, 'Use x-demo-user or Bearer portal-{username}-session')
     logRequest(req, 401, user)
     return
   }
 
-  const orderMatch = url.pathname.match(/^\/api\/orders\/([^/]+)$/)
-  if (req.method === 'GET' && orderMatch) {
-    const order = orders.get(orderMatch[1])
-    if (!order) {
-      notFound(res, 'Order not found')
-      logRequest(req, 404, user)
-      return
-    }
-
-    // Intentionally vulnerable: no owner or tenant authorization check.
-    sendJson(res, 200, {
-      success: true,
-      scenario: 'idor',
-      order,
-      actor: summarizeUser(user),
-      riskHint: 'Order lookup does not validate tenantId/ownerId before returning data.',
-    })
-    logRequest(req, 200, user)
-    return
-  }
-
-  const approveMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/approve$/)
-  if (req.method === 'POST' && approveMatch) {
-    const order = orders.get(approveMatch[1])
-    if (!order) {
-      notFound(res, 'Order not found')
-      logRequest(req, 404, user)
-      return
-    }
-
-    // Intentionally vulnerable: any authenticated user can approve any order.
-    order.status = 'approved'
-    order.approvedBy = user.username
-    sendJson(res, 200, {
-      success: true,
-      scenario: 'approval-bypass',
-      order,
-      actor: summarizeUser(user),
-      riskHint: 'Approval endpoint does not check role or tenant boundary.',
-    })
-    logRequest(req, 200, user)
-    return
-  }
-
-  const projectMembersMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/members$/)
-  if (req.method === 'GET' && projectMembersMatch) {
-    const project = projects.get(projectMembersMatch[1])
-    if (!project) {
-      notFound(res, 'Project not found')
-      logRequest(req, 404, user)
-      return
-    }
-
-    // Intentionally vulnerable: cross-tenant membership details are returned.
-    sendJson(res, 200, {
-      success: true,
-      scenario: 'idor',
-      projectId: project.id,
-      tenantId: project.tenantId,
-      members: project.members,
-      actor: summarizeUser(user),
-      riskHint: 'Project member list is exposed without project membership validation.',
-    })
-    logRequest(req, 200, user)
-    return
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/coupons/redeem') {
-    const body = await parseBody(req).catch(error => ({ __error: error.message }))
-    if (body.__error) {
-      sendJson(res, 400, { success: false, message: body.__error })
-      logRequest(req, 400, user)
-      return
-    }
-
-    const couponCode = typeof body.couponCode === 'string' ? body.couponCode : 'UNKNOWN'
-    const orderId = typeof body.orderId === 'string' ? body.orderId : null
-    couponUseSequence += 1
-    const record = {
-      redemptionId: `red-${couponUseSequence}`,
-      couponCode,
-      orderId,
-      actor: user.username,
-      tenantId: user.tenantId,
-      grantedDiscount: 50,
-      redeemedAt: new Date().toISOString(),
-    }
-    couponRedemptions.push(record)
-
-    // Intentionally vulnerable: coupon can be redeemed repeatedly without single-use control.
-    sendJson(res, 200, {
-      success: true,
-      scenario: 'double-redeem',
-      redemption: record,
-      redemptionCountForCoupon: couponRedemptions.filter(item => item.couponCode === couponCode).length,
-      riskHint: 'Coupon redemption lacks replay / single-use validation.',
-    })
-    logRequest(req, 200, user)
-    return
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/transfers/prepare') {
-    const body = await parseBody(req).catch(error => ({ __error: error.message }))
-    if (body.__error) {
-      sendJson(res, 400, { success: false, message: body.__error })
-      logRequest(req, 400, user)
-      return
-    }
-
-    transferSequence += 1
-    const transferId = `tr-${transferSequence}`
-    const transfer = {
-      id: transferId,
-      createdBy: user.username,
-      tenantId: user.tenantId,
-      fromAccount: body.fromAccount || `${user.username}-wallet`,
-      toAccount: body.toAccount || 'merchant-main',
-      amount: Number(body.amount || 0),
-      prepared: true,
-      preparedAt: new Date().toISOString(),
-    }
-    transfers.set(transferId, transfer)
-    sendJson(res, 200, {
-      success: true,
-      scenario: 'workflow-step',
-      transfer,
-      riskHint: 'Use /confirm to test whether the server enforces the prepared state.',
-    })
-    logRequest(req, 200, user)
-    return
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/transfers/confirm') {
-    const body = await parseBody(req).catch(error => ({ __error: error.message }))
-    if (body.__error) {
-      sendJson(res, 400, { success: false, message: body.__error })
-      logRequest(req, 400, user)
-      return
-    }
-
-    const transferId = typeof body.transferId === 'string' ? body.transferId : null
-    const existing = transferId ? transfers.get(transferId) : null
-    const transfer = existing || {
-      id: transferId || 'tr-missing',
-      createdBy: user.username,
-      tenantId: user.tenantId,
-      fromAccount: body.fromAccount || `${user.username}-wallet`,
-      toAccount: body.toAccount || 'merchant-main',
-      amount: Number(body.amount || 0),
-      prepared: false,
-    }
-
-    // Intentionally vulnerable: confirm succeeds even when no prepared step exists.
-    transfer.confirmed = true
-    transfer.confirmedBy = user.username
-    transfer.confirmedAt = new Date().toISOString()
-    transfers.set(transfer.id, transfer)
-    sendJson(res, 200, {
-      success: true,
-      scenario: 'skip-step',
-      transfer,
-      riskHint: 'Transfer confirmation does not require a valid prepared state.',
-    })
-    logRequest(req, 200, user)
-    return
-  }
-
-  const invoicePayMatch = url.pathname.match(/^\/api\/invoices\/([^/]+)\/pay$/)
-  if (req.method === 'POST' && invoicePayMatch) {
-    const invoice = invoices.get(invoicePayMatch[1])
-    if (!invoice) {
-      notFound(res, 'Invoice not found')
-      logRequest(req, 404, user)
-      return
-    }
-
-    // Intentionally vulnerable: repeated payment is allowed.
-    invoice.paidCount += 1
-    sendJson(res, 200, {
-      success: true,
-      scenario: 'double-pay',
-      invoice,
-      actor: summarizeUser(user),
-      riskHint: 'Invoice payment does not enforce idempotency or paid status.',
-    })
-    logRequest(req, 200, user)
-    return
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/demo/state') {
+  if (req.method === 'GET' && url.pathname === '/api/platform/state') {
     sendJson(res, 200, {
       success: true,
       users: Object.values(users),
       orders: Array.from(orders.values()),
-      projects: Array.from(projects.values()),
-      invoices: Array.from(invoices.values()),
-      couponRedemptions,
+      reimbursements: Array.from(reimbursements.values()),
       transfers: Array.from(transfers.values()),
+      payments: Array.from(payments.values()),
+      coupons: Array.from(coupons.values()),
     })
     logRequest(req, 200, user)
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/platform/reset') {
+    if (user.role !== 'admin') {
+      forbidden(res, 'Only admin can reset platform state')
+      logRequest(req, 403, user)
+      return
+    }
+
+    resetPlatformState()
+    respondScenario(res, req, 200, user, 'platform-reset', {
+      reset: true,
+      service: 'enterprise-finance-service',
+    })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/expense/claims/create') {
+    const body = await parseBody(req).catch(error => ({ __error: error.message }))
+    if (body.__error) {
+      badRequest(res, body.__error)
+      logRequest(req, 400, user)
+      return
+    }
+    const record = createReimbursement(user, body)
+    respondScenario(res, req, 200, user, 'reimbursement-create-draft', {
+      reimbursement: record,
+    })
+    return
+  }
+
+  const reimbursementSubmitId = getPathId(url.pathname, /^\/api\/expense\/claims\/([^/]+)\/submit$/)
+  if (req.method === 'POST' && reimbursementSubmitId) {
+    const record = reimbursements.get(reimbursementSubmitId)
+    if (!record) {
+      notFound(res, 'Reimbursement not found')
+      logRequest(req, 404, user)
+      return
+    }
+    if (record.applicantId !== user.id) {
+      forbidden(res, 'Only applicant can submit reimbursement')
+      logRequest(req, 403, user)
+      return
+    }
+    if (record.status !== 'draft') {
+      badRequest(res, 'Only draft reimbursement can be submitted')
+      logRequest(req, 400, user)
+      return
+    }
+    record.status = 'submitted'
+    record.submittedAt = new Date().toISOString()
+    respondScenario(res, req, 200, user, 'reimbursement-submit', {
+      reimbursement: record,
+    })
+    return
+  }
+
+  const reimbursementApproveId = getPathId(url.pathname, /^\/api\/workflow\/expense-claims\/([^/]+)\/approve$/)
+  if (req.method === 'POST' && reimbursementApproveId) {
+    const record = reimbursements.get(reimbursementApproveId)
+    if (!record) {
+      notFound(res, 'Reimbursement not found')
+      logRequest(req, 404, user)
+      return
+    }
+    if (user.role !== 'manager') {
+      forbidden(res, 'Only manager can approve expense claim')
+      logRequest(req, 403, user)
+      return
+    }
+    if (record.tenantId !== user.tenantId || record.status !== 'submitted') {
+      badRequest(res, 'Expense claim is not ready for approval')
+      logRequest(req, 400, user)
+      return
+    }
+    record.status = 'approved'
+    record.approvalHistory.push({ by: user.username, at: new Date().toISOString(), mode: 'standard' })
+    respondScenario(res, req, 200, user, 'reimbursement-approve', {
+      reimbursement: record,
+    })
+    return
+  }
+
+  const reimbursementDecisionId = getPathId(
+    url.pathname,
+    /^\/api\/mobile\/workbench\/expense-claims\/([^/]+)\/task-complete$/,
+  )
+  if (req.method === 'POST' && reimbursementDecisionId) {
+    const record = reimbursements.get(reimbursementDecisionId)
+    if (!record) {
+      notFound(res, 'Reimbursement not found')
+      logRequest(req, 404, user)
+      return
+    }
+    record.status = 'approved'
+    record.approvalHistory.push({ by: user.username, at: new Date().toISOString(), mode: 'alternate' })
+    record.mobileTaskCompletedBy = user.username
+    respondScenario(res, req, 200, user, 'mobile-expense-task-complete', {
+      reimbursement: record,
+    })
+    return
+  }
+
+  const reimbursementDisburseId = getPathId(
+    url.pathname,
+    /^\/api\/treasury\/expense-claims\/([^/]+)\/disburse$/,
+  )
+  if (req.method === 'POST' && reimbursementDisburseId) {
+    const record = reimbursements.get(reimbursementDisburseId)
+    if (!record) {
+      notFound(res, 'Reimbursement not found')
+      logRequest(req, 404, user)
+      return
+    }
+    if (user.role !== 'finance') {
+      forbidden(res, 'Only finance can pay expense claim')
+      logRequest(req, 403, user)
+      return
+    }
+    if (record.tenantId !== user.tenantId || record.status !== 'approved') {
+      badRequest(res, 'Expense claim must be approved before payment')
+      logRequest(req, 400, user)
+      return
+    }
+    if (record.paidAt) {
+      badRequest(res, 'Reimbursement already paid')
+      logRequest(req, 400, user)
+      return
+    }
+    record.status = 'paid'
+    record.paidAt = new Date().toISOString()
+    record.settlementBatchId = `TB-20260407-${padSequence(paymentSeq)}`
+    respondScenario(res, req, 200, user, 'reimbursement-disburse', {
+      reimbursement: record,
+      payment: createPayment(
+        {
+          reimbursementId: record.id,
+          amount: record.amount,
+          disbursementReference: record.treasuryDisbursementRef,
+        },
+        user,
+      ),
+    })
+    return
+  }
+
+  const reimbursementReleaseId = getPathId(
+    url.pathname,
+    /^\/api\/integrations\/treasury\/expense-claims\/([^/]+)\/execute$/,
+  )
+  if (req.method === 'POST' && reimbursementReleaseId) {
+    const record = reimbursements.get(reimbursementReleaseId)
+    if (!record) {
+      notFound(res, 'Reimbursement not found')
+      logRequest(req, 404, user)
+      return
+    }
+    record.status = 'paid'
+    record.paidCount = (record.paidCount || 0) + 1
+    record.lastPaidAt = new Date().toISOString()
+    record.integrationChannel = 'legacy-treasury-adapter'
+    respondScenario(res, req, 200, user, 'treasury-disbursement-execute', {
+      reimbursement: record,
+      payment: createPayment(
+        {
+          reimbursementId: record.id,
+          amount: record.amount,
+          disbursementReference: record.treasuryDisbursementRef,
+        },
+        user,
+      ),
+    })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/treasury/payment-requests/create') {
+    const body = await parseBody(req).catch(error => ({ __error: error.message }))
+    if (body.__error) {
+      badRequest(res, body.__error)
+      logRequest(req, 400, user)
+      return
+    }
+    const transfer = createTransfer(user, body)
+    respondScenario(res, req, 200, user, 'transfer-create-draft', {
+      transfer,
+    })
+    return
+  }
+
+  const transferReviewId = getPathId(
+    url.pathname,
+    /^\/api\/treasury\/payment-requests\/([^/]+)\/review$/,
+  )
+  if (req.method === 'POST' && transferReviewId) {
+    const transfer = transfers.get(transferReviewId)
+    if (!transfer) {
+      notFound(res, 'Transfer not found')
+      logRequest(req, 404, user)
+      return
+    }
+    if (user.role !== 'manager') {
+      forbidden(res, 'Only manager can review payment request')
+      logRequest(req, 403, user)
+      return
+    }
+    if (transfer.tenantId !== user.tenantId || transfer.status !== 'draft') {
+      badRequest(res, 'Payment request is not ready for review')
+      logRequest(req, 400, user)
+      return
+    }
+    transfer.status = 'reviewed'
+    transfer.approvals.push({ by: user.username, at: new Date().toISOString(), mode: 'standard' })
+    respondScenario(res, req, 200, user, 'transfer-review', {
+      transfer,
+    })
+    return
+  }
+
+  const transferConfirmId = getPathId(
+    url.pathname,
+    /^\/api\/treasury\/payment-requests\/([^/]+)\/confirm$/,
+  )
+  if (req.method === 'POST' && transferConfirmId) {
+    const transfer = transfers.get(transferConfirmId)
+    if (!transfer) {
+      notFound(res, 'Transfer not found')
+      logRequest(req, 404, user)
+      return
+    }
+    if (user.role !== 'finance') {
+      forbidden(res, 'Only finance can confirm payment request')
+      logRequest(req, 403, user)
+      return
+    }
+    if (transfer.tenantId !== user.tenantId || transfer.status !== 'reviewed') {
+      badRequest(res, 'Payment request must be reviewed before confirmation')
+      logRequest(req, 400, user)
+      return
+    }
+    if (transfer.confirmedAt) {
+      badRequest(res, 'Transfer already confirmed')
+      logRequest(req, 400, user)
+      return
+    }
+    transfer.status = 'confirmed'
+    transfer.confirmedAt = new Date().toISOString()
+    respondScenario(res, req, 200, user, 'transfer-confirm', {
+      transfer,
+    })
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/mobile/treasury/payment-confirmations') {
+    const body = await parseBody(req).catch(error => ({ __error: error.message }))
+    if (body.__error) {
+      badRequest(res, body.__error)
+      logRequest(req, 400, user)
+      return
+    }
+    const transferId =
+      typeof body.transferId === 'string' ? body.transferId : `pr-inline-${Date.now()}`
+    const transfer = transfers.get(transferId) || {
+      id: transferId,
+      paymentRequestNo: `PAYREQ-2026-${Date.now()}`,
+      tenantId: user.tenantId,
+      createdBy: user.username,
+      fromAccount: body.fromAccount || `${user.username}-wallet`,
+      toAccount: body.toAccount || 'merchant-main',
+      amount: Number(body.amount || 0),
+      paymentCategory: body.paymentCategory || 'vendor-settlement',
+      beneficiaryVendorId: body.beneficiaryVendorId || 'vendor-default',
+      cashPoolId: body.cashPoolId || 'cashpool-east-01',
+      settlementChannel: body.settlementChannel || 'cmb-enterprise',
+      reviewTaskId: null,
+      status: 'draft',
+      approvals: [],
+    }
+    transfer.status = 'confirmed'
+    transfer.confirmedAt = new Date().toISOString()
+    transfer.confirmedBy = user.username
+    transfers.set(transferId, transfer)
+    transfer.mobileConfirmed = true
+    respondScenario(res, req, 200, user, 'mobile-payment-confirmation', {
+      transfer,
+    })
+    return
+  }
+
+  const couponApplyCode = getPathId(url.pathname, /^\/api\/marketing\/coupons\/([^/]+)\/claim$/)
+  if (req.method === 'POST' && couponApplyCode) {
+    const coupon = coupons.get(couponApplyCode)
+    if (!coupon) {
+      notFound(res, 'Coupon not found')
+      logRequest(req, 404, user)
+      return
+    }
+    const alreadyUsed = coupon.uses.some(item => item.userId === user.id)
+    if (alreadyUsed) {
+      badRequest(res, 'Coupon already redeemed by this user')
+      logRequest(req, 400, user)
+      return
+    }
+    const use = { userId: user.id, username: user.username, redeemedAt: new Date().toISOString(), mode: 'standard' }
+    coupon.uses.push(use)
+    respondScenario(res, req, 200, user, 'coupon-apply', {
+      couponCode: coupon.code,
+      redemption: use,
+    })
+    return
+  }
+
+  const couponActivateCode = getPathId(
+    url.pathname,
+    /^\/api\/channel-partner\/campaigns\/([^/]+)\/activate$/,
+  )
+  if (req.method === 'POST' && couponActivateCode) {
+    const coupon = coupons.get(couponActivateCode)
+    if (!coupon) {
+      notFound(res, 'Coupon not found')
+      logRequest(req, 404, user)
+      return
+    }
+    const use = { userId: user.id, username: user.username, redeemedAt: new Date().toISOString(), mode: 'alternate' }
+    coupon.uses.push(use)
+    respondScenario(res, req, 200, user, 'campaign-activate', {
+      couponCode: coupon.code,
+      redemption: use,
+      redemptionCountForUser: coupon.uses.filter(item => item.userId === user.id).length,
+    })
+    return
+  }
+
+  const orderDetailId = getPathId(url.pathname, /^\/api\/customer\/orders\/([^/]+)\/detail$/)
+  if (req.method === 'GET' && orderDetailId) {
+    const order = orders.get(orderDetailId)
+    if (!order) {
+      notFound(res, 'Order not found')
+      logRequest(req, 404, user)
+      return
+    }
+    const isAllowed = order.ownerId === user.id || order.tenantId === user.tenantId || user.role === 'admin'
+    if (!isAllowed) {
+      forbidden(res, 'Order is outside your scope')
+      logRequest(req, 403, user)
+      return
+    }
+    respondScenario(res, req, 200, user, 'order-detail', {
+      order,
+    })
+    return
+  }
+
+  const orderSummaryId = getPathId(
+    url.pathname,
+    /^\/api\/customer-service\/orders\/([^/]+)\/snapshot$/,
+  )
+  if (req.method === 'GET' && orderSummaryId) {
+    const order = orders.get(orderSummaryId)
+    if (!order) {
+      notFound(res, 'Order not found')
+      logRequest(req, 404, user)
+      return
+    }
+    respondScenario(res, req, 200, user, 'order-snapshot', {
+      order,
+    })
     return
   }
 
@@ -403,27 +800,41 @@ async function handleRequest(req, res) {
 }
 
 if (process.argv.includes('--help')) {
-  console.log(`demo-business-service
+  console.log(`enterprise-finance-service
 
 Usage:
   npm run demo:biz-service
   DEMO_BIZ_PORT=7788 DEMO_BIZ_HOST=127.0.0.1 node scripts/demo-business-service.mjs
 
-Demo users:
-  alice, bob, admin, finance
+Accounts:
+  alice, bob, manager, finance, admin
 
 Auth:
-  Authorization: Bearer demo-{username}
+  Authorization: Bearer portal-{username}-session
   x-demo-user: {username}
+
+Primary routes:
+  POST /api/expense/claims/create
+  POST /api/workflow/expense-claims/{id}/approve
+  POST /api/treasury/payment-requests/{id}/confirm
+  GET  /api/customer/orders/{id}/detail
+
+Alternate routes:
+  POST /api/mobile/workbench/expense-claims/{id}/task-complete
+  POST /api/integrations/treasury/expense-claims/{id}/execute
+  POST /api/mobile/treasury/payment-confirmations
+  GET  /api/customer-service/orders/{id}/snapshot
 `)
   process.exit(0)
 }
+
+seedPlatformState()
 
 const server = http.createServer(async (req, res) => {
   try {
     await handleRequest(req, res)
   } catch (error) {
-    console.error('demo-business-service error', error)
+    console.error('enterprise-finance-service error', error)
     sendJson(res, 500, {
       success: false,
       message: error instanceof Error ? error.message : 'Internal server error',
@@ -432,9 +843,9 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.listen(port, host, () => {
-  console.log(`demo-business-service listening on http://${host}:${port}`)
-  console.log(`demo ui: http://${host}:${port}/`)
-  console.log('demo users: alice, bob, admin, finance')
-  console.log('use Authorization: Bearer demo-alice or x-demo-user: alice')
-  console.log('scenarios: idor, approval-bypass, double-redeem, skip-step, double-pay')
+  console.log(`enterprise-finance-service listening on http://${host}:${port}`)
+  console.log(`web portal: http://${host}:${port}/`)
+  console.log('accounts: alice, bob, manager, finance, admin')
+  console.log('use Authorization: Bearer portal-alice-session or x-demo-user: alice')
+  console.log('business domains: reimbursement, transfer, coupon, order')
 })

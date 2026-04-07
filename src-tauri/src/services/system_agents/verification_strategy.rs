@@ -10,6 +10,13 @@ pub enum VerificationExecutionMode {
     ConcurrentDuplicate,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerificationSequenceMode {
+    None,
+    SkipPrerequisite,
+    ReplayAfterTarget,
+}
+
 #[derive(Debug, Clone)]
 pub struct PreparedVerificationRequest {
     pub url: String,
@@ -18,6 +25,8 @@ pub struct PreparedVerificationRequest {
     pub notes: Vec<String>,
     pub strategy_used: String,
     pub execution_mode: VerificationExecutionMode,
+    pub execution_count: usize,
+    pub sequence_mode: VerificationSequenceMode,
 }
 
 pub fn prepare_verification_request(
@@ -29,9 +38,14 @@ pub fn prepare_verification_request(
             url: baseline.url.clone(),
             body: baseline.request_body.clone(),
             mutated: false,
-            notes: vec!["No verification plan was provided; replayed the baseline request as-is.".to_string()],
+            notes: vec![
+                "No verification plan was provided; replayed the baseline request as-is."
+                    .to_string(),
+            ],
             strategy_used: "replay_as_is".to_string(),
             execution_mode: VerificationExecutionMode::Single,
+            execution_count: 1,
+            sequence_mode: VerificationSequenceMode::None,
         });
     };
 
@@ -42,6 +56,8 @@ pub fn prepare_verification_request(
             false,
             plan,
             "Replayed the baseline request without mutation.",
+            1,
+            VerificationSequenceMode::None,
         )),
         "repeat_action" => Ok(single_request(
             baseline.url.clone(),
@@ -49,6 +65,8 @@ pub fn prepare_verification_request(
             false,
             plan,
             "Repeated the original action with the same request payload.",
+            normalize_repeat_count(plan.replay_count),
+            VerificationSequenceMode::None,
         )),
         "skip_prerequisite" => Ok(single_request(
             baseline.url.clone(),
@@ -56,6 +74,8 @@ pub fn prepare_verification_request(
             false,
             plan,
             "Replayed the target action independently to check whether prerequisite steps are enforced server-side.",
+            1,
+            VerificationSequenceMode::SkipPrerequisite,
         )),
         "reorder_sequence" => Ok(single_request(
             baseline.url.clone(),
@@ -63,6 +83,8 @@ pub fn prepare_verification_request(
             false,
             plan,
             "Replayed the selected action out of its original request sequence to test ordering constraints.",
+            1,
+            VerificationSequenceMode::ReplayAfterTarget,
         )),
         "concurrent_submit" => Ok(PreparedVerificationRequest {
             url: baseline.url.clone(),
@@ -74,6 +96,8 @@ pub fn prepare_verification_request(
             ),
             strategy_used: plan.preferred_strategy.clone(),
             execution_mode: VerificationExecutionMode::ConcurrentDuplicate,
+            execution_count: normalize_concurrent_count(plan.concurrent_requests),
+            sequence_mode: VerificationSequenceMode::None,
         }),
         "swap_identity" => Ok(single_request(
             baseline.url.clone(),
@@ -81,6 +105,8 @@ pub fn prepare_verification_request(
             false,
             plan,
             "Replayed the target request with an alternate authentication context from the same traffic cluster.",
+            1,
+            VerificationSequenceMode::None,
         )),
         "swap_resource_reference" => {
             let (mutated_url, mutated_body) = mutate_request_reference(
@@ -94,6 +120,8 @@ pub fn prepare_verification_request(
                 true,
                 plan,
                 "Mutated a candidate resource reference before replay.",
+                1,
+                VerificationSequenceMode::None,
             ))
         }
         "manual_review" => Err(anyhow!(
@@ -112,6 +140,8 @@ fn single_request(
     mutated: bool,
     plan: &VerificationPlan,
     summary: &str,
+    execution_count: usize,
+    sequence_mode: VerificationSequenceMode,
 ) -> PreparedVerificationRequest {
     PreparedVerificationRequest {
         url,
@@ -120,13 +150,42 @@ fn single_request(
         notes: collect_strategy_notes(plan, summary),
         strategy_used: plan.preferred_strategy.clone(),
         execution_mode: VerificationExecutionMode::Single,
+        execution_count,
+        sequence_mode,
     }
 }
 
 fn collect_strategy_notes(plan: &VerificationPlan, summary: &str) -> Vec<String> {
     let mut notes = vec![summary.to_string()];
+    if let Some(replay_count) = plan.replay_count.filter(|count| *count > 1) {
+        notes.push(format!("Requested repeat replay count: {}", replay_count));
+    }
+    if let Some(concurrent_requests) = plan.concurrent_requests.filter(|count| *count > 1) {
+        notes.push(format!(
+            "Requested concurrent submission count: {}",
+            concurrent_requests
+        ));
+    }
+    if !plan.sequence_request_ids.is_empty() {
+        notes.push(format!(
+            "Related sequence request ids: {}",
+            plan.sequence_request_ids
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     notes.extend(plan.notes.clone());
     notes
+}
+
+fn normalize_repeat_count(value: Option<u32>) -> usize {
+    value.unwrap_or(2).clamp(2, 5) as usize
+}
+
+fn normalize_concurrent_count(value: Option<u32>) -> usize {
+    value.unwrap_or(2).clamp(2, 5) as usize
 }
 
 fn mutate_request_reference(
@@ -236,8 +295,15 @@ fn prioritized_candidate_keys(candidate_parameters: &[String]) -> Vec<String> {
         .filter(|item| !item.trim().is_empty())
         .cloned()
         .collect::<Vec<_>>();
-    for fallback in ["id", "userId", "user_id", "orderId", "order_id", "projectId", "resourceId"]
-    {
+    for fallback in [
+        "id",
+        "userId",
+        "user_id",
+        "orderId",
+        "order_id",
+        "projectId",
+        "resourceId",
+    ] {
         if !keys.iter().any(|item| item == fallback) {
             keys.push(fallback.to_string());
         }
@@ -266,13 +332,7 @@ fn mutate_path_segment(segment: &str) -> Option<String> {
             .map(|value| (value + 1).to_string());
     }
 
-    if segment.len() >= 4
-        && segment
-            .chars()
-            .filter(|item| item.is_ascii_digit())
-            .count()
-            >= 2
-    {
+    if segment.len() >= 4 && segment.chars().filter(|item| item.is_ascii_digit()).count() >= 2 {
         return Some(mutate_scalar_value(segment));
     }
 

@@ -30,7 +30,10 @@ pub fn build_logic_skill_context(db: &DatabaseService, payload: &Value) -> Value
 fn build_skill_context_item(root: &std::path::Path, item: &Value) -> Option<Value> {
     let skill_id = item.get("id").and_then(Value::as_str)?.to_string();
     let score = item.get("score").cloned().unwrap_or(Value::Null);
-    let reasons = item.get("reasons").cloned().unwrap_or_else(|| Value::Array(vec![]));
+    let reasons = item
+        .get("reasons")
+        .cloned()
+        .unwrap_or_else(|| Value::Array(vec![]));
     let skill_path = root.join(&skill_id).join("SKILL.md");
 
     let doc = read_skill_markdown(&skill_path).ok()?;

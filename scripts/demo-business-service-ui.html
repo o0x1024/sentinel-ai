@@ -3,19 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Demo Business Service</title>
+    <title>企业费用与资金平台</title>
     <style>
       :root {
-        --bg: #f5f7fb;
+        --bg: #f6f8fb;
         --panel: #ffffff;
-        --panel-soft: #eef3ff;
-        --line: #d9e1f2;
-        --text: #1f2937;
+        --panel-soft: #eef4ff;
+        --line: #d8e0ec;
+        --text: #1d2939;
         --muted: #667085;
-        --accent: #2563eb;
-        --accent-soft: #dbeafe;
+        --accent: #1858d6;
+        --accent-soft: #deebff;
         --danger: #dc2626;
-        --success: #059669;
+        --danger-soft: #fee2e2;
+        --success: #0f9f6e;
+        --success-soft: #dcfce7;
+        --warning: #b45309;
+        --warning-soft: #ffedd5;
       }
 
       * {
@@ -26,13 +30,13 @@
         margin: 0;
         font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
         background:
-          radial-gradient(circle at top left, #dbeafe 0%, transparent 35%),
-          linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+          radial-gradient(circle at top left, #d8e7ff 0%, transparent 33%),
+          linear-gradient(180deg, #fbfdff 0%, var(--bg) 100%);
         color: var(--text);
       }
 
       .page {
-        max-width: 1440px;
+        max-width: 1480px;
         margin: 0 auto;
         padding: 28px;
       }
@@ -50,7 +54,8 @@
       .hero p {
         margin: 10px 0 0;
         color: var(--muted);
-        line-height: 1.6;
+        line-height: 1.7;
+        max-width: 980px;
       }
 
       .layout {
@@ -64,7 +69,7 @@
         background: var(--panel);
         border: 1px solid var(--line);
         border-radius: 18px;
-        box-shadow: 0 14px 40px rgba(37, 99, 235, 0.06);
+        box-shadow: 0 14px 40px rgba(24, 88, 214, 0.06);
       }
 
       .panel-header {
@@ -82,7 +87,7 @@
         margin: 8px 0 0;
         color: var(--muted);
         font-size: 14px;
-        line-height: 1.6;
+        line-height: 1.65;
       }
 
       .panel-body {
@@ -119,17 +124,6 @@
         color: var(--text);
       }
 
-      textarea {
-        min-height: 96px;
-        resize: vertical;
-      }
-
-      .button-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-      }
-
       button {
         border: 0;
         border-radius: 12px;
@@ -137,7 +131,7 @@
         cursor: pointer;
         background: var(--accent-soft);
         color: var(--accent);
-        font-weight: 600;
+        font-weight: 700;
       }
 
       button.primary {
@@ -151,42 +145,77 @@
         border: 1px solid var(--line);
       }
 
-      .scenario-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
       }
 
-      .scenario-card {
+      .tip-card {
         border: 1px solid var(--line);
-        border-radius: 16px;
-        background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-        padding: 16px;
+        border-radius: 14px;
+        padding: 14px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        margin-bottom: 14px;
       }
 
-      .scenario-card h4 {
+      .tip-card h4 {
         margin: 0 0 8px;
-        font-size: 16px;
+        font-size: 14px;
       }
 
-      .scenario-card p {
-        margin: 0 0 12px;
+      .tip-card p,
+      .tip-card ul {
+        margin: 0;
         color: var(--muted);
         font-size: 13px;
-        line-height: 1.6;
-        min-height: 62px;
+        line-height: 1.65;
+      }
+
+      .tip-card ul {
+        padding-left: 18px;
+      }
+
+      .workflows {
+        display: grid;
+        gap: 16px;
+      }
+
+      .workflow-card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+        background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+      }
+
+      .workflow-top {
+        padding: 16px;
+        border-bottom: 1px solid #edf2fe;
+      }
+
+      .workflow-top h4 {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      .workflow-top p {
+        margin: 10px 0 0;
+        color: var(--muted);
+        line-height: 1.7;
+        font-size: 14px;
       }
 
       .badge-row {
         display: flex;
-        gap: 8px;
         flex-wrap: wrap;
-        margin-bottom: 12px;
+        gap: 8px;
+        margin-top: 10px;
       }
 
       .badge {
         display: inline-flex;
         align-items: center;
+        gap: 6px;
         border-radius: 999px;
         padding: 4px 10px;
         font-size: 12px;
@@ -194,13 +223,110 @@
       }
 
       .badge-risk {
-        background: #fee2e2;
+        background: var(--danger-soft);
         color: var(--danger);
       }
 
-      .badge-method {
-        background: #dcfce7;
+      .badge-safe {
+        background: var(--success-soft);
         color: var(--success);
+      }
+
+      .badge-behavior {
+        background: var(--warning-soft);
+        color: var(--warning);
+      }
+
+      .workflow-body {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 0;
+      }
+
+      .workflow-section {
+        padding: 16px;
+      }
+
+      .workflow-section + .workflow-section {
+        border-left: 1px solid #edf2fe;
+      }
+
+      .workflow-section h5 {
+        margin: 0 0 10px;
+        font-size: 14px;
+      }
+
+      .behavior-flow {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .step-pill {
+        border-radius: 999px;
+        padding: 7px 12px;
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .step-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .step-row {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+      }
+
+      .step-index {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        background: #f0f5ff;
+        color: var(--accent);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+      }
+
+      .step-copy strong {
+        display: block;
+        font-size: 14px;
+      }
+
+      .step-copy span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .step-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .mini-tag {
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 11px;
+        font-weight: 700;
+        background: #eff6ff;
+        color: var(--accent);
       }
 
       .console {
@@ -216,30 +342,34 @@
         white-space: pre-wrap;
       }
 
-      .request-log {
-        border-top: 1px dashed var(--line);
+      .legend {
         margin-top: 14px;
-        padding-top: 14px;
-      }
-
-      .request-log h4 {
-        margin: 0 0 10px;
-        font-size: 14px;
-      }
-
-      .tiny {
         color: var(--muted);
         font-size: 12px;
-        line-height: 1.6;
+        line-height: 1.65;
       }
 
-      @media (max-width: 1080px) {
+      @media (max-width: 1100px) {
         .layout {
           grid-template-columns: 1fr;
         }
 
-        .scenario-grid {
+        .workflow-body {
           grid-template-columns: 1fr;
+        }
+
+        .workflow-section + .workflow-section {
+          border-left: 0;
+          border-top: 1px solid #edf2fe;
+        }
+
+        .step-row {
+          grid-template-columns: 34px minmax(0, 1fr);
+        }
+
+        .step-actions {
+          grid-column: 1 / -1;
+          padding-left: 46px;
         }
       }
     </style>
@@ -247,27 +377,28 @@
   <body>
     <div class="page">
       <div class="hero">
-        <h1>Demo Business Service</h1>
+        <h1>企业费用与资金平台</h1>
         <p>
-          用于给当前 System Agent 制造真实业务流量。你可以直接在这里切换身份、点击场景按钮，
-          通过浏览器和代理快速生成对象越权、审批越权、重复兑换、跳步执行和重复支付流量。
+          这是一个企业内部费用、转账、订单和营销活动平台。页面按真实业务流程组织，你可以像日常操作系统一样逐步点击，
+          让 Sentinel 结合浏览器行为特征和代理流量理解业务上下文，再分析状态推进、重复触发、幂等性表现和对象访问边界。
         </p>
       </div>
 
       <div class="layout">
         <section class="panel">
           <div class="panel-header">
-            <h2>测试控制台</h2>
-            <p>先选择身份，再执行单个场景，或者一键跑一轮混合流量。</p>
+            <h2>操作台</h2>
+            <p>先选择身份，再按业务流程逐步点击。建议保持代理监听器和浏览器行为扩展都开启。</p>
           </div>
           <div class="panel-body">
             <div class="field">
-              <label for="demo-user">当前身份</label>
+              <label for="demo-user">当前账号</label>
               <select id="demo-user">
-                <option value="alice">alice / tenant-a / user</option>
-                <option value="bob">bob / tenant-b / user</option>
-                <option value="admin">admin / tenant-a / admin</option>
+                <option value="alice">alice / tenant-a / employee</option>
+                <option value="manager">manager / tenant-a / manager</option>
                 <option value="finance">finance / tenant-a / finance</option>
+                <option value="bob">bob / tenant-b / employee</option>
+                <option value="admin">admin / tenant-a / admin</option>
               </select>
             </div>
 
@@ -276,14 +407,27 @@
               <input id="base-url" value="" />
             </div>
 
+            <div class="tip-card">
+              <h4>推荐操作顺序</h4>
+              <ul>
+                <li>先跑“报销协作流程”和“转账协作流程”，确认平台存在正常有状态业务流。</li>
+                <li>再跑“报销补录入口”“转账确认入口”“活动与订单访问”，对照不同入口下的状态推进差异。</li>
+                <li>浏览器扩展开启时，连续点击一组步骤更容易让行为特征参与逻辑分析。</li>
+              </ul>
+            </div>
+
             <div class="button-row">
-              <button class="primary" id="run-all">运行一轮完整场景</button>
-              <button class="ghost" id="load-state">查看当前状态</button>
+              <button class="primary" id="run-secondary-pack">执行辅助流程集</button>
+              <button class="ghost" id="run-primary-pack">执行协作流程集</button>
+              <button class="ghost" id="load-state">查看平台状态</button>
               <button class="ghost" id="clear-console">清空输出</button>
             </div>
 
-            <div class="request-log">
-              <h4>最近响应</h4>
+            <div class="legend">
+              说明：协作流程用于建立正常业务基线；辅助流程用于观察不同入口下的状态推进、重复触发和对象访问表现。
+            </div>
+
+            <div style="margin-top: 14px;">
               <div class="console" id="console"></div>
             </div>
           </div>
@@ -291,14 +435,11 @@
 
         <section class="panel">
           <div class="panel-header">
-            <h3>场景列表</h3>
-            <p>建议让 Sentinel 代理监听器保持开启，再通过浏览器访问此页面并点击下面按钮。</p>
+            <h3>业务流程</h3>
+            <p>按流程一步一步点击，比一键发包更能体现“用户行为特征 + 代理流量”的联合价值。</p>
           </div>
           <div class="panel-body">
-            <div class="scenario-grid" id="scenario-grid"></div>
-            <p class="tiny" style="margin-top: 14px;">
-              提示：如果要更稳定地触发当前 `traffic_logic_triage`，建议混合不同身份访问同类资源，再重复执行审批、兑换和支付类动作。
-            </p>
+            <div class="workflows" id="workflows"></div>
           </div>
         </section>
       </div>
@@ -308,81 +449,279 @@
       const baseUrlInput = document.getElementById('base-url');
       const userSelect = document.getElementById('demo-user');
       const consoleEl = document.getElementById('console');
-      const scenarioGrid = document.getElementById('scenario-grid');
+      const workflowsEl = document.getElementById('workflows');
 
       const inferredBaseUrl = window.location.origin === 'null'
         ? 'http://127.0.0.1:7788'
         : window.location.origin;
       baseUrlInput.value = inferredBaseUrl;
 
-      const scenarios = [
+      const runtimeState = {
+        reimbursementId: null,
+        transferId: null,
+      };
+
+      const workflows = [
         {
-          id: 'idor-order',
-          title: '对象越权：跨租户订单',
-          risk: 'IDOR / 越权读取',
-          method: 'GET',
-          description: '使用当前身份访问不属于自己的订单，观察是否直接返回完整订单内容。',
-          run: ({ baseUrl, user }) => requestJson(baseUrl, '/api/orders/ord-2001', { method: 'GET', user }),
+          id: 'primary-reimbursement',
+          title: '报销协作流程',
+          category: '协作流程',
+          emphasis: '基线流程',
+          description: '员工创建费用报销单并提交，经理在标准工作流审批，财务从资金台完成打款。用于制造有状态、分角色的正常业务流量。',
+          behavior: ['打开报销页', '填写报销单', '提交审批', '经理审批', '财务打款'],
+          steps: [
+            {
+              title: '员工创建报销单',
+              note: '使用企业费用门户创建草稿，生成后续流程的 expenseClaimId。',
+              actorTag: 'employee',
+              run: async context => {
+                const result = await requestJson(context.baseUrl, '/api/expense/claims/create', {
+                  method: 'POST',
+                  user: 'alice',
+                  body: {
+                    item: '客户拜访差旅',
+                    amount: 860,
+                    claimType: 'travel',
+                    costCenter: 'CC-SALES-01',
+                    expensePolicyId: 'POL-TRAVEL-2026',
+                    vendorId: 'vendor-air-cn',
+                    businessLine: 'regional-sales',
+                  },
+                });
+                runtimeState.reimbursementId = result.data.reimbursement.id;
+                return result;
+              },
+            },
+            {
+              title: '员工提交审批',
+              note: '提交草稿，让它进入 submitted 状态。',
+              actorTag: 'employee',
+              run: async context => requestJson(context.baseUrl, `/api/expense/claims/${requireId(runtimeState.reimbursementId, '报销单')}/submit`, {
+                method: 'POST',
+                user: 'alice',
+              }),
+            },
+            {
+              title: '经理审批',
+              note: '标准审批节点会校验角色和提交状态。',
+              actorTag: 'manager',
+              run: async context => requestJson(context.baseUrl, `/api/workflow/expense-claims/${requireId(runtimeState.reimbursementId, '报销单')}/approve`, {
+                method: 'POST',
+                user: 'manager',
+              }),
+            },
+            {
+              title: '财务打款',
+              note: '标准资金台打款节点要求 approved 状态且只能打款一次。',
+              actorTag: 'finance',
+              run: async context => requestJson(context.baseUrl, `/api/treasury/expense-claims/${requireId(runtimeState.reimbursementId, '报销单')}/disburse`, {
+                method: 'POST',
+                user: 'finance',
+              }),
+            },
+          ],
         },
         {
-          id: 'idor-project-members',
-          title: '对象越权：项目成员列表',
-          risk: 'IDOR / 越权读取',
-          method: 'GET',
-          description: '读取其他租户项目的成员列表，制造跨项目成员信息泄露流量。',
-          run: ({ baseUrl, user }) => requestJson(baseUrl, '/api/projects/proj-200/members', { method: 'GET', user }),
+          id: 'secondary-reimbursement',
+          title: '移动审批与集成出款',
+          category: '辅助流程',
+          emphasis: '处理入口差异',
+          description: '同一张报销单从移动工作台和财务集成端推进，用于对照不同入口下的状态推进差异。',
+          behavior: ['打开报销页', '创建报销单', '移动端完成任务', '集成端连续执行出款'],
+          steps: [
+            {
+              title: '创建报销单',
+              note: '生成一张新的报销单，后续通过移动端和集成端继续处理。',
+              actorTag: 'employee',
+              run: async context => {
+                const result = await requestJson(context.baseUrl, '/api/expense/claims/create', {
+                  method: 'POST',
+                  user: 'alice',
+                  body: {
+                    item: '商务招待费',
+                    amount: 1280,
+                    claimType: 'entertainment',
+                    costCenter: 'CC-SALES-02',
+                    expensePolicyId: 'POL-ENT-2026',
+                    vendorId: 'vendor-hotel-hz',
+                    businessLine: 'channel-growth',
+                  },
+                });
+                runtimeState.reimbursementId = result.data.reimbursement.id;
+                return result;
+              },
+            },
+            {
+              title: '移动端完成审批任务',
+              note: '通过移动工作台直接推进状态，不走标准审批角色。',
+              actorTag: 'employee',
+              run: async context => requestJson(context.baseUrl, `/api/mobile/workbench/expense-claims/${requireId(runtimeState.reimbursementId, '报销单')}/task-complete`, {
+                method: 'POST',
+                user: 'alice',
+              }),
+            },
+            {
+              title: '财务集成端连续两次执行出款',
+              note: '通过遗留财务集成接口连续触发两次相同操作。',
+              actorTag: 'employee',
+              run: async context => {
+                const first = await requestJson(context.baseUrl, `/api/integrations/treasury/expense-claims/${requireId(runtimeState.reimbursementId, '报销单')}/execute`, {
+                  method: 'POST',
+                  user: 'alice',
+                });
+                const second = await requestJson(context.baseUrl, `/api/integrations/treasury/expense-claims/${requireId(runtimeState.reimbursementId, '报销单')}/execute`, {
+                  method: 'POST',
+                  user: 'alice',
+                });
+                return { first, second };
+              },
+            },
+          ],
         },
         {
-          id: 'approval-bypass',
-          title: '审批越权',
-          risk: '业务逻辑 / 审批绕过',
-          method: 'POST',
-          description: '使用普通用户直接审批订单，验证服务端是否做了角色和租户校验。',
-          run: ({ baseUrl, user }) => requestJson(baseUrl, '/api/orders/ord-2001/approve', { method: 'POST', user }),
+          id: 'primary-transfer',
+          title: '付款申请协作流程',
+          category: '协作流程',
+          emphasis: '基线流程',
+          description: '员工创建付款申请，经理审核，财务确认。用于给 Agent 提供正常流程型样本。',
+          behavior: ['打开付款申请页', '填写收款账户', '提交审核', '经理审核', '财务确认'],
+          steps: [
+            {
+              title: '员工创建付款申请',
+              note: '先创建一笔付款申请草稿。',
+              actorTag: 'employee',
+              run: async context => {
+                const result = await requestJson(context.baseUrl, '/api/treasury/payment-requests/create', {
+                  method: 'POST',
+                  user: 'alice',
+                  body: {
+                    fromAccount: 'alice-wallet',
+                    toAccount: 'supplier-main',
+                    amount: 5200,
+                    paymentCategory: 'vendor-settlement',
+                    beneficiaryVendorId: 'vendor-ic-301',
+                    cashPoolId: 'cashpool-east-01',
+                    settlementChannel: 'cmb-enterprise',
+                  },
+                });
+                runtimeState.transferId = result.data.transfer.id;
+                return result;
+              },
+            },
+            {
+              title: '经理审核付款申请',
+              note: '标准审核节点只允许 manager 审核 draft。',
+              actorTag: 'manager',
+              run: async context => requestJson(context.baseUrl, `/api/treasury/payment-requests/${requireId(runtimeState.transferId, '付款申请')}/review`, {
+                method: 'POST',
+                user: 'manager',
+              }),
+            },
+            {
+              title: '财务确认付款申请',
+              note: '标准确认节点要求 reviewed 状态才能确认。',
+              actorTag: 'finance',
+              run: async context => requestJson(context.baseUrl, `/api/treasury/payment-requests/${requireId(runtimeState.transferId, '付款申请')}/confirm`, {
+                method: 'POST',
+                user: 'finance',
+              }),
+            },
+          ],
         },
         {
-          id: 'double-redeem',
-          title: '重复兑换',
-          risk: '业务逻辑 / 重放',
-          method: 'POST',
-          description: '连续两次兑换同一张优惠券，测试是否缺少单次使用控制。',
-          run: async ({ baseUrl, user }) => {
-            const first = await requestJson(baseUrl, '/api/coupons/redeem', {
-              method: 'POST',
-              user,
-              body: { couponCode: 'WELCOME-50', orderId: 'ord-1001' },
-            });
-            const second = await requestJson(baseUrl, '/api/coupons/redeem', {
-              method: 'POST',
-              user,
-              body: { couponCode: 'WELCOME-50', orderId: 'ord-1001' },
-            });
-            return { first, second };
-          },
+          id: 'secondary-transfer',
+          title: '移动端付款确认入口',
+          category: '辅助流程',
+          emphasis: '处理入口差异',
+          description: '通过移动端确认入口直接推进付款申请，不经过创建和审核流程；也方便 AI 关注 transferId、amount、toAccount 这些关键参数。',
+          behavior: ['打开移动资金页', '连续点击确认', '不经过创建和审核'],
+          steps: [
+            {
+              title: '确认付款申请',
+              note: '通过移动端确认入口直接推进状态。',
+              actorTag: 'employee',
+              run: async context => requestJson(context.baseUrl, '/api/mobile/treasury/payment-confirmations', {
+                method: 'POST',
+                user: 'alice',
+                body: {
+                  transferId: 'pr-nonexistent',
+                  amount: 5200,
+                  toAccount: 'supplier-main',
+                  paymentCategory: 'vendor-settlement',
+                  beneficiaryVendorId: 'vendor-ic-301',
+                },
+              }),
+            },
+            {
+              title: '再次确认同一付款申请',
+              note: '制造重复点击和重复状态推进。',
+              actorTag: 'employee',
+              run: async context => requestJson(context.baseUrl, '/api/mobile/treasury/payment-confirmations', {
+                method: 'POST',
+                user: 'alice',
+                body: {
+                  transferId: 'pr-nonexistent',
+                  amount: 5200,
+                  toAccount: 'supplier-main',
+                  paymentCategory: 'vendor-settlement',
+                  beneficiaryVendorId: 'vendor-ic-301',
+                },
+              }),
+            },
+          ],
         },
         {
-          id: 'skip-step',
-          title: '跳步执行',
-          risk: '业务逻辑 / 流程绕过',
-          method: 'POST',
-          description: '不调用 prepare，直接 confirm，验证确认动作是否依赖前置状态。',
-          run: ({ baseUrl, user }) => requestJson(baseUrl, '/api/transfers/confirm', {
-            method: 'POST',
-            user,
-            body: { transferId: 'tr-missing', amount: 100, toAccount: 'merchant-main' },
-          }),
-        },
-        {
-          id: 'double-pay',
-          title: '重复支付',
-          risk: '业务逻辑 / 幂等性缺失',
-          method: 'POST',
-          description: '对同一张发票连续支付，观察 paidCount 是否不断增加。',
-          run: async ({ baseUrl, user }) => {
-            const first = await requestJson(baseUrl, '/api/invoices/inv-100/pay', { method: 'POST', user });
-            const second = await requestJson(baseUrl, '/api/invoices/inv-100/pay', { method: 'POST', user });
-            return { first, second };
-          },
+          id: 'coupon-and-idor',
+          title: '营销与客服订单访问',
+          category: '辅助流程',
+          emphasis: '对象访问表现',
+          description: '先领取营销券，再通过渠道激活接口重复触发；随后读取跨租户客服订单快照，适合观察 Agent 对重复动作和对象访问边界的理解。',
+          behavior: ['打开营销页', '连续点击激活', '切到客服工单页', '查看不属于自己的订单快照'],
+          steps: [
+            {
+              title: '安全领取一次营销券',
+              note: '先跑一次标准兑换，给 Agent 一个正常业务对照样本。',
+              actorTag: 'employee',
+              run: async context => requestJson(context.baseUrl, '/api/marketing/coupons/SPRING-2026/claim', {
+                method: 'POST',
+                user: 'alice',
+              }),
+            },
+            {
+              title: '连续两次渠道激活',
+              note: '通过渠道合作方激活入口对同一用户反复发起相同操作。',
+              actorTag: 'employee',
+              run: async context => {
+                const first = await requestJson(context.baseUrl, '/api/channel-partner/campaigns/OPS-BONUS/activate', {
+                  method: 'POST',
+                  user: 'alice',
+                });
+                const second = await requestJson(context.baseUrl, '/api/channel-partner/campaigns/OPS-BONUS/activate', {
+                  method: 'POST',
+                  user: 'alice',
+                });
+                return { first, second };
+              },
+            },
+            {
+              title: '安全读取本租户订单',
+              note: '标准详情接口会校验 owner/tenant/admin。',
+              actorTag: 'employee',
+              run: async context => requestJson(context.baseUrl, '/api/customer/orders/ord-a-1001/detail', {
+                method: 'GET',
+                user: 'alice',
+              }),
+            },
+            {
+              title: '读取跨租户客服快照',
+              note: '通过客服快照视图查看不属于自己的订单。',
+              actorTag: 'employee',
+              run: async context => requestJson(context.baseUrl, '/api/customer-service/orders/ord-b-2001/snapshot', {
+                method: 'GET',
+                user: 'alice',
+              }),
+            },
+          ],
         },
       ];
 
@@ -395,12 +734,19 @@
         consoleEl.textContent = `${block}${consoleEl.textContent}`;
       }
 
+      function requireId(value, label) {
+        if (!value) {
+          throw new Error(`${label} ID 尚未生成，请先执行前置步骤`);
+        }
+        return value;
+      }
+
       async function requestJson(baseUrl, path, { method, user, body }) {
         const response = await fetch(`${baseUrl}${path}`, {
           method,
           headers: {
             'content-type': body ? 'application/json' : 'text/plain',
-            authorization: `Bearer demo-${user}`,
+            authorization: `Bearer portal-${user}-session`,
             'x-demo-user': user,
           },
           body: body ? JSON.stringify(body) : undefined,
@@ -415,38 +761,121 @@
         };
       }
 
-      async function runScenario(scenario) {
+      async function runStep(workflow, step) {
         const baseUrl = baseUrlInput.value.trim() || inferredBaseUrl;
-        const user = userSelect.value;
-        appendLog(`开始执行 ${scenario.title}`, { baseUrl, user, scenario: scenario.id });
+        appendLog(`开始执行 ${workflow.title} / ${step.title}`, {
+          behavior: workflow.behavior,
+          category: workflow.category,
+          actorHint: step.actorTag,
+        });
         try {
-          const result = await scenario.run({ baseUrl, user });
-          appendLog(`完成 ${scenario.title}`, result);
+          const result = await step.run({ baseUrl, user: userSelect.value });
+          appendLog(`完成 ${workflow.title} / ${step.title}`, result);
         } catch (error) {
-          appendLog(`失败 ${scenario.title}`, { message: error instanceof Error ? error.message : String(error) });
+          appendLog(`失败 ${workflow.title} / ${step.title}`, {
+            message: error instanceof Error ? error.message : String(error),
+          });
         }
       }
 
-      function renderScenarioCard(scenario) {
-        const card = document.createElement('div');
-        card.className = 'scenario-card';
-        card.innerHTML = `
-          <div class="badge-row">
-            <span class="badge badge-risk">${scenario.risk}</span>
-            <span class="badge badge-method">${scenario.method}</span>
-          </div>
-          <h4>${scenario.title}</h4>
-          <p>${scenario.description}</p>
-        `;
-        const button = document.createElement('button');
-        button.className = 'primary';
-        button.textContent = '执行场景';
-        button.addEventListener('click', () => void runScenario(scenario));
-        card.appendChild(button);
-        scenarioGrid.appendChild(card);
+      async function runWorkflow(workflow) {
+        for (const step of workflow.steps) {
+          // 串行执行，方便行为特征和流量序列被关联。
+          // eslint-disable-next-line no-await-in-loop
+          await runStep(workflow, step);
+        }
       }
 
-      scenarios.forEach(renderScenarioCard);
+      function createBadge(className, text) {
+        const badge = document.createElement('span');
+        badge.className = `badge ${className}`;
+        badge.textContent = text;
+        return badge;
+      }
+
+      function renderWorkflow(workflow) {
+        const card = document.createElement('section');
+        card.className = 'workflow-card';
+
+        const top = document.createElement('div');
+        top.className = 'workflow-top';
+        const heading = document.createElement('h4');
+        heading.textContent = workflow.title;
+        const desc = document.createElement('p');
+        desc.textContent = workflow.description;
+        const badges = document.createElement('div');
+        badges.className = 'badge-row';
+        badges.appendChild(createBadge(workflow.category === '协作流程' ? 'badge-safe' : 'badge-risk', workflow.emphasis));
+        badges.appendChild(createBadge('badge-behavior', workflow.category));
+        top.append(heading, desc, badges);
+
+        const body = document.createElement('div');
+        body.className = 'workflow-body';
+
+        const left = document.createElement('div');
+        left.className = 'workflow-section';
+        const leftTitle = document.createElement('h5');
+        leftTitle.textContent = '用户行为路径';
+        const behaviorFlow = document.createElement('div');
+        behaviorFlow.className = 'behavior-flow';
+        workflow.behavior.forEach(item => {
+          const pill = document.createElement('span');
+          pill.className = 'step-pill';
+          pill.textContent = item;
+          behaviorFlow.appendChild(pill);
+        });
+        left.append(leftTitle, behaviorFlow);
+
+        const right = document.createElement('div');
+        right.className = 'workflow-section';
+        const rightTitle = document.createElement('h5');
+          rightTitle.textContent = '流程动作';
+        const stepList = document.createElement('div');
+        stepList.className = 'step-list';
+
+        workflow.steps.forEach((step, index) => {
+          const row = document.createElement('div');
+          row.className = 'step-row';
+
+          const stepIndex = document.createElement('div');
+          stepIndex.className = 'step-index';
+          stepIndex.textContent = String(index + 1);
+
+          const copy = document.createElement('div');
+          copy.className = 'step-copy';
+          const title = document.createElement('strong');
+          title.textContent = step.title;
+          const note = document.createElement('span');
+          note.textContent = step.note;
+          copy.append(title, note);
+
+          const actions = document.createElement('div');
+          actions.className = 'step-actions';
+          const actor = document.createElement('span');
+          actor.className = 'mini-tag';
+          actor.textContent = step.actorTag;
+          const button = document.createElement('button');
+          button.className = 'primary';
+          button.textContent = '执行';
+          button.addEventListener('click', () => void runStep(workflow, step));
+          actions.append(actor, button);
+
+          row.append(stepIndex, copy, actions);
+          stepList.appendChild(row);
+        });
+
+        const runAllButton = document.createElement('button');
+        runAllButton.className = 'ghost';
+        runAllButton.textContent = '按流程执行整组动作';
+        runAllButton.addEventListener('click', () => void runWorkflow(workflow));
+
+        right.append(rightTitle, stepList, document.createElement('br'), runAllButton);
+        body.append(left, right);
+        card.append(top, body);
+        workflowsEl.appendChild(card);
+      }
+
+      workflows.forEach(renderWorkflow);
 
       document.getElementById('clear-console').addEventListener('click', () => {
         consoleEl.textContent = '';
@@ -454,27 +883,32 @@
 
       document.getElementById('load-state').addEventListener('click', async () => {
         const baseUrl = baseUrlInput.value.trim() || inferredBaseUrl;
-        const user = userSelect.value;
         try {
-          const state = await requestJson(baseUrl, '/api/demo/state', { method: 'GET', user });
-          appendLog('当前内存状态', state);
+          const state = await requestJson(baseUrl, '/api/platform/state', { method: 'GET', user: userSelect.value });
+          appendLog('当前平台状态', state);
         } catch (error) {
-          appendLog('查看当前状态失败', { message: error instanceof Error ? error.message : String(error) });
+          appendLog('查看平台状态失败', { message: error instanceof Error ? error.message : String(error) });
         }
       });
 
-      document.getElementById('run-all').addEventListener('click', async () => {
-        for (const scenario of scenarios) {
-          // 串行执行，方便历史记录和 triage 看出流程关系。
+      document.getElementById('run-secondary-pack').addEventListener('click', async () => {
+        for (const workflow of workflows.filter(item => item.category !== '协作流程')) {
           // eslint-disable-next-line no-await-in-loop
-          await runScenario(scenario);
+          await runWorkflow(workflow);
+        }
+      });
+
+      document.getElementById('run-primary-pack').addEventListener('click', async () => {
+        for (const workflow of workflows.filter(item => item.category === '协作流程')) {
+          // eslint-disable-next-line no-await-in-loop
+          await runWorkflow(workflow);
         }
       });
 
       appendLog('服务就绪', {
         baseUrl: inferredBaseUrl,
         currentUser: userSelect.value,
-        tip: '切换身份后点击场景按钮，即可通过浏览器直接制造测试流量。',
+        tip: '优先按流程逐步点击，比一键发包更容易体现浏览器行为特征的价值。',
       });
     </script>
   </body>

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { evaluateIntruderGrepExtracts, evaluateIntruderGrepMatches } from './analysis'
+import {
+  createDefaultGrepPayloadSettings,
+  evaluateIntruderGrepExtracts,
+  evaluateIntruderGrepMatches,
+  evaluateIntruderPayloadReflections,
+} from './analysis'
 
 describe('intruder grep helpers', () => {
   it('evaluates grep matches', () => {
@@ -9,12 +14,31 @@ describe('intruder grep helpers', () => {
         name: 'Admin',
         enabled: true,
         pattern: 'admin',
+        patternType: 'literal',
         caseSensitive: false,
+        excludeHeaders: false,
         invert: false,
       },
     ])
 
-    expect(matches['match-1']).toBe(true)
+    expect(matches['match-1']).toBe(1)
+  })
+
+  it('counts regex matches in the response body only', () => {
+    const matches = evaluateIntruderGrepMatches('X-Test: admin\r\n\r\nadmin admin', [
+      {
+        id: 'match-1',
+        name: 'Admin',
+        enabled: true,
+        pattern: 'admin',
+        patternType: 'regex',
+        caseSensitive: false,
+        excludeHeaders: true,
+        invert: false,
+      },
+    ])
+
+    expect(matches['match-1']).toBe(2)
   })
 
   it('extracts regex capture groups', () => {
@@ -30,5 +54,18 @@ describe('intruder grep helpers', () => {
     ])
 
     expect(extracts['extract-1']).toBe('abc123')
+  })
+
+  it('counts reflected payloads', () => {
+    const count = evaluateIntruderPayloadReflections(
+      'HTTP/1.1 200 OK\r\n\r\nHello admin and admin%40corp',
+      ['admin', 'admin@corp'],
+      {
+        ...createDefaultGrepPayloadSettings(),
+        enabled: true,
+      },
+    )
+
+    expect(count).toBe(3)
   })
 })

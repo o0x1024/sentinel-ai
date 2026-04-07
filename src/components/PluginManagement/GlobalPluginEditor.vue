@@ -9,6 +9,7 @@
       :is-editing="store.isEditing"
       :saving="store.saving"
       :code-error="store.codeError"
+      :validation-report="store.aiValidationReport"
       :is-fullscreen-editor="store.isFullscreen"
       :is-minimized="store.isMinimized"
       :sub-categories="subCategories"
@@ -40,6 +41,7 @@
       @confirm-merge="handleConfirmMerge"
       @test-current-plugin="handleTestPlugin"
       @clear-history="handleClearHistory"
+      @focus-validation-issue="handleFocusValidationIssue"
     />
 
     <!-- Test Result Dialog -->
@@ -193,6 +195,7 @@ import { basicSetup } from 'codemirror'
 import { MergeView } from '@codemirror/merge'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { locateValidationIssue } from './validationIssueLocator'
 
 // 扩展 HTMLElement 类型以支持自定义属性
 declare module '@vue/runtime-core' {
@@ -406,19 +409,20 @@ const codeEditorReadOnly = new Compartment()
 const subCategories = computed<SubCategory[]>(() => {
   if (store.newPluginMetadata.mainCategory === 'traffic') {
     return [
-      { value: 'sqli', label: 'SQL注入', icon: 'fas fa-database' },
-      { value: 'command_injection', label: '命令注入', icon: 'fas fa-terminal' },
-      { value: 'xss', label: '跨站脚本', icon: 'fas fa-code' },
-      { value: 'idor', label: '越权访问', icon: 'fas fa-user-lock' },
-      { value: 'auth_bypass', label: '认证绕过', icon: 'fas fa-unlock' },
-      { value: 'csrf', label: 'CSRF', icon: 'fas fa-shield-alt' },
-      { value: 'info_leak', label: '信息泄露', icon: 'fas fa-eye-slash' },
-      { value: 'file_upload', label: '文件上传', icon: 'fas fa-file-upload' },
-      { value: 'file_inclusion', label: '文件包含', icon: 'fas fa-file-code' },
-      { value: 'path_traversal', label: '目录穿越', icon: 'fas fa-folder-open' },
-      { value: 'xxe', label: 'XXE', icon: 'fas fa-file-code' },
-      { value: 'ssrf', label: 'SSRF', icon: 'fas fa-server' },
-      { value: 'custom', label: '自定义', icon: 'fas fa-wrench' }
+      { value: 'sqli', label: t('plugins.trafficCategories.sqli', 'SQL注入'), icon: 'fas fa-database' },
+      { value: 'command_injection', label: t('plugins.trafficCategories.command_injection', '命令注入'), icon: 'fas fa-terminal' },
+      { value: 'xss', label: t('plugins.trafficCategories.xss', '跨站脚本'), icon: 'fas fa-code' },
+      { value: 'idor', label: t('plugins.trafficCategories.idor', '越权访问'), icon: 'fas fa-user-lock' },
+      { value: 'auth_bypass', label: t('plugins.trafficCategories.auth_bypass', '认证绕过'), icon: 'fas fa-unlock' },
+      { value: 'csrf', label: t('plugins.trafficCategories.csrf', 'CSRF'), icon: 'fas fa-shield-alt' },
+      { value: 'info_leak', label: t('plugins.trafficCategories.info_leak', '信息泄露'), icon: 'fas fa-eye-slash' },
+      { value: 'file_upload', label: t('plugins.trafficCategories.file_upload', '文件上传'), icon: 'fas fa-file-upload' },
+      { value: 'file_inclusion', label: t('plugins.trafficCategories.file_inclusion', '文件包含'), icon: 'fas fa-file-code' },
+      { value: 'path_traversal', label: t('plugins.trafficCategories.path_traversal', '目录穿越'), icon: 'fas fa-folder-open' },
+      { value: 'xxe', label: t('plugins.trafficCategories.xxe', 'XXE'), icon: 'fas fa-file-code' },
+      { value: 'ssrf', label: t('plugins.trafficCategories.ssrf', 'SSRF'), icon: 'fas fa-server' },
+      { value: 'report', label: t('plugins.trafficCategories.report', '报告'), icon: 'fas fa-file-alt' },
+      { value: 'custom', label: t('plugins.trafficCategories.custom', '自定义'), icon: 'fas fa-wrench' }
     ]
   } else if (store.newPluginMetadata.mainCategory === 'agent') {
     return [
@@ -433,6 +437,12 @@ const subCategories = computed<SubCategory[]>(() => {
       { value: 'analyzer', label: t('plugins.agentCategories.analyzer', '分析工具'), icon: 'fas fa-microscope' },
       { value: 'reporter', label: t('plugins.agentCategories.reporter', '报告工具'), icon: 'fas fa-file-alt' },
       { value: 'custom', label: t('plugins.agentCategories.custom', '自定义'), icon: 'fas fa-wrench' }
+    ]
+  } else if (store.newPluginMetadata.mainCategory === 'intruder') {
+    return [
+      { value: 'payload_generator', label: t('plugins.intruderCategories.payload_generator', 'Payload 生成器'), icon: 'fas fa-list' },
+      { value: 'payload_processor', label: t('plugins.intruderCategories.payload_processor', 'Payload 处理器'), icon: 'fas fa-filter' },
+      { value: 'request_processor', label: t('plugins.intruderCategories.request_processor', '请求处理器'), icon: 'fas fa-exchange-alt' },
     ]
   }
   return []
@@ -635,11 +645,36 @@ const updateEditorsReadonly = (readonly: boolean) => {
   }
 }
 
+const focusEditorRange = (from: number, to: number) => {
+  const selection = { anchor: from, head: to }
+  const effects = [EditorView.scrollIntoView(from, { y: 'center' })]
+
+  if (codeEditorView) {
+    codeEditorView.dispatch({ selection, effects })
+    codeEditorView.focus()
+  }
+
+  if (fullscreenCodeEditorView) {
+    fullscreenCodeEditorView.dispatch({ selection, effects })
+    fullscreenCodeEditorView.focus()
+  }
+}
+
+const handleFocusValidationIssue = (sectionKey: string, issueCode: string, message: string) => {
+  const target = locateValidationIssue(store.pluginCode, sectionKey, issueCode, message)
+  if (!target) {
+    showToast('未能定位到相关代码位置', 'info')
+    return
+  }
+
+  focusEditorRange(target.from, target.to)
+}
+
 // Handlers
 const handleInsertTemplate = async () => {
-  const isAgentPlugin = store.newPluginMetadata.mainCategory === 'agent'
+  const isExecutionPlugin = ['agent', 'intruder'].includes(store.newPluginMetadata.mainCategory)
   try {
-    const templateType = isAgentPlugin ? 'agent' : 'traffic'
+    const templateType = isExecutionPlugin ? 'agent' : 'traffic'
     // 使用完整的插件生成 prompt（包含任务说明、示例等）来提取模板代码
     const combinedTemplate = await invoke<string>('get_combined_plugin_prompt_api', {
       pluginType: templateType,
@@ -658,14 +693,22 @@ const handleInsertTemplate = async () => {
     }
 
     if (!codeTemplate) {
-      codeTemplate = isAgentPlugin ? getAgentFallbackTemplate() : getTrafficFallbackTemplate()
+      codeTemplate = store.newPluginMetadata.mainCategory === 'intruder'
+        ? getIntruderFallbackTemplate(store.newPluginMetadata.category)
+        : isExecutionPlugin
+          ? getAgentFallbackTemplate()
+          : getTrafficFallbackTemplate()
     }
 
     store.pluginCode = codeTemplate
     updateEditorsContent(codeTemplate)
     showToast(t('plugins.templateInserted', '已插入模板代码'), 'success')
   } catch (error) {
-    const fallback = isAgentPlugin ? getAgentFallbackTemplate() : getTrafficFallbackTemplate()
+    const fallback = store.newPluginMetadata.mainCategory === 'intruder'
+      ? getIntruderFallbackTemplate(store.newPluginMetadata.category)
+      : isExecutionPlugin
+        ? getAgentFallbackTemplate()
+        : getTrafficFallbackTemplate()
     store.pluginCode = fallback
     updateEditorsContent(fallback)
     showToast(t('plugins.usingBuiltinTemplate', '使用内置模板'), 'info')
@@ -685,6 +728,233 @@ export async function analyze(input: ToolInput): Promise<ToolOutput> {
 }
 
 globalThis.analyze = analyze;`
+
+const getIntruderFallbackTemplate = (category: string) => {
+  if (category === 'payload_generator') {
+    return `interface ToolInput {
+  request?: { method: string; url: string; headers: Record<string, string>; body?: string };
+  rawRequest?: string;
+  target?: { host: string; port: number; useTls: boolean };
+  positions?: Array<{ index: number; value: string }>;
+  config?: {
+    values?: string[];
+    limit?: number;
+  };
+  options?: {
+    limit?: number;
+  };
+}
+
+interface ToolOutput {
+  success: boolean;
+  data?: {
+    payloads: string[];
+  };
+  error?: string;
+}
+
+export function get_input_schema() {
+  return {
+    type: 'object',
+    properties: {
+      config: {
+        type: 'object',
+        properties: {
+          values: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Static payloads returned by the generator'
+          },
+          limit: {
+            type: 'integer',
+            default: 100,
+            description: 'Maximum number of payloads to return'
+          }
+        }
+      }
+    }
+  };
+}
+
+export async function analyze(input: ToolInput): Promise<ToolOutput> {
+  try {
+    const values = Array.isArray(input?.config?.values) ? input.config.values.filter(Boolean) : [];
+    const limit = Math.max(1, Number(input?.config?.limit ?? input?.options?.limit ?? 100));
+    return {
+      success: true,
+      data: {
+        payloads: values.slice(0, limit)
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+globalThis.get_input_schema = get_input_schema;
+globalThis.analyze = analyze;`
+  }
+
+  if (category === 'payload_processor') {
+    return `interface ToolInput {
+  payload: string;
+  originalPayload?: string;
+  baseValue?: string;
+  positionIndex?: number;
+  config?: {
+    prefix?: string;
+    suffix?: string;
+    skipIfContains?: string;
+  };
+}
+
+interface ToolOutput {
+  success: boolean;
+  data?: {
+    payload?: string;
+    skip?: boolean;
+  };
+  error?: string;
+}
+
+export function get_input_schema() {
+  return {
+    type: 'object',
+    properties: {
+      config: {
+        type: 'object',
+        properties: {
+          prefix: { type: 'string', description: 'Prefix to prepend' },
+          suffix: { type: 'string', description: 'Suffix to append' },
+          skipIfContains: { type: 'string', description: 'Skip payload when it contains this text' }
+        }
+      }
+    }
+  };
+}
+
+export async function analyze(input: ToolInput): Promise<ToolOutput> {
+  try {
+    const skipIfContains = input?.config?.skipIfContains || '';
+    if (skipIfContains && input.payload.includes(skipIfContains)) {
+      return { success: true, data: { skip: true } };
+    }
+
+    const prefix = input?.config?.prefix || '';
+    const suffix = input?.config?.suffix || '';
+
+    return {
+      success: true,
+      data: {
+        payload: \`\${prefix}\${input.payload}\${suffix}\`
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+globalThis.get_input_schema = get_input_schema;
+globalThis.analyze = analyze;`
+  }
+
+  return `interface ToolInput {
+  rawRequest: string;
+  payloadValues?: string[];
+  payloadSummary?: string;
+  requestIndex?: number;
+  config?: {
+    headerName?: string;
+    headerValue?: string;
+  };
+}
+
+interface ToolOutput {
+  success: boolean;
+  data?: {
+    rawRequest: string;
+  };
+  error?: string;
+}
+
+export function get_input_schema() {
+  return {
+    type: 'object',
+    properties: {
+      config: {
+        type: 'object',
+        properties: {
+          headerName: {
+            type: 'string',
+            default: 'X-Intruder-Request',
+            description: 'Header name to inject'
+          },
+          headerValue: {
+            type: 'string',
+            default: 'preview',
+            description: 'Header value to inject'
+          }
+        }
+      }
+    }
+  };
+}
+
+function upsertHeader(rawRequest: string, headerName: string, headerValue: string): string {
+  const normalized = rawRequest.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+  const splitIndex = normalized.indexOf('\\n\\n');
+  const headerPart = splitIndex === -1 ? normalized : normalized.slice(0, splitIndex);
+  const bodyPart = splitIndex === -1 ? '' : normalized.slice(splitIndex + 2);
+  const lines = headerPart.split('\\n');
+  const requestLine = lines.shift() || 'GET / HTTP/1.1';
+  const lower = headerName.toLowerCase();
+
+  let replaced = false;
+  const nextHeaders = lines.map((line) => {
+    const idx = line.indexOf(':');
+    if (idx <= 0) return line;
+    const key = line.slice(0, idx).trim().toLowerCase();
+    if (key === lower) {
+      replaced = true;
+      return \`\${headerName}: \${headerValue}\`;
+    }
+    return line;
+  });
+
+  if (!replaced) {
+    nextHeaders.push(\`\${headerName}: \${headerValue}\`);
+  }
+
+  return [requestLine, ...nextHeaders, '', bodyPart].join('\\r\\n');
+}
+
+export async function analyze(input: ToolInput): Promise<ToolOutput> {
+  try {
+    const headerName = input?.config?.headerName || 'X-Intruder-Request';
+    const headerValue = input?.config?.headerValue || 'preview';
+    return {
+      success: true,
+      data: {
+        rawRequest: upsertHeader(input.rawRequest, headerName, headerValue)
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+globalThis.get_input_schema = get_input_schema;
+globalThis.analyze = analyze;`
+}
 
 const getTrafficFallbackTemplate = () => `export interface HttpRequest { method: string; url: string; headers: Record<string, string>; body?: string; }
 export interface HttpResponse { status: number; headers: Record<string, string>; body?: string; }
@@ -921,9 +1191,9 @@ const handleSendAiMessage = async (message: string) => {
   try {
     // 使用插件编辑专用的接口文档（仅包含接口说明，不包含生成任务说明）
     // 这样 AI 会专注于编辑现有代码，而不是重新生成整个插件
-    const isAgentPlugin = store.newPluginMetadata.mainCategory === 'agent'
+    const isExecutionPlugin = ['agent', 'intruder'].includes(store.newPluginMetadata.mainCategory)
     const interfaceDoc = await invoke<string>('get_plugin_interface_doc_api', {
-      pluginType: isAgentPlugin ? 'agent' : 'traffic'
+      pluginType: isExecutionPlugin ? 'agent' : 'traffic'
     })
 
     // 2. 构建代码上下文区块
@@ -1372,16 +1642,16 @@ const handleTestPlugin = async () => {
   
   store.pluginTesting = true
   try {
-    const isAgentPlugin = store.editingPlugin.metadata.main_category === 'agent'
-    const command = isAgentPlugin ? 'test_agent_plugin' : 'test_plugin'
+    const isExecutionPlugin = ['agent', 'intruder'].includes(store.editingPlugin.metadata.main_category)
+    const command = isExecutionPlugin ? 'test_agent_plugin' : 'test_plugin'
     const resp = await invoke<CommandResponse<any>>(command, { 
       pluginId: store.editingPlugin.metadata.id,
-      inputs: isAgentPlugin ? {} : undefined
+      inputs: isExecutionPlugin ? {} : undefined
     })
     
     if (resp.success && resp.data) {
       // 处理 Agent 插件测试结果
-      if (isAgentPlugin) {
+      if (isExecutionPlugin) {
         testResult.value = {
           success: resp.data.success,
           message: resp.data.message || (resp.data.success ? `插件执行完成 (${resp.data.execution_time_ms}ms)` : '测试失败'),

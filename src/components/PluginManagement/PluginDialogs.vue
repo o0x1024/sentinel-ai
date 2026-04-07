@@ -189,9 +189,20 @@
             <label class="label"><span class="label-text">{{ $t('plugins.pluginType', '插件类型') }}</span></label>
             <select :value="aiPluginType" @change="$emit('update:aiPluginType', ($event.target as HTMLSelectElement).value)" class="select select-bordered select-sm">
               <option value="traffic">{{ $t('plugins.categories.trafficAnalysis', '流量分析插件') }}</option>
-              <option value="agent">{{ $t('plugins.categories.agents', 'Agent工具插件') }}</option>
+              <option value="agent">{{ $t('plugins.categories.agents', 'Agent插件') }}</option>
+              <option value="intruder">{{ $t('plugins.categories.intruder', 'Intruder插件') }}</option>
             </select>
           </div>
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ $t('plugins.subCategory', '子分类') }}</span></label>
+            <select :value="aiPluginCategory" @change="$emit('update:aiPluginCategory', ($event.target as HTMLSelectElement).value)" class="select select-bordered select-sm">
+              <option v-for="option in aiPluginCategoryOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
           <div class="form-control">
             <label class="label"><span class="label-text">{{ $t('plugins.severity', '严重程度') }}</span></label>
             <select :value="aiSeverity" @change="$emit('update:aiSeverity', ($event.target as HTMLSelectElement).value)" class="select select-bordered select-sm">
@@ -454,6 +465,7 @@ import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
 import JsonViewer from '@/components/Tools/JsonViewer.vue'
 import type { PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult, AdvancedRunStat, AdvancedForm } from './types'
+import { agentsCategories, intruderCategories, trafficCategories } from './types'
 
 const { t } = useI18n()
 
@@ -472,6 +484,7 @@ const props = defineProps<{
   // AI Generate dialog
   aiPrompt: string
   aiPluginType: string
+  aiPluginCategory: string
   aiSeverity: string
   aiGenerating: boolean
   aiGenerateError: string
@@ -500,6 +513,7 @@ const emit = defineEmits<{
   'deletePlugin': []
   'update:aiPrompt': [value: string]
   'update:aiPluginType': [value: string]
+  'update:aiPluginCategory': [value: string]
   'update:aiSeverity': [value: string]
   'generatePluginWithAi': []
   'runAdvancedTest': []
@@ -522,6 +536,31 @@ const testResultDialogRef = ref<HTMLDialogElement>()
 const advancedDialogRef = ref<HTMLDialogElement>()
 const fileInputRef = ref<HTMLInputElement>()
 const reviewCodeEditorContainerRef = ref<HTMLDivElement>()
+
+const aiPluginCategoryOptions = computed(() => {
+  if (props.aiPluginType === 'traffic') {
+    return trafficCategories.map(category => ({
+      value: category,
+      label: t(`plugins.trafficCategories.${category}`, category),
+    }))
+  }
+
+  if (props.aiPluginType === 'agent') {
+    return agentsCategories.map(category => ({
+      value: category,
+      label: t(`plugins.agentCategories.${category}`, category),
+    }))
+  }
+
+  if (props.aiPluginType === 'intruder') {
+    return intruderCategories.map(category => ({
+      value: category,
+      label: t(`plugins.intruderCategories.${category}`, category),
+    }))
+  }
+
+  return []
+})
 
 // Quality breakdown items
 const qualityBreakdownItems = computed(() => {

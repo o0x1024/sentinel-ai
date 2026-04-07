@@ -10,6 +10,9 @@ export interface TrafficDisplaySettings {
   highlightRequestSyntax: boolean
   highlightResponseSyntax: boolean
   prettyPrintByDefault: boolean
+  showSendToRepeater: boolean
+  showSendToComparer: boolean
+  showSendToIntruder: boolean
   charsetMode: TrafficCharsetMode
   specificCharset: string
 }
@@ -32,6 +35,9 @@ const DEFAULT_TRAFFIC_DISPLAY_SETTINGS: TrafficDisplaySettings = {
   highlightRequestSyntax: true,
   highlightResponseSyntax: true,
   prettyPrintByDefault: true,
+  showSendToRepeater: true,
+  showSendToComparer: true,
+  showSendToIntruder: true,
   charsetMode: 'auto',
   specificCharset: 'UTF-8',
 }
@@ -96,6 +102,9 @@ function normalizeTrafficDisplaySettings(value?: Partial<TrafficDisplaySettings>
     highlightRequestSyntax: Boolean(normalized.highlightRequestSyntax),
     highlightResponseSyntax: Boolean(normalized.highlightResponseSyntax),
     prettyPrintByDefault: Boolean(normalized.prettyPrintByDefault),
+    showSendToRepeater: normalized.showSendToRepeater !== false,
+    showSendToComparer: normalized.showSendToComparer !== false,
+    showSendToIntruder: normalized.showSendToIntruder !== false,
     charsetMode,
     specificCharset,
   }

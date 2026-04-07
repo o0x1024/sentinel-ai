@@ -1,8 +1,19 @@
+import type { TrafficMessageType } from './trafficDisplaySettings'
+
 export interface TrafficTransferRequest {
   method: string
   url: string
   headers: Record<string, string>
   body?: string
+}
+
+export interface TrafficComparerDraftRequestInput {
+  request?: TrafficTransferRequest
+  text?: string
+  messageType?: TrafficMessageType
+  name?: string
+  label?: string
+  side?: 'auto' | 'left' | 'right'
 }
 
 interface TransferEnvelope<T> {
@@ -13,12 +24,29 @@ interface TransferEnvelope<T> {
 export const REPEATER_TRANSFER_STORAGE_KEY = 'trafficAnalysis.transfer.repeater'
 export const COMPARER_TRANSFER_STORAGE_KEY = 'trafficAnalysis.transfer.comparer'
 
+export type TrafficCompareSource = 'history' | 'repeater' | 'intruder' | 'generic'
+export type TrafficCompareKind = 'requestVersions' | 'responseVersions' | 'responseDiff' | 'baselineDiff' | 'generic'
+
+export interface TrafficCompareMeta {
+  source: TrafficCompareSource
+  kind: TrafficCompareKind
+}
+
+export interface TrafficCompareSideMeta {
+  messageType: TrafficMessageType
+  protocol?: 'http' | 'https'
+  repeaterRequest?: TrafficTransferRequest
+}
+
 export interface TrafficComparePayload {
   name: string
   leftLabel: string
   rightLabel: string
   leftText: string
   rightText: string
+  leftMeta?: TrafficCompareSideMeta
+  rightMeta?: TrafficCompareSideMeta
+  compareMeta?: TrafficCompareMeta
 }
 
 export function queueRepeaterTransfer(request: TrafficTransferRequest): void {

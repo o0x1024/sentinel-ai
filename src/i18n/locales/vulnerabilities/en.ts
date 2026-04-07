@@ -22,6 +22,15 @@ export default {
   },
   allSeverities: 'All Severities',
   noFindings: 'No findings found',
+  pagination: {
+    pageSize: 'Per page',
+    totalRecords: '{total} records',
+    pageInfo: 'Page {page} of {total}',
+    firstPage: 'First',
+    lastPage: 'Last',
+    jumpPlaceholder: 'Page',
+    jump: 'Go'
+  },
   cvss: 'CVSS Score',
   cve: 'CVE ID',
   affectedTarget: 'Affected Target',

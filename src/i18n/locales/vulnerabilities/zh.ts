@@ -22,6 +22,15 @@ export default {
   },
   allSeverities: '所有严重程度',
   noFindings: '未发现结果',
+  pagination: {
+    pageSize: '每页',
+    totalRecords: '共 {total} 条记录',
+    pageInfo: '第 {page} 页，共 {total} 页',
+    firstPage: '第一页',
+    lastPage: '最后一页',
+    jumpPlaceholder: '页码',
+    jump: '跳转'
+  },
   cvss: 'CVSS评分',
   cve: 'CVE编号',
   affectedTarget: '受影响目标',

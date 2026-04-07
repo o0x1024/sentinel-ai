@@ -341,6 +341,16 @@ impl DatabaseService {
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
+                if let Some(ref statuses) = filters.status_in {
+                    if !statuses.is_empty() {
+                        query_builder.push(" AND status IN (");
+                        let mut separated = query_builder.separated(", ");
+                        for status in statuses {
+                            separated.push_bind(status);
+                        }
+                        separated.push_unseparated(")");
+                    }
+                }
                 if let Some(ref plugin_id) = filters.plugin_id {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
@@ -381,6 +391,16 @@ impl DatabaseService {
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
+                if let Some(ref statuses) = filters.status_in {
+                    if !statuses.is_empty() {
+                        query_builder.push(" AND status IN (");
+                        let mut separated = query_builder.separated(", ");
+                        for status in statuses {
+                            separated.push_bind(status);
+                        }
+                        separated.push_unseparated(")");
+                    }
+                }
                 if let Some(ref plugin_id) = filters.plugin_id {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
@@ -420,6 +440,16 @@ impl DatabaseService {
                 }
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref statuses) = filters.status_in {
+                    if !statuses.is_empty() {
+                        query_builder.push(" AND status IN (");
+                        let mut separated = query_builder.separated(", ");
+                        for status in statuses {
+                            separated.push_bind(status);
+                        }
+                        separated.push_unseparated(")");
+                    }
                 }
                 if let Some(ref plugin_id) = filters.plugin_id {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
@@ -500,6 +530,16 @@ impl DatabaseService {
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
+                if let Some(ref statuses) = filters.status_in {
+                    if !statuses.is_empty() {
+                        query_builder.push(" AND status IN (");
+                        let mut separated = query_builder.separated(", ");
+                        for status in statuses {
+                            separated.push_bind(status);
+                        }
+                        separated.push_unseparated(")");
+                    }
+                }
                 if let Some(ref plugin_id) = filters.plugin_id {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
@@ -528,6 +568,16 @@ impl DatabaseService {
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
+                if let Some(ref statuses) = filters.status_in {
+                    if !statuses.is_empty() {
+                        query_builder.push(" AND status IN (");
+                        let mut separated = query_builder.separated(", ");
+                        for status in statuses {
+                            separated.push_bind(status);
+                        }
+                        separated.push_unseparated(")");
+                    }
+                }
                 if let Some(ref plugin_id) = filters.plugin_id {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
@@ -555,6 +605,16 @@ impl DatabaseService {
                 }
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref statuses) = filters.status_in {
+                    if !statuses.is_empty() {
+                        query_builder.push(" AND status IN (");
+                        let mut separated = query_builder.separated(", ");
+                        for status in statuses {
+                            separated.push_bind(status);
+                        }
+                        separated.push_unseparated(")");
+                    }
                 }
                 if let Some(ref plugin_id) = filters.plugin_id {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
@@ -1907,13 +1967,14 @@ impl DatabaseService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        match runtime {
+        let mut record = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let record = sqlx::query_as::<_, ProxyRequestRecord>(
                     r#"
                     SELECT id, url, host, protocol, method, status_code,
                            request_headers, request_body, response_headers, response_body,
-                           response_size, response_time, timestamp
+                           response_size, response_time, timestamp,
+                           request_body_compressed, response_body_compressed
                     FROM proxy_requests
                     WHERE id = $1
                     "#,
@@ -1921,14 +1982,15 @@ impl DatabaseService {
                 .bind(id)
                 .fetch_optional(pool)
                 .await?;
-                Ok(record)
+                record
             }
             DatabasePool::SQLite(pool) => {
                 let record = sqlx::query_as::<_, ProxyRequestRecord>(
                     r#"
                     SELECT id, url, host, protocol, method, status_code,
                            request_headers, request_body, response_headers, response_body,
-                           response_size, response_time, timestamp
+                           response_size, response_time, timestamp,
+                           request_body_compressed, response_body_compressed
                     FROM proxy_requests
                     WHERE id = ?
                     "#,
@@ -1936,14 +1998,15 @@ impl DatabaseService {
                 .bind(id)
                 .fetch_optional(pool)
                 .await?;
-                Ok(record)
+                record
             }
             DatabasePool::MySQL(pool) => {
                 let record = sqlx::query_as::<_, ProxyRequestRecord>(
                     r#"
                     SELECT id, url, host, protocol, method, status_code,
                            request_headers, request_body, response_headers, response_body,
-                           response_size, response_time, timestamp
+                           response_size, response_time, timestamp,
+                           request_body_compressed, response_body_compressed
                     FROM proxy_requests
                     WHERE id = ?
                     "#,
@@ -1951,9 +2014,18 @@ impl DatabaseService {
                 .bind(id)
                 .fetch_optional(pool)
                 .await?;
-                Ok(record)
+                record
             }
+        };
+
+        if let Some(record) = &mut record {
+            record.request_body =
+                smart_decompress(record.request_body.take(), record.request_body_compressed)?;
+            record.response_body =
+                smart_decompress(record.response_body.take(), record.response_body_compressed)?;
         }
+
+        Ok(record)
     }
 
     /// Clear all proxy requests
@@ -2162,6 +2234,7 @@ pub struct TrafficVulnerabilityFilters {
     pub vuln_type: Option<String>,
     pub severity: Option<String>,
     pub status: Option<String>,
+    pub status_in: Option<Vec<String>>,
     pub plugin_id: Option<String>,
     pub exclude_plugin_id: Option<String>,
     pub limit: Option<i64>,

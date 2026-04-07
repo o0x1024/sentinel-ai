@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use arboard::Clipboard;
@@ -25,9 +26,15 @@ pub struct TrafficBehaviorExtensionInstallation {
     pub bundled_with_app: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyTrafficBehaviorExtensionResult {
+    pub copied_directory: String,
+}
+
 fn resolve_extension_directory(app: &tauri::AppHandle) -> Option<(PathBuf, bool)> {
-    let source_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../extensions/chrome-behavior-capture");
+    let source_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../extensions/chrome-behavior-capture");
 
     let mut bundled_candidates = Vec::new();
     if let Ok(resource_dir) = app.path().resource_dir() {
@@ -46,6 +53,36 @@ fn resolve_extension_directory(app: &tauri::AppHandle) -> Option<(PathBuf, bool)
     }
 
     None
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst)
+        .map_err(|error| format!("Failed to create destination directory: {error}"))?;
+
+    for entry in
+        fs::read_dir(src).map_err(|error| format!("Failed to read source directory: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Failed to read entry type: {error}"))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_all(&from, &to)?;
+        } else {
+            fs::copy(&from, &to).map_err(|error| {
+                format!(
+                    "Failed to copy '{}' to '{}': {error}",
+                    from.display(),
+                    to.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -105,9 +142,53 @@ pub async fn get_traffic_behavior_extension_installation(
 }
 
 #[tauri::command]
+pub async fn copy_traffic_behavior_extension_to_directory(
+    app: tauri::AppHandle,
+    target_directory: String,
+) -> Result<CommandResponse<CopyTrafficBehaviorExtensionResult>, String> {
+    let (extension_directory, _) = resolve_extension_directory(&app)
+        .ok_or_else(|| "Failed to resolve browser extension directory".to_string())?;
+
+    let target_root = PathBuf::from(target_directory.trim());
+    if target_directory.trim().is_empty() {
+        return Ok(CommandResponse::err(
+            "Target directory is required".to_string(),
+        ));
+    }
+
+    if !target_root.exists() {
+        return Ok(CommandResponse::err(
+            "Target directory does not exist".to_string(),
+        ));
+    }
+
+    if !target_root.is_dir() {
+        return Ok(CommandResponse::err(
+            "Target path is not a directory".to_string(),
+        ));
+    }
+
+    let destination = target_root.join("chrome-behavior-capture");
+    if destination.exists() {
+        fs::remove_dir_all(&destination).map_err(|error| {
+            format!(
+                "Failed to replace existing extension directory '{}': {error}",
+                destination.display()
+            )
+        })?;
+    }
+
+    copy_dir_all(&extension_directory, &destination)?;
+
+    Ok(CommandResponse::ok(CopyTrafficBehaviorExtensionResult {
+        copied_directory: destination.to_string_lossy().into_owned(),
+    }))
+}
+
+#[tauri::command]
 pub async fn read_traffic_clipboard_text() -> Result<CommandResponse<String>, String> {
-    let mut clipboard = Clipboard::new()
-        .map_err(|error| format!("Failed to access clipboard: {error}"))?;
+    let mut clipboard =
+        Clipboard::new().map_err(|error| format!("Failed to access clipboard: {error}"))?;
     let text = clipboard
         .get_text()
         .map_err(|error| format!("Failed to read clipboard text: {error}"))?;

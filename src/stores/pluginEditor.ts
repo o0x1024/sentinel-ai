@@ -4,6 +4,7 @@ import type {
   PluginRecord, NewPluginMetadata, AiChatMessage, 
   CodeReference, TestResultReference 
 } from '../components/PluginManagement/types'
+import type { AiValidationReport } from '../components/PluginManagement/aiGeneratedPluginGate'
 
 // 对话历史持久化接口
 interface ChatHistoryEntry {
@@ -34,6 +35,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
   const isEditing = ref(false)
   const saving = ref(false)
   const codeError = ref('')
+  const aiValidationReport = ref<AiValidationReport | null>(null)
 
   // 插件元数据
   const newPluginMetadata = ref<NewPluginMetadata>({
@@ -124,6 +126,8 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
     editingPlugin.value = plugin
     pluginCode.value = code
     originalCode.value = code
+    codeError.value = ''
+    aiValidationReport.value = null
     
     // 如果是编辑现有插件，默认处于编辑状态
     isEditing.value = plugin !== null
@@ -170,6 +174,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
     isEditing.value = true
     saving.value = false
     codeError.value = ''
+    aiValidationReport.value = null
     aiChatMessages.value = []
     selectedCodeRef.value = null
     selectedTestResultRef.value = null
@@ -215,7 +220,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
 
   return {
     isOpen, isMinimized, isFullscreen,
-    editingPlugin, pluginCode, originalCode, isEditing, saving, codeError,
+    editingPlugin, pluginCode, originalCode, isEditing, saving, codeError, aiValidationReport,
     newPluginMetadata,
     showAiPanel, aiChatMessages, aiChatStreaming, aiChatStreamingContent,
     selectedCodeRef, selectedTestResultRef, pluginTesting,

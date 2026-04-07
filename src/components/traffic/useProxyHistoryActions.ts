@@ -7,16 +7,20 @@ import { useRouter } from 'vue-router'
 import { dialog } from '@/composables/useDialog'
 import { clearProxyHistoryDerivedCache } from './proxyHistoryDerivedSupport'
 import {
-  formatRequest,
   formatRequestRaw,
   formatResponseRaw,
   getHarStatusText,
 } from './proxyHistoryFormattingSupport'
+import {
+  buildRequestVersionComparePayload,
+  buildResponseVersionComparePayload,
+} from './trafficHistoryComparerSupport'
 import type {
   ProxyHistoryRequestTab,
   ProxyHistoryViewMode,
   ProxyRequest,
 } from './proxyHistoryTypes'
+import type { TrafficComparePayload, TrafficComparerDraftRequestInput } from './transfers'
 
 type ProxyHistoryStats = {
   total: number
@@ -36,6 +40,7 @@ type DetailContextMenuState = {
   visible: boolean
   x: number
   y: number
+  pane: 'request' | 'response'
 }
 
 type SendType = 'request' | 'response' | 'both'
@@ -43,7 +48,6 @@ type SendType = 'request' | 'response' | 'both'
 type Params = {
   contextMenu: Ref<ContextMenuState>
   detailContextMenu: Ref<DetailContextMenuState>
-  showFilterSubmenu: Ref<boolean>
   selectedRequest: Ref<ProxyRequest | null>
   selectedRequests: Ref<Set<number>>
   isMultiSelectMode: Ref<boolean>
@@ -53,12 +57,15 @@ type Params = {
   requestTab: Ref<ProxyHistoryRequestTab>
   responseTab: Ref<'pretty' | 'raw' | 'hex' | 'render'>
   requestViewMode: Ref<ProxyHistoryViewMode>
+  responseViewMode: Ref<ProxyHistoryViewMode>
   topPanelHeight: Ref<number>
   mainContainer: Ref<HTMLElement | null>
   hideContextMenu?: () => void
   hideDetailContextMenu?: () => void
   emitSendToRepeater: (request: { method: string; url: string; headers: Record<string, string>; body?: string }) => void
   emitSendToIntruder: (request: { method: string; url: string; headers: Record<string, string>; body?: string }) => void
+  emitSendDraftRequestToComparer: (payload: TrafficComparerDraftRequestInput) => void
+  emitSendToComparer: (payload: TrafficComparePayload) => void
   emitSendToAssistant: (requests: ProxyRequest[]) => void
   emitAddFilterRule: (rule: { matchType: string; condition: string; relationship?: string }) => void
   fetchRequestDetails: (requestId: number) => Promise<ProxyRequest | null>
@@ -91,6 +98,14 @@ const buildCurlCommand = (request: ProxyRequest) => {
 
 export const useProxyHistoryActions = (params: Params) => {
   const router = useRouter()
+  const compareVersionLabels = {
+    requestVersions: params.t('trafficAnalysis.history.batchCompare.requestVersions'),
+    responseVersions: params.t('trafficAnalysis.history.batchCompare.responseVersions'),
+    originalRequest: params.t('trafficAnalysis.history.detailsPanel.originalRequest'),
+    editedRequest: params.t('trafficAnalysis.history.detailsPanel.editedRequest'),
+    originalResponse: params.t('trafficAnalysis.history.detailsPanel.originalResponse'),
+    editedResponse: params.t('trafficAnalysis.history.detailsPanel.editedResponse'),
+  }
 
   const needsFullRequestDetails = (request: ProxyRequest) => request.has_full_details === false
 
@@ -116,7 +131,6 @@ export const useProxyHistoryActions = (params: Params) => {
   const hideContextMenu = () => {
     params.contextMenu.value.visible = false
     params.contextMenu.value.request = null
-    params.showFilterSubmenu.value = false
     document.removeEventListener('click', hideContextMenu)
     document.removeEventListener('contextmenu', hideContextMenu)
   }
@@ -173,12 +187,13 @@ export const useProxyHistoryActions = (params: Params) => {
     }, 0)
   }
 
-  const showDetailContextMenu = (event: MouseEvent) => {
+  const showDetailContextMenu = (event: MouseEvent, pane: 'request' | 'response' = 'request') => {
     if (!params.selectedRequest.value) return
     params.detailContextMenu.value = {
       visible: true,
       x: Math.min(event.clientX, window.innerWidth - 200),
       y: Math.min(event.clientY, window.innerHeight - 200),
+      pane,
     }
     setTimeout(() => {
       document.addEventListener('click', hideDetailContextMenu)
@@ -210,6 +225,58 @@ export const useProxyHistoryActions = (params: Params) => {
     })
   }
 
+  const detailSendToComparer = async () => {
+    hideDetailContextMenu()
+    const request = await resolveRequestDetails(params.selectedRequest.value)
+    if (!request) return
+
+    if (params.detailContextMenu.value.pane === 'response') {
+      params.emitSendDraftRequestToComparer({
+        text: formatResponseRaw(request, params.responseViewMode.value),
+        name: request.host || request.url,
+        label: params.t('trafficAnalysis.history.detailsPanel.response'),
+      })
+      return
+    }
+
+    params.emitSendDraftRequestToComparer({
+      request: {
+        method: request.method,
+        url: request.url,
+        headers: buildHeaders(request),
+        body: request.request_body || undefined,
+      },
+      name: request.host || request.url,
+      label: params.t('trafficAnalysis.history.detailsPanel.request'),
+    })
+  }
+
+  const detailCompareRequestVersions = async () => {
+    hideDetailContextMenu()
+    const request = await resolveRequestDetails(params.selectedRequest.value)
+    if (!request) return
+    const payload = buildRequestVersionComparePayload(request, compareVersionLabels)
+    if (!payload) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noEditedRequestVersion'))
+      return
+    }
+    params.emitSendToComparer(payload)
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentToComparer'))
+  }
+
+  const detailCompareResponseVersions = async () => {
+    hideDetailContextMenu()
+    const request = await resolveRequestDetails(params.selectedRequest.value)
+    if (!request) return
+    const payload = buildResponseVersionComparePayload(request, compareVersionLabels)
+    if (!payload) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noEditedResponseVersion'))
+      return
+    }
+    params.emitSendToComparer(payload)
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentToComparer'))
+  }
+
   const detailCopyUrl = () => {
     hideDetailContextMenu()
     if (!params.selectedRequest.value) return
@@ -222,11 +289,7 @@ export const useProxyHistoryActions = (params: Params) => {
     hideDetailContextMenu()
     const request = await resolveRequestDetails(params.selectedRequest.value)
     if (!request) return
-    const requestText = formatRequest(
-      request,
-      params.requestTab.value,
-      params.requestViewMode.value,
-    )
+    const requestText = formatRequestRaw(request, params.requestViewMode.value)
     navigator.clipboard.writeText(requestText)
       .then(() => dialog.toast.success('请求已复制'))
       .catch(() => dialog.toast.error('复制失败'))
@@ -265,6 +328,50 @@ export const useProxyHistoryActions = (params: Params) => {
     hideContextMenu()
   }
 
+  const sendToComparer = async () => {
+    const request = await resolveRequestDetails(params.contextMenu.value.request)
+    if (!request) return
+    params.emitSendDraftRequestToComparer({
+      request: {
+        method: request.method,
+        url: request.url,
+        headers: buildHeaders(request),
+        body: request.request_body || undefined,
+      },
+      name: request.host || request.url,
+      label: params.t('trafficAnalysis.history.detailsPanel.request'),
+    })
+    hideContextMenu()
+  }
+
+  const compareRequestVersions = async () => {
+    const request = await resolveRequestDetails(params.contextMenu.value.request)
+    if (!request) return
+    const payload = buildRequestVersionComparePayload(request, compareVersionLabels)
+    if (!payload) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noEditedRequestVersion'))
+      hideContextMenu()
+      return
+    }
+    params.emitSendToComparer(payload)
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentToComparer'))
+    hideContextMenu()
+  }
+
+  const compareResponseVersions = async () => {
+    const request = await resolveRequestDetails(params.contextMenu.value.request)
+    if (!request) return
+    const payload = buildResponseVersionComparePayload(request, compareVersionLabels)
+    if (!payload) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noEditedResponseVersion'))
+      hideContextMenu()
+      return
+    }
+    params.emitSendToComparer(payload)
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentToComparer'))
+    hideContextMenu()
+  }
+
   const copyUrl = () => {
     if (!params.contextMenu.value.request) return
     navigator.clipboard.writeText(params.contextMenu.value.request.url)
@@ -282,10 +389,25 @@ export const useProxyHistoryActions = (params: Params) => {
     hideContextMenu()
   }
 
+  const copyRequest = async () => {
+    const request = await resolveRequestDetails(params.contextMenu.value.request)
+    if (!request) return
+    navigator.clipboard.writeText(formatRequestRaw(request))
+      .then(() => dialog.toast.success('请求已复制'))
+      .catch(() => dialog.toast.error('复制失败'))
+    hideContextMenu()
+  }
+
   const openInBrowser = () => {
     if (!params.contextMenu.value.request) return
     window.open(params.contextMenu.value.request.url, '_blank')
     hideContextMenu()
+  }
+
+  const detailOpenInBrowser = () => {
+    hideDetailContextMenu()
+    if (!params.selectedRequest.value) return
+    window.open(params.selectedRequest.value.url, '_blank')
   }
 
   const clearHistoryFromMenu = () => {
@@ -378,7 +500,7 @@ export const useProxyHistoryActions = (params: Params) => {
 
   const isRequestSelected = (request: ProxyRequest) => params.selectedRequests.value.has(request.id)
 
-  const sendSelectedToAssistant = async (type: SendType = 'both') => {
+  const sendSelectedToAssistant = async (type: SendType = 'request') => {
     const selected = params.filteredRequests.value.filter((request) => params.selectedRequests.value.has(request.id))
     if (selected.length === 0) {
       dialog.toast.warning('请先选择要发送的请求')
@@ -387,19 +509,63 @@ export const useProxyHistoryActions = (params: Params) => {
     const detailedSelected = await resolveRequestDetailsBatch(selected)
     await tauriEmit('traffic:send-to-assistant', { requests: detailedSelected, type })
     params.emitSendToAssistant(detailedSelected)
-    const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量'
-    dialog.toast.success(`已发送 ${detailedSelected.length} 条${typeText}到 AI 助手`)
+    dialog.toast.success(`已发送 ${detailedSelected.length} 条请求到 AI 助手`)
     clearSelection()
     params.isMultiSelectMode.value = false
     router.push('/ai-assistant')
   }
 
-  const sendSingleToAssistant = async (request: ProxyRequest, type: SendType = 'both') => {
+  const sendSelectedRequestVersionsToComparer = async () => {
+    const selected = params.filteredRequests.value.filter((request) => params.selectedRequests.value.has(request.id))
+    if (selected.length === 0) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noSelectionForComparer'))
+      return
+    }
+
+    const detailedSelected = await resolveRequestDetailsBatch(selected)
+    const payloads = detailedSelected
+      .map((request) => buildRequestVersionComparePayload(request, compareVersionLabels))
+      .filter((payload): payload is TrafficComparePayload => Boolean(payload))
+
+    if (payloads.length === 0) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noEditedRequestVersion'))
+      return
+    }
+
+    payloads.forEach((payload) => params.emitSendToComparer(payload))
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToComparer', { count: payloads.length }))
+    clearSelection()
+    params.isMultiSelectMode.value = false
+  }
+
+  const sendSelectedResponseVersionsToComparer = async () => {
+    const selected = params.filteredRequests.value.filter((request) => params.selectedRequests.value.has(request.id))
+    if (selected.length === 0) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noSelectionForComparer'))
+      return
+    }
+
+    const detailedSelected = await resolveRequestDetailsBatch(selected)
+    const payloads = detailedSelected
+      .map((request) => buildResponseVersionComparePayload(request, compareVersionLabels))
+      .filter((payload): payload is TrafficComparePayload => Boolean(payload))
+
+    if (payloads.length === 0) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noEditedResponseVersion'))
+      return
+    }
+
+    payloads.forEach((payload) => params.emitSendToComparer(payload))
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToComparer', { count: payloads.length }))
+    clearSelection()
+    params.isMultiSelectMode.value = false
+  }
+
+  const sendSingleToAssistant = async (request: ProxyRequest, type: SendType = 'request') => {
     const detailedRequest = (await resolveRequestDetails(request)) || request
     await tauriEmit('traffic:send-to-assistant', { requests: [detailedRequest], type })
     params.emitSendToAssistant([detailedRequest])
-    const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量'
-    dialog.toast.success(`已发送${typeText}到 AI 助手`)
+    dialog.toast.success('已发送请求到 AI 助手')
     router.push('/ai-assistant')
   }
 
@@ -409,22 +575,10 @@ export const useProxyHistoryActions = (params: Params) => {
     hideContextMenu()
   }
 
-  const sendResponseToAssistantFromMenu = () => {
-    if (!params.contextMenu.value.request) return
-    sendSingleToAssistant(params.contextMenu.value.request, 'response')
-    hideContextMenu()
-  }
-
   const detailSendRequestToAssistant = () => {
     hideDetailContextMenu()
     if (!params.selectedRequest.value) return
     sendSingleToAssistant(params.selectedRequest.value, 'request')
-  }
-
-  const detailSendResponseToAssistant = () => {
-    hideDetailContextMenu()
-    if (!params.selectedRequest.value) return
-    sendSingleToAssistant(params.selectedRequest.value, 'response')
   }
 
   const exportSelectedToFile = async (type: 'request' | 'response') => {
@@ -611,12 +765,18 @@ export const useProxyHistoryActions = (params: Params) => {
     clearSelection,
     closeDetails,
     copyAsCurl,
+    copyRequest,
+    compareRequestVersions,
+    compareResponseVersions,
     copyUrl,
     detailCopyAsCurl,
     detailCopyRequest,
     detailCopyUrl,
+    detailOpenInBrowser,
+    detailCompareRequestVersions,
+    detailCompareResponseVersions,
     detailSendRequestToAssistant,
-    detailSendResponseToAssistant,
+    detailSendToComparer,
     detailSendToIntruder,
     detailSendToRepeater,
     exportAsHAR,
@@ -630,8 +790,10 @@ export const useProxyHistoryActions = (params: Params) => {
     selectRequest,
     selectedCount,
     sendRequestToAssistantFromMenu,
-    sendResponseToAssistantFromMenu,
+    sendSelectedRequestVersionsToComparer,
+    sendSelectedResponseVersionsToComparer,
     sendSelectedToAssistant,
+    sendToComparer,
     sendToIntruder,
     sendToRepeater,
     showContextMenu,

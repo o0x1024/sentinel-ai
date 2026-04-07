@@ -15,9 +15,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { EditorView, basicSetup } from 'codemirror'
+import { basicSetup } from 'codemirror'
 import { EditorState, Compartment } from '@codemirror/state'
-import { drawSelection, highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view'
+import { drawSelection, EditorView, highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, indentWithTab, history, undo, redo } from '@codemirror/commands'
 import { getHttpCodeThemeExtensions, isDarkHttpEditorTheme } from './httpEditorTheme'
 import { getHttpEditorLanguageExtensions, getHttpLanguageSignature } from './httpEditorHttpMode'
@@ -30,6 +30,7 @@ const props = withDefaults(defineProps<{
   readonly?: boolean
   height?: string
   fullscreen?: boolean
+  customContextMenu?: boolean
   placeholder?: string
   messageType?: TrafficMessageType
   displayMode?: 'pretty' | 'raw'
@@ -39,6 +40,7 @@ const props = withDefaults(defineProps<{
   readonly: false,
   height: '100%',
   fullscreen: false,
+  customContextMenu: false,
   placeholder: '',
   messageType: 'generic',
   displayMode: 'raw',
@@ -47,6 +49,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
+  (e: 'contextmenu', event: MouseEvent): void
 }>()
 
 const editorContainer = ref<HTMLDivElement>()
@@ -116,6 +119,13 @@ function getBaseExtensions() {
   ]
 }
 
+function handleEditorContextMenu(event: MouseEvent) {
+  if (!props.customContextMenu) return
+  event.preventDefault()
+  event.stopPropagation()
+  emit('contextmenu', event)
+}
+
 function saveScrollStateForKey(stateKey: string) {
   if (!stateKey || !editorView) return
   const scroller = editorView.scrollDOM
@@ -143,6 +153,9 @@ function initEditor() {
 
   if (editorView) {
     saveScrollState()
+    if (props.customContextMenu) {
+      editorView.dom.removeEventListener('contextmenu', handleEditorContextMenu, { capture: true })
+    }
     editorView.scrollDOM.removeEventListener('scroll', saveScrollState)
     editorView.destroy()
     editorView = null
@@ -172,6 +185,9 @@ function initEditor() {
     parent: editorContainer.value,
   })
 
+  if (props.customContextMenu) {
+    editorView.dom.addEventListener('contextmenu', handleEditorContextMenu, { capture: true })
+  }
   editorView.scrollDOM.addEventListener('scroll', saveScrollState, { passive: true })
   requestAnimationFrame(() => {
     restoreScrollState()
@@ -280,6 +296,9 @@ onMounted(async () => {
 onUnmounted(() => {
   saveScrollState()
   if (editorView) {
+    if (props.customContextMenu) {
+      editorView.dom.removeEventListener('contextmenu', handleEditorContextMenu, { capture: true })
+    }
     editorView.scrollDOM.removeEventListener('scroll', saveScrollState)
     editorView.destroy()
     editorView = null

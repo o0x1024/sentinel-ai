@@ -5,16 +5,19 @@
       ref="surfaceEditor"
       :model-value="modelValue"
       readonly
+      :custom-context-menu="customContextMenu"
       :message-type="messageType"
       :height="height"
       :display-mode="displayMode"
       :state-key="stateKey"
+      @contextmenu="emit('contextmenu', $event)"
     />
     <HttpMessageTextEditor
       v-else
       ref="surfaceEditor"
       :model-value="modelValue"
       :readonly="readonly"
+      :custom-context-menu="customContextMenu"
       :message-type="messageType"
       :height="height"
       :fullscreen="fullscreen"
@@ -22,6 +25,7 @@
       :display-mode="displayMode"
       :state-key="stateKey"
       @update:model-value="emit('update:modelValue', $event)"
+      @contextmenu="emit('contextmenu', $event)"
     />
   </div>
 </template>
@@ -36,6 +40,7 @@ const props = withDefaults(defineProps<{
   readonly?: boolean
   height?: string
   fullscreen?: boolean
+  customContextMenu?: boolean
   placeholder?: string
   messageType?: TrafficMessageType
   displayMode?: 'pretty' | 'raw'
@@ -45,6 +50,7 @@ const props = withDefaults(defineProps<{
   readonly: false,
   height: '100%',
   fullscreen: false,
+  customContextMenu: false,
   placeholder: '',
   messageType: 'generic',
   displayMode: 'raw',
@@ -53,6 +59,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
+  (e: 'contextmenu', event: MouseEvent): void
 }>()
 
 const surfaceEditor = ref<{

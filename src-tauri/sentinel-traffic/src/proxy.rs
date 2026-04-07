@@ -6,8 +6,10 @@
 //! - 请求/响应 tee（异步扫描队列）
 //! - 忽略上游证书验证（用于抓取证书异常的站点）
 
+use crate::intercept_rules::should_intercept_response;
+use crate::intercept_tracking::InterceptTracking;
+use crate::scope::{url_is_in_scope, ProxyScopeRule};
 use crate::{ProxyStats, RequestContext, ResponseContext, Result, TrafficError};
-use crate::scope::ProxyScopeRule;
 use brotli::Decompressor;
 use flate2::read::GzDecoder;
 use http_body_util::{BodyExt, Full};
@@ -435,8 +437,10 @@ pub struct InterceptFilterRule {
 /// 拦截状态（共享）
 #[derive(Clone)]
 pub struct InterceptState {
-    /// 是否启用请求拦截
+    /// 是否启用主拦截
     pub enabled: Arc<RwLock<bool>>,
+    /// 是否启用请求拦截规则
+    pub request_enabled: Arc<RwLock<bool>>,
     /// 是否启用响应拦截
     pub response_enabled: Arc<RwLock<bool>>,
     /// 是否启用 WebSocket 拦截
@@ -593,6 +597,8 @@ pub struct TrafficProxyHandler {
     /// 当前请求 ID（用于匹配 handle_request/handle_response）
     /// 注意：必须是“每个 clone 独立”的状态，不能用 Arc 共享。
     current_request_id: std::sync::Mutex<Option<String>>,
+    /// 记录哪些请求曾进入过请求拦截流程，供响应规则使用。
+    intercept_tracking: InterceptTracking,
 }
 
 impl Clone for TrafficProxyHandler {
@@ -610,6 +616,7 @@ impl Clone for TrafficProxyHandler {
             intercept_state: self.intercept_state.clone(),
             // 每个 clone 新建一份独立的 request_id 槽位，避免并发覆盖
             current_request_id: std::sync::Mutex::new(None),
+            intercept_tracking: self.intercept_tracking.clone(),
         }
     }
 }
@@ -628,6 +635,7 @@ impl TrafficProxyHandler {
             ws_message_counters: Arc::new(RwLock::new(HashMap::new())),
             intercept_state: None,
             current_request_id: std::sync::Mutex::new(None),
+            intercept_tracking: InterceptTracking::new(),
         }
     }
 
@@ -649,6 +657,7 @@ impl TrafficProxyHandler {
             ws_message_counters: Arc::new(RwLock::new(HashMap::new())),
             intercept_state: Some(intercept_state),
             current_request_id: std::sync::Mutex::new(None),
+            intercept_tracking: InterceptTracking::new(),
         }
     }
 
@@ -802,7 +811,14 @@ impl TrafficProxyHandler {
         url: &str,
         method: &str,
         _headers: &HashMap<String, String>,
+        include_rules: &[ProxyScopeRule],
+        exclude_rules: &[ProxyScopeRule],
     ) -> bool {
+        if !url_is_in_scope(url, include_rules, exclude_rules) {
+            debug!("Request {} skipped by global scope rules", url);
+            return false;
+        }
+
         let rules = intercept_state.request_filter_rules.read().await;
         if rules.is_empty() {
             return true; // No rules, intercept all
@@ -1701,13 +1717,17 @@ impl HttpHandler for TrafficProxyHandler {
                     if !is_https {
                         if let Some(intercept_state) = &self.intercept_state {
                             let intercept_enabled = *intercept_state.enabled.read().await;
-                            if intercept_enabled {
+                            let request_intercept_enabled =
+                                *intercept_state.request_enabled.read().await;
+                            if intercept_enabled && request_intercept_enabled {
                                 // Check filter rules before intercepting
                                 let should_intercept = Self::should_intercept_request(
                                     intercept_state,
                                     &req_ctx.url,
                                     &req_ctx.method,
                                     &req_ctx.headers,
+                                    &self.config.scope_include_rules,
+                                    &self.config.scope_exclude_rules,
                                 )
                                 .await;
 
@@ -1754,6 +1774,10 @@ impl HttpHandler for TrafficProxyHandler {
                                         self.set_current_request_id(request_id.clone());
                                         return RequestOrResponse::Request(new_req);
                                     }
+
+                                    self.intercept_tracking
+                                        .mark_request_intercepted(&request_id)
+                                        .await;
 
                                     info!(
                                         "Request {} intercepted, waiting for user action",
@@ -1893,6 +1917,9 @@ impl HttpHandler for TrafficProxyHandler {
                                                 }
                                                 InterceptAction::Drop => {
                                                     info!("Request {} dropped by user", request_id);
+                                                    self.intercept_tracking
+                                                        .clear_request(&request_id)
+                                                        .await;
                                                     // Return an empty response (connection reset)
                                                     return RequestOrResponse::Response(
                                                         Response::builder()
@@ -1979,7 +2006,12 @@ impl HttpHandler for TrafficProxyHandler {
                     request_map.get(&request_id).cloned()
                 };
 
-                if let Some(_req_ctx) = req_ctx_opt {
+                if let Some(req_ctx) = req_ctx_opt {
+                    let request_was_intercepted = self
+                        .intercept_tracking
+                        .was_request_intercepted(&request_id)
+                        .await;
+
                     // 流式响应：使用 Tee 机制同时转发和收集
                     if is_streaming {
                         info!(
@@ -1997,6 +2029,7 @@ impl HttpHandler for TrafficProxyHandler {
                                     let mut request_map = self.request_map.write().await;
                                     request_map.remove(&request_id);
                                 }
+                                self.intercept_tracking.clear_request(&request_id).await;
 
                                 debug!(
                                     "Streaming response forwarded: request_id={}, conn_key={}",
@@ -2029,116 +2062,163 @@ impl HttpHandler for TrafficProxyHandler {
                             // 检查是否需要拦截响应
                             let mut final_response = new_res;
                             if let Some(intercept_state) = &self.intercept_state {
+                                let intercept_enabled = *intercept_state.enabled.read().await;
                                 let response_intercept_enabled =
                                     *intercept_state.response_enabled.read().await;
 
-                                if response_intercept_enabled {
-                                    if let Some(pending_tx) = &intercept_state.pending_response_tx {
-                                        let response_id = uuid::Uuid::new_v4().to_string();
-                                        let (action_tx, action_rx) =
-                                            tokio::sync::oneshot::channel();
-
-                                        // 发送拦截响应到待处理队列
-                                        let body_string =
-                                            String::from_utf8_lossy(&resp_ctx.body).to_string();
-                                        let pending_response = PendingInterceptResponse {
-                                            id: response_id.clone(),
-                                            request_id: request_id.clone(),
-                                            status: resp_ctx.status,
-                                            headers: resp_ctx.headers.clone(),
-                                            body: Some(body_string),
-                                            timestamp: chrono::Utc::now().timestamp_millis(),
-                                            response_tx: action_tx,
-                                        };
-
-                                        if pending_tx.send(pending_response).is_ok() {
-                                            info!(
-                                                "Response intercepted: {} (status: {})",
-                                                response_id, resp_ctx.status
-                                            );
-
-                                            // 等待用户操作（最多30秒）
-                                            match tokio::time::timeout(
-                                                std::time::Duration::from_secs(30),
-                                                action_rx,
-                                            )
+                                if intercept_enabled && response_intercept_enabled {
+                                    if !url_is_in_scope(
+                                        &req_ctx.url,
+                                        &self.config.scope_include_rules,
+                                        &self.config.scope_exclude_rules,
+                                    ) {
+                                        debug!(
+                                            "Response {} skipped by global scope rules",
+                                            request_id
+                                        );
+                                    } else {
+                                        let response_rules = intercept_state
+                                            .response_filter_rules
+                                            .read()
                                             .await
-                                            {
-                                                Ok(Ok(InterceptAction::Forward(
-                                                    modified_content,
-                                                ))) => {
-                                                    info!("Response {} forwarded", response_id);
-                                                    if let Some(content) = modified_content {
-                                                        // 解析修改后的内容并重建响应
-                                                        match Self::parse_and_rebuild_response(
-                                                            &content,
-                                                        ) {
-                                                            Ok(modified_resp) => {
-                                                                info!("Response {} modified and forwarded", response_id);
+                                            .clone();
+                                        let should_intercept = should_intercept_response(
+                                            &response_rules,
+                                            &req_ctx,
+                                            &resp_ctx,
+                                            &self.config.scope_include_rules,
+                                            &self.config.scope_exclude_rules,
+                                            request_was_intercepted,
+                                        );
 
-                                                                // 更新 resp_ctx 保存修改后的数据
-                                                                resp_ctx.was_edited = true;
-                                                                resp_ctx.edited_status = Some(
-                                                                    modified_resp.status().as_u16(),
-                                                                );
+                                        if !should_intercept {
+                                            debug!(
+                                                "Response {} skipped by filter rules",
+                                                request_id
+                                            );
+                                        } else if let Some(pending_tx) =
+                                            &intercept_state.pending_response_tx
+                                        {
+                                            let response_id = uuid::Uuid::new_v4().to_string();
+                                            let (action_tx, action_rx) =
+                                                tokio::sync::oneshot::channel();
 
-                                                                // 保存修改后的 headers
-                                                                let mut edited_headers =
+                                            // 发送拦截响应到待处理队列
+                                            let body_string =
+                                                String::from_utf8_lossy(&resp_ctx.body).to_string();
+                                            let pending_response = PendingInterceptResponse {
+                                                id: response_id.clone(),
+                                                request_id: request_id.clone(),
+                                                status: resp_ctx.status,
+                                                headers: resp_ctx.headers.clone(),
+                                                body: Some(body_string),
+                                                timestamp: chrono::Utc::now().timestamp_millis(),
+                                                response_tx: action_tx,
+                                            };
+
+                                            if pending_tx.send(pending_response).is_ok() {
+                                                info!(
+                                                    "Response intercepted: {} (status: {})",
+                                                    response_id, resp_ctx.status
+                                                );
+
+                                                // 等待用户操作（最多30秒）
+                                                match tokio::time::timeout(
+                                                    std::time::Duration::from_secs(30),
+                                                    action_rx,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(Ok(InterceptAction::Forward(
+                                                        modified_content,
+                                                    ))) => {
+                                                        info!("Response {} forwarded", response_id);
+                                                        if let Some(content) = modified_content {
+                                                            // 解析修改后的内容并重建响应
+                                                            match Self::parse_and_rebuild_response(
+                                                                &content,
+                                                            ) {
+                                                                Ok(modified_resp) => {
+                                                                    info!("Response {} modified and forwarded", response_id);
+
+                                                                    // 更新 resp_ctx 保存修改后的数据
+                                                                    resp_ctx.was_edited = true;
+                                                                    resp_ctx.edited_status = Some(
+                                                                        modified_resp
+                                                                            .status()
+                                                                            .as_u16(),
+                                                                    );
+
+                                                                    // 保存修改后的 headers
+                                                                    let mut edited_headers =
                                                                     std::collections::HashMap::new(
                                                                     );
-                                                                for (name, value) in
-                                                                    modified_resp.headers().iter()
-                                                                {
-                                                                    if let Ok(v) = value.to_str() {
-                                                                        edited_headers.insert(
-                                                                            name.to_string(),
-                                                                            v.to_string(),
+                                                                    for (name, value) in
+                                                                        modified_resp
+                                                                            .headers()
+                                                                            .iter()
+                                                                    {
+                                                                        if let Ok(v) =
+                                                                            value.to_str()
+                                                                        {
+                                                                            edited_headers.insert(
+                                                                                name.to_string(),
+                                                                                v.to_string(),
+                                                                            );
+                                                                        }
+                                                                    }
+                                                                    resp_ctx.edited_headers =
+                                                                        Some(edited_headers);
+
+                                                                    // 注意：修改后的 body 需要从 content 中解析
+                                                                    // 因为 modified_resp 的 body 已经被消费了，我们从原始 content 中提取
+                                                                    if let Some(body_start) =
+                                                                        content.find("\r\n\r\n")
+                                                                    {
+                                                                        let body_content = &content
+                                                                            [body_start + 4..];
+                                                                        resp_ctx.edited_body = Some(
+                                                                            body_content
+                                                                                .as_bytes()
+                                                                                .to_vec(),
                                                                         );
                                                                     }
-                                                                }
-                                                                resp_ctx.edited_headers =
-                                                                    Some(edited_headers);
 
-                                                                // 注意：修改后的 body 需要从 content 中解析
-                                                                // 因为 modified_resp 的 body 已经被消费了，我们从原始 content 中提取
-                                                                if let Some(body_start) =
-                                                                    content.find("\r\n\r\n")
-                                                                {
-                                                                    let body_content =
-                                                                        &content[body_start + 4..];
-                                                                    resp_ctx.edited_body = Some(
-                                                                        body_content
-                                                                            .as_bytes()
-                                                                            .to_vec(),
-                                                                    );
+                                                                    final_response = modified_resp;
                                                                 }
-
-                                                                final_response = modified_resp;
-                                                            }
-                                                            Err(e) => {
-                                                                warn!("Failed to parse modified response: {}, using original", e);
+                                                                Err(e) => {
+                                                                    warn!("Failed to parse modified response: {}, using original", e);
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                }
-                                                Ok(Ok(InterceptAction::Drop)) => {
-                                                    info!("Response {} dropped", response_id);
-                                                    // 返回一个空响应
-                                                    return Response::builder()
-                                                        .status(204)
-                                                        .body(Body::empty())
-                                                        .unwrap_or_else(|_| {
-                                                            Response::new(Body::from(""))
-                                                        });
-                                                }
-                                                Ok(Err(_)) => {
-                                                    warn!(
+                                                    Ok(Ok(InterceptAction::Drop)) => {
+                                                        info!("Response {} dropped", response_id);
+                                                        {
+                                                            let mut request_map =
+                                                                self.request_map.write().await;
+                                                            request_map.remove(&request_id);
+                                                        }
+                                                        self.intercept_tracking
+                                                            .clear_request(&request_id)
+                                                            .await;
+                                                        // 返回一个空响应
+                                                        return Response::builder()
+                                                            .status(204)
+                                                            .body(Body::empty())
+                                                            .unwrap_or_else(|_| {
+                                                                Response::new(Body::from(""))
+                                                            });
+                                                    }
+                                                    Ok(Err(_)) => {
+                                                        warn!(
                                                         "Response intercept channel closed for {}",
                                                         response_id
                                                     );
-                                                }
-                                                Err(_) => {
-                                                    warn!("Response intercept timeout for {}, forwarding", response_id);
+                                                    }
+                                                    Err(_) => {
+                                                        warn!("Response intercept timeout for {}, forwarding", response_id);
+                                                    }
                                                 }
                                             }
                                         }
@@ -2157,11 +2237,13 @@ impl HttpHandler for TrafficProxyHandler {
                                 let mut request_map = self.request_map.write().await;
                                 request_map.remove(&request_id);
                             }
+                            self.intercept_tracking.clear_request(&request_id).await;
 
                             // 返回响应
                             final_response
                         }
                         Err(e) => {
+                            self.intercept_tracking.clear_request(&request_id).await;
                             error!("Failed to build response context: {}", e);
                             let mut stats = self.stats.write().await;
                             stats.errors += 1;

@@ -109,7 +109,7 @@ impl TrafficClusterState {
             }
         }
 
-        if let Some(request_id) = payload.get("requestId").and_then(Value::as_i64) {
+        if let Some(request_id) = payload.get("dbRequestId").and_then(Value::as_i64) {
             self.last_request_id = Some(request_id);
             push_bounded(
                 &mut self.recent_request_ids,

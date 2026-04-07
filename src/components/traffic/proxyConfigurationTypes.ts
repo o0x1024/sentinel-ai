@@ -36,6 +36,15 @@ export interface TrafficBehaviorSignalSettings {
   browserExtensionLastSeenAt: string | null
 }
 
+export interface TrafficContextExtractionSettings {
+  principalKeys: string[]
+  resourceKeyHints: string[]
+  authHeaderKeys: string[]
+  authTokenKeys: string[]
+  cookieHintKeys: string[]
+  actionAliases: Record<string, string[]>
+}
+
 export interface ProxyListener {
   running: boolean
   interface: string
@@ -174,6 +183,17 @@ export function createDefaultTrafficBehaviorSignalSettings(): TrafficBehaviorSig
     mode: 'proxy_inferred',
     browserExtensionConnected: false,
     browserExtensionLastSeenAt: null,
+  }
+}
+
+export function createDefaultTrafficContextExtractionSettings(): TrafficContextExtractionSettings {
+  return {
+    principalKeys: [],
+    resourceKeyHints: [],
+    authHeaderKeys: [],
+    authTokenKeys: [],
+    cookieHintKeys: [],
+    actionAliases: {},
   }
 }
 

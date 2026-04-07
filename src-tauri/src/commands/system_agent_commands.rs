@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
+use crate::services::system_agents::finding_lifecycle::TrafficFindingLifecycle;
 use crate::services::system_agents::tool_policy::validate_profile_tool_policy;
 use crate::services::system_agents::{
     ensure_default_system_agent_profiles, run_plugin_fix_agent, run_traffic_active_verifier,
@@ -65,6 +66,8 @@ pub struct SystemAgentProfilePayload {
     pub capability: String,
     pub enabled: bool,
     pub trigger_mode: String,
+    pub llm_provider_override: Option<String>,
+    pub llm_model_override: Option<String>,
     pub base_prompt_id: Option<String>,
     pub prompt_patch: Option<String>,
     pub input_schema: Option<Value>,
@@ -195,7 +198,9 @@ fn run_from_record(record: SystemAgentRunRecord) -> SystemAgentRunPayload {
     }
 }
 
-fn version_from_record(record: SystemAgentProfileVersionRecord) -> SystemAgentProfileVersionPayload {
+fn version_from_record(
+    record: SystemAgentProfileVersionRecord,
+) -> SystemAgentProfileVersionPayload {
     SystemAgentProfileVersionPayload {
         id: record.id,
         profile_id: record.profile_id,
@@ -216,6 +221,8 @@ fn detail_from_record(
         capability: record.capability,
         enabled: record.enabled,
         trigger_mode: record.trigger_mode,
+        llm_provider_override: record.llm_provider_override,
+        llm_model_override: record.llm_model_override,
         base_prompt_id: record.base_prompt_id,
         prompt_patch: record.prompt_patch,
         input_schema: parse_json_value(&record.input_schema_json),
@@ -239,6 +246,23 @@ fn detail_from_record(
 fn record_from_payload(
     payload: &SystemAgentProfilePayload,
 ) -> Result<SystemAgentProfileRecord, String> {
+    let llm_provider_override = payload
+        .llm_provider_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let llm_model_override = payload
+        .llm_model_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    if llm_model_override.is_some() && llm_provider_override.is_none() {
+        return Err("设置自定义模型时必须同时设置自定义提供商".to_string());
+    }
+
     Ok(SystemAgentProfileRecord {
         id: payload.id.clone(),
         name: payload.name.clone(),
@@ -247,6 +271,8 @@ fn record_from_payload(
         capability: payload.capability.clone(),
         enabled: payload.enabled,
         trigger_mode: payload.trigger_mode.clone(),
+        llm_provider_override,
+        llm_model_override,
         base_prompt_id: payload.base_prompt_id.clone(),
         prompt_patch: payload.prompt_patch.clone(),
         input_schema_json: to_json_object_string(payload.input_schema.as_ref())?,
@@ -487,19 +513,16 @@ pub async fn submit_system_agent_finding_feedback(
         .ok_or_else(|| "未找到对应的风险记录".to_string())?;
 
     if !finding.plugin_id.starts_with("agent:") {
-        return Ok(CommandResponse::err("仅支持对 System Agent 发现结果提交反馈"));
+        return Ok(CommandResponse::err(
+            "仅支持对 System Agent 发现结果提交反馈",
+        ));
     }
 
     let next_status = match request.feedback_type.as_str() {
-        "confirm" => "reviewed",
-        "false_positive" => "false_positive",
-        "reopen" => "open",
-        other => {
-            return Ok(CommandResponse::err(format!(
-                "不支持的反馈类型: {}",
-                other
-            )))
-        }
+        "confirm" => TrafficFindingLifecycle::Verified.vulnerability_status(),
+        "false_positive" => TrafficFindingLifecycle::FalsePositive.vulnerability_status(),
+        "reopen" => TrafficFindingLifecycle::FormalOpen.vulnerability_status(),
+        other => return Ok(CommandResponse::err(format!("不支持的反馈类型: {}", other))),
     };
 
     db_service
@@ -513,10 +536,12 @@ pub async fn submit_system_agent_finding_feedback(
         url: String::new(),
         method: "SYSTEM".to_string(),
         location: "system_agent_feedback".to_string(),
-        evidence_snippet: request.notes.clone().unwrap_or_else(|| match request.feedback_type.as_str() {
-            "confirm" => "用户确认该 System Agent 发现值得跟进。".to_string(),
-            "false_positive" => "用户将该 System Agent 发现标记为误报。".to_string(),
-            _ => "用户重新打开该 System Agent 发现。".to_string(),
+        evidence_snippet: request.notes.clone().unwrap_or_else(|| {
+            match request.feedback_type.as_str() {
+                "confirm" => "用户确认该 System Agent 发现值得跟进。".to_string(),
+                "false_positive" => "用户将该 System Agent 发现标记为误报。".to_string(),
+                _ => "用户重新打开该 System Agent 发现。".to_string(),
+            }
         }),
         request_headers: None,
         request_body: Some(
@@ -527,7 +552,13 @@ pub async fn submit_system_agent_finding_feedback(
             .to_string(),
         ),
         response_status: None,
-        response_headers: None,
+        response_headers: Some(
+            json!({
+                "analysisStage": "feedback",
+                "nextStatus": next_status,
+            })
+            .to_string(),
+        ),
         response_body: None,
         timestamp: Utc::now(),
     };

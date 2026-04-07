@@ -253,7 +253,8 @@ export default {
     categories: {
       all: '全部',
       trafficAnalysis: '流量分析插件',
-      agents: 'Agent工具插件',
+      agents: 'Agent插件',
+      intruder: 'Intruder插件',
       security: '安全',
       automation: '自动化',
       reporting: '报告',
@@ -474,6 +475,29 @@ export default {
       analyzer: '分析工具',
       reporter: '报告工具',
       custom: '自定义'
+    },
+
+    trafficCategories: {
+      sqli: 'SQL注入',
+      command_injection: '命令注入',
+      xss: '跨站脚本',
+      idor: '越权访问',
+      auth_bypass: '认证绕过',
+      csrf: 'CSRF',
+      info_leak: '信息泄露',
+      file_upload: '文件上传',
+      file_inclusion: '文件包含',
+      path_traversal: '路径穿越',
+      xxe: 'XXE',
+      ssrf: 'SSRF',
+      report: '报告',
+      custom: '自定义'
+    },
+
+    intruderCategories: {
+      payload_generator: 'Payload 生成器',
+      payload_processor: 'Payload 处理器',
+      request_processor: '请求处理器'
     }
   },
 
