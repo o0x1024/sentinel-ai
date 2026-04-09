@@ -140,8 +140,9 @@ fn assess_repeat_action(
         .iter()
         .filter(|status| is_success_status(**status))
         .count();
-    let repeated_success =
-        success_count >= 2 && is_success_status(response_status) && (matched_status || matched_body);
+    let repeated_success = success_count >= 2
+        && is_success_status(response_status)
+        && (matched_status || matched_body);
     if repeated_success {
         reasons.push(format!(
             "Repeated action kept succeeding across multiple sequential attempts (attemptStatuses={:?}, statusMatch={}, bodyMatch={}).",

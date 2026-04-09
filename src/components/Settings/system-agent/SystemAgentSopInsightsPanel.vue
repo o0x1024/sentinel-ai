@@ -96,7 +96,7 @@
       </div>
     </div>
 
-    <dialog ref="dialogRef" class="modal">
+    <AppDialog ref="dialogRef" class="modal">
       <div class="modal-box max-w-2xl">
         <h3 class="font-bold text-lg mb-4">
           {{ editingIndex === -1 ? '新增 SOP' : '编辑 SOP' }}
@@ -159,7 +159,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>close</button>
       </form>
-    </dialog>
+    </AppDialog>
   </div>
 </template>
 

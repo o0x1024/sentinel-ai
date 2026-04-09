@@ -1,10 +1,11 @@
 <template>
-  <dialog :open="open" class="modal" @click.self="$emit('close')">
-    <div class="modal-box max-w-2xl">
-      <div class="mb-4 flex items-center justify-between">
-        <h3 class="text-base font-semibold">{{ title }}</h3>
-        <button class="btn btn-ghost btn-xs" type="button" @click="$emit('close')">✕</button>
-      </div>
+  <Teleport to="body">
+    <div v-if="open" class="modal modal-open intruder-plugin-config-modal" @click.self="$emit('close')">
+      <div class="modal-box max-w-2xl intruder-plugin-config-modal-box">
+        <div class="mb-4 flex items-center justify-between">
+          <h3 class="text-base font-semibold">{{ title }}</h3>
+          <button class="btn btn-ghost btn-xs" type="button" @click="$emit('close')">✕</button>
+        </div>
 
       <div class="mb-4 flex items-center justify-between gap-3">
         <div class="tabs tabs-boxed tabs-sm">
@@ -365,44 +366,44 @@
           {{ $t('trafficAnalysis.intruder.actions.cancel') }}
         </button>
       </div>
+      </div>
     </div>
-  </dialog>
 
-  <dialog :open="dictionaryPickerOpen" class="modal" @click.self="closeDictionaryPicker">
-    <div class="modal-box max-w-3xl">
-      <div class="mb-4 flex items-center justify-between">
-        <div>
-          <h3 class="text-base font-semibold">
-            {{ dictionaryPickerAction === 'reference'
-              ? $t('trafficAnalysis.intruder.labels.selectDictionaryReference')
-              : $t('trafficAnalysis.intruder.labels.insertDictionaryWords') }}
-          </h3>
-          <p class="mt-1 text-xs text-base-content/60">
-            {{ dictionaryPickerAction === 'reference'
-              ? $t('trafficAnalysis.intruder.labels.dictionaryReferenceHint')
-              : $t('trafficAnalysis.intruder.labels.dictionaryInsertHint') }}
-          </p>
+    <div v-if="dictionaryPickerOpen" class="modal modal-open intruder-plugin-config-modal intruder-plugin-config-modal--top" @click.self="closeDictionaryPicker">
+      <div class="modal-box max-w-3xl intruder-plugin-config-modal-box">
+        <div class="mb-4 flex items-center justify-between">
+          <div>
+            <h3 class="text-base font-semibold">
+              {{ dictionaryPickerAction === 'reference'
+                ? $t('trafficAnalysis.intruder.labels.selectDictionaryReference')
+                : $t('trafficAnalysis.intruder.labels.insertDictionaryWords') }}
+            </h3>
+            <p class="mt-1 text-xs text-base-content/60">
+              {{ dictionaryPickerAction === 'reference'
+                ? $t('trafficAnalysis.intruder.labels.dictionaryReferenceHint')
+                : $t('trafficAnalysis.intruder.labels.dictionaryInsertHint') }}
+            </p>
+          </div>
+          <button class="btn btn-ghost btn-xs" type="button" @click="closeDictionaryPicker">✕</button>
         </div>
-        <button class="btn btn-ghost btn-xs" type="button" @click="closeDictionaryPicker">✕</button>
-      </div>
 
-      <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_12rem]">
-        <input
-          v-model="dictionaryPickerSearch"
-          type="text"
-          class="input input-bordered input-sm"
-          :placeholder="$t('trafficAnalysis.intruder.placeholders.searchDictionary')"
-        />
-        <select
-          v-model="dictionaryPickerType"
-          class="select select-bordered select-sm"
-        >
-          <option value="">{{ $t('trafficAnalysis.intruder.labels.allDictionaryTypes') }}</option>
-          <option v-for="option in dictionaryPickerTypeOptions" :key="option" :value="option">
-            {{ getDictionaryTypeLabel(option) }}
-          </option>
-        </select>
-      </div>
+        <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_12rem]">
+          <input
+            v-model="dictionaryPickerSearch"
+            type="text"
+            class="input input-bordered input-sm"
+            :placeholder="$t('trafficAnalysis.intruder.placeholders.searchDictionary')"
+          />
+          <select
+            v-model="dictionaryPickerType"
+            class="select select-bordered select-sm"
+          >
+            <option value="">{{ $t('trafficAnalysis.intruder.labels.allDictionaryTypes') }}</option>
+            <option v-for="option in dictionaryPickerTypeOptions" :key="option" :value="option">
+              {{ getDictionaryTypeLabel(option) }}
+            </option>
+          </select>
+        </div>
 
       <div v-if="dictionaryPickerAction === 'insert'" class="mt-3">
         <label class="label py-1">
@@ -603,8 +604,9 @@
           {{ $t('trafficAnalysis.intruder.actions.cancel') }}
         </button>
       </div>
+      </div>
     </div>
-  </dialog>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -1759,3 +1761,20 @@ watch(selectedDictionaryId, async (value, previousValue) => {
   await loadSelectedDictionaryPreview()
 })
 </script>
+
+<style scoped>
+.intruder-plugin-config-modal {
+  z-index: 70;
+  align-items: flex-start;
+  padding: 5rem 1rem 1.5rem;
+}
+
+.intruder-plugin-config-modal--top {
+  z-index: 80;
+}
+
+.intruder-plugin-config-modal-box {
+  max-height: calc(100vh - 6.5rem);
+  overflow-y: auto;
+}
+</style>

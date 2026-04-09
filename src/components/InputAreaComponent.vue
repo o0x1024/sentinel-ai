@@ -295,7 +295,7 @@
       />
 
       <Teleport to="body">
-        <dialog
+        <AppDialog
           v-if="showSlashManager"
           class="modal modal-open slash-manager-modal"
         >
@@ -438,7 +438,7 @@
           <form method="dialog" class="modal-backdrop">
             <button @click.prevent="closeSlashManager">close</button>
           </form>
-        </dialog>
+        </AppDialog>
       </Teleport>
       <input
         ref="importSlashInputRef"

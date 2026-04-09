@@ -777,7 +777,10 @@ impl AiServiceManager {
             .filter(|provider| !provider.is_empty())
         {
             return self.find_service_by_provider(provider).ok_or_else(|| {
-                anyhow::anyhow!("No AI service available for provider override '{}'", provider)
+                anyhow::anyhow!(
+                    "No AI service available for provider override '{}'",
+                    provider
+                )
             });
         }
 
@@ -802,11 +805,16 @@ impl AiServiceManager {
         model_override: Option<&str>,
     ) -> Result<LlmConfig> {
         let service = self.resolve_generation_service(provider_override).await?;
-        let mut llm_config =
-            apply_generation_settings_from_db(self.get_db_arc().as_ref(), service.service.to_llm_config())
-                .await;
+        let mut llm_config = apply_generation_settings_from_db(
+            self.get_db_arc().as_ref(),
+            service.service.to_llm_config(),
+        )
+        .await;
 
-        if let Some(model) = model_override.map(str::trim).filter(|model| !model.is_empty()) {
+        if let Some(model) = model_override
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        {
             llm_config = llm_config.with_model(model);
         }
 

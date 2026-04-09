@@ -3,9 +3,9 @@ use sentinel_plugins::{PluginMetadata, Severity};
 use sentinel_traffic::ScanTask;
 use tauri::{AppHandle, State};
 
-use crate::commands::traffic_analysis_commands::{
-    refresh_active_agent_plugin_tools, resolved_store_plugin_monitor_type, CommandResponse,
-    TrafficAnalysisState,
+use crate::commands::command_response_support::CommandResponse;
+use crate::commands::traffic::{
+    refresh_active_agent_plugin_tools, resolved_store_plugin_monitor_type, TrafficAnalysisState,
 };
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 

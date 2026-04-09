@@ -1,5 +1,5 @@
 <template>
-  <dialog class="modal" :class="{ 'modal-open': visible }">
+  <AppDialog class="modal" :class="{ 'modal-open': visible }">
     <div class="modal-box max-w-2xl">
       <h3 class="font-bold text-lg">{{ t('bugBounty.surface.inventory.edit.title') }}</h3>
       <p class="text-sm text-base-content/60 mt-1">
@@ -77,7 +77,7 @@
         </div>
       </form>
     </div>
-  </dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">

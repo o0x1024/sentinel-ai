@@ -6,12 +6,14 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import TopNavbar from './components/Layout/TopNavbar.vue'
+import GlobalSearchPalette from './components/Layout/GlobalSearchPalette.vue'
 import Sidebar from './components/Layout/Sidebar.vue'
 import LicenseActivation from './components/LicenseActivation.vue'
 import GlobalPluginEditor from './components/PluginManagement/GlobalPluginEditor.vue'
 
 import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
+import { isGlobalSearchShortcut, requestGlobalSearchOpen } from './services/globalSearchFocus'
 
 const router = useRouter()
 const route = useRoute()
@@ -43,10 +45,34 @@ const closeMobileMenu = () => {
   showMobileMenu.value = false
 }
 
+const isEditableTarget = (target: EventTarget | null) => {
+  const element = target as HTMLElement | null
+  if (!element) {
+    return false
+  }
+
+  const tagName = element.tagName.toLowerCase()
+  return element.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select'
+}
+
+const openGlobalSearch = async () => {
+  if (isStandaloneRoute.value) {
+    return
+  }
+
+  requestGlobalSearchOpen()
+}
+
 // 注册AI助手快捷键 (Alt+A)
 const handleKeyDown = (e: KeyboardEvent) => {
   if (e.key === 'Escape' && showMobileMenu.value) {
     closeMobileMenu()
+  }
+
+  if (isGlobalSearchShortcut(e) && !isEditableTarget(e.target)) {
+    e.preventDefault()
+    void openGlobalSearch()
+    return
   }
 
   if (e.key === 'Backspace') {
@@ -97,6 +123,8 @@ function onLicenseActivated() {
 
 // 在组件挂载时导航到Dashboard (如果当前在根路径)
 onMounted(async () => {
+  setLanguage((locale.value.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en')
+
   // Check license first
   await checkLicenseStatus()
 
@@ -241,6 +269,7 @@ window.updateUIScale = (newScale: number) => {
   <div id="app" class="h-screen bg-base-100 overflow-hidden">
     <!-- License Activation Dialog -->
     <LicenseActivation v-if="!isLicensed" @activated="onLicenseActivated" />
+    <GlobalSearchPalette v-if="!isStandaloneRoute" />
 
     <template v-if="!isStandaloneRoute">
       <TopNavbar @toggle-sidebar="toggleSidebar" @set-theme="setTheme" @switch-language="switchLanguage" />

@@ -69,7 +69,7 @@ export default {
   mcp: 'MCP管理',
   rolesManagement: '角色管理',
   scanSessions: '扫描会话',
-  agents: '智能体库',
+  agents: '系统智能体',
   agentCreator: 'Agent创建器',
   plugins: '插件管理',
   license: '许可证管理',
@@ -100,7 +100,7 @@ export default {
   // Notifications
   notifications: '通知',
   notificationCenter: '消息中心',
-  agentManagement: '智能体库',
+  agentManagement: '智能体管理',
   notificationRules: '通知中心',
   unreadNotifications: '未读通知',
   markAsRead: '标记为已读',

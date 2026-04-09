@@ -531,7 +531,7 @@
     @close="pluginConfigDialogOpen = false"
   />
 
-  <dialog :open="requestPreviewDialogOpen" class="modal" @click.self="requestPreviewDialogOpen = false">
+  <AppDialog :open="requestPreviewDialogOpen" class="modal" @click.self="requestPreviewDialogOpen = false">
     <div class="modal-box max-w-4xl">
       <div class="mb-4 flex items-center justify-between">
         <div>
@@ -1041,7 +1041,7 @@
         </button>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">

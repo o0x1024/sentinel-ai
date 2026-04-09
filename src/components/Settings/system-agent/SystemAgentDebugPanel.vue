@@ -4,14 +4,10 @@
       <div>
         <div class="font-semibold text-sm">调试与测试</div>
         <p class="text-xs text-base-content/60 mt-1">
-          默认使用推荐模板；只有在需要调试时再展开编辑原始 JSON。
+          通过测试事件回放被动系统智能体链路；只有在需要调试时再展开编辑原始 JSON。
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button class="btn btn-xs btn-outline" @click="applyRecommendedManualTemplate">
-          <i class="fas fa-wand-magic-sparkles mr-1"></i>
-          填充运行模板
-        </button>
         <button
           class="btn btn-xs btn-outline"
           @click="applyRecommendedDispatchTemplate"
@@ -23,30 +19,17 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-      <div class="rounded-lg border border-base-300 p-3 bg-base-200/40">
-        <div class="text-sm font-medium">运行模板</div>
-        <div class="text-xs text-base-content/60 mt-1 whitespace-pre-line">
-          {{ manualInputGuidance }}
-        </div>
-      </div>
-      <div
-        class="rounded-lg border border-base-300 p-3 bg-base-200/40"
-        :class="{ 'opacity-60': !supportsDispatch }"
-      >
-        <div class="text-sm font-medium">事件模板</div>
-        <div class="text-xs text-base-content/60 mt-1 whitespace-pre-line">
-          {{ dispatchPayloadGuidance }}
-        </div>
+    <div
+      class="rounded-lg border border-base-300 p-3 bg-base-200/40"
+      :class="{ 'opacity-60': !supportsDispatch }"
+    >
+      <div class="text-sm font-medium">事件模板</div>
+      <div class="text-xs text-base-content/60 mt-1 whitespace-pre-line">
+        {{ dispatchPayloadGuidance }}
       </div>
     </div>
 
     <div class="flex flex-wrap gap-2">
-      <button class="btn btn-outline" @click="$emit('run')" :disabled="running">
-        <span v-if="running" class="loading loading-spinner loading-xs mr-2"></span>
-        <i v-else class="fas fa-play mr-1"></i>
-        手动运行
-      </button>
       <button class="btn btn-outline" @click="$emit('dispatch')" :disabled="dispatching || !supportsDispatch">
         <span v-if="dispatching" class="loading loading-spinner loading-xs mr-2"></span>
         <i v-else class="fas fa-bolt mr-1"></i>
@@ -57,23 +40,17 @@
     <div class="collapse collapse-arrow border border-base-300 bg-base-100">
       <input type="checkbox" />
       <div class="collapse-title text-sm font-semibold">
-        原始 JSON 调试输入
+        原始事件载荷 JSON
       </div>
       <div class="collapse-content">
-        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 pt-2">
-          <label class="form-control">
-            <span class="label-text">手动运行输入 JSON</span>
-            <textarea v-model="manualInputProxy" class="textarea textarea-bordered h-36 font-mono text-xs"></textarea>
-          </label>
-          <label class="form-control">
-            <span class="label-text">测试事件载荷 JSON</span>
-            <textarea
-              v-model="dispatchPayloadProxy"
-              class="textarea textarea-bordered h-36 font-mono text-xs"
-              :disabled="!supportsDispatch"
-            ></textarea>
-          </label>
-        </div>
+        <label class="form-control pt-2">
+          <span class="label-text">测试事件载荷 JSON</span>
+          <textarea
+            v-model="dispatchPayloadProxy"
+            class="textarea textarea-bordered h-36 font-mono text-xs"
+            :disabled="!supportsDispatch"
+          ></textarea>
+        </label>
       </div>
     </div>
   </div>
@@ -86,30 +63,19 @@ import type { SystemAgentProfilePayload } from '../systemAgentSettingsSupport'
 import {
   getSystemAgentDispatchPayloadGuidance,
   getSystemAgentDispatchPayloadTemplate,
-  getSystemAgentManualInputGuidance,
-  getSystemAgentManualInputTemplate,
   supportsSystemAgentDispatch,
 } from './systemAgentRegistry'
 
 const props = defineProps<{
   profile: SystemAgentProfilePayload
-  manualInputText: string
   dispatchPayloadText: string
-  running: boolean
   dispatching: boolean
 }>()
 
 const emit = defineEmits<{
-  'update:manualInputText': [value: string]
   'update:dispatchPayloadText': [value: string]
-  run: []
   dispatch: []
 }>()
-
-const manualInputProxy = computed({
-  get: () => props.manualInputText,
-  set: value => emit('update:manualInputText', value),
-})
 
 const dispatchPayloadProxy = computed({
   get: () => props.dispatchPayloadText,
@@ -118,17 +84,9 @@ const dispatchPayloadProxy = computed({
 
 const supportsDispatch = computed(() => supportsSystemAgentDispatch(props.profile))
 
-const manualInputGuidance = computed(() => {
-  return getSystemAgentManualInputGuidance(props.profile)
-})
-
 const dispatchPayloadGuidance = computed(() => {
   return getSystemAgentDispatchPayloadGuidance(props.profile)
 })
-
-function applyRecommendedManualTemplate() {
-  emit('update:manualInputText', getSystemAgentManualInputTemplate(props.profile))
-}
 
 function applyRecommendedDispatchTemplate() {
   if (!supportsSystemAgentDispatch(props.profile)) {

@@ -99,9 +99,10 @@
       </div>
     </div>
 
-    <!-- Template Editor Modal -->
-    <div v-if="showEditorModal" class="modal modal-open">
-      <div class="modal-box max-w-4xl h-[80vh] flex flex-col">
+    <Teleport to="body">
+      <!-- Template Editor Modal -->
+      <div v-if="showEditorModal" class="modal modal-open">
+        <div class="modal-box max-w-4xl h-[80vh] flex flex-col">
         <h3 class="font-bold text-lg mb-4">
           {{ editingTemplate ? t('bugBounty.templates.editTemplate') : t('bugBounty.templates.createTemplate') }}
         </h3>
@@ -194,12 +195,12 @@
             {{ t('common.save') }}
           </button>
         </div>
+        </div>
       </div>
-    </div>
 
-    <!-- Template Preview Modal -->
-    <div v-if="showPreviewModal" class="modal modal-open">
-      <div class="modal-box max-w-3xl">
+      <!-- Template Preview Modal -->
+      <div v-if="showPreviewModal" class="modal modal-open">
+        <div class="modal-box max-w-3xl">
         <h3 class="font-bold text-lg mb-4">{{ previewingTemplate?.name }}</h3>
         
         <div class="space-y-4">
@@ -236,8 +237,9 @@
           </button>
           <button class="btn" @click="showPreviewModal = false">{{ t('common.close') }}</button>
         </div>
+        </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
 

@@ -52,7 +52,7 @@ export interface CommandResponse<T> {
   error?: string
 }
 
-export interface PluginFixAgentResult {
+export interface PluginFixTaskResult {
   runId: string
   profileId: string
   fixedCode: string
@@ -72,6 +72,9 @@ export interface PluginFixAgentResult {
   }
   promptPatchApplied: boolean
 }
+
+// Compatibility alias for older imports. Prefer `PluginFixTaskResult`.
+export type PluginFixAgentResult = PluginFixTaskResult
 
 export interface TestResult {
   success: boolean

@@ -26,7 +26,7 @@
     </div>
   </div>
 
-  <dialog :open="showNewWorkflowConfirm" class="modal">
+  <AppDialog :open="showNewWorkflowConfirm" class="modal">
     <div class="modal-box">
       <h3 class="font-bold text-lg mb-4">{{ t('trafficAnalysis.workflowStudio.newWorkflowConfirm.title') }}</h3>
       <p class="text-base-content/80">{{ t('trafficAnalysis.workflowStudio.newWorkflowConfirm.message') }}</p>
@@ -39,9 +39,9 @@
     <form method="dialog" class="modal-backdrop">
       <button @click="$emit('update:showNewWorkflowConfirm', false)">{{ t('trafficAnalysis.workflowStudio.newWorkflowConfirm.close') }}</button>
     </form>
-  </dialog>
+  </AppDialog>
 
-  <dialog :open="showMetaDialog" class="modal" @click.self="$emit('update:showMetaDialog', false)">
+  <AppDialog :open="showMetaDialog" class="modal" @click.self="$emit('update:showMetaDialog', false)">
     <div class="modal-box">
       <h3 class="font-bold text-lg mb-4">{{ t('trafficAnalysis.workflowStudio.metaDialog.title') }}</h3>
       <div class="space-y-3">
@@ -84,7 +84,7 @@
         <button class="btn btn-sm" @click="$emit('update:showMetaDialog', false)">{{ t('trafficAnalysis.workflowStudio.metaDialog.cancel') }}</button>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
 
   <Transition name="fade">
     <div v-if="drawerOpen" class="fixed inset-0 bg-black/20 z-40" @click="onCloseDrawer"></div>
@@ -199,7 +199,7 @@
     </div>
   </Transition>
 
-  <dialog ref="detailDialogRef" :open="showDetailDialog" class="modal" @click.self="$emit('update:showDetailDialog', false)">
+  <AppDialog ref="detailDialogRef" :open="showDetailDialog" class="modal" @click.self="$emit('update:showDetailDialog', false)">
     <div :class="['modal-box', detailDialogFullscreen ? 'max-w-[95vw] w-[95vw] max-h-[95vh] h-[95vh]' : 'max-w-3xl max-h-[80vh]']">
       <div class="flex items-center justify-between mb-4">
         <h3 class="font-bold text-lg">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.title') }}</h3>
@@ -243,7 +243,7 @@
         <button class="btn btn-sm" @click="$emit('update:showDetailDialog', false)">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.close') }}</button>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
 
   <div v-if="showResultPanel" ref="resultPanelRef" class="fixed inset-y-0 right-0 w-[500px] bg-base-100 shadow-xl border-l border-base-300 z-50">
     <div class="p-3 flex items-center justify-between border-b border-base-300">

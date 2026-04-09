@@ -60,14 +60,15 @@
         </div>
       </div>
 
-      <div v-if="new_rule_modal_open" class="fixed inset-0 z-[1000] bg-black/40 flex items-center justify-center">
-        <div class="card bg-base-100 w-full max-w-2xl">
-          <div class="card-body">
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="card-title">{{ editing_rule_id ? t('notifications.editNotification') : t('notifications.newNotification') }}</h3>
-              <button class="btn btn-ghost btn-sm" @click="close_rule_modal"><i class="fas fa-times"></i></button>
-            </div>
-            <div class="space-y-4">
+      <Teleport to="body">
+        <div v-if="new_rule_modal_open" class="fixed inset-0 z-[1000] bg-black/40 flex items-center justify-center">
+          <div class="card bg-base-100 w-full max-w-2xl">
+            <div class="card-body">
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="card-title">{{ editing_rule_id ? t('notifications.editNotification') : t('notifications.newNotification') }}</h3>
+                <button class="btn btn-ghost btn-sm" @click="close_rule_modal"><i class="fas fa-times"></i></button>
+              </div>
+              <div class="space-y-4">
               <div class="space-y-3">
                 <div>
                   <label class="label"><span class="label-text">{{ t('notifications.form.notificationType') }}</span></label>
@@ -149,14 +150,15 @@
                     </div>
                   </div>
               </div>
-              <div class="flex justify-end gap-2">
-                <button class="btn" @click="close_rule_modal">{{ t('notifications.cancel') }}</button>
-                <button class="btn btn-primary" @click="confirm_rule_modal">{{ t('notifications.confirm') }}</button>
+                <div class="flex justify-end gap-2">
+                  <button class="btn" @click="close_rule_modal">{{ t('notifications.cancel') }}</button>
+                  <button class="btn btn-primary" @click="confirm_rule_modal">{{ t('notifications.confirm') }}</button>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      </Teleport>
     </div>
   </div>
 </template>

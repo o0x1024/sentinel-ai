@@ -8,6 +8,7 @@ use sentinel_traffic::HttpRequestRecord;
 
 const MAX_TOP_LEVEL_KEYS: usize = 12;
 const MAX_RECENT_SEQUENCE: usize = 6;
+const MAX_BASELINE_BODY_LEN: usize = 16_384;
 
 #[derive(Debug, Clone)]
 pub struct TrafficContextSnapshot {
@@ -127,6 +128,13 @@ pub fn build_traffic_context_snapshot(
             "queryKeys": sorted_keys(&query_params),
             "bodySchema": body_schema,
         },
+        "baselineRequest": {
+            "requestHeaders": request_headers,
+            "requestBody": truncate_payload_text(request_body.as_deref()),
+            "responseStatus": effective_status_code(record),
+            "responseHeaders": response_headers,
+            "responseBody": truncate_payload_text(response_body.as_deref()),
+        },
         "responseFingerprint": response_fingerprint,
         "recentSequence": recent_sequence.iter().take(MAX_RECENT_SEQUENCE).cloned().collect::<Vec<_>>(),
     });
@@ -213,6 +221,10 @@ fn parse_json_map(raw: Option<&str>) -> Map<String, Value> {
     raw.and_then(|text| serde_json::from_str::<Value>(text).ok())
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default()
+}
+
+fn truncate_payload_text(raw: Option<&str>) -> Option<String> {
+    raw.map(|text| text.chars().take(MAX_BASELINE_BODY_LEN).collect())
 }
 
 fn extract_query_params(url: Option<&Url>) -> Map<String, Value> {

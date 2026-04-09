@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::net::TcpListener;
 use url::Url;
 
-use crate::commands::traffic_analysis_commands::TrafficAnalysisState;
+use crate::commands::traffic::TrafficAnalysisState;
 use crate::services::database::DatabaseService;
 use crate::services::system_agents::{
     TRAFFIC_BEHAVIOR_EXTENSION_BRIDGE_PORT, TRAFFIC_BEHAVIOR_SIGNAL_SETTINGS_KEY,

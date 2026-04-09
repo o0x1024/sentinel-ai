@@ -40,6 +40,14 @@ fn default_strategy() -> String {
     "replay_as_is".to_string()
 }
 
+fn value_to_payload_string(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        other => serde_json::to_string(other).ok(),
+    }
+}
+
 pub fn extract_verification_plan(output: &Value) -> Option<VerificationPlan> {
     let raw = output.get("verificationPlan")?;
     let mut plan = serde_json::from_value::<VerificationPlan>(raw.clone()).ok()?;
@@ -66,14 +74,28 @@ pub fn extract_context_payload(evidence: &[TrafficEvidenceRecord]) -> Option<Val
 }
 
 pub fn extract_target_request_id(output: Option<&Value>, payload: Option<&Value>) -> Option<i64> {
-    output
+    let payload_request_id = payload
+        .and_then(|value| value.get("dbRequestId"))
+        .and_then(Value::as_i64);
+    let recent_request_ids = payload
+        .and_then(|value| value.get("clusterSummary"))
+        .and_then(|value| value.get("recentRequestIds"))
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_i64).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let planned_request_id = output
         .and_then(extract_verification_plan)
-        .and_then(|plan| plan.target_request_id)
-        .or_else(|| {
-            payload
-                .and_then(|value| value.get("dbRequestId"))
-                .and_then(Value::as_i64)
-        })
+        .and_then(|plan| plan.target_request_id);
+
+    if let Some(target_request_id) = planned_request_id {
+        if payload_request_id == Some(target_request_id)
+            || recent_request_ids.contains(&target_request_id)
+        {
+            return Some(target_request_id);
+        }
+    }
+
+    payload_request_id
 }
 
 pub fn build_baseline_from_proxy_request(record: &ProxyRequestRecord) -> VerificationBaseline {
@@ -100,6 +122,26 @@ pub fn build_baseline_from_evidence(item: &TrafficEvidenceRecord) -> Verificatio
         response_headers: item.response_headers.clone(),
         response_body: item.response_body.clone(),
     }
+}
+
+pub fn build_baseline_from_context_payload(payload: &Value) -> Option<VerificationBaseline> {
+    let baseline = payload.get("baselineRequest")?;
+    let url = payload.get("url").and_then(Value::as_str)?.to_string();
+    let method = payload.get("method").and_then(Value::as_str)?.to_string();
+
+    Some(VerificationBaseline {
+        source_request_id: payload.get("dbRequestId").and_then(Value::as_i64),
+        url,
+        method,
+        request_headers: value_to_payload_string(baseline.get("requestHeaders")),
+        request_body: value_to_payload_string(baseline.get("requestBody")),
+        response_status: baseline
+            .get("responseStatus")
+            .and_then(Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok()),
+        response_headers: value_to_payload_string(baseline.get("responseHeaders")),
+        response_body: value_to_payload_string(baseline.get("responseBody")),
+    })
 }
 
 pub fn select_fallback_evidence<'a>(

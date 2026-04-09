@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-6">
-    <VulnerabilitiesStatsOverview :stats="stats" :lifecycle-stats="lifecycleStats" />
+    <VulnerabilitiesStatsOverview :stats="stats" />
 
     <VulnerabilitiesEvaluationSummaryPanel
       :current="evaluationComparison"
@@ -12,20 +12,6 @@
 
     <!-- 筛选器 -->
     <div class="bg-base-100 rounded-lg p-4 shadow-sm border border-base-300">
-      <div class="mb-3 flex flex-wrap items-center gap-2">
-        <span class="text-sm text-base-content/70">视图</span>
-        <div class="join">
-          <button
-            v-for="option in lifecycleViewOptions"
-            :key="option.value"
-            class="join-item btn btn-sm"
-            :class="filters.lifecycleView === option.value ? 'btn-primary' : 'btn-outline'"
-            @click="setLifecycleView(option.value)"
-          >
-            {{ option.label }}
-          </button>
-        </div>
-      </div>
       <div class="flex flex-wrap gap-3 items-center">
         <!-- 批量操作 -->
         <div v-if="selectedIds.size > 0" class="flex items-center gap-2 mr-auto">
@@ -78,11 +64,9 @@
             class="select select-bordered select-sm"
             @change="applyStatusFilter"
           >
-            <option value="">全部阶段</option>
-            <option value="candidate">候选待验证</option>
-            <option value="reviewed">已验证</option>
-            <option value="false_positive">误报</option>
+            <option value="">全部正式状态</option>
             <option value="open">开放</option>
+            <option value="reviewed">已验证</option>
             <option value="fixed">已修复</option>
           </select>
         </div>
@@ -134,57 +118,6 @@
           导入评测对照
         </button>
       </div>
-      <details class="mt-3 rounded-lg border border-base-300 bg-base-200/40">
-        <summary class="cursor-pointer select-none px-4 py-3 text-sm font-medium">
-          System Agent 扩展筛选与保存视图
-        </summary>
-        <div class="space-y-3 border-t border-base-300 px-4 py-4">
-          <p class="text-xs text-base-content/60">
-            SQLi、RCE、SSRF 等普通漏洞通常不需要下面这些筛选。只有在排查行为分析、语义抽象、逻辑漏洞候选时再展开。
-          </p>
-          <VulnerabilitiesSavedViewsBar
-            :presets="filterPresets"
-            :active-preset-id="activeFilterPreset"
-            :saved-views="savedViews"
-            :active-saved-view-id="activeSavedViewId"
-            @apply-preset="applyFilterPreset"
-            @reset-filters="resetAdvancedFilters"
-            @apply-saved-view="applySavedView"
-            @save-current-view="saveCurrentView"
-            @export-saved-views="exportSavedViews"
-            @import-saved-views="importSavedViews"
-            @delete-saved-view="deleteSavedView"
-          />
-          <div class="flex flex-wrap gap-3 items-center">
-            <div class="form-control">
-              <select
-                v-model="filters.semanticSource"
-                class="select select-bordered select-sm"
-                @change="applyFilters"
-              >
-                <option value="">全部语义来源</option>
-                <option value="ai_augmented">AI 增强</option>
-                <option value="fallback">确定性回退</option>
-              </select>
-            </div>
-            <div class="form-control">
-              <select
-                v-model="filters.hypothesisRiskType"
-                class="select select-bordered select-sm"
-                @change="applyHypothesisRiskTypeFilter"
-              >
-                <option value="">全部假设类型</option>
-                <option value="idor">IDOR</option>
-                <option value="bola">BOLA</option>
-                <option value="bfla">BFLA</option>
-                <option value="workflow">流程</option>
-                <option value="logic">逻辑</option>
-                <option value="race">竞态</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </details>
     </div>
 
     <!-- 漏洞列表 -->
@@ -227,6 +160,7 @@
               :verifying-id="verifyingId"
               @toggle-select="toggleSelect"
               @open-details="openDetails"
+              @open-workbench="openWorkbenchForFinding"
               @verify="verifyWithSystemAgent"
               @delete="deleteSingle"
             />
@@ -332,7 +266,7 @@
     </div>
 
     <!-- 详情模态框 -->
-    <dialog
+    <AppDialog
       :class="['modal', { 'modal-open': showDetailsModal }]"
       @click.self="closeDetails"
       @keydown.esc="closeDetails"
@@ -382,16 +316,23 @@
         </div>
 
         <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
+          <button
+            v-if="selectedFinding"
+            @click="openWorkbenchForFinding(selectedFinding)"
+            class="btn btn-sm btn-outline btn-primary"
+          >
+            进入工作台
+          </button>
           <button @click="closeDetails" class="btn btn-sm">{{ $t('common.close') }}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
         <button @click="closeDetails">close</button>
       </form>
-    </dialog>
+    </AppDialog>
 
     <!-- 删除全部确认对话框 -->
-    <dialog :class="['modal', { 'modal-open': showDeleteAllModal }]">
+    <AppDialog :class="['modal', { 'modal-open': showDeleteAllModal }]">
       <div class="modal-box">
         <h3 class="font-bold text-lg text-error">
           <svg
@@ -433,15 +374,17 @@
       <form method="dialog" class="modal-backdrop">
         <button @click="showDeleteAllModal = false">close</button>
       </form>
-    </dialog>
+    </AppDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { dialog } from '@/composables/useDialog'
 import { exportFindingSnapshot } from './vulnerabilitiesExportSupport'
 import {
   clearPersistedEvaluationComparisonHistory,
@@ -457,18 +400,6 @@ import {
   findEvaluationHistoryEntry,
   mergeEvaluationHistory,
 } from './vulnerabilitiesEvaluationHistorySupport'
-import {
-  detectActiveFilterPreset,
-  filterPresets, type FindingFilterPresetId, type VulnerabilityLifecycleView,
-} from './vulnerabilitiesFilterPresets'
-import VulnerabilitiesSavedViewsBar from './VulnerabilitiesSavedViewsBar.vue'
-import {
-  cloneFilterState, confirmAndDeleteSavedVulnerabilityFilterView, detectActiveSavedViewId,
-  exportSavedVulnerabilityFilterViews, importSavedVulnerabilityFilterViews,
-  loadSavedVulnerabilityFilterViews, mergeSavedVulnerabilityFilterViews,
-  promptAndSaveVulnerabilityFilterView, saveSavedVulnerabilityFilterViews,
-  type SavedVulnerabilityFilterView,
-} from './vulnerabilitiesSavedViews'
 import VulnerabilityDetailOverview from './VulnerabilityDetailOverview.vue'
 import VulnerabilityEvidenceList from './VulnerabilityEvidenceList.vue'
 import VulnerabilityFindingRow from './VulnerabilityFindingRow.vue'
@@ -476,10 +407,13 @@ import VulnerabilitySystemAgentPanel from './VulnerabilitySystemAgentPanel.vue'
 import VulnerabilityTimelinePanel from './VulnerabilityTimelinePanel.vue'
 import VulnerabilitiesStatsOverview from './VulnerabilitiesStatsOverview.vue'
 import VulnerabilitiesEvaluationSummaryPanel from './VulnerabilitiesEvaluationSummaryPanel.vue'
+import { getOrCreateWorkbenchCaseForFinding } from './securityWorkbenchCaseSupport'
 import type { Finding } from './vulnerabilityFindingTypes'
 import { isSystemAgentFinding } from './vulnerabilityFindingPresentation'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const emit = defineEmits<{
   'stats-updated': [stats: { total: number; critical: number }]
 }>()
@@ -497,26 +431,17 @@ const detailTab = ref<DetailTabId>('overview')
 const exportingSnapshot = ref(false)
 const evaluationComparison = ref<EvaluationComparisonSummary | null>(null)
 const evaluationComparisonHistory = ref<EvaluationComparisonSummary[]>([])
+const consumedRouteFindingId = ref<string | null>(null)
 
 const stats = ref({ critical: 0, high: 0, medium: 0, low: 0 })
-const lifecycleStats = ref({ candidate: 0, verified: 0, falsePositive: 0 })
-const savedViews = ref<SavedVulnerabilityFilterView[]>(loadSavedVulnerabilityFilterViews())
 
 const filters = ref({
   severity: '',
   status: '',
-  lifecycleView: 'formal' as VulnerabilityLifecycleView,
   search: '',
-  semanticSource: '',
-  hypothesisRiskType: '',
-  hypothesisRiskTypes: [] as string[],
 })
 
-const lifecycleViewOptions: Array<{ value: VulnerabilityLifecycleView; label: string }> = [
-  { value: 'formal', label: '正式漏洞' }, { value: 'candidate', label: '候选待验证' },
-  { value: 'verified', label: '已验证' }, { value: 'false_positive', label: '误报' },
-  { value: 'all', label: '全部' },
-]
+const VALID_SEVERITY_FILTERS = new Set(['', 'critical', 'high', 'medium', 'low', 'info'])
 const currentPage = ref(1)
 const pageSize = ref(10)
 const pageInput = ref('1')
@@ -526,8 +451,6 @@ const totalPages = computed(() => Math.max(1, Math.ceil(totalCount.value / pageS
 const isAllSelected = computed(
   () => findings.value.length > 0 && findings.value.every(f => selectedIds.value.has(f.id))
 )
-const activeFilterPreset = computed<FindingFilterPresetId | null>(() => detectActiveFilterPreset(filters.value))
-const activeSavedViewId = computed<string | null>(() => detectActiveSavedViewId(filters.value, savedViews.value))
 const detailTabs = computed<Array<{ id: DetailTabId; label: string }>>(() => {
   const tabs: Array<{ id: DetailTabId; label: string }> = [
     { id: 'overview', label: '概览' },
@@ -541,29 +464,19 @@ const detailTabs = computed<Array<{ id: DetailTabId; label: string }>>(() => {
 })
 
 const resolveStatusFilters = () => {
-  if (filters.value.status) {
+  const allowedFormalStatuses = new Set(['open', 'reviewed', 'fixed'])
+  if (filters.value.status && allowedFormalStatuses.has(filters.value.status)) {
     return {
       statusFilter: filters.value.status,
       statusFilters: null as string[] | null,
-      analysisStageFilters: null as string[] | null,
+      analysisStageFilters: ['formal_open', 'verified', 'fixed'],
     }
   }
 
-  switch (filters.value.lifecycleView) {
-    case 'candidate':
-      return { statusFilter: null, statusFilters: null, analysisStageFilters: ['hypothesis'] }
-    case 'verified':
-      return { statusFilter: null, statusFilters: null, analysisStageFilters: ['verified'] }
-    case 'false_positive':
-      return { statusFilter: null, statusFilters: null, analysisStageFilters: ['false_positive'] }
-    case 'formal':
-      return {
-        statusFilter: null,
-        statusFilters: null,
-        analysisStageFilters: ['formal_open', 'verified', 'fixed'],
-      }
-    default:
-      return { statusFilter: null, statusFilters: null, analysisStageFilters: null }
+  return {
+    statusFilter: null,
+    statusFilters: null,
+    analysisStageFilters: ['formal_open', 'verified', 'fixed'],
   }
 }
 
@@ -572,10 +485,7 @@ const countFindings = async (
   statusFilter: string | null = null,
   statusFilters: string[] | null = null,
   analysisStageFilters: string[] | null = null,
-  search: string | null = null,
-  semanticSourceFilter: string | null = null,
-  hypothesisRiskTypeFilter: string | null = null,
-  hypothesisRiskTypeFilters: string[] | null = null
+  search: string | null = null
 ) => {
   const response = await invoke<any>('count_findings', {
     severityFilter,
@@ -583,9 +493,6 @@ const countFindings = async (
     statusFilters,
     analysisStageFilters,
     search,
-    semanticSourceFilter,
-    hypothesisRiskTypeFilter,
-    hypothesisRiskTypeFilters,
   })
   return response.success ? Number(response.data || 0) : 0
 }
@@ -616,11 +523,6 @@ const refreshFindings = async () => {
     const severityFilter = filters.value.severity || null
     const { statusFilter, statusFilters, analysisStageFilters } = resolveStatusFilters()
     const search = filters.value.search.trim() || null
-    const semanticSourceFilter = filters.value.semanticSource || null
-    const hypothesisRiskTypeFilter = filters.value.hypothesisRiskType || null
-    const hypothesisRiskTypeFilters = filters.value.hypothesisRiskTypes.length
-      ? filters.value.hypothesisRiskTypes
-      : null
     const offset = (currentPage.value - 1) * pageSize.value
     const [filteredTotal, lifecycleStatsResponse, response] = await Promise.all([
       countFindings(
@@ -628,10 +530,7 @@ const refreshFindings = async () => {
         statusFilter,
         statusFilters,
         analysisStageFilters,
-        search,
-        semanticSourceFilter,
-        hypothesisRiskTypeFilter,
-        hypothesisRiskTypeFilters
+        search
       ),
       invoke<any>('get_finding_lifecycle_stats'),
       invoke<any>('list_findings', {
@@ -642,9 +541,6 @@ const refreshFindings = async () => {
         statusFilters,
         analysisStageFilters,
         search,
-        semanticSourceFilter,
-        hypothesisRiskTypeFilter,
-        hypothesisRiskTypeFilters,
       }),
     ])
 
@@ -658,14 +554,8 @@ const refreshFindings = async () => {
         medium: Number(metrics.medium || 0),
         low: Number(metrics.low || 0),
       })
-      lifecycleStats.value = {
-        candidate: Number(metrics.candidate || 0),
-        verified: Number(metrics.verified || 0),
-        falsePositive: Number(metrics.falsePositive || 0),
-      }
     } else {
       updateStats({ total: 0, critical: 0, high: 0, medium: 0, low: 0 })
-      lifecycleStats.value = { candidate: 0, verified: 0, falsePositive: 0 }
     }
 
     const nextTotalPages = Math.max(1, Math.ceil(filteredTotal / pageSize.value))
@@ -690,6 +580,7 @@ const refreshFindings = async () => {
         .filter((f: any) => f !== null)
 
       syncSelectedFinding()
+      await openFindingFromRoute()
       return
     }
 
@@ -699,23 +590,9 @@ const refreshFindings = async () => {
     findings.value = []
     totalCount.value = 0
     updateStats({ total: 0, critical: 0, high: 0, medium: 0, low: 0 })
-    lifecycleStats.value = { candidate: 0, verified: 0, falsePositive: 0 }
   } finally {
     isLoading.value = false
   }
-}
-
-const setLifecycleView = (view: VulnerabilityLifecycleView) => {
-  if (filters.value.lifecycleView === view) return
-  filters.value.lifecycleView = view
-  filters.value.status = ''
-  pageInput.value = '1'
-  selectedIds.value.clear()
-  if (currentPage.value !== 1) {
-    currentPage.value = 1
-    return
-  }
-  refreshFindings()
 }
 
 const applyFilters = () => {
@@ -729,93 +606,21 @@ const applyFilters = () => {
 }
 
 const applyStatusFilter = () => {
-  filters.value.lifecycleView = filters.value.status ? 'all' : filters.value.lifecycleView
   applyFilters()
 }
 
-const applyHypothesisRiskTypeFilter = () => {
-  filters.value.hypothesisRiskTypes = filters.value.hypothesisRiskType
-    ? [filters.value.hypothesisRiskType]
-    : []
-  applyFilters()
-}
+const syncFiltersFromRouteQuery = () => {
+  const nextSeverity = typeof route.query.severity === 'string' ? route.query.severity.trim().toLowerCase() : ''
+  const normalizedSeverity = VALID_SEVERITY_FILTERS.has(nextSeverity) ? nextSeverity : ''
 
-const resetAdvancedFilters = () => {
-  filters.value.semanticSource = ''
-  filters.value.hypothesisRiskType = ''
-  filters.value.hypothesisRiskTypes = []
-  filters.value.search = ''
-  filters.value.severity = ''
-  filters.value.status = ''
-  filters.value.lifecycleView = 'formal'
-  applyFilters()
-}
-
-const applyFilterPreset = (presetId: FindingFilterPresetId) => {
-  filters.value.severity = ''
-  filters.value.status = ''
-  filters.value.search = ''
-  if (presetId === 'high_value_candidate') {
-    filters.value.lifecycleView = 'candidate'
-    filters.value.semanticSource = 'ai_augmented'
-    filters.value.hypothesisRiskType = ''
-    filters.value.hypothesisRiskTypes = ['workflow', 'race']
-  } else if (presetId === 'object_boundary_candidate') {
-    filters.value.lifecycleView = 'candidate'
-    filters.value.semanticSource = 'ai_augmented'
-    filters.value.hypothesisRiskType = ''
-    filters.value.hypothesisRiskTypes = ['idor', 'bola', 'bfla']
-  } else {
-    filters.value.lifecycleView = 'all'
-    filters.value.semanticSource = 'ai_augmented'
-    filters.value.hypothesisRiskType = ''
-    filters.value.hypothesisRiskTypes = []
+  if (filters.value.severity === normalizedSeverity) {
+    return false
   }
-  applyFilters()
+
+  filters.value.severity = normalizedSeverity
+  return true
 }
 
-const applySavedView = (viewId: string | null) => {
-  const target = savedViews.value.find(view => view.id === viewId)
-  if (!target) return
-  filters.value = cloneFilterState(target.filters)
-  applyFilters()
-}
-
-const saveCurrentView = () => {
-  savedViews.value = promptAndSaveVulnerabilityFilterView({
-    views: savedViews.value,
-    activeViewId: activeSavedViewId.value,
-    filters: filters.value,
-  })
-  saveSavedVulnerabilityFilterViews(savedViews.value)
-}
-
-const deleteSavedView = (viewId: string | null) => {
-  savedViews.value = confirmAndDeleteSavedVulnerabilityFilterView({
-    views: savedViews.value,
-    viewId,
-  })
-  saveSavedVulnerabilityFilterViews(savedViews.value)
-}
-
-const exportSavedViews = async () => {
-  try {
-    await exportSavedVulnerabilityFilterViews(savedViews.value)
-  } catch (error) {
-    console.error('Failed to export saved views:', error)
-  }
-}
-
-const importSavedViews = async () => {
-  try {
-    const imported = await importSavedVulnerabilityFilterViews()
-    if (!imported.length) return
-    savedViews.value = mergeSavedVulnerabilityFilterViews(savedViews.value, imported)
-    saveSavedVulnerabilityFilterViews(savedViews.value)
-  } catch (error) {
-    console.error('Failed to import saved views:', error)
-  }
-}
 
 const loadEvaluationComparison = async () => {
   try {
@@ -872,13 +677,11 @@ const exportCurrentSnapshot = async () => {
       statusFilter,
       statusFilters,
       analysisStageFilters,
-      lifecycleView: filters.value.lifecycleView,
+      lifecycleView: 'formal',
       search: filters.value.search,
-      semanticSourceFilter: filters.value.semanticSource || null,
-      hypothesisRiskTypeFilter: filters.value.hypothesisRiskType || null,
-      hypothesisRiskTypeFilters: filters.value.hypothesisRiskTypes.length
-        ? filters.value.hypothesisRiskTypes
-        : null,
+      semanticSourceFilter: null,
+      hypothesisRiskTypeFilter: null,
+      hypothesisRiskTypeFilters: null,
     })
   } catch (error) {
     console.error('Failed to export finding snapshot:', error)
@@ -936,6 +739,25 @@ const closeDetails = () => {
   showDetailsModal.value = false
   selectedFinding.value = null
   detailTab.value = 'overview'
+
+  if (typeof route.query.findingId === 'string' && route.query.findingId.trim()) {
+    const nextQuery = { ...route.query }
+    delete nextQuery.findingId
+    router.replace({ query: nextQuery })
+  }
+}
+
+const openWorkbenchForFinding = async (finding: Finding) => {
+  try {
+    const caseItem = await getOrCreateWorkbenchCaseForFinding(finding.id)
+    showDetailsModal.value = false
+    selectedFinding.value = null
+    detailTab.value = 'overview'
+    await router.replace({ path: `/security-center/workbench/${caseItem.id}` })
+  } catch (error) {
+    console.error('Failed to open workbench for finding', error)
+    dialog.toast.error('打开安全工作台失败')
+  }
 }
 
 const toggleSelect = (id: string) => {
@@ -996,6 +818,42 @@ const syncSelectedFinding = () => {
   const nextFinding = findings.value.find(item => item.id === selectedFinding.value?.id)
   if (nextFinding) {
     selectedFinding.value = nextFinding
+  }
+}
+
+const openFindingFromRoute = async () => {
+  const findingId = typeof route.query.findingId === 'string' ? route.query.findingId.trim() : ''
+  if (!findingId) {
+    consumedRouteFindingId.value = null
+    return
+  }
+
+  if (consumedRouteFindingId.value === findingId) {
+    return
+  }
+
+  const existingFinding = findings.value.find(item => item.id === findingId)
+  if (existingFinding) {
+    consumedRouteFindingId.value = findingId
+    openDetails(existingFinding)
+    return
+  }
+
+  try {
+    const response = await invoke<any>('get_finding', { findingId })
+    if (!response?.success || !response?.data?.vulnerability) {
+      return
+    }
+
+    consumedRouteFindingId.value = findingId
+    selectedFinding.value = {
+      ...response.data.vulnerability,
+      evidence: response.data.evidence || [],
+    }
+    detailTab.value = 'overview'
+    showDetailsModal.value = true
+  } catch (error) {
+    console.error('Failed to open finding from route:', error)
   }
 }
 
@@ -1109,6 +967,31 @@ watch(selectedFinding, finding => {
   }
 })
 
+watch(
+  () => route.query.findingId,
+  () => {
+    void openFindingFromRoute()
+  },
+)
+
+watch(
+  () => route.query.severity,
+  () => {
+    if (!syncFiltersFromRouteQuery()) {
+      return
+    }
+
+    pageInput.value = '1'
+    selectedIds.value.clear()
+    if (currentPage.value !== 1) {
+      currentPage.value = 1
+      return
+    }
+
+    refreshFindings()
+  },
+)
+
 const handleKeyDown = (e: KeyboardEvent) => {
   if (e.key === 'Escape' && showDetailsModal.value) {
     closeDetails()
@@ -1117,6 +1000,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
 
 onMounted(async () => {
   pageInput.value = String(currentPage.value)
+  syncFiltersFromRouteQuery()
   try {
     evaluationComparison.value = await loadPersistedEvaluationComparison()
   } catch (error) {

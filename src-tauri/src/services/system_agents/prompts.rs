@@ -12,6 +12,7 @@ cross-identity access risk, skipped steps, repeated actions, race conditions, in
 Treat logicHypotheses as deterministic candidate signals that should anchor your reasoning, then use the rest of the context to confirm, downgrade, or reject them.
 Treat semanticAbstraction as a sanitized semantic mapping layer over path, params, headers, cookies, and schema-level features. It can clarify business roles when raw naming is non-standard.
 Treat skillRecommendations and logicSkillContext as optional hints rather than hard rules. Prefer general logic reasoning and invariant violations over path-name guessing.
+For verificationPlan.targetRequestId, only use the payload field dbRequestId or a recentRequestIds entry from clusterSummary. Never use historyRequestId.
 
 Required JSON shape:
 {
@@ -29,18 +30,6 @@ Required JSON shape:
     "sequenceRequestIds": number[],
     "notes": string[]
   } | null
-}"#
-        }
-        "manual_traffic_audit_agent" | "system:manual_traffic_audit_agent" => {
-            r#"You are a manual traffic audit agent.
-Review the provided traffic context and return strict JSON only.
-
-Required JSON shape:
-{
-  "summary": string,
-  "riskAreas": string[],
-  "interestingParameters": string[],
-  "suggestedTests": string[]
 }"#
         }
         "traffic_active_verifier" | "system:traffic_active_verifier" => {

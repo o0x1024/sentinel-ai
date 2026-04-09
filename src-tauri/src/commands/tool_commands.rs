@@ -703,17 +703,14 @@ async fn get_plugin_input_schema_async(
 /// List all available node types for workflow studio
 #[tauri::command]
 pub async fn list_node_catalog(
-    traffic_state: tauri::State<
-        '_,
-        crate::commands::traffic_analysis_commands::TrafficAnalysisState,
-    >,
+    traffic_state: tauri::State<'_, crate::commands::traffic::TrafficAnalysisState>,
 ) -> Result<Vec<NodeCatalogItem>, String> {
     build_node_catalog(traffic_state.inner()).await
 }
 
 /// Build node catalog for use by other commands (includes MCP and enabled plugins).
 pub async fn build_node_catalog(
-    traffic_state: &crate::commands::traffic_analysis_commands::TrafficAnalysisState,
+    traffic_state: &crate::commands::traffic::TrafficAnalysisState,
 ) -> Result<Vec<NodeCatalogItem>, String> {
     let mut catalog = Vec::new();
 

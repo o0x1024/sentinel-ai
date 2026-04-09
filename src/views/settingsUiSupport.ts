@@ -3,6 +3,7 @@ import {
   OUTPUT_STORAGE_THRESHOLD_MIN,
   OUTPUT_STORAGE_THRESHOLD_RECOMMENDED_MAX,
 } from './settingsDefinitions'
+import { setLanguage as applyI18nLanguage } from '@/i18n'
 
 export const clampOutputStorageThreshold = (value: number): number => {
   if (!Number.isFinite(value)) return OUTPUT_STORAGE_THRESHOLD_DEFAULT
@@ -22,7 +23,6 @@ export const normalizeCloseAction = (value: unknown): 'hide' | 'minimize' | 'exi
   }
   return 'minimize'
 }
-
 export const applyTheme = (theme: string, settings: any) => {
   let finalTheme = theme
   if (theme === 'auto') {
@@ -70,7 +70,7 @@ export const applyLanguage = (language: string, locale: { value: string }) => {
   }
 
   locale.value = langCode
-  localStorage.setItem('sentinel-language', langCode)
+  applyI18nLanguage(langCode as 'zh' | 'en')
 }
 
 export const applyUIScale = (scale: number) => {

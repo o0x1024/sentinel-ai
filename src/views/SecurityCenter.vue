@@ -16,10 +16,26 @@
 
     <!-- Tab 导航 -->
     <div class="tabs tabs-boxed bg-base-100 shadow-sm">
+      <a
+        class="tab"
+        :class="{ 'tab-active': activeTab === 'workbench' }"
+        @click="switchTab('workbench')"
+      >
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M9 6.75V6a3 3 0 016 0v.75m-7.5 0h9A1.5 1.5 0 0118 8.25v9A1.5 1.5 0 0116.5 18.75h-9A1.5 1.5 0 016 17.25v-9A1.5 1.5 0 017.5 6.75zM10.5 11.25h3"
+          ></path>
+        </svg>
+        {{ $t('securityCenter.tabs.workbench') }}
+      </a>
+
       <a 
         class="tab" 
         :class="{ 'tab-active': activeTab === 'vulnerabilities' }"
-        @click="activeTab = 'vulnerabilities'"
+        @click="switchTab('vulnerabilities')"
       >
         <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
@@ -30,7 +46,7 @@
       <a
         class="tab"
         :class="{ 'tab-active': activeTab === 'llmSecurity' }"
-        @click="activeTab = 'llmSecurity'"
+        @click="switchTab('llmSecurity')"
       >
         <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 3a.75.75 0 01.75.75V5h3V3.75a.75.75 0 011.5 0V5H16a2 2 0 012 2v2.25a.75.75 0 01-1.5 0V7a.5.5 0 00-.5-.5H8a.5.5 0 00-.5.5v2.25a.75.75 0 01-1.5 0V7a2 2 0 012-2h1V3.75A.75.75 0 019.75 3zM6.75 12A1.75 1.75 0 005 13.75v4.5C5 19.216 5.784 20 6.75 20h10.5A1.75 1.75 0 0019 18.25v-4.5A1.75 1.75 0 0017.25 12H6.75z"></path>
@@ -39,19 +55,26 @@
       </a>
     </div>
 
-    <!-- 漏洞管理 Tab -->
-    <VulnerabilitiesPanel @stats-updated="updateVulnStats" v-if="activeTab === 'vulnerabilities'"/>
-    <!-- LLM Security Tab -->
-    <LlmSecurityPanel v-if="activeTab === 'llmSecurity'" />
+    <KeepAlive>
+      <component
+        :is="activeTabComponent"
+        @stats-updated="updateVulnStats"
+      />
+    </KeepAlive>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch, markRaw } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import VulnerabilitiesPanel from '../components/SecurityCenter/VulnerabilitiesPanel.vue';
 import LlmSecurityPanel from '../components/SecurityCenter/LlmSecurityPanel.vue';
+import SecurityWorkbenchPage from '../components/SecurityCenter/SecurityWorkbenchPage.vue';
+import {
+  rememberSecurityCenterLocation,
+  resolveLastSecurityCenterLocation,
+} from '../services/securityCenterNavigation';
 
 
 defineOptions({
@@ -62,8 +85,28 @@ const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
 
+type SecurityCenterTab = 'scan' | 'vulnerabilities' | 'llmSecurity' | 'workbench' | 'assets'
+
 // 当前激活的 Tab
-const activeTab = ref<'scan' | 'vulnerabilities' | 'llmSecurity' | 'assets'>('vulnerabilities');
+const activeTab = ref<SecurityCenterTab>('workbench');
+
+const tabComponents = {
+  workbench: markRaw(SecurityWorkbenchPage),
+  vulnerabilities: markRaw(VulnerabilitiesPanel),
+  llmSecurity: markRaw(LlmSecurityPanel),
+} as const
+
+const activeTabComponent = computed(() => {
+  switch (activeTab.value) {
+    case 'vulnerabilities':
+      return tabComponents.vulnerabilities
+    case 'llmSecurity':
+      return tabComponents.llmSecurity
+    case 'workbench':
+    default:
+      return tabComponents.workbench
+  }
+})
 
 // 统计数据
 const overviewStats = ref({
@@ -79,18 +122,87 @@ const overviewStats = ref({
 // 从 URL 参数读取初始 Tab
 onMounted(() => {
   const tab = route.query.tab as string;
-  if (tab && ['scan', 'vulnerabilities', 'llmSecurity'].includes(tab)) {
-    activeTab.value = tab as 'scan' | 'vulnerabilities' | 'llmSecurity';
+  const findingId = typeof route.query.findingId === 'string' ? route.query.findingId : ''
+  const caseId =
+    typeof route.params.caseId === 'string'
+      ? route.params.caseId
+      : typeof route.query.caseId === 'string'
+        ? route.query.caseId
+        : ''
+  if (route.name === 'SecurityWorkbench' || caseId) {
+    rememberWorkbenchLocation()
+    activeTab.value = 'workbench'
+    return
   }
+  if (findingId) {
+    activeTab.value = 'vulnerabilities'
+    return
+  }
+  if (tab && ['scan', 'vulnerabilities', 'llmSecurity', 'workbench'].includes(tab)) {
+    activeTab.value = tab as 'scan' | 'vulnerabilities' | 'llmSecurity' | 'workbench';
+    return
+  }
+  activeTab.value = 'workbench'
 });
 
+const isWorkbenchRoute = (routePath: unknown, routeName: unknown, routeCaseId: unknown, queryCaseId: unknown) => (
+  routeName === 'SecurityWorkbench'
+  || (typeof routePath === 'string' && routePath.startsWith('/security-center/workbench'))
+  || (typeof routeCaseId === 'string' && routeCaseId.trim())
+  || (typeof queryCaseId === 'string' && queryCaseId.trim())
+)
+
+const rememberWorkbenchLocation = () => {
+  rememberSecurityCenterLocation(route.fullPath)
+}
+
+watch(
+  () => [route.name, route.path, route.query.tab, route.query.findingId, route.params.caseId, route.query.caseId],
+  ([routeName, routePath, tab, findingId, routeCaseId, queryCaseId]) => {
+    if (isWorkbenchRoute(routePath, routeName, routeCaseId, queryCaseId)) {
+      rememberWorkbenchLocation()
+      activeTab.value = 'workbench'
+      return
+    }
+
+    if (typeof findingId === 'string' && findingId.trim()) {
+      activeTab.value = 'vulnerabilities'
+      return
+    }
+
+    if (typeof tab === 'string' && ['scan', 'vulnerabilities', 'llmSecurity', 'workbench'].includes(tab)) {
+      activeTab.value = tab as 'scan' | 'vulnerabilities' | 'llmSecurity' | 'workbench'
+      return
+    }
+
+    activeTab.value = 'workbench'
+  },
+)
+
 // 更新 URL 参数
-const updateUrlTab = (tab: string) => {
-  router.replace({ query: { tab } });
+const updateUrlTab = (tab: SecurityCenterTab) => {
+  if (tab === 'workbench') {
+    router.replace(resolveLastSecurityCenterLocation())
+    return
+  }
+  router.replace({ path: '/security-center', query: { tab } });
 };
 
+const refreshTab = (tab: SecurityCenterTab) => {
+  window.dispatchEvent(new CustomEvent('security-center-refresh', {
+    detail: { tab },
+  }))
+}
+
 // 监听 Tab 切换
-const switchTab = (tab: 'scan' | 'vulnerabilities' | 'llmSecurity' | 'assets') => {
+const switchTab = (tab: SecurityCenterTab) => {
+  if (activeTab.value === tab) {
+    refreshTab(tab)
+    return
+  }
+  if (activeTab.value === 'workbench') {
+    rememberWorkbenchLocation()
+  }
   activeTab.value = tab;
   updateUrlTab(tab);
 };
@@ -141,7 +253,7 @@ const getRiskLevel = (score: number): string => {
 // 刷新所有数据
 const refreshAll = () => {
   // 触发所有子组件刷新
-  window.dispatchEvent(new CustomEvent('security-center-refresh'));
+  refreshTab(activeTab.value);
 };
 </script>
 

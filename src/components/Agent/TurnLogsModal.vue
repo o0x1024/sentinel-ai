@@ -1,5 +1,5 @@
 <template>
-  <dialog ref="dialogRef" class="modal" @close="handleClose">
+  <AppDialog ref="dialogRef" class="modal" @close="handleClose">
     <div class="modal-box max-w-5xl w-11/12 h-[85vh] flex flex-col overflow-hidden p-0">
       <div class="px-5 py-4 border-b border-base-300 flex items-center justify-between gap-3">
         <div>
@@ -179,7 +179,7 @@
     <form method="dialog" class="modal-backdrop" @click.prevent="closeDialog">
       <button>close</button>
     </form>
-  </dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">

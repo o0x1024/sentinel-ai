@@ -187,7 +187,7 @@
 
   <!-- Suite Create/Edit Modal -->
   <Teleport to="body">
-  <dialog :class="['modal', { 'modal-open': suiteFormOpen }]" style="z-index:1001" @click.self="closeSuiteForm">
+  <AppDialog :class="['modal', { 'modal-open': suiteFormOpen }]" style="z-index:1001" @click.self="closeSuiteForm">
     <div class="modal-box max-w-md">
       <h3 class="font-bold text-lg mb-4">
         {{ suiteFormMode === 'create' ? $t('llmSecurity.suiteDrawer.newSuite') : $t('llmSecurity.suiteDrawer.editSuite') }}
@@ -241,12 +241,12 @@
         <button class="btn btn-primary" @click="saveSuite">{{ $t('llmSecurity.suiteDrawer.suiteForm.save') }}</button>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
   </Teleport>
 
   <!-- Case Create/Edit Modal -->
   <Teleport to="body">
-  <dialog :class="['modal', { 'modal-open': caseFormOpen }]" style="z-index:1001" @click.self="closeCaseForm">
+  <AppDialog :class="['modal', { 'modal-open': caseFormOpen }]" style="z-index:1001" @click.self="closeCaseForm">
     <div class="modal-box max-w-2xl">
       <h3 class="font-bold text-lg mb-4">
         {{ caseFormMode === 'add' ? $t('llmSecurity.suiteDrawer.caseForm.titleAdd') : caseFormMode === 'edit' ? $t('llmSecurity.suiteDrawer.caseForm.titleEdit') : $t('llmSecurity.report.caseDetail') }}
@@ -339,12 +339,12 @@
         </template>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
   </Teleport>
 
   <!-- Confirm Delete Modal -->
   <Teleport to="body">
-  <dialog :class="['modal', { 'modal-open': confirmDialog.open }]" style="z-index:1001" @click.self="confirmDialog.open = false">
+  <AppDialog :class="['modal', { 'modal-open': confirmDialog.open }]" style="z-index:1001" @click.self="confirmDialog.open = false">
     <div class="modal-box max-w-sm">
       <h3 class="font-bold text-lg">{{ confirmDialog.title }}</h3>
       <p class="py-4 text-sm opacity-70">{{ confirmDialog.message }}</p>
@@ -353,12 +353,12 @@
         <button class="btn btn-error" @click="executeConfirm">{{ $t('llmSecurity.suiteDrawer.confirmDeleteSuite') }}</button>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
   </Teleport>
 
   <!-- Import Preview Dialog -->
   <Teleport to="body">
-  <dialog :class="['modal', { 'modal-open': importPreview.open }]" style="z-index:1001" @click.self="importPreview.open = false">
+  <AppDialog :class="['modal', { 'modal-open': importPreview.open }]" style="z-index:1001" @click.self="importPreview.open = false">
     <div class="modal-box w-11/12 max-w-3xl">
       <h3 class="font-bold text-lg mb-3">{{ $t('llmSecurity.importPreview.title') }}</h3>
       <div class="space-y-3 text-sm">
@@ -411,7 +411,7 @@
         </div>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
   </Teleport>
 </template>
 

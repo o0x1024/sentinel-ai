@@ -166,7 +166,14 @@ export const useProxyHistoryDerivedList = (params: Params) => {
   watch(
     () => params.requests.value,
     (nextRequests, previousRequests) => {
-      if (nextRequests !== previousRequests) {
+      if (nextRequests === previousRequests) {
+        return
+      }
+
+      const nextIds = nextRequests.map((request) => request.id)
+      const previousIds = (previousRequests || []).map((request) => request.id)
+
+      if (areIdsEqual(nextIds, previousIds)) {
         recomputeAll()
       }
     },

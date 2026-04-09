@@ -8,10 +8,10 @@ pub mod filters;
 pub mod finding_lifecycle;
 pub mod finding_observation;
 pub mod findings;
+pub mod language;
 pub mod logic_hypotheses;
 pub mod logic_invariants;
 pub mod logic_skill_context;
-pub mod plugin_fix;
 pub mod process_graph;
 pub mod prompts;
 pub mod runtime;
@@ -35,7 +35,6 @@ pub use behavior_signal::{
 pub use context_settings::{
     TrafficContextExtractionSettings, TRAFFIC_CONTEXT_EXTRACTION_SETTINGS_KEY,
 };
-pub use plugin_fix::{run_plugin_fix_agent, PluginFixAgentRequest, PluginFixAgentResult};
 pub use runtime::SystemAgentRuntime;
 pub use seed::ensure_default_system_agent_profiles;
 pub use types::{SystemAgentDispatchResult, SystemAgentEvent, SystemAgentRunUpdateEvent};

@@ -1,6 +1,8 @@
 //! Services module
 
 pub mod ai_manager;
+pub mod ai_task_plugin_fix;
+pub mod ai_tasks;
 pub mod asset_service;
 pub mod builtin_bounty_plugins;
 pub mod database {
@@ -32,6 +34,7 @@ pub mod ai {
 }
 
 // Other services
+pub use ai_task_plugin_fix::{run_plugin_fix_task, PluginFixTaskRequest, PluginFixTaskResult};
 pub use asset_service::AssetService;
 pub use database::DatabaseService;
 pub use system_agents::SystemAgentRuntime;

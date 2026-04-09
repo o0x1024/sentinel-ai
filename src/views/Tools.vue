@@ -100,7 +100,7 @@
     <SkillsTab v-if="activeTab === 'skills'" ref="skillsRef" />
 
     <!-- 服务器详情模态框 -->
-    <dialog :class="['modal', { 'modal-open': showDetailsModal }]">
+    <AppDialog :class="['modal', { 'modal-open': showDetailsModal }]">
       <div class="modal-box w-11/12 max-w-5xl" v-show="showDetailsModal">
         <div v-if="selectedServer">
           <div class="flex justify-between items-center mb-4">
@@ -218,10 +218,10 @@
           <button v-if="detailsTab === 'general'" @click="saveServerDetails" class="btn btn-primary">{{ $t('common.save') }}</button>
         </div>
       </div>
-    </dialog>
+    </AppDialog>
 
     <!-- 添加服务器模态框 -->
-    <dialog :class="['modal', { 'modal-open': showAddServerModal }]">
+    <AppDialog :class="['modal', { 'modal-open': showAddServerModal }]">
       <div class="modal-box w-11/12 max-w-5xl" v-show="showAddServerModal">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-bold text-lg">{{ $t('Tools.addServer.title') }}</h3>
@@ -253,10 +253,10 @@
           <button @click="handleImportFromJson" class="btn btn-primary">{{ $t('Tools.addServer.import') }}</button>
         </div>
       </div>
-    </dialog>
+    </AppDialog>
 
     <!-- 服务器工具测试模态框 -->
-    <dialog :class="['modal', { 'modal-open': showTestServerModal }]">
+    <AppDialog :class="['modal', { 'modal-open': showTestServerModal }]">
       <div class="modal-box w-11/12 max-w-5xl" v-show="showTestServerModal">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-bold text-lg">{{ $t('Tools.testServerTitle') }}: {{ testingServer?.name }}</h3>
@@ -335,7 +335,7 @@
           </button>
         </div>
       </div>
-    </dialog>
+    </AppDialog>
   </div>
 </template>
 

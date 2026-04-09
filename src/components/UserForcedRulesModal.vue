@@ -1,6 +1,7 @@
 <template>
-  <div class="modal modal-open">
-    <div class="modal-box max-w-4xl w-11/12 h-[78vh] p-0 flex flex-col overflow-hidden">
+  <Teleport to="body">
+    <div class="modal modal-open">
+      <div class="modal-box max-w-4xl w-11/12 h-[78vh] p-0 flex flex-col overflow-hidden">
       <div class="p-4 border-b flex items-center justify-between bg-base-200/50">
         <h3 class="font-bold text-lg flex items-center gap-2">
           <i class="fas fa-file-signature text-primary"></i>
@@ -64,8 +65,9 @@
           </button>
         </div>
       </div>
+      </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-col h-full bg-base-200 overflow-hidden" @contextmenu.prevent>
     <!-- 证书错误提示弹窗 -->
-    <dialog ref="certErrorDialog" class="modal">
+    <AppDialog ref="certErrorDialog" class="modal">
       <div class="modal-box max-w-2xl">
         <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
           <i class="fas fa-exclamation-triangle text-warning"></i>
@@ -53,7 +53,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('trafficAnalysis.history.detailsPanel.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
     
     <!-- 历史列表右键菜单 -->
     <div 
@@ -97,7 +97,7 @@
     </div>
 
     <!-- 筛选器配置弹窗 -->
-    <dialog ref="filterDialog" class="modal">
+    <AppDialog ref="filterDialog" class="modal">
       <div class="modal-box max-w-6xl max-h-[90vh]">
         <h3 class="font-bold text-lg mb-4">Configure HTTP Proxy filter</h3>
         
@@ -358,7 +358,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>close</button>
       </form>
-    </dialog>
+    </AppDialog>
 
     <!-- 可调整大小的上下分割布局 -->
     <div ref="mainContainer" class="flex-1 flex flex-col min-h-0 overflow-hidden">

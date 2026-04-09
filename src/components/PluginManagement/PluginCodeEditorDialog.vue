@@ -1,6 +1,6 @@
 <template>
   <!-- Code Editor Dialog -->
-  <dialog ref="codeEditorDialogRef" class="modal" :class="{ 'fullscreen-mode-active': isFullscreenEditor }" @cancel="handleDialogCancel">
+  <AppDialog ref="codeEditorDialogRef" class="modal" :class="{ 'fullscreen-mode-active': isFullscreenEditor }" @cancel="handleDialogCancel">
     <div class="modal-box w-11/12 max-w-5xl max-h-[90vh] overflow-y-auto" :class="{ 'invisible': isFullscreenEditor }">
       <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
         <div class="flex items-center gap-2">
@@ -216,7 +216,7 @@
       </div>
     </div>
     <form method="dialog" class="modal-backdrop" :class="{ 'invisible pointer-events-none': isFullscreenEditor }"><button @click="closeDialog">close</button></form>
-  </dialog>
+  </AppDialog>
 
   <!-- Fullscreen Editor Overlay -->
   <Teleport to="body">

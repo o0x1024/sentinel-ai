@@ -45,7 +45,7 @@
     />
 
     <!-- Test Result Dialog -->
-    <dialog ref="testResultDialogRef" class="modal">
+    <AppDialog ref="testResultDialogRef" class="modal">
       <div class="modal-box w-11/12 max-w-3xl">
         <h3 class="font-bold text-base mb-4">
           <i class="fas fa-vial mr-2"></i>{{ $t('plugins.testResult', '插件测试结果') }}
@@ -103,7 +103,7 @@
         </div>
       </div>
       <form method="dialog" class="modal-backdrop"><button @click="closeTestResultDialog">close</button></form>
-    </dialog>
+    </AppDialog>
 
     <!-- Custom Context Menu for Editor - Teleport to body to escape stacking context -->
     <Teleport to="body">
@@ -186,7 +186,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '../../composables/useDialog'
-import type { SubCategory, CodeReference, CommandResponse, PluginFixAgentResult, TestResult } from './types'
+import type { SubCategory, CodeReference, CommandResponse, PluginFixTaskResult, TestResult } from './types'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { EditorView, type ViewUpdate } from '@codemirror/view'
@@ -1420,7 +1420,7 @@ const handlePluginFixQuickAction = async () => {
 
   store.aiChatMessages.push({
     role: 'user',
-    content: t('plugins.fixWithAgentPrompt', '请基于当前测试失败信息修复这段插件代码'),
+    content: t('plugins.fixWithTaskPrompt', '请基于当前测试失败信息修复这段插件代码'),
     codeRef: {
       code: latestCode,
       preview: latestCode.substring(0, 100) + '...',
@@ -1432,10 +1432,10 @@ const handlePluginFixQuickAction = async () => {
   })
 
   store.aiChatStreaming = true
-  store.aiChatStreamingContent = t('plugins.fixingWithAgent', 'plugin_fix_agent 正在修复代码...')
+  store.aiChatStreamingContent = t('plugins.fixingWithTask', '插件修复任务正在修复代码...')
 
   try {
-    const resp = await invoke<CommandResponse<PluginFixAgentResult>>('fix_plugin_with_system_agent', {
+    const resp = await invoke<CommandResponse<PluginFixTaskResult>>('fix_plugin_with_ai_task', {
       request: {
         originalCode: latestCode,
         errorMessage,
@@ -1464,7 +1464,7 @@ const handlePluginFixQuickAction = async () => {
     }
 
     const content = [
-      '已通过 `plugin_fix_agent` 生成修复代码，并自动应用到当前编辑器。',
+      t('plugins.fixGeneratedByTask', '已通过插件修复任务生成修复代码，并自动应用到当前编辑器。'),
       '',
       ...validationLines,
       '',

@@ -2,6 +2,8 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
 import App from './App.vue'
+import AppDialog from './components/AppDialog.vue'
+import AppModal from './components/AppModal.vue'
 import './style.css'
 import 'driver.js/dist/driver.css'
 import { performanceService } from './services/performance'
@@ -77,6 +79,7 @@ const PluginManagement = () => import('./views/PluginManagement.vue')
 const BugBounty = () => import('./views/BugBounty.vue')
 const CyberChef = () => import('./views/CyberChef.vue')
 const AgentManagement = () => import('./views/AgentManagement.vue')
+const SearchView = () => import('./views/SearchView.vue')
 
 const Settings = () => import('./views/Settings.vue')
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue')
@@ -94,6 +97,12 @@ const routes = [
     name: 'DashboardAlias',
     component: Dashboard,
     meta: { title: '总览' },
+  },
+  {
+    path: '/security-center/workbench/:caseId?',
+    name: 'SecurityWorkbench',
+    component: SecurityCenter,
+    meta: { title: '安全工作台' },
   },
   {
     path: '/security-center',
@@ -184,7 +193,13 @@ const routes = [
     path: '/agent-management',
     name: 'AgentManagement',
     component: AgentManagement,
-    meta: { title: '智能体库' },
+    meta: { title: '智能体管理' },
+  },
+  {
+    path: '/search',
+    name: 'GlobalSearch',
+    component: SearchView,
+    meta: { title: '全局搜索' },
   },
   {
     path: '/performance',
@@ -262,6 +277,8 @@ const pinia = createPinia()
 // 创建应用
 const app = createApp(App)
 
+app.component('AppDialog', AppDialog)
+app.component('AppModal', AppModal)
 app.use(pinia)
 app.use(router)
 app.use(i18n) // 使用i18n

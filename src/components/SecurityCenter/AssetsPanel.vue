@@ -132,21 +132,23 @@
     </div>
 
     <!-- 资产详情模态框 -->
-    <div v-if="showDetailModal && selectedAsset" class="modal modal-open">
-      <div class="modal-box">
-        <h3 class="font-bold text-lg mb-4">{{ $t('assetManagement.assetDetail') }}</h3>
-        <div class="space-y-2">
-          <p><strong>{{ $t('assetManagement.name') }}:</strong> {{ selectedAsset.name }}</p>
-          <p><strong>{{ $t('assetManagement.type') }}:</strong> {{ selectedAsset.asset_type }}</p>
-          <p><strong>{{ $t('assetManagement.value') }}:</strong> {{ selectedAsset.value }}</p>
-          <p><strong>{{ $t('assetManagement.riskLevel.title') }}:</strong> {{ selectedAsset.risk_level }}</p>
-          <p><strong>{{ $t('common.status') }}:</strong> {{ selectedAsset.status }}</p>
-        </div>
-        <div class="modal-action">
-          <button @click="showDetailModal = false" class="btn btn-sm">{{ $t('common.close') }}</button>
+    <Teleport to="body">
+      <div v-if="showDetailModal && selectedAsset" class="modal modal-open">
+        <div class="modal-box">
+          <h3 class="font-bold text-lg mb-4">{{ $t('assetManagement.assetDetail') }}</h3>
+          <div class="space-y-2">
+            <p><strong>{{ $t('assetManagement.name') }}:</strong> {{ selectedAsset.name }}</p>
+            <p><strong>{{ $t('assetManagement.type') }}:</strong> {{ selectedAsset.asset_type }}</p>
+            <p><strong>{{ $t('assetManagement.value') }}:</strong> {{ selectedAsset.value }}</p>
+            <p><strong>{{ $t('assetManagement.riskLevel.title') }}:</strong> {{ selectedAsset.risk_level }}</p>
+            <p><strong>{{ $t('common.status') }}:</strong> {{ selectedAsset.status }}</p>
+          </div>
+          <div class="modal-action">
+            <button @click="showDetailModal = false" class="btn btn-sm">{{ $t('common.close') }}</button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
 

@@ -187,6 +187,7 @@
       </div>
     </div>
 
+    <Teleport to="body">
     <!-- 创建集合模态框 -->
     <div v-if="showCreateCollectionModal" class="modal modal-open" @click.self="showCreateCollectionModal = false">
       <div class="modal-box">
@@ -703,6 +704,7 @@
         </div>
       </div>
     </div>
+    </Teleport>
 
     <!-- Toast 通知 -->
     <Toast 

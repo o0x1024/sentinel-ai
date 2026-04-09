@@ -1,5 +1,5 @@
 <template>
-  <dialog :open="open" class="modal" @click.self="$emit('close')">
+  <AppDialog :open="open" class="modal" @click.self="$emit('close')">
     <div class="modal-box max-w-xl">
       <h3 class="font-bold text-lg">边映射</h3>
       <p class="mt-2 text-sm text-base-content/70">{{ edgeLabel }}</p>
@@ -71,7 +71,7 @@
         <button class="btn btn-ghost btn-sm" @click="$emit('close')">取消</button>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">

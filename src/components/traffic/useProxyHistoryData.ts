@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import type { Ref } from 'vue'
 import { dialog } from '@/composables/useDialog'
 import { clearProxyHistoryDerivedCache, pruneProxyHistoryDerivedCache } from './proxyHistoryDerivedSupport'
+import { dedupeProxyHistoryRequests, mergeProxyHistoryRequests } from './proxyHistoryRequestStore'
 import type { ProxyHistoryWsTab, ProxyRequest, WebSocketConnection, WebSocketMessage } from './proxyHistoryTypes'
 
 type ProxyHistoryStats = {
@@ -49,6 +50,10 @@ export const useProxyHistoryData = (params: Params) => {
 
   const normalizeRequests = (requests: ProxyRequest[]) => requests.map(normalizeRequest)
 
+  const syncRequestIdSet = (requests: ProxyRequest[]) => {
+    params.requestIdSet.value = new Set(requests.map((request) => request.id))
+  }
+
   const collectStats = (requests: ProxyRequest[]) => {
     let http = 0
     let https = 0
@@ -72,13 +77,21 @@ export const useProxyHistoryData = (params: Params) => {
   }
 
   const mergeRequestIntoList = (request: ProxyRequest) => {
-    const index = params.requests.value.findIndex((item) => item.id === request.id)
-    if (index === -1) {
-      return request
+    const {
+      requests: mergedRequests,
+      addedRequests,
+    } = mergeProxyHistoryRequests(
+      params.requests.value,
+      [request],
+      'append',
+    )
+    const merged = mergedRequests.find((item) => item.id === request.id) || request
+    params.requests.value = mergedRequests
+    syncRequestIdSet(mergedRequests)
+    pruneProxyHistoryDerivedCache(params.requestIdSet.value)
+    if (addedRequests.length > 0) {
+      updateStats()
     }
-
-    const merged = { ...params.requests.value[index], ...request }
-    params.requests.value.splice(index, 1, merged)
     return merged
   }
 
@@ -114,11 +127,11 @@ export const useProxyHistoryData = (params: Params) => {
       })
 
       if (response.success && response.data) {
-        const normalizedRequests = normalizeRequests(response.data as ProxyRequest[])
+        const responseRequests = normalizeRequests(response.data as ProxyRequest[])
+        const normalizedRequests = dedupeProxyHistoryRequests(responseRequests)
         params.requests.value = normalizedRequests
-        params.hasMore.value = normalizedRequests.length === params.initialLoadLimit
-        params.requestIdSet.value.clear()
-        normalizedRequests.forEach((request) => params.requestIdSet.value.add(request.id))
+        params.hasMore.value = responseRequests.length === params.initialLoadLimit
+        syncRequestIdSet(normalizedRequests)
         pruneProxyHistoryDerivedCache(params.requestIdSet.value)
         updateStats()
       }
@@ -141,21 +154,30 @@ export const useProxyHistoryData = (params: Params) => {
       })
 
       if (response.success && response.data) {
-        const normalizedRequests = normalizeRequests(response.data as ProxyRequest[])
+        const responseRequests = normalizeRequests(response.data as ProxyRequest[])
+        const normalizedRequests = dedupeProxyHistoryRequests(responseRequests)
         if (normalizedRequests.length > 0) {
-          params.requests.value.push(...normalizedRequests)
-          normalizedRequests.forEach((request) => params.requestIdSet.value.add(request.id))
-          params.hasMore.value = normalizedRequests.length === params.loadMoreSize
+          const previousRequestCount = params.requests.value.length
+          const {
+            requests: mergedRequests,
+            addedRequests,
+          } = mergeProxyHistoryRequests(params.requests.value, normalizedRequests, 'append')
+
+          params.requests.value = mergedRequests
+          syncRequestIdSet(mergedRequests)
+          params.hasMore.value = responseRequests.length === params.loadMoreSize
           if (params.requests.value.length > params.maxRequestsInMemory) {
             params.requests.value = params.requests.value.slice(0, params.maxRequestsInMemory)
-            params.requestIdSet.value = new Set(params.requests.value.map((request) => request.id))
+            syncRequestIdSet(params.requests.value)
             params.hasMore.value = false
             updateStats()
           } else {
-            updateStatsIncrementalBatch(normalizedRequests)
+            if (params.requests.value.length !== previousRequestCount) {
+              updateStatsIncrementalBatch(addedRequests)
+            }
           }
           pruneProxyHistoryDerivedCache(params.requestIdSet.value)
-          return normalizedRequests.length
+          return addedRequests.length
         } else {
           params.hasMore.value = false
         }
@@ -273,18 +295,27 @@ export const useProxyHistoryData = (params: Params) => {
   const processPendingUpdates = () => {
     if (pendingUpdates.length === 0) return
 
-    const newRequests = pendingUpdates
-      .map(normalizeRequest)
-      .filter((request) => !params.requestIdSet.value.has(request.id))
-    if (newRequests.length > 0) {
-      params.requests.value.unshift(...newRequests)
-      newRequests.forEach((request) => params.requestIdSet.value.add(request.id))
+    const normalizedRequests = dedupeProxyHistoryRequests(
+      pendingUpdates.map(normalizeRequest),
+    )
+    const {
+      requests: mergedRequests,
+      addedRequests,
+    } = mergeProxyHistoryRequests(params.requests.value, normalizedRequests, 'prepend')
+
+    if (normalizedRequests.length > 0) {
+      params.requests.value = mergedRequests
+      syncRequestIdSet(mergedRequests)
       if (params.requests.value.length > params.maxRequestsInMemory) {
         const removed = params.requests.value.splice(params.maxRequestsInMemory)
-        removed.forEach((request) => params.requestIdSet.value.delete(request.id))
+        if (removed.length > 0) {
+          syncRequestIdSet(params.requests.value)
+        }
       }
       pruneProxyHistoryDerivedCache(params.requestIdSet.value)
-      newRequests.forEach(updateStatsIncremental)
+      if (addedRequests.length > 0) {
+        addedRequests.forEach(updateStatsIncremental)
+      }
     }
 
     pendingUpdates = []

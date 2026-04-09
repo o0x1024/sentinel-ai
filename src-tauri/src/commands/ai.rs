@@ -1,10 +1,10 @@
-use crate::commands::ai_system_agent_support::{
-    build_virtual_tool_context, complete_external_tracked_run_failure,
-    complete_external_tracked_run_success, load_external_system_agent_context,
-    merge_external_system_prompt, run_external_chat_task, run_external_text_task,
-    start_external_tracked_run,
+use crate::commands::ai_task_support::{
+    build_virtual_tool_context, complete_external_profile_run_failure,
+    complete_external_profile_run_success, load_external_profile_context,
+    merge_external_profile_prompt, run_external_chat_task, run_external_text_task,
+    start_external_profile_run,
 };
-use crate::commands::traffic_analysis_commands::TrafficAnalysisState;
+use crate::commands::traffic::TrafficAnalysisState;
 use crate::models::database::{AiMessage, SubagentMessage, SubagentRun};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::DatabaseService;
@@ -15,16 +15,12 @@ use anyhow::Result;
 use chrono::Utc;
 use sentinel_db::Database;
 use sentinel_llm::{
-    parse_image_from_json, ChatMessage as LlmChatMessage, StreamContent,
-    StreamingLlmClient,
+    parse_image_from_json, ChatMessage as LlmChatMessage, StreamContent, StreamingLlmClient,
 };
 use sentinel_rag;
 use sentinel_workflow::WorkflowGraph;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
@@ -68,48 +64,6 @@ impl From<CommandAiConfig> for AiConfig {
             max_turns: None,
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct AiTurnLogQuery {
-    pub date: Option<String>,
-    pub conversation_id: Option<String>,
-    pub session_id: Option<String>,
-    pub limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiTurnLogEntry {
-    pub timestamp: String,
-    pub session_id: String,
-    pub conversation_id: String,
-    pub turn: Option<u64>,
-    pub provider: String,
-    pub model: String,
-    pub summary: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiTurnLogSummaryEntry {
-    pub timestamp: String,
-    pub session_id: String,
-    pub conversation_id: String,
-    pub turn: Option<u64>,
-    pub provider: String,
-    pub model: String,
-    pub status: String,
-    pub duration_ms: Option<i64>,
-    pub input_tokens: Option<u32>,
-    pub output_tokens: Option<u32>,
-    pub tool_call_count: usize,
-    pub user_request_preview: String,
-    pub assistant_response_preview: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct AiTurnLogDetailQuery {
-    pub date: Option<String>,
-    pub session_id: String,
 }
 
 // 全局取消令牌管理器: maps conversation_id -> (token, generation counter)
@@ -968,7 +922,7 @@ pub async fn generate_plugin_stream(
     ai_manager: State<'_, Arc<AiServiceManager>>,
     system_agent_runtime: State<'_, Arc<SystemAgentRuntime>>,
 ) -> Result<String, String> {
-    let agent_context = load_external_system_agent_context(
+    let agent_context = load_external_profile_context(
         system_agent_runtime.inner(),
         "traffic_plugin_generator_agent",
         &[],
@@ -995,8 +949,8 @@ pub async fn generate_plugin_stream(
             _ => Some(virtual_context),
         }
     };
-    let system_prompt = merge_external_system_prompt(external_system_prompt, &agent_context);
-    let tracked_run = start_external_tracked_run(
+    let system_prompt = merge_external_profile_prompt(external_system_prompt, &agent_context);
+    let tracked_run = start_external_profile_run(
         system_agent_runtime.inner(),
         "traffic_plugin_generator_agent",
         serde_json::json!({
@@ -1043,7 +997,7 @@ pub async fn generate_plugin_stream(
 
         match result {
             Ok(content) => {
-                complete_external_tracked_run_success(
+                complete_external_profile_run_success(
                     &runtime_for_tracking,
                     &tracked_run,
                     serde_json::json!({
@@ -1061,7 +1015,7 @@ pub async fn generate_plugin_stream(
                 );
             }
             Err(e) => {
-                complete_external_tracked_run_failure(
+                complete_external_profile_run_failure(
                     &runtime_for_tracking,
                     &tracked_run,
                     e.to_string(),
@@ -1607,231 +1561,6 @@ pub async fn archive_ai_conversation(
     Err("AI service not found".to_string())
 }
 
-// 获取AI对话列表
-fn resolve_turn_log_date(date: Option<&str>) -> String {
-    date.map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string())
-}
-
-fn build_turn_log_path(date: &str) -> PathBuf {
-    PathBuf::from("logs").join(format!("llm-turns-{}.jsonl", date))
-}
-
-fn for_each_jsonl_line_reverse<F>(path: &PathBuf, mut visit: F) -> Result<(), String>
-where
-    F: FnMut(&str) -> Result<bool, String>,
-{
-    let mut file = File::open(path)
-        .map_err(|e| format!("Failed to open turn log file {}: {}", path.display(), e))?;
-    let mut pos = file
-        .seek(SeekFrom::End(0))
-        .map_err(|e| format!("Failed to seek turn log file {}: {}", path.display(), e))?;
-    let mut remainder = Vec::<u8>::new();
-    let mut chunk = vec![0u8; 8192];
-
-    while pos > 0 {
-        let read_size = usize::try_from(pos.min(chunk.len() as u64)).unwrap_or(chunk.len());
-        pos -= read_size as u64;
-        file.seek(SeekFrom::Start(pos))
-            .map_err(|e| format!("Failed to seek turn log file {}: {}", path.display(), e))?;
-        file.read_exact(&mut chunk[..read_size])
-            .map_err(|e| format!("Failed to read turn log file {}: {}", path.display(), e))?;
-
-        let mut combined = Vec::with_capacity(read_size + remainder.len());
-        combined.extend_from_slice(&chunk[..read_size]);
-        combined.extend_from_slice(&remainder);
-
-        let parts = combined.split(|b| *b == b'\n').collect::<Vec<_>>();
-        remainder = parts.first().map(|part| part.to_vec()).unwrap_or_default();
-
-        for part in parts.iter().skip(1).rev() {
-            let line = String::from_utf8_lossy(part).trim().to_string();
-            if line.is_empty() {
-                continue;
-            }
-            if !visit(&line)? {
-                return Ok(());
-            }
-        }
-    }
-
-    if !remainder.is_empty() {
-        let line = String::from_utf8_lossy(&remainder).trim().to_string();
-        if !line.is_empty() && !visit(&line)? {
-            return Ok(());
-        }
-    }
-
-    Ok(())
-}
-
-fn preview_from_json_value(value: &serde_json::Value, max_chars: usize) -> String {
-    let raw = match value {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Null => String::new(),
-        other => serde_json::to_string(other).unwrap_or_default(),
-    };
-    let normalized = raw
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .trim()
-        .to_string();
-    if normalized.chars().count() <= max_chars {
-        return normalized;
-    }
-    let mut preview = normalized.chars().take(max_chars).collect::<String>();
-    preview.push_str("...");
-    preview
-}
-
-fn build_turn_log_summary(entry: AiTurnLogEntry) -> AiTurnLogSummaryEntry {
-    let status = entry
-        .summary
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let duration_ms = entry.summary.get("duration_ms").and_then(|v| v.as_i64());
-    let input_tokens = entry
-        .summary
-        .get("usage")
-        .and_then(|v| v.get("input_tokens"))
-        .and_then(|v| v.as_u64())
-        .and_then(|v| u32::try_from(v).ok());
-    let output_tokens = entry
-        .summary
-        .get("usage")
-        .and_then(|v| v.get("output_tokens"))
-        .and_then(|v| v.as_u64())
-        .and_then(|v| u32::try_from(v).ok());
-    let tool_call_count = entry
-        .summary
-        .get("tool_calls")
-        .and_then(|v| v.as_array())
-        .map(|v| v.len())
-        .unwrap_or(0);
-    let user_request_preview = preview_from_json_value(
-        entry
-            .summary
-            .get("user_request")
-            .unwrap_or(&serde_json::Value::Null),
-        160,
-    );
-    let assistant_response_preview = preview_from_json_value(
-        entry
-            .summary
-            .get("assistant_response")
-            .unwrap_or(&serde_json::Value::Null),
-        220,
-    );
-
-    AiTurnLogSummaryEntry {
-        timestamp: entry.timestamp,
-        session_id: entry.session_id,
-        conversation_id: entry.conversation_id,
-        turn: entry.turn,
-        provider: entry.provider,
-        model: entry.model,
-        status,
-        duration_ms,
-        input_tokens,
-        output_tokens,
-        tool_call_count,
-        user_request_preview,
-        assistant_response_preview,
-    }
-}
-
-#[tauri::command]
-pub async fn get_ai_turn_logs(
-    request: AiTurnLogQuery,
-) -> Result<Vec<AiTurnLogSummaryEntry>, String> {
-    let date = resolve_turn_log_date(request.date.as_deref());
-    let path = build_turn_log_path(&date);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let conversation_filter = request
-        .conversation_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string());
-    let session_filter = request
-        .session_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string());
-    let limit = request.limit.unwrap_or(50).min(500);
-
-    let mut rows = Vec::new();
-    for_each_jsonl_line_reverse(&path, |line| {
-        let entry = match serde_json::from_str::<AiTurnLogEntry>(line) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("Skipping malformed turn log row: {}", e);
-                return Ok(true);
-            }
-        };
-
-        if let Some(filter) = conversation_filter.as_deref() {
-            if !entry.conversation_id.contains(filter) {
-                return Ok(true);
-            }
-        }
-        if let Some(filter) = session_filter.as_deref() {
-            if !entry.session_id.contains(filter) {
-                return Ok(true);
-            }
-        }
-
-        rows.push(build_turn_log_summary(entry));
-        Ok(rows.len() < limit)
-    })?;
-
-    Ok(rows)
-}
-
-#[tauri::command]
-pub async fn get_ai_turn_log_detail(
-    request: AiTurnLogDetailQuery,
-) -> Result<Option<AiTurnLogEntry>, String> {
-    let session_id = request.session_id.trim();
-    if session_id.is_empty() {
-        return Err("session_id is required".to_string());
-    }
-
-    let date = resolve_turn_log_date(request.date.as_deref());
-    let path = build_turn_log_path(&date);
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let mut found = None;
-    for_each_jsonl_line_reverse(&path, |line| {
-        let entry = match serde_json::from_str::<AiTurnLogEntry>(line) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(
-                    "Skipping malformed turn log row while loading detail: {}",
-                    e
-                );
-                return Ok(true);
-            }
-        };
-        if entry.session_id == session_id {
-            found = Some(entry);
-            return Ok(false);
-        }
-        Ok(true)
-    })?;
-
-    Ok(found)
-}
-
 // 获取对话历史
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_ai_conversation_history(
@@ -2039,7 +1768,7 @@ pub async fn generate_workflow_from_nl(
         return Err("description is empty".to_string());
     }
 
-    let agent_context = load_external_system_agent_context(
+    let agent_context = load_external_profile_context(
         system_agent_runtime.inner(),
         "workflow_designer_agent",
         &["tool_catalog_reader", "workflow_catalog_reader"],
@@ -2047,16 +1776,17 @@ pub async fn generate_workflow_from_nl(
     .await
     .map_err(|e| e.to_string())?;
 
-    let virtual_tool_sections = build_virtual_tool_context(&agent_context, Some(traffic_state.inner()))
-        .await
-        .map_err(|e| e.to_string())?;
+    let virtual_tool_sections =
+        build_virtual_tool_context(&agent_context, Some(traffic_state.inner()))
+            .await
+            .map_err(|e| e.to_string())?;
     let virtual_tool_context = if virtual_tool_sections.is_empty() {
         String::new()
     } else {
         format!("\n{}\n", virtual_tool_sections.join("\n\n"))
     };
 
-    let tracked_run = start_external_tracked_run(
+    let tracked_run = start_external_profile_run(
         system_agent_runtime.inner(),
         "workflow_designer_agent",
         serde_json::json!({
@@ -2145,7 +1875,7 @@ CRITICAL RULES:
         virtual_tool_context
     );
     let system_prompt =
-        merge_external_system_prompt(Some(system_prompt), &agent_context).unwrap_or_default();
+        merge_external_profile_prompt(Some(system_prompt), &agent_context).unwrap_or_default();
 
     let user_prompt = format!("用户描述：{}\n请生成 WorkflowGraph JSON。", desc);
 
@@ -2162,10 +1892,11 @@ CRITICAL RULES:
         Some(system_prompt.clone()),
         user_prompt,
     )
-    .await {
+    .await
+    {
         Ok(raw) => raw,
         Err(e) => {
-            complete_external_tracked_run_failure(
+            complete_external_profile_run_failure(
                 system_agent_runtime.inner(),
                 &tracked_run,
                 e.to_string(),
@@ -2184,7 +1915,7 @@ CRITICAL RULES:
                     .map_err(|e| format!("Failed to parse extracted JSON: {}", e))?
             } else {
                 let error = format!("Failed to parse LLM output as JSON: {}", e0);
-                complete_external_tracked_run_failure(
+                complete_external_profile_run_failure(
                     system_agent_runtime.inner(),
                     &tracked_run,
                     &error,
@@ -2199,7 +1930,7 @@ CRITICAL RULES:
         Ok(graph) => graph,
         Err(e) => {
             let error = format!("Failed to parse workflow graph: {}", e);
-            complete_external_tracked_run_failure(
+            complete_external_profile_run_failure(
                 system_agent_runtime.inner(),
                 &tracked_run,
                 &error,
@@ -2226,7 +1957,7 @@ CRITICAL RULES:
         graph.credentials = vec![];
     }
 
-    complete_external_tracked_run_success(
+    complete_external_profile_run_success(
         system_agent_runtime.inner(),
         &tracked_run,
         serde_json::json!({

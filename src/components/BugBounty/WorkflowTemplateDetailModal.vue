@@ -1,9 +1,10 @@
 <template>
-  <div class="modal modal-open">
-    <div
-      ref="modalBoxEl"
-      class="modal-box max-w-5xl h-[90vh] overflow-y-auto overflow-x-hidden overscroll-contain bg-base-100"
-    >
+  <Teleport to="body">
+    <div class="modal modal-open">
+      <div
+        ref="modalBoxEl"
+        class="modal-box max-w-5xl h-[90vh] overflow-y-auto overflow-x-hidden overscroll-contain bg-base-100"
+      >
       <!-- Header -->
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-3">
@@ -249,9 +250,10 @@
           @error="onExecutionError"
         />
       </div>
+      </div>
+      <div class="modal-backdrop" @click="$emit('close')"></div>
     </div>
-    <div class="modal-backdrop" @click="$emit('close')"></div>
-  </div>
+  </Teleport>
 
   <!-- Add/Edit Step Modal (teleported to avoid nesting/clipping) -->
   <Teleport to="body">

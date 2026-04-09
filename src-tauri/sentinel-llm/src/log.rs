@@ -1,9 +1,13 @@
 //! LLM 请求/响应日志记录模块
 
-use std::fs::OpenOptions;
+use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
-use std::io::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Once,
+};
 
 const TOOL_LOG_MAX_CHARS: usize = 8000;
 const LLM_REQUEST_LOG_MAX_CHARS: usize = 12000;
@@ -12,8 +16,200 @@ const LLM_ERROR_LOG_MAX_CHARS: usize = 6000;
 const LLM_JSONL_PREVIEW_MAX_CHARS: usize = 800;
 const STREAM_EVENT_LOG_MAX_CHARS: usize = 8000;
 const TURN_LOG_MAX_CHARS: usize = 12000;
+const LLM_LOG_ROOT_DIR: &str = "logs/llm";
 static LLM_TURN_COUNTER: AtomicU64 = AtomicU64::new(1);
 static LLM_STREAM_EVENT_COUNTER: AtomicU64 = AtomicU64::new(1);
+static LLM_LOG_STORAGE_INIT: Once = Once::new();
+
+#[derive(Clone, Copy)]
+struct LlmLogCategory {
+    directory: &'static str,
+    legacy_prefix: &'static str,
+}
+
+const HTTP_REQUESTS_LOG_CATEGORY: LlmLogCategory = LlmLogCategory {
+    directory: "http-requests",
+    legacy_prefix: "llm-http-requests-",
+};
+
+const STREAM_EVENTS_LOG_CATEGORY: LlmLogCategory = LlmLogCategory {
+    directory: "stream-events",
+    legacy_prefix: "llm-stream-events-",
+};
+
+const TURNS_LOG_CATEGORY: LlmLogCategory = LlmLogCategory {
+    directory: "turns",
+    legacy_prefix: "llm-turns-",
+};
+
+const TOOL_CALLS_LOG_CATEGORY: LlmLogCategory = LlmLogCategory {
+    directory: "tool-calls",
+    legacy_prefix: "llm-tool-calls-",
+};
+
+const MIGRATED_LOG_CATEGORIES: [LlmLogCategory; 4] = [
+    HTTP_REQUESTS_LOG_CATEGORY,
+    STREAM_EVENTS_LOG_CATEGORY,
+    TURNS_LOG_CATEGORY,
+    TOOL_CALLS_LOG_CATEGORY,
+];
+
+fn ensure_directory(path: &Path) -> io::Result<()> {
+    fs::create_dir_all(path)
+}
+
+fn logs_root_dir() -> PathBuf {
+    PathBuf::from("logs")
+}
+
+fn llm_log_category_dir(category: LlmLogCategory) -> PathBuf {
+    PathBuf::from(LLM_LOG_ROOT_DIR).join(category.directory)
+}
+
+fn current_utc_log_date() -> String {
+    chrono::Utc::now().format("%Y-%m-%d").to_string()
+}
+
+fn legacy_llm_log_path(category: LlmLogCategory, date: &str, extension: &str) -> PathBuf {
+    logs_root_dir().join(format!("{}{}.{}", category.legacy_prefix, date, extension))
+}
+
+fn initialize_llm_log_storage() {
+    LLM_LOG_STORAGE_INIT.call_once(|| {
+        if let Err(e) = ensure_directory(&logs_root_dir()) {
+            tracing::error!("Failed to create logs directory: {}", e);
+            return;
+        }
+
+        for category in MIGRATED_LOG_CATEGORIES {
+            let category_dir = llm_log_category_dir(category);
+            if let Err(e) = ensure_directory(&category_dir) {
+                tracing::error!(
+                    "Failed to create categorized LLM log directory {}: {}",
+                    category_dir.display(),
+                    e
+                );
+            }
+        }
+
+        migrate_legacy_llm_logs();
+    });
+}
+
+fn categorized_llm_log_path(category: LlmLogCategory, extension: &str) -> PathBuf {
+    llm_log_category_dir(category).join(format!("{}.{}", current_utc_log_date(), extension))
+}
+
+fn categorized_llm_log_path_for_date(
+    category: LlmLogCategory,
+    date: &str,
+    extension: &str,
+) -> PathBuf {
+    llm_log_category_dir(category).join(format!("{}.{}", date, extension))
+}
+
+fn open_categorized_llm_log_file(
+    category: LlmLogCategory,
+    extension: &str,
+) -> io::Result<(PathBuf, File)> {
+    initialize_llm_log_storage();
+
+    let category_dir = llm_log_category_dir(category);
+    ensure_directory(&category_dir)?;
+
+    let path = categorized_llm_log_path(category, extension);
+    let file = OpenOptions::new().create(true).append(true).open(&path)?;
+    Ok((path, file))
+}
+
+pub fn turn_log_jsonl_paths_for_date(date: &str) -> Vec<PathBuf> {
+    vec![
+        categorized_llm_log_path_for_date(TURNS_LOG_CATEGORY, date, "jsonl"),
+        legacy_llm_log_path(TURNS_LOG_CATEGORY, date, "jsonl"),
+    ]
+}
+
+fn categorize_legacy_llm_log_file(file_name: &str) -> Option<(LlmLogCategory, &str)> {
+    MIGRATED_LOG_CATEGORIES.iter().find_map(|category| {
+        file_name
+            .strip_prefix(category.legacy_prefix)
+            .map(|suffix| (*category, suffix))
+    })
+}
+
+fn move_legacy_log_file(source: &Path, destination: &Path) -> io::Result<()> {
+    if source == destination || !source.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = destination.parent() {
+        ensure_directory(parent)?;
+    }
+
+    if !destination.exists() {
+        return match fs::rename(source, destination) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                fs::copy(source, destination)?;
+                fs::remove_file(source)
+            }
+        };
+    }
+
+    let mut source_file = File::open(source)?;
+    let mut destination_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(destination)?;
+
+    io::copy(&mut source_file, &mut destination_file)?;
+    destination_file.flush()?;
+    fs::remove_file(source)
+}
+
+fn migrate_legacy_llm_logs() {
+    let read_dir = match fs::read_dir(logs_root_dir()) {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::error!("Failed to scan logs directory for legacy LLM logs: {}", e);
+            return;
+        }
+    };
+
+    for entry in read_dir {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                tracing::warn!("Failed to inspect a logs directory entry: {}", e);
+                continue;
+            }
+        };
+
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let file_name = match entry.file_name().into_string() {
+            Ok(file_name) => file_name,
+            Err(_) => continue,
+        };
+
+        let Some((category, suffix)) = categorize_legacy_llm_log_file(&file_name) else {
+            continue;
+        };
+
+        let destination = llm_log_category_dir(category).join(suffix);
+        if let Err(e) = move_legacy_log_file(&path, &destination) {
+            tracing::warn!(
+                "Failed to migrate legacy LLM log {} to {}: {}",
+                path.display(),
+                destination.display(),
+                e
+            );
+        }
+    }
+}
 
 fn truncate_utf8_at_boundary(input: &str, max_bytes: usize) -> String {
     if input.len() <= max_bytes {
@@ -86,20 +282,12 @@ fn write_llm_jsonl_log(
         "truncated": normalized_content.len() > LLM_JSONL_PREVIEW_MAX_CHARS || normalized_content.contains("[truncated]"),
     });
 
-    let jsonl_file_path = format!(
-        "logs/llm-http-requests-{}.jsonl",
-        chrono::Utc::now().format("%Y-%m-%d")
-    );
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&jsonl_file_path)
-    {
-        Ok(mut file) => {
+    match open_categorized_llm_log_file(HTTP_REQUESTS_LOG_CATEGORY, "jsonl") {
+        Ok((jsonl_file_path, mut file)) => {
             if let Err(e) = writeln!(file, "{}", event) {
                 tracing::error!(
                     "Failed to write to LLM JSONL log file {}: {}",
-                    jsonl_file_path,
+                    jsonl_file_path.display(),
                     e
                 );
             } else {
@@ -107,11 +295,7 @@ fn write_llm_jsonl_log(
             }
         }
         Err(e) => {
-            tracing::error!(
-                "Failed to open LLM JSONL log file {}: {}",
-                jsonl_file_path,
-                e
-            );
+            tracing::error!("Failed to open LLM JSONL log file: {}", e);
         }
     }
 }
@@ -148,32 +332,20 @@ pub fn write_llm_log(
         content
     );
 
-    // 确保日志目录存在
-    if let Err(e) = std::fs::create_dir_all("logs") {
-        tracing::error!("Failed to create logs directory: {}", e);
-        return;
-    }
-
-    // 写入专门的 LLM 请求日志文件
-    let log_file_path = format!(
-        "logs/llm-http-requests-{}.log",
-        chrono::Utc::now().format("%Y-%m-%d")
-    );
-
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file_path)
-    {
-        Ok(mut file) => {
+    match open_categorized_llm_log_file(HTTP_REQUESTS_LOG_CATEGORY, "log") {
+        Ok((log_file_path, mut file)) => {
             if let Err(e) = file.write_all(log_entry.as_bytes()) {
-                tracing::error!("Failed to write to LLM log file {}: {}", log_file_path, e);
+                tracing::error!(
+                    "Failed to write to LLM log file {}: {}",
+                    log_file_path.display(),
+                    e
+                );
             } else {
                 let _ = file.flush();
             }
         }
         Err(e) => {
-            tracing::error!("Failed to open LLM log file {}: {}", log_file_path, e);
+            tracing::error!("Failed to open LLM log file: {}", e);
         }
     }
 
@@ -210,26 +382,12 @@ fn write_stream_log(
         payload_text
     );
 
-    if let Err(e) = std::fs::create_dir_all("logs") {
-        tracing::error!("Failed to create logs directory: {}", e);
-        return;
-    }
-
-    let log_file_path = format!(
-        "logs/llm-stream-events-{}.log",
-        chrono::Utc::now().format("%Y-%m-%d")
-    );
-
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file_path)
-    {
-        Ok(mut file) => {
+    match open_categorized_llm_log_file(STREAM_EVENTS_LOG_CATEGORY, "log") {
+        Ok((log_file_path, mut file)) => {
             if let Err(e) = file.write_all(log_entry.as_bytes()) {
                 tracing::error!(
                     "Failed to write to stream log file {}: {}",
-                    log_file_path,
+                    log_file_path.display(),
                     e
                 );
             } else {
@@ -237,7 +395,7 @@ fn write_stream_log(
             }
         }
         Err(e) => {
-            tracing::error!("Failed to open stream log file {}: {}", log_file_path, e);
+            tracing::error!("Failed to open stream log file: {}", e);
         }
     }
 }
@@ -264,25 +422,12 @@ pub fn log_stream_event(
         "payload": sanitized_payload,
     });
 
-    if let Err(e) = std::fs::create_dir_all("logs") {
-        tracing::error!("Failed to create logs directory: {}", e);
-        return;
-    }
-
-    let jsonl_file_path = format!(
-        "logs/llm-stream-events-{}.jsonl",
-        chrono::Utc::now().format("%Y-%m-%d")
-    );
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&jsonl_file_path)
-    {
-        Ok(mut file) => {
+    match open_categorized_llm_log_file(STREAM_EVENTS_LOG_CATEGORY, "jsonl") {
+        Ok((jsonl_file_path, mut file)) => {
             if let Err(e) = writeln!(file, "{}", event) {
                 tracing::error!(
                     "Failed to write to stream JSONL log file {}: {}",
-                    jsonl_file_path,
+                    jsonl_file_path.display(),
                     e
                 );
             } else {
@@ -290,11 +435,7 @@ pub fn log_stream_event(
             }
         }
         Err(e) => {
-            tracing::error!(
-                "Failed to open stream JSONL log file {}: {}",
-                jsonl_file_path,
-                e
-            );
+            tracing::error!("Failed to open stream JSONL log file: {}", e);
         }
     }
 
@@ -335,25 +476,12 @@ pub fn log_turn_summary(
         "summary": sanitized_payload,
     });
 
-    if let Err(e) = std::fs::create_dir_all("logs") {
-        tracing::error!("Failed to create logs directory: {}", e);
-        return;
-    }
-
-    let jsonl_file_path = format!(
-        "logs/llm-turns-{}.jsonl",
-        chrono::Utc::now().format("%Y-%m-%d")
-    );
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&jsonl_file_path)
-    {
-        Ok(mut file) => {
+    match open_categorized_llm_log_file(TURNS_LOG_CATEGORY, "jsonl") {
+        Ok((jsonl_file_path, mut file)) => {
             if let Err(e) = writeln!(file, "{}", event) {
                 tracing::error!(
                     "Failed to write to turn JSONL log file {}: {}",
-                    jsonl_file_path,
+                    jsonl_file_path.display(),
                     e
                 );
             } else {
@@ -361,18 +489,10 @@ pub fn log_turn_summary(
             }
         }
         Err(e) => {
-            tracing::error!(
-                "Failed to open turn JSONL log file {}: {}",
-                jsonl_file_path,
-                e
-            );
+            tracing::error!("Failed to open turn JSONL log file: {}", e);
         }
     }
 
-    let log_file_path = format!(
-        "logs/llm-turns-{}.log",
-        chrono::Utc::now().format("%Y-%m-%d")
-    );
     let payload_text = truncate_with_marker(&event["summary"].to_string(), TURN_LOG_MAX_CHARS);
     let log_entry = format!(
         "[{}] [TURN {}] [Session: {}] [Conversation: {}] [Provider: {}] [Model: {}] {}\n",
@@ -386,20 +506,20 @@ pub fn log_turn_summary(
         model,
         payload_text
     );
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file_path)
-    {
-        Ok(mut file) => {
+    match open_categorized_llm_log_file(TURNS_LOG_CATEGORY, "log") {
+        Ok((log_file_path, mut file)) => {
             if let Err(e) = file.write_all(log_entry.as_bytes()) {
-                tracing::error!("Failed to write to turn log file {}: {}", log_file_path, e);
+                tracing::error!(
+                    "Failed to write to turn log file {}: {}",
+                    log_file_path.display(),
+                    e
+                );
             } else {
                 let _ = file.flush();
             }
         }
         Err(e) => {
-            tracing::error!("Failed to open turn log file {}: {}", log_file_path, e);
+            tracing::error!("Failed to open turn log file: {}", e);
         }
     }
 }
@@ -425,30 +545,20 @@ pub fn write_tool_log(
         content
     );
 
-    if let Err(e) = std::fs::create_dir_all("logs") {
-        tracing::error!("Failed to create logs directory: {}", e);
-        return;
-    }
-
-    let log_file_path = format!(
-        "logs/llm-tool-calls-{}.log",
-        chrono::Utc::now().format("%Y-%m-%d")
-    );
-
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file_path)
-    {
-        Ok(mut file) => {
+    match open_categorized_llm_log_file(TOOL_CALLS_LOG_CATEGORY, "log") {
+        Ok((log_file_path, mut file)) => {
             if let Err(e) = file.write_all(log_entry.as_bytes()) {
-                tracing::error!("Failed to write to tool log file {}: {}", log_file_path, e);
+                tracing::error!(
+                    "Failed to write to tool log file {}: {}",
+                    log_file_path.display(),
+                    e
+                );
             } else {
                 let _ = file.flush();
             }
         }
         Err(e) => {
-            tracing::error!("Failed to open tool log file {}: {}", log_file_path, e);
+            tracing::error!("Failed to open tool log file: {}", e);
         }
     }
 }
@@ -604,12 +714,107 @@ pub fn log_error_response(
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_utf8_at_boundary;
+    use super::{
+        categorize_legacy_llm_log_file, truncate_utf8_at_boundary, turn_log_jsonl_paths_for_date,
+        write_tool_log, HTTP_REQUESTS_LOG_CATEGORY, STREAM_EVENTS_LOG_CATEGORY,
+        TOOL_CALLS_LOG_CATEGORY, TURNS_LOG_CATEGORY,
+    };
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn truncate_utf8_never_panics_on_multibyte_boundary() {
         let input = "a中😀b";
         let out = truncate_utf8_at_boundary(input, 4);
         assert_eq!(out, "a中");
+    }
+
+    #[test]
+    fn categorize_legacy_llm_log_file_maps_known_prefixes() {
+        let http = categorize_legacy_llm_log_file("llm-http-requests-2026-04-08.log");
+        assert_eq!(
+            http.map(|(category, _)| category.directory),
+            Some(HTTP_REQUESTS_LOG_CATEGORY.directory)
+        );
+        assert_eq!(http.map(|(_, suffix)| suffix), Some("2026-04-08.log"));
+
+        let stream = categorize_legacy_llm_log_file("llm-stream-events-2026-04-08.jsonl");
+        assert_eq!(
+            stream.map(|(category, _)| category.directory),
+            Some(STREAM_EVENTS_LOG_CATEGORY.directory)
+        );
+        assert_eq!(stream.map(|(_, suffix)| suffix), Some("2026-04-08.jsonl"));
+
+        let tool = categorize_legacy_llm_log_file("llm-tool-calls-2026-04-08.log");
+        assert_eq!(
+            tool.map(|(category, _)| category.directory),
+            Some(TOOL_CALLS_LOG_CATEGORY.directory)
+        );
+        assert_eq!(tool.map(|(_, suffix)| suffix), Some("2026-04-08.log"));
+
+        let turn = categorize_legacy_llm_log_file("llm-turns-2026-04-08.jsonl");
+        assert_eq!(
+            turn.map(|(category, _)| category.directory),
+            Some(TURNS_LOG_CATEGORY.directory)
+        );
+        assert_eq!(turn.map(|(_, suffix)| suffix), Some("2026-04-08.jsonl"));
+    }
+
+    #[test]
+    fn write_tool_log_uses_categorized_directory_and_migrates_legacy_files() {
+        let original_dir = env::current_dir().expect("current dir");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("duration")
+            .as_nanos();
+        let temp_dir = env::temp_dir().join(format!("sentinel-llm-log-test-{}", unique));
+        let legacy_dir = temp_dir.join("logs");
+        let legacy_path = legacy_dir.join("llm-tool-calls-2026-04-08.log");
+        let run = || -> Result<(), Box<dyn std::error::Error>> {
+            fs::create_dir_all(&legacy_dir)?;
+            fs::write(&legacy_path, "legacy-entry\n")?;
+
+            env::set_current_dir(&temp_dir)?;
+            write_tool_log(
+                "session-1",
+                Some("conversation-1"),
+                "provider-x",
+                "model-y",
+                "TOOL CALL",
+                "tool payload",
+            );
+
+            let migrated_path = temp_dir.join("logs/llm/tool-calls/2026-04-08.log");
+            let today_path = temp_dir.join(format!(
+                "logs/llm/tool-calls/{}.log",
+                chrono::Utc::now().format("%Y-%m-%d")
+            ));
+
+            assert!(migrated_path.exists(), "legacy file should be migrated");
+            assert!(
+                !legacy_path.exists(),
+                "legacy flat file should be removed from logs root"
+            );
+            assert!(
+                today_path.exists(),
+                "new tool log should use categorized directory"
+            );
+            Ok(())
+        };
+
+        let result = run();
+        let _ = env::set_current_dir(&original_dir);
+        let _ = fs::remove_dir_all(&temp_dir);
+        result.expect("categorized tool log write should succeed");
+    }
+
+    #[test]
+    fn turn_log_jsonl_paths_prioritize_categorized_path() {
+        let paths = turn_log_jsonl_paths_for_date("2026-04-08");
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], PathBuf::from("logs/llm/turns/2026-04-08.jsonl"));
+        assert_eq!(paths[1], PathBuf::from("logs/llm-turns-2026-04-08.jsonl"));
     }
 }

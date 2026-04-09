@@ -15,7 +15,7 @@
       </button>
     </div>
 
-    <dialog ref="dialogRef" class="modal">
+    <AppDialog ref="dialogRef" class="modal">
       <div class="modal-box max-w-2xl">
         <h3 class="mb-4 text-lg font-semibold">{{ label }}</h3>
 
@@ -173,7 +173,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('common.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
   </div>
 </template>
 

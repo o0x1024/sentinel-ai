@@ -580,7 +580,7 @@
     </div>
 
     <!-- Execute Case Dialog -->
-    <dialog :class="['modal', { 'modal-open': !!selectedRun }]" @click.self="closeDialog">
+    <AppDialog :class="['modal', { 'modal-open': !!selectedRun }]" @click.self="closeDialog">
       <div class="modal-box w-11/12 max-w-2xl">
         <h3 class="font-bold text-lg mb-4">{{ $t('llmSecurity.executeDialog.title') }}</h3>
         <div class="space-y-4">
@@ -636,10 +636,10 @@
           </div>
         </div>
       </div>
-    </dialog>
+    </AppDialog>
 
     <!-- Import Preview Dialog -->
-    <dialog :class="['modal', { 'modal-open': importPreview.open }]" @click.self="closeImportPreview">
+    <AppDialog :class="['modal', { 'modal-open': importPreview.open }]" @click.self="closeImportPreview">
       <div class="modal-box w-11/12 max-w-4xl">
         <h3 class="font-bold text-lg mb-3">{{ $t('llmSecurity.importPreview.title') }}</h3>
         <div class="space-y-3 text-sm">
@@ -671,7 +671,7 @@
           </div>
         </div>
       </div>
-    </dialog>
+    </AppDialog>
 
     <!-- Suite Manager Drawer -->
     <LlmSuiteDrawer
@@ -682,7 +682,7 @@
 
     <!-- Case Preview Modal (Step 2) -->
     <Teleport to="body">
-      <dialog :class="['modal', { 'modal-open': casePreviewModal.open }]" style="z-index:1001" @click.self="casePreviewModal.open = false">
+      <AppDialog :class="['modal', { 'modal-open': casePreviewModal.open }]" style="z-index:1001" @click.self="casePreviewModal.open = false">
         <div class="modal-box w-11/12 max-w-3xl">
           <h3 class="font-bold text-base mb-4">
             {{ $t('llmSecurity.tests.casePreviewTitle', { category: casePreviewModal.category }) }}
@@ -709,12 +709,12 @@
             <button class="btn btn-primary btn-sm" @click="casePreviewModal.open = false">{{ $t('llmSecurity.tests.casePreviewClose') }}</button>
           </div>
         </div>
-      </dialog>
+      </AppDialog>
     </Teleport>
 
     <!-- Case Detail Modal (Report) -->
     <Teleport to="body">
-      <dialog :class="['modal', { 'modal-open': caseDetailModal.open }]" style="z-index:1001" @click.self="caseDetailModal.open = false">
+      <AppDialog :class="['modal', { 'modal-open': caseDetailModal.open }]" style="z-index:1001" @click.self="caseDetailModal.open = false">
         <div v-if="caseDetailModal.entry" class="modal-box w-11/12 max-w-2xl">
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-bold text-base">{{ $t('llmSecurity.report.caseDetail') }}</h3>
@@ -798,13 +798,13 @@
             <button class="btn btn-primary btn-sm" @click="caseDetailModal.open = false">{{ $t('llmSecurity.report.closeDetail') }}</button>
           </div>
         </div>
-      </dialog>
+      </AppDialog>
     </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
@@ -1442,6 +1442,11 @@ const loadLocalSuites = async () => {
   }
 }
 
+const handleSecurityCenterRefresh = () => {
+  void loadLocalSuites()
+  void loadRuns()
+}
+
 const handleExportSuitesJson = async () => {
   try {
     lastError.value = ''
@@ -1487,5 +1492,10 @@ const applyImport = async (overwriteConflicts: boolean) => {
 onMounted(() => {
   void loadLocalSuites()
   void loadRuns()
+  window.addEventListener('security-center-refresh', handleSecurityCenterRefresh)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('security-center-refresh', handleSecurityCenterRefresh)
 })
 </script>

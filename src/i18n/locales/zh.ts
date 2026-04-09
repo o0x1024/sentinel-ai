@@ -98,6 +98,7 @@ export default {
   securityCenter: {
     title: '安全中心',
     tabs: {
+      workbench: '安全工作台',
       vulnerabilities: '漏洞',
       scanTasks: '扫描任务',
       llmSecurity: 'LLM安全测试',
@@ -384,6 +385,12 @@ export default {
     currentCode: '当前代码',
     aiSuggestion: 'AI 建议',
     aiAssistant: 'AI 助手',
+    fixWithTaskPrompt: '请基于当前测试失败信息修复这段插件代码',
+    fixingWithTask: '插件修复任务正在修复代码...',
+    fixGeneratedByTask: '已通过插件修复任务生成修复代码，并自动应用到当前编辑器。',
+    fixApplied: '修复代码已应用',
+    fixAppliedWithWarnings: '修复代码已应用，但仍有校验问题',
+    fixFailed: '修复失败',
     addToAiContext: '添加到 AI 上下文',
     addedToContext: '已添加到上下文',
     aiInputPlaceholder: '描述你想要的修改...',

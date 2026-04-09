@@ -4,7 +4,7 @@
   支持内置工具、工作流工具、插件工具的普通测试和高级测试
 -->
 <template>
-  <dialog :class="['modal', { 'modal-open': modelValue }]">
+  <AppDialog :class="['modal', { 'modal-open': modelValue }]">
     <div class="modal-box w-11/12 max-w-4xl" v-show="modelValue">
       <div class="flex justify-between items-center mb-4">
         <h3 class="font-bold text-lg flex items-center gap-2">
@@ -153,7 +153,7 @@
     <form method="dialog" class="modal-backdrop bg-black/50" @click="close">
       <button>close</button>
     </form>
-  </dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">

@@ -1,17 +1,17 @@
 export default {
-  title: '智能体库',
-  agents: 'Agent',
-  activeAgents: '活跃Agent',
-  inactiveAgents: '非活跃Agent',
-  agentDetails: 'Agent详情',
-  agentName: 'Agent名称',
-  agentStatus: 'Agent状态',
-  agentType: 'Agent类型',
-  agentVersion: 'Agent版本',
+  title: '智能体管理',
+  agents: '系统智能体',
+  activeAgents: '活跃系统智能体',
+  inactiveAgents: '非活跃系统智能体',
+  agentDetails: '智能体详情',
+  agentName: '智能体名称',
+  agentStatus: '智能体状态',
+  agentType: '智能体类型',
+  agentVersion: '智能体版本',
   lastSeen: '最后访问',
-  searchPlaceholder: '搜索Agent...',
-  noAgents: '未找到Agent',
-  totalAgents: 'Agent总数',
+  searchPlaceholder: '搜索系统智能体...',
+  noAgents: '未找到系统智能体',
+  totalAgents: '系统智能体总数',
 
   stats: {
     totalScans: '总扫描数',
@@ -31,7 +31,7 @@ export default {
   },
 
   workflow: {
-    title: 'Agent工作流',
+    title: '智能体工作流',
     createWorkflow: '创建工作流',
     editWorkflow: '编辑工作流',
     deleteWorkflow: '删除工作流',
@@ -50,10 +50,10 @@ export default {
   },
 
   form: {
-    namePlaceholder: '输入Agent名称',
-    descriptionPlaceholder: '输入Agent描述',
-    selectType: '选择Agent类型',
-    selectStatus: '选择Agent状态',
+    namePlaceholder: '输入智能体名称',
+    descriptionPlaceholder: '输入智能体描述',
+    selectType: '选择智能体类型',
+    selectStatus: '选择智能体状态',
   },
 
   taskTypes: {

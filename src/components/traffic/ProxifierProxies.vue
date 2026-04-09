@@ -71,7 +71,7 @@
     </div>
 
     <!-- 编辑对话框 -->
-    <dialog ref="editDialog" class="modal">
+    <AppDialog ref="editDialog" class="modal">
       <div class="modal-box max-w-md">
         <h3 class="font-bold text-lg mb-4">
           {{ editingProxy.id ? $t('trafficAnalysis.proxifierProxies.dialog.editTitle') : $t('trafficAnalysis.proxifierProxies.dialog.addTitle') }}
@@ -150,7 +150,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('trafficAnalysis.history.detailsPanel.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
   </div>
 </template>
 

@@ -165,7 +165,7 @@
     </div>
 
     <!-- 编辑监听器对话框 -->
-    <dialog ref="editDialogRef" class="modal">
+    <AppDialog ref="editDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
           {{ $t('trafficAnalysis.proxyConfiguration.editListener') }}
@@ -263,7 +263,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
 
     <!-- Traffic Analysis Settings -->
     <div v-if="activeSettingsTab === 'analysis'" class="card bg-base-100 shadow-xl">
@@ -656,7 +656,7 @@
     </div>
 
     <!-- Rule Edit Dialog -->
-    <dialog ref="ruleDialogRef" class="modal">
+    <AppDialog ref="ruleDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
           {{ editingRuleIsNew ? $t('trafficAnalysis.proxyConfiguration.addInterceptionRule') : $t('trafficAnalysis.proxyConfiguration.editInterceptionRule') }}
@@ -720,7 +720,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
 
     <!-- upstream proxy servers -->
     <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
@@ -996,7 +996,7 @@
 
 
     <!-- Upstream Proxy Edit Dialog -->
-    <dialog ref="upstreamDialogRef" class="modal">
+    <AppDialog ref="upstreamDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
           {{ editingUpstreamIsNew ? $t('trafficAnalysis.proxyConfiguration.addUpstreamProxy') : $t('trafficAnalysis.proxyConfiguration.editUpstreamProxy') }}
@@ -1089,10 +1089,10 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
 
     <!-- Match and Replace Rule Edit Dialog -->
-    <dialog ref="matchReplaceDialogRef" class="modal">
+    <AppDialog ref="matchReplaceDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
           {{ editingMatchReplaceIsNew ? $t('trafficAnalysis.proxyConfiguration.addMatchReplaceRule') : $t('trafficAnalysis.proxyConfiguration.editMatchReplaceRule') }}
@@ -1158,10 +1158,10 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
 
     <!-- TLS Pass Through Edit Dialog -->
-    <dialog ref="tlsPassThroughDialogRef" class="modal">
+    <AppDialog ref="tlsPassThroughDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
           {{ editingTlsIsNew ? $t('trafficAnalysis.proxyConfiguration.addTlsPassThrough') : $t('trafficAnalysis.proxyConfiguration.editTlsPassThrough') }}
@@ -1201,10 +1201,10 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
 
     <!-- CA Certificate Import/Export Dialog -->
-    <dialog ref="certDialogRef" class="modal">
+    <AppDialog ref="certDialogRef" class="modal">
       <div class="modal-box max-w-lg">
         <h3 class="font-bold text-lg mb-2">
           {{ $t('trafficAnalysis.proxyConfiguration.caCertDialogTitle') }}
@@ -1300,7 +1300,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
 
     <!-- TLS Pass Through -->
     <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">

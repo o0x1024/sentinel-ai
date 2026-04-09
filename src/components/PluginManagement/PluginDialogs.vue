@@ -1,6 +1,6 @@
 <template>
   <!-- Review Plugin Detail Dialog -->
-  <dialog ref="reviewDetailDialogRef" class="modal">
+  <AppDialog ref="reviewDetailDialogRef" class="modal">
     <div class="modal-box w-11/12 max-w-6xl max-h-[90vh] overflow-y-auto">
       <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
         <h3 class="font-bold text-lg">
@@ -123,10 +123,10 @@
       </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button @click="closeReviewDetailDialog">close</button></form>
-  </dialog>
+  </AppDialog>
 
   <!-- Upload Plugin Dialog -->
-  <dialog ref="uploadDialogRef" class="modal">
+  <AppDialog ref="uploadDialogRef" class="modal">
     <div class="modal-box max-h-[90vh] overflow-y-auto">
       <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
         <h3 class="font-bold text-lg">{{ $t('plugins.uploadPlugin', '上传插件') }}</h3>
@@ -148,10 +148,10 @@
       </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button @click="closeUploadDialog">close</button></form>
-  </dialog>
+  </AppDialog>
 
   <!-- Delete Confirmation Dialog -->
-  <dialog ref="deleteDialogRef" class="modal">
+  <AppDialog ref="deleteDialogRef" class="modal">
     <div class="modal-box max-h-[90vh] overflow-y-auto">
       <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
         <h3 class="font-bold text-lg">{{ $t('plugins.confirmDelete', '确认删除') }}</h3>
@@ -170,10 +170,10 @@
       </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button @click="closeDeleteDialog">close</button></form>
-  </dialog>
+  </AppDialog>
 
   <!-- AI Generate Plugin Dialog -->
-  <dialog ref="aiGenerateDialogRef" class="modal">
+  <AppDialog ref="aiGenerateDialogRef" class="modal">
     <div class="modal-box w-11/12 max-w-3xl">
       <h3 class="font-bold text-base mb-4">
         <i class="fas fa-magic mr-2"></i>{{ $t('plugins.aiGenerate', 'AI生成插件') }}
@@ -230,10 +230,10 @@
       </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button @click="closeAIGenerateDialog">close</button></form>
-  </dialog>
+  </AppDialog>
 
   <!-- Test Result Dialog -->
-  <dialog ref="testResultDialogRef" class="modal">
+  <AppDialog ref="testResultDialogRef" class="modal">
     <div class="modal-box w-11/12 max-w-3xl">
       <h3 class="font-bold text-base mb-4">
         <i class="fas fa-vial mr-2"></i>{{ $t('plugins.testResult', '插件测试结果') }}
@@ -291,10 +291,10 @@
       </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button @click="closeTestResultDialog">close</button></form>
-  </dialog>
+  </AppDialog>
 
   <!-- Advanced Test Dialog -->
-  <dialog ref="advancedDialogRef" class="modal">
+  <AppDialog ref="advancedDialogRef" class="modal">
     <div class="modal-box w-11/12 max-w-5xl">
       <h3 class="font-bold text-base mb-4">
         <i class="fas fa-gauge-high mr-2"></i>{{ $t('plugins.advancedTest', '高级测试') }}
@@ -456,7 +456,7 @@
       </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button @click="closeAdvancedDialog">close</button></form>
-  </dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">

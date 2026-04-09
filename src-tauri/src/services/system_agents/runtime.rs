@@ -21,6 +21,7 @@ use crate::services::system_agents::filters::matches_event_filter;
 use crate::services::system_agents::findings::persist_passive_agent_finding;
 use crate::services::system_agents::logic_hypotheses::build_logic_hypotheses;
 use crate::services::system_agents::logic_invariants::evaluate_logic_invariants;
+use crate::services::system_agents::language::{output_language_instruction, resolve_ui_language};
 use crate::services::system_agents::logic_skill_context::build_logic_skill_context;
 use crate::services::system_agents::process_graph::build_process_graph;
 use crate::services::system_agents::prompts::resolve_base_prompt;
@@ -794,10 +795,12 @@ impl SystemAgentRuntime {
         run_id: &str,
     ) -> Result<String> {
         let base_prompt = resolve_base_prompt(profile.base_prompt_id.as_deref(), &profile.id);
+        let ui_language = resolve_ui_language(&self.db).await;
         let tool_policy = SystemAgentToolPolicy::from_profile(profile);
         tool_policy.validate()?;
 
         let mut prompt_sections = vec![base_prompt.to_string()];
+        prompt_sections.push(output_language_instruction(&ui_language).to_string());
         if let Some(prompt_patch) = &profile.prompt_patch {
             if !prompt_patch.trim().is_empty() {
                 prompt_sections.push(format!("Additional instructions:\n{}", prompt_patch));
@@ -855,7 +858,8 @@ impl SystemAgentRuntime {
                 return Ok(serde_json::to_string(&json_output)?);
             }
             Err(error)
-                if profile.llm_provider_override.is_some() || profile.llm_model_override.is_some() =>
+                if profile.llm_provider_override.is_some()
+                    || profile.llm_model_override.is_some() =>
             {
                 return Err(error);
             }
@@ -863,7 +867,11 @@ impl SystemAgentRuntime {
         }
 
         Ok(serde_json::to_string(&json!({
-            "summary": "No AI service configured; generated deterministic fallback output.",
+            "summary": if ui_language == "zh" {
+                "当前未配置 AI 服务，已生成确定性的兜底输出。"
+            } else {
+                "No AI service configured; generated deterministic fallback output."
+            },
             "signals": [
                 format!("profile={}", profile.id),
                 format!("trigger={}", trigger_event.unwrap_or("manual"))
@@ -897,7 +905,10 @@ impl SystemAgentRuntime {
     }
 
     async fn run_semantic_mapper_llm(&self, payload: &Value, fallback: &Value) -> Result<Value> {
-        let llm_config = self.ai_manager.resolve_generation_llm_config(None, None).await?;
+        let llm_config = self
+            .ai_manager
+            .resolve_generation_llm_config(None, None)
+            .await?;
         let client = sentinel_llm::LlmClient::new(llm_config);
         let user_input = serde_json::to_string_pretty(&build_semantic_feature_payload(payload))?;
         let raw = client

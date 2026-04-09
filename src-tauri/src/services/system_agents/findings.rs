@@ -9,9 +9,26 @@ use sentinel_db::{DatabaseService, TrafficEvidenceRecord, TrafficFinding};
 use crate::services::system_agents::finding_lifecycle::{
     initial_lifecycle_for_detection, TrafficFindingLifecycle,
 };
+use crate::services::system_agents::language::{is_chinese_ui_language, resolve_ui_language};
 use crate::services::system_agents::finding_observation::TrafficFindingObservation;
 use crate::services::system_agents::safety::SystemAgentSafetyPolicy;
 use crate::services::system_agents::types::SystemAgentEvent;
+
+fn context_baseline_string(payload: &Value, key: &str) -> Option<String> {
+    payload
+        .get("baselineRequest")
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn context_baseline_i32(payload: &Value, key: &str) -> Option<i32> {
+    payload
+        .get("baselineRequest")
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+}
 
 pub async fn persist_passive_agent_finding(
     db: &DatabaseService,
@@ -137,6 +154,7 @@ async fn insert_system_agent_context_evidence(
     output: &Value,
     status: &str,
 ) -> Result<()> {
+    let ui_language = resolve_ui_language(db).await;
     let event_payload =
         serde_json::to_string_pretty(&event.payload).unwrap_or_else(|_| event.payload.to_string());
     let output_payload =
@@ -158,7 +176,11 @@ async fn insert_system_agent_context_evidence(
         evidence_snippet: output
             .get("summary")
             .and_then(Value::as_str)
-            .unwrap_or("System agent triage context")
+            .unwrap_or(if is_chinese_ui_language(&ui_language) {
+                "系统 Agent 研判上下文"
+            } else {
+                "System agent triage context"
+            })
             .to_string(),
         request_headers: None,
         request_body: Some(event_payload),
@@ -177,6 +199,7 @@ async fn build_finding_from_output(
     event: &SystemAgentEvent,
     output: &Value,
 ) -> Result<Option<TrafficFinding>> {
+    let ui_language = resolve_ui_language(db).await;
     let observation = match build_observation_from_output(db, profile_id, event, output).await? {
         Some(observation) => observation,
         None => return Ok(None),
@@ -187,6 +210,7 @@ async fn build_finding_from_output(
     }
 
     let title = build_title(
+        &ui_language,
         &observation.risk_type,
         &observation.method,
         observation.path_template.as_deref(),
@@ -232,17 +256,24 @@ async fn build_finding_from_output(
         evidence,
         request_headers: proxy_request
             .as_ref()
-            .and_then(|record| record.request_headers.clone()),
+            .and_then(|record| record.request_headers.clone())
+            .or_else(|| context_baseline_string(&event.payload, "requestHeaders")),
         request_body: proxy_request
             .as_ref()
-            .and_then(|record| record.request_body.clone()),
-        response_status: proxy_request.as_ref().map(|record| record.status_code),
+            .and_then(|record| record.request_body.clone())
+            .or_else(|| context_baseline_string(&event.payload, "requestBody")),
+        response_status: proxy_request
+            .as_ref()
+            .map(|record| record.status_code)
+            .or_else(|| context_baseline_i32(&event.payload, "responseStatus")),
         response_headers: proxy_request
             .as_ref()
-            .and_then(|record| record.response_headers.clone()),
+            .and_then(|record| record.response_headers.clone())
+            .or_else(|| context_baseline_string(&event.payload, "responseHeaders")),
         response_body: proxy_request
             .as_ref()
-            .and_then(|record| record.response_body.clone()),
+            .and_then(|record| record.response_body.clone())
+            .or_else(|| context_baseline_string(&event.payload, "responseBody")),
         created_at: Utc::now(),
     }))
 }
@@ -253,6 +284,7 @@ async fn build_observation_from_output(
     event: &SystemAgentEvent,
     output: &Value,
 ) -> Result<Option<TrafficFindingObservation>> {
+    let ui_language = resolve_ui_language(db).await;
     let risk_type = output
         .get("riskType")
         .and_then(Value::as_str)
@@ -270,7 +302,11 @@ async fn build_observation_from_output(
     let summary = output
         .get("summary")
         .and_then(Value::as_str)
-        .unwrap_or("Passive system agent detected a potential security risk.")
+        .unwrap_or(if is_chinese_ui_language(&ui_language) {
+            "被动 system agent 检测到潜在安全风险。"
+        } else {
+            "Passive system agent detected a potential security risk."
+        })
         .to_string();
     let signals = output
         .get("signals")
@@ -358,22 +394,40 @@ async fn build_observation_from_output(
     }))
 }
 
-fn build_title(risk_type: &str, method: &str, path: Option<&str>) -> String {
+fn build_title(language: &str, risk_type: &str, method: &str, path: Option<&str>) -> String {
     let path = path.unwrap_or("/");
-    match risk_type {
-        "idor" | "bola" | "bfla" => format!(
-            "[AI] Potential {} risk on {} {}",
-            risk_type.to_uppercase(),
-            method,
-            path
-        ),
-        "logic" | "workflow" | "race" => format!(
-            "[AI] Potential {} risk on {} {}",
-            risk_type.to_uppercase(),
-            method,
-            path
-        ),
-        _ => format!("[AI] Potential {} risk on {} {}", risk_type, method, path),
+    let risk = match risk_type {
+        "idor" => "IDOR",
+        "bola" => "BOLA",
+        "bfla" => "BFLA",
+        "logic" => {
+            if is_chinese_ui_language(language) {
+                "业务逻辑"
+            } else {
+                "LOGIC"
+            }
+        }
+        "workflow" => {
+            if is_chinese_ui_language(language) {
+                "工作流"
+            } else {
+                "WORKFLOW"
+            }
+        }
+        "race" => {
+            if is_chinese_ui_language(language) {
+                "竞态"
+            } else {
+                "RACE"
+            }
+        }
+        _ => risk_type,
+    };
+
+    if is_chinese_ui_language(language) {
+        format!("[AI] {} {} 存在潜在 {} 风险", method, path, risk)
+    } else {
+        format!("[AI] Potential {} risk on {} {}", risk, method, path)
     }
 }
 

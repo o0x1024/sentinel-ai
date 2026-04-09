@@ -36,7 +36,6 @@ import {
 export function useSystemAgentSettingsController() {
   const loading = ref(false)
   const saving = ref(false)
-  const running = ref(false)
   const dispatching = ref(false)
   const autoSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const profiles = ref<SystemAgentProfileSummary[]>([])
@@ -68,7 +67,6 @@ export function useSystemAgentSettingsController() {
     shadowMode: false,
     scopeHostsText: '',
   })
-  const manualInputText = ref('{\n  "summary": "手动审计目标"\n}')
   const dispatchPayloadText = ref(
     '{\n  "clusterKey": "demo-cluster",\n  "host": "example.com",\n  "pathTemplate": "/api/demo",\n  "method": "GET"\n}'
   )
@@ -125,8 +123,8 @@ export function useSystemAgentSettingsController() {
   const selectedProfileModeBadge = computed(() => {
     if (!selectedProfile.value) {
       return {
-        label: '主动类',
-        className: 'badge-info',
+        label: '事件驱动',
+        className: 'badge-warning',
       }
     }
     return getSystemAgentModeBadge(selectedProfile.value)
@@ -208,8 +206,15 @@ export function useSystemAgentSettingsController() {
         'list_system_agent_profiles'
       )
       profiles.value = (response.data ?? []).filter(
-        profile => profile.visibility !== 'hidden' && profile.id !== 'traffic_idor_triage'
+        profile =>
+          profile.visibility !== 'hidden'
+          && profile.mode === 'passive'
+          && profile.id !== 'traffic_idor_triage'
       )
+      if (!profiles.value.some(profile => profile.id === selectedProfileId.value)) {
+        selectedProfileId.value = ''
+        selectedProfile.value = null
+      }
       if (!selectedProfileId.value && profiles.value.length > 0) {
         await selectProfile(profiles.value[0].id)
       }
@@ -515,29 +520,6 @@ export function useSystemAgentSettingsController() {
     }, 600)
   }
 
-  const runSelectedProfile = async () => {
-    if (!selectedProfile.value?.id) return
-    running.value = true
-    try {
-      const inputSummary = parseJsonText(manualInputText.value)
-      const response = await invoke<CommandResponse<SystemAgentRunPayload>>(
-        'trigger_system_agent_profile',
-        {
-          profileId: selectedProfile.value.id,
-          inputSummary,
-        }
-      )
-      if (!response.data) throw new Error(response.error || '运行失败')
-      await loadRuns()
-      dialog.toast.success('System Agent 已执行')
-    } catch (error) {
-      console.error('Failed to run system agent profile', error)
-      dialog.toast.error(`运行失败: ${String(error)}`)
-    } finally {
-      running.value = false
-    }
-  }
-
   const dispatchSelectedProfileEvent = async () => {
     if (!selectedProfile.value?.id) return
     const eventName = selectedProfilePassiveEventName.value
@@ -651,7 +633,6 @@ export function useSystemAgentSettingsController() {
 
   return {
     loading,
-    running,
     dispatching,
     profiles,
     runs,
@@ -666,7 +647,6 @@ export function useSystemAgentSettingsController() {
     llmModelSuggestions,
     globalDefaultLlmLabel,
     safetyPolicyValue,
-    manualInputText,
     dispatchPayloadText,
     toolBindingValue,
     promptPatchPlaceholder,
@@ -687,7 +667,6 @@ export function useSystemAgentSettingsController() {
     statsWindowStart,
     profileListItems,
     selectProfile,
-    runSelectedProfile,
     dispatchSelectedProfileEvent,
     seedDefaults,
     refreshAll,

@@ -1,4 +1,5 @@
 import { createI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
 import zh from './locales/zh'
 import en from './locales/en'
 
@@ -67,6 +68,9 @@ export const setLanguage = (lang: SupportedLocale) => {
   if (i18n.global.locale && typeof i18n.global.locale === 'object' && 'value' in i18n.global.locale) {
     (i18n.global.locale as { value: string }).value = lang
   }
+  void invoke('set_language', { lang }).catch(error => {
+    console.warn('[i18n] Failed to sync language to backend', error)
+  })
 }
 
 // 导出当前语言获取函数

@@ -15,13 +15,15 @@ use uuid::Uuid;
 use sentinel_db::{DatabaseService, TrafficEvidenceRecord};
 
 use crate::services::system_agents::finding_lifecycle::TrafficFindingLifecycle;
+use crate::services::system_agents::language::{is_chinese_ui_language, resolve_ui_language};
 use crate::services::system_agents::safety::SystemAgentSafetyPolicy;
 use crate::services::system_agents::tool_policy::SystemAgentToolPolicy;
 use crate::services::system_agents::verification_assessment::assess_verification_result;
 use crate::services::system_agents::verification_plan::{
-    build_baseline_from_evidence, build_baseline_from_proxy_request, extract_context_output,
-    extract_context_payload, extract_target_request_id, extract_verification_plan,
-    select_fallback_evidence, VerificationBaseline, VerificationPlan,
+    build_baseline_from_context_payload, build_baseline_from_evidence,
+    build_baseline_from_proxy_request, extract_context_output, extract_context_payload,
+    extract_target_request_id, extract_verification_plan, select_fallback_evidence,
+    VerificationBaseline, VerificationPlan,
 };
 use crate::services::system_agents::verification_strategy::{
     prepare_verification_request, PreparedVerificationRequest, VerificationExecutionMode,
@@ -139,6 +141,7 @@ async fn execute_verification(
     run_id: &str,
     plan_hint: Option<VerificationPlan>,
 ) -> Result<TrafficActiveVerifierResult> {
+    let ui_language = resolve_ui_language(db).await;
     let profile = runtime
         .get_profile(TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID)
         .await?
@@ -190,6 +193,42 @@ async fn execute_verification(
             .await;
         }
     };
+    let mut active_plan = plan.clone();
+    let mut prepared_request = prepared_request;
+
+    let headers = if prepared_request.strategy_used == "swap_identity" {
+        match resolve_alternate_identity_headers(
+            db,
+            context_payload.as_ref(),
+            baseline.source_request_id,
+            baseline.request_headers.as_deref(),
+        )
+        .await?
+        {
+            Some(raw_headers) => parse_request_headers(Some(&raw_headers))?,
+            None => {
+                if let Some(fallback_plan) = degrade_identity_swap_plan(active_plan.as_ref()) {
+                    prepared_request = prepare_verification_request(&baseline, Some(&fallback_plan))?;
+                    active_plan = Some(fallback_plan);
+                    parse_request_headers(baseline.request_headers.as_deref())?
+                } else {
+                    return persist_blocked_verification_result(
+                        db,
+                        app_handle,
+                        &finding.id,
+                        &baseline,
+                        run_id,
+                        "Verification plan requested identity swap, but no alternate authenticated request was available in the same cluster.".to_string(),
+                        plan.as_ref(),
+                    )
+                    .await;
+                }
+            }
+        }
+    } else {
+        parse_request_headers(baseline.request_headers.as_deref())?
+    };
+
     let PreparedVerificationRequest {
         url: request_url,
         body: request_body,
@@ -221,33 +260,8 @@ async fn execute_verification(
         .redirect(reqwest::redirect::Policy::limited(5))
         .timeout(Duration::from_secs(15))
         .build()?;
-    let headers = if strategy_used == "swap_identity" {
-        match resolve_alternate_identity_headers(
-            db,
-            context_payload.as_ref(),
-            baseline.source_request_id,
-            baseline.request_headers.as_deref(),
-        )
-        .await?
-        {
-            Some(raw_headers) => parse_request_headers(Some(&raw_headers))?,
-            None => {
-                return persist_blocked_verification_result(
-                    db,
-                    app_handle,
-                    &finding.id,
-                    &baseline,
-                    run_id,
-                    "Verification plan requested identity swap, but no alternate authenticated request was available in the same cluster.".to_string(),
-                    plan.as_ref(),
-                )
-                .await;
-            }
-        }
-    } else {
-        parse_request_headers(baseline.request_headers.as_deref())?
-    };
-    let sequence_requests = resolve_sequence_requests(db, plan.as_ref(), baseline.source_request_id).await?;
+    let sequence_requests =
+        resolve_sequence_requests(db, active_plan.as_ref(), baseline.source_request_id).await?;
 
     let verification_response = execute_verification_request(
         &client,
@@ -277,7 +291,23 @@ async fn execute_verification(
         execution_mode,
     );
 
-    let summary = if assessment.verified {
+    let summary = if is_chinese_ui_language(&ui_language) {
+        if assessment.verified {
+            format!(
+                "系统 Agent 使用 {} 完成验证，已确认该假设（状态码={}, 结果={}, 请求变异={}）。",
+                strategy_used, verification_response.response_status, assessment.outcome, mutated
+            )
+        } else {
+            format!(
+                "系统 Agent 使用 {} 完成验证，尚未确认该假设（基线状态={:?}, 回放状态={}, 结果={}, 请求变异={}）。",
+                strategy_used,
+                baseline.response_status,
+                verification_response.response_status,
+                assessment.outcome,
+                mutated
+            )
+        }
+    } else if assessment.verified {
         format!(
             "System agent verification using {} confirmed the hypothesis (status={}, outcome={}, mutated={}).",
             strategy_used, verification_response.response_status, assessment.outcome, mutated
@@ -348,6 +378,19 @@ async fn execute_verification(
             TrafficFindingLifecycle::Verified.vulnerability_status(),
         )
         .await?;
+        let _ = app_handle.emit(
+            "scan:finding",
+            json!({
+                "vuln_id": finding.id,
+                "vuln_type": finding.vuln_type,
+                "severity": finding.severity,
+                "status": TrafficFindingLifecycle::Verified.vulnerability_status(),
+                "analysisStage": TrafficFindingLifecycle::Verified.key(),
+                "url": request_url,
+                "summary": summary,
+                "timestamp": Utc::now().to_rfc3339(),
+            }),
+        );
     }
 
     let result = TrafficActiveVerifierResult {
@@ -389,6 +432,12 @@ async fn resolve_verification_context(
     if let Some(request_id) = target_request_id {
         if let Some(record) = db.get_proxy_request_by_id(request_id).await? {
             return Ok((build_baseline_from_proxy_request(&record), plan));
+        }
+    }
+
+    if let Some(payload) = context_payload.as_ref() {
+        if let Some(baseline) = build_baseline_from_context_payload(payload) {
+            return Ok((baseline, plan));
         }
     }
 
@@ -446,6 +495,29 @@ async fn resolve_alternate_identity_headers(
     Ok(None)
 }
 
+fn degrade_identity_swap_plan(plan: Option<&VerificationPlan>) -> Option<VerificationPlan> {
+    let mut fallback = plan.cloned()?;
+    if !fallback.candidate_parameters.is_empty() {
+        fallback.preferred_strategy = "swap_resource_reference".to_string();
+        fallback.notes.push(
+            "Identity-swap verification was downgraded to resource-reference mutation because no alternate authenticated request was available in the same cluster.".to_string(),
+        );
+        return Some(fallback);
+    }
+    if !fallback.sequence_request_ids.is_empty() {
+        fallback.preferred_strategy = "skip_prerequisite".to_string();
+        fallback.notes.push(
+            "Identity-swap verification was downgraded to prerequisite-skipping replay because no alternate authenticated request was available in the same cluster.".to_string(),
+        );
+        return Some(fallback);
+    }
+    fallback.preferred_strategy = "replay_as_is".to_string();
+    fallback.notes.push(
+        "Identity-swap verification was downgraded to baseline replay because no alternate authenticated request was available in the same cluster.".to_string(),
+    );
+    Some(fallback)
+}
+
 async fn resolve_sequence_requests(
     db: &DatabaseService,
     plan: Option<&VerificationPlan>,
@@ -464,8 +536,12 @@ async fn resolve_sequence_requests(
             continue;
         };
         requests.push(ProxySequenceRequest {
-            method: Method::from_bytes(record.method.as_bytes())
-                .map_err(|_| anyhow!("Unsupported HTTP method in sequence request: {}", record.method))?,
+            method: Method::from_bytes(record.method.as_bytes()).map_err(|_| {
+                anyhow!(
+                    "Unsupported HTTP method in sequence request: {}",
+                    record.method
+                )
+            })?,
             url: record.url,
             headers: parse_request_headers(record.request_headers.as_deref())?,
             body: record.request_body,
@@ -693,6 +769,12 @@ async fn persist_blocked_verification_result(
     reason: String,
     plan: Option<&VerificationPlan>,
 ) -> Result<TrafficActiveVerifierResult> {
+    let ui_language = resolve_ui_language(db).await;
+    let blocked_summary = if is_chinese_ui_language(&ui_language) {
+        format!("系统 Agent 验证已被阻断：{reason}")
+    } else {
+        format!("System agent verification was blocked: {reason}")
+    };
     let evidence_id = format!("tev-{}", Uuid::new_v4());
     let evidence = TrafficEvidenceRecord {
         id: evidence_id.clone(),
@@ -700,7 +782,7 @@ async fn persist_blocked_verification_result(
         url: baseline.url.clone(),
         method: baseline.method.clone(),
         location: "system_agent_verification".to_string(),
-        evidence_snippet: format!("System agent verification was blocked: {reason}"),
+        evidence_snippet: blocked_summary.clone(),
         request_headers: baseline.request_headers.clone(),
         request_body: baseline.request_body.clone(),
         response_status: None,
@@ -731,7 +813,7 @@ async fn persist_blocked_verification_result(
         matched_status: false,
         matched_body: false,
         response_status: None,
-        summary: format!("System agent verification was blocked: {reason}"),
+        summary: blocked_summary,
         evidence_id: Some(evidence_id),
     };
     let _ = app_handle.emit("system-agent:verification-complete", &result);

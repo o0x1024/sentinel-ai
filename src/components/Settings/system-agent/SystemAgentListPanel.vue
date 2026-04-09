@@ -1,11 +1,11 @@
 <template>
   <div class="border border-base-300 rounded-lg overflow-hidden">
-    <div class="px-4 py-3 bg-base-200 text-sm font-semibold">智能体列表</div>
+    <div class="px-4 py-3 bg-base-200 text-sm font-semibold">系统智能体列表</div>
     <div v-if="loading" class="p-6 text-center">
       <span class="loading loading-spinner loading-md"></span>
     </div>
     <div v-else-if="items.length === 0" class="p-6 text-sm text-base-content/60">
-      当前还没有可用智能体。
+      当前还没有可用系统智能体。
     </div>
     <div v-else class="max-h-[720px] overflow-y-auto">
       <button

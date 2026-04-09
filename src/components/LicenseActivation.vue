@@ -85,9 +85,10 @@ async function copyMachineId() {
 </script>
 
 <template>
-  <div v-if="needsActivation" class="fixed inset-0 z-[9999] flex items-center justify-center bg-base-300/95 backdrop-blur-sm">
-    <div class="card bg-base-100 shadow-2xl w-full max-w-md mx-4">
-      <div class="card-body">
+  <Teleport to="body">
+    <div v-if="needsActivation" class="fixed inset-0 z-[9999] flex items-center justify-center bg-base-300/95 backdrop-blur-sm">
+      <div class="card bg-base-100 shadow-2xl w-full max-w-md mx-4">
+        <div class="card-body">
         <!-- Header -->
         <div class="text-center mb-6">
           <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
@@ -161,9 +162,10 @@ async function copyMachineId() {
             {{ t('license.needHelp') }}
           </a>
         </div>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>

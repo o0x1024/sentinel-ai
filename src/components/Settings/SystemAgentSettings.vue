@@ -141,13 +141,9 @@
             <div v-else-if="activeWorkspaceTab === 'runs'" class="space-y-4">
               <SystemAgentDebugPanel
                 :profile="selectedProfile"
-                :manual-input-text="manualInputText"
                 :dispatch-payload-text="dispatchPayloadText"
-                :running="running"
                 :dispatching="dispatching"
-                @update:manual-input-text="manualInputText = $event"
                 @update:dispatch-payload-text="dispatchPayloadText = $event"
-                @run="runSelectedProfile"
                 @dispatch="dispatchSelectedProfileEvent"
               />
 
@@ -214,7 +210,6 @@ type WorkspaceTabKey = 'overview' | 'config' | 'runs' | 'insights'
 
 const {
   loading,
-  running,
   dispatching,
   runs,
   versions,
@@ -228,7 +223,6 @@ const {
   llmModelSuggestions,
   globalDefaultLlmLabel,
   safetyPolicyValue,
-  manualInputText,
   dispatchPayloadText,
   toolBindingValue,
   promptPatchPlaceholder,
@@ -249,7 +243,6 @@ const {
   statsWindowStart,
   profileListItems,
   selectProfile,
-  runSelectedProfile,
   dispatchSelectedProfileEvent,
   seedDefaults,
   refreshAll,
@@ -281,7 +274,7 @@ const workspaceTabs = computed(() => {
     {
       key: 'runs',
       label: '运行',
-      description: '手动调试智能体，并查看完整运行记录与版本快照。',
+      description: '通过测试事件回放调试系统智能体，并查看完整运行记录与版本快照。',
       count: runs.value.length,
     },
   ]

@@ -165,7 +165,7 @@
       </section>
     </div>
 
-    <dialog ref="dialogRef" class="modal">
+    <AppDialog ref="dialogRef" class="modal">
       <div class="modal-box max-w-2xl px-0 py-0 overflow-hidden">
         <div class="border-b border-base-300 px-5 py-4">
           <h3 class="text-xl font-semibold text-center">
@@ -266,7 +266,7 @@
           </div>
         </div>
       </div>
-    </dialog>
+    </AppDialog>
 
     <input
       ref="includeFileInputRef"

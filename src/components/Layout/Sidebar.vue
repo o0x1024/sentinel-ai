@@ -9,10 +9,10 @@
         v-for="item in mainMenuItems"
         :key="item.path"
         :to="item.path"
-        class="btn btn-ghost btn-circle tooltip tooltip-right"
+        class="btn btn-ghost btn-circle inline-flex items-center justify-center shrink-0 tooltip tooltip-right"
         :data-tip="item.name"
       >
-        <i :class="`${item.icon} text-xl`"></i>
+        <i :class="`${item.icon} text-xl leading-none`"></i>
       </router-link>
 
       <div class="divider divider-neutral my-2"></div>
@@ -22,10 +22,10 @@
         v-for="item in toolMenuItems"
         :key="item.path"
         :to="item.path"
-        class="btn btn-ghost btn-circle tooltip tooltip-right"
+        class="btn btn-ghost btn-circle inline-flex items-center justify-center shrink-0 tooltip tooltip-right"
         :data-tip="item.name"
       >
-        <i :class="`${item.icon} text-xl`"></i>
+        <i :class="`${item.icon} text-xl leading-none`"></i>
       </router-link>
     </div>
 
@@ -46,7 +46,9 @@
                 :to="item.path"
                 class="rounded-lg flex items-center gap-3 px-3 py-2 hover:bg-base-300 transition-colors"
                 :class="{
-                  'bg-primary/10 text-primary border-r-2 border-primary': route.path === item.path,
+                  'bg-primary/10 text-primary border-r-2 border-primary': item.path.startsWith('/security-center')
+                    ? isSecurityCenterRoute
+                    : route.path === item.path,
                 }"
               >
                 <i :class="`${item.icon} text-lg`"></i>
@@ -145,6 +147,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useNotificationCenter } from '@/composables/useNotificationCenter'
+import { resolveLastSecurityCenterLocation } from '@/services/securityCenterNavigation'
 
 // 接收折叠状态
 const props = defineProps({
@@ -159,6 +162,7 @@ const { t } = useI18n()
 const route = useRoute()
 const { unreadMessageCount, unreadNotificationCount } = useNotificationCenter()
 const unreadActivityCount = computed(() => unreadMessageCount.value + unreadNotificationCount.value)
+const isSecurityCenterRoute = computed(() => route.path.startsWith('/security-center'))
 
 // 主要功能菜单项
 const mainMenuItems = computed(() => [
@@ -170,7 +174,7 @@ const mainMenuItems = computed(() => [
     badgeClass: '',
   },
   {
-    path: '/security-center',
+    path: resolveLastSecurityCenterLocation(),
     name: t('sidebar.securityCenter', '安全中心'),
     icon: 'fas fa-shield-alt',
     badge: taskStats.value.running > 0 ? taskStats.value.running.toString() : null,
@@ -278,7 +282,7 @@ const systemMenuItems = computed(() => [
   },
   {
     path: '/agent-management',
-    name: t('sidebar.agentManagement', '智能体库'),
+    name: t('sidebar.agentManagement', '智能体管理'),
     icon: 'fas fa-robot',
     badge: null,
     badgeClass: '',

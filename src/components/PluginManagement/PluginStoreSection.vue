@@ -239,7 +239,7 @@
     </div>
 
     <!-- Plugin Detail Modal -->
-    <dialog ref="detailDialogRef" class="modal">
+    <AppDialog ref="detailDialogRef" class="modal">
       <div class="modal-box max-w-3xl">
         <h3 class="font-bold text-lg">{{ selectedPlugin?.name }}</h3>
         
@@ -316,7 +316,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>close</button>
       </form>
-    </dialog>
+    </AppDialog>
   </div>
 </template>
 

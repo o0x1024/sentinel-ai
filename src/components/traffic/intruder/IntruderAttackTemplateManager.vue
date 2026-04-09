@@ -5,7 +5,7 @@
       {{ $t('trafficAnalysis.intruder.labels.savedAttack') }}
     </button>
 
-    <dialog ref="dialogRef" class="modal">
+    <AppDialog ref="dialogRef" class="modal">
       <div class="modal-box max-w-4xl">
         <h3 class="mb-4 text-lg font-semibold">{{ $t('trafficAnalysis.intruder.labels.savedAttack') }}</h3>
 
@@ -96,7 +96,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('common.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
   </div>
 </template>
 

@@ -1,5 +1,5 @@
 <template>
-  <dialog ref="dialogRef" class="modal intruder-results-modal" @close="$emit('close')">
+  <AppDialog ref="dialogRef" class="modal intruder-results-modal" @close="$emit('close')">
     <div class="modal-box flex h-[85vh] max-w-[92vw] flex-col overflow-hidden p-0">
       <IntruderResultsContent
         :workspace-name="workspaceName"
@@ -56,7 +56,7 @@
     <form method="dialog" class="modal-backdrop">
       <button>{{ $t('common.close') }}</button>
     </form>
-  </dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">

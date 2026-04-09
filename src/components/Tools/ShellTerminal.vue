@@ -1,5 +1,5 @@
 <template>
-  <dialog :class="['modal', { 'modal-open': modelValue }]">
+  <AppDialog :class="['modal', { 'modal-open': modelValue }]">
     <div v-if="modelValue" class="modal-box w-11/12 max-w-5xl h-[80vh] flex flex-col p-0">
       <!-- Header -->
       <div class="flex justify-between items-center px-4 py-3 border-b border-base-300 bg-base-200">
@@ -81,7 +81,7 @@
     <form method="dialog" class="modal-backdrop" @click="close">
       <button>close</button>
     </form>
-  </dialog>
+  </AppDialog>
 
   <!-- Settings Modal -->
   <ShellConfigModal v-model="showSettings" />

@@ -358,7 +358,7 @@
     </div>
 
     <!-- Filter Rule Dialog -->
-    <dialog ref="filterDialogRef" class="modal">
+    <AppDialog ref="filterDialogRef" class="modal">
       <div class="modal-box max-w-lg">
         <h3 class="font-bold text-lg mb-4">
           <i class="fas fa-filter mr-2"></i>
@@ -448,7 +448,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>close</button>
       </form>
-    </dialog>
+    </AppDialog>
 
   </div>
 </template>

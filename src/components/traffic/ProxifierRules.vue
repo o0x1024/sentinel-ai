@@ -101,7 +101,7 @@
     </div>
 
     <!-- 编辑对话框 -->
-    <dialog ref="editDialog" class="modal">
+    <AppDialog ref="editDialog" class="modal">
       <div class="modal-box max-w-lg">
         <h3 class="font-bold text-lg mb-4">
           {{ editingRule.id ? $t('proxifierPanel.buttons.edit') : $t('proxifierPanel.buttons.add') }}
@@ -206,7 +206,7 @@
       <form method="dialog" class="modal-backdrop">
         <button>{{ $t('proxifierPanel.buttons.close') }}</button>
       </form>
-    </dialog>
+    </AppDialog>
   </div>
 </template>
 

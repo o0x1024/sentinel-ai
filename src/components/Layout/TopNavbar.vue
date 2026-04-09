@@ -17,19 +17,32 @@
     <!-- 中间区域 - 可以放置搜索框或其他功能 -->
     <div class="navbar-center hidden lg:flex">
       <!-- 全局搜索框 -->
-      <div class="form-control">
+      <div ref="searchContainerRef" class="form-control relative">
         <div class="input-group">
           <input 
+            ref="searchInputRef"
             type="text" 
-            placeholder="搜索任务、漏洞、工具..." 
+            placeholder="搜索页面、功能、消息..." 
             class="input input-bordered input-sm w-64" 
             v-model="searchQuery"
-            @keyup.enter="performSearch"
+            @focus="handleSearchFocus"
+            @keydown="handleSearchKeydown"
           />
           <button class="btn btn-square btn-sm" @click="performSearch">
             <i class="fas fa-search"></i>
           </button>
         </div>
+        <TopNavbarSearchResults
+          :visible="showSearchResults"
+          :query="trimmedSearchQuery"
+          :results="searchResults"
+          :highlighted-index="highlightedSearchIndex"
+          :recent-searches="recentSearches"
+          @select="openSearchResult"
+          @highlight="highlightedSearchIndex = $event"
+          @recent-search="applyRecentSearch"
+          @clear-recent-searches="clearNavbarRecentSearches"
+        />
       </div>
     </div>
 
@@ -114,13 +127,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
 import { usePageTour, type TourStep } from '@/composables/usePageTour'
+import { useGlobalSearch } from '@/composables/useGlobalSearch'
+import { useSearchFindings } from '@/composables/useSearchFindings'
 import { useNotificationCenter } from '@/composables/useNotificationCenter'
+import { GLOBAL_SEARCH_FOCUS_EVENT } from '@/services/globalSearchFocus'
+import { isStrongSearchMatch, type GlobalSearchResult } from '@/services/globalSearch'
+import { addRecentSearch, clearRecentSearches, loadRecentSearches } from '@/services/searchHistory'
 import type { AppNotificationItem, NotificationCategory } from '@/types/notification'
 import TopNavbarActivityDropdown from './TopNavbarActivityDropdown.vue'
+import TopNavbarSearchResults from './TopNavbarSearchResults.vue'
 
 
 // Emits
@@ -135,12 +154,9 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const { manualStartTour } = usePageTour()
-
-// 搜索相关
-const searchQuery = ref('')
-
 const {
   initializeNotificationCenter,
+  items: notificationCenterItems,
   messageItems,
   notificationItems,
   unreadMessageCount,
@@ -150,6 +166,158 @@ const {
   markAllAsRead,
   clearCategory,
 } = useNotificationCenter()
+const { findings: searchFindings, initializeSearchFindings } = useSearchFindings()
+const { search } = useGlobalSearch({
+  notifications: notificationCenterItems,
+  findings: searchFindings,
+})
+
+// 搜索相关
+const searchQuery = ref('')
+const recentSearches = ref<string[]>(loadRecentSearches())
+const searchContainerRef = ref<HTMLElement | null>(null)
+const searchInputRef = ref<HTMLInputElement | null>(null)
+const isSearchFocused = ref(false)
+const highlightedSearchIndex = ref(0)
+const trimmedSearchQuery = computed(() => searchQuery.value.trim())
+const searchResults = computed(() => search(trimmedSearchQuery.value, 6))
+const showSearchResults = computed(() =>
+  isSearchFocused.value && (trimmedSearchQuery.value.length > 0 || recentSearches.value.length > 0),
+)
+
+watch(
+  () => [route.path, route.query.q],
+  ([path, query]) => {
+    searchQuery.value = path === '/search' && typeof query === 'string' ? query : ''
+  },
+  { immediate: true },
+)
+
+watch(searchResults, results => {
+  if (results.length === 0) {
+    highlightedSearchIndex.value = 0
+    return
+  }
+
+  if (highlightedSearchIndex.value >= results.length) {
+    highlightedSearchIndex.value = 0
+  }
+})
+
+watch(trimmedSearchQuery, () => {
+  highlightedSearchIndex.value = 0
+})
+
+const closeSearchResults = () => {
+  isSearchFocused.value = false
+  highlightedSearchIndex.value = 0
+}
+
+const clearNavbarRecentSearches = () => {
+  recentSearches.value = clearRecentSearches()
+  highlightedSearchIndex.value = 0
+}
+
+const focusNavbarSearch = () => {
+  if (route.path === '/search') {
+    return
+  }
+
+  isSearchFocused.value = true
+  nextTick(() => {
+    searchInputRef.value?.focus()
+    searchInputRef.value?.select()
+  })
+}
+
+const openSearchTarget = async (target: Pick<GlobalSearchResult, 'path' | 'query'>) => {
+  closeSearchResults()
+  await router.push({
+    path: target.path,
+    query: target.query,
+  })
+}
+
+const rememberSearchQuery = (query: string) => {
+  recentSearches.value = addRecentSearch(query)
+}
+
+const openSearchResult = async (result: GlobalSearchResult) => {
+  rememberSearchQuery(trimmedSearchQuery.value || result.title)
+  await openSearchTarget(result)
+}
+
+const applyRecentSearch = async (query: string) => {
+  searchQuery.value = query
+  isSearchFocused.value = true
+  highlightedSearchIndex.value = 0
+  await performSearch()
+}
+
+const handleSearchFocus = () => {
+  isSearchFocused.value = true
+}
+
+const moveSearchHighlight = (direction: 1 | -1) => {
+  const count = searchResults.value.length
+  if (count === 0) {
+    highlightedSearchIndex.value = 0
+    return
+  }
+
+  highlightedSearchIndex.value = (highlightedSearchIndex.value + direction + count) % count
+}
+
+const handleSearchKeydown = async (event: KeyboardEvent) => {
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    isSearchFocused.value = true
+    moveSearchHighlight(1)
+    return
+  }
+
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    isSearchFocused.value = true
+    moveSearchHighlight(-1)
+    return
+  }
+
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeSearchResults()
+    searchInputRef.value?.blur()
+    return
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    const highlightedResult = searchResults.value[highlightedSearchIndex.value]
+    if (showSearchResults.value && highlightedResult) {
+      await openSearchResult(highlightedResult)
+      return
+    }
+
+    await performSearch()
+  }
+}
+
+const handleDocumentPointerDown = (event: MouseEvent) => {
+  const target = event.target as Node | null
+  if (!target) {
+    return
+  }
+
+  if (searchContainerRef.value?.contains(target)) {
+    return
+  }
+
+  closeSearchResults()
+}
+
+const handleGlobalSearchFocus = () => {
+  focusNavbarSearch()
+}
 
 // 可用语言
 const availableLanguages = [
@@ -179,13 +347,25 @@ const switchLanguage = (lang: string) => {
   emit('switchLanguage', lang)
 }
 
-const performSearch = () => {
-  if (searchQuery.value.trim()) {
-    // 执行搜索逻辑
-    console.log('搜索:', searchQuery.value)
-    // 可以导航到搜索结果页面
-    router.push({ path: '/search', query: { q: searchQuery.value } })
+const performSearch = async () => {
+  const query = trimmedSearchQuery.value
+  if (!query) {
+    return
   }
+
+  rememberSearchQuery(query)
+
+  const [bestMatch, nextMatch] = search(query, 2)
+  if (
+    isStrongSearchMatch(bestMatch ?? null, query) &&
+    !isStrongSearchMatch(nextMatch ?? null, query)
+  ) {
+    await openSearchTarget(bestMatch!)
+    return
+  }
+
+  closeSearchResults()
+  await router.push({ path: '/search', query: { q: query } })
 }
 
 const openActivity = async (item: AppNotificationItem) => {
@@ -342,7 +522,15 @@ const startPageTour = () => {
 }
 
 onMounted(async () => {
+  document.addEventListener('mousedown', handleDocumentPointerDown)
+  window.addEventListener(GLOBAL_SEARCH_FOCUS_EVENT, handleGlobalSearchFocus)
+  await initializeSearchFindings()
   await initializeNotificationCenter(router)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('mousedown', handleDocumentPointerDown)
+  window.removeEventListener(GLOBAL_SEARCH_FOCUS_EVENT, handleGlobalSearchFocus)
 })
 
 </script>

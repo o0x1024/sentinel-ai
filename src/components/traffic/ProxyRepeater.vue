@@ -100,7 +100,7 @@
       </div>
       
       <!-- Target 配置对话框 -->
-      <dialog :class="['modal', showTargetDialog ? 'modal-open' : '']">
+      <AppDialog :class="['modal', showTargetDialog ? 'modal-open' : '']">
         <div class="modal-box max-w-sm">
           <h3 class="font-bold text-lg mb-4">{{ $t('trafficAnalysis.repeater.contextMenu.configureTargetDetails') }}</h3>
           <p class="text-sm text-base-content/70 mb-4">
@@ -169,7 +169,7 @@
         <form method="dialog" class="modal-backdrop" @click="showTargetDialog = false">
           <button>{{ $t('trafficAnalysis.repeater.contextMenu.close') }}</button>
         </form>
-      </dialog>
+      </AppDialog>
 
       <!-- Request / Response Panels -->
       <div class="flex-1 flex overflow-hidden" :class="layoutMode === 'horizontal' ? 'flex-row' : 'flex-col'">

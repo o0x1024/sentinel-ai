@@ -1,6 +1,7 @@
 <template>
-  <div v-if="isOpen" class="modal-overlay" @click.self="closeModal">
-    <div class="modal-content">
+  <Teleport to="body">
+    <div v-if="isOpen" class="modal-overlay" @click.self="closeModal">
+      <div class="modal-content">
       <div class="modal-header">
         <h2 class="text-xl font-semibold">{{ t('roles.roleManagement') }}</h2>
         <button @click="closeModal" class="close-button">&times;</button>
@@ -106,8 +107,9 @@
       <div class="modal-footer">
         <button @click="closeModal" class="close-modal-button">{{ t('common.close') }}</button>
       </div>
+      </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

@@ -4,6 +4,8 @@ interface ToastOptions {
   message: string
   type?: 'success' | 'error' | 'warning' | 'info'
   duration?: number
+  actionLabel?: string
+  onAction?: () => void
 }
 
 class ToastService {

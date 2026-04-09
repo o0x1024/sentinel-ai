@@ -5,43 +5,17 @@ use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
+use crate::commands::command_response_support::CommandResponse;
 use crate::services::system_agents::finding_lifecycle::TrafficFindingLifecycle;
 use crate::services::system_agents::tool_policy::validate_profile_tool_policy;
 use crate::services::system_agents::{
-    ensure_default_system_agent_profiles, run_plugin_fix_agent, run_traffic_active_verifier,
-    PluginFixAgentRequest, PluginFixAgentResult, SystemAgentDispatchResult, SystemAgentRuntime,
-    TrafficActiveVerifierRequest, TrafficActiveVerifierResult,
+    ensure_default_system_agent_profiles, run_traffic_active_verifier, SystemAgentDispatchResult,
+    SystemAgentRuntime, TrafficActiveVerifierRequest, TrafficActiveVerifierResult,
 };
-use crate::services::AiServiceManager;
 use sentinel_db::{
     Database, DatabaseService, SystemAgentBindingRecord, SystemAgentProfileRecord,
     SystemAgentProfileVersionRecord, SystemAgentRunRecord, TrafficEvidenceRecord,
 };
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandResponse<T> {
-    pub success: bool,
-    pub data: Option<T>,
-    pub error: Option<String>,
-}
-
-impl<T> CommandResponse<T> {
-    pub fn ok(data: T) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn err(error: impl ToString) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error.to_string()),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -319,6 +293,31 @@ fn bindings_from_payload(
         .collect()
 }
 
+fn normalize_profile_bindings(
+    profile: &SystemAgentProfileRecord,
+    mut bindings: Vec<SystemAgentBindingRecord>,
+) -> Vec<SystemAgentBindingRecord> {
+    let safety_policy = parse_json_value(&profile.safety_policy_json);
+    let auto_mode_enabled = safety_policy
+        .as_ref()
+        .and_then(|value| value.get("autoMode"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if profile.id == "traffic_active_verifier" {
+        let desired_enabled = profile.enabled && auto_mode_enabled;
+        if let Some(binding) = bindings
+            .iter_mut()
+            .find(|binding| binding.event_name == "traffic.hypothesis.ready")
+        {
+            binding.enabled = desired_enabled;
+            binding.updated_at = Utc::now();
+        }
+    }
+
+    bindings
+}
+
 #[tauri::command]
 pub async fn list_system_agent_profiles(
     db_service: State<'_, Arc<DatabaseService>>,
@@ -362,7 +361,8 @@ pub async fn save_system_agent_profile(
 ) -> Result<CommandResponse<SystemAgentProfilePayload>, String> {
     let profile_record = record_from_payload(&profile)?;
     validate_profile_tool_policy(&profile_record).map_err(|e| e.to_string())?;
-    let binding_records = bindings_from_payload(&profile.id, &profile.bindings)?;
+    let binding_records =
+        normalize_profile_bindings(&profile_record, bindings_from_payload(&profile.id, &profile.bindings)?);
 
     db_service
         .save_system_agent_profile(&profile_record, &binding_records)
@@ -475,18 +475,6 @@ pub async fn seed_system_agent_profiles(
         .map_err(|e| e.to_string())?
         .len();
     Ok(CommandResponse::ok(count))
-}
-
-#[tauri::command]
-pub async fn fix_plugin_with_system_agent(
-    runtime: State<'_, Arc<SystemAgentRuntime>>,
-    ai_manager: State<'_, Arc<AiServiceManager>>,
-    request: PluginFixAgentRequest,
-) -> Result<CommandResponse<PluginFixAgentResult>, String> {
-    let result = run_plugin_fix_agent(runtime.inner(), ai_manager.inner(), request)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(CommandResponse::ok(result))
 }
 
 #[tauri::command]

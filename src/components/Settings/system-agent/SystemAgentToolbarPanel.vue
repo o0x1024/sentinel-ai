@@ -2,7 +2,7 @@
   <div class="flex flex-wrap items-center justify-end gap-2">
     <button class="btn btn-sm btn-outline" @click="$emit('seed')" :disabled="loading">
       <i class="fas fa-seedling mr-1"></i>
-      初始化默认智能体
+      初始化默认系统智能体
     </button>
     <button class="btn btn-sm btn-ghost" @click="$emit('refresh')" :disabled="loading">
       <i class="fas fa-rotate mr-1"></i>

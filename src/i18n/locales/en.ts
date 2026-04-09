@@ -98,6 +98,7 @@ export default {
   securityCenter: {
     title: 'Security Center',
     tabs: {
+      workbench: 'Security Workbench',
       vulnerabilities: 'Vulnerabilities',
       scanTasks: 'Scan Tasks',
       llmSecurity: 'LLM Security',
@@ -399,6 +400,12 @@ export default {
     loadReviewError: 'Failed to load review plugins',
     testing: 'Testing...',
     aiAssistant: 'AI Assistant',
+    fixWithTaskPrompt: 'Fix this plugin code based on the current test failure details',
+    fixingWithTask: 'Plugin fix task is repairing the code...',
+    fixGeneratedByTask: 'Generated fixed code through the plugin fix task and applied it to the current editor.',
+    fixApplied: 'Fixed code applied',
+    fixAppliedWithWarnings: 'Fixed code applied, but validation issues remain',
+    fixFailed: 'Fix failed',
     aiInputPlaceholder: 'Describe your changes...',
     aiAssistantHint: 'Describe your changes and AI will help you edit the code',
     fullCode: 'Full Code',

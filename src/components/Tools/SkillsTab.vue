@@ -120,7 +120,7 @@
       </div>
     </div>
 
-    <dialog :class="['modal', { 'modal-open': showInstallModal }]">
+    <AppDialog :class="['modal', { 'modal-open': showInstallModal }]">
       <div class="modal-box w-11/12 max-w-2xl">
         <div class="flex items-center justify-between mb-3">
           <h3 class="font-bold text-lg">{{ $t('Tools.skillsInstallSelect') }}</h3>
@@ -156,9 +156,9 @@
           </button>
         </div>
       </div>
-    </dialog>
+    </AppDialog>
 
-    <dialog :class="['modal', { 'modal-open': showGitModal }]">
+    <AppDialog :class="['modal', { 'modal-open': showGitModal }]">
       <div class="modal-box w-11/12 max-w-2xl">
         <div class="flex items-center justify-between mb-3">
           <h3 class="font-bold text-lg">{{ $t('Tools.skillsInstallFromGithub') }}</h3>
@@ -177,7 +177,7 @@
           </button>
         </div>
       </div>
-    </dialog>
+    </AppDialog>
   </div>
 </template>
 

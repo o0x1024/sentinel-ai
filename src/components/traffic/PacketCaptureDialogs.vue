@@ -50,8 +50,9 @@
     </ul>
   </div>
 
-  <div v-if="showFilterDialog" class="modal modal-open">
-    <div class="modal-box max-w-2xl">
+  <Teleport to="body">
+    <div v-if="showFilterDialog" class="modal modal-open">
+      <div class="modal-box max-w-2xl">
       <h3 class="font-bold text-lg mb-4"><i class="fas fa-sliders-h mr-2"></i>{{ $t('trafficAnalysis.packetCapture.filterDialog.title') }}</h3>
       <div class="space-y-4">
         <div class="form-control">
@@ -120,12 +121,12 @@
         <button class="btn btn-ghost" @click="$emit('update:showFilterDialog', false)">{{ $t('trafficAnalysis.packetCapture.filterDialog.cancel') }}</button>
         <button class="btn btn-primary" @click="onApplyAdvancedFilter">{{ $t('trafficAnalysis.packetCapture.filterDialog.apply') }}</button>
       </div>
+      </div>
+      <div class="modal-backdrop" @click="$emit('update:showFilterDialog', false)"></div>
     </div>
-    <div class="modal-backdrop" @click="$emit('update:showFilterDialog', false)"></div>
-  </div>
 
-  <div v-if="streamDialog.visible" class="modal modal-open">
-    <div class="modal-box max-w-4xl h-[80vh] flex flex-col">
+    <div v-if="streamDialog.visible" class="modal modal-open">
+      <div class="modal-box max-w-4xl h-[80vh] flex flex-col">
       <div class="flex items-center justify-between mb-4">
         <h3 class="font-bold text-lg"><i class="fas fa-stream mr-2"></i>{{ streamDialog.title }}</h3>
         <div class="flex items-center gap-2">
@@ -157,12 +158,12 @@
         </div>
         <button class="btn" @click="onCloseStreamDialog">{{ $t('trafficAnalysis.packetCapture.streamDialog.close') }}</button>
       </div>
+      </div>
+      <div class="modal-backdrop" @click="onCloseStreamDialog"></div>
     </div>
-    <div class="modal-backdrop" @click="onCloseStreamDialog"></div>
-  </div>
 
-  <div v-if="showExtractDialog" class="modal modal-open">
-    <div class="modal-box max-w-5xl max-h-[90vh]">
+    <div v-if="showExtractDialog" class="modal modal-open">
+      <div class="modal-box max-w-5xl max-h-[90vh]">
       <h3 class="font-bold text-lg mb-4 flex items-center justify-between">
         <span><i class="fas fa-file-export mr-2"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.title') }}</span>
         <span v-if="!extractLoading && extractedFiles.length > 0" class="text-sm font-normal text-base-content/70">
@@ -308,9 +309,10 @@
           {{ $t('trafficAnalysis.packetCapture.extractDialog.saveSelectedFiles', { count: selectedExtractFileIds.size }) }}
         </button>
       </div>
+      </div>
+      <div class="modal-backdrop" @click="onCloseExtractDialog"></div>
     </div>
-    <div class="modal-backdrop" @click="onCloseExtractDialog"></div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

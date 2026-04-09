@@ -1,156 +1,12 @@
 use anyhow::Result;
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 use sentinel_db::{Database, DatabaseService, SystemAgentBindingRecord, SystemAgentProfileRecord};
 
 fn default_profiles() -> Vec<(SystemAgentProfileRecord, Vec<SystemAgentBindingRecord>)> {
     let now = Utc::now();
-
-    let manual = SystemAgentProfileRecord {
-        id: "manual_traffic_audit_agent".to_string(),
-        name: "Manual Traffic Audit Agent".to_string(),
-        description: "用户手动触发的流量审计 Agent".to_string(),
-        mode: "active".to_string(),
-        capability: "reviewer".to_string(),
-        enabled: true,
-        trigger_mode: "manual".to_string(),
-        llm_provider_override: None,
-        llm_model_override: None,
-        base_prompt_id: Some("system:manual_traffic_audit_agent".to_string()),
-        prompt_patch: Some("优先关注鉴权、对象边界和状态流转。".to_string()),
-        input_schema_json: json!({
-            "type": "object",
-            "properties": {
-                "summary": {"type": "string"},
-                "requests": {"type": "array"}
-            }
-        })
-        .to_string(),
-        output_schema_json: json!({
-            "type": "object",
-            "properties": {
-                "summary": {"type": "string"},
-                "riskAreas": {"type": "array"},
-                "interestingParameters": {"type": "array"},
-                "suggestedTests": {"type": "array"}
-            }
-        })
-        .to_string(),
-        required_tools_json: "[]".to_string(),
-        optional_tools_json: serde_json::to_string(&vec![
-            "traffic_history_reader".to_string(),
-            "repeater_launcher".to_string(),
-        ])
-        .unwrap_or_else(|_| "[]".to_string()),
-        forbidden_tools_json: "[]".to_string(),
-        trigger_events_json: "[]".to_string(),
-        budget_json: json!({"maxRunsPerHour": 20, "maxTokensPerRun": 1200}).to_string(),
-        safety_policy_json: json!({"allowActiveReplay": false, "shadowMode": false}).to_string(),
-        cooldown_secs: 0,
-        max_concurrency: 1,
-        risk_level: "medium".to_string(),
-        visibility: "system".to_string(),
-        created_at: now,
-        updated_at: now,
-    };
-
-    let workflow_designer = SystemAgentProfileRecord {
-        id: "workflow_designer_agent".to_string(),
-        name: "Workflow Designer Agent".to_string(),
-        description: "负责自然语言到工作流图的主动生成。".to_string(),
-        mode: "active".to_string(),
-        capability: "designer".to_string(),
-        enabled: true,
-        trigger_mode: "manual".to_string(),
-        llm_provider_override: None,
-        llm_model_override: None,
-        base_prompt_id: Some("system:workflow_designer_agent".to_string()),
-        prompt_patch: Some("生成结果必须严格满足 WorkflowGraph 结构。".to_string()),
-        input_schema_json: json!({"type":"object"}).to_string(),
-        output_schema_json: json!({"type":"object"}).to_string(),
-        required_tools_json: "[]".to_string(),
-        optional_tools_json: serde_json::to_string(&vec![
-            "workflow_catalog_reader".to_string(),
-            "tool_catalog_reader".to_string(),
-        ])
-        .unwrap_or_else(|_| "[]".to_string()),
-        forbidden_tools_json: "[]".to_string(),
-        trigger_events_json: "[]".to_string(),
-        budget_json: json!({"maxRunsPerHour": 30, "maxTokensPerRun": 2400}).to_string(),
-        safety_policy_json: json!({"allowActiveReplay": false, "shadowMode": false}).to_string(),
-        cooldown_secs: 0,
-        max_concurrency: 2,
-        risk_level: "medium".to_string(),
-        visibility: "system".to_string(),
-        created_at: now,
-        updated_at: now,
-    };
-
-    let traffic_plugin_generator = SystemAgentProfileRecord {
-        id: "traffic_plugin_generator_agent".to_string(),
-        name: "Traffic Plugin Generator Agent".to_string(),
-        description: "负责生成流量分析插件代码。".to_string(),
-        mode: "active".to_string(),
-        capability: "generator".to_string(),
-        enabled: true,
-        trigger_mode: "manual".to_string(),
-        llm_provider_override: None,
-        llm_model_override: None,
-        base_prompt_id: Some("system:traffic_plugin_generator_agent".to_string()),
-        prompt_patch: Some("优先生成可维护、可验证、可审阅的插件实现。".to_string()),
-        input_schema_json: json!({"type":"object"}).to_string(),
-        output_schema_json: json!({"type":"object"}).to_string(),
-        required_tools_json: "[]".to_string(),
-        optional_tools_json: serde_json::to_string(&vec![
-            "plugin_prompt_reader".to_string(),
-            "plugin_example_reader".to_string(),
-        ])
-        .unwrap_or_else(|_| "[]".to_string()),
-        forbidden_tools_json: "[]".to_string(),
-        trigger_events_json: "[]".to_string(),
-        budget_json: json!({"maxRunsPerHour": 40, "maxTokensPerRun": 3600}).to_string(),
-        safety_policy_json: json!({"allowActiveReplay": false, "shadowMode": false}).to_string(),
-        cooldown_secs: 0,
-        max_concurrency: 2,
-        risk_level: "medium".to_string(),
-        visibility: "system".to_string(),
-        created_at: now,
-        updated_at: now,
-    };
-
-    let plugin_fix = SystemAgentProfileRecord {
-        id: "plugin_fix_agent".to_string(),
-        name: "Plugin Fix Agent".to_string(),
-        description: "负责根据测试/校验结果修复插件。".to_string(),
-        mode: "active".to_string(),
-        capability: "generator".to_string(),
-        enabled: true,
-        trigger_mode: "manual".to_string(),
-        llm_provider_override: None,
-        llm_model_override: None,
-        base_prompt_id: Some("system:plugin_fix_agent".to_string()),
-        prompt_patch: Some("修复时优先保持原始接口和输出契约不变。".to_string()),
-        input_schema_json: json!({"type":"object"}).to_string(),
-        output_schema_json: json!({"type":"object"}).to_string(),
-        required_tools_json: "[]".to_string(),
-        optional_tools_json: serde_json::to_string(&vec![
-            "plugin_validator".to_string(),
-            "plugin_test_result_reader".to_string(),
-        ])
-        .unwrap_or_else(|_| "[]".to_string()),
-        forbidden_tools_json: "[]".to_string(),
-        trigger_events_json: "[]".to_string(),
-        budget_json: json!({"maxRunsPerHour": 40, "maxTokensPerRun": 3600}).to_string(),
-        safety_policy_json: json!({"allowActiveReplay": false, "shadowMode": false}).to_string(),
-        cooldown_secs: 0,
-        max_concurrency: 2,
-        risk_level: "medium".to_string(),
-        visibility: "system".to_string(),
-        created_at: now,
-        updated_at: now,
-    };
 
     let passive_logic = SystemAgentProfileRecord {
         id: "traffic_logic_triage".to_string(),
@@ -222,10 +78,6 @@ fn default_profiles() -> Vec<(SystemAgentProfileRecord, Vec<SystemAgentBindingRe
     };
 
     vec![
-        (manual, vec![]),
-        (workflow_designer, vec![]),
-        (traffic_plugin_generator, vec![]),
-        (plugin_fix, vec![]),
         (
             active_verifier.clone(),
             vec![SystemAgentBindingRecord {
@@ -255,13 +107,58 @@ fn default_profiles() -> Vec<(SystemAgentProfileRecord, Vec<SystemAgentBindingRe
     ]
 }
 
-pub async fn ensure_default_system_agent_profiles(db: Arc<DatabaseService>) -> Result<()> {
-    if let Some(mut legacy_idor) = db.get_system_agent_profile("traffic_idor_triage").await? {
-        legacy_idor.enabled = false;
-        legacy_idor.visibility = "hidden".to_string();
-        legacy_idor.updated_at = Utc::now();
-        db.save_system_agent_profile(&legacy_idor, &[]).await?;
+async fn hide_and_disable_profile(db: &Arc<DatabaseService>, profile_id: &str) -> Result<()> {
+    if let Some(mut profile) = db.get_system_agent_profile(profile_id).await? {
+        profile.enabled = false;
+        profile.visibility = "hidden".to_string();
+        profile.updated_at = Utc::now();
+        db.save_system_agent_profile(&profile, &[]).await?;
     }
+
+    Ok(())
+}
+
+fn auto_mode_enabled_from_profile(profile: &SystemAgentProfileRecord) -> bool {
+    serde_json::from_str::<Value>(&profile.safety_policy_json)
+        .ok()
+        .and_then(|value| value.get("autoMode").and_then(Value::as_bool))
+        .unwrap_or(false)
+}
+
+async fn sync_existing_profile_bindings(
+    db: &Arc<DatabaseService>,
+    profile_id: &str,
+) -> Result<()> {
+    let Some(profile) = db.get_system_agent_profile(profile_id).await? else {
+        return Ok(());
+    };
+
+    let mut bindings = db.list_system_agent_bindings(Some(profile_id)).await?;
+    let mut changed = false;
+
+    if profile_id == "traffic_active_verifier" {
+        let desired_enabled = profile.enabled && auto_mode_enabled_from_profile(&profile);
+        if let Some(binding) = bindings
+            .iter_mut()
+            .find(|binding| binding.event_name == "traffic.hypothesis.ready")
+        {
+            if binding.enabled != desired_enabled {
+                binding.enabled = desired_enabled;
+                binding.updated_at = Utc::now();
+                changed = true;
+            }
+        }
+    }
+
+    if changed {
+        db.save_system_agent_profile(&profile, &bindings).await?;
+    }
+
+    Ok(())
+}
+
+pub async fn ensure_default_system_agent_profiles(db: Arc<DatabaseService>) -> Result<()> {
+    hide_and_disable_profile(&db, "traffic_idor_triage").await?;
 
     let existing_ids = db
         .list_system_agent_profiles()
@@ -275,6 +172,8 @@ pub async fn ensure_default_system_agent_profiles(db: Arc<DatabaseService>) -> R
             db.save_system_agent_profile(&profile, &bindings).await?;
         }
     }
+
+    sync_existing_profile_bindings(&db, "traffic_active_verifier").await?;
 
     Ok(())
 }

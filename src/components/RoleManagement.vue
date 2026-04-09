@@ -1,6 +1,7 @@
 <template>
-  <div class="modal modal-open">
-    <div class="modal-box max-w-6xl w-11/12 h-[85vh] p-0 flex flex-col overflow-hidden">
+  <Teleport to="body">
+    <div class="modal modal-open">
+      <div class="modal-box max-w-6xl w-11/12 h-[85vh] p-0 flex flex-col overflow-hidden">
       <!-- Header -->
       <div class="p-4 border-b flex items-center justify-between bg-base-200/50">
         <h3 class="font-bold text-lg flex items-center gap-2">
@@ -260,11 +261,11 @@
       </div>
     </div>
     
-    <div class="modal-backdrop" @click="$emit('close')"></div>
+      <div class="modal-backdrop" @click="$emit('close')"></div>
     
     <!-- Delete Confirmation -->
-    <div v-if="roleToDelete" class="modal modal-open">
-      <div class="modal-box max-w-sm">
+      <div v-if="roleToDelete" class="modal modal-open">
+        <div class="modal-box max-w-sm">
         <h3 class="font-bold text-lg text-error flex items-center gap-2">
           <i class="fas fa-exclamation-triangle"></i>
           {{ t('common.confirm') }}
@@ -285,10 +286,11 @@
             {{ t('common.delete') }}
           </button>
         </div>
+        </div>
+        <div class="modal-backdrop" @click="roleToDelete = null"></div>
       </div>
-      <div class="modal-backdrop" @click="roleToDelete = null"></div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

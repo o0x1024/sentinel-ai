@@ -40,6 +40,11 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
             fields
         })
         .unwrap_or_default();
+    let cluster_sequence_ids = payload
+        .get("clusterSummary")
+        .and_then(|value| value.get("recentRequestIds"))
+        .cloned()
+        .unwrap_or_else(|| Value::Array(Vec::new()));
 
     if invariant_ids.contains(&"ownership_invariant") {
         let confidence = if distinct_auth_contexts >= 3 || total_requests >= 5 {
@@ -61,25 +66,37 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
                 format!("actionKind={action_kind}"),
             ],
             "recommendedVerification": {
-                "preferredStrategy": "swap_identity",
+                "preferredStrategy": "swap_resource_reference",
                 "targetRequestId": payload.get("dbRequestId").cloned().unwrap_or(Value::Null),
                 "candidateParameters": resource_fields.clone(),
                 "concurrentRequests": null,
                 "replayCount": null,
-                "sequenceRequestIds": payload
-                    .get("clusterSummary")
-                    .and_then(|value| value.get("recentRequestIds"))
-                    .cloned()
-                    .unwrap_or_else(|| Value::Array(Vec::new())),
+                "sequenceRequestIds": cluster_sequence_ids.clone(),
                 "notes": [
-                    "Replay the same resource request using an alternate authenticated context from the cluster.",
-                    "If the request still succeeds with similar response semantics, treat it as strong object authorization evidence."
+                    "Replay the same resource request by replacing observed resource references from the same cluster.",
+                    "If the request still succeeds with similar response semantics, treat it as strong object authorization evidence even in a single-account workflow."
                 ]
             }
         }));
     }
 
     if invariant_ids.contains(&"role_separation_invariant") {
+        let role_strategy = if !resource_fields.is_empty() {
+            "swap_resource_reference"
+        } else {
+            "skip_prerequisite"
+        };
+        let role_notes = if !resource_fields.is_empty() {
+            vec![
+                "Try the same privileged action against another observed resource reference from the same cluster.",
+                "If the action still succeeds, review whether resource-scoped authorization is missing on a role-sensitive endpoint.",
+            ]
+        } else {
+            vec![
+                "Replay the privileged action without reconstructing the full earlier flow.",
+                "Focus on approval, refund, delete, confirm, and payment style actions when only a single authenticated identity is available.",
+            ]
+        };
         hypotheses.push(json!({
             "id": "role_sensitive_function_access",
             "riskType": "bfla",
@@ -93,20 +110,13 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
                 format!("actionKind={action_kind}"),
             ],
             "recommendedVerification": {
-                "preferredStrategy": "swap_identity",
+                "preferredStrategy": role_strategy,
                 "targetRequestId": payload.get("dbRequestId").cloned().unwrap_or(Value::Null),
                 "candidateParameters": resource_fields.clone(),
                 "concurrentRequests": null,
                 "replayCount": null,
-                "sequenceRequestIds": payload
-                    .get("clusterSummary")
-                    .and_then(|value| value.get("recentRequestIds"))
-                    .cloned()
-                    .unwrap_or_else(|| Value::Array(Vec::new())),
-                "notes": [
-                    "Try the same privileged action with another authenticated identity from the same cluster.",
-                    "Focus on approval, refund, delete, confirm, and payment style actions."
-                ]
+                "sequenceRequestIds": cluster_sequence_ids.clone(),
+                "notes": role_notes
             }
         }));
     }
@@ -130,11 +140,7 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
                 "candidateParameters": resource_fields.clone(),
                 "replayCount": 1,
                 "concurrentRequests": null,
-                "sequenceRequestIds": payload
-                    .get("clusterSummary")
-                    .and_then(|value| value.get("recentRequestIds"))
-                    .cloned()
-                    .unwrap_or_else(|| Value::Array(Vec::new())),
+                "sequenceRequestIds": cluster_sequence_ids.clone(),
                 "notes": [
                     "Replay the target action directly without reproducing the earlier workflow steps.",
                     "If it still succeeds, the server may not enforce required state transitions."
@@ -162,11 +168,7 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
                 "candidateParameters": resource_fields.clone(),
                 "replayCount": 2,
                 "concurrentRequests": null,
-                "sequenceRequestIds": payload
-                    .get("clusterSummary")
-                    .and_then(|value| value.get("recentRequestIds"))
-                    .cloned()
-                    .unwrap_or_else(|| Value::Array(Vec::new())),
+                "sequenceRequestIds": cluster_sequence_ids.clone(),
                 "notes": [
                     "Repeat the same request without changing the payload.",
                     "If the second replay keeps succeeding, review idempotency and one-time-consumption controls."
@@ -194,11 +196,7 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
                 "candidateParameters": resource_fields,
                 "replayCount": null,
                 "concurrentRequests": 3,
-                "sequenceRequestIds": payload
-                    .get("clusterSummary")
-                    .and_then(|value| value.get("recentRequestIds"))
-                    .cloned()
-                    .unwrap_or_else(|| Value::Array(Vec::new())),
+                "sequenceRequestIds": cluster_sequence_ids,
                 "notes": [
                     "Replay the same request concurrently.",
                     "If duplicate submissions both succeed, treat it as strong race or idempotency evidence."
@@ -259,7 +257,7 @@ mod tests {
                 .get("recommendedVerification")
                 .and_then(|value| value.get("preferredStrategy"))
                 .and_then(Value::as_str),
-            Some("swap_identity")
+            Some("swap_resource_reference")
         );
     }
 

@@ -2,7 +2,7 @@
   <div v-if="contextMenu.visible" class="fixed bg-base-100 shadow-xl rounded-lg border border-base-300 py-1 min-w-[160px]" style="z-index: 9999;" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
     <div v-for="(item, index) in contextMenu.items" :key="index" class="px-4 py-2 hover:bg-base-200 cursor-pointer text-sm transition-colors" :class="{ 'text-error': item.danger }" @click="onContextMenuClick(item)">{{ item.label }}</div>
   </div>
-  <dialog :class="['modal', { 'modal-open': showAiGenerateModal }]">
+  <AppDialog :class="['modal', { 'modal-open': showAiGenerateModal }]">
     <div class="modal-box max-w-2xl">
       <div class="flex justify-between items-center mb-3">
         <h3 class="font-bold text-lg">{{ title }}</h3>
@@ -22,7 +22,7 @@
         </button>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">

@@ -10,15 +10,24 @@
         @mouseleave="toast.duration && resumeToast(toast.id, toast.duration)"
       >
         <component :is="getIcon(toast.type)" />
-        <span>{{ toast.message }}</span>
-        <button
-          @click="removeToast(toast.id)"
-          class="btn btn-ghost btn-xs btn-circle"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <span class="flex-1">{{ toast.message }}</span>
+        <div class="flex items-center gap-1">
+          <button
+            v-if="toast.actionLabel && toast.onAction"
+            class="btn btn-ghost btn-xs"
+            @click="runToastAction(toast.id)"
+          >
+            {{ toast.actionLabel }}
+          </button>
+          <button
+            @click="removeToast(toast.id)"
+            class="btn btn-ghost btn-xs btn-circle"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
     </TransitionGroup>
   </div>
@@ -32,6 +41,8 @@ interface Toast {
   type: 'success' | 'error' | 'warning' | 'info'
   message: string
   duration?: number
+  actionLabel?: string
+  onAction?: () => void
 }
 
 const toasts = ref<Toast[]>([])
@@ -150,6 +161,16 @@ const removeToast = (id: string) => {
       timeouts.delete(id)
     }
   }
+}
+
+const runToastAction = (id: string) => {
+  const toast = toasts.value.find(item => item.id === id)
+  if (!toast?.onAction) {
+    return
+  }
+
+  toast.onAction()
+  removeToast(id)
 }
 
 const clearToasts = () => {

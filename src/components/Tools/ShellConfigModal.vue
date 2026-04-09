@@ -1,5 +1,5 @@
 <template>
-  <dialog :class="['modal', { 'modal-open': modelValue }]">
+  <AppDialog :class="['modal', { 'modal-open': modelValue }]">
     <div v-if="modelValue" class="modal-box w-11/12 max-w-4xl">
       <div class="flex justify-between items-center mb-4">
         <h3 class="font-bold text-lg">
@@ -104,7 +104,7 @@
         </button>
       </div>
     </div>
-  </dialog>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">

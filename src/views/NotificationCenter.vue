@@ -171,7 +171,7 @@
         </div>
       </div>
 
-      <dialog ref="preferencesDialog" class="modal">
+      <AppDialog ref="preferencesDialog" class="modal">
         <div class="modal-box max-w-4xl">
           <div class="flex items-start justify-between gap-4">
             <div>
@@ -279,7 +279,7 @@
         <form method="dialog" class="modal-backdrop">
           <button>{{ t('notifications.cancel') }}</button>
         </form>
-      </dialog>
+      </AppDialog>
   </div>
 </template>
 
