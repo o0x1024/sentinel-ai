@@ -52,24 +52,36 @@
           </span>
         </div>
 
-        <details v-if="getWorkbenchEvidenceExchange(evidence)?.requestHeaders">
-          <summary class="cursor-pointer text-sm font-medium">{{ wb('evidence.requestHeaders') }}</summary>
-          <pre class="mt-2 bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{ formatWorkbenchRawPayload(getWorkbenchEvidenceExchange(evidence)?.requestHeaders) }}</pre>
+        <details v-if="hasRequestPayload(evidence)" class="rounded-lg border border-base-300 bg-base-100">
+          <summary class="cursor-pointer px-3 py-2 text-sm font-medium">
+            {{ wb('evidence.requestPanel') }}
+          </summary>
+          <div class="space-y-2 border-t border-base-300 px-3 py-3">
+            <div v-if="getWorkbenchEvidenceExchange(evidence)?.requestHeaders" class="space-y-1">
+              <p class="text-xs font-medium text-base-content/70">{{ wb('evidence.requestHeaders') }}</p>
+              <pre class="bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{ formatWorkbenchRawPayload(getWorkbenchEvidenceExchange(evidence)?.requestHeaders) }}</pre>
+            </div>
+            <div v-if="getWorkbenchEvidenceExchange(evidence)?.requestBody" class="space-y-1">
+              <p class="text-xs font-medium text-base-content/70">{{ wb('evidence.requestBody') }}</p>
+              <pre class="bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{ formatWorkbenchRawPayload(getWorkbenchEvidenceExchange(evidence)?.requestBody) }}</pre>
+            </div>
+          </div>
         </details>
 
-        <details v-if="getWorkbenchEvidenceExchange(evidence)?.requestBody">
-          <summary class="cursor-pointer text-sm font-medium">{{ wb('evidence.requestBody') }}</summary>
-          <pre class="mt-2 bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{ formatWorkbenchRawPayload(getWorkbenchEvidenceExchange(evidence)?.requestBody) }}</pre>
-        </details>
-
-        <details v-if="getWorkbenchEvidenceExchange(evidence)?.responseHeaders">
-          <summary class="cursor-pointer text-sm font-medium">{{ wb('evidence.responseHeaders') }}</summary>
-          <pre class="mt-2 bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{ formatWorkbenchRawPayload(getWorkbenchEvidenceExchange(evidence)?.responseHeaders) }}</pre>
-        </details>
-
-        <details v-if="getWorkbenchEvidenceExchange(evidence)?.responseBody">
-          <summary class="cursor-pointer text-sm font-medium">{{ wb('evidence.responseBody') }}</summary>
-          <pre class="mt-2 bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{ formatWorkbenchRawPayload(getWorkbenchEvidenceExchange(evidence)?.responseBody) }}</pre>
+        <details v-if="hasResponsePayload(evidence)" class="rounded-lg border border-base-300 bg-base-100">
+          <summary class="cursor-pointer px-3 py-2 text-sm font-medium">
+            {{ wb('evidence.responsePanel') }}
+          </summary>
+          <div class="space-y-2 border-t border-base-300 px-3 py-3">
+            <div v-if="getWorkbenchEvidenceExchange(evidence)?.responseHeaders" class="space-y-1">
+              <p class="text-xs font-medium text-base-content/70">{{ wb('evidence.responseHeaders') }}</p>
+              <pre class="bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{ formatWorkbenchRawPayload(getWorkbenchEvidenceExchange(evidence)?.responseHeaders) }}</pre>
+            </div>
+            <div v-if="getWorkbenchEvidenceExchange(evidence)?.responseBody" class="space-y-1">
+              <p class="text-xs font-medium text-base-content/70">{{ wb('evidence.responseBody') }}</p>
+              <pre class="bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{ formatWorkbenchRawPayload(getWorkbenchEvidenceExchange(evidence)?.responseBody) }}</pre>
+            </div>
+          </div>
         </details>
       </div>
     </div>
@@ -82,6 +94,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import type { WorkbenchCase } from './securityWorkbenchTypes'
+import type { Evidence } from './vulnerabilityFindingTypes'
 import { formatWorkbenchTime } from './securityWorkbenchPresentation'
 import { wb } from './securityWorkbenchLocale'
 import {
@@ -103,6 +116,16 @@ defineEmits<{
 
 const evidences = computed(() => props.caseItem.finding.evidence || [])
 const evidenceRefs = ref<Record<string, HTMLElement | null>>({})
+
+const hasRequestPayload = (evidence: Evidence) => {
+  const exchange = getWorkbenchEvidenceExchange(evidence)
+  return Boolean(exchange?.requestHeaders || exchange?.requestBody)
+}
+
+const hasResponsePayload = (evidence: Evidence) => {
+  const exchange = getWorkbenchEvidenceExchange(evidence)
+  return Boolean(exchange?.responseHeaders || exchange?.responseBody)
+}
 
 const setEvidenceRef = (evidenceId: string) => (element: Element | null) => {
   evidenceRefs.value[evidenceId] = element instanceof HTMLElement ? element : null

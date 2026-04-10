@@ -8,6 +8,8 @@ use serde_json::{json, Value};
 use tauri::State;
 use uuid::Uuid;
 
+use super::surface_scope_sync_support::{create_missing_in_scope_domains, infer_root_domain};
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SurfaceAssetUpdateRequest {
     pub display_name: Option<String>,
@@ -38,6 +40,7 @@ pub struct SurfaceAssetManualImportResult {
     pub requested: usize,
     pub created: usize,
     pub skipped: usize,
+    pub scopes_created: usize,
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -78,19 +81,6 @@ fn normalize_asset_name(asset_type: &str, raw_value: &str) -> Option<String> {
     } else {
         Some(normalized)
     }
-}
-
-fn infer_root_domain(domain: &str) -> Option<String> {
-    let parts: Vec<&str> = domain.split('.').filter(|part| !part.is_empty()).collect();
-    if parts.len() < 2 {
-        return None;
-    }
-
-    Some(format!(
-        "{}.{}",
-        parts[parts.len().saturating_sub(2)],
-        parts[parts.len().saturating_sub(1)]
-    ))
 }
 
 fn build_manual_import_artifact(asset_type: &str, asset_name: &str) -> Option<Value> {
@@ -269,10 +259,24 @@ pub async fn surface_manual_import_assets(
         created += 1;
     }
 
+    let scopes_created = if asset_type == "domain" {
+        create_missing_in_scope_domains(
+            db_service.inner().as_ref(),
+            program_id,
+            &requested_values,
+            "Auto-created from manual domain import",
+            "auto_root_domain_from_import",
+        )
+        .await?
+    } else {
+        0
+    };
+
     Ok(SurfaceAssetManualImportResult {
         requested: requested_values.len(),
         created,
         skipped,
+        scopes_created,
     })
 }
 

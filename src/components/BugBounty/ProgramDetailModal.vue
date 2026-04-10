@@ -64,10 +64,21 @@
         <div v-if="activeTab === 'scopes'" class="space-y-4">
           <div class="flex justify-between items-center">
             <h4 class="font-semibold">{{ t('bugBounty.programDetail.scopeList') }}</h4>
-            <button class="btn btn-sm btn-primary" @click="showCreateScopeModal = true">
-              <i class="fas fa-plus mr-2"></i>
-              {{ t('bugBounty.programDetail.addScope') }}
-            </button>
+            <div class="flex items-center gap-2">
+              <button
+                class="btn btn-sm btn-outline"
+                :disabled="syncingDomainScopes"
+                @click="backfillDomainScopes"
+              >
+                <span v-if="syncingDomainScopes" class="loading loading-spinner loading-xs mr-2"></span>
+                <i v-else class="fas fa-wand-magic-sparkles mr-2"></i>
+                {{ t('bugBounty.programDetail.backfillDomainScopes') }}
+              </button>
+              <button class="btn btn-sm btn-primary" @click="showCreateScopeModal = true">
+                <i class="fas fa-plus mr-2"></i>
+                {{ t('bugBounty.programDetail.addScope') }}
+              </button>
+            </div>
           </div>
 
           <div v-if="loadingScopes" class="flex justify-center py-8">
@@ -93,7 +104,7 @@
                     <thead>
                       <tr>
                         <th>{{ t('bugBounty.scope.target') }}</th>
-                        <th>{{ t('bugBounty.scope.type') }}</th>
+                        <th>{{ t('bugBounty.scope.scopeType') }}</th>
                         <th>{{ t('bugBounty.scope.description') }}</th>
                         <th>{{ t('bugBounty.table.actions') }}</th>
                       </tr>
@@ -134,7 +145,7 @@
                     <thead>
                       <tr>
                         <th>{{ t('bugBounty.scope.target') }}</th>
-                        <th>{{ t('bugBounty.scope.type') }}</th>
+                        <th>{{ t('bugBounty.scope.scopeType') }}</th>
                         <th>{{ t('bugBounty.scope.description') }}</th>
                         <th>{{ t('bugBounty.table.actions') }}</th>
                       </tr>
@@ -323,6 +334,7 @@ const emit = defineEmits<{
 const activeTab = ref('scopes')
 const loadingScopes = ref(false)
 const creatingSope = ref(false)
+const syncingDomainScopes = ref(false)
 const showCreateScopeModal = ref(false)
 
 const scopes = ref<any[]>([])
@@ -352,6 +364,10 @@ const loadScopes = async () => {
   } finally {
     loadingScopes.value = false
   }
+}
+
+const refreshScopes = async () => {
+  await loadScopes()
 }
 
 const loadProgramFindings = async () => {
@@ -390,6 +406,42 @@ const createScope = async () => {
     toast.error(t('bugBounty.errors.createFailed'))
   } finally {
     creatingSope.value = false
+  }
+}
+
+const backfillDomainScopes = async () => {
+  if (!props.program?.id) return
+
+  try {
+    syncingDomainScopes.value = true
+    const result = await invoke<{ domain_assets: number; root_domains: number; scopes_created: number }>(
+      'bounty_backfill_domain_scopes_from_assets',
+      { programId: props.program.id },
+    )
+
+    if (result.scopes_created > 0) {
+      toast.success(
+        t('bugBounty.success.domainScopesBackfilled', {
+          scopes: result.scopes_created,
+          roots: result.root_domains,
+        }),
+      )
+    } else {
+      toast.warning(
+        t('bugBounty.programDetail.backfillNoop', {
+          roots: result.root_domains,
+          assets: result.domain_assets,
+        }),
+      )
+    }
+
+    await loadScopes()
+    emit('updated')
+  } catch (error) {
+    console.error('Failed to backfill domain scopes from assets:', error)
+    toast.error(t('bugBounty.errors.backfillDomainScopesFailed'))
+  } finally {
+    syncingDomainScopes.value = false
   }
 }
 
@@ -449,6 +501,10 @@ watch(() => props.visible, async (val) => {
     await loadScopes()
     await loadProgramFindings()
   }
+})
+
+defineExpose({
+  refreshScopes,
 })
 </script>
 

@@ -69,6 +69,11 @@
               <i class="fas fa-file-import mr-2"></i>
               {{ t('bugBounty.surface.inventory.actions.manualImport') }}
             </button>
+            <button class="btn btn-outline btn-sm" :disabled="exportingAssets" @click="openExportModal()">
+              <span v-if="exportingAssets" class="loading loading-spinner loading-xs mr-2"></span>
+              <i v-else class="fas fa-download mr-2"></i>
+              {{ t('bugBounty.surface.inventory.actions.exportAssets') }}
+            </button>
             <select v-model="assetTypeFilter" class="select select-bordered select-sm">
               <option value="">{{ t('bugBounty.surface.inventory.allTypes') }}</option>
               <option v-for="option in assetTypeOptions" :key="option.type" :value="option.type">
@@ -127,9 +132,6 @@
           <div class="flex flex-wrap items-center gap-2">
             <button class="btn btn-sm btn-warning" :disabled="!selectedAssetIds.length || inventoryLoading || bulkDeleting" @click="deleteSelectedAssets">
               {{ t('bugBounty.surface.inventory.actions.deleteSelected') }}
-            </button>
-            <button class="btn btn-sm btn-warning btn-outline" :disabled="!inventoryItems.length || inventoryLoading || bulkDeleting" @click="deleteCurrentPageAssets">
-              {{ t('bugBounty.surface.inventory.actions.deleteCurrentPage') }}
             </button>
             <button class="btn btn-sm btn-error" :disabled="!inventoryTotal || inventoryLoading || bulkDeleting" @click="deleteAllFilteredAssets">
               {{ deleteAllActionLabel }}
@@ -447,12 +449,24 @@
     @close="closeImportModal"
     @submit="submitImport"
   />
+  <SurfaceAssetExportModal
+    :visible="showExportModal"
+    :exporting="exportingAssets"
+    :program-name="selectedProgramName"
+    :current-asset-type="assetTypeFilter || null"
+    :available-asset-types="exportAssetTypes"
+    :initial-export-type="preferredExportType"
+    @close="closeExportModal"
+    @submit="exportInventoryAssets"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit as tauriEmit } from '@tauri-apps/api/event'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import SurfaceAssetListModal from './SurfaceAssetListModal.vue'
@@ -461,10 +475,18 @@ import SurfaceDiscoveryRunDetailModal from './SurfaceDiscoveryRunDetailModal.vue
 import SurfaceFingerprintCategoryPanel from './SurfaceFingerprintCategoryPanel.vue'
 import SurfaceTopologyPanel from './SurfaceTopologyPanel.vue'
 import SurfaceAssetEditModal, { type SurfaceAssetEditPayload } from './SurfaceAssetEditModal.vue'
+import SurfaceAssetExportModal, { type SurfaceAssetExportPayload } from './SurfaceAssetExportModal.vue'
 import SurfaceAssetImportModal, { type SurfaceAssetImportPayload } from './SurfaceAssetImportModal.vue'
 import SurfaceAssetTypeIcon from './SurfaceAssetTypeIcon.vue'
 import SurfaceIconButton from './SurfaceIconButton.vue'
 import { buildReferencedSurfaceAsset } from './surfaceAssetUtils'
+import {
+  buildSurfaceAssetExportRows,
+  convertSurfaceAssetExportRowsToCsv,
+  filterSurfaceInventoryItemsForExport,
+  sanitizeExportFilenamePart,
+  type SurfaceAssetExportType,
+} from './surfaceAssetExportSupport'
 import { useToast } from '../../composables/useToast'
 import { dialog } from '../../composables/useDialog'
 
@@ -474,7 +496,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'refresh'): void
+  (e: 'refresh', payload?: { programId: string | null }): void
 }>()
 
 const { t } = useI18n()
@@ -485,6 +507,7 @@ const loading = ref(false)
 const inventoryLoading = ref(false)
 const bulkDeleting = ref(false)
 const importing = ref(false)
+const exportingAssets = ref(false)
 const activeTab = ref<'inventory' | 'types' | 'topology' | 'runs'>('inventory')
 const selectedProgramId = ref(props.programId || '')
 const search = ref('')
@@ -529,8 +552,10 @@ const selectedAssetIds = ref<string[]>([])
 const showEditModal = ref(false)
 const editingAsset = ref<any | null>(null)
 const showImportModal = ref(false)
+const showExportModal = ref(false)
 const serviceNameOptions = ref<Array<{ value: string; count: number }>>([])
 const transportProtocolOptions = ref<Array<{ value: string; count: number }>>([])
+const preferredExportType = ref<SurfaceAssetExportType>('all')
 
 const assetTypeOptions = computed(() => {
   return Object.entries(overview.value.by_type || {})
@@ -538,7 +563,26 @@ const assetTypeOptions = computed(() => {
     .sort((a, b) => Number(b[1]) - Number(a[1]))
     .map(([type, count]) => ({ type, count: Number(count) }))
 })
+const exportAssetTypes = computed(() =>
+  Array.from(
+    new Set([
+      ...assetTypeOptions.value.map(option => option.type),
+      'org',
+      'domain',
+      'ip',
+      'host',
+      'port',
+      'service',
+      'web',
+      'certificate',
+    ]),
+  ),
+)
 const showServiceFacetFilters = computed(() => assetTypeFilter.value === 'service')
+const selectedProgramName = computed(() => {
+  const selected = (props.programs || []).find(program => program.id === selectedProgramId.value)
+  return selected?.name || null
+})
 
 const inventoryPageCount = computed(() => Math.max(1, Math.ceil(inventoryTotal.value / inventoryPageSize.value)))
 const runTotal = computed(() => runs.value.length)
@@ -730,7 +774,7 @@ const loadAll = async () => {
       runPage.value = runPageCount.value
     }
     runPageInput.value = String(runPage.value)
-    emit('refresh')
+    emit('refresh', { programId })
   } catch (error) {
     console.error('Failed to load surface graph data:', error)
     overview.value = {
@@ -815,6 +859,18 @@ const openImportModal = () => {
 
 const closeImportModal = () => {
   showImportModal.value = false
+}
+
+const openExportModal = (options: { programId?: string | null; exportType?: SurfaceAssetExportType } = {}) => {
+  if (options.programId !== undefined) {
+    selectedProgramId.value = options.programId || ''
+  }
+  preferredExportType.value = options.exportType || (assetTypeFilter.value ? 'current' : 'all')
+  showExportModal.value = true
+}
+
+const closeExportModal = () => {
+  showExportModal.value = false
 }
 
 const formatInventoryValue = (item: any, column: any) => {
@@ -915,26 +971,6 @@ const deleteSelectedAssets = async () => {
   }
 }
 
-const deleteCurrentPageAssets = async () => {
-  const ids = [...currentPageAssetIds.value]
-  if (!ids.length) return
-  if (!(await dialog.confirm(t('bugBounty.surface.inventory.actions.confirmDeleteCurrentPage', { count: ids.length })))) {
-    return
-  }
-
-  try {
-    bulkDeleting.value = true
-    const deleted = await invoke<number>('surface_batch_delete_assets', { assetIds: ids })
-    toast.success(t('bugBounty.surface.inventory.actions.deleteSuccess', { count: deleted }))
-    await refreshAfterMutation(deleted)
-  } catch (error) {
-    console.error('Failed to delete current surface inventory page:', error)
-    toast.error(t('bugBounty.surface.inventory.actions.deleteFailed'))
-  } finally {
-    bulkDeleting.value = false
-  }
-}
-
 const deleteAllFilteredAssets = async () => {
   if (!inventoryTotal.value) return
   const confirmKey = hasInventoryFilters.value
@@ -975,11 +1011,32 @@ const saveAssetEdit = async (payload: SurfaceAssetEditPayload) => {
 const submitImport = async (payload: SurfaceAssetImportPayload) => {
   try {
     importing.value = true
-    const result = await invoke<{ requested: number; created: number; skipped: number }>('surface_manual_import_assets', {
+    const result = await invoke<{ requested: number; created: number; skipped: number; scopes_created: number }>('surface_manual_import_assets', {
       request: payload,
     })
 
-    if (result.created > 0 && result.skipped > 0) {
+    if (result.created > 0 && result.skipped > 0 && result.scopes_created > 0) {
+      toast.success(
+        t('bugBounty.surface.inventory.import.partialSuccessWithScopes', {
+          created: result.created,
+          skipped: result.skipped,
+          scopes: result.scopes_created,
+        }),
+      )
+    } else if (result.created > 0 && result.scopes_created > 0) {
+      toast.success(
+        t('bugBounty.surface.inventory.import.successWithScopes', {
+          count: result.created,
+          scopes: result.scopes_created,
+        }),
+      )
+    } else if (result.scopes_created > 0) {
+      toast.success(
+        t('bugBounty.surface.inventory.import.scopeOnlySuccess', {
+          scopes: result.scopes_created,
+        }),
+      )
+    } else if (result.created > 0 && result.skipped > 0) {
       toast.success(
         t('bugBounty.surface.inventory.import.partialSuccess', {
           created: result.created,
@@ -1020,6 +1077,89 @@ const sendAssetToAssistant = async (assetId?: string | null) => {
   } catch (error) {
     console.error('Failed to send surface asset to AI assistant:', error)
     toast.error(t('bugBounty.surface.inventory.actions.assistantFailed'))
+  }
+}
+
+const buildExportFilterPayload = (exportType: SurfaceAssetExportType) => {
+  const useCurrentType = exportType === 'current'
+  const resolvedAssetType = useCurrentType
+    ? assetTypeFilter.value || null
+    : exportType === 'all' || exportType === 'api'
+      ? null
+      : exportType
+  const useServiceFacetFilters =
+    (useCurrentType && assetTypeFilter.value === 'service') || exportType === 'service'
+
+  return {
+    program_id: selectedProgramId.value || null,
+    asset_type: resolvedAssetType,
+    status: statusFilter.value || null,
+    search: search.value.trim() || null,
+    service_name: useServiceFacetFilters ? serviceNameFilter.value || null : null,
+    transport_protocol: useServiceFacetFilters ? transportProtocolFilter.value || null : null,
+    limit: null,
+    offset: null,
+  }
+}
+
+const buildExportFilename = (exportType: SurfaceAssetExportType, format: 'csv' | 'json') => {
+  const programPart = sanitizeExportFilenamePart(selectedProgramName.value || 'all_programs')
+  const typePart = sanitizeExportFilenamePart(
+    exportType === 'current' ? assetTypeFilter.value || 'current' : exportType,
+  )
+  return `surface-assets-${programPart}-${typePart}-${Date.now()}.${format}`
+}
+
+const exportInventoryAssets = async (payload: SurfaceAssetExportPayload) => {
+  try {
+    exportingAssets.value = true
+
+    const response = await invoke<any>('surface_list_inventory', {
+      filter: buildExportFilterPayload(payload.exportType),
+    })
+    const allItems = Array.isArray(response?.items) ? response.items : []
+    const filteredItems = filterSurfaceInventoryItemsForExport(
+      allItems,
+      payload.exportType,
+      assetTypeFilter.value || null,
+    )
+
+    if (!filteredItems.length) {
+      toast.warning(t('bugBounty.surface.inventory.export.empty'))
+      return
+    }
+
+    const filePath = await save({
+      defaultPath: buildExportFilename(payload.exportType, payload.format),
+      filters: [{ name: payload.format.toUpperCase(), extensions: [payload.format] }],
+    })
+    if (!filePath) return
+
+    const content = payload.format === 'json'
+      ? JSON.stringify(
+        {
+          exported_at: new Date().toISOString(),
+          program_id: selectedProgramId.value || null,
+          export_type: payload.exportType,
+          filter: buildExportFilterPayload(payload.exportType),
+          total: filteredItems.length,
+          items: filteredItems,
+        },
+        null,
+        2,
+      )
+      : convertSurfaceAssetExportRowsToCsv(
+        buildSurfaceAssetExportRows(filteredItems, payload.exportType),
+      )
+
+    await writeTextFile(filePath, content)
+    closeExportModal()
+    toast.success(t('bugBounty.surface.inventory.export.success', { count: filteredItems.length }))
+  } catch (error) {
+    console.error('Failed to export surface inventory assets:', error)
+    toast.error(t('bugBounty.surface.inventory.export.failed'))
+  } finally {
+    exportingAssets.value = false
   }
 }
 
@@ -1200,5 +1340,9 @@ onMounted(() => {
   inventoryPageInput.value = String(inventoryPage.value)
   runPageInput.value = String(runPage.value)
   loadAll()
+})
+
+defineExpose({
+  openExportModal,
 })
 </script>

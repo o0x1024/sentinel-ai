@@ -147,7 +147,6 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useNotificationCenter } from '@/composables/useNotificationCenter'
-import { resolveLastSecurityCenterLocation } from '@/services/securityCenterNavigation'
 
 // 接收折叠状态
 const props = defineProps({
@@ -174,7 +173,7 @@ const mainMenuItems = computed(() => [
     badgeClass: '',
   },
   {
-    path: resolveLastSecurityCenterLocation(),
+    path: '/security-center',
     name: t('sidebar.securityCenter', '安全中心'),
     icon: 'fas fa-shield-alt',
     badge: taskStats.value.running > 0 ? taskStats.value.running.toString() : null,

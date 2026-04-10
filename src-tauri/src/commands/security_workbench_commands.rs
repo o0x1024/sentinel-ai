@@ -4,7 +4,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use sentinel_db::{Database, SystemAgentRunRecord, TrafficEvidenceRecord};
 use sentinel_traffic::{EvidenceRecord, VulnerabilityFilters};
@@ -335,6 +335,38 @@ pub struct DeleteSecurityWorkbenchCasesResultPayload {
     pub deleted_activity_count: usize,
     pub deleted_execution_draft_count: usize,
     pub deleted_execution_run_count: usize,
+}
+
+fn emit_workbench_changed(
+    app_handle: &AppHandle,
+    reason: &str,
+    case_ids: &[String],
+    finding_ids: &[String],
+) {
+    let _ = app_handle.emit(
+        "security-workbench:changed",
+        json!({
+            "reason": reason,
+            "caseIds": case_ids,
+            "findingIds": finding_ids,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }),
+    );
+}
+
+fn emit_finding_updated(
+    app_handle: &AppHandle,
+    reason: &str,
+    finding_ids: &[String],
+) {
+    let _ = app_handle.emit(
+        "scan:finding-updated",
+        json!({
+            "reason": reason,
+            "findingIds": finding_ids,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }),
+    );
 }
 
 fn normalize_case_status(value: Option<&str>) -> String {
@@ -1411,6 +1443,7 @@ async fn intake_non_formal_findings_into_workbench_cases(
 
 #[tauri::command]
 pub async fn security_workbench_list_cases(
+    app_handle: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     request: Option<ListSecurityWorkbenchCasesRequest>,
 ) -> Result<CommandResponse<WorkbenchCaseListResponsePayload>, String> {
@@ -1431,6 +1464,17 @@ pub async fn security_workbench_list_cases(
 
     if intake_changed || payload_changed(&refreshed_cases, &raw_cases) {
         save_workbench_cases(&state, &refreshed_cases).await?;
+        if intake_changed {
+            let case_ids = refreshed_cases
+                .iter()
+                .map(|item| item.id.clone())
+                .collect::<Vec<_>>();
+            let finding_ids = refreshed_cases
+                .iter()
+                .map(|item| item.finding_id.clone())
+                .collect::<Vec<_>>();
+            emit_workbench_changed(&app_handle, "intake", &case_ids, &finding_ids);
+        }
     }
 
     let mut items = refreshed_cases
@@ -1490,6 +1534,7 @@ pub async fn security_workbench_list_cases(
 
 #[tauri::command]
 pub async fn security_workbench_get_or_create_case_for_finding(
+    app_handle: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     request: GetOrCreateSecurityWorkbenchCaseForFindingRequest,
 ) -> Result<CommandResponse<WorkbenchCasePayload>, String> {
@@ -1518,6 +1563,12 @@ pub async fn security_workbench_get_or_create_case_for_finding(
         }
         cases[index] = existing.clone();
         save_workbench_cases(&state, &cases).await?;
+        emit_workbench_changed(
+            &app_handle,
+            "case_updated",
+            &[existing.id.clone()],
+            &[existing.finding_id.clone()],
+        );
         return Ok(CommandResponse::ok(existing));
     }
 
@@ -1538,6 +1589,12 @@ pub async fn security_workbench_get_or_create_case_for_finding(
 
     cases.insert(0, next_case.clone());
     save_workbench_cases(&state, &cases).await?;
+    emit_workbench_changed(
+        &app_handle,
+        "case_created",
+        &[next_case.id.clone()],
+        &[next_case.finding_id.clone()],
+    );
 
     Ok(CommandResponse::ok(next_case))
 }
@@ -1605,6 +1662,7 @@ pub async fn security_workbench_get_case_detail(
 
 #[tauri::command]
 pub async fn security_workbench_update_case(
+    app_handle: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     request: UpdateSecurityWorkbenchCaseRequest,
 ) -> Result<CommandResponse<Option<WorkbenchCasePayload>>, String> {
@@ -1632,21 +1690,43 @@ pub async fn security_workbench_update_case(
 
     cases[index] = next_case.clone();
     save_workbench_cases(&state, &cases).await?;
+    emit_workbench_changed(
+        &app_handle,
+        "case_updated",
+        &[next_case.id.clone()],
+        &[next_case.finding_id.clone()],
+    );
 
     Ok(CommandResponse::ok(Some(next_case)))
 }
 
 #[tauri::command]
 pub async fn security_workbench_delete_cases(
+    app_handle: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     request: DeleteSecurityWorkbenchCasesRequest,
 ) -> Result<CommandResponse<DeleteSecurityWorkbenchCasesResultPayload>, String> {
+    let cases = load_workbench_cases(&state).await?;
+    let finding_ids = cases
+        .iter()
+        .filter(|item| request.case_ids.iter().any(|case_id| case_id == &item.id))
+        .map(|item| item.finding_id.clone())
+        .collect::<Vec<_>>();
     let result = delete_workbench_cases_by_ids(&state, &request.case_ids).await?;
+    if !result.deleted_case_ids.is_empty() {
+        emit_workbench_changed(
+            &app_handle,
+            "case_deleted",
+            &result.deleted_case_ids,
+            &finding_ids,
+        );
+    }
     Ok(CommandResponse::ok(result))
 }
 
 #[tauri::command]
 pub async fn security_workbench_add_note(
+    app_handle: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     request: AddSecurityWorkbenchNoteRequest,
 ) -> Result<CommandResponse<Option<WorkbenchNotePayload>>, String> {
@@ -1677,6 +1757,12 @@ pub async fn security_workbench_add_note(
         cases[index].updated_at = now.clone();
         cases[index].last_activity_at = now;
         save_workbench_cases(&state, &cases).await?;
+        emit_workbench_changed(
+            &app_handle,
+            "note_added",
+            &[cases[index].id.clone()],
+            &[cases[index].finding_id.clone()],
+        );
     }
 
     Ok(CommandResponse::ok(Some(next_note)))
@@ -1684,6 +1770,7 @@ pub async fn security_workbench_add_note(
 
 #[tauri::command]
 pub async fn security_workbench_create_execution_draft(
+    app_handle: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     request: CreateSecurityWorkbenchExecutionDraftRequest,
 ) -> Result<CommandResponse<Option<WorkbenchExecutionDraftPayload>>, String> {
@@ -1717,6 +1804,12 @@ pub async fn security_workbench_create_execution_draft(
         cases[index].updated_at = now.clone();
         cases[index].last_activity_at = now;
         save_workbench_cases(&state, &cases).await?;
+        emit_workbench_changed(
+            &app_handle,
+            "draft_created",
+            &[cases[index].id.clone()],
+            &[cases[index].finding_id.clone()],
+        );
     }
 
     Ok(CommandResponse::ok(Some(next_draft)))
@@ -1724,6 +1817,7 @@ pub async fn security_workbench_create_execution_draft(
 
 #[tauri::command]
 pub async fn security_workbench_update_execution_draft(
+    app_handle: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     request: UpdateSecurityWorkbenchExecutionDraftRequest,
 ) -> Result<CommandResponse<Option<WorkbenchExecutionDraftPayload>>, String> {
@@ -1743,6 +1837,12 @@ pub async fn security_workbench_update_execution_draft(
         cases[case_index].updated_at = now.clone();
         cases[case_index].last_activity_at = now;
         save_workbench_cases(&state, &cases).await?;
+        emit_workbench_changed(
+            &app_handle,
+            "draft_updated",
+            &[cases[case_index].id.clone()],
+            &[cases[case_index].finding_id.clone()],
+        );
     }
 
     Ok(CommandResponse::ok(Some(next_draft)))
@@ -1750,6 +1850,7 @@ pub async fn security_workbench_update_execution_draft(
 
 #[tauri::command]
 pub async fn security_workbench_execute_execution_draft(
+    app_handle: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     request: ExecuteSecurityWorkbenchExecutionDraftRequest,
 ) -> Result<CommandResponse<Option<WorkbenchExecutionRunPayload>>, String> {
@@ -1985,6 +2086,12 @@ pub async fn security_workbench_execute_execution_draft(
         cases[index].updated_at = completed_at.clone();
         cases[index].last_activity_at = completed_at;
         save_workbench_cases(&state, &cases).await?;
+        emit_workbench_changed(
+            &app_handle,
+            "draft_executed",
+            &[cases[index].id.clone()],
+            &[cases[index].finding_id.clone()],
+        );
     }
 
     Ok(CommandResponse::ok(Some(run)))
@@ -1992,6 +2099,7 @@ pub async fn security_workbench_execute_execution_draft(
 
 #[tauri::command]
 pub async fn security_workbench_sync_case_to_finding(
+    app_handle: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     request: SyncSecurityWorkbenchCaseToFindingRequest,
 ) -> Result<CommandResponse<Option<WorkbenchFindingSyncResultPayload>>, String> {
@@ -2087,6 +2195,18 @@ pub async fn security_workbench_sync_case_to_finding(
         })),
     )
     .await;
+
+    emit_workbench_changed(
+        &app_handle,
+        if request.apply_suggestion_to_case.unwrap_or(false) {
+            "finding_synced_with_suggestion"
+        } else {
+            "finding_synced"
+        },
+        &[request.case_id.clone()],
+        &[next_case.finding_id.clone()],
+    );
+    emit_finding_updated(&app_handle, "status_sync", &[next_case.finding_id.clone()]);
 
     Ok(CommandResponse::ok(Some(
         WorkbenchFindingSyncResultPayload {

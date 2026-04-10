@@ -157,11 +157,9 @@
               :key="finding.id"
               :finding="finding"
               :selected="selectedIds.has(finding.id)"
-              :verifying-id="verifyingId"
               @toggle-select="toggleSelect"
               @open-details="openDetails"
               @open-workbench="openWorkbenchForFinding"
-              @verify="verifyWithSystemAgent"
               @delete="deleteSingle"
             />
           </tbody>
@@ -424,7 +422,6 @@ const showDetailsModal = ref(false)
 const showDeleteAllModal = ref(false)
 const selectedFinding = ref<Finding | null>(null)
 const selectedIds = ref<Set<string>>(new Set())
-const verifyingId = ref<string | null>(null)
 const feedbackingId = ref<string | null>(null)
 type DetailTabId = 'overview' | 'evidence' | 'system_agent' | 'timeline'
 const detailTab = ref<DetailTabId>('overview')
@@ -794,25 +791,6 @@ const deleteSingle = async (id: string) => {
   }
 }
 
-const verifyWithSystemAgent = async (findingId: string) => {
-  if (verifyingId.value) return
-  verifyingId.value = findingId
-  try {
-    const response = await invoke<any>('verify_finding_with_system_agent', {
-      request: { findingId },
-    })
-    if (!response.success) {
-      throw new Error(response.error || '系统 Agent 验证失败')
-    }
-    await refreshFindings()
-  } catch (error) {
-    console.error('Failed to verify finding with system agent:', error)
-    alert('验证失败: ' + error)
-  } finally {
-    verifyingId.value = null
-  }
-}
-
 const syncSelectedFinding = () => {
   if (!selectedFinding.value) return
   const nextFinding = findings.value.find(item => item.id === selectedFinding.value?.id)
@@ -939,8 +917,8 @@ const handleRefresh = () => {
 }
 
 let unlistenFinding: UnlistenFn | null = null
-let unlistenVerification: UnlistenFn | null = null
 let unlistenRunUpdate: UnlistenFn | null = null
+let unlistenFindingUpdated: UnlistenFn | null = null
 
 // 监听页码变化
 watch(currentPage, () => {
@@ -1023,7 +1001,7 @@ onMounted(async () => {
   unlistenFinding = await listen('scan:finding', () => {
     refreshFindings()
   })
-  unlistenVerification = await listen('system-agent:verification-complete', () => {
+  unlistenFindingUpdated = await listen('scan:finding-updated', () => {
     refreshFindings()
   })
   unlistenRunUpdate = await listen<any>('system-agent:run-updated', event => {
@@ -1037,7 +1015,7 @@ onUnmounted(() => {
   window.removeEventListener('security-center-refresh', handleRefresh)
   window.removeEventListener('keydown', handleKeyDown)
   unlistenFinding?.()
-  unlistenVerification?.()
+  unlistenFindingUpdated?.()
   unlistenRunUpdate?.()
 })
 </script>

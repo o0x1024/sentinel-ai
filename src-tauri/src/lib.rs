@@ -987,6 +987,7 @@ pub fn run() {
             commands::bounty_update_scope,
             commands::bounty_delete_scope,
             commands::bounty_list_scopes,
+            commands::bounty_backfill_domain_scopes_from_assets,
             commands::bounty_validate_scope,
             // Bug Bounty Finding commands
             commands::bounty_create_finding,

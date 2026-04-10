@@ -374,6 +374,26 @@ async fn build_observation_from_output(
         .and_then(|value| value.get("distinctAuthContexts"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let response_status = proxy_request
+        .as_ref()
+        .map(|record| record.status_code)
+        .or_else(|| {
+            payload
+                .get("statusCode")
+                .and_then(Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok())
+        });
+    let has_auth_headers = payload
+        .get("authContext")
+        .and_then(|value| value.get("headerSources"))
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty());
+    let has_auth_cookies = payload
+        .get("authContext")
+        .and_then(|value| value.get("cookieKeys"))
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty());
+    let has_auth_material = has_auth_headers || has_auth_cookies;
 
     Ok(Some(TrafficFindingObservation {
         observed_at: event.timestamp,
@@ -389,6 +409,8 @@ async fn build_observation_from_output(
         action_kind,
         total_requests,
         distinct_auth_contexts,
+        response_status,
+        has_auth_material,
         path_template,
         db_request_id,
     }))

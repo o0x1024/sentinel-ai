@@ -65,6 +65,47 @@
       </div>
     </div>
 
+    <div
+      v-if="systemAgentStatuses.length"
+      class="rounded-lg border border-base-300 bg-base-100 p-4 space-y-3"
+    >
+      <div>
+        <p class="text-sm font-semibold">{{ wb('overview.agentPolicyTitle') }}</p>
+        <p class="text-xs text-base-content/60">{{ wb('overview.agentPolicySummary') }}</p>
+      </div>
+      <div class="grid gap-3 lg:grid-cols-2">
+        <div
+          v-for="agent in systemAgentStatuses"
+          :key="agent.profileId"
+          class="rounded-lg border border-base-300 bg-base-200/60 p-4 space-y-3"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p class="text-sm font-semibold">{{ getAgentLabel(agent.profileId) }}</p>
+              <p class="text-xs text-base-content/60">{{ agent.profileId }}</p>
+            </div>
+            <span :class="['badge', agent.enabled ? 'badge-success' : 'badge-ghost']">
+              {{ agent.enabled ? wb('overview.agentEnabled') : wb('overview.agentDisabled') }}
+            </span>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <span :class="['badge badge-outline', agent.autoMode ? 'badge-success' : 'badge-ghost']">
+              {{ wb('overview.autoMode') }}: {{ agent.autoMode ? wb('overview.enabled') : wb('overview.disabled') }}
+            </span>
+            <span :class="['badge badge-outline', agent.allowActiveReplay ? 'badge-warning' : 'badge-ghost']">
+              {{ wb('overview.activeReplay') }}: {{ agent.allowActiveReplay ? wb('overview.enabled') : wb('overview.disabled') }}
+            </span>
+            <span :class="['badge badge-outline', agent.shadowMode ? 'badge-info' : 'badge-ghost']">
+              {{ wb('overview.shadowMode') }}: {{ agent.shadowMode ? wb('overview.enabled') : wb('overview.disabled') }}
+            </span>
+            <span class="badge badge-outline">
+              {{ wb('overview.scopeHosts') }}: {{ agent.scopeHosts.length }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="rounded-lg border border-base-300 bg-base-100 p-4 space-y-3">
       <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
         <label class="form-control">
@@ -131,6 +172,7 @@ import type {
   WorkbenchAssessmentSuggestion,
   WorkbenchCase,
   WorkbenchCaseStatus,
+  WorkbenchSystemAgentStatus,
 } from './securityWorkbenchTypes'
 import {
   formatWorkbenchTime,
@@ -149,6 +191,7 @@ const props = defineProps<{
   caseItem: WorkbenchCase
   syncingFinding: boolean
   assessmentSuggestion: WorkbenchAssessmentSuggestion | null
+  systemAgentStatuses: WorkbenchSystemAgentStatus[]
 }>()
 
 const emit = defineEmits<{
@@ -165,6 +208,7 @@ const conclusionDraft = ref(props.caseItem.currentConclusion)
 const statusDraft = ref<WorkbenchCaseStatus>(props.caseItem.status)
 const priorityDraft = ref<'low' | 'medium' | 'high'>(props.caseItem.priority)
 const assessmentSuggestion = computed(() => props.assessmentSuggestion)
+const systemAgentStatuses = computed(() => props.systemAgentStatuses || [])
 const findingTitle = computed(() => getWorkbenchFindingTitle(props.caseItem.finding))
 const findingDescription = computed(() => getWorkbenchFindingDescription(props.caseItem.finding))
 
@@ -207,5 +251,11 @@ const syncFinding = () => {
 
 const syncFindingWithSuggestion = () => {
   emit('sync-finding-with-suggestion')
+}
+
+const getAgentLabel = (profileId: string) => {
+  if (profileId === 'traffic_logic_triage') return wb('overview.agentLogic')
+  if (profileId === 'traffic_active_verifier') return wb('overview.agentVerifier')
+  return profileId
 }
 </script>

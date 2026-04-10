@@ -57,10 +57,16 @@
                 />
               </td>
               <td class="max-w-sm">
-                <div class="space-y-1">
-                  <p class="font-medium line-clamp-2">{{ item.title }}</p>
-                  <p class="text-xs text-base-content/60">{{ getWorkbenchCaseSubtitle(item) }}</p>
-                </div>
+                <button
+                  class="w-full text-left rounded-md transition hover:bg-base-200/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  :title="wb('common.open')"
+                  @click="$emit('open-case', item.id)"
+                >
+                  <div class="space-y-1 p-1">
+                    <p class="font-medium line-clamp-2">{{ item.title }}</p>
+                    <p class="text-xs text-base-content/60">{{ getWorkbenchCaseSubtitle(item) }}</p>
+                  </div>
+                </button>
               </td>
               <td><span class="badge badge-outline">{{ item.finding.vulnType }}</span></td>
               <td>

@@ -45,6 +45,7 @@
                     <i class="fas fa-ellipsis-v"></i>
                   </label>
                   <ul tabindex="0" class="dropdown-content z-10 menu p-2 shadow bg-base-100 rounded-box w-40">
+                    <li><a @click.stop="$emit('export-assets', program)"><i class="fas fa-download mr-2"></i>{{ t('bugBounty.programs.exportAssets') }}</a></li>
                     <li><a @click.stop="$emit('edit', program)"><i class="fas fa-edit mr-2"></i>{{ t('common.edit') }}</a></li>
                     <li><a @click.stop="$emit('delete', program)" class="text-error"><i class="fas fa-trash mr-2"></i>{{ t('common.delete') }}</a></li>
                   </ul>
@@ -89,6 +90,7 @@ const props = defineProps<{
 defineEmits<{
   (e: 'create'): void
   (e: 'select', program: any): void
+  (e: 'export-assets', program: any): void
   (e: 'edit', program: any): void
   (e: 'delete', program: any): void
 }>()

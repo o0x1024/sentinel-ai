@@ -79,6 +79,16 @@ export interface WorkbenchCaseDetailResult {
   assessmentSuggestion: WorkbenchAssessmentSuggestion | null
 }
 
+export interface WorkbenchSystemAgentStatus {
+  profileId: string
+  capability: string
+  enabled: boolean
+  autoMode: boolean
+  allowActiveReplay: boolean
+  shadowMode: boolean
+  scopeHosts: string[]
+}
+
 export interface WorkbenchCaseListQuery {
   search?: string
   status?: WorkbenchCaseStatus | ''

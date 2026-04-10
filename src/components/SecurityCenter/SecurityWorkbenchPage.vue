@@ -1,9 +1,6 @@
 <template>
   <div class="">
-    <div
-      v-if="!selectedCaseId"
-      class="rounded-lg border border-base-300 bg-base-100 p-4"
-    >
+    <div class="rounded-lg border border-base-300 bg-base-100 p-4">
       <div class="flex flex-wrap items-center gap-3">
         <label class="form-control flex-1 min-w-[16rem]">
           <input
@@ -38,45 +35,7 @@
       </div>
     </div>
 
-    <SecurityWorkbenchCaseDetail
-      v-if="selectedCaseId"
-      :case-item="selectedCase"
-      :activities="selectedActivities"
-      :notes="selectedNotes"
-      :syncing-finding="syncingFinding"
-      :execution-drafts="selectedExecutionDrafts"
-      :execution-runs="selectedExecutionRuns"
-      :verifier-runs="selectedVerifierRuns"
-      :assessment-suggestion="selectedAssessmentSuggestion"
-      :executing-draft-id="executingDraftId"
-      :initial-tab="selectedWorkbenchTab"
-      :selected-evidence-id="selectedEvidenceId"
-      :selected-draft-id="selectedDraftId"
-      :selected-run-id="selectedRunId"
-      :selected-timeline-item-id="selectedTimelineItemId"
-      :initial-timeline-search="selectedTimelineSearch"
-      :initial-timeline-filter="selectedTimelineFilter"
-      @back="openCase(null)"
-      @copy-location-link="copyCurrentLocationLink"
-      @change-tab="changeCaseTab"
-      @save-conclusion="saveConclusion"
-      @save-metadata="saveMetadata"
-      @set-baseline="setBaseline"
-      @add-note="addNote"
-      @sync-finding="syncFinding"
-      @sync-finding-with-suggestion="syncFindingWithSuggestion"
-      @create-draft="createDraft"
-      @update-draft-status="updateDraftStatus"
-      @execute-draft="executeDraft"
-      @open-target="openTimelineTarget"
-      @copy-target-link="copyTimelineTargetLink"
-      @copy-timeline-item-link="copyTimelineItemLink"
-      @change-timeline-state="changeTimelineState"
-      @delete-case="deleteCase"
-    />
-
     <SecurityWorkbenchCaseList
-      v-else
       :cases="caseItems"
       :total="totalCount"
       :page="page"
@@ -92,12 +51,69 @@
       @delete-selected="deleteSelectedCases"
       @open-case="openCase"
     />
+
+    <AppDialog
+      :class="['modal', { 'modal-open': !!selectedCaseId }]"
+      @click.self="openCase(null)"
+      @keydown.esc="openCase(null)"
+    >
+      <div class="modal-box flex h-[92vh] w-11/12 max-w-7xl flex-col overflow-hidden p-0">
+        <div
+          v-if="isLoadingCase && !selectedCaseDetailForModal"
+          class="flex min-h-[16rem] items-center justify-center"
+        >
+          <span class="loading loading-spinner loading-lg"></span>
+        </div>
+
+        <SecurityWorkbenchCaseDetail
+          v-else
+          :case-item="selectedCase"
+          :activities="selectedActivities"
+          :notes="selectedNotes"
+          :syncing-finding="syncingFinding"
+          :execution-drafts="selectedExecutionDrafts"
+          :execution-runs="selectedExecutionRuns"
+          :verifier-runs="selectedVerifierRuns"
+          :assessment-suggestion="selectedAssessmentSuggestion"
+          :system-agent-statuses="workbenchSystemAgentStatuses"
+          :executing-draft-id="executingDraftId"
+          :initial-tab="selectedWorkbenchTab"
+          :selected-evidence-id="selectedEvidenceId"
+          :selected-draft-id="selectedDraftId"
+          :selected-run-id="selectedRunId"
+          :selected-timeline-item-id="selectedTimelineItemId"
+          :initial-timeline-search="selectedTimelineSearch"
+          :initial-timeline-filter="selectedTimelineFilter"
+          @back="openCase(null)"
+          @copy-location-link="copyCurrentLocationLink"
+          @change-tab="changeCaseTab"
+          @save-conclusion="saveConclusion"
+          @save-metadata="saveMetadata"
+          @set-baseline="setBaseline"
+          @add-note="addNote"
+          @sync-finding="syncFinding"
+          @sync-finding-with-suggestion="syncFindingWithSuggestion"
+          @create-draft="createDraft"
+          @update-draft-status="updateDraftStatus"
+          @execute-draft="executeDraft"
+          @open-target="openTimelineTarget"
+          @copy-target-link="copyTimelineTargetLink"
+          @copy-timeline-item-link="copyTimelineItemLink"
+          @change-timeline-state="changeTimelineState"
+          @delete-case="deleteCase"
+        />
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button @click="openCase(null)">close</button>
+      </form>
+    </AppDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
 import SecurityWorkbenchCaseDetail from './SecurityWorkbenchCaseDetail.vue'
 import SecurityWorkbenchCaseList from './SecurityWorkbenchCaseList.vue'
@@ -108,6 +124,7 @@ import {
   executeWorkbenchExecutionDraft,
   getWorkbenchAutoModeEnabled,
   getWorkbenchCaseDetail,
+  getWorkbenchSystemAgentStatuses,
   listWorkbenchCases,
   syncWorkbenchCaseToFinding,
   updateWorkbenchExecutionDraftStatus,
@@ -127,6 +144,7 @@ import type {
   WorkbenchNote,
   WorkbenchNoteKind,
   WorkbenchReplayPlan,
+  WorkbenchSystemAgentStatus,
   WorkbenchVerifierRun,
 } from './securityWorkbenchTypes'
 
@@ -146,6 +164,16 @@ type WorkbenchListRouteState = {
   page: number
   pageSize: number
 }
+type WorkbenchRouteSnapshot = WorkbenchListRouteState & {
+  caseId: string
+  workbenchTab: CaseDetailTabId
+  evidenceId: string | null
+  draftId: string | null
+  runId: string | null
+  timelineId: string | null
+  timelineSearch: string
+  timelineFilter: 'all' | 'system' | 'notes' | 'draft_execution' | 'finding_sync' | 'suggestion_sync' | WorkbenchNoteKind
+}
 
 const isLoadingList = ref(false)
 const isLoadingCase = ref(false)
@@ -160,60 +188,44 @@ const search = ref('')
 const statusFilter = ref<WorkbenchCaseStatus | ''>('')
 const selectedCaseIds = ref<string[]>([])
 const workbenchAutoModeEnabled = ref(false)
+const workbenchSystemAgentStatuses = ref<WorkbenchSystemAgentStatus[]>([])
 const autoAttemptedCaseIds = new Set<string>()
+let unlistenFinding: UnlistenFn | null = null
+let unlistenVerificationComplete: UnlistenFn | null = null
+let unlistenWorkbenchChanged: UnlistenFn | null = null
 
-const selectedCaseId = computed(() =>
+const isWorkbenchRouteActive = (
+  routeName: unknown = route.name,
+  routePath: unknown = route.path,
+  routeCaseId: unknown = route.params.caseId,
+  queryCaseId: unknown = route.query.caseId,
+) => (
+  routeName === 'SecurityWorkbench'
+  || (typeof routePath === 'string' && routePath.startsWith('/security-center/workbench'))
+  || (typeof routeCaseId === 'string' && routeCaseId.trim())
+  || (typeof queryCaseId === 'string' && queryCaseId.trim())
+)
+
+const readSelectedCaseIdFromRoute = () =>
   typeof route.params.caseId === 'string' && route.params.caseId.trim()
     ? route.params.caseId.trim()
     : typeof route.query.caseId === 'string' && route.query.caseId.trim()
       ? route.query.caseId.trim()
-      : '',
-)
+      : ''
 
-const selectedCase = computed(() => selectedCaseDetail.value?.caseItem || null)
-const selectedActivities = computed<WorkbenchActivity[]>(() => selectedCaseDetail.value?.activities || [])
-const selectedNotes = computed<WorkbenchNote[]>(() => selectedCaseDetail.value?.notes || [])
-const selectedExecutionDrafts = computed(() => selectedCaseDetail.value?.executionDrafts || [])
-const selectedExecutionRuns = computed<WorkbenchExecutionRun[]>(() => selectedCaseDetail.value?.executionRuns || [])
-const selectedVerifierRuns = computed<WorkbenchVerifierRun[]>(() => selectedCaseDetail.value?.verifierRuns || [])
-const selectedAssessmentSuggestion = computed(() => selectedCaseDetail.value?.assessmentSuggestion || null)
-const selectedWorkbenchTab = computed<CaseDetailTabId>(() => {
+const readSelectedWorkbenchTabFromRoute = (): CaseDetailTabId => {
   const value = typeof route.query.workbenchTab === 'string' ? route.query.workbenchTab : ''
   return ['overview', 'evidence', 'analysis', 'plan', 'drafts', 'verification', 'review'].includes(value)
     ? (value as CaseDetailTabId)
     : 'overview'
-})
-const selectedEvidenceId = computed(() =>
-  typeof route.query.evidenceId === 'string' && route.query.evidenceId.trim()
-    ? route.query.evidenceId.trim()
-    : null,
-)
-const selectedDraftId = computed(() =>
-  typeof route.query.draftId === 'string' && route.query.draftId.trim()
-    ? route.query.draftId.trim()
-    : null,
-)
-const selectedRunId = computed(() =>
-  typeof route.query.runId === 'string' && route.query.runId.trim()
-    ? route.query.runId.trim()
-    : null,
-)
-const selectedTimelineItemId = computed(() =>
-  typeof route.query.timelineId === 'string' && route.query.timelineId.trim()
-    ? route.query.timelineId.trim()
-    : null,
-)
-const selectedTimelineSearch = computed(() =>
-  typeof route.query.timelineSearch === 'string' ? route.query.timelineSearch.trim() : '',
-)
-const selectedTimelineFilter = computed<
-  'all' | 'system' | 'notes' | 'draft_execution' | 'finding_sync' | 'suggestion_sync' | WorkbenchNoteKind
->(() => {
+}
+
+const readSelectedTimelineFilterFromRoute = (): WorkbenchRouteSnapshot['timelineFilter'] => {
   const value = typeof route.query.timelineFilter === 'string' ? route.query.timelineFilter : ''
   return ['all', 'system', 'notes', 'draft_execution', 'finding_sync', 'suggestion_sync', 'observation', 'conclusion', 'false_positive_reason', 'remediation_note', 'replay_note'].includes(value)
-    ? (value as 'all' | 'system' | 'notes' | 'draft_execution' | 'finding_sync' | 'suggestion_sync' | WorkbenchNoteKind)
+    ? (value as WorkbenchRouteSnapshot['timelineFilter'])
     : 'all'
-})
+}
 
 const normalizeListPage = (value: unknown, fallback: number) => {
   const nextValue = Number(value)
@@ -233,12 +245,77 @@ const readListRouteState = (): WorkbenchListRouteState => ({
     : 20,
 })
 
+const buildWorkbenchRouteSnapshot = (): WorkbenchRouteSnapshot => {
+  const listState = readListRouteState()
+  return {
+    ...listState,
+    caseId: readSelectedCaseIdFromRoute(),
+    workbenchTab: readSelectedWorkbenchTabFromRoute(),
+    evidenceId:
+      typeof route.query.evidenceId === 'string' && route.query.evidenceId.trim()
+        ? route.query.evidenceId.trim()
+        : null,
+    draftId:
+      typeof route.query.draftId === 'string' && route.query.draftId.trim()
+        ? route.query.draftId.trim()
+        : null,
+    runId:
+      typeof route.query.runId === 'string' && route.query.runId.trim()
+        ? route.query.runId.trim()
+        : null,
+    timelineId:
+      typeof route.query.timelineId === 'string' && route.query.timelineId.trim()
+        ? route.query.timelineId.trim()
+        : null,
+    timelineSearch: typeof route.query.timelineSearch === 'string' ? route.query.timelineSearch.trim() : '',
+    timelineFilter: readSelectedTimelineFilterFromRoute(),
+  }
+}
+
+const workbenchRouteSnapshot = ref<WorkbenchRouteSnapshot>(
+  isWorkbenchRouteActive()
+    ? buildWorkbenchRouteSnapshot()
+    : {
+        caseId: '',
+        search: '',
+        status: '',
+        page: 1,
+        pageSize: 20,
+        workbenchTab: 'overview',
+        evidenceId: null,
+        draftId: null,
+        runId: null,
+        timelineId: null,
+        timelineSearch: '',
+        timelineFilter: 'all',
+      },
+)
+
+const selectedCaseId = computed(() => workbenchRouteSnapshot.value.caseId)
+const selectedCaseDetailForModal = computed(() =>
+  selectedCaseDetail.value?.caseItem.id === selectedCaseId.value ? selectedCaseDetail.value : null,
+)
+
+const selectedCase = computed(() => selectedCaseDetailForModal.value?.caseItem || null)
+const selectedActivities = computed<WorkbenchActivity[]>(() => selectedCaseDetailForModal.value?.activities || [])
+const selectedNotes = computed<WorkbenchNote[]>(() => selectedCaseDetailForModal.value?.notes || [])
+const selectedExecutionDrafts = computed(() => selectedCaseDetailForModal.value?.executionDrafts || [])
+const selectedExecutionRuns = computed<WorkbenchExecutionRun[]>(() => selectedCaseDetailForModal.value?.executionRuns || [])
+const selectedVerifierRuns = computed<WorkbenchVerifierRun[]>(() => selectedCaseDetailForModal.value?.verifierRuns || [])
+const selectedAssessmentSuggestion = computed(() => selectedCaseDetailForModal.value?.assessmentSuggestion || null)
+const selectedWorkbenchTab = computed<CaseDetailTabId>(() => workbenchRouteSnapshot.value.workbenchTab)
+const selectedEvidenceId = computed(() => workbenchRouteSnapshot.value.evidenceId)
+const selectedDraftId = computed(() => workbenchRouteSnapshot.value.draftId)
+const selectedRunId = computed(() => workbenchRouteSnapshot.value.runId)
+const selectedTimelineItemId = computed(() => workbenchRouteSnapshot.value.timelineId)
+const selectedTimelineSearch = computed(() => workbenchRouteSnapshot.value.timelineSearch)
+const selectedTimelineFilter = computed<WorkbenchRouteSnapshot['timelineFilter']>(() => workbenchRouteSnapshot.value.timelineFilter)
+
 const applyListRouteState = () => {
-  const nextState = readListRouteState()
-  search.value = nextState.search
-  statusFilter.value = nextState.status
-  page.value = nextState.page
-  pageSize.value = nextState.pageSize
+  search.value = workbenchRouteSnapshot.value.search
+  statusFilter.value = workbenchRouteSnapshot.value.status
+  page.value = workbenchRouteSnapshot.value.page
+  pageSize.value = workbenchRouteSnapshot.value.pageSize
 }
 
 const buildListRouteQuery = () => {
@@ -487,6 +564,10 @@ const refreshWorkbenchData = async () => {
 }
 
 const handleSecurityCenterRefresh = () => {
+  void refreshWorkbenchData()
+}
+
+const handleWorkbenchFindingRefresh = () => {
   void refreshWorkbenchData()
 }
 
@@ -834,8 +915,28 @@ watch(
 )
 
 watch(
-  () => [route.query.search, route.query.status, route.query.page, route.query.pageSize],
+  () => [
+    route.name,
+    route.path,
+    route.params.caseId,
+    route.query.caseId,
+    route.query.search,
+    route.query.status,
+    route.query.page,
+    route.query.pageSize,
+    route.query.workbenchTab,
+    route.query.evidenceId,
+    route.query.draftId,
+    route.query.runId,
+    route.query.timelineId,
+    route.query.timelineSearch,
+    route.query.timelineFilter,
+  ],
   async () => {
+    if (!isWorkbenchRouteActive()) {
+      return
+    }
+    workbenchRouteSnapshot.value = buildWorkbenchRouteSnapshot()
     applyListRouteState()
     await loadCaseList()
   },
@@ -843,16 +944,26 @@ watch(
 )
 
 onMounted(async () => {
-  applyListRouteState()
   try {
     workbenchAutoModeEnabled.value = await getWorkbenchAutoModeEnabled()
   } catch (error) {
     console.error('Failed to load workbench auto mode setting', error)
   }
+  try {
+    workbenchSystemAgentStatuses.value = await getWorkbenchSystemAgentStatuses()
+  } catch (error) {
+    console.error('Failed to load workbench system agent statuses', error)
+  }
   window.addEventListener('security-center-refresh', handleSecurityCenterRefresh)
+  unlistenFinding = await listen('scan:finding', handleWorkbenchFindingRefresh)
+  unlistenVerificationComplete = await listen('system-agent:verification-complete', handleWorkbenchFindingRefresh)
+  unlistenWorkbenchChanged = await listen('security-workbench:changed', handleWorkbenchFindingRefresh)
 })
 
 onUnmounted(() => {
   window.removeEventListener('security-center-refresh', handleSecurityCenterRefresh)
+  unlistenFinding?.()
+  unlistenVerificationComplete?.()
+  unlistenWorkbenchChanged?.()
 })
 </script>

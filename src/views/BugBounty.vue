@@ -115,6 +115,7 @@
           :loading="loading"
           @create="showCreateProgramModal = true"
           @select="selectProgram"
+          @export-assets="exportProgramAssets"
           @edit="editProgram"
           @delete="deleteProgram"
         />
@@ -122,6 +123,7 @@
 
       <div v-if="mountedTabs.assets" v-show="activeTab === 'assets'" class="h-full overflow-auto">
         <AssetsPanelV2
+          ref="assetsPanelRef"
           :program-id="selectedProgram?.id"
           :programs="programs"
           @refresh="onAssetsRefreshNeeded"
@@ -259,6 +261,7 @@
     />
 
     <ProgramDetailModal
+      ref="programDetailModalRef"
       :visible="showProgramDetailModal"
       :program="selectedProgram"
       @close="showProgramDetailModal = false"
@@ -316,7 +319,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useRoute } from 'vue-router'
@@ -418,6 +421,8 @@ const selectedWorkflowTemplate = ref<any>(null)
 const selectedWorkflowTemplateId = ref<string>('')
 const workflowTemplates = ref<any[]>([])
 const editingProgram = ref<any>(null) // Program being edited
+const assetsPanelRef = ref<InstanceType<typeof AssetsPanelV2> | null>(null)
+const programDetailModalRef = ref<InstanceType<typeof ProgramDetailModal> | null>(null)
 
 // Data
 const programs = ref<any[]>([])
@@ -912,6 +917,16 @@ const selectProgram = (program: any) => {
   showProgramDetailModal.value = true
 }
 
+const exportProgramAssets = async (program: any) => {
+  selectedProgram.value = program
+  await switchTab('assets')
+  await nextTick()
+  assetsPanelRef.value?.openExportModal({
+    programId: program?.id || null,
+    exportType: 'all',
+  })
+}
+
 const onProgramUpdated = async () => {
   await refreshProgramsOverview()
 }
@@ -1083,11 +1098,20 @@ const onAssetsDiscovered = async (result: any) => {
   showDiscoverAssetsModal.value = false
 }
 
-const onAssetsRefreshNeeded = async () => {
+const onAssetsRefreshNeeded = async (payload?: { programId?: string | null }) => {
   await Promise.all([
     loadAssetStats(),
     loadChangeEventStats(),
   ])
+
+  const refreshedProgramId = payload?.programId || null
+  if (
+    refreshedProgramId &&
+    showProgramDetailModal.value &&
+    selectedProgram.value?.id === refreshedProgramId
+  ) {
+    await programDetailModalRef.value?.refreshScopes()
+  }
 }
 
 // Workflow Template

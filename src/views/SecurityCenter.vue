@@ -71,10 +71,6 @@ import { useRoute, useRouter } from 'vue-router';
 import VulnerabilitiesPanel from '../components/SecurityCenter/VulnerabilitiesPanel.vue';
 import LlmSecurityPanel from '../components/SecurityCenter/LlmSecurityPanel.vue';
 import SecurityWorkbenchPage from '../components/SecurityCenter/SecurityWorkbenchPage.vue';
-import {
-  rememberSecurityCenterLocation,
-  resolveLastSecurityCenterLocation,
-} from '../services/securityCenterNavigation';
 
 
 defineOptions({
@@ -89,6 +85,7 @@ type SecurityCenterTab = 'scan' | 'vulnerabilities' | 'llmSecurity' | 'workbench
 
 // 当前激活的 Tab
 const activeTab = ref<SecurityCenterTab>('workbench');
+const lastWorkbenchLocation = ref('/security-center/workbench')
 
 const tabComponents = {
   workbench: markRaw(SecurityWorkbenchPage),
@@ -129,6 +126,11 @@ onMounted(() => {
       : typeof route.query.caseId === 'string'
         ? route.query.caseId
         : ''
+  if (shouldNormalizeToWorkbenchRoute(route.name, route.path, tab, findingId, route.params.caseId, route.query.caseId)) {
+    activeTab.value = 'workbench'
+    normalizeToWorkbenchRoute()
+    return
+  }
   if (route.name === 'SecurityWorkbench' || caseId) {
     rememberWorkbenchLocation()
     activeTab.value = 'workbench'
@@ -152,13 +154,72 @@ const isWorkbenchRoute = (routePath: unknown, routeName: unknown, routeCaseId: u
   || (typeof queryCaseId === 'string' && queryCaseId.trim())
 )
 
+const isSecurityCenterContainerRoute = (routePath: unknown, routeName: unknown) => (
+  routeName === 'SecurityCenter'
+  || routeName === 'SecurityWorkbench'
+  || routeName === 'ScanTasks'
+  || routeName === 'Vulnerabilities'
+  || (typeof routePath === 'string' && routePath.startsWith('/security-center'))
+)
+
+const hasWorkbenchCase = (routeCaseId: unknown, queryCaseId: unknown) => (
+  (typeof routeCaseId === 'string' && routeCaseId.trim())
+  || (typeof queryCaseId === 'string' && queryCaseId.trim())
+)
+
+const shouldNormalizeToWorkbenchRoute = (
+  routeName: unknown,
+  routePath: unknown,
+  tab: unknown,
+  findingId: unknown,
+  routeCaseId: unknown,
+  queryCaseId: unknown,
+) => {
+  if (routeName !== 'SecurityCenter' || routePath !== '/security-center') {
+    return false
+  }
+
+  if (typeof findingId === 'string' && findingId.trim()) {
+    return false
+  }
+
+  if (hasWorkbenchCase(routeCaseId, queryCaseId)) {
+    return false
+  }
+
+  if (typeof tab === 'string' && tab.trim() && tab !== 'workbench') {
+    return false
+  }
+
+  return true
+}
+
 const rememberWorkbenchLocation = () => {
-  rememberSecurityCenterLocation(route.fullPath)
+  lastWorkbenchLocation.value = route.fullPath
+}
+
+const normalizeToWorkbenchRoute = () => {
+  const nextQuery = { ...route.query }
+  delete nextQuery.tab
+  void router.replace({
+    path: '/security-center/workbench',
+    query: nextQuery,
+  })
 }
 
 watch(
   () => [route.name, route.path, route.query.tab, route.query.findingId, route.params.caseId, route.query.caseId],
   ([routeName, routePath, tab, findingId, routeCaseId, queryCaseId]) => {
+    if (!isSecurityCenterContainerRoute(routePath, routeName)) {
+      return
+    }
+
+    if (shouldNormalizeToWorkbenchRoute(routeName, routePath, tab, findingId, routeCaseId, queryCaseId)) {
+      activeTab.value = 'workbench'
+      normalizeToWorkbenchRoute()
+      return
+    }
+
     if (isWorkbenchRoute(routePath, routeName, routeCaseId, queryCaseId)) {
       rememberWorkbenchLocation()
       activeTab.value = 'workbench'
@@ -182,7 +243,7 @@ watch(
 // 更新 URL 参数
 const updateUrlTab = (tab: SecurityCenterTab) => {
   if (tab === 'workbench') {
-    router.replace(resolveLastSecurityCenterLocation())
+    router.replace(lastWorkbenchLocation.value)
     return
   }
   router.replace({ path: '/security-center', query: { tab } });

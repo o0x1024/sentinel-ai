@@ -17,6 +17,7 @@ import type {
   WorkbenchNote,
   WorkbenchNoteKind,
   WorkbenchReplayPlan,
+  WorkbenchSystemAgentStatus,
 } from './securityWorkbenchTypes'
 
 interface CommandResponse<T> {
@@ -31,6 +32,21 @@ const unwrapResponse = <T>(response: CommandResponse<T>, fallbackMessage: string
   }
 
   throw new Error(response.error || fallbackMessage)
+}
+
+const getSystemAgentProfile = async (
+  id: string,
+): Promise<SystemAgentProfilePayload | null> => {
+  const response = await invoke<SettingsCommandResponse<SystemAgentProfilePayload | null>>(
+    'get_system_agent_profile',
+    { id },
+  )
+
+  if (!response.success) {
+    throw new Error(response.error || `加载 Agent 配置失败: ${id}`)
+  }
+
+  return response.data ?? null
 }
 
 export const listWorkbenchCases = async (
@@ -234,16 +250,27 @@ export const executeWorkbenchExecutionDraft = async (
 }
 
 export const getWorkbenchAutoModeEnabled = async (): Promise<boolean> => {
-  const response = await invoke<SettingsCommandResponse<SystemAgentProfilePayload | null>>(
-    'get_system_agent_profile',
-    {
-      id: 'traffic_active_verifier',
-    },
-  )
+  const profile = await getSystemAgentProfile('traffic_active_verifier')
+  return profile?.safetyPolicy?.autoMode === true
+}
 
-  if (!response.success) {
-    throw new Error(response.error || '加载自动验证配置失败')
-  }
+export const getWorkbenchSystemAgentStatuses = async (): Promise<WorkbenchSystemAgentStatus[]> => {
+  const profiles = await Promise.all([
+    getSystemAgentProfile('traffic_logic_triage'),
+    getSystemAgentProfile('traffic_active_verifier'),
+  ])
 
-  return response.data?.safetyPolicy?.autoMode === true
+  return profiles
+    .filter((profile): profile is SystemAgentProfilePayload => profile != null)
+    .map(profile => ({
+      profileId: profile.id,
+      capability: profile.capability,
+      enabled: profile.enabled === true,
+      autoMode: profile.safetyPolicy?.autoMode === true,
+      allowActiveReplay: profile.safetyPolicy?.allowActiveReplay === true,
+      shadowMode: profile.safetyPolicy?.shadowMode === true,
+      scopeHosts: Array.isArray(profile.safetyPolicy?.scopeHosts)
+        ? profile.safetyPolicy.scopeHosts.filter((value): value is string => typeof value === 'string')
+        : [],
+    }))
 }
