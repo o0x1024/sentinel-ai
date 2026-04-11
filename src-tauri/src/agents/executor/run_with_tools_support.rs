@@ -6,8 +6,12 @@ use std::sync::{Arc, Mutex};
 use sentinel_db::Database;
 use sentinel_db::DatabaseService;
 use sentinel_llm::ChatMessage;
-use sentinel_tools::buildin_tools::{HttpRequestTool, ShellTool, SkillsTool, TodosTool};
-use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor, ToolSource};
+use sentinel_tools::buildin_tools::{
+    AskUserQuestionTool, HttpRequestTool, ShellTool, SkillsTool, TodosTool,
+};
+use sentinel_tools::dynamic_tool::{
+    DynamicTool, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
+};
 use sentinel_tools::ToolServer;
 
 use crate::agents::executor::types::ToolCallRecord;
@@ -103,6 +107,7 @@ pub(super) async fn register_skills_tool_guard(
         output_schema: None,
         source: ToolSource::Builtin,
         category: "system".to_string(),
+        execution_policy: ToolExecutionPolicy::default(),
         executor,
     };
 
@@ -576,6 +581,7 @@ async fn build_shell_override_def(
         output_schema: None,
         source: ToolSource::Builtin,
         category: "system".to_string(),
+        execution_policy: shell_info.execution_policy.clone(),
         executor: shell_executor,
     })
 }
@@ -618,6 +624,7 @@ async fn build_http_override_def(tool_server: &ToolServer) -> Option<DynamicTool
         output_schema: None,
         source: ToolSource::Builtin,
         category: "network".to_string(),
+        execution_policy: http_info.execution_policy.clone(),
         executor: http_executor,
     })
 }
@@ -665,7 +672,58 @@ async fn build_todos_override_def(
         output_schema: None,
         source: ToolSource::Builtin,
         category: "system".to_string(),
+        execution_policy: todos_info.execution_policy.clone(),
         executor: todos_executor,
+    })
+}
+
+async fn build_ask_user_question_override_def(
+    tool_server: &ToolServer,
+    execution_id: &str,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(AskUserQuestionTool::NAME).await?;
+    let execution_id_for_questions = execution_id.to_string();
+    let input_schema = info.input_schema.clone();
+    let description = info.description.clone();
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id_for_questions = execution_id_for_questions.clone();
+        Box::pin(async move {
+            use rig::tool::Tool;
+            use sentinel_tools::buildin_tools::ask_user_question::{
+                AskUserQuestionArgs, AskUserQuestionTool,
+            };
+
+            let mut patched_args = args;
+            if let Some(obj) = patched_args.as_object_mut() {
+                obj.insert(
+                    "execution_id".to_string(),
+                    serde_json::Value::String(execution_id_for_questions.clone()),
+                );
+            }
+
+            let tool_args: AskUserQuestionArgs = serde_json::from_value(patched_args)
+                .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+            let tool = AskUserQuestionTool::new();
+            let result = tool
+                .call(tool_args)
+                .await
+                .map_err(|e| format!("AskUserQuestion failed: {}", e))?;
+
+            serde_json::to_value(result)
+                .map_err(|e| format!("Failed to serialize ask_user_question result: {}", e))
+        })
+    });
+
+    Some(DynamicToolDef {
+        name: AskUserQuestionTool::NAME.to_string(),
+        description,
+        input_schema,
+        output_schema: None,
+        source: ToolSource::Builtin,
+        category: "system".to_string(),
+        execution_policy: info.execution_policy.clone(),
+        executor,
     })
 }
 
@@ -692,6 +750,15 @@ pub(super) async fn patch_builtin_dynamic_tools(
 
     if current_tool_ids.iter().any(|id| id == TodosTool::NAME) {
         if let Some(def) = build_todos_override_def(tool_server, execution_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
+    if current_tool_ids
+        .iter()
+        .any(|id| id == AskUserQuestionTool::NAME)
+    {
+        if let Some(def) = build_ask_user_question_override_def(tool_server, execution_id).await {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }

@@ -17,17 +17,14 @@ use tauri::Manager;
 use tokio::sync::{watch, RwLock, Semaphore};
 use tokio::task::AbortHandle;
 
+use sentinel_tools::buildin_tools::agent_control_tool::{
+    set_close_agent_executor, set_list_agents_executor, set_spawn_agent_executor,
+    set_wait_agents_executor, AgentHandleItem, CloseAgentArgs, CloseAgentOutput, ListAgentsArgs,
+    ListAgentsOutput, SpawnAgentArgs, SpawnAgentOutput, WaitAgentsArgs, WaitAgentsOutput,
+};
 use sentinel_tools::buildin_tools::subagent_tool::{
-    set_subagent_await_executor, set_subagent_channel_executor, set_subagent_execute_executor,
-    SubagentAwaitArgs, SubagentAwaitOutput, SubagentAwaitPolicy, SubagentChannelArgs,
-    SubagentChannelOp, SubagentChannelOutput, SubagentEventItem, SubagentEventPollArgs,
-    SubagentEventPollOutput, SubagentEventPublishArgs, SubagentEventPublishOutput,
-    SubagentExecuteArgs, SubagentExecuteMode, SubagentExecuteOutput, SubagentRunArgs,
-    SubagentRunOutput, SubagentSpawnArgs, SubagentSpawnOutput, SubagentStateGetArgs,
-    SubagentStateGetOutput, SubagentStatePutArgs, SubagentStatePutOutput, SubagentStatus,
-    SubagentTaskInfo, SubagentTaskResult, SubagentToolError, SubagentWaitAnyArgs,
-    SubagentWaitAnyOutput, SubagentWaitArgs, SubagentWaitOutput, SubagentWorkflowNodeResult,
-    SubagentWorkflowRunArgs, SubagentWorkflowRunOutput,
+    SubagentSpawnArgs, SubagentSpawnOutput, SubagentStatus, SubagentTaskInfo, SubagentTaskResult,
+    SubagentToolError, SubagentWaitArgs, SubagentWaitOutput,
 };
 
 use super::{condense_text, execute_agent, ContextPolicy, ToolConfig};
@@ -48,14 +45,6 @@ static PARENT_CONTEXTS: Lazy<Arc<RwLock<HashMap<String, SubagentParentContext>>>
 static TASK_REGISTRY: Lazy<Arc<RwLock<HashMap<String, SubagentTaskEntry>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
-/// Shared state storage (scoped by parent_execution_id)
-static SHARED_STATE: Lazy<Arc<RwLock<HashMap<String, HashMap<String, SharedStateEntry>>>>> =
-    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
-
-/// Event bus storage (scoped by parent_execution_id + channel)
-static EVENT_BUS: Lazy<Arc<RwLock<HashMap<String, HashMap<String, Vec<SubagentEventItem>>>>>> =
-    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
-
 /// Global concurrency limiter
 static GLOBAL_SEMAPHORE: Lazy<Arc<Semaphore>> = Lazy::new(|| Arc::new(Semaphore::new(5)));
 
@@ -64,9 +53,8 @@ static PARENT_SEMAPHORES: Lazy<Arc<RwLock<HashMap<String, Arc<Semaphore>>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 const MAX_SUBAGENTS_PER_PARENT: usize = 3;
-const MAX_EVENTS_PER_CHANNEL: usize = 500;
 const MAX_SUBAGENT_RECURSION_DEPTH: usize = 4;
-const SUBAGENT_TOOL_IDS: [&str; 3] = ["subagent_execute", "subagent_await", "subagent_channel"];
+const SUBAGENT_TOOL_IDS: [&str; 4] = ["spawn_agent", "wait_agents", "list_agents", "close_agent"];
 
 // ============================================================================
 // Types
@@ -84,6 +72,19 @@ pub struct SubagentParentContext {
     pub timeout_secs: u64,
     pub task_context: String,
     pub recursion_depth: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ControlPlaneSpawnRequest {
+    pub parent_execution_id: String,
+    pub task: String,
+    pub role: Option<String>,
+    pub system_prompt: Option<String>,
+    pub tool_config: Option<serde_json::Value>,
+    pub max_iterations: usize,
+    pub timeout_secs: Option<u64>,
+    pub inherit_parent_tools: bool,
+    pub depends_on_task_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,12 +114,6 @@ struct TaskCompletion {
     success: bool,
     output: Option<String>,
     error: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct SharedStateEntry {
-    value: serde_json::Value,
-    version: u64,
 }
 
 // ============================================================================
@@ -336,12 +331,6 @@ async fn cleanup_parent_resources_if_idle(parent_id: &str) {
 
     let mut parent_sems = PARENT_SEMAPHORES.write().await;
     parent_sems.remove(parent_id);
-
-    let mut state = SHARED_STATE.write().await;
-    state.remove(parent_id);
-
-    let mut events = EVENT_BUS.write().await;
-    events.remove(parent_id);
 }
 
 fn get_app_handle() -> Result<&'static tauri::AppHandle, SubagentToolError> {
@@ -754,6 +743,7 @@ async fn run_task(task_id: String) {
         persist_messages: false,
         subagent_run_id: Some(task_id.clone()),
         context_policy: Some(subagent_context_policy()),
+        context_engine_mode: Some(crate::agents::ContextEngineMode::CodexLike),
         recursion_depth: pending_data.recursion_depth,
     };
 
@@ -943,8 +933,26 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
 
     Ok(SubagentSpawnOutput {
         task_id,
-        message: "Subagent task queued. Use subagent_await to get results.".to_string(),
+        message: "Subagent task queued. Use wait_agents to get results.".to_string(),
     })
+}
+
+pub async fn control_plane_spawn_task(request: ControlPlaneSpawnRequest) -> Result<String, String> {
+    execute_spawn(SubagentSpawnArgs {
+        parent_execution_id: request.parent_execution_id,
+        task: request.task,
+        role: request.role,
+        system_prompt: request.system_prompt,
+        tool_config: request.tool_config,
+        max_iterations: request.max_iterations.max(1),
+        timeout_secs: request.timeout_secs,
+        inherit_parent_llm: true,
+        inherit_parent_tools: request.inherit_parent_tools,
+        depends_on_task_ids: request.depends_on_task_ids,
+    })
+    .await
+    .map(|output| output.task_id)
+    .map_err(|error| error.to_string())
 }
 
 // ============================================================================
@@ -1068,750 +1076,64 @@ async fn execute_wait(args: SubagentWaitArgs) -> Result<SubagentWaitOutput, Suba
     Ok(SubagentWaitOutput { results, summary })
 }
 
-// ============================================================================
-// Executor: wait_any
-// ============================================================================
-
-async fn execute_wait_any(
-    args: SubagentWaitAnyArgs,
-) -> Result<SubagentWaitAnyOutput, SubagentToolError> {
-    if args.task_ids.is_empty() {
-        return Err(SubagentToolError::InvalidArguments(
-            "task_ids cannot be empty".to_string(),
-        ));
-    }
-
-    let timeout = tokio::time::Duration::from_secs(args.timeout_secs);
-
-    // First pass: check already-completed and collect watch receivers for pending
-    let mut completed = Vec::new();
-    let mut pending_info: Vec<(
-        String,
-        Option<String>,
-        watch::Receiver<Option<TaskCompletion>>,
-    )> = Vec::new();
-
-    {
-        let tasks = TASK_REGISTRY.read().await;
-        for task_id in &args.task_ids {
-            match tasks.get(task_id) {
-                Some(entry) => {
-                    if entry.info.parent_execution_id != args.parent_execution_id {
-                        completed.push(SubagentTaskResult {
-                            task_id: task_id.clone(),
-                            role: entry.info.role.clone(),
-                            success: false,
-                            output: None,
-                            error: Some(format!(
-                                "Task {} does not belong to parent_execution_id {}",
-                                task_id, args.parent_execution_id
-                            )),
-                        });
-                        continue;
-                    }
-
-                    if let Some(completion) = entry.completion_rx.borrow().clone() {
-                        completed.push(SubagentTaskResult {
-                            task_id: task_id.clone(),
-                            role: entry.info.role.clone(),
-                            success: completion.success,
-                            output: completion.output,
-                            error: completion.error,
-                        });
-                    } else {
-                        pending_info.push((
-                            task_id.clone(),
-                            entry.info.role.clone(),
-                            entry.completion_rx.clone(),
-                        ));
-                    }
-                }
-                None => completed.push(SubagentTaskResult {
-                    task_id: task_id.clone(),
-                    role: None,
-                    success: false,
-                    output: None,
-                    error: Some(format!("Task not found: {}", task_id)),
-                }),
-            }
-        }
-    }
-
-    if !completed.is_empty() {
-        let pending_task_ids = pending_info.iter().map(|(id, _, _)| id.clone()).collect();
-        return Ok(SubagentWaitAnyOutput {
-            completed,
-            pending_task_ids,
-        });
-    }
-
-    if pending_info.is_empty() {
-        return Err(SubagentToolError::InvalidArguments(
-            "No tasks to wait for".to_string(),
-        ));
-    }
-
-    // Use mpsc to get notified when any watcher sees a completion
-    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<usize>(pending_info.len().max(1));
-
-    let watcher_handles: Vec<_> = pending_info
-        .iter()
-        .enumerate()
-        .map(|(idx, (_, _, rx))| {
-            let tx = notify_tx.clone();
-            let mut rx = rx.clone();
-            tokio::spawn(async move {
-                loop {
-                    if rx.borrow().is_some() {
-                        let _ = tx.send(idx).await;
-                        return;
-                    }
-                    if rx.changed().await.is_err() {
-                        let _ = tx.send(idx).await;
-                        return;
-                    }
-                }
-            })
-        })
-        .collect();
-    drop(notify_tx);
-
-    let wait_result = tokio::time::timeout(timeout, notify_rx.recv()).await;
-
-    for h in &watcher_handles {
-        h.abort();
-    }
-
-    match wait_result {
-        Ok(Some(completed_idx)) => {
-            let (task_id, role, rx) = &pending_info[completed_idx];
-            let completion = rx.borrow().clone().unwrap_or(TaskCompletion {
-                success: false,
-                output: None,
-                error: Some("Task channel closed".to_string()),
-            });
-            completed.push(SubagentTaskResult {
-                task_id: task_id.clone(),
-                role: role.clone(),
-                success: completion.success,
-                output: completion.output,
-                error: completion.error,
-            });
-
-            let pending_task_ids = pending_info
-                .iter()
-                .enumerate()
-                .filter(|(idx, _)| *idx != completed_idx)
-                .map(|(_, (id, _, _))| id.clone())
-                .collect();
-
-            Ok(SubagentWaitAnyOutput {
-                completed,
-                pending_task_ids,
-            })
-        }
-        Ok(None) => Err(SubagentToolError::Timeout),
-        Err(_) => Err(SubagentToolError::Timeout),
-    }
+pub async fn control_plane_wait_tasks(
+    parent_execution_id: String,
+    task_ids: Vec<String>,
+    timeout_secs: u64,
+) -> Result<SubagentWaitOutput, String> {
+    execute_wait(SubagentWaitArgs {
+        parent_execution_id,
+        task_ids,
+        timeout_secs,
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
-// ============================================================================
-// Executor: workflow_run (DAG orchestration)
-// ============================================================================
+pub async fn control_plane_list_tasks(parent_execution_id: &str) -> Vec<SubagentTaskInfo> {
+    let tasks = TASK_REGISTRY.read().await;
+    let mut items = tasks
+        .values()
+        .filter(|entry| entry.info.parent_execution_id == parent_execution_id)
+        .map(|entry| entry.info.clone())
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+    items
+}
 
-async fn execute_workflow_run(
-    args: SubagentWorkflowRunArgs,
-) -> Result<SubagentWorkflowRunOutput, SubagentToolError> {
-    if args.nodes.is_empty() {
-        return Err(SubagentToolError::InvalidArguments(
-            "workflow nodes cannot be empty".to_string(),
-        ));
-    }
-
-    let workflow_id = uuid::Uuid::new_v4().to_string();
-    let mut remaining = args.nodes.clone();
-    let mut node_to_task_id: HashMap<String, String> = HashMap::new();
-    let mut spawn_order: Vec<(String, String)> = Vec::new();
-    let mut seen_node_ids = std::collections::HashSet::new();
-
-    for node in &args.nodes {
-        if node.node_id.trim().is_empty() {
-            return Err(SubagentToolError::InvalidArguments(
-                "node_id cannot be empty".to_string(),
+pub async fn control_plane_close_task(
+    parent_execution_id: &str,
+    task_id: &str,
+) -> Result<(), String> {
+    let abort_handle = {
+        let tasks = TASK_REGISTRY.read().await;
+        let Some(entry) = tasks.get(task_id) else {
+            return Err(format!("Task not found: {}", task_id));
+        };
+        if entry.info.parent_execution_id != parent_execution_id {
+            return Err(format!(
+                "Task {} does not belong to parent_execution_id {}",
+                task_id, parent_execution_id
             ));
         }
-        if !seen_node_ids.insert(node.node_id.clone()) {
-            return Err(SubagentToolError::InvalidArguments(format!(
-                "duplicate workflow node_id: {}",
-                node.node_id
-            )));
-        }
-    }
-
-    while !remaining.is_empty() {
-        let mut ready_indexes = Vec::new();
-        for (idx, node) in remaining.iter().enumerate() {
-            let ready = node
-                .depends_on_node_ids
-                .iter()
-                .all(|dep| node_to_task_id.contains_key(dep));
-            if ready {
-                ready_indexes.push(idx);
-            }
-        }
-
-        if ready_indexes.is_empty() {
-            let unresolved = remaining
-                .iter()
-                .map(|n| n.node_id.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(SubagentToolError::InvalidArguments(format!(
-                "workflow has cyclic or unresolved dependencies among nodes: {}",
-                unresolved
-            )));
-        }
-
-        for idx in ready_indexes.into_iter().rev() {
-            let node = remaining.remove(idx);
-            let depends_on_task_ids = node
-                .depends_on_node_ids
-                .iter()
-                .map(|dep| {
-                    node_to_task_id.get(dep).cloned().ok_or_else(|| {
-                        SubagentToolError::InvalidArguments(format!(
-                            "dependency node not found: {}",
-                            dep
-                        ))
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-
-            let spawn_output = execute_spawn(SubagentSpawnArgs {
-                parent_execution_id: args.parent_execution_id.clone(),
-                task: node.task,
-                role: node.role,
-                system_prompt: None,
-                tool_config: None,
-                max_iterations: node.max_iterations,
-                timeout_secs: node.timeout_secs,
-                inherit_parent_llm: true,
-                inherit_parent_tools: true,
-                depends_on_task_ids,
-            })
-            .await?;
-
-            node_to_task_id.insert(node.node_id.clone(), spawn_output.task_id.clone());
-            spawn_order.push((node.node_id, spawn_output.task_id));
-        }
-    }
-
-    let wait_output = execute_wait(SubagentWaitArgs {
-        parent_execution_id: args.parent_execution_id.clone(),
-        task_ids: spawn_order
-            .iter()
-            .map(|(_, task_id)| task_id.clone())
-            .collect(),
-        timeout_secs: args.timeout_secs,
-    })
-    .await?;
-
-    let by_task = wait_output
-        .results
-        .into_iter()
-        .map(|r| (r.task_id.clone(), r))
-        .collect::<HashMap<_, _>>();
-
-    let mut results = Vec::new();
-    for (node_id, task_id) in spawn_order {
-        if let Some(result) = by_task.get(&task_id) {
-            results.push(SubagentWorkflowNodeResult {
-                node_id,
-                task_id,
-                result: result.clone(),
-            });
-        }
-    }
-
-    let success = results.iter().filter(|r| r.result.success).count();
-    let failed = results.len().saturating_sub(success);
-    let summary = format!(
-        "Workflow {} completed: {} nodes, {} succeeded, {} failed",
-        workflow_id,
-        results.len(),
-        success,
-        failed
-    );
-
-    Ok(SubagentWorkflowRunOutput {
-        workflow_id,
-        results,
-        summary,
-    })
-}
-
-// ============================================================================
-// Executor: run (legacy, blocking)
-// ============================================================================
-
-const WAIT_TIMEOUT_BUFFER_SECS: u64 = 30;
-
-async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, SubagentToolError> {
-    let execution_timeout = args.timeout_secs;
-    let parent_execution_id = args.parent_execution_id.clone();
-
-    let spawn_args = SubagentSpawnArgs {
-        parent_execution_id,
-        role: args.role,
-        task: args.task,
-        inherit_parent_llm: args.inherit_parent_llm,
-        inherit_parent_tools: args.inherit_parent_tools,
-        tool_config: args.tool_config,
-        system_prompt: args.system_prompt,
-        max_iterations: args.max_iterations,
-        timeout_secs: execution_timeout,
-        depends_on_task_ids: args.depends_on_task_ids,
+        entry.abort_handle.clone()
     };
 
-    let spawn_output = execute_spawn(spawn_args).await?;
-    let task_id = spawn_output.task_id;
-
-    // Wait timeout = execution timeout + buffer for cleanup/transition
-    let base_timeout = execution_timeout
-        .unwrap_or_else(sentinel_tools::buildin_tools::subagent_tool::get_default_subagent_timeout);
-    let wait_timeout_secs = base_timeout.saturating_add(WAIT_TIMEOUT_BUFFER_SECS);
-
-    let wait_args = SubagentWaitArgs {
-        parent_execution_id: args.parent_execution_id,
-        task_ids: vec![task_id.clone()],
-        timeout_secs: wait_timeout_secs,
-    };
-
-    let wait_output = execute_wait(wait_args).await?;
-
-    if let Some(result) = wait_output.results.first() {
-        if result.success {
-            Ok(SubagentRunOutput {
-                success: true,
-                execution_id: task_id,
-                output: result.output.clone(),
-                error: None,
-            })
-        } else {
-            let err_msg = result
-                .error
-                .clone()
-                .unwrap_or_else(|| "Unknown error".to_string());
-            Err(SubagentToolError::ExecutionFailed(err_msg))
-        }
-    } else {
-        Err(SubagentToolError::ExecutionFailed(
-            "Task lost during wait".to_string(),
-        ))
-    }
-}
-
-// ============================================================================
-// Executor: shared state
-// ============================================================================
-
-async fn execute_state_put(
-    args: SubagentStatePutArgs,
-) -> Result<SubagentStatePutOutput, SubagentToolError> {
-    if args.key.trim().is_empty() {
-        return Err(SubagentToolError::InvalidArguments(
-            "state key cannot be empty".to_string(),
-        ));
+    if let Some(handle) = abort_handle {
+        handle.abort();
     }
 
-    let mut state = SHARED_STATE.write().await;
-    let parent_state = state
-        .entry(args.parent_execution_id)
-        .or_insert_with(HashMap::new);
-
-    let current_version = parent_state.get(&args.key).map(|e| e.version).unwrap_or(0);
-    if let Some(expected) = args.expected_version {
-        if expected != current_version {
-            return Err(SubagentToolError::InvalidArguments(format!(
-                "version mismatch for key {}: expected {}, current {}",
-                args.key, expected, current_version
-            )));
-        }
-    }
-
-    let next_version = current_version + 1;
-    parent_state.insert(
-        args.key.clone(),
-        SharedStateEntry {
-            value: args.value,
-            version: next_version,
+    mark_task_terminal(
+        task_id,
+        TaskCompletion {
+            success: false,
+            output: None,
+            error: Some("Task closed by control plane".to_string()),
         },
-    );
-
-    Ok(SubagentStatePutOutput {
-        key: args.key,
-        version: next_version,
-    })
-}
-
-async fn execute_state_get(
-    args: SubagentStateGetArgs,
-) -> Result<SubagentStateGetOutput, SubagentToolError> {
-    if args.key.trim().is_empty() {
-        return Err(SubagentToolError::InvalidArguments(
-            "state key cannot be empty".to_string(),
-        ));
-    }
-
-    let state = SHARED_STATE.read().await;
-    let Some(parent_state) = state.get(&args.parent_execution_id) else {
-        return Ok(SubagentStateGetOutput {
-            key: args.key,
-            found: false,
-            value: None,
-            version: None,
-        });
-    };
-
-    match parent_state.get(&args.key) {
-        Some(entry) => Ok(SubagentStateGetOutput {
-            key: args.key,
-            found: true,
-            value: Some(entry.value.clone()),
-            version: Some(entry.version),
-        }),
-        None => Ok(SubagentStateGetOutput {
-            key: args.key,
-            found: false,
-            value: None,
-            version: None,
-        }),
-    }
-}
-
-// ============================================================================
-// Executor: event bus
-// ============================================================================
-
-async fn execute_event_publish(
-    args: SubagentEventPublishArgs,
-) -> Result<SubagentEventPublishOutput, SubagentToolError> {
-    if args.channel.trim().is_empty() {
-        return Err(SubagentToolError::InvalidArguments(
-            "channel cannot be empty".to_string(),
-        ));
-    }
-
-    let mut bus = EVENT_BUS.write().await;
-    let parent_bus = bus
-        .entry(args.parent_execution_id)
-        .or_insert_with(HashMap::new);
-
-    let channel_events = parent_bus
-        .entry(args.channel.clone())
-        .or_insert_with(Vec::new);
-    let next_seq = channel_events.last().map(|e| e.seq + 1).unwrap_or(1);
-
-    channel_events.push(SubagentEventItem {
-        channel: args.channel.clone(),
-        seq: next_seq,
-        timestamp: chrono::Utc::now().timestamp(),
-        payload: args.payload,
-    });
-
-    // Evict oldest events when exceeding capacity
-    if channel_events.len() > MAX_EVENTS_PER_CHANNEL {
-        let drain_count = channel_events.len() - MAX_EVENTS_PER_CHANNEL;
-        channel_events.drain(..drain_count);
-    }
-
-    Ok(SubagentEventPublishOutput {
-        channel: args.channel,
-        seq: next_seq,
-    })
-}
-
-async fn execute_event_poll(
-    args: SubagentEventPollArgs,
-) -> Result<SubagentEventPollOutput, SubagentToolError> {
-    if args.channel.trim().is_empty() {
-        return Err(SubagentToolError::InvalidArguments(
-            "channel cannot be empty".to_string(),
-        ));
-    }
-
-    let limit = args.limit.clamp(1, 200);
-    let after_seq = args.after_seq.unwrap_or(0);
-
-    let bus = EVENT_BUS.read().await;
-    let Some(parent_bus) = bus.get(&args.parent_execution_id) else {
-        return Ok(SubagentEventPollOutput {
-            channel: args.channel,
-            latest_seq: 0,
-            events: vec![],
-        });
-    };
-
-    let Some(channel_events) = parent_bus.get(&args.channel) else {
-        return Ok(SubagentEventPollOutput {
-            channel: args.channel,
-            latest_seq: 0,
-            events: vec![],
-        });
-    };
-
-    let latest_seq = channel_events.last().map(|e| e.seq).unwrap_or(0);
-    let events = channel_events
-        .iter()
-        .filter(|e| e.seq > after_seq)
-        .take(limit)
-        .cloned()
-        .collect::<Vec<_>>();
-
-    Ok(SubagentEventPollOutput {
-        channel: args.channel,
-        latest_seq,
-        events,
-    })
-}
-
-// ============================================================================
-// Unified executors
-// ============================================================================
-
-async fn execute_unified(
-    args: SubagentExecuteArgs,
-) -> Result<SubagentExecuteOutput, SubagentToolError> {
-    match args.mode {
-        SubagentExecuteMode::Async => {
-            let task = args.task.ok_or_else(|| {
-                SubagentToolError::InvalidArguments("task is required for mode=async".to_string())
-            })?;
-            let spawn_output = execute_spawn(SubagentSpawnArgs {
-                parent_execution_id: args.parent_execution_id,
-                task,
-                role: args.role,
-                system_prompt: args.system_prompt,
-                tool_config: args.tool_config,
-                max_iterations: args.max_iterations,
-                timeout_secs: args.timeout_secs,
-                inherit_parent_llm: args.inherit_parent_llm,
-                inherit_parent_tools: args.inherit_parent_tools,
-                depends_on_task_ids: args.depends_on_task_ids,
-            })
-            .await?;
-
-            Ok(SubagentExecuteOutput {
-                mode: SubagentExecuteMode::Async,
-                success: true,
-                task_id: Some(spawn_output.task_id),
-                execution_id: None,
-                workflow_id: None,
-                result: None,
-                results: None,
-                summary: Some(spawn_output.message),
-                error: None,
-            })
-        }
-        SubagentExecuteMode::Sync => {
-            let task = args.task.ok_or_else(|| {
-                SubagentToolError::InvalidArguments("task is required for mode=sync".to_string())
-            })?;
-            let run_output = execute_run(SubagentRunArgs {
-                parent_execution_id: args.parent_execution_id,
-                task,
-                role: args.role.clone(),
-                system_prompt: args.system_prompt,
-                tool_config: args.tool_config,
-                max_iterations: args.max_iterations,
-                timeout_secs: args.timeout_secs,
-                inherit_parent_llm: args.inherit_parent_llm,
-                inherit_parent_tools: args.inherit_parent_tools,
-                depends_on_task_ids: args.depends_on_task_ids,
-            })
-            .await?;
-
-            Ok(SubagentExecuteOutput {
-                mode: SubagentExecuteMode::Sync,
-                success: run_output.success,
-                task_id: None,
-                execution_id: Some(run_output.execution_id.clone()),
-                workflow_id: None,
-                result: Some(SubagentTaskResult {
-                    task_id: run_output.execution_id,
-                    role: args.role,
-                    success: run_output.success,
-                    output: run_output.output,
-                    error: run_output.error,
-                }),
-                results: None,
-                summary: Some("Synchronous subagent execution completed".to_string()),
-                error: None,
-            })
-        }
-        SubagentExecuteMode::Workflow => {
-            if args.nodes.is_empty() {
-                return Err(SubagentToolError::InvalidArguments(
-                    "nodes is required for mode=workflow".to_string(),
-                ));
-            }
-            let timeout_secs = args.timeout_secs.unwrap_or_else(
-                sentinel_tools::buildin_tools::subagent_tool::get_default_subagent_timeout,
-            );
-            let workflow_output = execute_workflow_run(SubagentWorkflowRunArgs {
-                parent_execution_id: args.parent_execution_id,
-                nodes: args.nodes,
-                timeout_secs,
-            })
-            .await?;
-
-            Ok(SubagentExecuteOutput {
-                mode: SubagentExecuteMode::Workflow,
-                success: true,
-                task_id: None,
-                execution_id: None,
-                workflow_id: Some(workflow_output.workflow_id),
-                result: None,
-                results: Some(workflow_output.results),
-                summary: Some(workflow_output.summary),
-                error: None,
-            })
-        }
-    }
-}
-
-async fn await_unified(args: SubagentAwaitArgs) -> Result<SubagentAwaitOutput, SubagentToolError> {
-    match args.policy {
-        SubagentAwaitPolicy::All => {
-            let wait_output = execute_wait(SubagentWaitArgs {
-                parent_execution_id: args.parent_execution_id,
-                task_ids: args.task_ids,
-                timeout_secs: args.timeout_secs,
-            })
-            .await?;
-            Ok(SubagentAwaitOutput {
-                policy: SubagentAwaitPolicy::All,
-                completed: wait_output.results,
-                pending_task_ids: vec![],
-                summary: Some(wait_output.summary),
-            })
-        }
-        SubagentAwaitPolicy::Any => {
-            let wait_output = execute_wait_any(SubagentWaitAnyArgs {
-                parent_execution_id: args.parent_execution_id,
-                task_ids: args.task_ids,
-                timeout_secs: args.timeout_secs,
-            })
-            .await?;
-            Ok(SubagentAwaitOutput {
-                policy: SubagentAwaitPolicy::Any,
-                completed: wait_output.completed,
-                pending_task_ids: wait_output.pending_task_ids,
-                summary: None,
-            })
-        }
-    }
-}
-
-async fn channel_unified(
-    args: SubagentChannelArgs,
-) -> Result<SubagentChannelOutput, SubagentToolError> {
-    match args.op {
-        SubagentChannelOp::StatePut => {
-            let key = args.key.ok_or_else(|| {
-                SubagentToolError::InvalidArguments("key is required for op=state.put".to_string())
-            })?;
-            let value = args.value.ok_or_else(|| {
-                SubagentToolError::InvalidArguments(
-                    "value is required for op=state.put".to_string(),
-                )
-            })?;
-
-            let output = execute_state_put(SubagentStatePutArgs {
-                parent_execution_id: args.parent_execution_id,
-                key,
-                value,
-                expected_version: args.expected_version,
-            })
-            .await?;
-            Ok(SubagentChannelOutput {
-                op: SubagentChannelOp::StatePut,
-                key: Some(output.key),
-                found: None,
-                value: None,
-                version: Some(output.version),
-                channel: None,
-                seq: None,
-                latest_seq: None,
-                events: None,
-            })
-        }
-        SubagentChannelOp::StateGet => {
-            let key = args.key.ok_or_else(|| {
-                SubagentToolError::InvalidArguments("key is required for op=state.get".to_string())
-            })?;
-            let output = execute_state_get(SubagentStateGetArgs {
-                parent_execution_id: args.parent_execution_id,
-                key,
-            })
-            .await?;
-            Ok(SubagentChannelOutput {
-                op: SubagentChannelOp::StateGet,
-                key: Some(output.key),
-                found: Some(output.found),
-                value: output.value,
-                version: output.version,
-                channel: None,
-                seq: None,
-                latest_seq: None,
-                events: None,
-            })
-        }
-        SubagentChannelOp::EventPublish => {
-            let payload = args.payload.ok_or_else(|| {
-                SubagentToolError::InvalidArguments(
-                    "payload is required for op=event.publish".to_string(),
-                )
-            })?;
-            let output = execute_event_publish(SubagentEventPublishArgs {
-                parent_execution_id: args.parent_execution_id,
-                channel: args.channel,
-                payload,
-            })
-            .await?;
-            Ok(SubagentChannelOutput {
-                op: SubagentChannelOp::EventPublish,
-                key: None,
-                found: None,
-                value: None,
-                version: None,
-                channel: Some(output.channel),
-                seq: Some(output.seq),
-                latest_seq: None,
-                events: None,
-            })
-        }
-        SubagentChannelOp::EventPoll => {
-            let output = execute_event_poll(SubagentEventPollArgs {
-                parent_execution_id: args.parent_execution_id,
-                channel: args.channel,
-                after_seq: args.after_seq,
-                limit: args.limit,
-            })
-            .await?;
-            Ok(SubagentChannelOutput {
-                op: SubagentChannelOp::EventPoll,
-                key: None,
-                found: None,
-                value: None,
-                version: None,
-                channel: Some(output.channel),
-                seq: None,
-                latest_seq: Some(output.latest_seq),
-                events: Some(output.events),
-            })
-        }
-    }
+    )
+    .await;
+    cleanup_parent_resources_if_idle(parent_execution_id).await;
+    Ok(())
 }
 
 // ============================================================================
@@ -1819,23 +1141,100 @@ async fn channel_unified(
 // ============================================================================
 
 pub fn init_subagent_executor() {
-    let execute_executor = std::sync::Arc::new(|args: SubagentExecuteArgs| {
-        Box::pin(execute_unified(args))
-            as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
+    let spawn_executor = std::sync::Arc::new(|args: SpawnAgentArgs| {
+        Box::pin(async move {
+            let task_id = super::control_plane::spawn_agent(ControlPlaneSpawnRequest {
+                parent_execution_id: args.parent_execution_id,
+                task: args.task,
+                role: args.role,
+                system_prompt: args.system_prompt,
+                tool_config: args.tool_config,
+                max_iterations: args.max_iterations,
+                timeout_secs: args.timeout_secs,
+                inherit_parent_tools: args.inherit_parent_tools,
+                depends_on_task_ids: args.depends_on_task_ids,
+            })
+            .await
+            .map_err(|message| {
+                sentinel_tools::buildin_tools::agent_control_tool::AgentControlToolError { message }
+            })?;
+            Ok(SpawnAgentOutput {
+                task_id,
+                status: "queued".to_string(),
+            })
+        }) as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
     });
-    set_subagent_execute_executor(execute_executor);
+    set_spawn_agent_executor(spawn_executor);
 
-    let await_executor = std::sync::Arc::new(|args: SubagentAwaitArgs| {
-        Box::pin(await_unified(args))
-            as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
+    let wait_executor = std::sync::Arc::new(|args: WaitAgentsArgs| {
+        Box::pin(async move {
+            let agents = super::control_plane::wait_agents(
+                args.parent_execution_id,
+                args.task_ids,
+                args.timeout_secs,
+            )
+            .await
+            .map_err(|message| {
+                sentinel_tools::buildin_tools::agent_control_tool::AgentControlToolError { message }
+            })?
+            .into_iter()
+            .map(|item| AgentHandleItem {
+                id: item.id,
+                parent_execution_id: item.parent_execution_id,
+                kind: format!("{:?}", item.kind).to_ascii_lowercase(),
+                role: item.role,
+                task: item.task,
+                status: item.status,
+                started_at: item.started_at,
+                completed_at: item.completed_at,
+                output: item.output,
+                error: item.error,
+            })
+            .collect();
+            Ok(WaitAgentsOutput { agents })
+        }) as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
     });
-    set_subagent_await_executor(await_executor);
+    set_wait_agents_executor(wait_executor);
 
-    let channel_executor = std::sync::Arc::new(|args: SubagentChannelArgs| {
-        Box::pin(channel_unified(args))
-            as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
+    let list_executor = std::sync::Arc::new(|args: ListAgentsArgs| {
+        Box::pin(async move {
+            let agents = super::control_plane::list_agents(&args.parent_execution_id)
+                .await
+                .into_iter()
+                .map(|item| AgentHandleItem {
+                    id: item.id,
+                    parent_execution_id: item.parent_execution_id,
+                    kind: format!("{:?}", item.kind).to_ascii_lowercase(),
+                    role: item.role,
+                    task: item.task,
+                    status: item.status,
+                    started_at: item.started_at,
+                    completed_at: item.completed_at,
+                    output: item.output,
+                    error: item.error,
+                })
+                .collect();
+            Ok(ListAgentsOutput { agents })
+        }) as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
     });
-    set_subagent_channel_executor(channel_executor);
+    set_list_agents_executor(list_executor);
 
-    tracing::info!("Subagent executors initialized (execute/await/channel)");
+    let close_executor = std::sync::Arc::new(|args: CloseAgentArgs| {
+        Box::pin(async move {
+            super::control_plane::close_agent(&args.parent_execution_id, &args.task_id)
+                .await
+                .map_err(|message| {
+                    sentinel_tools::buildin_tools::agent_control_tool::AgentControlToolError {
+                        message,
+                    }
+                })?;
+            Ok(CloseAgentOutput {
+                closed: true,
+                task_id: args.task_id,
+            })
+        }) as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
+    });
+    set_close_agent_executor(close_executor);
+
+    tracing::info!("Subagent executors initialized (spawn/wait/list/close)");
 }

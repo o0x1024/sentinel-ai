@@ -4,6 +4,7 @@ use sentinel_llm::ChatMessage;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::context_engineering::tool_digest::ToolDigest;
+use crate::agents::context_engineering::ContextMessageLayout;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ContextSection {
@@ -89,6 +90,59 @@ impl ContextPacket {
         }
 
         prompt.trim().to_string()
+    }
+
+    pub fn render_context_messages(&self, layout: ContextMessageLayout) -> Vec<ChatMessage> {
+        match layout {
+            ContextMessageLayout::SingleUserMessage => {
+                let rendered = self.render_orchestrator_context();
+                if rendered.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    vec![ChatMessage::user(rendered)]
+                }
+            }
+            ContextMessageLayout::SplitUserMessages => {
+                let mut messages = Vec::new();
+
+                if !self.run_state.trim().is_empty() {
+                    messages.push(ChatMessage::user(format!(
+                        "[RunState]\n{}",
+                        self.run_state.trim()
+                    )));
+                }
+
+                if !self.retrieved_memories.is_empty() {
+                    let mut body = String::from("[RetrievedMemory]\n");
+                    for item in &self.retrieved_memories {
+                        body.push_str("- ");
+                        body.push_str(item.trim());
+                        body.push('\n');
+                    }
+                    messages.push(ChatMessage::user(body.trim().to_string()));
+                }
+
+                if !self.tool_digests.is_empty() {
+                    let mut body = String::from("[Recent Tool Digests]\n");
+                    for digest in &self.tool_digests {
+                        if let Some(artifact_id) = digest.artifact_id.as_ref() {
+                            body.push_str(&format!(
+                                "- [{}] {}: {} (artifact_id: {})\n",
+                                digest.status, digest.tool_name, digest.summary, artifact_id
+                            ));
+                        } else {
+                            body.push_str(&format!(
+                                "- [{}] {}: {}\n",
+                                digest.status, digest.tool_name, digest.summary
+                            ));
+                        }
+                    }
+                    messages.push(ChatMessage::user(body.trim().to_string()));
+                }
+
+                messages
+            }
+        }
     }
 
     pub fn set_tool_digests(&mut self, digests: &[ToolDigest]) {

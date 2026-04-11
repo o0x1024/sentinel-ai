@@ -10,17 +10,15 @@ use sentinel_db::{Database, SystemAgentRunRecord, TrafficEvidenceRecord};
 use sentinel_traffic::{EvidenceRecord, VulnerabilityFilters};
 
 use crate::commands::command_response_support::CommandResponse;
-use crate::commands::traffic::TrafficAnalysisState;
 use crate::commands::security_workbench_storage_support::{
     create_workbench_id, default_baseline_evidence_id, load_finding_snapshot,
-    load_workbench_ignored_finding_ids,
     load_workbench_activities, load_workbench_cases, load_workbench_execution_drafts,
-    load_workbench_execution_runs, load_workbench_notes, payload_changed,
-    refresh_workbench_case_snapshot, save_workbench_activities, save_workbench_cases,
-    save_workbench_execution_drafts, save_workbench_execution_runs,
-    save_workbench_ignored_finding_ids, save_workbench_notes,
-    workbench_priority_for_severity,
+    load_workbench_execution_runs, load_workbench_ignored_finding_ids, load_workbench_notes,
+    payload_changed, refresh_workbench_case_snapshot, save_workbench_activities,
+    save_workbench_cases, save_workbench_execution_drafts, save_workbench_execution_runs,
+    save_workbench_ignored_finding_ids, save_workbench_notes, workbench_priority_for_severity,
 };
+use crate::commands::traffic::TrafficAnalysisState;
 use crate::services::system_agents::finding_lifecycle::TrafficFindingLifecycle;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -354,11 +352,7 @@ fn emit_workbench_changed(
     );
 }
 
-fn emit_finding_updated(
-    app_handle: &AppHandle,
-    reason: &str,
-    finding_ids: &[String],
-) {
+fn emit_finding_updated(app_handle: &AppHandle, reason: &str, finding_ids: &[String]) {
     let _ = app_handle.emit(
         "scan:finding-updated",
         json!({
@@ -1310,7 +1304,11 @@ async fn delete_workbench_cases_by_ids(
     let mut cases = load_workbench_cases(state).await?;
     let deleted_cases = cases
         .iter()
-        .filter(|item| normalized_case_ids.iter().any(|case_id| case_id == &item.id))
+        .filter(|item| {
+            normalized_case_ids
+                .iter()
+                .any(|case_id| case_id == &item.id)
+        })
         .cloned()
         .collect::<Vec<_>>();
     let deleted_case_ids = deleted_cases
@@ -1340,19 +1338,35 @@ async fn delete_workbench_cases_by_ids(
 
     let mut notes = load_workbench_notes(state).await?;
     let notes_before = notes.len();
-    notes.retain(|item| !deleted_case_ids.iter().any(|case_id| case_id == &item.case_id));
+    notes.retain(|item| {
+        !deleted_case_ids
+            .iter()
+            .any(|case_id| case_id == &item.case_id)
+    });
 
     let mut activities = load_workbench_activities(state).await?;
     let activities_before = activities.len();
-    activities.retain(|item| !deleted_case_ids.iter().any(|case_id| case_id == &item.case_id));
+    activities.retain(|item| {
+        !deleted_case_ids
+            .iter()
+            .any(|case_id| case_id == &item.case_id)
+    });
 
     let mut drafts = load_workbench_execution_drafts(state).await?;
     let drafts_before = drafts.len();
-    drafts.retain(|item| !deleted_case_ids.iter().any(|case_id| case_id == &item.case_id));
+    drafts.retain(|item| {
+        !deleted_case_ids
+            .iter()
+            .any(|case_id| case_id == &item.case_id)
+    });
 
     let mut runs = load_workbench_execution_runs(state).await?;
     let runs_before = runs.len();
-    runs.retain(|item| !deleted_case_ids.iter().any(|case_id| case_id == &item.case_id));
+    runs.retain(|item| {
+        !deleted_case_ids
+            .iter()
+            .any(|case_id| case_id == &item.case_id)
+    });
 
     save_workbench_cases(state, &cases).await?;
     save_workbench_notes(state, &notes).await?;
@@ -1454,7 +1468,8 @@ pub async fn security_workbench_list_cases(
     let page = request.page.unwrap_or(1).max(1);
 
     let mut raw_cases = load_workbench_cases(&state).await?;
-    let intake_changed = intake_non_formal_findings_into_workbench_cases(&state, &mut raw_cases).await?;
+    let intake_changed =
+        intake_non_formal_findings_into_workbench_cases(&state, &mut raw_cases).await?;
     let notes = load_workbench_notes(&state).await?;
 
     let mut refreshed_cases = Vec::with_capacity(raw_cases.len());
@@ -1644,7 +1659,9 @@ pub async fn security_workbench_get_case_detail(
         .await
         .map_err(|error| format!("Failed to load verifier runs for workbench case: {error}"))?
         .into_iter()
-        .filter(|run| extract_system_agent_run_finding_id(run).as_deref() == Some(&refreshed.finding_id))
+        .filter(|run| {
+            extract_system_agent_run_finding_id(run).as_deref() == Some(&refreshed.finding_id)
+        })
         .map(|run| map_verifier_run_payload(&run))
         .collect::<Vec<_>>();
     let assessment_suggestion = build_workbench_assessment_suggestion(&refreshed, &execution_runs);

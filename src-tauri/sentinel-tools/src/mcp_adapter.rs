@@ -8,7 +8,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
-use crate::dynamic_tool::{create_executor, DynamicToolDef, ToolExecutor, ToolSource};
+use crate::dynamic_tool::{
+    create_executor, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
+};
 use crate::tool_server::ToolServer;
 
 /// MCP tool metadata from server
@@ -333,6 +335,7 @@ impl McpToolAdapter {
                 server_name: server_name.clone(),
             },
             category: "mcp".to_string(),
+            execution_policy: ToolExecutionPolicy::default(),
             executor: create_mcp_tool_executor(server_name, tool_name),
         }
     }

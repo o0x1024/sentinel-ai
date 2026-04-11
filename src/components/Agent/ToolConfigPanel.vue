@@ -1,7 +1,7 @@
 <template>
   <div class="tool-config-panel">
     <!-- Header -->
-    <div class="panel-header flex items-center justify-between p-4 border-b border-base-300">
+    <div v-if="props.showHeader" class="panel-header flex items-center justify-between p-4 border-b border-base-300">
       <div class="flex items-center gap-2">
         <i class="fas fa-tools text-primary"></i>
         <h3 class="text-lg font-semibold">{{ t('agent.toolConfig') }}</h3>
@@ -346,7 +346,7 @@
     </div>
 
     <!-- Footer Actions -->
-    <div class="panel-footer p-4 border-t border-base-300 flex justify-end gap-2">
+    <div v-if="props.showFooter" class="panel-footer p-4 border-t border-base-300 flex justify-end gap-2">
       <button @click="resetToDefault" class="btn btn-sm btn-ghost">
         <i class="fas fa-undo"></i>
         {{ t('agent.reset') }}
@@ -360,7 +360,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, withDefaults } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '../../composables/useDialog'
@@ -423,9 +423,14 @@ interface ToolUsageStatistics {
   recent_executions: ToolUsageRecord[]
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   config: ToolConfig
-}>()
+  showHeader?: boolean
+  showFooter?: boolean
+}>(), {
+  showHeader: true,
+  showFooter: true,
+})
 
 const emit = defineEmits<{
   'update:config': [config: ToolConfig]
@@ -436,9 +441,10 @@ const LEGACY_SKILLS_TOOL_IDS = [
   'skills',
   'shell',
   'http_request',
-  'subagent_execute',
-  'subagent_await',
-  'subagent_channel',
+  'spawn_agent',
+  'wait_agents',
+  'list_agents',
+  'close_agent',
   'tenth_man_review',
   'memory',
   'todos',
@@ -721,7 +727,7 @@ const removeFixedTool = (tool: string) => {
 
 const resetToDefault = () => {
   localConfig.value = {
-    enabled: false,
+    enabled: true,
     selection_strategy: 'Keyword',
     max_tools: 5,
     fixed_tools: ['interactive_shell'],

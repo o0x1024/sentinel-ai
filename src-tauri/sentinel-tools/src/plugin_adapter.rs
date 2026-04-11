@@ -8,7 +8,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
-use crate::dynamic_tool::{create_executor, DynamicToolDef, ToolExecutor, ToolSource};
+use crate::dynamic_tool::{
+    create_executor, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
+};
 use crate::tool_server::ToolServer;
 
 /// Plugin tool metadata
@@ -284,6 +286,7 @@ impl PluginToolAdapter {
                 plugin_id: plugin_id.clone(),
             },
             category: meta.category.clone().unwrap_or_else(|| "other".to_string()),
+            execution_policy: ToolExecutionPolicy::default(),
             executor: create_plugin_executor(plugin_id),
         }
     }

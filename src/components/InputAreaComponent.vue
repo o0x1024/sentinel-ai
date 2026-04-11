@@ -17,6 +17,45 @@
 
     <!-- Input area (refactored) -->
     <div class="px-4 pb-3 pt-2">
+      <div v-if="props.referencedFiles && props.referencedFiles.length > 0" class="mb-2">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs text-base-content/60 flex items-center gap-1">
+            <i class="fas fa-file-code text-secondary"></i>
+            引用的文件 ({{ props.referencedFiles.length }})
+          </span>
+          <button
+            @click="clearReferencedFiles"
+            class="btn btn-xs btn-ghost text-base-content/60 hover:text-error"
+            title="清除所有文件引用"
+          >
+            <i class="fas fa-times"></i>
+            清除
+          </button>
+        </div>
+        <div class="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+          <div
+            v-for="(file, idx) in props.referencedFiles"
+            :key="file.id"
+            class="group relative flex items-center gap-2 px-2 py-1 bg-secondary/10 border border-secondary/25 rounded-lg text-xs"
+          >
+            <span class="badge badge-xs badge-outline badge-secondary">FILE</span>
+            <span class="font-medium text-base-content/80 truncate max-w-60" :title="file.relativePath">
+              {{ file.relativePath }}
+            </span>
+            <span class="text-base-content/60 whitespace-nowrap">
+              {{ formatReferencedFileSize(file.size) }}
+            </span>
+            <button
+              @click="removeReferencedFile(idx)"
+              class="w-4 h-4 rounded-full bg-error/80 text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs ml-1"
+              title="移除"
+            >
+              <i class="fas fa-times text-[10px]"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- 流量引用显示区 -->
       <div v-if="props.referencedTraffic && props.referencedTraffic.length > 0" class="mb-2">
         <div class="flex items-center justify-between mb-1">
@@ -25,7 +64,7 @@
             引用的流量 ({{ props.referencedTraffic.length }})
           </span>
           <button 
-            @click="emit('clear-traffic')"
+            @click="clearReferencedTraffic"
             class="btn btn-xs btn-ghost text-base-content/60 hover:text-error"
             title="清除所有引用"
           >
@@ -53,7 +92,7 @@
               {{ traffic.status_code || 'N/A' }}
             </span>
             <button
-              @click="emit('remove-traffic', idx)"
+              @click="removeReferencedTraffic(idx)"
               class="w-4 h-4 rounded-full bg-error/80 text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs ml-1"
               title="移除"
             >
@@ -70,7 +109,7 @@
             引用的资产 ({{ props.referencedAssets.length }})
           </span>
           <button
-            @click="emit('clear-assets')"
+            @click="clearReferencedAssets"
             class="btn btn-xs btn-ghost text-base-content/60 hover:text-error"
             title="清除所有资产引用"
           >
@@ -95,7 +134,7 @@
               {{ asset.value }}
             </span>
             <button
-              @click="emit('remove-asset', idx)"
+              @click="removeReferencedAsset(idx)"
               class="w-4 h-4 rounded-full bg-error/80 text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs ml-1"
               title="移除"
             >
@@ -187,6 +226,37 @@
             rows="1"
           />
         </div>
+        <div v-if="mentionOpen" class="slash-popover border border-base-300 bg-base-100 rounded-xl shadow-xl">
+          <div class="px-3 py-2 border-b border-base-300/60 text-xs text-base-content/60">
+            引用资源
+          </div>
+          <div v-if="mentionLoading" class="px-3 py-2 text-sm text-base-content/60">
+            正在搜索文件、资产和流量...
+          </div>
+          <div v-else-if="mentionError" class="px-3 py-2 text-sm text-error">
+            {{ mentionError }}
+          </div>
+          <div v-else-if="filteredMentionItems.length === 0" class="px-3 py-2 text-sm text-base-content/60">
+            无匹配资源
+          </div>
+          <div v-else class="py-1 max-h-64 overflow-y-auto">
+            <button
+              v-for="(item, idx) in filteredMentionItems"
+              :key="item.id"
+              class="w-full text-left px-3 py-2 transition-colors"
+              :class="idx === mentionActiveIndex ? 'bg-primary/15 text-primary' : 'hover:bg-base-200 text-base-content'"
+              @mousedown.prevent="applyMentionSelection(item)"
+            >
+              <div class="flex items-center gap-4">
+                <span :class="['badge badge-xs shrink-0', getMentionBadgeClass(item.kind)]">
+                  {{ getMentionBadgeLabel(item.kind) }}
+                </span>
+                <span class="font-semibold text-sm truncate min-w-0 flex-1">{{ item.label }}</span>
+                <span class="text-xs opacity-70 whitespace-nowrap">{{ item.description }}</span>
+              </div>
+            </button>
+          </div>
+        </div>
         <div v-if="slashOpen" class="slash-popover border border-base-300 bg-base-100 rounded-xl shadow-xl">
           <div class="px-3 py-2 border-b border-base-300/60 text-xs text-base-content/60">
             Slash Commands
@@ -216,15 +286,13 @@
         <!-- Toolbar: left actions and right send/stop -->
         <div class="flex items-center justify-between gap-2">
           <InputToolbarActions
-            :tools-enabled="localToolsEnabled"
-            :team-enabled="localTeamEnabled"
-            :rag-enabled="localRagEnabled"
-            :web-search-enabled="localWebSearchEnabled"
+            :rag-enabled="effectiveRagEnabled"
+            :team-enabled="effectiveTeamEnabled"
+            :web-search-enabled="effectiveWebSearchEnabled"
             @trigger-file-select="triggerFileSelect"
-            @toggle-tools="toggleTools"
             @open-tool-config="emit('open-tool-config')"
-            @toggle-team="toggleTeam"
             @toggle-rag="toggleRAG"
+            @toggle-team="toggleTeam"
             @toggle-web-search="toggleWebSearch"
             @open-slash-manager="openSlashManager"
             @clear-conversation="clearConversation"
@@ -244,22 +312,21 @@
               <span class="opacity-80">{{ formatTokenCount(effectiveContextUsage.usedTokens) }} / {{ formatTokenCount(effectiveContextUsage.maxTokens) }}</span>
               <span class="opacity-70 hidden sm:inline">{{ t('agent.contextUsed') }}</span>
             </div>
-            <div class="assistant-model-switch">
+            <div class="assistant-agent-switch">
               <SearchableSelect
-                :model-value="localSelectedModel"
-                :options="availableModelOptions"
-                :placeholder="modelLoading ? '加载模型中...' : '选择模型'"
-                search-placeholder="搜索模型..."
-                no-results-text="无匹配模型"
-                :disabled="modelLoading || availableModelOptions.length === 0"
+                :model-value="effectiveSelectedAgent"
+                :options="availableAgentOptions"
+                :placeholder="agentLoading ? '加载 Agent 中...' : '选择 Agent'"
+                search-placeholder="搜索 Agent..."
+                no-results-text="无匹配 Agent"
+                :disabled="agentLoading || availableAgentOptions.length === 0"
                 size="sm"
                 direction="up"
                 variant="toolbar"
                 :auto-width="true"
                 align="right"
-                group-by="description"
-                @update:model-value="localSelectedModel = $event"
-                @change="onModelChanged"
+                @update:model-value="effectiveSelectedAgent = $event"
+                @change="onAgentChanged"
               />
             </div>
             <button class="icon-btn" title="语言 / 翻译"><i class="fas fa-language"></i></button>
@@ -411,9 +478,7 @@
                     <select v-model="newSlashCommand.action" class="select select-bordered select-sm">
                       <option value="new_conversation">新建会话</option>
                       <option value="clear_conversation">清空会话</option>
-                      <option value="toggle_rag">切换 RAG</option>
-                      <option value="toggle_tools">切换 Tools</option>
-                      <option value="open_tool_config">打开工具配置</option>
+                      <option value="open_tool_config">打开 Agent 配置</option>
                     </select>
                   </label>
                   <label v-if="newSlashCommand.type === 'prompt'" class="label cursor-pointer justify-start gap-2">
@@ -459,37 +524,19 @@ import draggable from 'vuedraggable'
 import SearchableSelect from '@/components/SearchableSelect.vue'
 import InputToolbarActions from '@/components/InputArea/InputToolbarActions.vue'
 import { useInputAttachments } from '@/components/InputArea/useInputAttachments'
+import {
+  findMentionTokenAdjacentToCursor,
+  findMentionTokenForDeletion,
+  removeMentionTokenText,
+  removeTextRange,
+  snapCursorToMentionBoundary,
+} from '@/components/InputArea/mentionTokenSupport'
+import { useInputMentions } from '@/components/InputArea/useInputMentions'
 import { useInputSlashCommands } from '@/components/InputArea/useInputSlashCommands'
+import type { ReferencedAsset, ReferencedFile, ReferencedTraffic, TrafficSendType } from '@/components/Agent/agentDraftTypes'
 import type { PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
 
 const { t } = useI18n()
-
-// 流量引用类型
-type TrafficSendType = 'request' | 'response' | 'both'
-interface ReferencedTraffic {
-  id: number
-  url: string
-  method: string
-  host: string
-  status_code: number
-  request_headers?: string
-  request_body?: string
-  response_headers?: string
-  response_body?: string
-  sendType?: TrafficSendType
-}
-
-interface ReferencedAsset {
-  id: string
-  name: string
-  value: string
-  asset_type: string
-  risk_level?: string
-  status?: string
-  description?: string
-  tags?: string[]
-  metadata?: Record<string, any>
-}
 
 // Context usage info type
 interface ContextUsageInfo {
@@ -505,7 +552,7 @@ interface ContextUsageInfo {
   summarySegmentCount: number
 }
 
-interface ModelOption {
+interface AgentOption {
   value: string
   label: string
   description?: string
@@ -518,18 +565,18 @@ const props = defineProps<{
   showDebugInfo: boolean
   allowTakeover?: boolean
   ragEnabled?: boolean
-  toolsEnabled?: boolean
   webSearchEnabled?: boolean
   teamEnabled?: boolean
   pendingAttachments?: any[]
   pendingDocuments?: PendingDocumentAttachment[]
   processedDocuments?: ProcessedDocumentResult[]
+  referencedFiles?: ReferencedFile[]
   referencedTraffic?: ReferencedTraffic[]
   referencedAssets?: ReferencedAsset[]
   contextUsage?: ContextUsageInfo | null
-  availableModels?: ModelOption[]
-  selectedModel?: string
-  modelLoading?: boolean
+  availableAgents?: AgentOption[]
+  selectedAgent?: string
+  agentLoading?: boolean
   defaultMaxContextTokens?: number
 }>()
 
@@ -541,7 +588,6 @@ const emit = defineEmits<{
   (e: 'create-new-conversation'): void
   (e: 'clear-conversation'): void
   (e: 'toggle-rag', enabled: boolean): void
-  (e: 'toggle-tools', enabled: boolean): void
   (e: 'toggle-web-search', enabled: boolean): void
   (e: 'toggle-team', enabled: boolean): void
   (e: 'open-tool-config'): void
@@ -550,11 +596,19 @@ const emit = defineEmits<{
   (e: 'add-documents', files: PendingDocumentAttachment[]): void
   (e: 'remove-document', index: number): void
   (e: 'document-processed', result: ProcessedDocumentResult): void
+  (e: 'add-file-reference', files: ReferencedFile[]): void
+  (e: 'add-traffic-reference', traffic: ReferencedTraffic[]): void
+  (e: 'add-asset-reference', assets: ReferencedAsset[]): void
+  (e: 'sync-file-references', files: ReferencedFile[]): void
+  (e: 'sync-traffic-references', traffic: ReferencedTraffic[]): void
+  (e: 'sync-asset-references', assets: ReferencedAsset[]): void
+  (e: 'remove-file', index: number): void
+  (e: 'clear-files'): void
   (e: 'remove-traffic', index: number): void
   (e: 'clear-traffic'): void
   (e: 'remove-asset', index: number): void
   (e: 'clear-assets'): void
-  (e: 'change-model', value: string): void
+  (e: 'change-agent', value: string): void
 }>()
 
 // removed architecture utilities
@@ -576,46 +630,48 @@ const getAssetRiskBadgeClass = (level?: string) => {
   }
 }
 
+const getMentionBadgeClass = (kind: 'file' | 'asset' | 'traffic') => {
+  switch (kind) {
+    case 'file':
+      return 'badge-secondary'
+    case 'asset':
+      return 'badge-primary'
+    case 'traffic':
+      return 'badge-accent'
+    default:
+      return 'badge-ghost'
+  }
+}
+
+const getMentionBadgeLabel = (kind: 'file' | 'asset' | 'traffic') => {
+  switch (kind) {
+    case 'file':
+      return 'FILE'
+    case 'asset':
+      return 'ASSET'
+    case 'traffic':
+      return 'HTTP'
+    default:
+      return 'REF'
+  }
+}
+
 // --- New input logic ---
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
 
-// --- Persistence helpers ---
-const STORAGE_KEYS = {
-  rag: 'sentinel:input:ragEnabled',
-  tools: 'sentinel:input:toolsEnabled',
-  webSearch: 'sentinel:input:webSearchEnabled',
-  team: 'sentinel:input:teamEnabled',
-} as const
-
-const getBool = (key: string, fallback = false) => {
-  try {
-    const v = localStorage.getItem(key)
-    if (v === null) return fallback
-    return v === '1' || v === 'true'
-  } catch {
-    return fallback
-  }
-}
-
-const setBool = (key: string, value: boolean) => {
-  try {
-    localStorage.setItem(key, value ? '1' : '0')
-  } catch {
-    // ignore
-  }
-}
-
-// Feature states (controlled by parent via props, with persistence)
-const localRagEnabled = ref<boolean>(!!props.ragEnabled)
-const localToolsEnabled = ref<boolean>(!!props.toolsEnabled)
-const localWebSearchEnabled = ref<boolean>(!!props.webSearchEnabled)
-const localTeamEnabled = ref<boolean>(!!props.teamEnabled)
-const localSelectedModel = ref(props.selectedModel || '')
-const availableModelOptions = computed(() => props.availableModels || [])
-
-// init guard
-const initialized = ref(false)
+// Feature states are fully controlled by parent.
+const effectiveRagEnabled = computed(() => !!props.ragEnabled)
+const effectiveWebSearchEnabled = computed(() => !!props.webSearchEnabled)
+const effectiveTeamEnabled = computed(() => !!props.teamEnabled)
+const effectiveSelectedAgent = computed({
+  get: () => props.selectedAgent || '',
+  set: (value: string) => {
+    if (!value) return
+    emit('change-agent', value)
+  },
+})
+const availableAgentOptions = computed(() => props.availableAgents || [])
 
 const placeholderText = computed(() => '在这里输入消息，按 Enter 发送')
 
@@ -626,16 +682,45 @@ const autoResize = () => {
   el.style.height = Math.min(el.scrollHeight, 320) + 'px'
 }
 
+const setCursorPosition = (cursor: number, preference: 'left' | 'right' | 'nearest' = 'nearest') => {
+  const el = textareaRef.value
+  if (!el) return
+  const normalizedCursor = snapCursorToMentionBoundary(props.inputMessage || '', cursor, preference)
+  el.setSelectionRange(normalizedCursor, normalizedCursor)
+}
+
+const setInputValue = (value: string, cursor = value.length) => {
+  emit('update:input-message', value)
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    const normalizedCursor = snapCursorToMentionBoundary(value, cursor, 'nearest')
+    el.setSelectionRange(normalizedCursor, normalizedCursor)
+    updateSlashState(value, normalizedCursor)
+    updateMentionState(value, normalizedCursor)
+    autoResize()
+  })
+}
+
 const onInput = (e: Event) => {
   const target = e.target as HTMLTextAreaElement
   emit('update:input-message', target.value)
+  syncMentionBindings(target.value)
   updateSlashState(target.value, target.selectionStart || 0)
+  updateMentionState(target.value, target.selectionStart || 0)
   autoResize()
 }
 
 const onCaretChanged = (e: Event) => {
   const target = e.target as HTMLTextAreaElement
-  updateSlashState(target.value, target.selectionStart || 0)
+  const cursor = target.selectionStart || 0
+  const normalizedCursor = snapCursorToMentionBoundary(target.value, cursor, 'nearest')
+  if (normalizedCursor !== cursor) {
+    target.setSelectionRange(normalizedCursor, normalizedCursor)
+  }
+  updateSlashState(target.value, normalizedCursor)
+  updateMentionState(target.value, normalizedCursor)
 }
 const {
   fileInputRef,
@@ -720,21 +805,48 @@ const {
   },
   getInputMessage: () => props.inputMessage || '',
   onInputValueChange: (value) => {
-    emit('update:input-message', value)
-    nextTick(() => {
-      const el = textareaRef.value
-      if (!el) return
-      el.focus()
-      el.setSelectionRange(value.length, value.length)
-      updateSlashState(value, value.length)
-      autoResize()
-    })
+    setInputValue(value)
   },
   toggleRAG: () => {
     toggleRAG()
   },
-  toggleTools: () => {
-    toggleTools()
+})
+
+const {
+  applyMentionSelection,
+  closeMentionPopover,
+  filteredMentionItems,
+  mentionActiveIndex,
+  mentionError,
+  mentionLoading,
+  mentionOpen,
+  syncMentionBindings,
+  updateMentionState,
+} = useInputMentions({
+  getInputMessage: () => props.inputMessage || '',
+  getReferencedAssets: () => props.referencedAssets || [],
+  getReferencedFiles: () => props.referencedFiles || [],
+  getReferencedTraffic: () => props.referencedTraffic || [],
+  onAddReferencedAsset: (asset) => {
+    emit('add-asset-reference', [asset])
+  },
+  onAddReferencedFile: (file) => {
+    emit('add-file-reference', [file])
+  },
+  onAddReferencedTraffic: (traffic) => {
+    emit('add-traffic-reference', [traffic])
+  },
+  onInputValueChange: (value, cursor) => {
+    setInputValue(value, cursor)
+  },
+  onSyncReferencedAssets: (assets) => {
+    emit('sync-asset-references', assets)
+  },
+  onSyncReferencedFiles: (files) => {
+    emit('sync-file-references', files)
+  },
+  onSyncReferencedTraffic: (traffic) => {
+    emit('sync-traffic-references', traffic)
   },
 })
 
@@ -879,12 +991,80 @@ const onCompositionStart = () => {
 
 const onCompositionEnd = () => {
   isComposing.value = false
+  const el = textareaRef.value
+  if (el) {
+    const cursor = el.selectionStart || 0
+    const normalizedCursor = snapCursorToMentionBoundary(el.value || '', cursor, 'nearest')
+    if (normalizedCursor !== cursor) {
+      el.setSelectionRange(normalizedCursor, normalizedCursor)
+    }
+  }
 }
 
 const onKeydown = (e: KeyboardEvent) => {
   // Ignore Enter key during IME composition
   if (isComposing.value && e.key === 'Enter') {
     return
+  }
+
+  if (e.key === 'Backspace' || e.key === 'Delete') {
+    const el = textareaRef.value
+    const selectionStart = el?.selectionStart || 0
+    const selectionEnd = el?.selectionEnd || selectionStart
+    const token = findMentionTokenForDeletion(props.inputMessage || '', selectionStart, selectionEnd, e.key)
+    if (token) {
+      e.preventDefault()
+      const nextValue = removeTextRange(props.inputMessage || '', token.start, token.end)
+      setInputValue(nextValue.value, nextValue.cursor)
+      return
+    }
+  }
+
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.shiftKey && !e.altKey && !e.metaKey) {
+    const el = textareaRef.value
+    const selectionStart = el?.selectionStart || 0
+    const selectionEnd = el?.selectionEnd || selectionStart
+    if (selectionStart === selectionEnd) {
+      const direction = e.key === 'ArrowLeft' ? 'left' : 'right'
+      const adjacentToken = findMentionTokenAdjacentToCursor(
+        props.inputMessage || '',
+        selectionStart,
+        direction,
+      )
+      if (adjacentToken) {
+        e.preventDefault()
+        setCursorPosition(direction === 'left' ? adjacentToken.start : adjacentToken.end, direction)
+        return
+      }
+    }
+  }
+
+  if (mentionOpen.value) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (filteredMentionItems.value.length > 0) {
+        mentionActiveIndex.value = (mentionActiveIndex.value + 1) % filteredMentionItems.value.length
+      }
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (filteredMentionItems.value.length > 0) {
+        mentionActiveIndex.value =
+          (mentionActiveIndex.value - 1 + filteredMentionItems.value.length) % filteredMentionItems.value.length
+      }
+      return
+    }
+    if ((e.key === 'Enter' || e.key === 'Tab') && filteredMentionItems.value.length > 0) {
+      e.preventDefault()
+      void applyMentionSelection()
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeMentionPopover()
+      return
+    }
   }
 
   if (slashOpen.value) {
@@ -948,35 +1128,20 @@ const clearConversation = () => {
 }
 
 const toggleRAG = () => {
-  localRagEnabled.value = !localRagEnabled.value
-  setBool(STORAGE_KEYS.rag, localRagEnabled.value)
-  // 通知父组件RAG状态变化
-  emit('toggle-rag', localRagEnabled.value)
-}
-
-const toggleTools = () => {
-  localToolsEnabled.value = !localToolsEnabled.value
-  setBool(STORAGE_KEYS.tools, localToolsEnabled.value)
-  // 通知父组件Tools状态变化
-  emit('toggle-tools', localToolsEnabled.value)
+  emit('toggle-rag', !effectiveRagEnabled.value)
 }
 
 const toggleWebSearch = () => {
-  localWebSearchEnabled.value = !localWebSearchEnabled.value
-  setBool(STORAGE_KEYS.webSearch, localWebSearchEnabled.value)
-  emit('toggle-web-search', localWebSearchEnabled.value)
+  emit('toggle-web-search', !effectiveWebSearchEnabled.value)
 }
 
 const toggleTeam = () => {
-  localTeamEnabled.value = !localTeamEnabled.value
-  setBool(STORAGE_KEYS.team, localTeamEnabled.value)
-  emit('toggle-team', localTeamEnabled.value)
+  emit('toggle-team', !effectiveTeamEnabled.value)
 }
 
-const onModelChanged = (value: string) => {
+const onAgentChanged = (value: string) => {
   if (!value) return
-  localSelectedModel.value = value
-  emit('change-model', value)
+  emit('change-agent', value)
 }
 
 // 点击外部区域关闭弹层
@@ -986,6 +1151,7 @@ const handleClickOutside = (e: MouseEvent) => {
   if (!target || !container) return
   if (!container.contains(target)) {
     closeSlashPopover()
+    closeMentionPopover()
   }
 }
 
@@ -1036,6 +1202,64 @@ const getTypeLabel = (type?: TrafficSendType): string => {
   }
 }
 
+const formatReferencedFileSize = (size: number): string => {
+  if (!Number.isFinite(size) || size <= 0) return '0 B'
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${size} B`
+}
+
+const removeReferencedFile = (index: number) => {
+  const file = props.referencedFiles?.[index]
+  if (file?.mentionText) {
+    setInputValue(removeMentionTokenText(props.inputMessage || '', file.mentionText))
+  }
+  emit('remove-file', index)
+}
+
+const clearReferencedFiles = () => {
+  let nextValue = props.inputMessage || ''
+  for (const file of props.referencedFiles || []) {
+    nextValue = removeMentionTokenText(nextValue, file.mentionText)
+  }
+  setInputValue(nextValue)
+  emit('clear-files')
+}
+
+const removeReferencedTraffic = (index: number) => {
+  const traffic = props.referencedTraffic?.[index]
+  if (traffic?.mentionText) {
+    setInputValue(removeMentionTokenText(props.inputMessage || '', traffic.mentionText))
+  }
+  emit('remove-traffic', index)
+}
+
+const clearReferencedTraffic = () => {
+  let nextValue = props.inputMessage || ''
+  for (const traffic of props.referencedTraffic || []) {
+    nextValue = removeMentionTokenText(nextValue, traffic.mentionText)
+  }
+  setInputValue(nextValue)
+  emit('clear-traffic')
+}
+
+const removeReferencedAsset = (index: number) => {
+  const asset = props.referencedAssets?.[index]
+  if (asset?.mentionText) {
+    setInputValue(removeMentionTokenText(props.inputMessage || '', asset.mentionText))
+  }
+  emit('remove-asset', index)
+}
+
+const clearReferencedAssets = () => {
+  let nextValue = props.inputMessage || ''
+  for (const asset of props.referencedAssets || []) {
+    nextValue = removeMentionTokenText(nextValue, asset.mentionText)
+  }
+  setInputValue(nextValue)
+  emit('clear-assets')
+}
+
 // 聚焦输入框
 const focusInput = () => {
   nextTick(() => {
@@ -1047,43 +1271,6 @@ const focusInput = () => {
 onMounted(async () => {
   autoResize()
   await loadSlashCommands()
-  // 同步父组件传入的初始值
-  // Initialize persistent states (persisted values take precedence)
-  try {
-    // RAG: prefer persisted value if exists, otherwise use prop
-    const hasPersistedRag = localStorage.getItem(STORAGE_KEYS.rag) !== null
-    const savedRag = hasPersistedRag ? getBool(STORAGE_KEYS.rag) : !!props.ragEnabled
-    localRagEnabled.value = savedRag
-    setBool(STORAGE_KEYS.rag, savedRag)
-    emit('toggle-rag', savedRag)
-    
-    // Tools: prefer persisted value if exists, otherwise use prop
-    const hasPersistedTools = localStorage.getItem(STORAGE_KEYS.tools) !== null
-    const savedTools = hasPersistedTools ? getBool(STORAGE_KEYS.tools) : !!props.toolsEnabled
-    localToolsEnabled.value = savedTools
-    setBool(STORAGE_KEYS.tools, savedTools)
-    emit('toggle-tools', savedTools)
-
-    const hasPersistedWebSearch = localStorage.getItem(STORAGE_KEYS.webSearch) !== null
-    const savedWebSearch = hasPersistedWebSearch ? getBool(STORAGE_KEYS.webSearch) : !!props.webSearchEnabled
-    localWebSearchEnabled.value = savedWebSearch
-    setBool(STORAGE_KEYS.webSearch, savedWebSearch)
-    emit('toggle-web-search', savedWebSearch)
-
-    // Team: prefer persisted value if exists, otherwise use prop
-    const hasPersistedTeam = localStorage.getItem(STORAGE_KEYS.team) !== null
-    const savedTeam = hasPersistedTeam ? getBool(STORAGE_KEYS.team) : !!props.teamEnabled
-    localTeamEnabled.value = savedTeam
-    setBool(STORAGE_KEYS.team, savedTeam)
-    emit('toggle-team', savedTeam)
-  } catch {
-    // fallback to props on any error
-    localRagEnabled.value = !!props.ragEnabled
-    localToolsEnabled.value = !!props.toolsEnabled
-    localWebSearchEnabled.value = !!props.webSearchEnabled
-    localTeamEnabled.value = !!props.teamEnabled
-  }
-  initialized.value = true
   window.addEventListener('click', handleClickOutside, true)
   
   // 设置 Tauri 拖放监听
@@ -1098,64 +1285,19 @@ onUnmounted(() => {
   teardownNativeDragDrop()
 })
 
-// 监听父组件状态变化，保持本地按钮状态一致（并持久化）
-watch(
-  () => props.ragEnabled,
-  (val) => {
-    if (typeof val === 'boolean') {
-      localRagEnabled.value = val
-      setBool(STORAGE_KEYS.rag, val)
-    }
-  }
-)
-
-// 监听工具状态变化（父组件从数据库加载后会更新）
-watch(
-  () => props.toolsEnabled,
-  (val) => {
-    if (typeof val === 'boolean') {
-      localToolsEnabled.value = val
-      setBool(STORAGE_KEYS.tools, val)
-    }
-  }
-)
-
-watch(
-  () => props.webSearchEnabled,
-  (val) => {
-    if (typeof val === 'boolean') {
-      localWebSearchEnabled.value = val
-      setBool(STORAGE_KEYS.webSearch, val)
-    }
-  }
-)
-
-watch(
-  () => props.teamEnabled,
-  (val) => {
-    if (typeof val === 'boolean') {
-      localTeamEnabled.value = val
-      setBool(STORAGE_KEYS.team, val)
-    }
-  }
-)
-
-watch(
-  () => props.selectedModel,
-  (val) => {
-    if (typeof val === 'string') {
-      localSelectedModel.value = val
-    }
-  },
-  { immediate: true },
-)
-
 watch(
   () => props.inputMessage,
   (val) => {
+    syncMentionBindings(val || '')
     if (!val || !val.includes('/')) {
       closeSlashPopover()
     }
+    if (!val || !val.includes('@')) {
+      closeMentionPopover()
+      return
+    }
+    const el = textareaRef.value
+    updateMentionState(val, el?.selectionStart || val.length)
   }
 )
 
@@ -1216,19 +1358,19 @@ defineExpose({
   box-shadow:0 2px 4px rgba(0,0,0,.15); 
 }
 
-.assistant-model-switch {
+.assistant-agent-switch {
   min-width: 6rem;
   max-width: 14rem;
   flex-shrink: 1;
 }
 
-.assistant-model-switch :deep(.input) {
+.assistant-agent-switch :deep(.input) {
   border-radius: 0.5rem;
   font-size: 0.75rem;
 }
 
 @media (max-width: 1024px) {
-  .assistant-model-switch {
+  .assistant-agent-switch {
     max-width: 10rem;
   }
 }

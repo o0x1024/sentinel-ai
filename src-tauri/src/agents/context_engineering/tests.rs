@@ -7,7 +7,7 @@ use crate::agents::context_engineering::tool_digest::build_tool_digest;
 use crate::agents::context_engineering::types::{
     trim_history_preserve_tool_pairs, ContextPacket, ToolDigestEntry,
 };
-use crate::agents::context_engineering::ContextRunState;
+use crate::agents::context_engineering::{ContextMessageLayout, ContextRunState};
 
 #[test]
 fn trim_history_preserves_tool_pairs() {
@@ -98,4 +98,23 @@ fn orchestrator_context_contains_runtime_sections() {
     assert!(rendered.contains("[RetrievedMemory]"));
     assert!(rendered.contains("[Recent Tool Digests]"));
     assert!(!rendered.contains("STATIC_RULES"));
+}
+
+#[test]
+fn codex_layout_splits_runtime_sections_into_multiple_messages() {
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.run_state = "Goals:\n- dynamic task".to_string();
+    packet.retrieved_memories = vec!["memory item".to_string()];
+    packet.tool_digests = vec![ToolDigestEntry {
+        status: "ok".to_string(),
+        tool_name: "shell".to_string(),
+        summary: "listed files".to_string(),
+        artifact_id: None,
+    }];
+
+    let messages = packet.render_context_messages(ContextMessageLayout::SplitUserMessages);
+    assert_eq!(messages.len(), 3);
+    assert!(messages[0].content.contains("[RunState]"));
+    assert!(messages[1].content.contains("[RetrievedMemory]"));
+    assert!(messages[2].content.contains("[Recent Tool Digests]"));
 }

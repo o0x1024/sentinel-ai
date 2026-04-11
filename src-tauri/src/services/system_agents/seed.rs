@@ -125,10 +125,7 @@ fn auto_mode_enabled_from_profile(profile: &SystemAgentProfileRecord) -> bool {
         .unwrap_or(false)
 }
 
-async fn sync_existing_profile_bindings(
-    db: &Arc<DatabaseService>,
-    profile_id: &str,
-) -> Result<()> {
+async fn sync_existing_profile_bindings(db: &Arc<DatabaseService>, profile_id: &str) -> Result<()> {
     let Some(profile) = db.get_system_agent_profile(profile_id).await? else {
         return Ok(());
     };

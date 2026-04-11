@@ -2,6 +2,11 @@
  * Agent 类型定义
  * 完整的 Agent 系统类型，与后端保持一致
  */
+import type {
+  ReferencedAsset,
+  ReferencedFile,
+  ReferencedTraffic,
+} from './agentReferences'
 
 // ============ 消息类型 ============
 
@@ -59,6 +64,9 @@ export interface MessageMetadata {
   requires_confirmation?: boolean  // 第十人原则是否需要确认
   document_attachments?: ProcessedDocumentResult[]  // 用户消息中的文档附件
   image_attachments?: ImageAttachment[]  // 用户消息中的图片附件
+  referenced_files?: ReferencedFile[]
+  referenced_assets?: ReferencedAsset[]
+  referenced_traffic?: ReferencedTraffic[]
 }
 
 // Image attachment structure (matches backend MessageAttachment::Image)

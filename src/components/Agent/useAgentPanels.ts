@@ -45,7 +45,7 @@ export const useAgentPanels = (params: {
   resetAgentError: () => void
   resolveAgentName: (agentId?: string | null) => string
   selectedTeamTaskAssigneeId: ComputedRef<string | null>
-  teamModeEnabled: Ref<boolean>
+  teamWorkspaceAvailable: ComputedRef<boolean>
   terminalClose: () => void
   terminalHasHistory: ComputedRef<boolean>
   terminalIsActive: ComputedRef<boolean>
@@ -109,7 +109,7 @@ export const useAgentPanels = (params: {
   })
 
   const teamTodoBuckets = computed<TeamTodoBucket[]>(() => {
-    if (!params.teamModeEnabled.value || !params.activeTeamSessionId.value) return []
+    if (!params.teamWorkspaceAvailable.value || !params.activeTeamSessionId.value) return []
     const bucketMap = new Map<string, TeamTodoBucket>()
 
     for (const entry of scopedTodoEntries.value) {
@@ -137,7 +137,7 @@ export const useAgentPanels = (params: {
   })
 
   const todoSourceOptions = computed<TodoSourceOption[]>(() => {
-    if (!params.teamModeEnabled.value || teamTodoBuckets.value.length === 0) return []
+    if (!params.teamWorkspaceAvailable.value || teamTodoBuckets.value.length === 0) return []
     const allCount = teamTodoBuckets.value.reduce((acc, bucket) => acc + bucket.todos.length, 0)
     return [
       {
@@ -182,7 +182,7 @@ export const useAgentPanels = (params: {
   })
 
   const todos = computed<Todo[]>(() => {
-    if (params.teamModeEnabled.value && params.activeTeamSessionId.value) {
+    if (params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value) {
       if (teamTodoBuckets.value.length > 0) return teamTodos.value
     }
     return conversationTodos.value
@@ -374,7 +374,7 @@ export const useAgentPanels = (params: {
   }, { immediate: true })
 
   watch(selectedTaskTodoSourceKey, (nextKey) => {
-    if (!params.teamModeEnabled.value || !params.activeTeamSessionId.value) return
+    if (!params.teamWorkspaceAvailable.value || !params.activeTeamSessionId.value) return
     if (nextKey === TODO_SOURCE_ALL_KEY) {
       selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
       return
@@ -384,6 +384,14 @@ export const useAgentPanels = (params: {
       return
     }
     selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
+  }, { immediate: true })
+
+  watch(params.teamWorkspaceAvailable, (available) => {
+    if (available) return
+    if (activeRightPanel.value === 'team') {
+      activeRightPanel.value = null
+    }
+    params.isTeamWorkspaceActive.value = false
   }, { immediate: true })
 
   const clearTodosForCurrentContext = () => {

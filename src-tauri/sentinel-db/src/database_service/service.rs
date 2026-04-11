@@ -1239,6 +1239,16 @@ impl DatabaseService {
         .await?;
         self.execute_runtime_ddl(
             runtime,
+            "CREATE INDEX IF NOT EXISTS idx_ai_conversations_updated_at ON ai_conversations(updated_at DESC)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_ai_messages_conversation_timestamp_id ON ai_messages(conversation_id, timestamp ASC, id ASC)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
             "CREATE INDEX IF NOT EXISTS idx_traffic_vulnerabilities_signature ON traffic_vulnerabilities(signature)",
         )
         .await?;

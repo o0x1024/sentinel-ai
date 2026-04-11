@@ -11,7 +11,7 @@ lerna-debug.log*
 ca
 logs
 
-
+docs
 node_modules
 dist
 dist-ssr

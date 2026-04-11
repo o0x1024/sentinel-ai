@@ -10,8 +10,8 @@ use sentinel_tools::{get_tool_server, mcp_adapter};
 
 use crate::agents::tenth_man::TenthManConfig;
 use crate::agents::tool_router::ToolConfig;
-use crate::agents::ContextPolicy;
 use crate::agents::DocumentAttachmentInfo;
+use crate::agents::{ContextEngineMode, ContextPolicy};
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 
 use self::run_simple::execute_agent_simple;
@@ -50,6 +50,7 @@ pub struct AgentExecuteParams {
     pub persist_messages: bool,
     pub subagent_run_id: Option<String>,
     pub context_policy: Option<ContextPolicy>,
+    pub context_engine_mode: Option<ContextEngineMode>,
     pub recursion_depth: usize,
 }
 

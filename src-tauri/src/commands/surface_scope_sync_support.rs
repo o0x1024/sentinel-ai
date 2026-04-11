@@ -4,28 +4,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 const COMMON_TWO_LABEL_PUBLIC_SUFFIXES: &[&str] = &[
-    "ac.jp",
-    "ac.uk",
-    "co.jp",
-    "co.kr",
-    "co.nz",
-    "co.uk",
-    "com.au",
-    "com.br",
-    "com.cn",
-    "com.hk",
-    "com.mx",
-    "com.sg",
-    "edu.cn",
-    "edu.hk",
-    "gov.cn",
-    "gov.uk",
-    "net.au",
-    "net.cn",
-    "org.au",
-    "org.cn",
-    "org.hk",
-    "org.uk",
+    "ac.jp", "ac.uk", "co.jp", "co.kr", "co.nz", "co.uk", "com.au", "com.br", "com.cn", "com.hk",
+    "com.mx", "com.sg", "edu.cn", "edu.hk", "gov.cn", "gov.uk", "net.au", "net.cn", "org.au",
+    "org.cn", "org.hk", "org.uk",
 ];
 
 pub fn infer_root_domain(domain: &str) -> Option<String> {
@@ -164,7 +145,10 @@ mod tests {
 
     #[test]
     fn infer_root_domain_for_standard_domain() {
-        assert_eq!(infer_root_domain("api.example.com").as_deref(), Some("example.com"));
+        assert_eq!(
+            infer_root_domain("api.example.com").as_deref(),
+            Some("example.com")
+        );
     }
 
     #[test]
@@ -181,6 +165,9 @@ mod tests {
 
     #[test]
     fn infer_root_domain_for_bare_registrable_domain() {
-        assert_eq!(infer_root_domain("example.co.uk").as_deref(), Some("example.co.uk"));
+        assert_eq!(
+            infer_root_domain("example.co.uk").as_deref(),
+            Some("example.co.uk")
+        );
     }
 }

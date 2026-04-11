@@ -1,3 +1,5 @@
+pub mod agent_control_tool;
+pub mod ask_user_question;
 pub mod http_request;
 pub mod memory;
 pub mod ocr;
@@ -10,13 +12,14 @@ pub mod tenth_man_tool;
 pub mod todos;
 pub mod web_search;
 
+pub use agent_control_tool::{CloseAgentTool, ListAgentsTool, SpawnAgentTool, WaitAgentsTool};
+pub use ask_user_question::AskUserQuestionTool;
 pub use http_request::HttpRequestTool;
 pub use memory::MemoryManagerTool;
 pub use ocr::OcrTool;
 pub use search_exploit::SearchExploitTool;
 pub use shell::ShellTool;
 pub use skills::SkillsTool;
-pub use subagent_tool::{SubagentAwaitTool, SubagentChannelTool, SubagentExecuteTool};
 pub use subdomain_brute::SubdomainBruteTool;
 pub use tenth_man_tool::TenthManTool;
 pub use todos::TodosTool;
@@ -28,6 +31,7 @@ use rig::tool::ToolSet;
 pub fn create_buildin_toolset() -> ToolSet {
     let mut toolset = ToolSet::default();
     toolset.add_tool(HttpRequestTool::default());
+    toolset.add_tool(AskUserQuestionTool::new());
     toolset.add_tool(ShellTool::new());
     toolset.add_tool(TodosTool);
     toolset.add_tool(WebSearchTool::default());
@@ -36,10 +40,10 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(OcrTool);
     toolset.add_tool(SkillsTool);
     toolset.add_tool(SubdomainBruteTool);
-    // Condensed subagent tools
-    toolset.add_tool(SubagentExecuteTool::new());
-    toolset.add_tool(SubagentAwaitTool::new());
-    toolset.add_tool(SubagentChannelTool::new());
+    toolset.add_tool(SpawnAgentTool);
+    toolset.add_tool(WaitAgentsTool);
+    toolset.add_tool(ListAgentsTool);
+    toolset.add_tool(CloseAgentTool);
     toolset
 }
 
@@ -47,6 +51,7 @@ pub fn create_buildin_toolset() -> ToolSet {
 pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
     let tools: Vec<Box<dyn rig::tool::ToolDyn>> = vec![
         Box::new(HttpRequestTool::default()),
+        Box::new(AskUserQuestionTool::new()),
         Box::new(ShellTool::new()),
         Box::new(TodosTool),
         Box::new(WebSearchTool::default()),
@@ -55,10 +60,10 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(OcrTool),
         Box::new(SkillsTool),
         Box::new(SubdomainBruteTool),
-        // Condensed subagent tools
-        Box::new(SubagentExecuteTool::new()),
-        Box::new(SubagentAwaitTool::new()),
-        Box::new(SubagentChannelTool::new()),
+        Box::new(SpawnAgentTool),
+        Box::new(WaitAgentsTool),
+        Box::new(ListAgentsTool),
+        Box::new(CloseAgentTool),
     ];
 
     let mut definitions = Vec::new();

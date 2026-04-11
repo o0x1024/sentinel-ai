@@ -16,9 +16,9 @@ use tokio::sync::RwLock;
 
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
-    HttpRequestTool, MemoryManagerTool, OcrTool, SearchExploitTool, ShellTool, SkillsTool,
-    SubagentAwaitTool, SubagentChannelTool, SubagentExecuteTool, TenthManTool, TodosTool,
-    WebSearchTool,
+    AskUserQuestionTool, CloseAgentTool, HttpRequestTool, ListAgentsTool, MemoryManagerTool,
+    OcrTool, SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TenthManTool, TodosTool,
+    WaitAgentsTool, WebSearchTool,
 };
 
 use sentinel_tools::terminal::server::TerminalServer;
@@ -198,7 +198,7 @@ impl Default for ToolConfig {
             fixed_tools: vec![], // No default tools, fully user-controlled
             disabled_tools: vec![],
             allowed_tools: vec![],
-            enabled: false, // 默认关闭，避免意外消耗
+            enabled: true,
         }
     }
 }
@@ -298,6 +298,20 @@ impl ToolRouter {
                 always_available: false,
             },
             // 系统工具
+            ToolMetadata {
+                id: AskUserQuestionTool::NAME.to_string(),
+                name: AskUserQuestionTool::NAME.to_string(),
+                description: AskUserQuestionTool::DESCRIPTION.to_string(),
+                category: ToolCategory::System,
+                tags: vec![
+                    "question".to_string(),
+                    "clarification".to_string(),
+                    "user".to_string(),
+                    "decision".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: true,
+            },
             ToolMetadata {
                 id: ShellTool::NAME.to_string(),
                 name: ShellTool::NAME.to_string(),
@@ -416,48 +430,61 @@ impl ToolRouter {
                 cost_estimate: ToolCost::Medium,
                 always_available: false,
             },
-            // Condensed subagent tools
             ToolMetadata {
-                id: SubagentExecuteTool::NAME.to_string(),
-                name: SubagentExecuteTool::NAME.to_string(),
-                description: "Execute subagent tasks in sync, async, or workflow mode.".to_string(),
+                id: SpawnAgentTool::NAME.to_string(),
+                name: SpawnAgentTool::NAME.to_string(),
+                description: SpawnAgentTool::DESCRIPTION.to_string(),
                 category: ToolCategory::AI,
                 tags: vec![
                     "subagent".to_string(),
-                    "execute".to_string(),
-                    "sync".to_string(),
-                    "async".to_string(),
-                    "workflow".to_string(),
-                    "orchestration".to_string(),
+                    "spawn".to_string(),
+                    "delegate".to_string(),
+                    "background".to_string(),
+                    "parallel".to_string(),
                 ],
                 cost_estimate: ToolCost::High,
                 always_available: false,
             },
             ToolMetadata {
-                id: SubagentAwaitTool::NAME.to_string(),
-                name: SubagentAwaitTool::NAME.to_string(),
-                description: "Wait for subagent completion with all/any policy.".to_string(),
+                id: WaitAgentsTool::NAME.to_string(),
+                name: WaitAgentsTool::NAME.to_string(),
+                description: WaitAgentsTool::DESCRIPTION.to_string(),
                 category: ToolCategory::AI,
                 tags: vec![
                     "subagent".to_string(),
-                    "await".to_string(),
                     "wait".to_string(),
-                    "collect".to_string(),
+                    "join".to_string(),
+                    "completion".to_string(),
                 ],
                 cost_estimate: ToolCost::Low,
                 always_available: false,
             },
             ToolMetadata {
-                id: SubagentChannelTool::NAME.to_string(),
-                name: SubagentChannelTool::NAME.to_string(),
-                description: "Shared state and event channel operations for subagents.".to_string(),
+                id: ListAgentsTool::NAME.to_string(),
+                name: ListAgentsTool::NAME.to_string(),
+                description: ListAgentsTool::DESCRIPTION.to_string(),
                 category: ToolCategory::AI,
                 tags: vec![
                     "subagent".to_string(),
-                    "state".to_string(),
-                    "event".to_string(),
+                    "list".to_string(),
+                    "status".to_string(),
+                    "inspect".to_string(),
                     "coordination".to_string(),
-                    "channel".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: CloseAgentTool::NAME.to_string(),
+                name: CloseAgentTool::NAME.to_string(),
+                description: CloseAgentTool::DESCRIPTION.to_string(),
+                category: ToolCategory::AI,
+                tags: vec![
+                    "subagent".to_string(),
+                    "close".to_string(),
+                    "cancel".to_string(),
+                    "wait".to_string(),
+                    "coordination".to_string(),
                 ],
                 cost_estimate: ToolCost::Low,
                 always_available: false,
@@ -548,9 +575,10 @@ impl ToolRouter {
                     SkillsTool::NAME.to_string(),
                     ShellTool::NAME.to_string(),
                     HttpRequestTool::NAME.to_string(),
-                    SubagentExecuteTool::NAME.to_string(),
-                    SubagentAwaitTool::NAME.to_string(),
-                    SubagentChannelTool::NAME.to_string(),
+                    SpawnAgentTool::NAME.to_string(),
+                    WaitAgentsTool::NAME.to_string(),
+                    ListAgentsTool::NAME.to_string(),
+                    CloseAgentTool::NAME.to_string(),
                     TenthManTool::NAME.to_string(),
                 ];
                 if !config
@@ -599,9 +627,10 @@ impl ToolRouter {
                     SkillsTool::NAME.to_string(),
                     ShellTool::NAME.to_string(),
                     HttpRequestTool::NAME.to_string(),
-                    SubagentExecuteTool::NAME.to_string(),
-                    SubagentAwaitTool::NAME.to_string(),
-                    SubagentChannelTool::NAME.to_string(),
+                    SpawnAgentTool::NAME.to_string(),
+                    WaitAgentsTool::NAME.to_string(),
+                    ListAgentsTool::NAME.to_string(),
+                    CloseAgentTool::NAME.to_string(),
                     TenthManTool::NAME.to_string(),
                 ];
                 if !config

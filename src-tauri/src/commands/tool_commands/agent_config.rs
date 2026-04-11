@@ -277,7 +277,7 @@ pub async fn save_agent_config(
     set_shell_config(shell_cfg).await;
 
     // Update global subagent timeout
-    sentinel_tools::buildin_tools::subagent_tool::set_default_subagent_timeout(
+    sentinel_tools::buildin_tools::agent_control_tool::set_default_agent_timeout(
         config.subagent.timeout_secs,
     );
 
@@ -433,7 +433,7 @@ pub async fn init_agent_config(db: &sentinel_db::DatabaseService) -> Result<(), 
     set_shell_config(shell_cfg).await;
 
     // Set global subagent timeout
-    sentinel_tools::buildin_tools::subagent_tool::set_default_subagent_timeout(
+    sentinel_tools::buildin_tools::agent_control_tool::set_default_agent_timeout(
         subagent_config.timeout_secs,
     );
 

@@ -11,14 +11,15 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::buildin_tools::{
-    HttpRequestTool, MemoryManagerTool, OcrTool, SearchExploitTool, ShellTool, SkillsTool,
-    SubdomainBruteTool, TenthManTool, TodosTool, WebSearchTool,
+    AskUserQuestionTool, HttpRequestTool, MemoryManagerTool, OcrTool, SearchExploitTool,
+    ShellTool, SkillsTool, SubdomainBruteTool, TenthManTool, TodosTool, WebSearchTool,
 };
 
 use crate::terminal::server::TerminalServer;
 
 use crate::dynamic_tool::{
-    DynamicTool, DynamicToolBuilder, DynamicToolDef, ToolExecutor, ToolRegistry, ToolSource,
+    DynamicTool, DynamicToolBuilder, DynamicToolDef, ToolExecutionPolicy, ToolExecutor,
+    ToolRegistry, ToolSource,
 };
 
 /// Global tool server instance
@@ -83,6 +84,7 @@ pub struct ToolInfo {
     pub output_schema: Option<Value>,
     pub source: String,
     pub category: String,
+    pub execution_policy: ToolExecutionPolicy,
     pub enabled: bool,
 }
 
@@ -143,6 +145,13 @@ impl ToolServer {
             }))
             .source(ToolSource::Builtin)
             .category("network")
+            .execution_policy(ToolExecutionPolicy {
+                read_only: true,
+                mutating: false,
+                concurrency_safe: true,
+                requires_permission: false,
+                supports_background: false,
+            })
             .executor(|args| async move {
                 use crate::buildin_tools::http_request::HttpRequestArgs;
                 use rig::tool::Tool;
@@ -163,6 +172,87 @@ impl ToolServer {
             .expect("Failed to build http_request tool");
 
         self.registry.register(http_request_def).await;
+
+        let ask_user_question_def =
+            DynamicToolBuilder::new(AskUserQuestionTool::NAME.to_string())
+                .description(AskUserQuestionTool::DESCRIPTION.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "description": "Questions to ask the user (1-4 questions).",
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "header": {
+                                        "type": "string",
+                                        "description": "Very short question header."
+                                    },
+                                    "question": {
+                                        "type": "string",
+                                        "description": "Question text shown to the user."
+                                    },
+                                    "options": {
+                                        "type": "array",
+                                        "description": "Multiple-choice options for this question.",
+                                        "minItems": 2,
+                                        "maxItems": 4,
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "label": {
+                                                    "type": "string",
+                                                    "description": "Short option label."
+                                                },
+                                                "description": {
+                                                    "type": "string",
+                                                    "description": "Short explanation of the option."
+                                                }
+                                            },
+                                            "required": ["label", "description"]
+                                        }
+                                    }
+                                },
+                                "required": ["header", "question", "options"]
+                            }
+                        }
+                    },
+                    "required": ["questions"]
+                }))
+                .source(ToolSource::Builtin)
+                .category("system")
+                .execution_policy(ToolExecutionPolicy {
+                    read_only: true,
+                    mutating: false,
+                    concurrency_safe: true,
+                    requires_permission: false,
+                    supports_background: false,
+                })
+                .executor(|args| async move {
+                    use crate::buildin_tools::ask_user_question::{
+                        AskUserQuestionArgs, AskUserQuestionTool,
+                    };
+                    use rig::tool::Tool;
+
+                    let tool_args: AskUserQuestionArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                    let tool = AskUserQuestionTool::new();
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("AskUserQuestion failed: {}", e))?;
+
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build ask_user_question tool");
+
+        self.registry.register(ask_user_question_def).await;
 
         // Register shell tool
         let shell_desc = {
@@ -192,6 +282,13 @@ impl ToolServer {
                 "required": ["command"]
             }))
             .source(ToolSource::Builtin)
+            .execution_policy(ToolExecutionPolicy {
+                read_only: false,
+                mutating: true,
+                concurrency_safe: false,
+                requires_permission: true,
+                supports_background: false,
+            })
             .executor(|args| async move {
                 use crate::buildin_tools::shell::ShellArgs;
                 use rig::tool::Tool;
@@ -254,6 +351,13 @@ impl ToolServer {
                 "required": ["execution_id", "action"]
             }))
             .source(ToolSource::Builtin)
+            .execution_policy(ToolExecutionPolicy {
+                read_only: false,
+                mutating: true,
+                concurrency_safe: false,
+                requires_permission: false,
+                supports_background: false,
+            })
             .executor(|args| async move {
                 use crate::buildin_tools::todos::{TodosArgs, TodosTool};
                 use rig::tool::Tool;
@@ -987,6 +1091,7 @@ impl ToolServer {
                     ToolSource::Workflow { workflow_id } => format!("workflow::{}", workflow_id),
                 },
                 category: def.category.clone(),
+                execution_policy: def.execution_policy.clone(),
                 enabled: true,
             })
             .collect()
@@ -1006,6 +1111,7 @@ impl ToolServer {
                 ToolSource::Workflow { workflow_id } => format!("workflow::{}", workflow_id),
             },
             category: def.category.clone(),
+            execution_policy: def.execution_policy.clone(),
             enabled: true,
         })
     }
@@ -1048,6 +1154,7 @@ impl ToolServer {
                 server_name: server_name.to_string(),
             },
             category: "mcp".to_string(),
+            execution_policy: ToolExecutionPolicy::default(),
             executor,
         };
 
@@ -1077,6 +1184,7 @@ impl ToolServer {
                 plugin_id: plugin_id.to_string(),
             },
             category: category.unwrap_or_else(|| "other".to_string()),
+            execution_policy: ToolExecutionPolicy::default(),
             executor,
         };
 
@@ -1104,6 +1212,7 @@ impl ToolServer {
                 workflow_id: workflow_id.to_string(),
             },
             category: "workflow".to_string(),
+            execution_policy: ToolExecutionPolicy::default(),
             executor,
         };
 
@@ -1175,6 +1284,7 @@ impl ToolServer {
                     ToolSource::Plugin { .. } => "plugin".to_string(),
                     ToolSource::Workflow { .. } => "workflow".to_string(),
                 },
+                execution_policy: def.execution_policy.clone(),
                 enabled: true,
             })
             .collect()
@@ -1190,122 +1300,100 @@ impl Default for ToolServer {
 impl ToolServer {
     /// Register condensed subagent tools (execute, await, channel)
     async fn register_subagent_tools(&self) {
-        use crate::buildin_tools::subagent_tool::{
-            SubagentAwaitArgs, SubagentAwaitTool, SubagentChannelArgs, SubagentChannelTool,
-            SubagentExecuteArgs, SubagentExecuteTool,
+        use crate::buildin_tools::agent_control_tool::{
+            CloseAgentArgs, CloseAgentTool, ListAgentsArgs, ListAgentsTool, SpawnAgentArgs,
+            SpawnAgentTool, WaitAgentsArgs, WaitAgentsTool,
         };
 
-        let execute_def = DynamicToolBuilder::new(SubagentExecuteTool::NAME.to_string())
-            .description(SubagentExecuteTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "parent_execution_id": { "type": "string" },
-                    "mode": { "type": "string", "enum": ["sync", "async", "workflow"] },
-                    "task": { "type": "string" },
-                    "role": { "type": "string" },
-                    "system_prompt": { "type": "string" },
-                    "tool_config": { "type": "object" },
-                    "max_iterations": { "type": "integer", "default": 50 },
-                    "timeout_secs": { "type": "integer" },
-                    "inherit_parent_llm": { "type": "boolean", "default": true },
-                    "inherit_parent_tools": { "type": "boolean", "default": false },
-                    "depends_on_task_ids": { "type": "array", "items": { "type": "string" } },
-                    "nodes": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "node_id": { "type": "string" },
-                                "task": { "type": "string" },
-                                "role": { "type": "string" },
-                                "depends_on_node_ids": { "type": "array", "items": { "type": "string" } },
-                                "max_iterations": { "type": "integer", "default": 50 },
-                                "timeout_secs": { "type": "integer" }
-                            },
-                            "required": ["node_id", "task"]
-                        }
-                    }
-                },
-                "required": ["parent_execution_id", "mode"]
-            }))
+        let spawn_def = DynamicToolBuilder::new(SpawnAgentTool::NAME.to_string())
+            .description(SpawnAgentTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(SpawnAgentArgs)).unwrap_or_default(),
+            )
             .source(ToolSource::Builtin)
             .executor(|args| async move {
                 use rig::tool::Tool;
-                let tool_args: SubagentExecuteArgs = serde_json::from_value(args)
+                let tool_args: SpawnAgentArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let tool = SubagentExecuteTool::new();
-                let result = tool.call(tool_args).await
-                    .map_err(|e| format!("Subagent execute failed: {}", e))?;
-                serde_json::to_value(result)
-                    .map_err(|e| format!("Failed to serialize result: {}", e))
-            })
-            .build()
-            .expect("Failed to build subagent_execute tool");
-        self.registry.register(execute_def).await;
-
-        let await_def = DynamicToolBuilder::new(SubagentAwaitTool::NAME.to_string())
-            .description(SubagentAwaitTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "parent_execution_id": { "type": "string" },
-                    "policy": { "type": "string", "enum": ["all", "any"] },
-                    "task_ids": { "type": "array", "items": { "type": "string" } },
-                    "timeout_secs": { "type": "integer", "default": 600 }
-                },
-                "required": ["parent_execution_id", "policy", "task_ids"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move {
-                use rig::tool::Tool;
-                let tool_args: SubagentAwaitArgs = serde_json::from_value(args)
-                    .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let tool = SubagentAwaitTool::new();
+                let tool = SpawnAgentTool;
                 let result = tool
                     .call(tool_args)
                     .await
-                    .map_err(|e| format!("Subagent await failed: {}", e))?;
+                    .map_err(|e| format!("spawn_agent failed: {}", e))?;
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
             .build()
-            .expect("Failed to build subagent_await tool");
-        self.registry.register(await_def).await;
+            .expect("Failed to build spawn_agent tool");
+        self.registry.register(spawn_def).await;
 
-        let channel_def = DynamicToolBuilder::new(SubagentChannelTool::NAME.to_string())
-            .description(SubagentChannelTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "parent_execution_id": { "type": "string" },
-                    "op": { "type": "string", "enum": ["state.put", "state.get", "event.publish", "event.poll"] },
-                    "key": { "type": "string" },
-                    "value": {},
-                    "expected_version": { "type": "integer" },
-                    "channel": { "type": "string", "default": "default" },
-                    "payload": {},
-                    "after_seq": { "type": "integer" },
-                    "limit": { "type": "integer", "default": 50 }
-                },
-                "required": ["parent_execution_id", "op"]
-            }))
+        let wait_def = DynamicToolBuilder::new(WaitAgentsTool::NAME.to_string())
+            .description(WaitAgentsTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(WaitAgentsArgs)).unwrap_or_default(),
+            )
             .source(ToolSource::Builtin)
             .executor(|args| async move {
                 use rig::tool::Tool;
-                let tool_args: SubagentChannelArgs = serde_json::from_value(args)
+                let tool_args: WaitAgentsArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let tool = SubagentChannelTool::new();
-                let result = tool.call(tool_args).await
-                    .map_err(|e| format!("Subagent channel failed: {}", e))?;
+                let tool = WaitAgentsTool;
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("wait_agents failed: {}", e))?;
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
             .build()
-            .expect("Failed to build subagent_channel tool");
-        self.registry.register(channel_def).await;
+            .expect("Failed to build wait_agents tool");
+        self.registry.register(wait_def).await;
 
-        tracing::info!("Registered subagent tools: execute, await, channel");
+        let list_def = DynamicToolBuilder::new(ListAgentsTool::NAME.to_string())
+            .description(ListAgentsTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(ListAgentsArgs)).unwrap_or_default(),
+            )
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: ListAgentsArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = ListAgentsTool;
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("list_agents failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build list_agents tool");
+        self.registry.register(list_def).await;
+
+        let close_def = DynamicToolBuilder::new(CloseAgentTool::NAME.to_string())
+            .description(CloseAgentTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(CloseAgentArgs)).unwrap_or_default(),
+            )
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: CloseAgentArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = CloseAgentTool;
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("close_agent failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build close_agent tool");
+        self.registry.register(close_def).await;
+
+        tracing::info!("Registered agent control tools: spawn, wait, list, close");
     }
 }
 

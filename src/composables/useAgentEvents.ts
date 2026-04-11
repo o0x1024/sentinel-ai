@@ -302,6 +302,9 @@ export function useAgentEvents(
       timestamp: number
       document_attachments?: any[]
       image_attachments?: any[]
+      referenced_files?: any[]
+      referenced_assets?: any[]
+      referenced_traffic?: any[]
     }>('agent:user_message', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
@@ -323,6 +326,9 @@ export function useAgentEvents(
           : undefined
       )
       const imgAttachments = payload.image_attachments
+      const referencedFiles = payload.referenced_files
+      const referencedAssets = payload.referenced_assets
+      const referencedTraffic = payload.referenced_traffic
       pendingDocumentAttachments.value = [] // Clear after use
       if (shouldSuppressUserMessages()) {
         return
@@ -335,6 +341,15 @@ export function useAgentEvents(
       }
       if (imgAttachments) {
         metadata.image_attachments = imgAttachments
+      }
+      if (referencedFiles) {
+        metadata.referenced_files = referencedFiles
+      }
+      if (referencedAssets) {
+        metadata.referenced_assets = referencedAssets
+      }
+      if (referencedTraffic) {
+        metadata.referenced_traffic = referencedTraffic
       }
 
       const existingById = messages.value.find(item => item.id === payload.message_id)

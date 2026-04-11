@@ -10,8 +10,9 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
-    HttpRequestTool, OcrTool, SearchExploitTool, ShellTool, SkillsTool, SubagentAwaitTool,
-    SubagentChannelTool, SubagentExecuteTool, TenthManTool, TodosTool,
+    AskUserQuestionTool, CloseAgentTool, HttpRequestTool, ListAgentsTool, OcrTool,
+    SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TenthManTool, TodosTool,
+    WaitAgentsTool,
 };
 use sentinel_tools::get_tool_server;
 use sentinel_tools::terminal::server::TerminalServer;
@@ -46,6 +47,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     // All tools enabled by default
     map.insert(HttpRequestTool::NAME.to_string(), true);
+    map.insert(AskUserQuestionTool::NAME.to_string(), true);
     map.insert(ShellTool::NAME.to_string(), true);
     map.insert(
         sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(),
@@ -60,10 +62,10 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(TerminalServer::NAME.to_string(), true);
     map.insert(TenthManTool::NAME.to_string(), true);
     map.insert(TodosTool::NAME.to_string(), true);
-    // Condensed subagent tools
-    map.insert(SubagentExecuteTool::NAME.to_string(), true);
-    map.insert(SubagentAwaitTool::NAME.to_string(), true);
-    map.insert(SubagentChannelTool::NAME.to_string(), true);
+    map.insert(SpawnAgentTool::NAME.to_string(), true);
+    map.insert(WaitAgentsTool::NAME.to_string(), true);
+    map.insert(ListAgentsTool::NAME.to_string(), true);
+    map.insert(CloseAgentTool::NAME.to_string(), true);
     RwLock::new(map)
 });
 
@@ -73,6 +75,56 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     let states = TOOL_STATES.read().await;
 
     let mut tools = vec![
+        BuiltinToolInfo {
+            id: AskUserQuestionTool::NAME.to_string(),
+            name: AskUserQuestionTool::NAME.to_string(),
+            description: AskUserQuestionTool::DESCRIPTION.to_string(),
+            category: "system".to_string(),
+            version: "1.0.0".to_string(),
+            enabled: *states.get(AskUserQuestionTool::NAME).unwrap_or(&true),
+            input_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "description": "Questions to ask the user (1-4 questions).",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "header": {
+                                    "type": "string",
+                                    "description": "Very short question header."
+                                },
+                                "question": {
+                                    "type": "string",
+                                    "description": "Question text."
+                                },
+                                "options": {
+                                    "type": "array",
+                                    "description": "Multiple-choice options.",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {
+                                                "type": "string",
+                                                "description": "Short option label."
+                                            },
+                                            "description": {
+                                                "type": "string",
+                                                "description": "Short option description."
+                                            }
+                                        },
+                                        "required": ["label", "description"]
+                                    }
+                                }
+                            },
+                            "required": ["header", "question", "options"]
+                        }
+                    }
+                },
+                "required": ["questions"]
+            })),
+        },
         BuiltinToolInfo {
             id: HttpRequestTool::NAME.to_string(),
             name: HttpRequestTool::NAME.to_string(),
@@ -314,89 +366,48 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         })),
     });
 
-    // Add condensed subagent tools
+    let spawn_definition = SpawnAgentTool::default().definition(String::new()).await;
     tools.push(BuiltinToolInfo {
-        id: SubagentExecuteTool::NAME.to_string(),
-        name: SubagentExecuteTool::NAME.to_string(),
-        description: "Unified subagent execution in sync/async/workflow modes.".to_string(),
+        id: SpawnAgentTool::NAME.to_string(),
+        name: SpawnAgentTool::NAME.to_string(),
+        description: SpawnAgentTool::DESCRIPTION.to_string(),
         category: ToolCategory::AI.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentExecuteTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string" },
-                "mode": { "type": "string", "enum": ["sync", "async", "workflow"] },
-                "task": { "type": "string" },
-                "role": { "type": "string" },
-                "system_prompt": { "type": "string" },
-                "tool_config": { "type": "object" },
-                "max_iterations": { "type": "integer", "default": 50 },
-                "timeout_secs": { "type": "integer" },
-                "inherit_parent_llm": { "type": "boolean", "default": true },
-                "inherit_parent_tools": { "type": "boolean", "default": false },
-                "depends_on_task_ids": { "type": "array", "items": { "type": "string" } },
-                "nodes": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "node_id": { "type": "string" },
-                            "task": { "type": "string" },
-                            "role": { "type": "string" },
-                            "depends_on_node_ids": { "type": "array", "items": { "type": "string" } },
-                            "max_iterations": { "type": "integer", "default": 50 },
-                            "timeout_secs": { "type": "integer" }
-                        },
-                        "required": ["node_id", "task"]
-                    }
-                }
-            },
-            "required": ["parent_execution_id", "mode"]
-        })),
+        enabled: *states.get(SpawnAgentTool::NAME).unwrap_or(&true),
+        input_schema: Some(spawn_definition.parameters),
     });
 
+    let wait_definition = WaitAgentsTool::default().definition(String::new()).await;
     tools.push(BuiltinToolInfo {
-        id: SubagentAwaitTool::NAME.to_string(),
-        name: SubagentAwaitTool::NAME.to_string(),
-        description: "Wait for subagent tasks with policy all/any.".to_string(),
+        id: WaitAgentsTool::NAME.to_string(),
+        name: WaitAgentsTool::NAME.to_string(),
+        description: WaitAgentsTool::DESCRIPTION.to_string(),
         category: ToolCategory::AI.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentAwaitTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string" },
-                "policy": { "type": "string", "enum": ["all", "any"] },
-                "task_ids": { "type": "array", "items": { "type": "string" } },
-                "timeout_secs": { "type": "integer", "default": 600 }
-            },
-            "required": ["parent_execution_id", "policy", "task_ids"]
-        })),
+        enabled: *states.get(WaitAgentsTool::NAME).unwrap_or(&true),
+        input_schema: Some(wait_definition.parameters),
     });
 
+    let list_definition = ListAgentsTool::default().definition(String::new()).await;
     tools.push(BuiltinToolInfo {
-        id: SubagentChannelTool::NAME.to_string(),
-        name: SubagentChannelTool::NAME.to_string(),
-        description: "Unified subagent state/event channel operations.".to_string(),
+        id: ListAgentsTool::NAME.to_string(),
+        name: ListAgentsTool::NAME.to_string(),
+        description: ListAgentsTool::DESCRIPTION.to_string(),
         category: ToolCategory::AI.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentChannelTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string" },
-                "op": { "type": "string", "enum": ["state.put", "state.get", "event.publish", "event.poll"] },
-                "key": { "type": "string" },
-                "value": {},
-                "expected_version": { "type": "integer" },
-                "channel": { "type": "string", "default": "default" },
-                "payload": {},
-                "after_seq": { "type": "integer" },
-                "limit": { "type": "integer", "default": 50 }
-            },
-            "required": ["parent_execution_id", "op"]
-        })),
+        enabled: *states.get(ListAgentsTool::NAME).unwrap_or(&true),
+        input_schema: Some(list_definition.parameters),
+    });
+
+    let close_definition = CloseAgentTool::default().definition(String::new()).await;
+    tools.push(BuiltinToolInfo {
+        id: CloseAgentTool::NAME.to_string(),
+        name: CloseAgentTool::NAME.to_string(),
+        description: CloseAgentTool::DESCRIPTION.to_string(),
+        category: ToolCategory::AI.to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get(CloseAgentTool::NAME).unwrap_or(&true),
+        input_schema: Some(close_definition.parameters),
     });
 
     // Add tenth_man_review
@@ -1229,7 +1240,9 @@ pub use tool_server::{
 // The new ReAct architecture doesn't require these bridge commands
 // mod vision_bridge;
 
+mod ask_user_question;
 mod shell_permissions;
+pub use ask_user_question::PendingAskUserQuestionRequest;
 pub use shell_permissions::PendingPermissionRequest;
 
 pub mod agent_config;
@@ -1252,6 +1265,11 @@ pub async fn init_shell_permission_handler(app: tauri::AppHandle) -> Result<(), 
 }
 
 #[tauri::command]
+pub async fn init_ask_user_question_handler(app: tauri::AppHandle) -> Result<(), String> {
+    ask_user_question::init_ask_user_question_handler(app).await
+}
+
+#[tauri::command]
 pub async fn get_shell_tool_config() -> Result<ShellConfig, String> {
     shell_permissions::get_shell_tool_config().await
 }
@@ -1269,6 +1287,25 @@ pub async fn respond_shell_permission(id: String, allowed: bool) -> Result<(), S
 #[tauri::command]
 pub async fn get_pending_shell_permissions() -> Result<Vec<PendingPermissionRequest>, String> {
     shell_permissions::get_pending_shell_permissions().await
+}
+
+#[tauri::command]
+pub async fn get_pending_ask_user_questions() -> Result<Vec<PendingAskUserQuestionRequest>, String>
+{
+    ask_user_question::get_pending_ask_user_questions().await
+}
+
+#[tauri::command]
+pub async fn respond_ask_user_question(
+    id: String,
+    answers: HashMap<String, String>,
+) -> Result<(), String> {
+    ask_user_question::respond_ask_user_question(id, answers).await
+}
+
+#[tauri::command]
+pub async fn reject_ask_user_question(id: String) -> Result<(), String> {
+    ask_user_question::reject_ask_user_question(id).await
 }
 
 #[tauri::command]

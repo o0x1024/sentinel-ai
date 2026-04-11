@@ -841,7 +841,7 @@ impl DatabaseService {
                 .bind(conversation.total_messages)
                 .bind(conversation.total_tokens)
                 .bind(conversation.cost)
-                .bind(serde_json::to_string(&conversation.tags).unwrap_or_default())
+                .bind(&conversation.tags)
                 .bind(&conversation.tool_config)
                 .bind(conversation.is_archived)
                 .bind(conversation.created_at)
@@ -911,7 +911,7 @@ impl DatabaseService {
                 .bind(conversation.total_messages)
                 .bind(conversation.total_tokens)
                 .bind(conversation.cost)
-                .bind(serde_json::to_string(&conversation.tags).unwrap_or_default())
+                .bind(&conversation.tags)
                 .bind(&conversation.tool_config)
                 .bind(conversation.is_archived)
                 .bind(conversation.created_at)
@@ -981,7 +981,7 @@ impl DatabaseService {
                 .bind(conversation.total_messages)
                 .bind(conversation.total_tokens)
                 .bind(conversation.cost)
-                .bind(serde_json::to_string(&conversation.tags).unwrap_or_default())
+                .bind(&conversation.tags)
                 .bind(&conversation.tool_config)
                 .bind(conversation.is_archived)
                 .bind(conversation.created_at)
@@ -1002,7 +1002,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query(
-                    "SELECT * FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL::TEXT AS tags, NULL::TEXT AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC",
                 )
                 .fetch_all(pool)
                 .await?;
@@ -1013,7 +1013,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query(
-                    "SELECT * FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC",
                 )
                 .fetch_all(pool)
                 .await?;
@@ -1024,7 +1024,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query(
-                    "SELECT * FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC",
                 )
                 .fetch_all(pool)
                 .await?;
@@ -1048,7 +1048,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query(
-                    "SELECT * FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC LIMIT $1 OFFSET $2",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL::TEXT AS tags, NULL::TEXT AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC LIMIT $1 OFFSET $2",
                 )
                 .bind(limit)
                 .bind(offset)
@@ -1061,7 +1061,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query(
-                    "SELECT * FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC LIMIT ? OFFSET ?",
                 )
                 .bind(limit)
                 .bind(offset)
@@ -1074,7 +1074,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query(
-                    "SELECT * FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC LIMIT ? OFFSET ?",
                 )
                 .bind(limit)
                 .bind(offset)
@@ -1117,6 +1117,39 @@ impl DatabaseService {
             }
         };
         Ok(count)
+    }
+
+    pub async fn get_ai_conversation_detail_internal(
+        &self,
+        id: &str,
+    ) -> Result<Option<AiConversation>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let row = sqlx::query("SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL::TEXT AS tags, NULL::TEXT AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.map(|r| ai_conversation_from_row(&r)))
+            }
+            DatabasePool::SQLite(pool) => {
+                let row = sqlx::query("SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE id = ?")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.map(|r| ai_conversation_from_row(&r)))
+            }
+            DatabasePool::MySQL(pool) => {
+                let row = sqlx::query("SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE id = ?")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.map(|r| ai_conversation_from_row(&r)))
+            }
+        }
     }
 
     pub async fn get_ai_conversation_internal(&self, id: &str) -> Result<Option<AiConversation>> {
@@ -1220,7 +1253,7 @@ impl DatabaseService {
                 .bind(conversation.total_messages)
                 .bind(conversation.total_tokens)
                 .bind(conversation.cost)
-                .bind(serde_json::to_string(&conversation.tags).unwrap_or_default())
+                .bind(&conversation.tags)
                 .bind(&conversation.tool_config)
                 .bind(conversation.is_archived)
                 .bind(Utc::now())
@@ -1290,7 +1323,7 @@ impl DatabaseService {
                 .bind(conversation.total_messages)
                 .bind(conversation.total_tokens)
                 .bind(conversation.cost)
-                .bind(serde_json::to_string(&conversation.tags).unwrap_or_default())
+                .bind(&conversation.tags)
                 .bind(&conversation.tool_config)
                 .bind(conversation.is_archived)
                 .bind(Utc::now())
@@ -1360,7 +1393,7 @@ impl DatabaseService {
                 .bind(conversation.total_messages)
                 .bind(conversation.total_tokens)
                 .bind(conversation.cost)
-                .bind(serde_json::to_string(&conversation.tags).unwrap_or_default())
+                .bind(&conversation.tags)
                 .bind(&conversation.tool_config)
                 .bind(conversation.is_archived)
                 .bind(Utc::now())

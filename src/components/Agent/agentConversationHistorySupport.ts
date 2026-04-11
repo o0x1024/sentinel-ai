@@ -188,6 +188,21 @@ export const buildConversationTimeline = (
       if (documentAttachments && Array.isArray(documentAttachments) && documentAttachments.length > 0) {
         finalMetadata = { ...finalMetadata, document_attachments: documentAttachments }
       }
+      const referencedFiles =
+        parsedMetadata?.referenced_files || parsedStructured?.referenced_files
+      if (referencedFiles && Array.isArray(referencedFiles) && referencedFiles.length > 0) {
+        finalMetadata = { ...finalMetadata, referenced_files: referencedFiles }
+      }
+      const referencedAssets =
+        parsedMetadata?.referenced_assets || parsedStructured?.referenced_assets
+      if (referencedAssets && Array.isArray(referencedAssets) && referencedAssets.length > 0) {
+        finalMetadata = { ...finalMetadata, referenced_assets: referencedAssets }
+      }
+      const referencedTraffic =
+        parsedMetadata?.referenced_traffic || parsedStructured?.referenced_traffic
+      if (referencedTraffic && Array.isArray(referencedTraffic) && referencedTraffic.length > 0) {
+        finalMetadata = { ...finalMetadata, referenced_traffic: referencedTraffic }
+      }
     }
 
     if (row.role === 'assistant' && !normalizedDisplayContent) {

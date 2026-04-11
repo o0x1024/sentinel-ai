@@ -27,7 +27,10 @@ use crate::agents::executor::types::ToolCallRecord;
 use crate::agents::executor::utils::{cleanup_container_context_async, truncate_for_memory};
 use crate::agents::tenth_man::{InterventionContext, InterventionMode, TenthMan, TriggerReason};
 use crate::agents::tool_router::ToolRouter;
-use crate::agents::{append_tool_digests, build_context, build_tool_digest, ContextBuildInput};
+use crate::agents::{
+    append_tool_digests, build_context, build_tool_digest, resolve_context_policy,
+    ContextBuildInput,
+};
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 
 pub async fn execute_agent_with_tools(
@@ -104,10 +107,10 @@ pub async fn execute_agent_with_tools(
     let mut current_tool_ids = selected_tool_ids.clone();
 
     // 4. Build context via Context Engineering
-    let context_policy = params
-        .context_policy
-        .clone()
-        .unwrap_or_else(crate::agents::ContextPolicy::default);
+    let context_policy = resolve_context_policy(
+        params.context_policy.clone(),
+        params.context_engine_mode.unwrap_or_default(),
+    );
     let context_result = build_context(ContextBuildInput {
         app_handle: app_handle.clone(),
         execution_id: params.execution_id.clone(),
@@ -959,9 +962,10 @@ pub async fn execute_agent_with_tools(
                                 "skills".to_string(),
                                 "todos".to_string(),
                                 "http_request".to_string(),
-                                "subagent_execute".to_string(),
-                                "subagent_await".to_string(),
-                                "subagent_channel".to_string(),
+                                "spawn_agent".to_string(),
+                                "wait_agents".to_string(),
+                                "list_agents".to_string(),
+                                "close_agent".to_string(),
                                 "tenth_man_review".to_string(),
                             ];
                             if !tool_config

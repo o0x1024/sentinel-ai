@@ -37,7 +37,6 @@ export const useInputSlashCommands = (params: {
   getInputMessage: () => string
   onInputValueChange: (value: string) => void
   toggleRAG: () => void
-  toggleTools: () => void
 }) => {
   const slashOpen = ref(false)
   const slashActiveIndex = ref(0)
@@ -73,27 +72,9 @@ export const useInputSlashCommands = (params: {
       is_builtin: true,
     },
     {
-      id: 'builtin-rag',
-      name: 'rag',
-      description: '切换 RAG',
-      type: 'action',
-      action: 'toggle_rag',
-      enabled: true,
-      is_builtin: true,
-    },
-    {
-      id: 'builtin-tools',
-      name: 'tools',
-      description: '切换 Tools',
-      type: 'action',
-      action: 'toggle_tools',
-      enabled: true,
-      is_builtin: true,
-    },
-    {
-      id: 'builtin-toolcfg',
-      name: 'toolcfg',
-      description: '打开工具配置',
+      id: 'builtin-agentcfg',
+      name: 'agentcfg',
+      description: '打开 Agent 配置',
       type: 'action',
       action: 'open_tool_config',
       enabled: true,
@@ -179,11 +160,11 @@ export const useInputSlashCommands = (params: {
       case 'clear_conversation':
         return '清空会话'
       case 'toggle_rag':
-        return '切换 RAG'
+        return '旧版检索开关'
       case 'toggle_tools':
-        return '切换 Tools'
+        return '打开 Agent 配置'
       case 'open_tool_config':
-        return '打开工具配置'
+        return '打开 Agent 配置'
       default:
         return ''
     }
@@ -292,7 +273,7 @@ export const useInputSlashCommands = (params: {
         params.toggleRAG()
         break
       case 'toggle_tools':
-        params.toggleTools()
+        params.emitOpenToolConfig()
         break
       case 'open_tool_config':
         params.emitOpenToolConfig()

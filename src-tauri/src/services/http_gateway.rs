@@ -1712,6 +1712,7 @@ async fn run_agent_execution(
         persist_messages: true,
         subagent_run_id: None,
         context_policy: None,
+        context_engine_mode: Some(crate::agents::ContextEngineMode::ClaudeLike),
         recursion_depth: 0,
     };
 

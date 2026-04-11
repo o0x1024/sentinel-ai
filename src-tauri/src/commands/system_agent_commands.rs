@@ -361,8 +361,10 @@ pub async fn save_system_agent_profile(
 ) -> Result<CommandResponse<SystemAgentProfilePayload>, String> {
     let profile_record = record_from_payload(&profile)?;
     validate_profile_tool_policy(&profile_record).map_err(|e| e.to_string())?;
-    let binding_records =
-        normalize_profile_bindings(&profile_record, bindings_from_payload(&profile.id, &profile.bindings)?);
+    let binding_records = normalize_profile_bindings(
+        &profile_record,
+        bindings_from_payload(&profile.id, &profile.bindings)?,
+    );
 
     db_service
         .save_system_agent_profile(&profile_record, &binding_records)

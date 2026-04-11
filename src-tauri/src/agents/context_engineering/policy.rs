@@ -44,9 +44,16 @@ pub enum ContextScope {
     Subagent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMessageLayout {
+    SingleUserMessage,
+    SplitUserMessages,
+}
+
 #[derive(Debug, Clone)]
 pub struct ContextPolicy {
     pub scope: ContextScope,
+    pub message_layout: ContextMessageLayout,
     pub include_working_dir: bool,
     pub include_context_storage: bool,
     pub include_task_mainline: bool,
@@ -64,8 +71,15 @@ pub struct ContextPolicy {
 
 impl Default for ContextPolicy {
     fn default() -> Self {
+        Self::claude_like()
+    }
+}
+
+impl ContextPolicy {
+    pub fn claude_like() -> Self {
         Self {
             scope: ContextScope::Agent,
+            message_layout: ContextMessageLayout::SingleUserMessage,
             include_working_dir: true,
             include_context_storage: true,
             include_task_mainline: true,
@@ -87,12 +101,37 @@ impl Default for ContextPolicy {
             },
         }
     }
-}
 
-impl ContextPolicy {
+    pub fn codex_like() -> Self {
+        Self {
+            scope: ContextScope::Agent,
+            message_layout: ContextMessageLayout::SplitUserMessages,
+            include_working_dir: true,
+            include_context_storage: false,
+            include_task_mainline: true,
+            include_run_state: true,
+            include_document_attachments: true,
+            include_skill_instructions: true,
+            include_stuck_resolution_rule: true,
+            run_state_max_digests: 4,
+            run_state_max_chars: 1800,
+            task_brief_max_chars: 500,
+            layer_max_chars: 10000,
+            feature_context_packet_v2: true,
+            budget: ContextBudgetPolicy {
+                system_max_tokens: 3200,
+                run_state_max_tokens: 1400,
+                window_max_tokens: 10000,
+                retrieval_max_tokens: 1800,
+                tool_digest_max_tokens: 1400,
+            },
+        }
+    }
+
     pub fn subagent() -> Self {
         Self {
             scope: ContextScope::Subagent,
+            message_layout: ContextMessageLayout::SingleUserMessage,
             include_working_dir: false,
             include_context_storage: false,
             include_task_mainline: false,

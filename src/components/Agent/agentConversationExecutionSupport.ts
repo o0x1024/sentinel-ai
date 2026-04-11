@@ -1,4 +1,5 @@
 import type { ProcessedDocumentResult } from '@/types/agent'
+import type { ReferencedAsset, ReferencedFile, ReferencedTraffic } from '@/types/agentReferences'
 
 export const takeOverConversationExecution = async (params: {
   appendPartialAssistantMessage: (message: {
@@ -83,6 +84,7 @@ export const buildAssistantModelOverride = (
 )
 
 export const executeConversationTask = async (params: {
+  assistantContextMode: 'claude-like' | 'codex-like'
   assistantSelectedModel?: string | null
   conversationId: string
   defaultConversationTitle: string
@@ -106,6 +108,7 @@ export const executeConversationTask = async (params: {
     config: {
       attachments?: unknown[]
       conversation_id: string
+      context_mode: 'claude-like' | 'codex-like'
       display_content?: string
       document_attachments?: ProcessedDocumentResult[]
       enable_rag: boolean
@@ -113,14 +116,20 @@ export const executeConversationTask = async (params: {
       force_todos: boolean
       message_id: null
       model_override?: string
+      referenced_assets?: ReferencedAsset[]
+      referenced_files?: ReferencedFile[]
+      referenced_traffic?: ReferencedTraffic[]
       timeout_secs: number
       tool_config: unknown
     }
     task: string
   }) => Promise<any>
   runtimeToolConfig: unknown
+  usedAssets: ReferencedAsset[]
   usedAttachments: unknown[]
   usedDocuments: ProcessedDocumentResult[]
+  usedFiles: ReferencedFile[]
+  usedTraffic: ReferencedTraffic[]
 }): Promise<any> => {
   params.maybeAutoRenameConversation({
     convId: params.conversationId,
@@ -136,6 +145,7 @@ export const executeConversationTask = async (params: {
     config: {
       attachments: params.usedAttachments.length > 0 ? params.usedAttachments : undefined,
       conversation_id: params.conversationId,
+      context_mode: params.assistantContextMode,
       display_content: params.displayContent,
       document_attachments: params.usedDocuments.length > 0 ? params.usedDocuments : undefined,
       enable_rag: params.enableRag,
@@ -143,6 +153,9 @@ export const executeConversationTask = async (params: {
       force_todos: params.forceTodos,
       message_id: null,
       model_override: buildAssistantModelOverride(params.assistantSelectedModel),
+      referenced_assets: params.usedAssets.length > 0 ? params.usedAssets : undefined,
+      referenced_files: params.usedFiles.length > 0 ? params.usedFiles : undefined,
+      referenced_traffic: params.usedTraffic.length > 0 ? params.usedTraffic : undefined,
       timeout_secs: 300,
       tool_config: params.runtimeToolConfig,
     },

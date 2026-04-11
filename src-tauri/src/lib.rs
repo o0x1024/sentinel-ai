@@ -39,9 +39,9 @@ use services::{
 use crate::skills::scan_and_upsert_skills;
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 use commands::{
-    ai, ai_execution_state_support, ai_turn_logs, aisettings, asset, cleanup_expired_cache, config,
-    database as db_commands, delete_cache, dictionary, get_all_cache_keys, get_cache,
-    llm_test_commands,
+    ai, ai_conversation_binding_support, ai_execution_state_support, ai_turn_logs, aisettings,
+    asset, cleanup_expired_cache, config, database as db_commands, delete_cache, dictionary,
+    get_all_cache_keys, get_cache, llm_test_commands,
     monitor_commands::MonitorSchedulerState,
     packet_capture_commands::{self, PacketCaptureState},
     performance,
@@ -722,6 +722,10 @@ pub fn run() {
                 if let Err(e) = tool_commands::init_shell_permission_handler(handle.clone()).await {
                     tracing::error!("Failed to init shell permission handler: {}", e);
                 }
+                if let Err(e) = tool_commands::init_ask_user_question_handler(handle.clone()).await
+                {
+                    tracing::error!("Failed to init ask user question handler: {}", e);
+                }
 
                 tracing::info!("Workflow engine and scheduler initialized");
 
@@ -856,9 +860,15 @@ pub fn run() {
             ai::add_ai_service,
             ai::remove_ai_service,
             ai::create_ai_conversation,
+            commands::assistant_profile_commands::list_assistant_profiles,
+            commands::assistant_profile_commands::get_assistant_profile,
+            commands::assistant_profile_commands::save_assistant_profiles,
+            commands::assistant_profile_commands::get_default_assistant_profile_id,
+            commands::assistant_profile_commands::save_default_assistant_profile_id,
             ai::save_ai_message,
             ai::cancel_ai_stream,
             ai::cancel_shell_execution,
+            ai_conversation_binding_support::get_ai_conversation_binding,
             ai_execution_state_support::get_ai_conversation,
             ai_execution_state_support::get_ai_conversations,
             ai_execution_state_support::get_ai_conversations_paginated,
@@ -871,6 +881,7 @@ pub fn run() {
             ai::delete_subagent_runs_after,
             ai::clear_conversation_messages,
             ai::save_tool_config,
+            ai_conversation_binding_support::save_ai_conversation_binding,
             ai::get_tool_config,
             ai::get_ai_conversation_history,
             ai::delete_ai_conversation,
@@ -907,6 +918,9 @@ pub fn run() {
             ai::cancel_plugin_assistant_chat,
             commands::get_active_rag_collections,
             commands::set_rag_collection_active,
+            tool_commands::get_pending_ask_user_questions,
+            tool_commands::respond_ask_user_question,
+            tool_commands::reject_ask_user_question,
             // Plugin generation commands
             commands::get_combined_plugin_prompt_api,
             // System Agent commands
@@ -1450,6 +1464,7 @@ pub fn run() {
             commands::test_tracking_commands::test_error_tracking,
 
             // Shell Tool commands
+            tool_commands::init_ask_user_question_handler,
             tool_commands::init_shell_permission_handler,
             tool_commands::get_shell_tool_config,
             tool_commands::set_shell_tool_config,
@@ -1473,6 +1488,9 @@ pub fn run() {
             commands::save_workspace_settings,
             commands::list_uploaded_files,
             commands::clear_uploaded_files,
+            commands::search_recent_proxy_requests,
+            commands::search_working_directory_files,
+            commands::read_working_directory_file_preview,
             // Terminal WebSocket commands
             commands::start_terminal_server,
             commands::stop_terminal_server,
@@ -1564,26 +1582,26 @@ pub fn run() {
             sentinel_workflow::commands::list_workflow_schedules,
             sentinel_workflow::commands::get_workflow_schedule,
             // Team V3 commands (non-backward-compatible cutover)
-            commands::team_v3_commands::team_v3_ensure_schema,
-            commands::team_v3_commands::team_v3_reset_schema,
-            commands::team_v3_commands::team_v3_create_session,
-            commands::team_v3_commands::team_v3_get_session,
-            commands::team_v3_commands::team_v3_list_sessions,
-            commands::team_v3_commands::team_v3_update_session,
-            commands::team_v3_commands::team_v3_start_execution,
-            commands::team_v3_commands::team_v3_stop_execution,
-            commands::team_v3_commands::team_v3_finalize_execution,
-            commands::team_v3_commands::team_v3_get_run_status,
-            commands::team_v3_commands::team_v3_create_task,
-            commands::team_v3_commands::team_v3_list_tasks,
-            commands::team_v3_commands::team_v3_claim_task,
-            commands::team_v3_commands::team_v3_release_task_claim,
-            commands::team_v3_commands::team_v3_send_message,
-            commands::team_v3_commands::team_v3_list_thread_messages,
-            commands::team_v3_commands::team_v3_list_messages,
-            commands::team_v3_commands::team_v3_list_blackboard_entries,
-            commands::team_v3_commands::team_v3_submit_plan_revision,
-            commands::team_v3_commands::team_v3_review_plan_revision,
+            commands::team_v3_schema::team_v3_ensure_schema,
+            commands::team_v3_schema::team_v3_reset_schema,
+            commands::team_v3_api::team_v3_create_session,
+            commands::team_v3_api::team_v3_get_session,
+            commands::team_v3_api::team_v3_list_sessions,
+            commands::team_v3_api::team_v3_update_session,
+            commands::team_v3_api::team_v3_start_execution,
+            commands::team_v3_api::team_v3_stop_execution,
+            commands::team_v3_api::team_v3_finalize_execution,
+            commands::team_v3_api::team_v3_get_run_status,
+            commands::team_v3_api::team_v3_create_task,
+            commands::team_v3_api::team_v3_list_tasks,
+            commands::team_v3_api::team_v3_claim_task,
+            commands::team_v3_api::team_v3_release_task_claim,
+            commands::team_v3_api::team_v3_send_message,
+            commands::team_v3_api::team_v3_list_thread_messages,
+            commands::team_v3_api::team_v3_list_messages,
+            commands::team_v3_api::team_v3_list_blackboard_entries,
+            commands::team_v3_api::team_v3_submit_plan_revision,
+            commands::team_v3_api::team_v3_review_plan_revision,
         ])
         .run(context)
         .expect("Failed to start Tauri application");

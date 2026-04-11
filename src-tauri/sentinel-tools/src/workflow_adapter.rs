@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::dynamic_tool::{create_executor, DynamicToolDef, ToolExecutor, ToolSource};
+use crate::dynamic_tool::{
+    create_executor, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
+};
 use crate::tool_server::ToolServer;
 
 /// Workflow tool metadata
@@ -173,6 +175,7 @@ impl WorkflowToolAdapter {
                 workflow_id: workflow_id.clone(),
             },
             category: "workflow".to_string(),
+            execution_policy: ToolExecutionPolicy::default(),
             executor: create_workflow_executor(workflow_id),
         }
     }

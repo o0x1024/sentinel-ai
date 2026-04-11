@@ -3,6 +3,7 @@ import type {
   PendingDocumentAttachment,
   ProcessedDocumentResult,
 } from '@/types/agent'
+import type { ReferencedAsset, ReferencedFile, ReferencedTraffic } from '@/types/agentReferences'
 
 export interface ReplaySubagentLike {
   startedAt?: number
@@ -12,6 +13,9 @@ export interface RestoredMessageDraftArtifacts {
   pendingAttachments: any[]
   pendingDocuments: PendingDocumentAttachment[]
   processedDocuments: ProcessedDocumentResult[]
+  referencedAssets: ReferencedAsset[]
+  referencedFiles: ReferencedFile[]
+  referencedTraffic: ReferencedTraffic[]
 }
 
 export interface MessageReplaySnapshot<TSubagent extends ReplaySubagentLike> {
@@ -70,6 +74,9 @@ export const restoreDraftArtifactsFromMessage = (
   const metadata = (message.metadata as any) || {}
   const pendingAttachments = parseMetadataArray(metadata.image_attachments)
   const rawDocumentAttachments = parseMetadataArray(metadata.document_attachments)
+  const referencedFiles = parseMetadataArray(metadata.referenced_files) as ReferencedFile[]
+  const referencedAssets = parseMetadataArray(metadata.referenced_assets) as ReferencedAsset[]
+  const referencedTraffic = parseMetadataArray(metadata.referenced_traffic) as ReferencedTraffic[]
   const processedDocuments = rawDocumentAttachments.map((doc: any) => {
     const status = doc?.status === 'failed' || doc?.status === 'processing' || doc?.status === 'pending'
       ? doc.status
@@ -95,6 +102,9 @@ export const restoreDraftArtifactsFromMessage = (
     pendingAttachments,
     pendingDocuments,
     processedDocuments,
+    referencedAssets,
+    referencedFiles,
+    referencedTraffic,
   }
 }
 

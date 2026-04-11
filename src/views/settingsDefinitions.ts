@@ -19,7 +19,6 @@ export const OUTPUT_STORAGE_THRESHOLD_DEFAULT = 16000
 export const settingsCategories = [
   { id: 'ai', icon: 'fas fa-robot' },
   { id: 'rag', icon: 'fas fa-database' },
-  { id: 'agent', icon: 'fas fa-user-cog' },
   { id: 'database', icon: 'fas fa-server' },
   { id: 'system', icon: 'fas fa-cog' },
   { id: 'security', icon: 'fas fa-shield-alt' },

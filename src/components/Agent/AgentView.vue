@@ -29,9 +29,21 @@
         v-if="showToolConfig"
         class="tool-config-drawer absolute right-0 top-0 bottom-0 w-[420px] bg-base-100 shadow-2xl z-50 overflow-hidden"
       >
-        <ToolConfigPanel 
-          :config="toolConfig"
-          @update:config="handleToolConfigUpdate"
+        <AssistantWorkConfigPanel
+          :available-models="assistantModelOptions"
+          :context-mode="assistantSessionSettings.contextMode"
+          :model-loading="isLoadingAssistantModels"
+          :profile-id="assistantSessionSettings.profileId"
+          :profile-loading="isLoadingAssistantProfiles"
+          :profile-options="assistantProfileOptions"
+          :run-mode="assistantSessionSettings.runMode"
+          :selected-model="assistantSelectedModel"
+          :tool-config="toolConfig"
+          @update:context-mode="handleAssistantContextModeChange"
+          @update:model="handleAssistantModelSelection"
+          @update:profile-id="handleAssistantProfileChange"
+          @update:run-mode="handleAssistantRunModeChange"
+          @update:tool-config="handleToolConfigUpdate"
           @close="showToolConfig = false"
         />
       </div>
@@ -59,24 +71,6 @@
           >
             {{ conversationExecutionStateBadgeText }}
           </span>
-          
-          <!-- RAG {{ t('agent.statusIndicator') }} -->
-          <div v-if="ragEnabled" class="flex items-center gap-1 px-2 py-1 bg-info/10 rounded-md border border-info/30">
-            <i class="fas fa-book text-info text-xs"></i>
-            <span class="text-xs text-info font-medium">{{ t('agent.knowledgeBase') }}</span>
-          </div>
-
-          <!-- Tenth Man Toggle -->
-          <button 
-            @click="tenthManEnabled = !tenthManEnabled"
-            class="btn btn-xs gap-1 transition-colors"
-            :class="tenthManEnabled ? 'btn-error text-white' : 'btn-ghost text-base-content/50'"
-            :title="tenthManEnabled ? 'Disable Tenth Man Rule (Strict Review)' : 'Enable Tenth Man Rule (Strict Review)'"
-          >
-            <i class="fas fa-user-secret"></i>
-            <span class="text-xs font-medium hidden sm:inline">10th Man</span>
-          </button>
-
         </div>
         <div class="flex items-center gap-2">
           <!-- Todos Button - always visible -->
@@ -112,7 +106,7 @@
             <span>{{ t('agent.terminal') }}</span>
           </button>
           <button
-            v-if="teamModeEnabled"
+            v-if="teamWorkspaceAvailable"
             @click="handleToggleTeamWorkspace()"
             class="btn btn-sm gap-1"
             :class="activeRightPanel === 'team' ? 'btn-primary' : 'btn-ghost text-primary'"
@@ -174,33 +168,40 @@
             :allow-takeover="true"
             :show-debug-info="false"
             :rag-enabled="ragEnabled"
-            :tools-enabled="toolsEnabled"
             :web-search-enabled="webSearchEnabled"
             :team-enabled="teamModeEnabled"
             :pending-attachments="pendingAttachments"
             :pending-documents="pendingDocuments"
             :processed-documents="processedDocuments"
+            :referenced-files="referencedFiles"
             :referenced-traffic="referencedTraffic"
             :referenced-assets="referencedAssets"
             :context-usage="contextUsage"
             :default-max-context-tokens="assistantDefaultMaxContextTokens"
-            :available-models="assistantModelOptions"
-            :selected-model="assistantSelectedModel"
-            :model-loading="isLoadingAssistantModels"
+            :available-agents="assistantAgentOptions"
+            :selected-agent="assistantSessionSettings.profileId"
+            :agent-loading="isLoadingAssistantProfiles"
             @send-message="handleSubmit"
             @stop-execution="handleStop"
             @toggle-rag="handleToggleRAG"
-            @toggle-tools="handleToggleTools"
             @toggle-web-search="handleToggleWebSearch"
             @toggle-team="handleToggleTeamMode"
-            @change-model="handleAssistantModelChange"
+            @change-agent="handleAssistantProfileChange"
             @add-attachments="handleAddAttachments"
             @remove-attachment="handleRemoveAttachment"
             @add-documents="handleAddDocuments"
             @remove-document="handleRemoveDocument"
             @document-processed="handleDocumentProcessed"
+            @remove-file="handleRemoveFile"
+            @clear-files="handleClearFiles"
+            @add-file-reference="addReferencedFiles"
+            @sync-file-references="syncReferencedFiles"
+            @add-traffic-reference="addReferencedTraffic"
+            @sync-traffic-references="syncReferencedTraffic"
             @remove-traffic="handleRemoveTraffic"
             @clear-traffic="handleClearTraffic"
+            @add-asset-reference="addReferencedAssets"
+            @sync-asset-references="syncReferencedAssets"
             @remove-asset="handleRemoveAsset"
             @clear-assets="handleClearAssets"
             @create-new-conversation="handleCreateConversation"
@@ -275,6 +276,7 @@
       :subagent="selectedSubagent"
       @close="showSubagentDetailModal = false"
     />
+    <AskUserQuestionModal :execution-id="conversationId" />
   </div>
 </template>
 
@@ -303,6 +305,7 @@ import { useAgentEvents } from '@/composables/useAgentEvents'
 import { useTodos } from '@/composables/useTodos'
 import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
+import AskUserQuestionModal from './AskUserQuestionModal.vue'
 import MessageFlow from './MessageFlow.vue'
 import TodoPanel from './TodoPanel.vue'
 import HtmlPanel from './HtmlPanel.vue'
@@ -311,7 +314,7 @@ import SubagentDetailModal from './SubagentDetailModal.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
-import ToolConfigPanel from './ToolConfigPanel.vue'
+import AssistantWorkConfigPanel from './AssistantWorkConfigPanel.vue'
 import TeamWorkspacePanel from './TeamWorkspacePanel.vue'
 import {
   type AgentExecutionFinishedEvent,
@@ -337,9 +340,16 @@ import {
 import { useAgentConversationFlow } from './useAgentConversationFlow'
 import { useAgentModelAndToolConfig } from './useAgentModelAndToolConfig'
 import { useAgentPanels } from './useAgentPanels'
+import { useAssistantProfiles, type AssistantProfileOption } from './assistantProfiles'
+import { useAssistantSessionSettings } from './useAssistantSessionSettings'
 import { useAgentTeamRuntime } from './useAgentTeamRuntime'
 import { useAgentTeamViewState } from './useAgentTeamViewState'
-import type { ReferencedAsset, ReferencedTraffic, TrafficSendType } from './agentDraftTypes'
+import type {
+  AssistantConversationBinding,
+  ReferencedAsset,
+  ReferencedTraffic,
+  TrafficSendType,
+} from './agentDraftTypes'
 import { useAgentDraftArtifacts } from './useAgentDraftArtifacts'
 import type {
   TeamOrchestrationPlan,
@@ -353,6 +363,7 @@ import type {
   TeamStepMovePayload,
 } from './teamOrchestrationTypes'
 import {
+  normalizeToolIdList,
   type UiToolConfigPayload,
 } from './toolConfigRuntime'
 
@@ -420,30 +431,63 @@ const conversationExecutionStateBadgeClass = computed(() => {
   return getExecutionStateBadgeClass(conversationExecutionState.value?.outcome)
 })
 
+const {
+  defaultAssistantProfileId,
+  getAssistantProfileOption,
+  loadDefaultAssistantProfile,
+  isLoadingAssistantProfiles,
+  loadAssistantProfiles,
+  profileOptions: assistantProfileOptions,
+} = useAssistantProfiles()
+const assistantAgentOptions = computed(() =>
+  assistantProfileOptions.value.map((profile) => ({
+    value: profile.id,
+    label: profile.label,
+    description: profile.runMode === 'team' ? 'Team' : 'Assistant',
+  })),
+)
+
 // Feature toggles
-const ragEnabled = ref(false)
-const webSearchEnabled = ref(false)
-const teamModeEnabled = ref(false)
-const tenthManEnabled = ref(false)
+const {
+  applyConversationBinding,
+  applyProfilePreset,
+  ragEnabled,
+  resetSessionSettings,
+  sessionSettings: assistantSessionSettings,
+  setContextMode,
+  setProfileId,
+  setRunMode,
+  teamModeEnabled,
+  tenthManEnabled,
+  toConversationBinding,
+  webSearchEnabled,
+} = useAssistantSessionSettings()
 const {
   addReferencedAssets,
+  addReferencedFiles,
   addReferencedTraffic,
   clearDraftArtifacts,
   handleAddAttachments,
   handleAddDocuments,
   handleClearAssets,
+  handleClearFiles,
   handleClearTraffic,
   handleDocumentProcessed,
   handleRemoveAsset,
   handleRemoveAttachment,
   handleRemoveDocument,
+  handleRemoveFile,
   handleRemoveTraffic,
   pendingAttachments,
   pendingDocuments,
   processedDocuments,
   referencedAssets,
+  referencedFiles,
   referencedTraffic,
   restoreArtifactsFromMessage,
+  syncReferencedAssets,
+  syncReferencedFiles,
+  syncReferencedTraffic,
 } = useAgentDraftArtifacts()
 const activeTeamSessionId = ref<string | null>(null)
 const teamSessionState = ref<string>('PENDING')
@@ -504,12 +548,20 @@ const {
   isLoadingAssistantModels,
   loadAssistantModelOptions,
   loadToolConfig,
+  setAssistantSelectedModel,
   toolConfig,
   toolsEnabled,
 } = useAgentModelAndToolConfig({
   getFailedToSaveToolConfigLabel: () => t('agent.failedToSaveToolConfig'),
   localError,
 })
+
+const CONVERSATION_BINDING_SAVE_DEBOUNCE_MS = 300
+const assistantProfileRegistryReady = ref(false)
+const isHydratingConversationBinding = ref(false)
+const conversationBindingReadyId = ref<string | null>(null)
+let conversationBindingSaveTimer: ReturnType<typeof setTimeout> | null = null
+const assistantContextMode = computed(() => assistantSessionSettings.value.contextMode)
 
 // Agent events
 const matchesCurrentTeamSubagentParent = (parentExecutionId: string) => {
@@ -606,6 +658,17 @@ const isTeamRunActive = computed(() => {
     'ARTIFACT_GENERATION',
   ].includes(normalized)
 })
+
+const teamWorkspaceAvailable = computed(() =>
+  Boolean(
+    teamModeEnabled.value ||
+    activeTeamSessionId.value ||
+    teamSessionDetail.value ||
+    teamSessionMessages.value.length ||
+    teamTasks.value.length ||
+    teamBlackboardEntries.value.length,
+  ),
+)
 const isExecuting = computed(() => agentEvents.isExecuting.value || isTeamRunActive.value)
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
@@ -756,7 +819,7 @@ const {
   },
   resolveAgentName,
   selectedTeamTaskAssigneeId: computed(() => normalizeOptionalText(selectedTeamTask.value?.assignee_agent_id) || null),
-  teamModeEnabled,
+  teamWorkspaceAvailable,
   terminalClose: () => {
     terminalComposable.closeTerminal()
   },
@@ -775,22 +838,181 @@ const {
   },
 })
 
-// Handle RAG toggle
+// Handle retrieval toggle
 const handleToggleRAG = (enabled: boolean) => {
   ragEnabled.value = enabled
-  console.log('[AgentView] RAG:', enabled ? 'enabled' : 'disabled')
-}
-
-// Handle Tools toggle
-const handleToggleTools = (enabled: boolean) => {
-  toolsEnabled.value = enabled
-  toolConfig.value.enabled = enabled
-  console.log('[AgentView] Tools:', enabled ? 'enabled' : 'disabled')
+  console.log('[AgentView] retrieval:', enabled ? 'enabled' : 'disabled')
 }
 
 const handleToggleWebSearch = (enabled: boolean) => {
   webSearchEnabled.value = enabled
   console.log('[AgentView] Web search:', enabled ? 'enabled' : 'disabled')
+}
+
+const handleAssistantModelSelection = (value: string | null) => {
+  handleAssistantModelChange(value || '')
+}
+
+const applyProfileModelDefault = (profile: AssistantProfileOption) => {
+  const defaultModel = profile.defaultModel?.trim()
+  if (!defaultModel) return
+  setAssistantSelectedModel(defaultModel, { persist: false })
+}
+
+const applyProfileToolsDefault = (profile: AssistantProfileOption, enabledOverride?: boolean) => {
+  const enabled = typeof enabledOverride === 'boolean'
+    ? enabledOverride
+    : profile.defaultToolsEnabled === true
+  toolsEnabled.value = enabled
+  toolConfig.value = {
+    ...toolConfig.value,
+    enabled,
+    selection_strategy: profile.defaultToolSelectionStrategy || toolConfig.value.selection_strategy,
+    max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
+    fixed_tools: normalizeToolIdList(profile.defaultFixedTools),
+    disabled_tools: normalizeToolIdList(profile.defaultDisabledTools),
+    manual_tools: normalizeToolIdList(profile.defaultManualTools),
+  } as UiToolConfigPayload
+}
+
+const applyProfileTeamPresetDefaults = (profile: AssistantProfileOption) => {
+  if (profile.runMode !== 'team' || activeTeamSessionId.value) return
+  const orchestrationPresetId = profile.defaultTeamOrchestrationPresetId?.trim()
+  const recoveryPresetId = profile.defaultTeamRecoveryPresetId?.trim()
+  if (orchestrationPresetId) {
+    teamSelectedOrchestrationPresetId.value = orchestrationPresetId as TeamOrchestrationPresetId
+  }
+  if (recoveryPresetId) {
+    teamSelectedRecoveryPresetId.value = recoveryPresetId as TeamRecoveryPresetId
+  }
+}
+
+const handleAssistantProfileChange = (profileId: string) => {
+  const profile = getAssistantProfileOption(profileId)
+  if (profile) {
+    applyProfilePreset(profile)
+    applyProfileModelDefault(profile)
+    applyProfileToolsDefault(profile)
+    applyProfileTeamPresetDefaults(profile)
+    void handleToggleTeamMode(profile.runMode === 'team')
+    return
+  }
+  setProfileId(profileId)
+}
+
+const handleAssistantContextModeChange = (mode: 'claude-like' | 'codex-like') => {
+  setContextMode(mode)
+}
+
+const handleAssistantRunModeChange = async (mode: 'assistant' | 'team') => {
+  setRunMode(mode)
+  await handleToggleTeamMode(mode === 'team')
+}
+
+const applyConversationBindingState = (binding: AssistantConversationBinding | null) => {
+  applyConversationBinding(binding)
+  const boundProfile = binding?.profileId ? getAssistantProfileOption(binding.profileId) : null
+
+  if (binding?.selectedModel) {
+    setAssistantSelectedModel(binding.selectedModel, { persist: false })
+  } else if (boundProfile) {
+    applyProfileModelDefault(boundProfile)
+  }
+
+  if (boundProfile) {
+    applyProfileToolsDefault(
+      boundProfile,
+      typeof binding?.toolsEnabled === 'boolean' ? binding.toolsEnabled : undefined,
+    )
+  } else if (typeof binding?.toolsEnabled === 'boolean') {
+    toolsEnabled.value = binding.toolsEnabled
+    toolConfig.value = {
+      ...toolConfig.value,
+      enabled: binding.toolsEnabled,
+    } as UiToolConfigPayload
+  }
+}
+
+const applyDefaultAssistantProfile = () => {
+  resetSessionSettings()
+  const defaultProfileId = defaultAssistantProfileId.value.trim()
+  if (!defaultProfileId) return
+  const defaultProfile = getAssistantProfileOption(defaultProfileId)
+  if (defaultProfile) {
+    applyProfilePreset(defaultProfile)
+    applyProfileModelDefault(defaultProfile)
+    applyProfileToolsDefault(defaultProfile)
+    applyProfileTeamPresetDefaults(defaultProfile)
+    return
+  }
+  setProfileId(defaultProfileId)
+}
+
+const loadConversationBinding = async (targetConversationId: string | null) => {
+  if (!targetConversationId) {
+    conversationBindingReadyId.value = null
+    applyDefaultAssistantProfile()
+    return
+  }
+
+  isHydratingConversationBinding.value = true
+  conversationBindingReadyId.value = null
+  try {
+    const binding = await invoke<AssistantConversationBinding | null>('get_ai_conversation_binding', {
+      conversationId: targetConversationId,
+    })
+    if (conversationId.value !== targetConversationId) return
+    if (binding) {
+      applyConversationBindingState(binding)
+    } else {
+      applyDefaultAssistantProfile()
+    }
+    conversationBindingReadyId.value = targetConversationId
+  } catch (error) {
+    console.warn('[AgentView] Failed to load conversation binding:', error)
+    if (conversationId.value === targetConversationId) {
+      applyDefaultAssistantProfile()
+      conversationBindingReadyId.value = targetConversationId
+    }
+  } finally {
+    if (conversationId.value === targetConversationId) {
+      isHydratingConversationBinding.value = false
+    }
+  }
+}
+
+const persistConversationBinding = async (targetConversationId: string) => {
+  const binding = toConversationBinding({
+    selectedModel: assistantSelectedModel.value,
+    toolsEnabled: toolsEnabled.value,
+  })
+
+  await invoke('save_ai_conversation_binding', {
+    conversationId: targetConversationId,
+    binding,
+  })
+}
+
+const schedulePersistConversationBinding = () => {
+  const targetConversationId = conversationId.value
+  if (!targetConversationId) return
+  if (isHydratingConversationBinding.value) return
+  if (conversationBindingReadyId.value !== targetConversationId) return
+
+  if (conversationBindingSaveTimer) {
+    clearTimeout(conversationBindingSaveTimer)
+  }
+
+  conversationBindingSaveTimer = setTimeout(async () => {
+    try {
+      if (!conversationId.value || conversationId.value !== targetConversationId) return
+      await persistConversationBinding(targetConversationId)
+    } catch (error) {
+      console.warn('[AgentView] Failed to persist conversation binding:', error)
+    } finally {
+      conversationBindingSaveTimer = null
+    }
+  }, CONVERSATION_BINDING_SAVE_DEBOUNCE_MS)
 }
 const {
   appendTeamBridgeMessage,
@@ -853,6 +1075,7 @@ const {
   },
   teamBlackboardEntries,
   teamModeEnabled,
+  teamWorkspaceAvailable,
   teamSelectedOrchestrationPresetId,
   teamSelectedRecoveryPresetId,
   teamSessionDetail,
@@ -1127,6 +1350,7 @@ const {
   agentMessages: agentEvents.messages,
   agentStreamingContent: agentEvents.streamingContent,
   agentSubagents: agentEvents.subagents,
+  assistantContextMode,
   assistantSelectedModel,
   buildToolConfig: () => toolConfig.value as unknown as UiToolConfigPayload,
   clearAgentMessages: () => {
@@ -1173,6 +1397,7 @@ const {
   processedDocuments,
   ragEnabled,
   referencedAssets,
+  referencedFiles,
   referencedTraffic,
   resetTerminal: () => {
     terminalComposable.resetTerminal()
@@ -1220,7 +1445,12 @@ const handleCreateConversation = async (newConvId?: string) => {
 // Initialize
 onMounted(async () => {
   console.log('[AgentView] Mounted with executionId:', props.executionId)
-  await loadAssistantModelOptions()
+  await Promise.all([
+    loadAssistantModelOptions(),
+    loadAssistantProfiles(),
+    loadDefaultAssistantProfile(),
+  ])
+  assistantProfileRegistryReady.value = true
   unlistenAiConfigUpdated = await listen('ai_config_updated', async () => {
     await loadAssistantModelOptions()
   })
@@ -1286,7 +1516,35 @@ onMounted(async () => {
   })
 })
 
+watch(
+  [assistantProfileRegistryReady, conversationId],
+  ([ready, value]) => {
+    if (!ready) return
+    void loadConversationBinding(value)
+  },
+  { immediate: true },
+)
+
+watch(
+  [
+    conversationId,
+    ragEnabled,
+    webSearchEnabled,
+    tenthManEnabled,
+    teamModeEnabled,
+    assistantSelectedModel,
+    toolsEnabled,
+  ],
+  () => {
+    schedulePersistConversationBinding()
+  },
+)
+
 onUnmounted(() => {
+  if (conversationBindingSaveTimer) {
+    clearTimeout(conversationBindingSaveTimer)
+    conversationBindingSaveTimer = null
+  }
   if (unlistenAiConfigUpdated) {
     unlistenAiConfigUpdated()
     unlistenAiConfigUpdated = null
@@ -1368,6 +1626,7 @@ defineExpose({
   scrollToBottom: () => scrollMessageViewportToBottom(),
   addReferencedTraffic,
   addReferencedAssets,
+  addReferencedFiles,
   loadConversationHistory,
   conversationId,
   focusInput: () => inputAreaRef.value?.focusInput(),

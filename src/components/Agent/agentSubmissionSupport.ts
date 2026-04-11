@@ -24,28 +24,39 @@ export interface SubmissionReferencedAsset {
   value: string
 }
 
-export interface SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset> {
+export interface SubmissionReferencedFile {
+  path: string
+  preview: string
+  relativePath: string
+  size: number
+  truncated: boolean
+}
+
+export interface SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset, TFile> {
   usedAssets: TAsset[]
   usedAttachments: TAttachment[]
   usedDocuments: ProcessedDocumentResult[]
+  usedFiles: TFile[]
   usedTraffic: TTraffic[]
 }
 
-export interface PreparedSubmission<TAttachment, TTraffic, TAsset>
-  extends SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset> {
+export interface PreparedSubmission<TAttachment, TTraffic, TAsset, TFile>
+  extends SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset, TFile> {
   displayContent?: string
   fullTask: string
 }
 
-export const collectSubmissionResourceSnapshot = <TAttachment, TTraffic, TAsset>(params: {
+export const collectSubmissionResourceSnapshot = <TAttachment, TTraffic, TAsset, TFile>(params: {
   pendingAttachments: TAttachment[]
   processedDocuments: ProcessedDocumentResult[]
   referencedAssets: TAsset[]
+  referencedFiles: TFile[]
   referencedTraffic: TTraffic[]
-}): SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset> => ({
+}): SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset, TFile> => ({
   usedAssets: [...params.referencedAssets],
   usedAttachments: [...params.pendingAttachments],
   usedDocuments: params.processedDocuments.filter((doc) => doc.status === 'ready'),
+  usedFiles: [...params.referencedFiles],
   usedTraffic: [...params.referencedTraffic],
 })
 
@@ -136,8 +147,26 @@ export const buildAssetContext = (assets: SubmissionReferencedAsset[]): string =
   return parts.join('\n')
 }
 
+export const buildFileContext = (files: SubmissionReferencedFile[]): string => {
+  const parts: string[] = ['Referenced files:\n']
+
+  files.forEach((file, index) => {
+    parts.push(`\n--- File #${index + 1} ---`)
+    parts.push(`Path: ${file.relativePath}`)
+    parts.push(`Absolute Path: ${file.path}`)
+    parts.push(`Size: ${file.size} bytes`)
+    if (file.truncated) {
+      parts.push('Preview: [truncated]')
+    }
+    parts.push(`\nContent Preview:\n${file.preview}`)
+  })
+
+  return parts.join('\n')
+}
+
 export const buildSubmissionTask = (params: {
   assets: SubmissionReferencedAsset[]
+  files: SubmissionReferencedFile[]
   task: string
   traffic: SubmissionReferencedTraffic[]
 }): { displayContent?: string; fullTask: string } => {
@@ -157,28 +186,40 @@ export const buildSubmissionTask = (params: {
     displayContent = params.task
   }
 
+  if (params.files.length > 0) {
+    const fileContext = buildFileContext(params.files)
+    fullTask = fullTask === params.task
+      ? `${fileContext}\n\nUser task: ${params.task}`
+      : `${fileContext}\n\n${fullTask}`
+    displayContent = params.task
+  }
+
   return { displayContent, fullTask }
 }
 
-export const prepareSubmission = <TAttachment, TTraffic, TAsset>(params: {
+export const prepareSubmission = <TAttachment, TTraffic, TAsset, TFile>(params: {
   clearDraftState: () => void
   pendingAttachments: TAttachment[]
   processedDocuments: ProcessedDocumentResult[]
   referencedAssets: TAsset[]
+  referencedFiles: TFile[]
   referencedTraffic: TTraffic[]
   setPendingDocumentAttachments: (documents: ProcessedDocumentResult[]) => void
   task: string
   toAssetContextItems: (assets: TAsset[]) => SubmissionReferencedAsset[]
+  toFileContextItems: (files: TFile[]) => SubmissionReferencedFile[]
   toTrafficContextItems: (traffic: TTraffic[]) => SubmissionReferencedTraffic[]
-}): PreparedSubmission<TAttachment, TTraffic, TAsset> => {
+}): PreparedSubmission<TAttachment, TTraffic, TAsset, TFile> => {
   const usedResources = collectSubmissionResourceSnapshot({
     pendingAttachments: params.pendingAttachments,
     processedDocuments: params.processedDocuments,
     referencedAssets: params.referencedAssets,
+    referencedFiles: params.referencedFiles,
     referencedTraffic: params.referencedTraffic,
   })
   const { displayContent, fullTask } = buildSubmissionTask({
     assets: params.toAssetContextItems(params.referencedAssets),
+    files: params.toFileContextItems(params.referencedFiles),
     task: params.task,
     traffic: params.toTrafficContextItems(params.referencedTraffic),
   })

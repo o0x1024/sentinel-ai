@@ -19,9 +19,9 @@ use crate::services::system_agents::context::build_traffic_context_snapshot;
 use crate::services::system_agents::context_settings::TrafficContextExtractionSettings;
 use crate::services::system_agents::filters::matches_event_filter;
 use crate::services::system_agents::findings::persist_passive_agent_finding;
+use crate::services::system_agents::language::{output_language_instruction, resolve_ui_language};
 use crate::services::system_agents::logic_hypotheses::build_logic_hypotheses;
 use crate::services::system_agents::logic_invariants::evaluate_logic_invariants;
-use crate::services::system_agents::language::{output_language_instruction, resolve_ui_language};
 use crate::services::system_agents::logic_skill_context::build_logic_skill_context;
 use crate::services::system_agents::process_graph::build_process_graph;
 use crate::services::system_agents::prompts::resolve_base_prompt;
@@ -955,6 +955,7 @@ impl SystemAgentRuntime {
             persist_messages: false,
             subagent_run_id: None,
             context_policy: None,
+            context_engine_mode: Some(crate::agents::ContextEngineMode::CodexLike),
             recursion_depth: 0,
         };
 

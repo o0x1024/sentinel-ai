@@ -31,6 +31,7 @@ export const useAgentConversationFlow = (params: {
   agentMessages: Ref<AgentMessage[]>
   agentStreamingContent: Ref<string>
   agentSubagents: Ref<any[]>
+  assistantContextMode: Ref<'claude-like' | 'codex-like'>
   assistantSelectedModel: Ref<string>
   buildToolConfig: () => UiToolConfigPayload
   clearAgentMessages: () => void
@@ -65,6 +66,7 @@ export const useAgentConversationFlow = (params: {
   processedDocuments: Ref<any[]>
   ragEnabled: Ref<boolean>
   referencedAssets: Ref<any[]>
+  referencedFiles: Ref<any[]>
   referencedTraffic: Ref<any[]>
   resetTerminal: () => void
   restoreArtifactsFromMessage: (message: AgentMessage) => void
@@ -336,12 +338,14 @@ export const useAgentConversationFlow = (params: {
             pendingAttachments: params.pendingAttachments.value,
             processedDocuments: params.processedDocuments.value,
             referencedAssets: params.referencedAssets.value,
+            referencedFiles: params.referencedFiles.value,
             referencedTraffic: params.referencedTraffic.value,
             setPendingDocumentAttachments: (documents) => {
               params.setPendingDocumentAttachments(documents)
             },
             task,
             toAssetContextItems: (assets) => assets,
+            toFileContextItems: (files) => files,
             toTrafficContextItems: (traffic) => traffic,
           })
 
@@ -395,8 +399,11 @@ export const useAgentConversationFlow = (params: {
       const {
         displayContent,
         fullTask,
+        usedAssets,
         usedAttachments,
         usedDocuments,
+        usedFiles,
+        usedTraffic,
       } = prepareSubmission({
         clearDraftState: () => {
           params.inputValue.value = ''
@@ -405,12 +412,14 @@ export const useAgentConversationFlow = (params: {
         pendingAttachments: params.pendingAttachments.value,
         processedDocuments: params.processedDocuments.value,
         referencedAssets: params.referencedAssets.value,
+        referencedFiles: params.referencedFiles.value,
         referencedTraffic: params.referencedTraffic.value,
         setPendingDocumentAttachments: (documents) => {
           params.setPendingDocumentAttachments(documents)
         },
         task,
         toAssetContextItems: (assets) => assets,
+        toFileContextItems: (files) => files,
         toTrafficContextItems: (traffic) => traffic,
       })
 
@@ -438,6 +447,7 @@ export const useAgentConversationFlow = (params: {
         }
 
         const result = await executeConversationTaskSupport({
+          assistantContextMode: params.assistantContextMode.value,
           assistantSelectedModel: params.assistantSelectedModel.value,
           conversationId: ensuredConversationId,
           defaultConversationTitle: params.getUnnamedConversationTitle(),
@@ -458,8 +468,11 @@ export const useAgentConversationFlow = (params: {
           runtimeToolConfig: buildRuntimeToolConfigForExecution(params.buildToolConfig(), {
             webSearchEnabled: params.webSearchEnabled.value,
           }),
+          usedAssets,
           usedAttachments,
           usedDocuments,
+          usedFiles,
+          usedTraffic,
         })
 
         params.emitComplete(result)

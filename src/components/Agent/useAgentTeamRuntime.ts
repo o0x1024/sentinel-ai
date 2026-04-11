@@ -93,6 +93,7 @@ export const useAgentTeamRuntime = (params: {
   setLocalError: (message: string) => void
   teamBlackboardEntries: Ref<TeamBlackboardEntry[]>
   teamModeEnabled: Ref<boolean>
+  teamWorkspaceAvailable: ComputedRef<boolean>
   teamSelectedOrchestrationPresetId: Ref<TeamOrchestrationPresetId | null>
   teamSelectedRecoveryPresetId: Ref<TeamRecoveryPresetId>
   teamSessionDetail: Ref<AgentTeamSession | null>
@@ -806,7 +807,7 @@ export const useAgentTeamRuntime = (params: {
   }
 
   const handleToggleTeamWorkspace = async () => {
-    if (!params.teamModeEnabled.value) return
+    if (!params.teamWorkspaceAvailable.value) return
     if (params.activeRightPanel.value === 'team') {
       params.deactivateRightPanel('team')
       return
@@ -815,6 +816,7 @@ export const useAgentTeamRuntime = (params: {
     params.isTeamWorkspaceActive.value = true
     if (!params.activeTeamSessionId.value) {
       params.teamWorkspaceTab.value = 'tasks'
+      return
     }
     await loadTeamWorkspaceData()
   }

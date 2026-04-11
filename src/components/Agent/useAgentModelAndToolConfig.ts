@@ -50,13 +50,13 @@ export const useAgentModelAndToolConfig = (params: {
   getFailedToSaveToolConfigLabel: () => string
 }) => {
   const toolConfig = ref<UiToolConfigPayload>({
-    enabled: false,
+    enabled: true,
     selection_strategy: 'Keyword',
     max_tools: 5,
     fixed_tools: ['interactive_shell'],
     disabled_tools: [],
   } as any)
-  const toolsEnabled = ref(false)
+  const toolsEnabled = ref(true)
   const assistantModelOptions = ref<AssistantModelOption[]>([])
   const assistantSelectedModel = ref('')
   const isLoadingAssistantModels = ref(false)
@@ -166,8 +166,11 @@ export const useAgentModelAndToolConfig = (params: {
     }
   }
 
-  const handleAssistantModelChange = (value: string) => {
+  const setAssistantSelectedModel = (value: string, options?: { persist?: boolean }) => {
     assistantSelectedModel.value = value
+    if (options?.persist === false) {
+      return
+    }
     try {
       if (value) {
         localStorage.setItem(ASSISTANT_MODEL_STORAGE_KEY, value)
@@ -177,6 +180,10 @@ export const useAgentModelAndToolConfig = (params: {
     } catch {
       // ignore storage errors
     }
+  }
+
+  const handleAssistantModelChange = (value: string) => {
+    setAssistantSelectedModel(value)
   }
 
   const buildTeamToolPolicyFromUiConfig = (config: UiToolConfigPayload) => {
@@ -294,6 +301,7 @@ export const useAgentModelAndToolConfig = (params: {
     isLoadingAssistantModels,
     loadAssistantModelOptions,
     loadToolConfig,
+    setAssistantSelectedModel,
     toolConfig,
     toolsEnabled,
   }

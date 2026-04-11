@@ -82,10 +82,6 @@
                      @test-embedding-connection="testEmbeddingConnection"
                      @reset-rag-config="resetRagConfig" />
 
-
-        <!-- Agent设置 -->
-        <AgentSettings v-if="activeCategory === 'agent'" />
-
         <!-- 数据库设置 -->
         <DatabaseSettings v-if="activeCategory === 'database'" 
                           v-model:settings="settings"
@@ -147,7 +143,6 @@ import DatabaseSettings from '@/components/Settings/DatabaseSettings.vue'
 import GeneralSettings from '@/components/Settings/GeneralSettings.vue'
 import SecuritySettings from '@/components/Settings/SecuritySettings.vue'
 import NetworkSettings from '@/components/Settings/NetworkSettings.vue'
-import AgentSettings from '@/components/Settings/AgentSettings.vue'
 import {
   createDefaultCustomProvider,
   createDefaultRagConfig,

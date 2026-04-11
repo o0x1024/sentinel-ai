@@ -9,8 +9,8 @@ use sentinel_db::{DatabaseService, TrafficEvidenceRecord, TrafficFinding};
 use crate::services::system_agents::finding_lifecycle::{
     initial_lifecycle_for_detection, TrafficFindingLifecycle,
 };
-use crate::services::system_agents::language::{is_chinese_ui_language, resolve_ui_language};
 use crate::services::system_agents::finding_observation::TrafficFindingObservation;
+use crate::services::system_agents::language::{is_chinese_ui_language, resolve_ui_language};
 use crate::services::system_agents::safety::SystemAgentSafetyPolicy;
 use crate::services::system_agents::types::SystemAgentEvent;
 

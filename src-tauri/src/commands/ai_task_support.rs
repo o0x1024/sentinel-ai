@@ -318,6 +318,7 @@ pub async fn run_external_text_task(
             persist_messages: false,
             subagent_run_id: None,
             context_policy: None,
+            context_engine_mode: Some(crate::agents::ContextEngineMode::CodexLike),
             recursion_depth: 0,
         };
 
@@ -390,6 +391,7 @@ pub async fn run_external_chat_task(
             persist_messages: false,
             subagent_run_id: None,
             context_policy: None,
+            context_engine_mode: Some(crate::agents::ContextEngineMode::CodexLike),
             recursion_depth: 0,
         };
 

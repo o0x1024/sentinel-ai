@@ -138,6 +138,13 @@
     :execution-id="message.metadata?.execution_id"
   />
 
+  <AskUserQuestionToolResult
+    v-else-if="isAskUserQuestionTool && message.type === 'tool_call'"
+    :result="message.metadata?.tool_result"
+    :error="message.metadata?.error"
+    :status="message.metadata?.status"
+  />
+
   <WebSearchToolResult
     v-else-if="isWebSearchTool"
     :args="message.metadata?.tool_args"
@@ -402,6 +409,62 @@
               </div>
             </div>
           </div>
+
+          <div v-if="message.type === 'user' && referencedFiles.length > 0" class="mt-2 pt-2 border-t border-base-300/50">
+            <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
+              <i class="fas fa-file-code text-secondary"></i>
+              <span>引用文件 ({{ referencedFiles.length }})</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="file in referencedFiles"
+                :key="file.id"
+                class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-secondary/10 border border-secondary/25 text-xs"
+              >
+                <span class="badge badge-xs badge-secondary">FILE</span>
+                <span class="font-medium truncate max-w-56" :title="file.relativePath">{{ file.relativePath }}</span>
+                <span class="text-base-content/60">{{ formatDocSize(file.size) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="message.type === 'user' && referencedAssets.length > 0" class="mt-2 pt-2 border-t border-base-300/50">
+            <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
+              <i class="fas fa-cubes text-primary"></i>
+              <span>引用资产 ({{ referencedAssets.length }})</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="asset in referencedAssets"
+                :key="asset.id"
+                class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-primary/10 border border-primary/25 text-xs"
+              >
+                <span class="badge badge-xs badge-outline">{{ asset.asset_type }}</span>
+                <span class="font-medium truncate max-w-44" :title="asset.name">{{ asset.name }}</span>
+                <span class="text-base-content/60 truncate max-w-56" :title="asset.value">{{ asset.value }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="message.type === 'user' && referencedTraffic.length > 0" class="mt-2 pt-2 border-t border-base-300/50">
+            <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
+              <i class="fas fa-network-wired text-accent"></i>
+              <span>引用流量 ({{ referencedTraffic.length }})</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="traffic in referencedTraffic"
+                :key="traffic.id"
+                class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-accent/10 border border-accent/25 text-xs"
+              >
+                <span class="badge badge-xs badge-accent">{{ traffic.method }}</span>
+                <span class="font-medium truncate max-w-64" :title="traffic.url">
+                  {{ traffic.host }}{{ getTrafficPath(traffic.url) }}
+                </span>
+                <span class="text-base-content/60">{{ traffic.status_code || 'N/A' }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       
@@ -437,7 +500,9 @@ import { useI18n } from 'vue-i18n'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import type { AgentMessage } from '@/types/agent'
+import type { ReferencedAsset, ReferencedFile, ReferencedTraffic } from '@/types/agentReferences'
 import { getMessageTypeName } from '@/types/agent'
+import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ShellToolResult from './ShellToolResult.vue'
 import WebSearchToolResult from './WebSearchToolResult.vue'
@@ -682,6 +747,11 @@ const skillsCardTarget = computed(() => {
 const isShellTool = computed(() => {
   const name = props.message.metadata?.tool_name?.toLowerCase()
   return name === 'shell' || name === 'bash' || name === 'cmd' || name === 'powershell'
+})
+
+const isAskUserQuestionTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return name === 'ask_user_question'
 })
 
 const isWebSearchTool = computed(() => {
@@ -958,6 +1028,7 @@ const hasToolResult = computed(() => {
 const hasToolCallContent = computed(() => {
   if (props.message.type !== 'tool_call') return false
   if (isSkillsTool.value) return false
+  if (isAskUserQuestionTool.value) return false
   if (isWebSearchTool.value) return false
   
   // Has content, args, result, or call_id
@@ -1047,6 +1118,39 @@ const imageAttachments = computed(() => {
   
   return []
 })
+
+const referencedFiles = computed<ReferencedFile[]>(() => {
+  if (props.message.type !== 'user') return []
+  return Array.isArray(props.message.metadata?.referenced_files)
+    ? props.message.metadata.referenced_files
+    : []
+})
+
+const referencedAssets = computed<ReferencedAsset[]>(() => {
+  if (props.message.type !== 'user') return []
+  return Array.isArray(props.message.metadata?.referenced_assets)
+    ? props.message.metadata.referenced_assets
+    : []
+})
+
+const referencedTraffic = computed<ReferencedTraffic[]>(() => {
+  if (props.message.type !== 'user') return []
+  return Array.isArray(props.message.metadata?.referenced_traffic)
+    ? props.message.metadata.referenced_traffic
+    : []
+})
+
+const getTrafficPath = (url: string) => {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.pathname}${parsed.search}`
+  } catch {
+    const marker = url.indexOf('://')
+    const normalized = marker >= 0 ? url.slice(marker + 3) : url
+    const slashIndex = normalized.indexOf('/')
+    return slashIndex >= 0 ? normalized.slice(slashIndex) : '/'
+  }
+}
 
 // Get image preview URL from base64 data
 const getImagePreviewUrl = (img: any): string => {

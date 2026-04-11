@@ -419,16 +419,19 @@ const success = computed(() => {
   return props.status === 'completed'
 })
 
-const backgroundCommandError = computed(() => {
+const shellGuidanceError = computed(() => {
   const rawError = String(props.error || '').trim()
-  if (!rawError.includes('Detected a background shell command')) {
+  if (
+    !rawError.includes('Detected a background shell command') &&
+    !rawError.includes('Detected a long-running foreground shell command')
+  ) {
     return ''
   }
   return rawError
 })
 
 const shouldRecommendTerminal = computed(() => {
-  return props.status === 'failed' && backgroundCommandError.value.length > 0
+  return props.status === 'failed' && shellGuidanceError.value.length > 0
 })
 
 // Execution time

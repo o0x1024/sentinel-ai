@@ -517,7 +517,11 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     }
 
     packet.orchestrator_context = packet.render_orchestrator_context();
-    let orchestrator_context_tokens = estimate_tokens(&packet.orchestrator_context);
+    let context_overlay_messages = packet.render_context_messages(policy.message_layout);
+    let orchestrator_context_tokens: usize = context_overlay_messages
+        .iter()
+        .map(estimate_message_tokens)
+        .sum();
 
     let history_tokens: usize = history_messages.iter().map(estimate_message_tokens).sum();
     let available_for_history = safe_limit
@@ -535,8 +539,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         trim_trace.push("trimmed_window".to_string());
     }
 
-    if !packet.orchestrator_context.trim().is_empty() {
-        history_messages.insert(0, ChatMessage::user(packet.orchestrator_context.clone()));
+    if !context_overlay_messages.is_empty() {
+        history_messages.splice(0..0, context_overlay_messages);
     }
 
     packet.system_instructions = system_prompt_content.clone();

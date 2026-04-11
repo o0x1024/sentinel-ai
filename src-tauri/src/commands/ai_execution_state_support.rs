@@ -185,7 +185,7 @@ pub async fn get_ai_conversation(
     db_service: State<'_, std::sync::Arc<crate::services::database::DatabaseService>>,
 ) -> Result<Option<AiConversationListItem>, String> {
     let conversation = db_service
-        .get_ai_conversation(&conversation_id)
+        .get_ai_conversation_detail_internal(&conversation_id)
         .await
         .map_err(|e| format!("Failed to load conversation {}: {}", conversation_id, e))?;
 

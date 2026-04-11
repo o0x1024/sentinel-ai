@@ -476,6 +476,75 @@ interactive_shell for long-lived processes, or fully detach the command, for exa
         )
     }
 
+    fn command_matches_long_running_pattern(command: &str, patterns: &[&str]) -> bool {
+        let normalized = command.trim().to_lowercase();
+        patterns.iter().any(|pattern| normalized.starts_with(pattern))
+    }
+
+    fn foreground_command_looks_long_running(command: &str) -> bool {
+        if Self::has_background_operator(command) {
+            return false;
+        }
+
+        const PREFIX_PATTERNS: &[&str] = &[
+            "python -m http.server",
+            "python3 -m http.server",
+            "python -m uvicorn",
+            "python3 -m uvicorn",
+            "uvicorn ",
+            "gunicorn ",
+            "python manage.py runserver",
+            "python3 manage.py runserver",
+            "npm run dev",
+            "npm run start",
+            "npm start",
+            "pnpm dev",
+            "pnpm start",
+            "yarn dev",
+            "yarn start",
+            "vite",
+            "next dev",
+            "next start",
+            "nuxt dev",
+            "webpack serve",
+            "cargo watch",
+            "tail -f",
+            "tail --follow",
+            "watch ",
+            "docker logs -f",
+            "docker logs --follow",
+            "kubectl logs -f",
+            "kubectl logs --follow",
+            "journalctl -f",
+        ];
+
+        if Self::command_matches_long_running_pattern(command, PREFIX_PATTERNS) {
+            return true;
+        }
+
+        let normalized = command.trim().to_lowercase();
+        normalized.contains(" --watch")
+            || normalized.contains(" -f ")
+                && (normalized.starts_with("docker logs")
+                    || normalized.starts_with("kubectl logs")
+                    || normalized.starts_with("tail "))
+    }
+
+    fn build_foreground_long_running_command_guidance(command: &str) -> Option<String> {
+        if !Self::foreground_command_looks_long_running(command) {
+            return None;
+        }
+
+        Some(
+            "Detected a long-running foreground shell command. The one-shot shell tool waits for \
+the process to exit, so commands that start servers, watchers, or follow logs will block the \
+conversation until they are manually stopped or time out. Use interactive_shell for long-lived \
+processes, or fully detach the command, for example: `nohup <command> >/tmp/sentinel-shell.log \
+2>&1 < /dev/null & echo $!`."
+                .to_string(),
+        )
+    }
+
     /// Execute command in Docker sandbox
     async fn execute_in_docker(
         &self,
@@ -695,6 +764,10 @@ impl Tool for ShellTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let start_time = Instant::now();
         if let Some(guidance) = Self::build_background_command_guidance(&args.command) {
+            return Err(ShellError::ExecutionFailed(guidance));
+        }
+        if let Some(guidance) = Self::build_foreground_long_running_command_guidance(&args.command)
+        {
             return Err(ShellError::ExecutionFailed(guidance));
         }
         let execution_id = args.execution_id.clone();
@@ -1005,6 +1078,20 @@ mod tests {
             "nohup python3 -m http.server 8000 >/tmp/http.log 2>&1 < /dev/null & echo $!"
         )
         .is_none());
+    }
+
+    #[test]
+    fn test_detects_long_running_foreground_command() {
+        assert!(ShellTool::foreground_command_looks_long_running(
+            "python3 -m http.server 8000"
+        ));
+        assert!(ShellTool::build_foreground_long_running_command_guidance(
+            "npm run dev"
+        )
+        .is_some());
+        assert!(!ShellTool::foreground_command_looks_long_running(
+            "cargo test -p sentinel-ai"
+        ));
     }
 
     #[tokio::test]

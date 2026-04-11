@@ -38,6 +38,27 @@ pub enum ToolSource {
     Workflow { workflow_id: String },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolExecutionPolicy {
+    pub read_only: bool,
+    pub mutating: bool,
+    pub concurrency_safe: bool,
+    pub requires_permission: bool,
+    pub supports_background: bool,
+}
+
+impl Default for ToolExecutionPolicy {
+    fn default() -> Self {
+        Self {
+            read_only: false,
+            mutating: false,
+            concurrency_safe: false,
+            requires_permission: false,
+            supports_background: false,
+        }
+    }
+}
+
 /// Dynamic tool definition
 #[derive(Clone)]
 pub struct DynamicToolDef {
@@ -53,6 +74,8 @@ pub struct DynamicToolDef {
     pub source: ToolSource,
     /// Tool category
     pub category: String,
+    /// Runtime execution policy
+    pub execution_policy: ToolExecutionPolicy,
     /// Tool executor function
     pub executor: ToolExecutor,
 }
@@ -319,6 +342,7 @@ pub struct DynamicToolBuilder {
     output_schema: Option<Value>,
     source: ToolSource,
     category: String,
+    execution_policy: ToolExecutionPolicy,
     executor: Option<ToolExecutor>,
 }
 
@@ -334,6 +358,7 @@ impl DynamicToolBuilder {
             output_schema: None,
             source: ToolSource::Builtin,
             category: "other".to_string(),
+            execution_policy: ToolExecutionPolicy::default(),
             executor: None,
         }
     }
@@ -363,6 +388,11 @@ impl DynamicToolBuilder {
         self
     }
 
+    pub fn execution_policy(mut self, policy: ToolExecutionPolicy) -> Self {
+        self.execution_policy = policy;
+        self
+    }
+
     pub fn executor<F, Fut>(mut self, f: F) -> Self
     where
         F: Fn(Value) -> Fut + Send + Sync + 'static,
@@ -387,6 +417,7 @@ impl DynamicToolBuilder {
             output_schema: self.output_schema,
             source: self.source,
             category: self.category,
+            execution_policy: self.execution_policy,
             executor,
         })
     }

@@ -1,5 +1,5 @@
-use serde::Serialize;
 use sentinel_traffic::{EvidenceRecord, VulnerabilityRecord};
+use serde::Serialize;
 
 use crate::commands::traffic::TrafficAnalysisState;
 

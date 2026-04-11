@@ -208,7 +208,8 @@ async fn execute_verification(
             Some(raw_headers) => parse_request_headers(Some(&raw_headers))?,
             None => {
                 if let Some(fallback_plan) = degrade_identity_swap_plan(active_plan.as_ref()) {
-                    prepared_request = prepare_verification_request(&baseline, Some(&fallback_plan))?;
+                    prepared_request =
+                        prepare_verification_request(&baseline, Some(&fallback_plan))?;
                     active_plan = Some(fallback_plan);
                     parse_request_headers(baseline.request_headers.as_deref())?
                 } else {
