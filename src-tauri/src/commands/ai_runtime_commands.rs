@@ -49,6 +49,8 @@ pub struct AgentExecuteConfig {
     #[serde(default)]
     pub referenced_files: Option<Vec<serde_json::Value>>,
     #[serde(default)]
+    pub referenced_messages: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
     pub referenced_assets: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     pub referenced_traffic: Option<Vec<serde_json::Value>>,
@@ -613,6 +615,7 @@ pub async fn agent_execute(
         traffic_context: None,
         display_content: None,
         referenced_files: None,
+        referenced_messages: None,
         referenced_assets: None,
         referenced_traffic: None,
         model_override: None,
@@ -637,6 +640,7 @@ pub async fn agent_execute(
     let attachments_for_save = raw_attachments.as_ref().map(sanitize_image_attachments);
     let document_attachments_for_save = config.document_attachments.clone();
     let referenced_files_for_save = config.referenced_files.clone();
+    let referenced_messages_for_save = config.referenced_messages.clone();
     let referenced_assets_for_save = config.referenced_assets.clone();
     let referenced_traffic_for_save = config.referenced_traffic.clone();
 
@@ -818,6 +822,11 @@ pub async fn agent_execute(
                         data["referenced_files"] = serde_json::json!(files);
                     }
                 }
+                if let Some(ref messages) = referenced_messages_for_save {
+                    if !messages.is_empty() {
+                        data["referenced_messages"] = serde_json::json!(messages);
+                    }
+                }
                 if let Some(ref assets) = referenced_assets_for_save {
                     if !assets.is_empty() {
                         data["referenced_assets"] = serde_json::json!(assets);
@@ -849,6 +858,11 @@ pub async fn agent_execute(
                 if let Some(ref files) = referenced_files_for_save {
                     if !files.is_empty() {
                         meta["referenced_files"] = serde_json::json!(files);
+                    }
+                }
+                if let Some(ref messages) = referenced_messages_for_save {
+                    if !messages.is_empty() {
+                        meta["referenced_messages"] = serde_json::json!(messages);
                     }
                 }
                 if let Some(ref assets) = referenced_assets_for_save {
@@ -899,6 +913,7 @@ pub async fn agent_execute(
                         "document_attachments": document_attachments_for_save,
                         "image_attachments": attachments_for_save,
                         "referenced_files": referenced_files_for_save,
+                        "referenced_messages": referenced_messages_for_save,
                         "referenced_assets": referenced_assets_for_save,
                         "referenced_traffic": referenced_traffic_for_save,
                     }),

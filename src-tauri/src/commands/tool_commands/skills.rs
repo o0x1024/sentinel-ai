@@ -3,7 +3,7 @@
 use std::fs;
 use std::sync::Arc;
 
-use sentinel_db::{Database, Skill, SkillDetail, SkillSummary};
+use sentinel_db::{Database, DatabaseService, Skill, SkillDetail, SkillSummary};
 use serde::{Deserialize, Serialize};
 
 use crate::skills::{
@@ -216,14 +216,14 @@ pub async fn get_skill_markdown(
 }
 
 /// Create a new skill
-pub async fn create_skill(
+pub(crate) async fn create_skill_internal(
     payload: CreateSkillRequest,
-    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+    db_service: &DatabaseService,
 ) -> Result<Skill, String> {
     validate_skill_name(&payload.name)?;
     validate_skill_description(&payload.description)?;
 
-    let root = skills_root(&db_service);
+    let root = skills_root(db_service);
     let base_name = sanitize_skill_dir_name(&payload.name);
     if base_name != payload.name {
         return Err("Skill name contains invalid characters".to_string());
@@ -277,6 +277,14 @@ pub async fn create_skill(
         .create_skill(&db_payload)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Create a new skill
+pub async fn create_skill(
+    payload: CreateSkillRequest,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Skill, String> {
+    create_skill_internal(payload, db_service.inner().as_ref()).await
 }
 
 /// Update an existing skill

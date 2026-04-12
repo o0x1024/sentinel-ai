@@ -3,6 +3,7 @@
  * 完整的 Agent 系统类型，与后端保持一致
  */
 import type {
+  ReferencedConversationMessage,
   ReferencedAsset,
   ReferencedFile,
   ReferencedTraffic,
@@ -35,7 +36,11 @@ export interface MessageMetadata {
   iteration?: number
   selected_tools?: string[]
   tool_call_id?: string  // 工具调用 ID，用于关联调用和结果
-  status?: 'pending' | 'running' | 'completed' | 'failed'  // 工具调用状态
+  status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'  // 工具调用状态
+  task_id?: string
+  session_id?: string
+  command?: string
+  exit_code?: number
   rag_info?: {
     rag_applied: boolean
     rag_sources_used: boolean
@@ -65,6 +70,7 @@ export interface MessageMetadata {
   document_attachments?: ProcessedDocumentResult[]  // 用户消息中的文档附件
   image_attachments?: ImageAttachment[]  // 用户消息中的图片附件
   referenced_files?: ReferencedFile[]
+  referenced_messages?: ReferencedConversationMessage[]
   referenced_assets?: ReferencedAsset[]
   referenced_traffic?: ReferencedTraffic[]
 }
@@ -100,7 +106,7 @@ export interface AgentMessage {
 // ============ 工具调用 ============
 
 // 工具调用状态
-export type ToolStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type ToolStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 // 工具调用
 export interface ToolCall {

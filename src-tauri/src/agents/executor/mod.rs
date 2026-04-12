@@ -21,10 +21,14 @@ pub mod message_store;
 pub mod run_simple;
 pub mod run_with_tools;
 mod run_with_tools_support;
+pub mod tool_trace_store;
 pub mod tool_exec;
 pub mod types;
 pub mod utils;
 
+pub use tool_trace_store::{
+    append_execution_tool_trace, clear_execution_tool_trace, take_execution_tool_trace,
+};
 pub use tool_exec::{
     execute_builtin_tool, execute_mcp_tool, execute_plugin_tool, execute_workflow_tool,
 };

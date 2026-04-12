@@ -67,6 +67,7 @@ export const useAgentConversationFlow = (params: {
   ragEnabled: Ref<boolean>
   referencedAssets: Ref<any[]>
   referencedFiles: Ref<any[]>
+  referencedMessages: Ref<any[]>
   referencedTraffic: Ref<any[]>
   resetTerminal: () => void
   restoreArtifactsFromMessage: (message: AgentMessage) => void
@@ -339,6 +340,7 @@ export const useAgentConversationFlow = (params: {
             processedDocuments: params.processedDocuments.value,
             referencedAssets: params.referencedAssets.value,
             referencedFiles: params.referencedFiles.value,
+            referencedMessages: params.referencedMessages.value,
             referencedTraffic: params.referencedTraffic.value,
             setPendingDocumentAttachments: (documents) => {
               params.setPendingDocumentAttachments(documents)
@@ -346,6 +348,7 @@ export const useAgentConversationFlow = (params: {
             task,
             toAssetContextItems: (assets) => assets,
             toFileContextItems: (files) => files,
+            toMessageContextItems: (messages) => messages,
             toTrafficContextItems: (traffic) => traffic,
           })
 
@@ -403,6 +406,7 @@ export const useAgentConversationFlow = (params: {
         usedAttachments,
         usedDocuments,
         usedFiles,
+        usedMessages,
         usedTraffic,
       } = prepareSubmission({
         clearDraftState: () => {
@@ -413,6 +417,7 @@ export const useAgentConversationFlow = (params: {
         processedDocuments: params.processedDocuments.value,
         referencedAssets: params.referencedAssets.value,
         referencedFiles: params.referencedFiles.value,
+        referencedMessages: params.referencedMessages.value,
         referencedTraffic: params.referencedTraffic.value,
         setPendingDocumentAttachments: (documents) => {
           params.setPendingDocumentAttachments(documents)
@@ -420,6 +425,7 @@ export const useAgentConversationFlow = (params: {
         task,
         toAssetContextItems: (assets) => assets,
         toFileContextItems: (files) => files,
+        toMessageContextItems: (messages) => messages,
         toTrafficContextItems: (traffic) => traffic,
       })
 
@@ -472,6 +478,7 @@ export const useAgentConversationFlow = (params: {
           usedAttachments,
           usedDocuments,
           usedFiles,
+          usedMessages,
           usedTraffic,
         })
 

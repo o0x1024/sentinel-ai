@@ -19,6 +19,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [dependencies]
 # Workspace members
 sentinel-core = { path = "sentinel-core", default-features = false }

@@ -38,6 +38,7 @@ import type {
   SystemAgentRunPayload,
 } from '../systemAgentSettingsSupport'
 import type { SystemAgentStatsMode } from './systemAgentRegistry'
+import { isSystemAgentFindingVerified } from './systemAgentFindingPresentation'
 
 const props = defineProps<{
   runs: SystemAgentRunPayload[]
@@ -96,7 +97,7 @@ const agentStats = computed(() => {
     recentRuns: recentRunsWindow.length,
     runSuccessRate,
     totalFindings: props.totalFindingsCount,
-    recentVerifiedFindings: windowedRecentFindings.value.filter(finding => hasVerificationEvidence(finding)).length,
+    recentVerifiedFindings: windowedRecentFindings.value.filter(finding => isSystemAgentFindingVerified(finding)).length,
     falsePositiveFindings: props.falsePositiveFindingsCount,
     versionCount: props.versions.length,
     latestVersionAt: props.versions[0]?.createdAt || null,
@@ -152,10 +153,6 @@ const statCards = computed(() => {
   )
   return cards
 })
-
-function hasVerificationEvidence(finding: SystemAgentFindingSummary) {
-  return !!finding.evidence?.some(evidence => evidence.location === 'system_agent_verification')
-}
 
 function formatDate(value?: string | null) {
   if (!value) return '-'

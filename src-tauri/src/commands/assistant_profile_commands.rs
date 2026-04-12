@@ -46,7 +46,10 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_tenth_man_enabled: false,
             default_tool_selection_strategy: "Keyword".to_string(),
             default_max_tools: 5,
-            default_fixed_tools: vec!["interactive_shell".to_string()],
+            default_fixed_tools: vec![
+                "interactive_shell".to_string(),
+                "ask_user_question".to_string(),
+            ],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
             default_team_orchestration_preset_id: None,
@@ -67,6 +70,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_max_tools: 5,
             default_fixed_tools: vec![
                 "interactive_shell".to_string(),
+                "ask_user_question".to_string(),
                 "tenth_man_review".to_string(),
             ],
             default_disabled_tools: vec![],
@@ -89,6 +93,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_max_tools: 8,
             default_fixed_tools: vec![
                 "interactive_shell".to_string(),
+                "ask_user_question".to_string(),
                 "spawn_agent".to_string(),
                 "wait_agents".to_string(),
                 "list_agents".to_string(),
@@ -114,6 +119,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_max_tools: 8,
             default_fixed_tools: vec![
                 "interactive_shell".to_string(),
+                "ask_user_question".to_string(),
                 "spawn_agent".to_string(),
                 "wait_agents".to_string(),
                 "list_agents".to_string(),

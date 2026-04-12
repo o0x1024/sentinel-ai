@@ -64,11 +64,20 @@
             <HttpMessageSurface
               v-model="draft.leftText"
               custom-context-menu
+              show-search-bar
               :message-type="draftLeftMessageType"
               display-mode="raw"
               height="100%"
               :placeholder="$t('trafficAnalysis.comparer.draft.leftPlaceholder')"
               state-key="comparer:draft:left"
+              :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+              :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+              :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+              :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+              :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+              :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+              :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+              :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
               @contextmenu="showDraftContextMenu($event, 'left')"
             />
           </div>
@@ -82,11 +91,20 @@
             <HttpMessageSurface
               v-model="draft.rightText"
               custom-context-menu
+              show-search-bar
               :message-type="draftRightMessageType"
               display-mode="raw"
               height="100%"
               :placeholder="$t('trafficAnalysis.comparer.draft.rightPlaceholder')"
               state-key="comparer:draft:right"
+              :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+              :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+              :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+              :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+              :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+              :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+              :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+              :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
               @contextmenu="showDraftContextMenu($event, 'right')"
             />
           </div>
@@ -145,6 +163,17 @@
           :left-text="displayedLeftText"
           :right-text="displayedRightText"
           :message-type="diffMessageType"
+          :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+          :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+          :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+          :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+          :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+          :search-active-side-title="$t('trafficAnalysis.messageSearch.activeSide')"
+          :search-left-label="$t('trafficAnalysis.messageSearch.left')"
+          :search-right-label="$t('trafficAnalysis.messageSearch.right')"
+          :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+          :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+          :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
           @contextmenu="showContextMenu($event)"
         />
       </div>

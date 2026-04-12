@@ -174,8 +174,10 @@
             :pending-documents="pendingDocuments"
             :processed-documents="processedDocuments"
             :referenced-files="referencedFiles"
+            :referenced-messages="referencedMessages"
             :referenced-traffic="referencedTraffic"
             :referenced-assets="referencedAssets"
+            :available-conversation-messages="visibleMessages"
             :context-usage="contextUsage"
             :default-max-context-tokens="assistantDefaultMaxContextTokens"
             :available-agents="assistantAgentOptions"
@@ -196,6 +198,10 @@
             @clear-files="handleClearFiles"
             @add-file-reference="addReferencedFiles"
             @sync-file-references="syncReferencedFiles"
+            @remove-message="handleRemoveMessage"
+            @clear-messages="handleClearMessages"
+            @add-message-reference="addReferencedMessages"
+            @sync-message-references="syncReferencedMessages"
             @add-traffic-reference="addReferencedTraffic"
             @sync-traffic-references="syncReferencedTraffic"
             @remove-traffic="handleRemoveTraffic"
@@ -465,28 +471,33 @@ const {
 const {
   addReferencedAssets,
   addReferencedFiles,
+  addReferencedMessages,
   addReferencedTraffic,
   clearDraftArtifacts,
   handleAddAttachments,
   handleAddDocuments,
   handleClearAssets,
   handleClearFiles,
+  handleClearMessages,
   handleClearTraffic,
   handleDocumentProcessed,
   handleRemoveAsset,
   handleRemoveAttachment,
   handleRemoveDocument,
   handleRemoveFile,
+  handleRemoveMessage,
   handleRemoveTraffic,
   pendingAttachments,
   pendingDocuments,
   processedDocuments,
   referencedAssets,
   referencedFiles,
+  referencedMessages,
   referencedTraffic,
   restoreArtifactsFromMessage,
   syncReferencedAssets,
   syncReferencedFiles,
+  syncReferencedMessages,
   syncReferencedTraffic,
 } = useAgentDraftArtifacts()
 const activeTeamSessionId = ref<string | null>(null)
@@ -1398,6 +1409,7 @@ const {
   ragEnabled,
   referencedAssets,
   referencedFiles,
+  referencedMessages,
   referencedTraffic,
   resetTerminal: () => {
     terminalComposable.resetTerminal()

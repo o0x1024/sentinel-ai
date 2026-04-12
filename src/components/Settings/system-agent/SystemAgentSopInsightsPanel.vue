@@ -167,18 +167,25 @@
 import { computed, ref, watch } from 'vue'
 
 import { dialog } from '@/composables/useDialog'
-import type { SystemAgentFindingSummary } from '../systemAgentSettingsSupport'
+import type {
+  SystemAgentFindingSummary,
+  SystemAgentSopDefinition,
+} from '../systemAgentSettingsSupport'
 import {
   createEmptySystemAgentSopDefinition,
-  loadSystemAgentSopDefinitions,
-  saveSystemAgentSopDefinitions,
-  type SystemAgentSopDefinition,
+  loadLegacySystemAgentSopDefinitions,
+  normalizeSystemAgentSopDefinitions,
 } from './systemAgentSopCatalog'
 
 const props = defineProps<{
   profileId: string
   findings: SystemAgentFindingSummary[]
   windowStart: number
+  definitions: SystemAgentSopDefinition[]
+}>()
+
+const emit = defineEmits<{
+  'update:definitions': [value: SystemAgentSopDefinition[]]
 }>()
 
 interface SopHitEntry {
@@ -195,15 +202,34 @@ interface DisplaySopEntry extends SopHitEntry {
   updatedAt?: string
 }
 
-const definitions = ref<SystemAgentSopDefinition[]>([])
 const dialogRef = ref<HTMLDialogElement | null>(null)
 const editingIndex = ref(-1)
 const editingDefinition = ref<SystemAgentSopDefinition>(createEmptySystemAgentSopDefinition())
+const migratedLegacyProfileIds = new Set<string>()
+
+const definitions = computed(() =>
+  normalizeSystemAgentSopDefinitions(props.definitions),
+)
 
 watch(
-  () => props.profileId,
+  () => [props.profileId, props.definitions] as const,
   profileId => {
-    definitions.value = loadSystemAgentSopDefinitions(profileId)
+    if (!profileId[0] || migratedLegacyProfileIds.has(profileId[0])) {
+      return
+    }
+    if (normalizeSystemAgentSopDefinitions(profileId[1]).length > 0) {
+      migratedLegacyProfileIds.add(profileId[0])
+      return
+    }
+
+    const legacyDefinitions = loadLegacySystemAgentSopDefinitions(profileId[0])
+    migratedLegacyProfileIds.add(profileId[0])
+    if (legacyDefinitions.length === 0) {
+      return
+    }
+
+    emitDefinitions(legacyDefinitions)
+    dialog.toast.success('已导入当前 Agent 的本地 SOP 定义')
   },
   { immediate: true },
 )
@@ -224,7 +250,11 @@ const sopHits = computed<SopHitEntry[]>(() => {
         continue
       }
       const payload = parseJson(evidence.request_body)
-      const items = Array.isArray(payload?.logicSkillContext) ? payload.logicSkillContext : []
+      const items = Array.isArray(payload?.logicSopContext) && payload.logicSopContext.length > 0
+        ? payload.logicSopContext
+        : Array.isArray(payload?.logicSkillContext)
+          ? payload.logicSkillContext
+          : []
       for (const item of items) {
         const id = typeof item?.id === 'string' ? item.id.trim() : ''
         if (!id) continue
@@ -330,8 +360,7 @@ async function removeDefinition(id: string) {
     return
   }
 
-  definitions.value = definitions.value.filter(item => item.id !== id)
-  persistDefinitions()
+  emitDefinitions(definitions.value.filter(item => item.id !== id))
   dialog.toast.success('SOP 已删除')
 }
 
@@ -364,21 +393,20 @@ function saveDialog() {
   }
 
   if (editingIndex.value === -1) {
-    definitions.value = [...definitions.value, nextItem]
+    emitDefinitions([...definitions.value, nextItem])
     dialog.toast.success('SOP 已新增')
   } else {
     const nextDefinitions = [...definitions.value]
     nextDefinitions.splice(editingIndex.value, 1, nextItem)
-    definitions.value = nextDefinitions
+    emitDefinitions(nextDefinitions)
     dialog.toast.success('SOP 已更新')
   }
 
-  persistDefinitions()
   closeDialog()
 }
 
-function persistDefinitions() {
-  saveSystemAgentSopDefinitions(props.profileId, definitions.value)
+function emitDefinitions(nextDefinitions: SystemAgentSopDefinition[]) {
+  emit('update:definitions', normalizeSystemAgentSopDefinitions(nextDefinitions))
 }
 
 function parseJson(raw?: string | null) {

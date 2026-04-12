@@ -1097,6 +1097,12 @@ impl Database for DatabaseService {
     ) -> Result<Vec<SystemAgentRunRecord>> {
         Self::list_system_agent_runs_internal(self, profile_id, limit).await
     }
+    async fn delete_system_agent_run(&self, id: &str) -> Result<u64> {
+        Self::delete_system_agent_run_internal(self, id).await
+    }
+    async fn clear_system_agent_runs(&self, profile_id: Option<&str>) -> Result<u64> {
+        Self::clear_system_agent_runs_internal(self, profile_id).await
+    }
     async fn list_system_agent_profile_versions(
         &self,
         profile_id: &str,
@@ -1114,6 +1120,7 @@ impl Database for DatabaseService {
         &self,
         id: &str,
         status: &str,
+        tool_calls: Option<&str>,
         output_json: Option<&str>,
         error_message: Option<&str>,
         finished_at: Option<DateTime<Utc>>,
@@ -1122,6 +1129,7 @@ impl Database for DatabaseService {
             self,
             id,
             status,
+            tool_calls,
             output_json,
             error_message,
             finished_at,

@@ -53,7 +53,7 @@ export const useAgentModelAndToolConfig = (params: {
     enabled: true,
     selection_strategy: 'Keyword',
     max_tools: 5,
-    fixed_tools: ['interactive_shell'],
+    fixed_tools: ['interactive_shell', 'ask_user_question'],
     disabled_tools: [],
   } as any)
   const toolsEnabled = ref(true)

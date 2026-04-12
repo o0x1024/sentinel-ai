@@ -7,7 +7,7 @@ export default {
     results: '攻击结果',
   },
   help: {
-    markerHint: '使用 §value§ 包住要爆破的位置，或先选中文本再点击“添加位置”。',
+    markerHint: '使用 $value$ 包住要爆破的位置，或先选中文本再点击“添加位置”。',
     attackTypeHint: '提供狙击手、攻城锤、草叉、集束炸弹四种攻击模式。',
     payloadProcessingHint: '定义在每个载荷使用前执行的处理规则。',
     payloadEncodingHint: '在最终 payload 发送前，仅对选定字符执行 URL 编码。',
@@ -252,10 +252,10 @@ export default {
   },
   actions: {
     addPosition: '添加位置',
-    addPositionSymbol: '添加 §',
+    addPositionSymbol: '添加 $',
     autoMark: '自动标记',
     clearPositions: '清空位置',
-    clearPositionSymbol: '清除 §',
+    clearPositionSymbol: '清除 $',
     syncPayloadSets: '同步载荷集',
     addPayloadSet: '新增载荷集',
     cloneTab: '克隆标签',

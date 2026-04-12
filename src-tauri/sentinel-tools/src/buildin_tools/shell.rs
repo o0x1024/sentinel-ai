@@ -44,6 +44,9 @@ pub struct ShellArgs {
     /// Whether to store oversized output into context files (agent-only)
     #[serde(default)]
     pub enable_large_output_storage: bool,
+    /// Run command in a dedicated interactive shell session and return immediately.
+    #[serde(default)]
+    pub run_in_background: bool,
 }
 
 fn default_timeout() -> u64 {
@@ -71,6 +74,21 @@ pub struct ShellOutput {
     /// If fallback happened, includes failure reason
     #[serde(default)]
     pub fallback_reason: Option<String>,
+    /// Indicates the command was launched in background mode.
+    #[serde(default)]
+    pub backgrounded: bool,
+    /// Background task id if launched asynchronously.
+    #[serde(default)]
+    pub background_task_id: Option<String>,
+    /// Interactive terminal session id for a background command.
+    #[serde(default)]
+    pub background_session_id: Option<String>,
+    /// Background task status if launched asynchronously.
+    #[serde(default)]
+    pub background_status: Option<String>,
+    /// Human-readable note for background execution.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// Shell command errors
@@ -339,7 +357,8 @@ impl ShellTool {
         "Execute a one-shot shell command and return stdout/stderr when the command finishes. ",
         "Use for filesystem inspection, CLI utilities, scripting, build/test commands, and quick network tools ",
         "that exit on their own. Prefer this over other tools when direct command execution is the simplest path. ",
-        "Do not use for interactive REPLs, TUIs, long-lived services, or attached background jobs; use interactive_shell instead."
+        "Do not use for interactive REPLs or TUIs. For long-lived services or watchers, either set run_in_background=true ",
+        "to launch a dedicated terminal session, or use interactive_shell directly."
     );
 
     /// Check if command is reading files from /workspace/context/ to avoid recursive storage
@@ -470,7 +489,7 @@ impl ShellTool {
         Some(
             "Detected a background shell command that keeps stdout/stderr attached. The one-shot \
 shell tool waits for those pipes to close, so this command would stay in running state. Use \
-interactive_shell for long-lived processes, or fully detach the command, for example: \
+run_in_background=true / interactive_shell for long-lived processes, or fully detach the command, for example: \
 `nohup <command> >/tmp/sentinel-shell.log 2>&1 < /dev/null & echo $!`."
                 .to_string(),
         )
@@ -538,7 +557,7 @@ interactive_shell for long-lived processes, or fully detach the command, for exa
         Some(
             "Detected a long-running foreground shell command. The one-shot shell tool waits for \
 the process to exit, so commands that start servers, watchers, or follow logs will block the \
-conversation until they are manually stopped or time out. Use interactive_shell for long-lived \
+conversation until they are manually stopped or time out. Use run_in_background=true or interactive_shell for long-lived \
 processes, or fully detach the command, for example: `nohup <command> >/tmp/sentinel-shell.log \
 2>&1 < /dev/null & echo $!`."
                 .to_string(),
@@ -763,12 +782,15 @@ impl Tool for ShellTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let start_time = Instant::now();
-        if let Some(guidance) = Self::build_background_command_guidance(&args.command) {
-            return Err(ShellError::ExecutionFailed(guidance));
-        }
-        if let Some(guidance) = Self::build_foreground_long_running_command_guidance(&args.command)
-        {
-            return Err(ShellError::ExecutionFailed(guidance));
+        if !args.run_in_background {
+            if let Some(guidance) = Self::build_background_command_guidance(&args.command) {
+                return Err(ShellError::ExecutionFailed(guidance));
+            }
+            if let Some(guidance) =
+                Self::build_foreground_long_running_command_guidance(&args.command)
+            {
+                return Err(ShellError::ExecutionFailed(guidance));
+            }
         }
         let execution_id = args.execution_id.clone();
         let cancellation_token = if let Some(exec_id) = execution_id.as_deref() {
@@ -783,7 +805,52 @@ impl Tool for ShellTool {
             .execution_mode
             .clone()
             .unwrap_or_else(|| config.default_execution_mode.clone());
+        let docker_image = config.docker_config.as_ref().map(|value| value.image.clone());
         drop(config);
+
+        if args.run_in_background {
+            if matches!(execution_mode, ShellExecutionMode::Host) {
+                self.check_permission(&args.command, execution_id.as_deref())
+                    .await?;
+            }
+            let launch = crate::buildin_tools::shell_background::launch_background_shell_task(
+                crate::buildin_tools::shell_background::LaunchBackgroundShellTaskRequest {
+                    execution_id: execution_id.clone(),
+                    command: args.command.clone(),
+                    cwd: args.cwd.clone(),
+                    execution_mode: execution_mode.clone(),
+                    docker_image,
+                },
+            )
+            .await
+            .map_err(ShellError::ExecutionFailed)?;
+
+            if let Some(exec_id) = execution_id.as_deref() {
+                clear_shell_execution_cancellation(exec_id).await;
+            }
+
+            let execution_time_ms = start_time.elapsed().as_millis() as u64;
+            return Ok(ShellOutput {
+                command: args.command,
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: None,
+                completed: false,
+                execution_time_ms,
+                output_stored: false,
+                execution_mode: launch.execution_mode.clone(),
+                fallback_from: None,
+                fallback_reason: None,
+                backgrounded: true,
+                background_task_id: Some(launch.task_id),
+                background_session_id: Some(launch.session_id),
+                background_status: Some("running".to_string()),
+                note: Some(
+                    "Command is running in a dedicated interactive shell session. Open the terminal panel to inspect or stop it."
+                        .to_string(),
+                ),
+            });
+        }
 
         // Execute command based on mode with fallback
         let execution_result: Result<
@@ -1042,6 +1109,11 @@ impl Tool for ShellTool {
             execution_mode,
             fallback_from,
             fallback_reason,
+            backgrounded: false,
+            background_task_id: None,
+            background_session_id: None,
+            background_status: None,
+            note: None,
         })
     }
 }

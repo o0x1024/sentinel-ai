@@ -35,6 +35,27 @@ export default {
     capture: 'fa-broadcast-tower',
     proxyConfig: 'fa-cog'
   },
+  messageSearch: {
+    placeholder: '搜索当前内容，回车下一个，Shift+回车上一个',
+    next: '下一个匹配',
+    previous: '上一个匹配',
+    caseSensitive: '区分大小写',
+    regexp: '正则表达式',
+    activeSide: '当前侧',
+    left: '左侧',
+    right: '右侧',
+    clear: '清空搜索',
+    noMatches: '无匹配',
+    invalidRegexp: '正则无效',
+  },
+  httpEditor: {
+    toolbar: {
+      showLineEndings: '显示换行符号',
+      hideLineEndings: '隐藏换行符号',
+      enableLineWrap: '开启自动换行',
+      disableLineWrap: '关闭自动换行',
+    },
+  },
   comparer: {
     tabs: {
       pretty: '格式化',
@@ -371,12 +392,23 @@ export default {
       },
       request: '请求',
       response: '响应',
+      loading: '正在加载详情',
       decompressed: '已解压',
       close: '关闭',
       originalRequest: '原始请求',
       editedRequest: '修改后的请求',
       originalResponse: '原始响应',
       editedResponse: '修改后的响应',
+      search: {
+        placeholder: '搜索当前内容，回车下一个，Shift+回车上一个',
+        next: '下一个匹配',
+        previous: '上一个匹配',
+        caseSensitive: '区分大小写',
+        regexp: '正则表达式',
+        clear: '清空搜索',
+        noMatches: '无匹配',
+        invalidRegexp: '正则无效',
+      },
     },
     table: {
       id: 'ID',

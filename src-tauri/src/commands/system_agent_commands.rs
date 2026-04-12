@@ -7,6 +7,10 @@ use uuid::Uuid;
 
 use crate::commands::command_response_support::CommandResponse;
 use crate::services::system_agents::finding_lifecycle::TrafficFindingLifecycle;
+use crate::services::system_agents::logic_sop_context::{
+    parse_system_agent_sop_definitions, serialize_system_agent_sop_definitions,
+    SystemAgentSopDefinition,
+};
 use crate::services::system_agents::tool_policy::validate_profile_tool_policy;
 use crate::services::system_agents::{
     ensure_default_system_agent_profiles, run_traffic_active_verifier, SystemAgentDispatchResult,
@@ -44,6 +48,8 @@ pub struct SystemAgentProfilePayload {
     pub llm_model_override: Option<String>,
     pub base_prompt_id: Option<String>,
     pub prompt_patch: Option<String>,
+    #[serde(default)]
+    pub sop_definitions: Vec<SystemAgentSopDefinition>,
     pub input_schema: Option<Value>,
     pub output_schema: Option<Value>,
     pub required_tools: Vec<String>,
@@ -84,6 +90,7 @@ pub struct SystemAgentRunPayload {
     pub trigger_event: Option<String>,
     pub status: String,
     pub input_summary: Option<Value>,
+    pub tool_calls: Option<Value>,
     pub output: Option<Value>,
     pub error_message: Option<String>,
     pub started_at: DateTime<Utc>,
@@ -163,6 +170,7 @@ fn run_from_record(record: SystemAgentRunRecord) -> SystemAgentRunPayload {
         trigger_event: record.trigger_event,
         status: record.status,
         input_summary: parse_json_value(&record.input_summary_json),
+        tool_calls: record.tool_calls.as_deref().and_then(parse_json_value),
         output: record.output_json.as_deref().and_then(parse_json_value),
         error_message: record.error_message,
         started_at: record.started_at,
@@ -199,6 +207,7 @@ fn detail_from_record(
         llm_model_override: record.llm_model_override,
         base_prompt_id: record.base_prompt_id,
         prompt_patch: record.prompt_patch,
+        sop_definitions: parse_system_agent_sop_definitions(&record.sop_definitions_json),
         input_schema: parse_json_value(&record.input_schema_json),
         output_schema: parse_json_value(&record.output_schema_json),
         required_tools: parse_json_array(&record.required_tools_json),
@@ -249,6 +258,8 @@ fn record_from_payload(
         llm_model_override,
         base_prompt_id: payload.base_prompt_id.clone(),
         prompt_patch: payload.prompt_patch.clone(),
+        sop_definitions_json: serialize_system_agent_sop_definitions(&payload.sop_definitions)
+            .map_err(|e| e.to_string())?,
         input_schema_json: to_json_object_string(payload.input_schema.as_ref())?,
         output_schema_json: to_json_object_string(payload.output_schema.as_ref())?,
         required_tools_json: to_json_array_string(&payload.required_tools)?,
@@ -412,6 +423,30 @@ pub async fn list_system_agent_runs(
     Ok(CommandResponse::ok(
         runs.into_iter().map(run_from_record).collect(),
     ))
+}
+
+#[tauri::command]
+pub async fn delete_system_agent_run(
+    db_service: State<'_, Arc<DatabaseService>>,
+    id: String,
+) -> Result<CommandResponse<u64>, String> {
+    let deleted = db_service
+        .delete_system_agent_run(&id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(CommandResponse::ok(deleted))
+}
+
+#[tauri::command]
+pub async fn clear_system_agent_runs(
+    db_service: State<'_, Arc<DatabaseService>>,
+    profile_id: Option<String>,
+) -> Result<CommandResponse<u64>, String> {
+    let deleted = db_service
+        .clear_system_agent_runs(profile_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(CommandResponse::ok(deleted))
 }
 
 #[tauri::command]

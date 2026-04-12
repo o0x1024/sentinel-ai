@@ -23,6 +23,9 @@ use crate::agents::context_engineering::reflection::{
     record_execution_reflection, ExecutionOutcome,
 };
 use crate::agents::executor::message_store::save_assistant_message;
+use crate::agents::executor::tool_trace_store::{
+    append_execution_tool_trace, clear_execution_tool_trace,
+};
 use crate::agents::executor::types::ToolCallRecord;
 use crate::agents::executor::utils::{cleanup_container_context_async, truncate_for_memory};
 use crate::agents::tenth_man::{InterventionContext, InterventionMode, TenthMan, TriggerReason};
@@ -38,6 +41,7 @@ pub async fn execute_agent_with_tools(
     params: AgentExecuteParams,
     tool_server: &ToolServer,
 ) -> Result<String> {
+    clear_execution_tool_trace(&params.execution_id);
     let tool_config = params.tool_config.clone().unwrap_or_default();
 
     // 1. 创建工具路由器（加载所有动态工具：工作流、MCP、插件）
@@ -658,18 +662,29 @@ pub async fn execute_agent_with_tools(
                                         tool_success,
                                         &result,
                                     );
+                                    let record = ToolCallRecord {
+                                        id: id.clone(),
+                                        name,
+                                        arguments,
+                                        result: Some(result.clone()),
+                                        success: tool_success,
+                                        sequence: seq,
+                                        started_at_ms,
+                                        completed_at_ms,
+                                        duration_ms,
+                                    };
                                     if let Ok(mut records) = collector.lock() {
-                                        records.push(ToolCallRecord {
-                                            id: id.clone(),
-                                            name,
-                                            arguments,
-                                            result: Some(result.clone()),
-                                            success: tool_success,
-                                            sequence: seq,
-                                            started_at_ms,
-                                            completed_at_ms,
-                                            duration_ms,
-                                        });
+                                        records.push(record.clone());
+                                    }
+                                    append_execution_tool_trace(&execution_id, record.clone());
+                                    if execution_id.starts_with("sar-") {
+                                        let _ = app_handle.emit(
+                                            "system-agent:tool-call-recorded",
+                                            json!({
+                                                "runId": execution_id,
+                                                "toolCall": record,
+                                            }),
+                                        );
                                     }
 
                                     // Update persisted tool message with result (keep timestamp as started_at to avoid reordering).

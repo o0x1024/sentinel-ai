@@ -181,8 +181,17 @@
                 custom-context-menu
                 message-type="request"
                 readonly
+                show-search-bar
                 display-mode="raw"
                 :state-key="selectedResult ? `intruder:request:${selectedResult.id}` : ''"
+                :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
                 @contextmenu.capture.prevent="showSelectedResultContextMenu($event)"
               />
             </div>
@@ -220,8 +229,17 @@
                 custom-context-menu
                 message-type="response"
                 readonly
+                show-search-bar
                 display-mode="raw"
                 :state-key="selectedResult ? `intruder:response:${selectedResult.id}` : ''"
+                :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
                 @contextmenu.capture.prevent="showSelectedResultContextMenu($event)"
               />
             </div>
@@ -248,7 +266,23 @@
           </div>
         </div>
         <div class="min-h-0">
-          <HttpMessageSurface :model-value="requestText" message-type="request" readonly display-mode="raw" :state-key="`intruder:positions:${workspaceName}`" />
+          <HttpMessageSurface
+            :model-value="requestText"
+            message-type="request"
+            readonly
+            show-search-bar
+            marker-mode="intruder"
+            display-mode="raw"
+            :state-key="`intruder:positions:${workspaceName}`"
+            :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+            :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+            :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+            :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+            :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+            :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+            :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+            :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+          />
         </div>
       </div>
     </div>

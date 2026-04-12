@@ -28,11 +28,25 @@
       <div v-if="isFailed" class="rounded-lg border border-error/30 bg-error/10 px-3 py-3 text-error">
         {{ errorText }}
       </div>
-      <div
-        v-else
-        class="rounded-lg border border-base-300 bg-base-200/40 px-3 py-3 text-base-content/70"
-      >
-        正在等待用户回答这些问题。
+      <div v-else class="space-y-3">
+        <div
+          class="rounded-lg border border-base-300 bg-base-200/40 px-3 py-3 text-base-content/70"
+        >
+          正在等待用户回答这些问题。
+        </div>
+        <div
+          v-for="question in pendingQuestions"
+          :key="question.question"
+          class="rounded-lg border border-base-300 bg-base-200/30 px-3 py-3"
+        >
+          <div class="text-xs font-medium uppercase tracking-wide text-base-content/50">
+            {{ question.header || 'Question' }}
+          </div>
+          <div class="mt-1 text-sm text-base-content">{{ question.question }}</div>
+          <div class="mt-2 text-xs text-base-content/60">
+            {{ question.options.map((option) => option.label).join(' / ') }}
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -44,10 +58,12 @@ import { computed } from 'vue'
 interface QuestionItem {
   header?: string
   question: string
+  options: { label: string }[]
 }
 
 const props = defineProps<{
   result?: unknown
+  args?: unknown
   error?: string
   status?: string
 }>()
@@ -88,6 +104,12 @@ const answerEntries = computed(() => {
     question: question.question,
     answer: result.answers?.[question.question] || '',
   }))
+})
+
+const pendingQuestions = computed(() => {
+  if (!props.args || typeof props.args !== 'object') return []
+  const args = props.args as { questions?: QuestionItem[] }
+  return Array.isArray(args.questions) ? args.questions : []
 })
 
 const isFailed = computed(() => props.status === 'failed')

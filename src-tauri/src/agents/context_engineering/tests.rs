@@ -5,7 +5,7 @@ use crate::agents::context_engineering::memory_index::{
 };
 use crate::agents::context_engineering::tool_digest::build_tool_digest;
 use crate::agents::context_engineering::types::{
-    trim_history_preserve_tool_pairs, ContextPacket, ToolDigestEntry,
+    trim_history_preserve_tool_pairs, ContextPacket, RetrievedMemorySection, ToolDigestEntry,
 };
 use crate::agents::context_engineering::{ContextMessageLayout, ContextRunState};
 
@@ -46,6 +46,29 @@ fn memory_retrieval_prefers_relevant_items() {
     let items = retrieve_memory_items(&mut state, &query);
     assert!(!items.is_empty());
     assert!(items.iter().any(|item| item.text.contains("8080")));
+}
+
+#[test]
+fn memory_ingestion_promotes_fact_signals_into_richer_kinds() {
+    let mut state = ContextRunState::default();
+    ingest_memory_items(
+        &mut state,
+        &[
+            String::from("Prefer ripgrep for searches in large repos"),
+            String::from("Avoid broad wildcard scans on production"),
+        ],
+        &[],
+        &[],
+    );
+
+    assert!(state
+        .memory_items
+        .iter()
+        .any(|item| item.kind == "preference" && item.importance == 4));
+    assert!(state
+        .memory_items
+        .iter()
+        .any(|item| item.kind == "anti_pattern" && item.importance == 4));
 }
 
 #[test]
@@ -117,4 +140,83 @@ fn codex_layout_splits_runtime_sections_into_multiple_messages() {
     assert!(messages[0].content.contains("[RunState]"));
     assert!(messages[1].content.contains("[RetrievedMemory]"));
     assert!(messages[2].content.contains("[Recent Tool Digests]"));
+}
+
+#[test]
+fn orchestrator_context_renders_typed_memory_sections() {
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.retrieved_memory_sections = vec![
+        RetrievedMemorySection {
+            title: "Relevant Decisions".to_string(),
+            items: vec!["[decision|importance=4|score=0.91] use ripgrep for searches".to_string()],
+        },
+        RetrievedMemorySection {
+            title: "Known Anti-patterns".to_string(),
+            items: vec![
+                "[anti_pattern|importance=4|score=0.77] avoid broad wildcard scans".to_string(),
+            ],
+        },
+    ];
+
+    let rendered = packet.render_orchestrator_context();
+    assert!(rendered.contains("[RetrievedMemory]"));
+    assert!(rendered.contains("Relevant Decisions:"));
+    assert!(rendered.contains("Known Anti-patterns:"));
+}
+
+#[test]
+fn split_layout_uses_typed_memory_sections_when_available() {
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.retrieved_memory_sections = vec![RetrievedMemorySection {
+        title: "Reusable SOP Hints".to_string(),
+        items: vec![
+            "[sop|importance=4|score=0.88] verify host, path, and auth state before replay"
+                .to_string(),
+        ],
+    }];
+
+    let messages = packet.render_context_messages(ContextMessageLayout::SplitUserMessages);
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].content.contains("[RetrievedMemory]"));
+    assert!(messages[0].content.contains("Reusable SOP Hints:"));
+}
+
+#[test]
+fn ask_user_question_digest_is_summarized_as_question_collection() {
+    let digest = build_tool_digest(
+        "ask_user_question",
+        &serde_json::json!({
+            "questions": [
+                {
+                    "header": "Mode",
+                    "question": "Which mode should we use?",
+                    "options": [
+                        {"label": "Safe", "description": "Conservative"},
+                        {"label": "Fast", "description": "Quicker"}
+                    ]
+                }
+            ]
+        }),
+        r#"{"questions":[{"header":"Mode","question":"Which mode should we use?","options":[{"label":"Safe","description":"Conservative"},{"label":"Fast","description":"Quicker"}]}],"answers":{"Which mode should we use?":"Safe"}}"#,
+    );
+
+    assert_eq!(digest.status, "ok");
+    assert!(digest.summary.contains("AskUserQuestion collected 1 / 1 answers"));
+}
+
+#[test]
+fn background_shell_digest_is_not_treated_as_failed_exit() {
+    let digest = build_tool_digest(
+        "shell",
+        &serde_json::json!({
+            "command": "python3 -m http.server 8000",
+            "run_in_background": true
+        }),
+        r#"{"command":"python3 -m http.server 8000","backgrounded":true,"background_task_id":"task-1","background_session_id":"session-1","background_status":"running"}"#,
+    );
+
+    assert_eq!(digest.status, "ok");
+    assert!(digest.summary.contains("background running"));
+    assert!(digest.summary.contains("task task-1"));
+    assert!(digest.summary.contains("session session-1"));
 }

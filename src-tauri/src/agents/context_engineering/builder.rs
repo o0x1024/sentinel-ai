@@ -16,7 +16,8 @@ use crate::agents::context_engineering::checkpoint::{
     load_or_init_run_state, save_run_state, ContextRunState,
 };
 use crate::agents::context_engineering::memory_index::{
-    evict_low_value_items, ingest_memory_items, retrieve_memory_items, MemoryQuery,
+    evict_low_value_items, ingest_memory_items, retrieve_memory_items_hybrid, MemoryQuery,
+    RetrievedMemoryItem,
 };
 use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
 use crate::agents::context_engineering::policy::{ContextPolicy, ContextScope};
@@ -27,6 +28,7 @@ use crate::agents::context_engineering::tool_digest::condense_text;
 use crate::agents::context_engineering::types::{trim_history_preserve_tool_pairs, ContextPacket};
 use crate::agents::sliding_window::{SlidingWindowConfig, SlidingWindowManager};
 use crate::agents::types::DocumentAttachmentInfo;
+use sentinel_rag::canonicalize_memory_kind;
 
 const USER_FORCED_RULES_CONFIG_CATEGORY: &str = "agent";
 const USER_FORCED_RULES_CONFIG_KEY: &str = "user_forced_rules";
@@ -142,6 +144,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     }
     let mut run_state_block = String::new();
     let mut retrieved_memory_lines: Vec<String> = Vec::new();
+    let mut retrieved_memory_sections = Vec::new();
     let mut retrieved_memory_ids: Vec<String> = Vec::new();
     let mut run_state_digests = Vec::new();
 
@@ -227,8 +230,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 query: format!("{}\n{}", state.task_brief, input.task),
                 top_k: 8,
             };
-            // Keep retrieval local to current run-state; no vector-store retrieval.
-            let retrieved = retrieve_memory_items(&mut state, &query);
+            let retrieved =
+                retrieve_memory_items_hybrid(&input.app_handle, &mut state, &query).await;
             retrieved_memory_ids = retrieved.iter().map(|item| item.id.clone()).collect();
             let retrieved_text = retrieved
                 .iter()
@@ -240,6 +243,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 })
                 .collect::<Vec<_>>();
             retrieved_memory_lines = retrieved_text.clone();
+            retrieved_memory_sections = build_retrieved_memory_sections(&retrieved);
         }
         state.last_updated_at_ms = chrono::Utc::now().timestamp_millis();
         save_run_state(&input.app_handle, &input.execution_id, &state).await?;
@@ -317,11 +321,20 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     .iter()
     .any(|kw| task_lower.contains(kw));
 
+    system_prompt.push_str(
+        "\n\n[Tool Usage Priority]\n\
+        - Use `ask_user_question` when requirements are ambiguous, when multiple implementation paths are viable, or when you need the user to choose between concrete options.\n\
+        - Use one-shot `shell` only for commands that should finish on their own and return output promptly.\n\
+        - If a command starts a server, watcher, log follower, dev process, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive.\n\
+        - Use `interactive_shell` for iterative terminal work, REPLs, TUIs, debugger sessions, or when you need to inspect a live long-running process interactively.\n\
+        - Never leave the conversation blocked on a long-lived foreground shell command.",
+    );
+
     if is_binary_security_task {
-        // system_prompt.push_str(
-        //     "\n\n[Tool Usage Priority]\n\
-        //     For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and long-running interactions. Use one-off `shell` only for short, non-interactive commands.",
-        // );
+        system_prompt.push_str(
+            "\n\
+            - For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and multi-step terminal exploration. Use one-off `shell` only for short non-interactive commands.",
+        );
     }
 
     system_prompt.push_str(
@@ -382,6 +395,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     );
     if policy.feature_context_packet_v2 {
         packet.retrieved_memories = retrieved_memory_lines;
+        packet.retrieved_memory_sections = retrieved_memory_sections;
     }
     packet.set_tool_digests(&run_state_digests);
 
@@ -484,10 +498,16 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         trim_trace.push("trimmed_run_state".to_string());
     }
 
-    let mut retrieval_tokens = estimate_tokens(&packet.retrieved_memories.join("\n"));
-    while retrieval_tokens > budget.retrieval_max_tokens && !packet.retrieved_memories.is_empty() {
-        packet.retrieved_memories.pop();
-        retrieval_tokens = estimate_tokens(&packet.retrieved_memories.join("\n"));
+    let mut retrieval_tokens = estimate_tokens(&packet.render_retrieved_memory_context());
+    while retrieval_tokens > budget.retrieval_max_tokens
+        && (!packet.retrieved_memory_sections.is_empty() || !packet.retrieved_memories.is_empty())
+    {
+        if !packet.retrieved_memory_sections.is_empty() {
+            trim_retrieved_memory_sections(&mut packet.retrieved_memory_sections);
+        } else if !packet.retrieved_memories.is_empty() {
+            packet.retrieved_memories.pop();
+        }
+        retrieval_tokens = estimate_tokens(&packet.render_retrieved_memory_context());
     }
     if retrieval_tokens > budget.retrieval_max_tokens {
         trim_trace.push("trimmed_retrieval".to_string());
@@ -605,7 +625,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             system_tokens: estimate_tokens(&packet.system_instructions),
             run_state_tokens,
             window_tokens: history_tokens,
-            retrieval_tokens: estimate_tokens(&packet.retrieved_memories.join("\n")),
+            retrieval_tokens: estimate_tokens(&packet.render_retrieved_memory_context()),
             tool_digest_tokens: estimate_tokens(
                 &packet
                     .tool_digests
@@ -626,6 +646,88 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         history_messages: packet.window_messages.clone(),
         context_packet: packet,
     })
+}
+
+fn build_retrieved_memory_sections(
+    retrieved: &[RetrievedMemoryItem],
+) -> Vec<crate::agents::context_engineering::types::RetrievedMemorySection> {
+    let mut preferences = Vec::new();
+    let mut decisions = Vec::new();
+    let mut anti_patterns = Vec::new();
+    let mut sop_hints = Vec::new();
+    let mut general = Vec::new();
+
+    for item in retrieved {
+        let mut qualifiers = vec![
+            item.kind.clone(),
+            format!("importance={}", item.importance),
+            format!("score={:.2}", item.score),
+        ];
+        if item.scope != "project" {
+            qualifiers.push(format!("scope={}", item.scope));
+        }
+        if item.stability != "stable" {
+            qualifiers.push(format!("stability={}", item.stability));
+        }
+        if item.source != "context_engineering" && item.source != "unknown" {
+            qualifiers.push(format!("source={}", item.source));
+        }
+        if item.confidence < 0.8 {
+            qualifiers.push(format!("confidence={:.2}", item.confidence));
+        }
+        let line = format!("[{}] {}", qualifiers.join("|"), item.text);
+        match normalize_memory_kind(item.kind.as_str()).as_str() {
+            "preference" => preferences.push(line),
+            "decision" => decisions.push(line),
+            "anti_pattern" => anti_patterns.push(line),
+            "sop" => sop_hints.push(line),
+            _ => general.push(line),
+        }
+    }
+
+    let mut sections = Vec::new();
+    push_memory_section(&mut sections, "Durable Preferences", preferences, 3);
+    push_memory_section(&mut sections, "Relevant Decisions", decisions, 4);
+    push_memory_section(&mut sections, "Known Anti-patterns", anti_patterns, 3);
+    push_memory_section(&mut sections, "Reusable SOP Hints", sop_hints, 3);
+    push_memory_section(&mut sections, "Relevant Memory", general, 4);
+    sections
+}
+
+fn push_memory_section(
+    sections: &mut Vec<crate::agents::context_engineering::types::RetrievedMemorySection>,
+    title: &str,
+    mut items: Vec<String>,
+    limit: usize,
+) {
+    if items.is_empty() || limit == 0 {
+        return;
+    }
+    items.truncate(limit);
+    sections.push(
+        crate::agents::context_engineering::types::RetrievedMemorySection {
+            title: title.to_string(),
+            items,
+        },
+    );
+}
+
+fn normalize_memory_kind(kind: &str) -> String {
+    canonicalize_memory_kind(kind)
+}
+
+fn trim_retrieved_memory_sections(
+    sections: &mut Vec<crate::agents::context_engineering::types::RetrievedMemorySection>,
+) {
+    while let Some(last) = sections.last_mut() {
+        if last.items.pop().is_some() {
+            if last.items.is_empty() {
+                sections.pop();
+            }
+            return;
+        }
+        sections.pop();
+    }
 }
 
 fn split_context_messages(

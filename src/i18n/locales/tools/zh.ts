@@ -2,6 +2,7 @@ export default {
   // 页面标题和描述
   serversTitle: '工具管理',
   serversDescription: '管理内置工具、工作流、插件和MCP工具',
+  expand: '展开',
 
   // 选项卡
   builtinTools: '内置工具',

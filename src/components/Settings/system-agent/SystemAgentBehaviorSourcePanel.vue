@@ -4,7 +4,7 @@
       <div>
         <div class="text-sm font-semibold">行为来源</div>
         <div class="text-xs text-base-content/60 mt-1">
-          当前 `Traffic Logic Triage` 使用的行为上下文来源。
+          当前 `{{ triageAgentDisplayName }}` 使用的行为上下文来源。
         </div>
       </div>
       <span class="badge badge-sm" :class="effectiveModeBadgeClass">
@@ -80,6 +80,9 @@
 import type { TrafficBehaviorSignalSettings } from '@/components/traffic/proxyConfigurationTypes'
 import type { SystemAgentBehaviorEffectStats } from '../systemAgentSettingsSupport'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+import { getSystemAgentDisplayName } from './systemAgentRegistry'
 
 const props = defineProps<{
   settings: TrafficBehaviorSignalSettings
@@ -88,11 +91,21 @@ const props = defineProps<{
   bridgeUrl?: string
 }>()
 
+const { locale } = useI18n({ useScope: 'global' })
 const selectedMode = computed(() => props.settings.mode)
 const connected = computed(() => props.settings.browserExtensionConnected)
 const lastSeenAt = computed(() => props.settings.browserExtensionLastSeenAt)
 const bridgeUrl = computed(() => props.bridgeUrl || 'http://127.0.0.1:18931')
 const stats = computed(() => props.stats || null)
+const triageAgentDisplayName = computed(() =>
+  getSystemAgentDisplayName(
+    {
+      id: 'traffic_logic_triage',
+      name: 'Traffic Logic Triage',
+    },
+    locale.value
+  )
+)
 const windowLabel = computed(() => {
   if (props.window === '7d') return '近 7 天'
   if (props.window === '30d') return '近 30 天'

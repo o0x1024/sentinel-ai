@@ -14,9 +14,10 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use sentinel_traffic::{
-    Finding, FindingDeduplicator, InterceptFilterRule as TrafficInterceptFilterRule,
-    InterceptState, PendingInterceptRequest, PendingInterceptResponse, ProxyConfig, ProxyService,
-    ProxyStats, ProxyStatus, ScanPipeline, VulnerabilityFilters,
+    Finding, FindingDeduplicator, HttpRequestRecord,
+    InterceptFilterRule as TrafficInterceptFilterRule, InterceptState, PendingInterceptRequest,
+    PendingInterceptResponse, ProxyConfig, ProxyHistoryCache, ProxyService, ProxyStats,
+    ProxyStatus, ScanPipeline, VulnerabilityFilters,
 };
 
 use crate::commands::command_response_support::CommandResponse;
@@ -41,6 +42,59 @@ use super::replay_support::{
 pub use super::analysis_state_support::{
     InterceptedRequest, InterceptedResponse, TrafficAnalysisState,
 };
+
+fn build_proxy_request_record(record: &HttpRequestRecord) -> sentinel_db::ProxyRequestRecord {
+    sentinel_db::ProxyRequestRecord {
+        id: None,
+        url: record.url.clone(),
+        host: record.host.clone(),
+        protocol: record.protocol.clone(),
+        method: record.method.clone(),
+        status_code: record.status_code,
+        request_headers: record.request_headers.clone(),
+        request_body: record.request_body.clone(),
+        response_headers: record.response_headers.clone(),
+        response_body: record.response_body.clone(),
+        response_size: record.response_size,
+        response_time: record.response_time,
+        timestamp: record.timestamp,
+        request_body_compressed: false,
+        response_body_compressed: false,
+    }
+}
+
+async fn ensure_history_record_has_db_request_id(
+    mut record: HttpRequestRecord,
+    db: &Arc<sentinel_db::DatabaseService>,
+    cache: &Arc<ProxyHistoryCache>,
+) -> HttpRequestRecord {
+    if record.db_request_id.is_some() {
+        return record;
+    }
+
+    if let Some(updated_record) = cache.get_http_request_by_id(record.id).await {
+        if updated_record.db_request_id.is_some() {
+            return updated_record;
+        }
+    }
+
+    let db_record = build_proxy_request_record(&record);
+    match db.insert_proxy_request(&db_record).await {
+        Ok(db_request_id) => {
+            cache.set_http_request_db_id(record.id, db_request_id).await;
+            record.db_request_id = Some(db_request_id);
+        }
+        Err(error) => {
+            tracing::warn!(
+                "Failed to persist history record {} before system-agent processing: {}",
+                record.id,
+                error
+            );
+        }
+    }
+
+    record
+}
 
 /// 内部启动函数（可在内部和外部复用）
 pub async fn start_traffic_analysis_internal(
@@ -225,6 +279,8 @@ pub async fn start_traffic_analysis_internal(
     let behavior_signal_settings = state.behavior_signal_settings.clone();
     let behavior_extension_events = state.behavior_extension_events.clone();
     let context_extraction_settings = state.context_extraction_settings.clone();
+    let db_for_history_hook = db_service.clone();
+    let cache_for_history_hook = history_cache.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -242,11 +298,19 @@ pub async fn start_traffic_analysis_internal(
                         .with_request_record_hook(Arc::new(move |record| {
                             if let Some(runtime) = &system_agent_runtime_for_pipeline {
                                 let runtime = runtime.clone();
+                                let db_for_history_hook = db_for_history_hook.clone();
+                                let cache_for_history_hook = cache_for_history_hook.clone();
                                 let behavior_signal_settings = behavior_signal_settings.clone();
                                 let behavior_extension_events = behavior_extension_events.clone();
                                 let context_extraction_settings =
                                     context_extraction_settings.clone();
                                 tauri::async_runtime::spawn(async move {
+                                    let record = ensure_history_record_has_db_request_id(
+                                        record,
+                                        &db_for_history_hook,
+                                        &cache_for_history_hook,
+                                    )
+                                    .await;
                                     let behavior_signal =
                                         behavior_signal_settings.read().await.clone();
                                     let context_extraction =
@@ -517,23 +581,7 @@ pub async fn start_traffic_analysis_internal(
                     let mut saved = 0;
                     for record in unpersisted {
                         let cache_request_id = record.id;
-                        let db_record = sentinel_db::ProxyRequestRecord {
-                            id: None,
-                            url: record.url,
-                            host: record.host,
-                            protocol: record.protocol,
-                            method: record.method,
-                            status_code: record.status_code as i32,
-                            request_headers: record.request_headers,
-                            request_body: record.request_body,
-                            response_headers: record.response_headers,
-                            response_body: record.response_body,
-                            response_size: record.response_size,
-                            response_time: record.response_time,
-                            timestamp: record.timestamp,
-                            request_body_compressed: false,
-                            response_body_compressed: false,
-                        };
+                        let db_record = build_proxy_request_record(&record);
 
                         if let Ok(db_request_id) =
                             db_for_persist.insert_proxy_request(&db_record).await

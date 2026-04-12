@@ -33,6 +33,12 @@ export function getContextSkillEntriesFromPayload(payload: unknown) {
   return Array.isArray(skills) ? skills : []
 }
 
+export function getContextSopEntriesFromPayload(payload: unknown) {
+  const record = asRecord(payload)
+  const sops = record?.logicSopContext
+  return Array.isArray(sops) ? sops : []
+}
+
 export function getContextInvariantEntriesFromPayload(payload: unknown) {
   const record = asRecord(payload)
   const invariants = record?.logicInvariants

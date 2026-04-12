@@ -3,7 +3,12 @@ import type {
   PendingDocumentAttachment,
   ProcessedDocumentResult,
 } from '@/types/agent'
-import type { ReferencedAsset, ReferencedFile, ReferencedTraffic } from '@/types/agentReferences'
+import type {
+  ReferencedAsset,
+  ReferencedConversationMessage,
+  ReferencedFile,
+  ReferencedTraffic,
+} from '@/types/agentReferences'
 
 export interface ReplaySubagentLike {
   startedAt?: number
@@ -15,6 +20,7 @@ export interface RestoredMessageDraftArtifacts {
   processedDocuments: ProcessedDocumentResult[]
   referencedAssets: ReferencedAsset[]
   referencedFiles: ReferencedFile[]
+  referencedMessages: ReferencedConversationMessage[]
   referencedTraffic: ReferencedTraffic[]
 }
 
@@ -75,6 +81,7 @@ export const restoreDraftArtifactsFromMessage = (
   const pendingAttachments = parseMetadataArray(metadata.image_attachments)
   const rawDocumentAttachments = parseMetadataArray(metadata.document_attachments)
   const referencedFiles = parseMetadataArray(metadata.referenced_files) as ReferencedFile[]
+  const referencedMessages = parseMetadataArray(metadata.referenced_messages) as ReferencedConversationMessage[]
   const referencedAssets = parseMetadataArray(metadata.referenced_assets) as ReferencedAsset[]
   const referencedTraffic = parseMetadataArray(metadata.referenced_traffic) as ReferencedTraffic[]
   const processedDocuments = rawDocumentAttachments.map((doc: any) => {
@@ -104,6 +111,7 @@ export const restoreDraftArtifactsFromMessage = (
     processedDocuments,
     referencedAssets,
     referencedFiles,
+    referencedMessages,
     referencedTraffic,
   }
 }

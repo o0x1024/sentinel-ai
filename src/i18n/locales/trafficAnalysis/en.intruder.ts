@@ -7,7 +7,7 @@ export default {
     results: 'Attack Results',
   },
   help: {
-    markerHint: 'Wrap attack points with §value§, or select text and click "Add position".',
+    markerHint: 'Wrap attack points with $value$, or select text and click "Add position".',
     attackTypeHint: 'Supports Sniper, Battering Ram, Pitchfork, and Cluster Bomb.',
     payloadProcessingHint: 'Define rules to transform each payload before it is used.',
     payloadEncodingHint: 'URL-encode selected characters within the final payload before it is sent.',
@@ -252,10 +252,10 @@ export default {
   },
   actions: {
     addPosition: 'Add position',
-    addPositionSymbol: 'Add §',
+    addPositionSymbol: 'Add $',
     autoMark: 'Auto mark',
     clearPositions: 'Clear positions',
-    clearPositionSymbol: 'Clear §',
+    clearPositionSymbol: 'Clear $',
     syncPayloadSets: 'Sync payload sets',
     addPayloadSet: 'Add payload set',
     cloneTab: 'Clone tab',

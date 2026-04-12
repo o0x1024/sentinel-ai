@@ -89,7 +89,6 @@
             @update:request-text="updateRequestText(currentWorkspace.id, $event)"
             @update:target-url="updateTargetUrl(currentWorkspace.id, $event)"
             @update:update-host-header="updateAttackOption(currentWorkspace.id, 'updateHostHeader', $event)"
-            @mark-selection="markSelection(currentWorkspace.id, $event)"
             @auto-mark="autoMarkPositions(currentWorkspace.id)"
             @clear-markers="clearMarkers(currentWorkspace.id)"
             @send-to-repeater="sendWorkspaceRequestToRepeater(currentWorkspace.id)"
@@ -204,7 +203,6 @@ import {
   extractIntruderPositions,
   getRequiredPayloadSetCount,
   estimateAttackCount,
-  wrapSelectionWithMarkers,
 } from './intruder/attack'
 import {
   applyIntruderRequestSettings,
@@ -1259,14 +1257,6 @@ function updateVisibleColumns(workspaceId: string, value: string[]) {
     workspace.grepExtractRules,
     workspace.grepPayloadSettings,
   )
-}
-
-function markSelection(workspaceId: string, payload: { start: number; end: number }) {
-  const workspace = findWorkspace(workspaceId)
-  if (!workspace) return
-
-  workspace.requestText = wrapSelectionWithMarkers(workspace.requestText, payload.start, payload.end)
-  applyDerivedWorkspaceState(workspace)
 }
 
 function autoMarkPositions(workspaceId: string) {

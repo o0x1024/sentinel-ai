@@ -1,7 +1,14 @@
+import { getCurrentLanguage } from '@/i18n'
+
 import type { SystemAgentProfilePayload, SystemAgentProfileSummary } from '../systemAgentSettingsSupport'
 
-type AgentIdentity = Pick<SystemAgentProfilePayload, 'id' | 'description' | 'mode' | 'capability'>
-  | Pick<SystemAgentProfileSummary, 'id' | 'description' | 'mode' | 'capability'>
+type AgentIdentity = {
+  id: string
+  name?: string
+  description: string
+  mode: string
+  capability: string
+}
 
 export type SystemAgentUiKind =
   | 'traffic_triage'
@@ -17,6 +24,10 @@ export type SystemAgentModeBadge = {
 
 interface SystemAgentUiDefinition {
   kind: SystemAgentUiKind
+  displayName?: {
+    zh: string
+    en: string
+  }
   description: string
   passiveEventName?: string
   supportsFindings?: boolean
@@ -52,6 +63,10 @@ const GENERIC_DEFINITION: SystemAgentUiDefinition = {
 const SYSTEM_AGENT_UI_DEFINITIONS: Record<string, SystemAgentUiDefinition> = {
   traffic_logic_triage: {
     kind: 'traffic_triage',
+    displayName: {
+      zh: '流量逻辑分诊',
+      en: 'Traffic Logic Triage',
+    },
     description: '在后台持续分析流量，发现越权、流程异常和业务逻辑风险。',
     passiveEventName: 'traffic.cluster.ready',
     supportsFindings: true,
@@ -82,6 +97,10 @@ const SYSTEM_AGENT_UI_DEFINITIONS: Record<string, SystemAgentUiDefinition> = {
   },
   traffic_active_verifier: {
     kind: 'traffic_verifier',
+    displayName: {
+      zh: '流量主动验证',
+      en: 'Traffic Active Verifier',
+    },
     description: '对已发现的风险做最小化安全验证，帮助确认是否值得人工跟进。',
     passiveEventName: 'traffic.hypothesis.ready',
     supportsFindings: false,
@@ -113,6 +132,17 @@ export function getSystemAgentUiDefinition(profile: AgentIdentity): SystemAgentU
 
 export function getSystemAgentDescription(profile: AgentIdentity): string {
   return getSystemAgentUiDefinition(profile).description || profile.description || '系统智能体'
+}
+
+export function getSystemAgentDisplayName(
+  profile: Pick<AgentIdentity, 'id'> & { name?: string },
+  locale: string = getCurrentLanguage()
+): string {
+  const displayName = SYSTEM_AGENT_UI_DEFINITIONS[profile.id]?.displayName
+  if (!displayName) {
+    return profile.name || profile.id
+  }
+  return locale.startsWith('zh') ? displayName.zh : displayName.en
 }
 
 export function getSystemAgentPromptPatchPlaceholder(profile: AgentIdentity): string {

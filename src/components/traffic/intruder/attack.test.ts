@@ -43,7 +43,7 @@ function createPayloadSet(overrides: Partial<IntruderPayloadSet> = {}): Intruder
 
 describe('intruder attack helpers', () => {
   it('extracts marker positions', () => {
-    const positions = extractIntruderPositions('GET /?q=§admin§&role=§user§ HTTP/1.1')
+    const positions = extractIntruderPositions('GET /?q=$admin$&role=$user$ HTTP/1.1')
     expect(positions).toHaveLength(2)
     expect(positions[0].value).toBe('admin')
     expect(positions[1].value).toBe('user')
@@ -51,19 +51,19 @@ describe('intruder attack helpers', () => {
 
   it('wraps selected text with intruder markers', () => {
     const result = wrapSelectionWithMarkers('username=admin', 9, 14)
-    expect(result).toBe('username=§admin§')
+    expect(result).toBe('username=$admin$')
   })
 
   it('auto marks query string values', () => {
     const request = 'GET /search?q=test&lang=zh HTTP/1.1\r\nHost: example.com\r\n\r\n'
     const marked = autoMarkIntruderPositions(request)
-    expect(marked).toContain('q=§test§')
-    expect(marked).toContain('lang=§zh§')
+    expect(marked).toContain('q=$test$')
+    expect(marked).toContain('lang=$zh$')
   })
 
   it('builds sniper attack requests', async () => {
     const plan = await buildIntruderAttackPlan({
-      template: 'GET /?q=§test§&role=§user§ HTTP/1.1',
+      template: 'GET /?q=$test$&role=$user$ HTTP/1.1',
       attackType: 'sniper',
       payloadSets: [
         createPayloadSet({ payloadsText: 'admin\nroot' }),
@@ -83,7 +83,7 @@ describe('intruder attack helpers', () => {
 
   it('truncates cluster bomb plans above the limit', async () => {
     const plan = await buildIntruderAttackPlan({
-      template: 'POST /login HTTP/1.1\r\nHost: example.com\r\n\r\nusername=§admin§&password=§pass§',
+      template: 'POST /login HTTP/1.1\r\nHost: example.com\r\n\r\nusername=$admin$&password=$pass$',
       attackType: 'clusterBomb',
       payloadSets: [
         createPayloadSet({ id: 'set-1', payloadsText: 'a\nb\nc' }),
@@ -98,12 +98,19 @@ describe('intruder attack helpers', () => {
   })
 
   it('clears markers cleanly', () => {
-    expect(clearIntruderMarkers('a§b§c')).toBe('abc')
+    expect(clearIntruderMarkers('a$b$c')).toBe('abc')
+  })
+
+  it('keeps supporting legacy section markers', () => {
+    const positions = extractIntruderPositions('GET /?q=§admin§ HTTP/1.1')
+    expect(positions).toHaveLength(1)
+    expect(positions[0].value).toBe('admin')
+    expect(clearIntruderMarkers('before §admin§ after')).toBe('before admin after')
   })
 
   it('applies payload processing rules before substitution', async () => {
     const plan = await buildIntruderAttackPlan({
-      template: 'GET /?q=§test§ HTTP/1.1',
+      template: 'GET /?q=$test$ HTTP/1.1',
       attackType: 'sniper',
       payloadSets: [
         createPayloadSet({ payloadsText: 'admin' }),
@@ -133,7 +140,7 @@ describe('intruder attack helpers', () => {
 
   it('skips payloads removed by processing rules', async () => {
     const plan = await buildIntruderAttackPlan({
-      template: 'GET /?q=§test§ HTTP/1.1',
+      template: 'GET /?q=$test$ HTTP/1.1',
       attackType: 'sniper',
       payloadSets: [
         createPayloadSet({ payloadsText: 'admin\nroot' }),
@@ -157,7 +164,7 @@ describe('intruder attack helpers', () => {
 
   it('replaces {base} using the original value of each attack position', async () => {
     const plan = await buildIntruderAttackPlan({
-      template: 'GET /?q=§admin§&role=§user§ HTTP/1.1',
+      template: 'GET /?q=$admin$&role=$user$ HTTP/1.1',
       attackType: 'batteringRam',
       payloadSets: [
         createPayloadSet({ payloadsText: 'pre-{base}-post' }),
@@ -181,7 +188,7 @@ describe('intruder attack helpers', () => {
 
   it('can include both hashed and raw payload forms in one request', async () => {
     const plan = await buildIntruderAttackPlan({
-      template: 'GET /?q=§seed§ HTTP/1.1',
+      template: 'GET /?q=$seed$ HTTP/1.1',
       attackType: 'sniper',
       payloadSets: [
         createPayloadSet({ payloadsText: 'abc' }),
@@ -213,7 +220,7 @@ describe('intruder attack helpers', () => {
 
   it('applies selective URL encoding to the final payload', async () => {
     const plan = await buildIntruderAttackPlan({
-      template: 'GET /?q=§seed§ HTTP/1.1',
+      template: 'GET /?q=$seed$ HTTP/1.1',
       attackType: 'sniper',
       payloadSets: [
         createPayloadSet({
@@ -231,7 +238,7 @@ describe('intruder attack helpers', () => {
 
   it('uses async resolver for extension-generated payloads', async () => {
     const plan = await buildIntruderAttackPlan({
-      template: 'GET /?q=§test§ HTTP/1.1',
+      template: 'GET /?q=$test$ HTTP/1.1',
       attackType: 'sniper',
       payloadSets: [
         createPayloadSet({
@@ -251,7 +258,7 @@ describe('intruder attack helpers', () => {
 
   it('runs payload plugin processors after built-in payload rules', async () => {
     const plan = await buildIntruderAttackPlan({
-      template: 'GET /?q=§test§ HTTP/1.1',
+      template: 'GET /?q=$test$ HTTP/1.1',
       attackType: 'sniper',
       payloadSets: [
         createPayloadSet({ payloadsText: 'admin' }),

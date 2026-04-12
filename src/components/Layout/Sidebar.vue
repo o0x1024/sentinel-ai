@@ -272,6 +272,13 @@ const toolMenuItems = computed(() => [
 
 // 系统设置菜单项
 const systemMenuItems = computed(() => [
+    {
+    path: '/agent-management',
+    name: t('sidebar.agentManagement', '智能体管理'),
+    icon: 'fas fa-robot',
+    badge: null,
+    badgeClass: '',
+  },
   {
     path: '/notification-center',
     name: t('sidebar.notificationCenter', '消息中心'),
@@ -279,13 +286,7 @@ const systemMenuItems = computed(() => [
     badge: unreadActivityCount.value > 0 ? unreadActivityCount.value.toString() : null,
     badgeClass: unreadActivityCount.value > 0 ? 'badge-primary' : '',
   },
-  {
-    path: '/agent-management',
-    name: t('sidebar.agentManagement', '智能体管理'),
-    icon: 'fas fa-robot',
-    badge: null,
-    badgeClass: '',
-  },
+
   {
     path: '/notifications',
     name: t('sidebar.notificationRules', '通知中心'),

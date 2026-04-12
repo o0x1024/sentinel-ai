@@ -140,6 +140,7 @@
 
   <AskUserQuestionToolResult
     v-else-if="isAskUserQuestionTool && message.type === 'tool_call'"
+    :args="message.metadata?.tool_args"
     :result="message.metadata?.tool_result"
     :error="message.metadata?.error"
     :status="message.metadata?.status"
@@ -428,6 +429,28 @@
             </div>
           </div>
 
+          <div v-if="message.type === 'user' && referencedMessages.length > 0" class="mt-2 pt-2 border-t border-base-300/50">
+            <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
+              <i class="fas fa-comment-dots text-info"></i>
+              <span>引用消息 ({{ referencedMessages.length }})</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="referencedMessage in referencedMessages"
+                :key="referencedMessage.id"
+                class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-info/10 border border-info/25 text-xs"
+              >
+                <span class="badge badge-xs badge-info">{{ referencedMessage.roleLabel }}</span>
+                <span
+                  class="font-medium truncate max-w-72"
+                  :title="referencedMessage.content"
+                >
+                  {{ referencedMessage.content }}
+                </span>
+              </div>
+            </div>
+          </div>
+
           <div v-if="message.type === 'user' && referencedAssets.length > 0" class="mt-2 pt-2 border-t border-base-300/50">
             <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
               <i class="fas fa-cubes text-primary"></i>
@@ -500,7 +523,12 @@ import { useI18n } from 'vue-i18n'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import type { AgentMessage } from '@/types/agent'
-import type { ReferencedAsset, ReferencedFile, ReferencedTraffic } from '@/types/agentReferences'
+import type {
+  ReferencedAsset,
+  ReferencedConversationMessage,
+  ReferencedFile,
+  ReferencedTraffic,
+} from '@/types/agentReferences'
 import { getMessageTypeName } from '@/types/agent'
 import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
@@ -1123,6 +1151,13 @@ const referencedFiles = computed<ReferencedFile[]>(() => {
   if (props.message.type !== 'user') return []
   return Array.isArray(props.message.metadata?.referenced_files)
     ? props.message.metadata.referenced_files
+    : []
+})
+
+const referencedMessages = computed<ReferencedConversationMessage[]>(() => {
+  if (props.message.type !== 'user') return []
+  return Array.isArray(props.message.metadata?.referenced_messages)
+    ? props.message.metadata.referenced_messages
     : []
 })
 

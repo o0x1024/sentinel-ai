@@ -22,6 +22,7 @@ fn default_profiles() -> Vec<(SystemAgentProfileRecord, Vec<SystemAgentBindingRe
         prompt_patch: Some(
             "重点识别越权、对象边界、跳步骤、重复提交、逆序执行和状态机异常。".to_string(),
         ),
+        sop_definitions_json: "[]".to_string(),
         input_schema_json: json!({"type": "object"}).to_string(),
         output_schema_json: json!({"type": "object"}).to_string(),
         required_tools_json: "[]".to_string(),
@@ -59,6 +60,7 @@ fn default_profiles() -> Vec<(SystemAgentProfileRecord, Vec<SystemAgentBindingRe
         llm_model_override: None,
         base_prompt_id: Some("system:traffic_active_verifier".to_string()),
         prompt_patch: Some("仅对已有证据的 finding 执行最小化安全重放验证。".to_string()),
+        sop_definitions_json: "[]".to_string(),
         input_schema_json: json!({"type": "object"}).to_string(),
         output_schema_json: json!({"type": "object"}).to_string(),
         required_tools_json: "[]".to_string(),

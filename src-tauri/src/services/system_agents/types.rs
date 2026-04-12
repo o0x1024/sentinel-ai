@@ -18,6 +18,7 @@ pub struct SystemAgentRunUpdateEvent {
     pub profile_id: String,
     pub status: String,
     pub trigger_event: Option<String>,
+    pub tool_calls: Option<Value>,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
     pub error_message: Option<String>,

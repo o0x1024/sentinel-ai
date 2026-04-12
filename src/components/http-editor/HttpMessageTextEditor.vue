@@ -6,22 +6,112 @@
       'readonly-mode': readonly,
       'pretty-mode': displayMode === 'pretty',
       'raw-mode': displayMode === 'raw',
+      'with-search-bar': showSearchBar,
     }"
     :style="editorStyle"
   >
+    <div class="editor-display-toolbar">
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs editor-display-button"
+        :class="{ 'btn-active': settings.showLineEndings }"
+        :title="lineEndingToggleTitle"
+        @click="toggleLineEndingIndicators"
+      >
+        <span class="editor-display-button-label">↵</span>
+      </button>
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs editor-display-button"
+        :class="{ 'btn-active': settings.wrapLongLines }"
+        :title="lineWrapToggleTitle"
+        @click="toggleLineWrap"
+      >
+        <i class="fas fa-text-width"></i>
+      </button>
+    </div>
     <div ref="editorContainer" class="editor-container"></div>
+    <div v-if="showSearchBar" class="editor-search-bar border-t border-base-300 bg-base-200/95">
+      <div class="editor-search-main">
+        <label class="input input-sm input-bordered flex items-center gap-2 w-full bg-base-100">
+          <i class="fas fa-search text-base-content/50 text-xs"></i>
+          <input
+            ref="searchInput"
+            v-model="searchQuery"
+            type="text"
+            class="grow"
+            :placeholder="searchPlaceholder"
+            @keydown.enter.prevent="handleSearchEnter"
+            @keydown.esc.stop="clearSearch"
+          />
+          <span v-if="searchQuery" class="text-[11px] text-base-content/60 whitespace-nowrap">
+            {{ searchStatusText }}
+          </span>
+        </label>
+      </div>
+      <div class="editor-search-actions">
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs"
+          :class="{ 'btn-active': searchCaseSensitive }"
+          :title="searchCaseSensitiveTitle"
+          @click="toggleCaseSensitive"
+        >
+          Aa
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs"
+          :class="{ 'btn-active': searchRegexp }"
+          :title="searchRegexpTitle"
+          @click="toggleRegexp"
+        >
+          .*
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs"
+          :disabled="!canNavigateSearchResults"
+          :title="searchPreviousTitle"
+          @click="findPreviousMatch"
+        >
+          <i class="fas fa-chevron-up"></i>
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs"
+          :disabled="!canNavigateSearchResults"
+          :title="searchNextTitle"
+          @click="findNextMatch"
+        >
+          <i class="fas fa-chevron-down"></i>
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs"
+          :disabled="!searchQuery"
+          :title="searchClearTitle"
+          @click="clearSearch"
+        >
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { basicSetup } from 'codemirror'
 import { EditorState, Compartment } from '@codemirror/state'
-import { drawSelection, EditorView, highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view'
+import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, indentWithTab, history, undo, redo } from '@codemirror/commands'
+import { SearchQuery, findNext, findPrevious, getSearchQuery, search, setSearchQuery } from '@codemirror/search'
+import { useI18n } from 'vue-i18n'
 import { getHttpCodeThemeExtensions, isDarkHttpEditorTheme } from './httpEditorTheme'
+import { createLineEndingIndicatorExtension, getDetectedLineEndingLabel } from './httpEditorDisplayExtensions'
 import { getHttpEditorLanguageExtensions, getHttpLanguageSignature } from './httpEditorHttpMode'
 import { shouldHighlightTrafficMessageSyntax, useTrafficDisplaySettings, type TrafficMessageType } from '@/components/traffic/trafficDisplaySettings'
+import { getIntruderMarkerEditorExtensions } from '@/components/traffic/intruder/intruderMarkerEditorExtension'
 
 const scrollStateCache = new Map<string, { top: number; left: number }>()
 
@@ -35,6 +125,16 @@ const props = withDefaults(defineProps<{
   messageType?: TrafficMessageType
   displayMode?: 'pretty' | 'raw'
   stateKey?: string
+  markerMode?: 'none' | 'intruder'
+  showSearchBar?: boolean
+  searchPlaceholder?: string
+  searchNextTitle?: string
+  searchPreviousTitle?: string
+  searchCaseSensitiveTitle?: string
+  searchRegexpTitle?: string
+  searchClearTitle?: string
+  searchNoMatchesText?: string
+  searchInvalidRegexpText?: string
 }>(), {
   modelValue: '',
   readonly: false,
@@ -45,6 +145,16 @@ const props = withDefaults(defineProps<{
   messageType: 'generic',
   displayMode: 'raw',
   stateKey: '',
+  markerMode: 'none',
+  showSearchBar: false,
+  searchPlaceholder: 'Search',
+  searchNextTitle: 'Next match',
+  searchPreviousTitle: 'Previous match',
+  searchCaseSensitiveTitle: 'Case sensitive',
+  searchRegexpTitle: 'Regex',
+  searchClearTitle: 'Clear search',
+  searchNoMatchesText: 'No matches',
+  searchInvalidRegexpText: 'Invalid regex',
 })
 
 const emit = defineEmits<{
@@ -53,15 +163,48 @@ const emit = defineEmits<{
 }>()
 
 const editorContainer = ref<HTMLDivElement>()
+const searchInput = ref<HTMLInputElement>()
+const searchQuery = ref('')
+const searchCaseSensitive = ref(false)
+const searchRegexp = ref(false)
+const totalSearchMatches = ref(0)
+const activeSearchMatch = ref(0)
 let editorView: EditorView | null = null
 let currentLanguageSignature = ''
 const readOnlyCompartment = new Compartment()
 const editableCompartment = new Compartment()
+const lineWrapCompartment = new Compartment()
+const lineEndingCompartment = new Compartment()
+const { t } = useI18n()
 const { settings } = useTrafficDisplaySettings()
 const editorStyle = computed(() => ({
   '--traffic-editor-font-size': `${settings.value.fontSize}px`,
   '--traffic-editor-font-family': settings.value.fontFamily,
 }))
+const lineEndingToggleTitle = computed(() => (
+  settings.value.showLineEndings
+    ? t('trafficAnalysis.httpEditor.toolbar.hideLineEndings')
+    : t('trafficAnalysis.httpEditor.toolbar.showLineEndings')
+))
+const lineWrapToggleTitle = computed(() => (
+  settings.value.wrapLongLines
+    ? t('trafficAnalysis.httpEditor.toolbar.disableLineWrap')
+    : t('trafficAnalysis.httpEditor.toolbar.enableLineWrap')
+))
+const hasInvalidSearchQuery = computed(() => {
+  if (!searchQuery.value || !props.showSearchBar) return false
+  return !buildSearchQuery().valid
+})
+const canNavigateSearchResults = computed(() => {
+  if (!searchQuery.value) return false
+  return totalSearchMatches.value > 0 && !hasInvalidSearchQuery.value
+})
+const searchStatusText = computed(() => {
+  if (!searchQuery.value) return ''
+  if (hasInvalidSearchQuery.value) return props.searchInvalidRegexpText
+  if (totalSearchMatches.value === 0) return props.searchNoMatchesText
+  return `${activeSearchMatch.value || 1}/${totalSearchMatches.value}`
+})
 
 function getThemeExtensions() {
   const highlightEnabled = shouldHighlightTrafficMessageSyntax(props.messageType)
@@ -103,19 +246,86 @@ function getLanguageExtensions() {
   return getHttpEditorLanguageExtensions(props.modelValue)
 }
 
-function getBaseExtensions() {
-  if (!props.readonly) {
-    return [
-      basicSetup,
-      keymap.of([...defaultKeymap, indentWithTab]),
-      history(),
-    ]
-  }
+function getLineWrapExtension() {
+  return settings.value.wrapLongLines ? EditorView.lineWrapping : []
+}
 
-  return [
+function getLineEndingExtension() {
+  return settings.value.showLineEndings
+    ? createLineEndingIndicatorExtension(getDetectedLineEndingLabel(props.modelValue))
+    : []
+}
+
+function getBaseExtensions() {
+  const sharedKeymap = keymap.of([
+    {
+      key: 'Mod-a',
+      run: () => {
+        if (!editorView) return false
+        editorView.dispatch({
+          selection: { anchor: 0, head: editorView.state.doc.length },
+        })
+        editorView.focus()
+        return true
+      },
+    },
+    {
+      key: 'Mod-f',
+      run: () => {
+        if (!props.showSearchBar) return false
+        focusSearchInput()
+        return true
+      },
+    },
+    {
+      key: 'F3',
+      run: () => {
+        if (!props.showSearchBar) return false
+        return findNextMatch()
+      },
+    },
+    {
+      key: 'Shift-F3',
+      run: () => {
+        if (!props.showSearchBar) return false
+        return findPreviousMatch()
+      },
+    },
+    {
+      key: 'Mod-g',
+      run: () => {
+        if (!props.showSearchBar) return false
+        return findNextMatch()
+      },
+    },
+    {
+      key: 'Shift-Mod-g',
+      run: () => {
+        if (!props.showSearchBar) return false
+        return findPreviousMatch()
+      },
+    },
+  ])
+  const searchExtensions = props.showSearchBar ? [search()] : []
+  const markerExtensions = props.markerMode === 'intruder' ? getIntruderMarkerEditorExtensions() : []
+  const readonlyFocusExtensions = props.readonly
+    ? [EditorView.contentAttributes.of({ tabindex: '0' })]
+    : []
+  const baseEditorExtensions = [
     lineNumbers(),
     drawSelection(),
+    highlightSpecialChars(),
     highlightActiveLineGutter(),
+    highlightActiveLine(),
+  ]
+
+  return [
+    sharedKeymap,
+    ...searchExtensions,
+    ...markerExtensions,
+    ...baseEditorExtensions,
+    ...readonlyFocusExtensions,
+    ...(props.readonly ? [] : [history(), keymap.of([...defaultKeymap, indentWithTab])]),
   ]
 }
 
@@ -148,6 +358,115 @@ function restoreScrollState() {
   scroller.scrollLeft = state.left
 }
 
+function buildSearchQuery() {
+  return new SearchQuery({
+    search: searchQuery.value,
+    caseSensitive: searchCaseSensitive.value,
+    regexp: searchRegexp.value,
+  })
+}
+
+function syncLocalSearchState() {
+  if (!editorView || !props.showSearchBar) return
+  const query = getSearchQuery(editorView.state)
+  if (searchQuery.value !== query.search) searchQuery.value = query.search
+  if (searchCaseSensitive.value !== query.caseSensitive) searchCaseSensitive.value = query.caseSensitive
+  if (searchRegexp.value !== query.regexp) searchRegexp.value = query.regexp
+}
+
+function updateSearchMetrics() {
+  if (!editorView || !props.showSearchBar) {
+    totalSearchMatches.value = 0
+    activeSearchMatch.value = 0
+    return
+  }
+
+  const query = getSearchQuery(editorView.state)
+  if (!query.search || !query.valid) {
+    totalSearchMatches.value = 0
+    activeSearchMatch.value = 0
+    return
+  }
+
+  const cursor = query.getCursor(editorView.state)
+  const selection = editorView.state.selection.main
+  let total = 0
+  let active = 0
+
+  for (let next = cursor.next(); !next.done; next = cursor.next()) {
+    total += 1
+    const match = next.value
+    const overlapsSelection = (selection.from === match.from && selection.to === match.to)
+      || (selection.from === selection.to && selection.from >= match.from && selection.from <= match.to)
+      || (selection.from < match.to && selection.to > match.from)
+
+    if (overlapsSelection && active === 0) {
+      active = total
+    }
+  }
+
+  totalSearchMatches.value = total
+  activeSearchMatch.value = total === 0 ? 0 : active || 1
+}
+
+function applySearchState(navigateToMatch = false) {
+  if (!editorView || !props.showSearchBar) return
+  const query = buildSearchQuery()
+  editorView.dispatch({
+    effects: setSearchQuery.of(query),
+  })
+  if (navigateToMatch && query.search && query.valid) {
+    findNext(editorView)
+  }
+  syncLocalSearchState()
+  updateSearchMetrics()
+}
+
+function focusSearchInput() {
+  if (!props.showSearchBar) return
+  requestAnimationFrame(() => {
+    searchInput.value?.focus()
+    searchInput.value?.select()
+  })
+}
+
+function clearSearch() {
+  if (!props.showSearchBar) return
+  searchQuery.value = ''
+  applySearchState(false)
+  editorView?.focus()
+}
+
+function findNextMatch() {
+  if (!editorView || !canNavigateSearchResults.value) return false
+  const handled = findNext(editorView)
+  updateSearchMetrics()
+  return handled
+}
+
+function findPreviousMatch() {
+  if (!editorView || !canNavigateSearchResults.value) return false
+  const handled = findPrevious(editorView)
+  updateSearchMetrics()
+  return handled
+}
+
+function handleSearchEnter(event: KeyboardEvent) {
+  if (event.shiftKey) {
+    findPreviousMatch()
+    return
+  }
+  findNextMatch()
+}
+
+function toggleCaseSensitive() {
+  searchCaseSensitive.value = !searchCaseSensitive.value
+}
+
+function toggleRegexp() {
+  searchRegexp.value = !searchRegexp.value
+}
+
 function initEditor() {
   if (!editorContainer.value) return
 
@@ -173,10 +492,22 @@ function initEditor() {
         if (update.docChanged && !props.readonly) {
           emit('update:modelValue', update.state.doc.toString())
         }
+        if (
+          props.showSearchBar
+          && (
+            update.selectionSet
+            || update.docChanged
+            || update.transactions.some(tr => tr.effects.some(effect => effect.is(setSearchQuery)))
+          )
+        ) {
+          syncLocalSearchState()
+          updateSearchMetrics()
+        }
       }),
       readOnlyCompartment.of(EditorState.readOnly.of(props.readonly)),
       editableCompartment.of(EditorView.editable.of(!props.readonly)),
-      EditorView.lineWrapping,
+      lineWrapCompartment.of(getLineWrapExtension()),
+      lineEndingCompartment.of(getLineEndingExtension()),
     ],
   })
 
@@ -191,6 +522,8 @@ function initEditor() {
   editorView.scrollDOM.addEventListener('scroll', saveScrollState, { passive: true })
   requestAnimationFrame(() => {
     restoreScrollState()
+    syncLocalSearchState()
+    updateSearchMetrics()
   })
 }
 
@@ -218,8 +551,35 @@ function updateReadonly(readonly: boolean) {
   })
 }
 
+function updateLineWrap(enabled: boolean) {
+  if (!editorView) return
+  editorView.dispatch({
+    effects: lineWrapCompartment.reconfigure(enabled ? EditorView.lineWrapping : []),
+  })
+}
+
+function updateLineEndings(enabled: boolean) {
+  if (!editorView) return
+  editorView.dispatch({
+    effects: lineEndingCompartment.reconfigure(
+      enabled
+        ? createLineEndingIndicatorExtension(getDetectedLineEndingLabel(props.modelValue))
+        : [],
+    ),
+  })
+}
+
+function toggleLineWrap() {
+  settings.value.wrapLongLines = !settings.value.wrapLongLines
+}
+
+function toggleLineEndingIndicators() {
+  settings.value.showLineEndings = !settings.value.showLineEndings
+}
+
 defineExpose({
   focus: () => editorView?.focus(),
+  focusSearch: focusSearchInput,
   getContent: () => editorView?.state.doc.toString() || '',
   getSelectionRange: () => {
     if (!editorView) return { from: 0, to: 0 }
@@ -244,12 +604,29 @@ defineExpose({
   },
 })
 
+watch(searchQuery, () => {
+  if (!props.showSearchBar) return
+  applySearchState(true)
+})
+
+watch(searchCaseSensitive, () => {
+  if (!props.showSearchBar) return
+  applySearchState(true)
+})
+
+watch(searchRegexp, () => {
+  if (!props.showSearchBar) return
+  applySearchState(true)
+})
+
 watch(() => props.modelValue, (newVal) => {
   if (getLanguageSignature(newVal) !== currentLanguageSignature) {
     initEditor()
     return
   }
   updateContent(newVal)
+  updateLineEndings(settings.value.showLineEndings)
+  updateSearchMetrics()
 })
 
 watch(() => props.readonly, (newVal) => {
@@ -270,6 +647,7 @@ watch(
   () => [
     props.messageType,
     props.readonly,
+    props.markerMode,
     settings.value.highlightRequestSyntax,
     settings.value.highlightResponseSyntax,
   ],
@@ -277,6 +655,14 @@ watch(
     initEditor()
   },
 )
+
+watch(() => settings.value.wrapLongLines, (enabled) => {
+  updateLineWrap(enabled)
+})
+
+watch(() => settings.value.showLineEndings, (enabled) => {
+  updateLineEndings(enabled)
+})
 
 let themeObserver: MutationObserver | null = null
 
@@ -314,6 +700,9 @@ onUnmounted(() => {
   width: 100%;
   height: v-bind(height);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
 }
 
 .http-code-editor.fullscreen {
@@ -328,6 +717,59 @@ onUnmounted(() => {
 .editor-container {
   width: 100%;
   height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.editor-display-toolbar {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.45rem;
+  z-index: 4;
+  display: flex;
+  gap: 0.25rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.http-code-editor:hover .editor-display-toolbar,
+.http-code-editor:focus-within .editor-display-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.editor-display-button {
+  min-width: 1.85rem;
+  height: 1.65rem;
+  padding: 0 0.45rem;
+  border: 1px solid oklch(var(--b3) / 0.85);
+  background: oklch(var(--b1) / 0.95);
+  box-shadow: 0 4px 14px oklch(0 0 0 / 0.08);
+}
+
+.editor-display-button-label {
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.editor-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  flex: 0 0 auto;
+}
+
+.editor-search-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.editor-search-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 :deep(.cm-editor) {
@@ -343,30 +785,11 @@ onUnmounted(() => {
 }
 
 :deep(.cm-content) {
-  padding: 0 0 6px;
   user-select: text;
-}
-
-.http-code-editor.pretty-mode :deep(.cm-content) {
-  padding: 2px 0 8px;
-}
-
-.http-code-editor.readonly-mode :deep(.cm-content) {
-  padding: 1px 0 4px;
-}
-
-.http-code-editor.readonly-mode.pretty-mode :deep(.cm-content) {
-  padding: 2px 0 6px;
-}
-
-.http-code-editor.raw-mode :deep(.cm-content) {
-  padding: 0 0 2px;
 }
 
 :deep(.cm-line) {
   padding: 0 8px;
-  min-height: 13px;
-  line-height: 13px;
 }
 
 .http-code-editor.pretty-mode :deep(.cm-line) {
@@ -379,8 +802,6 @@ onUnmounted(() => {
 }
 
 :deep(.cm-gutterElement) {
-  min-height: 13px;
-  line-height: 13px;
   padding-right: 0.65rem;
 }
 
@@ -404,5 +825,16 @@ onUnmounted(() => {
 
 :deep(.cm-content ::selection) {
   background-color: transparent;
+}
+
+:deep(.cm-line-ending-indicator) {
+  display: inline-block;
+  margin-left: 0.2rem;
+  color: oklch(var(--bc) / 0.32);
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  user-select: none;
 }
 </style>

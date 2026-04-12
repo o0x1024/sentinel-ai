@@ -4,6 +4,7 @@ import { buildReferencedSurfaceAsset } from '@/components/BugBounty/surfaceAsset
 import { buildMentionToken, parseMentionTokens } from './mentionTokenSupport'
 import type {
   ReferencedAsset,
+  ReferencedConversationMessage,
   ReferencedFile,
   ReferencedTraffic,
 } from '@/types/agentReferences'
@@ -53,7 +54,14 @@ interface ProxyRequestCommandResponse<T> {
   error?: string | null
 }
 
-type MentionKind = 'file' | 'asset' | 'traffic'
+type MentionKind = 'file' | 'asset' | 'message' | 'traffic'
+interface MentionableConversationMessage {
+  content: string
+  id: string
+  roleLabel: string
+  timestamp: number
+  type: string
+}
 
 interface MentionSuggestionBase {
   description: string
@@ -70,6 +78,10 @@ export type MentionSuggestionItem =
   | (MentionSuggestionBase & {
     assetId: string
     kind: 'asset'
+  })
+  | (MentionSuggestionBase & {
+    kind: 'message'
+    messageId: string
   })
   | (MentionSuggestionBase & {
     kind: 'traffic'
@@ -176,6 +188,14 @@ const buildTrafficItem = (item: ProxyRequestMentionMatch): MentionSuggestionItem
   requestId: item.id,
 })
 
+const buildMessageItem = (item: MentionableConversationMessage): MentionSuggestionItem => ({
+  description: item.roleLabel,
+  id: `message:${item.id}`,
+  kind: 'message',
+  label: item.content.replace(/\s+/g, ' ').slice(0, 72) || item.roleLabel,
+  messageId: item.id,
+})
+
 const buildMentionText = (item: MentionSuggestionItem) => {
   switch (item.kind) {
     case 'file':
@@ -188,6 +208,12 @@ const buildMentionText = (item: MentionSuggestionItem) => {
       return buildMentionToken({
         id: item.assetId,
         kind: 'asset',
+        label: item.label,
+      })
+    case 'message':
+      return buildMentionToken({
+        id: item.messageId,
+        kind: 'message',
         label: item.label,
       })
     case 'traffic':
@@ -205,13 +231,17 @@ export const useInputMentions = (params: {
   getInputMessage: () => string
   getReferencedAssets: () => ReferencedAsset[]
   getReferencedFiles: () => ReferencedFile[]
+  getReferencedMessages: () => ReferencedConversationMessage[]
   getReferencedTraffic: () => ReferencedTraffic[]
+  getConversationMessages: () => MentionableConversationMessage[]
   onAddReferencedAsset: (asset: ReferencedAsset) => void
   onAddReferencedFile: (file: ReferencedFile) => void
+  onAddReferencedMessage: (message: ReferencedConversationMessage) => void
   onAddReferencedTraffic: (traffic: ReferencedTraffic) => void
   onInputValueChange: (value: string, cursor?: number) => void
   onSyncReferencedAssets: (assets: ReferencedAsset[]) => void
   onSyncReferencedFiles: (files: ReferencedFile[]) => void
+  onSyncReferencedMessages: (messages: ReferencedConversationMessage[]) => void
   onSyncReferencedTraffic: (traffic: ReferencedTraffic[]) => void
 }) => {
   const mentionOpen = ref(false)
@@ -242,6 +272,16 @@ export const useInputMentions = (params: {
     const currentSeq = ++searchSeq
     mentionLoading.value = true
     mentionError.value = ''
+
+    const localMessageItems = params.getConversationMessages()
+      .filter((item) => {
+        const normalized = query.trim().toLowerCase()
+        if (!normalized) return true
+        const haystack = `${item.roleLabel} ${item.content}`.toLowerCase()
+        return haystack.includes(normalized)
+      })
+      .slice(0, MENTION_LIMIT_PER_KIND)
+      .map(buildMessageItem)
 
     const [fileResult, assetResult, trafficResult] = await Promise.allSettled([
       invoke<WorkingDirectoryFileMatch[]>('search_working_directory_files', {
@@ -282,6 +322,8 @@ export const useInputMentions = (params: {
     } else {
       errors.push(trafficResult.reason instanceof Error ? trafficResult.reason.message : String(trafficResult.reason))
     }
+
+    nextItems.push(...localMessageItems)
 
     mentionItems.value = nextItems
     if (mentionActiveIndex.value >= mentionItems.value.length) {
@@ -333,6 +375,14 @@ export const useInputMentions = (params: {
         return !item.mentionText || text.includes(item.mentionText)
       }),
     )
+    params.onSyncReferencedMessages(
+      params.getReferencedMessages().filter((item) => {
+        if (tokens.some((token) => token.kind === 'message' && token.id === item.id)) {
+          return true
+        }
+        return !item.mentionText || text.includes(item.mentionText)
+      }),
+    )
     params.onSyncReferencedTraffic(
       params.getReferencedTraffic().filter((item) => {
         if (tokens.some((token) => token.kind === 'traffic' && token.id === String(item.id))) {
@@ -376,6 +426,19 @@ export const useInputMentions = (params: {
         params.onAddReferencedAsset({
           ...buildReferencedSurfaceAsset(detail),
           mentionText,
+        })
+      } else if (selectedItem.kind === 'message') {
+        const message = params.getConversationMessages().find((item) => item.id === selectedItem.messageId)
+        if (!message) {
+          throw new Error('引用消息不存在')
+        }
+        params.onAddReferencedMessage({
+          content: message.content,
+          id: message.id,
+          mentionText,
+          roleLabel: message.roleLabel,
+          timestamp: message.timestamp,
+          type: message.type,
         })
       } else {
         const response = await invoke<ProxyRequestCommandResponse<ReferencedTraffic | null>>('get_proxy_request', {

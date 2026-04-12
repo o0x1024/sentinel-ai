@@ -33,6 +33,7 @@
                 v-for="option in question.options"
                 :key="`${question.question}:${option.label}`"
                 class="flex cursor-pointer items-start gap-3 rounded-lg border border-base-300 bg-base-100 px-3 py-3 transition-colors hover:border-primary/40"
+                @mouseenter="focusPreview(question.question, option.label)"
               >
                 <input
                   :name="question.question"
@@ -48,6 +49,16 @@
                   </div>
                 </div>
               </label>
+            </div>
+
+            <div
+              v-if="resolvePreview(question.question)"
+              class="mt-3 rounded-lg border border-info/30 bg-info/5 p-3"
+            >
+              <div class="mb-2 text-xs font-medium uppercase tracking-wide text-info">
+                预览
+              </div>
+              <MarkdownRenderer :content="resolvePreview(question.question) || ''" />
             </div>
 
             <div class="mt-3">
@@ -91,10 +102,12 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import MarkdownRenderer from './MarkdownRenderer.vue'
 
 interface AskUserQuestionOption {
   label: string
   description: string
+  preview?: string | null
 }
 
 interface AskUserQuestionItem {
@@ -117,6 +130,7 @@ const props = defineProps<{
 const pendingRequest = ref<PendingAskUserQuestionRequest | null>(null)
 const selectedAnswers = ref<Record<string, string>>({})
 const customAnswers = ref<Record<string, string>>({})
+const previewFocus = ref<Record<string, string>>({})
 const submitting = ref(false)
 
 let unlisten: UnlistenFn | null = null
@@ -139,6 +153,7 @@ const normalizeRequest = (value: unknown): PendingAskUserQuestionRequest | null 
 const clearDraft = () => {
   selectedAnswers.value = {}
   customAnswers.value = {}
+  previewFocus.value = {}
 }
 
 const setPendingRequest = (request: PendingAskUserQuestionRequest | null) => {
@@ -182,6 +197,10 @@ const selectOption = (questionText: string, label: string) => {
     ...selectedAnswers.value,
     [questionText]: label,
   }
+  previewFocus.value = {
+    ...previewFocus.value,
+    [questionText]: label,
+  }
   customAnswers.value = {
     ...customAnswers.value,
     [questionText]: '',
@@ -198,6 +217,27 @@ const updateCustomAnswer = (questionText: string, value: string) => {
 const handleCustomAnswerInput = (questionText: string, event: Event) => {
   const target = event.target as HTMLInputElement | null
   updateCustomAnswer(questionText, target?.value || '')
+}
+
+const focusPreview = (questionText: string, label: string) => {
+  previewFocus.value = {
+    ...previewFocus.value,
+    [questionText]: label,
+  }
+}
+
+const resolvePreview = (questionText: string) => {
+  const request = pendingRequest.value
+  if (!request) return ''
+  const question = request.questions.find((item) => item.question === questionText)
+  if (!question) return ''
+  const preferredLabel =
+    previewFocus.value[questionText] ||
+    selectedAnswers.value[questionText] ||
+    question.options.find((option) => !!option.preview)?.label ||
+    ''
+  const option = question.options.find((item) => item.label === preferredLabel)
+  return option?.preview || ''
 }
 
 const handleSubmit = async () => {

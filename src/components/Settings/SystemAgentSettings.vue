@@ -2,9 +2,12 @@
   <div class="card bg-transparent shadow-none">
     <div class="card-body gap-4 px-0 py-0">
       <div class="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4">
-        <SystemAgentListPanel
+        <AgentListPanel
+          title="后台 Agent 列表"
+          empty-text="当前还没有可用后台 Agent。"
           :loading="loading"
           :items="profileListItems"
+          :filter-options="systemAgentListFilterOptions"
           :selected-id="selectedProfileId"
           @select="selectProfile"
         />
@@ -23,16 +26,32 @@
           </template>
 
           <template v-if="selectedProfile">
-            <SystemAgentProfileHeaderPanel
-              :name="selectedProfile.name"
+            <AgentIdentityPanel
+              eyebrow="后台型 Agent"
+              :title="selectedProfileDisplayName"
               :description="selectedProfileDescription"
-              :mode-badge="selectedProfileModeBadge"
-              :passive-event-name="selectedProfilePassiveEventName"
-              :enabled="selectedProfile.enabled"
-              @update:enabled="selectedProfile.enabled = $event"
-            />
+              :meta-items="selectedProfileMetaItems"
+            >
+              <template #badges>
+                <span class="badge badge-sm" :class="selectedProfileModeBadge.className">
+                  {{ selectedProfileModeBadge.label }}
+                </span>
+              </template>
 
-            <SystemAgentWorkspaceTabs v-model="activeWorkspaceTab" :items="workspaceTabs" />
+              <template #actions>
+                <label class="label cursor-pointer justify-start gap-3">
+                  <input
+                    :checked="selectedProfile.enabled"
+                    type="checkbox"
+                    class="toggle toggle-primary"
+                    @change="handleSelectedProfileEnabledToggle"
+                  />
+                  <span class="label-text">启用</span>
+                </label>
+              </template>
+            </AgentIdentityPanel>
+
+            <AgentWorkspaceTabs v-model="activeWorkspaceTab" :items="workspaceTabs" />
 
             <div
               class="rounded-lg border border-base-300 bg-base-100 px-4 py-3 text-sm text-base-content/70"
@@ -54,8 +73,11 @@
               <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4">
                 <SystemAgentRunsPanel
                   :runs="overviewRuns"
-                  :disabled="!selectedProfile.id"
+                  :disabled="!selectedProfile.id || mutatingRuns"
+                  :deleting-run-id="deletingRunId"
                   @refresh="loadRuns"
+                  @delete-run="deleteRun"
+                  @clear-runs="clearRuns"
                 />
 
                 <SystemAgentRecentFindingsPanel
@@ -77,7 +99,7 @@
 
             <div v-else-if="activeWorkspaceTab === 'config'" class="space-y-4">
               <SystemAgentPromptPatchPanel
-                :name="selectedProfile.name"
+                :name="selectedProfileDisplayName"
                 :prompt-patch="selectedProfile.promptPatch || ''"
                 :placeholder="promptPatchPlaceholder"
                 :guidance="promptPatchGuidance"
@@ -100,21 +122,23 @@
               />
 
               <div class="grid grid-cols-1 gap-4">
-                <SystemAgentLlmOverridePanel
-                  :profile-id="selectedProfile.id"
-                  :model-value="{
-                    provider: selectedProfile.llmProviderOverride,
-                    model: selectedProfile.llmModelOverride,
-                  }"
+                <AgentModelPanel
+                  title="LLM 覆盖"
+                  description="不设置时自动继承 AI 设置中的默认提供商和模型。"
+                  provider-label="LLM 提供商"
+                  model-label="模型"
+                  :provider-value="selectedProfile.llmProviderOverride || ''"
+                  :model-value="selectedProfile.llmModelOverride || ''"
                   :provider-options="llmProviderOptions"
-                  :model-suggestions="llmModelSuggestions"
+                  :model-options="selectedProfileModelOptions"
                   :global-default-label="globalDefaultLlmLabel"
-                  @update:model-value="
-                    value => {
-                      selectedProfile.llmProviderOverride = value.provider
-                      selectedProfile.llmModelOverride = value.model
-                    }
-                  "
+                  :datalist-id="selectedProfileModelDatalistId"
+                  follow-default-option-label="跟随全局默认"
+                  follow-badge-label="跟随全局"
+                  custom-badge-label="自定义中"
+                  suggested-hint="已加载该提供商的模型建议，也可手动输入模型 ID。"
+                  @update:provider-value="updateSelectedProfileProviderOverride"
+                  @update:model-value="updateSelectedProfileModelOverride"
                 />
                 <SystemAgentToolBindingPanel v-model="toolBindingValue" />
                 <SystemAgentSafetyPolicyPanel
@@ -149,8 +173,11 @@
 
               <SystemAgentRunsPanel
                 :runs="runs"
-                :disabled="!selectedProfile.id"
+                :disabled="!selectedProfile.id || mutatingRuns"
+                :deleting-run-id="deletingRunId"
                 @refresh="loadRuns"
+                @delete-run="deleteRun"
+                @clear-runs="clearRuns"
               />
 
               <SystemAgentVersionsPanel
@@ -172,6 +199,8 @@
                 :profile-id="selectedProfile.id"
                 :findings="recentFindings"
                 :window-start="statsWindowStart"
+                :definitions="selectedProfile.sopDefinitions || []"
+                @update:definitions="selectedProfile.sopDefinitions = $event"
               />
             </div>
           </template>
@@ -184,6 +213,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
+import AgentIdentityPanel from './AgentIdentityPanel.vue'
+import AgentListPanel from './AgentListPanel.vue'
+import AgentModelPanel from './AgentModelPanel.vue'
+import AgentWorkspaceTabs from './AgentWorkspaceTabs.vue'
 import SystemAgentAdvancedSettingsPanel from './system-agent/SystemAgentAdvancedSettingsPanel.vue'
 import SystemAgentAutoSaveStatusBar from './system-agent/SystemAgentAutoSaveStatusBar.vue'
 import SystemAgentBehaviorSourcePanel from './system-agent/SystemAgentBehaviorSourcePanel.vue'
@@ -191,26 +224,30 @@ import SystemAgentContextExtractionPanel from './system-agent/SystemAgentContext
 import SystemAgentDebugPanel from './system-agent/SystemAgentDebugPanel.vue'
 import SystemAgentDetailLayout from './system-agent/SystemAgentDetailLayout.vue'
 import SystemAgentEmptyStatePanel from './system-agent/SystemAgentEmptyStatePanel.vue'
-import SystemAgentListPanel from './system-agent/SystemAgentListPanel.vue'
-import SystemAgentProfileHeaderPanel from './system-agent/SystemAgentProfileHeaderPanel.vue'
 import SystemAgentPromptPatchPanel from './system-agent/SystemAgentPromptPatchPanel.vue'
 import SystemAgentRecentFindingsPanel from './system-agent/SystemAgentRecentFindingsPanel.vue'
 import SystemAgentSopInsightsPanel from './system-agent/SystemAgentSopInsightsPanel.vue'
 import SystemAgentToolbarPanel from './system-agent/SystemAgentToolbarPanel.vue'
 import SystemAgentRunsPanel from './system-agent/SystemAgentRunsPanel.vue'
-import SystemAgentLlmOverridePanel from './system-agent/SystemAgentLlmOverridePanel.vue'
 import SystemAgentSafetyPolicyPanel from './system-agent/SystemAgentSafetyPolicyPanel.vue'
 import SystemAgentStatsCards from './system-agent/SystemAgentStatsCards.vue'
 import SystemAgentVersionsPanel from './system-agent/SystemAgentVersionsPanel.vue'
-import SystemAgentWorkspaceTabs from './system-agent/SystemAgentWorkspaceTabs.vue'
 import SystemAgentToolBindingPanel from './SystemAgentToolBindingPanel.vue'
 import { useSystemAgentSettingsController } from './system-agent/useSystemAgentSettingsController'
 
 type WorkspaceTabKey = 'overview' | 'config' | 'runs' | 'insights'
+const systemAgentListFilterOptions = [
+  { key: 'enabled', label: '已启用' },
+  { key: 'disabled', label: '已停用' },
+  { key: 'triage', label: 'Triage' },
+  { key: 'verifier', label: 'Verifier' },
+]
 
 const {
   loading,
   dispatching,
+  mutatingRuns,
+  deletingRunId,
   runs,
   versions,
   recentFindings,
@@ -228,6 +265,7 @@ const {
   promptPatchPlaceholder,
   promptPatchGuidance,
   selectedProfileDescription,
+  selectedProfileDisplayName,
   autoSaveStatusText,
   autoSaveStatusClass,
   behaviorSignalSettings,
@@ -248,11 +286,40 @@ const {
   refreshAll,
   saveContextExtractionSettings,
   loadRuns,
+  deleteRun,
+  clearRuns,
   loadVersions,
   loadRecentFindings,
 } = useSystemAgentSettingsController()
 
 const activeWorkspaceTab = ref<WorkspaceTabKey>('overview')
+const selectedProfileModelDatalistId = computed(() =>
+  `system-agent-llm-models-${selectedProfile.value?.id || 'profile'}`
+)
+const selectedProfileMetaItems = computed(() => {
+  if (!selectedProfile.value) return []
+
+  return [
+    {
+      label: 'Agent ID',
+      value: selectedProfile.value.id,
+    },
+    {
+      label: '能力',
+      value: selectedProfile.value.capability,
+    },
+    {
+      label: '自动事件',
+      value: selectedProfilePassiveEventName.value || '未配置',
+    },
+  ]
+})
+const selectedProfileModelOptions = computed(() =>
+  llmModelSuggestions.value.map(model => ({
+    value: model,
+    label: model,
+  }))
+)
 
 const workspaceTabs = computed(() => {
   const tabs: Array<{
@@ -274,7 +341,7 @@ const workspaceTabs = computed(() => {
     {
       key: 'runs',
       label: '运行',
-      description: '通过测试事件回放调试系统智能体，并查看完整运行记录与版本快照。',
+      description: '通过测试事件回放调试后台 Agent，并查看完整运行记录与版本快照。',
       count: runs.value.length,
     },
   ]
@@ -298,6 +365,26 @@ const activeWorkspaceTabDescription = computed(() => {
 const overviewRuns = computed(() => runs.value.slice(0, 3))
 const overviewVersions = computed(() => versions.value.slice(0, 3))
 const overviewFindings = computed(() => recentFindings.value.slice(0, 3))
+
+function handleSelectedProfileEnabledToggle(event: Event) {
+  const target = event.target as HTMLInputElement | null
+  if (!selectedProfile.value) return
+  selectedProfile.value.enabled = target?.checked === true
+}
+
+function updateSelectedProfileProviderOverride(value: string) {
+  if (!selectedProfile.value) return
+  const provider = value.trim() || null
+  selectedProfile.value.llmProviderOverride = provider
+  if (!provider) {
+    selectedProfile.value.llmModelOverride = null
+  }
+}
+
+function updateSelectedProfileModelOverride(value: string) {
+  if (!selectedProfile.value) return
+  selectedProfile.value.llmModelOverride = value.trim() || null
+}
 
 watch(showRecentFindingsPanel, visible => {
   if (!visible && activeWorkspaceTab.value === 'insights') {

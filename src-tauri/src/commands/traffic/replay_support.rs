@@ -1,4 +1,8 @@
 use flate2::read::{DeflateDecoder, GzDecoder};
+use reqwest::{
+    header::{HeaderMap, HeaderName, HeaderValue},
+    Method, StatusCode,
+};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -83,17 +87,22 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
             return Err("Total timeout exceeded".to_string());
         }
 
-        let outbound_request = build_outbound_request(&current_request, &current_url, &cookie_jar);
-        let response_buf = execute_single_raw_request(
-            current_url.host_str().unwrap_or(&config.host),
-            current_url.port_or_known_default().unwrap_or(config.port),
-            current_url.scheme() == "https",
-            &outbound_request,
-            remaining_timeout,
-        )
-        .await?;
+        let raw_response = if is_http2_protocol(&current_request.protocol) {
+            execute_single_http2_request(&current_request, &current_url, &cookie_jar, remaining_timeout).await?
+        } else {
+            let outbound_request =
+                build_outbound_request(&current_request, &current_url, &cookie_jar);
+            let response_buf = execute_single_raw_request(
+                current_url.host_str().unwrap_or(&config.host),
+                current_url.port_or_known_default().unwrap_or(config.port),
+                current_url.scheme() == "https",
+                &outbound_request,
+                remaining_timeout,
+            )
+            .await?;
 
-        let raw_response = decode_http_response(&response_buf);
+            decode_http_response(&response_buf)
+        };
         let response_head = parse_raw_response(&raw_response);
         last_raw_response = raw_response;
 
@@ -147,6 +156,122 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
         final_url: current_url.to_string(),
         redirect_chain,
     })
+}
+
+fn is_http2_protocol(protocol: &str) -> bool {
+    matches!(protocol.trim().to_ascii_uppercase().as_str(), "HTTP/2" | "HTTP/2.0")
+}
+
+async fn execute_single_http2_request(
+    request: &ParsedRawRequest,
+    target_url: &Url,
+    cookie_jar: &[RedirectCookie],
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout)
+        .build()
+        .map_err(|error| format!("Failed to create HTTP/2 client: {error}"))?;
+
+    let method = Method::from_bytes(request.method.as_bytes())
+        .map_err(|error| format!("Unsupported HTTP method for HTTP/2 replay: {error}"))?;
+
+    let mut reqwest_headers = build_http2_headers(request, target_url, cookie_jar)?;
+    let mut builder = client
+        .request(method, target_url.clone())
+        .version(reqwest::Version::HTTP_2);
+
+    if !reqwest_headers.is_empty() {
+        builder = builder.headers(std::mem::take(&mut reqwest_headers));
+    }
+
+    if !request.body.is_empty() {
+        builder = builder.body(request.body.clone());
+    }
+
+    let response = builder
+        .send()
+        .await
+        .map_err(|error| format!("Failed to send HTTP/2 request: {error}"))?;
+
+    build_http2_raw_response(response).await
+}
+
+fn build_http2_headers(
+    request: &ParsedRawRequest,
+    target_url: &Url,
+    cookie_jar: &[RedirectCookie],
+) -> Result<HeaderMap, String> {
+    let mut header_map = HeaderMap::new();
+
+    for (name, value) in request.headers.iter() {
+        if should_skip_http2_header(name, value) {
+            continue;
+        }
+
+        let header_name = HeaderName::from_bytes(name.trim().as_bytes())
+            .map_err(|error| format!("Invalid HTTP/2 header name `{name}`: {error}"))?;
+        let header_value = HeaderValue::from_str(value.trim())
+            .map_err(|error| format!("Invalid HTTP/2 header value for `{name}`: {error}"))?;
+        header_map.append(header_name, header_value);
+    }
+
+    if let Some(cookie_header) = build_cookie_header(cookie_jar, target_url) {
+        let header_value = HeaderValue::from_str(&cookie_header)
+            .map_err(|error| format!("Invalid Cookie header for HTTP/2 replay: {error}"))?;
+        header_map.insert(HeaderName::from_static("cookie"), header_value);
+    } else {
+        header_map.remove(HeaderName::from_static("cookie"));
+    }
+
+    Ok(header_map)
+}
+
+fn should_skip_http2_header(name: &str, value: &str) -> bool {
+    let normalized = name.trim().to_ascii_lowercase();
+
+    match normalized.as_str() {
+        "host" | "content-length" | "connection" | "proxy-connection" | "keep-alive"
+        | "transfer-encoding" | "upgrade" => true,
+        "te" => !value.trim().eq_ignore_ascii_case("trailers"),
+        _ => false,
+    }
+}
+
+async fn build_http2_raw_response(response: reqwest::Response) -> Result<String, String> {
+    let status = response.status();
+    let reason = canonical_reason(status);
+    let mut raw_response = if reason.is_empty() {
+        format!("HTTP/2 {}\r\n", status.as_u16())
+    } else {
+        format!("HTTP/2 {} {}\r\n", status.as_u16(), reason)
+    };
+
+    for (name, value) in response.headers().iter() {
+        if let Ok(value_str) = value.to_str() {
+            raw_response.push_str(name.as_str());
+            raw_response.push_str(": ");
+            raw_response.push_str(value_str);
+            raw_response.push_str("\r\n");
+        }
+    }
+
+    raw_response.push_str("\r\n");
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("Failed to read HTTP/2 response body: {error}"))?;
+    raw_response.push_str(&String::from_utf8_lossy(&body));
+
+    Ok(raw_response)
+}
+
+fn canonical_reason(status: StatusCode) -> &'static str {
+    status.canonical_reason().unwrap_or("")
 }
 
 async fn execute_single_raw_request(
@@ -335,10 +460,6 @@ fn build_outbound_request(
     }
     raw_request.push_str("\r\n");
     raw_request.push_str(&request.body);
-    if !raw_request.ends_with("\r\n") {
-        raw_request.push_str("\r\n");
-    }
-
     raw_request
 }
 
@@ -745,7 +866,9 @@ async fn read_http_response<S: AsyncRead + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_redirect_request, cookie_matches, parse_raw_request, parse_set_cookie, RedirectCookie,
+        build_initial_cookie_jar, build_outbound_request, build_redirect_request,
+        build_request_url, cookie_matches, is_http2_protocol, parse_raw_request,
+        parse_set_cookie, should_skip_http2_header, RedirectCookie,
     };
     use url::Url;
 
@@ -800,5 +923,42 @@ mod tests {
         assert_eq!(redirected.method, "GET");
         assert!(redirected.body.is_empty());
         assert_eq!(redirected.target, "/home");
+    }
+
+    #[test]
+    fn outbound_request_preserves_form_body_without_trailing_crlf() {
+        let raw_request = concat!(
+            "POST /cart HTTP/1.1\r\n",
+            "Host: example.com\r\n",
+            "Content-Type: application/x-www-form-urlencoded\r\n",
+            "Content-Length: 999\r\n",
+            "\r\n",
+            "productId=1&redir=PRODUCT&quantity=1&price=133700"
+        );
+        let request = parse_raw_request(raw_request).unwrap();
+        let target_url = build_request_url(&request.target, "example.com", 443, true).unwrap();
+        let cookie_jar = build_initial_cookie_jar(&request, &target_url);
+
+        let outbound = build_outbound_request(&request, &target_url, &cookie_jar);
+
+        assert!(outbound.ends_with("productId=1&redir=PRODUCT&quantity=1&price=133700"));
+        assert!(!outbound.ends_with("\r\n"));
+        assert!(outbound.contains("\r\nContent-Length: 49\r\n"));
+    }
+
+    #[test]
+    fn detects_http2_protocol_tokens() {
+        assert!(is_http2_protocol("HTTP/2"));
+        assert!(is_http2_protocol("http/2.0"));
+        assert!(!is_http2_protocol("HTTP/1.1"));
+    }
+
+    #[test]
+    fn filters_connection_specific_headers_for_http2() {
+        assert!(should_skip_http2_header("Connection", "keep-alive"));
+        assert!(should_skip_http2_header("Transfer-Encoding", "chunked"));
+        assert!(should_skip_http2_header("TE", "gzip"));
+        assert!(!should_skip_http2_header("TE", "trailers"));
+        assert!(!should_skip_http2_header("Accept", "*/*"));
     }
 }

@@ -286,7 +286,7 @@ window.updateUIScale = (newScale: number) => {
           'ml-64': !sidebarCollapsed
         }">
           <router-view v-slot="{ Component }">
-            <keep-alive :include="['TrafficAnalysis', 'AIAssistant', 'Vulnerabilities','Settings','Plugin','SecurityCenter','WorkflowStudio','BugBountyView']">
+            <keep-alive :include="['TrafficAnalysis', 'AIAssistant', 'Vulnerabilities','Settings','Plugin','SecurityCenter','WorkflowStudio','BugBountyView','AgentManagement']">
               <component :is="Component" class="min-h-full" />
             </keep-alive>
           </router-view>

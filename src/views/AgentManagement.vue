@@ -3,7 +3,7 @@
     <div class="mb-3">
       <h2 class="text-2xl font-bold">智能体管理</h2>
       <p class="text-sm text-base-content/70 mt-2">
-        集中管理交互助手 profile、Agent 运行环境与被动系统智能体的状态、配置和运行记录。
+        从同一个入口管理交互型 Agent、后台型 Agent，以及它们共享的运行环境。
       </p>
     </div>
 
@@ -19,31 +19,27 @@
       </button>
     </div>
 
-    <div class="mb-4 rounded-xl border border-base-300 bg-base-100 px-4 py-3 text-sm text-base-content/70">
-      {{ activeWorkspaceTabDescription }}
-    </div>
 
     <div>
-      <AssistantProfileRegistryPanel v-if="activeWorkspaceTab === 'assistant-profiles'" />
-      <AgentSettings v-if="activeWorkspaceTab === 'runtime-settings'" />
-      <SystemAgentSettings v-if="activeWorkspaceTab === 'system-agents'" />
+      <KeepAlive>
+        <component :is="activeWorkspaceComponent" />
+      </KeepAlive>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { KeepAlive, computed, ref } from 'vue'
 import AgentSettings from '@/components/Settings/AgentSettings.vue'
-import AssistantProfileRegistryPanel from '@/components/Settings/AssistantProfileRegistryPanel.vue'
-import SystemAgentSettings from '@/components/Settings/SystemAgentSettings.vue'
+import AgentRegistryWorkspace from '@/components/Settings/AgentRegistryWorkspace.vue'
 
 defineOptions({
   name: 'AgentManagement',
 })
 
-type WorkspaceTabKey = 'assistant-profiles' | 'runtime-settings' | 'system-agents'
+type WorkspaceTabKey = 'agent-registry' | 'runtime-settings'
 
-const activeWorkspaceTab = ref<WorkspaceTabKey>('assistant-profiles')
+const activeWorkspaceTab = ref<WorkspaceTabKey>('agent-registry')
 
 const workspaceTabs: Array<{
   key: WorkspaceTabKey
@@ -51,23 +47,19 @@ const workspaceTabs: Array<{
   description: string
 }> = [
   {
-    key: 'assistant-profiles',
-    label: '助手 Profiles',
-    description: '管理交互助手的默认 profile、上下文模式、模型、工具策略和 Team preset。',
+    key: 'agent-registry',
+    label: 'Agent 管理',
+    description: '统一管理交互型 Agent 与后台型 Agent，并按运行方式切换具体配置工作区。',
   },
   {
     key: 'runtime-settings',
     label: '运行环境',
     description: '管理 Agent 终端执行环境、工作目录、文件上传、图片附件、Subagent 超时和完成守卫。',
   },
-  {
-    key: 'system-agents',
-    label: '系统智能体',
-    description: '管理被动系统智能体的状态、配置、运行记录、发现与洞察。',
-  },
 ]
 
-const activeWorkspaceTabDescription = computed(() =>
-  workspaceTabs.find(tab => tab.key === activeWorkspaceTab.value)?.description || '',
+const activeWorkspaceComponent = computed(() =>
+  activeWorkspaceTab.value === 'agent-registry' ? AgentRegistryWorkspace : AgentSettings,
 )
+
 </script>

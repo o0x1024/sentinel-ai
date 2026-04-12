@@ -1,10 +1,4 @@
-export interface SystemAgentSopDefinition {
-  id: string
-  name: string
-  description: string
-  procedure: string
-  updatedAt: string
-}
+import type { SystemAgentSopDefinition } from '../systemAgentSettingsSupport'
 
 const STORAGE_PREFIX = 'system-agent-sop-catalog:'
 
@@ -18,7 +12,21 @@ export function createEmptySystemAgentSopDefinition(): SystemAgentSopDefinition 
   }
 }
 
-export function loadSystemAgentSopDefinitions(profileId: string): SystemAgentSopDefinition[] {
+export function normalizeSystemAgentSopDefinitions(
+  values: unknown,
+): SystemAgentSopDefinition[] {
+  if (!Array.isArray(values)) {
+    return []
+  }
+
+  return values
+    .map(item => normalizeSystemAgentSopDefinition(item))
+    .filter((item): item is SystemAgentSopDefinition => !!item)
+}
+
+export function loadLegacySystemAgentSopDefinitions(
+  profileId: string,
+): SystemAgentSopDefinition[] {
   if (!profileId || typeof localStorage === 'undefined') {
     return []
   }
@@ -26,29 +34,16 @@ export function loadSystemAgentSopDefinitions(profileId: string): SystemAgentSop
   try {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}${profileId}`)
     if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .map(item => normalizeSystemAgentSopDefinition(item))
-      .filter((item): item is SystemAgentSopDefinition => !!item)
+    return normalizeSystemAgentSopDefinitions(JSON.parse(raw))
   } catch {
     return []
   }
 }
 
-export function saveSystemAgentSopDefinitions(
-  profileId: string,
-  definitions: SystemAgentSopDefinition[],
-) {
-  if (!profileId || typeof localStorage === 'undefined') {
-    return
-  }
-
-  localStorage.setItem(`${STORAGE_PREFIX}${profileId}`, JSON.stringify(definitions))
-}
-
-function normalizeSystemAgentSopDefinition(value: unknown): SystemAgentSopDefinition | null {
-  if (!value || typeof value !== 'object') {
+function normalizeSystemAgentSopDefinition(
+  value: unknown,
+): SystemAgentSopDefinition | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
   }
 
@@ -63,8 +58,9 @@ function normalizeSystemAgentSopDefinition(value: unknown): SystemAgentSopDefini
     name: typeof item.name === 'string' ? item.name.trim() : '',
     description: typeof item.description === 'string' ? item.description.trim() : '',
     procedure: typeof item.procedure === 'string' ? item.procedure : '',
-    updatedAt: typeof item.updatedAt === 'string' && item.updatedAt
-      ? item.updatedAt
-      : new Date().toISOString(),
+    updatedAt:
+      typeof item.updatedAt === 'string' && item.updatedAt
+        ? item.updatedAt
+        : new Date().toISOString(),
   }
 }

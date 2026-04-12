@@ -19,6 +19,7 @@ pub struct SystemAgentProfileRecord {
     pub llm_model_override: Option<String>,
     pub base_prompt_id: Option<String>,
     pub prompt_patch: Option<String>,
+    pub sop_definitions_json: String,
     pub input_schema_json: String,
     pub output_schema_json: String,
     pub required_tools_json: String,
@@ -54,6 +55,7 @@ pub struct SystemAgentRunRecord {
     pub trigger_event: Option<String>,
     pub status: String,
     pub input_summary_json: String,
+    pub tool_calls: Option<String>,
     pub output_json: Option<String>,
     pub error_message: Option<String>,
     pub started_at: DateTime<Utc>,
@@ -171,20 +173,21 @@ impl DatabaseService {
                             llm_model_override = $8,
                             base_prompt_id = $9,
                             prompt_patch = $10,
-                            input_schema_json = $11,
-                            output_schema_json = $12,
-                            required_tools_json = $13,
-                            optional_tools_json = $14,
-                            forbidden_tools_json = $15,
-                            trigger_events_json = $16,
-                            budget_json = $17,
-                            safety_policy_json = $18,
-                            cooldown_secs = $19,
-                            max_concurrency = $20,
-                            risk_level = $21,
-                            visibility = $22,
+                            sop_definitions_json = $11,
+                            input_schema_json = $12,
+                            output_schema_json = $13,
+                            required_tools_json = $14,
+                            optional_tools_json = $15,
+                            forbidden_tools_json = $16,
+                            trigger_events_json = $17,
+                            budget_json = $18,
+                            safety_policy_json = $19,
+                            cooldown_secs = $20,
+                            max_concurrency = $21,
+                            risk_level = $22,
+                            visibility = $23,
                             updated_at = CURRENT_TIMESTAMP
-                        WHERE id = $23
+                        WHERE id = $24
                         "#,
                     )
                     .bind(&profile.name)
@@ -197,6 +200,7 @@ impl DatabaseService {
                     .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
+                    .bind(&profile.sop_definitions_json)
                     .bind(&profile.input_schema_json)
                     .bind(&profile.output_schema_json)
                     .bind(&profile.required_tools_json)
@@ -218,15 +222,16 @@ impl DatabaseService {
                         INSERT INTO system_agent_profiles (
                             id, name, description, mode, capability, enabled, trigger_mode,
                             llm_provider_override, llm_model_override,
-                            base_prompt_id, prompt_patch, input_schema_json, output_schema_json,
-                            required_tools_json, optional_tools_json, forbidden_tools_json,
-                            trigger_events_json, budget_json, safety_policy_json, cooldown_secs,
-                            max_concurrency, risk_level, visibility
+                            base_prompt_id, prompt_patch, sop_definitions_json,
+                            input_schema_json, output_schema_json, required_tools_json,
+                            optional_tools_json, forbidden_tools_json, trigger_events_json,
+                            budget_json, safety_policy_json, cooldown_secs, max_concurrency,
+                            risk_level, visibility
                         ) VALUES (
                             $1, $2, $3, $4, $5, $6, $7,
-                            $8, $9, $10, $11, $12, $13,
-                            $14, $15, $16, $17, $18, $19, $20,
-                            $21, $22, $23
+                            $8, $9, $10, $11, $12, $13, $14,
+                            $15, $16, $17, $18, $19, $20, $21,
+                            $22, $23, $24
                         )
                         "#,
                     )
@@ -241,6 +246,7 @@ impl DatabaseService {
                     .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
+                    .bind(&profile.sop_definitions_json)
                     .bind(&profile.input_schema_json)
                     .bind(&profile.output_schema_json)
                     .bind(&profile.required_tools_json)
@@ -295,6 +301,7 @@ impl DatabaseService {
                             llm_model_override = ?,
                             base_prompt_id = ?,
                             prompt_patch = ?,
+                            sop_definitions_json = ?,
                             input_schema_json = ?,
                             output_schema_json = ?,
                             required_tools_json = ?,
@@ -321,6 +328,7 @@ impl DatabaseService {
                     .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
+                    .bind(&profile.sop_definitions_json)
                     .bind(&profile.input_schema_json)
                     .bind(&profile.output_schema_json)
                     .bind(&profile.required_tools_json)
@@ -342,11 +350,12 @@ impl DatabaseService {
                         INSERT INTO system_agent_profiles (
                             id, name, description, mode, capability, enabled, trigger_mode,
                             llm_provider_override, llm_model_override,
-                            base_prompt_id, prompt_patch, input_schema_json, output_schema_json,
-                            required_tools_json, optional_tools_json, forbidden_tools_json,
-                            trigger_events_json, budget_json, safety_policy_json, cooldown_secs,
-                            max_concurrency, risk_level, visibility
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            base_prompt_id, prompt_patch, sop_definitions_json,
+                            input_schema_json, output_schema_json, required_tools_json,
+                            optional_tools_json, forbidden_tools_json, trigger_events_json,
+                            budget_json, safety_policy_json, cooldown_secs, max_concurrency,
+                            risk_level, visibility
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         "#,
                     )
                     .bind(&profile.id)
@@ -360,6 +369,7 @@ impl DatabaseService {
                     .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
+                    .bind(&profile.sop_definitions_json)
                     .bind(&profile.input_schema_json)
                     .bind(&profile.output_schema_json)
                     .bind(&profile.required_tools_json)
@@ -414,6 +424,7 @@ impl DatabaseService {
                             llm_model_override = ?,
                             base_prompt_id = ?,
                             prompt_patch = ?,
+                            sop_definitions_json = ?,
                             input_schema_json = ?,
                             output_schema_json = ?,
                             required_tools_json = ?,
@@ -440,6 +451,7 @@ impl DatabaseService {
                     .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
+                    .bind(&profile.sop_definitions_json)
                     .bind(&profile.input_schema_json)
                     .bind(&profile.output_schema_json)
                     .bind(&profile.required_tools_json)
@@ -461,11 +473,12 @@ impl DatabaseService {
                         INSERT INTO system_agent_profiles (
                             id, name, description, mode, capability, enabled, trigger_mode,
                             llm_provider_override, llm_model_override,
-                            base_prompt_id, prompt_patch, input_schema_json, output_schema_json,
-                            required_tools_json, optional_tools_json, forbidden_tools_json,
-                            trigger_events_json, budget_json, safety_policy_json, cooldown_secs,
-                            max_concurrency, risk_level, visibility
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            base_prompt_id, prompt_patch, sop_definitions_json,
+                            input_schema_json, output_schema_json, required_tools_json,
+                            optional_tools_json, forbidden_tools_json, trigger_events_json,
+                            budget_json, safety_policy_json, cooldown_secs, max_concurrency,
+                            risk_level, visibility
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         "#,
                     )
                     .bind(&profile.id)
@@ -479,6 +492,7 @@ impl DatabaseService {
                     .bind(&profile.llm_model_override)
                     .bind(&profile.base_prompt_id)
                     .bind(&profile.prompt_patch)
+                    .bind(&profile.sop_definitions_json)
                     .bind(&profile.input_schema_json)
                     .bind(&profile.output_schema_json)
                     .bind(&profile.required_tools_json)
@@ -832,6 +846,91 @@ impl DatabaseService {
         Ok(runs)
     }
 
+    pub async fn delete_system_agent_run_internal(&self, id: &str) -> Result<u64> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let affected_rows = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM system_agent_runs WHERE id = $1")
+                    .bind(id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM system_agent_runs WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM system_agent_runs WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+        };
+
+        Ok(affected_rows)
+    }
+
+    pub async fn clear_system_agent_runs_internal(&self, profile_id: Option<&str>) -> Result<u64> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let affected_rows = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                if let Some(profile_id) = profile_id {
+                    sqlx::query("DELETE FROM system_agent_runs WHERE profile_id = $1")
+                        .bind(profile_id)
+                        .execute(pool)
+                        .await?
+                        .rows_affected()
+                } else {
+                    sqlx::query("DELETE FROM system_agent_runs")
+                        .execute(pool)
+                        .await?
+                        .rows_affected()
+                }
+            }
+            DatabasePool::SQLite(pool) => {
+                if let Some(profile_id) = profile_id {
+                    sqlx::query("DELETE FROM system_agent_runs WHERE profile_id = ?")
+                        .bind(profile_id)
+                        .execute(pool)
+                        .await?
+                        .rows_affected()
+                } else {
+                    sqlx::query("DELETE FROM system_agent_runs")
+                        .execute(pool)
+                        .await?
+                        .rows_affected()
+                }
+            }
+            DatabasePool::MySQL(pool) => {
+                if let Some(profile_id) = profile_id {
+                    sqlx::query("DELETE FROM system_agent_runs WHERE profile_id = ?")
+                        .bind(profile_id)
+                        .execute(pool)
+                        .await?
+                        .rows_affected()
+                } else {
+                    sqlx::query("DELETE FROM system_agent_runs")
+                        .execute(pool)
+                        .await?
+                        .rows_affected()
+                }
+            }
+        };
+
+        Ok(affected_rows)
+    }
+
     pub async fn get_system_agent_run_internal(
         &self,
         id: &str,
@@ -919,8 +1018,8 @@ impl DatabaseService {
                     r#"
                     INSERT INTO system_agent_runs (
                         id, profile_id, trigger_event, status, input_summary_json,
-                        output_json, error_message, started_at, finished_at, created_at, updated_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        tool_calls, output_json, error_message, started_at, finished_at, created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                     "#,
                 )
                 .bind(&run.id)
@@ -928,6 +1027,7 @@ impl DatabaseService {
                 .bind(&run.trigger_event)
                 .bind(&run.status)
                 .bind(&run.input_summary_json)
+                .bind(&run.tool_calls)
                 .bind(&run.output_json)
                 .bind(&run.error_message)
                 .bind(run.started_at)
@@ -942,8 +1042,8 @@ impl DatabaseService {
                     r#"
                     INSERT INTO system_agent_runs (
                         id, profile_id, trigger_event, status, input_summary_json,
-                        output_json, error_message, started_at, finished_at, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        tool_calls, output_json, error_message, started_at, finished_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&run.id)
@@ -951,6 +1051,7 @@ impl DatabaseService {
                 .bind(&run.trigger_event)
                 .bind(&run.status)
                 .bind(&run.input_summary_json)
+                .bind(&run.tool_calls)
                 .bind(&run.output_json)
                 .bind(&run.error_message)
                 .bind(run.started_at)
@@ -965,8 +1066,8 @@ impl DatabaseService {
                     r#"
                     INSERT INTO system_agent_runs (
                         id, profile_id, trigger_event, status, input_summary_json,
-                        output_json, error_message, started_at, finished_at, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        tool_calls, output_json, error_message, started_at, finished_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&run.id)
@@ -974,6 +1075,7 @@ impl DatabaseService {
                 .bind(&run.trigger_event)
                 .bind(&run.status)
                 .bind(&run.input_summary_json)
+                .bind(&run.tool_calls)
                 .bind(&run.output_json)
                 .bind(&run.error_message)
                 .bind(run.started_at)
@@ -991,6 +1093,7 @@ impl DatabaseService {
         &self,
         id: &str,
         status: &str,
+        tool_calls: Option<&str>,
         output_json: Option<&str>,
         error_message: Option<&str>,
         finished_at: Option<DateTime<Utc>>,
@@ -1005,14 +1108,16 @@ impl DatabaseService {
                     r#"
                     UPDATE system_agent_runs
                     SET status = $1,
-                        output_json = $2,
-                        error_message = $3,
-                        finished_at = $4,
+                        tool_calls = $2,
+                        output_json = $3,
+                        error_message = $4,
+                        finished_at = $5,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE id = $5
+                    WHERE id = $6
                     "#,
                 )
                 .bind(status)
+                .bind(tool_calls)
                 .bind(output_json)
                 .bind(error_message)
                 .bind(finished_at)
@@ -1025,6 +1130,7 @@ impl DatabaseService {
                     r#"
                     UPDATE system_agent_runs
                     SET status = ?,
+                        tool_calls = ?,
                         output_json = ?,
                         error_message = ?,
                         finished_at = ?,
@@ -1033,6 +1139,7 @@ impl DatabaseService {
                     "#,
                 )
                 .bind(status)
+                .bind(tool_calls)
                 .bind(output_json)
                 .bind(error_message)
                 .bind(finished_at)
@@ -1045,6 +1152,7 @@ impl DatabaseService {
                     r#"
                     UPDATE system_agent_runs
                     SET status = ?,
+                        tool_calls = ?,
                         output_json = ?,
                         error_message = ?,
                         finished_at = ?,
@@ -1053,6 +1161,7 @@ impl DatabaseService {
                     "#,
                 )
                 .bind(status)
+                .bind(tool_calls)
                 .bind(output_json)
                 .bind(error_message)
                 .bind(finished_at)

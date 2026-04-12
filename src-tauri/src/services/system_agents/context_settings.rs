@@ -61,7 +61,7 @@ const DEFAULT_ACTION_ALIASES: &[(&str, &[&str])] = &[
     ("claim", &["claim"]),
     ("grant", &["issue", "grant"]),
     ("create", &["create", "draft"]),
-    ("pay", &["pay", "payment"]),
+    ("pay", &["pay", "payment", "checkout"]),
     ("refund", &["refund"]),
     ("export", &["export", "download"]),
     ("search", &["search"]),

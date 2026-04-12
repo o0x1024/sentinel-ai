@@ -12,6 +12,13 @@
         :error="call.success === false ? (call.result || 'Shell execution failed') : undefined"
         :status="call.success === false ? 'failed' : 'completed'"
       />
+      <AskUserQuestionToolResult
+        v-else-if="isAskUserQuestionCall(call)"
+        :args="parseArgs(call.arguments)"
+        :result="parseResult(call.result)"
+        :error="call.success === false ? (call.result || 'AskUserQuestion failed') : undefined"
+        :status="call.success === false ? 'failed' : 'completed'"
+      />
       <!-- Tool call header -->
       <div 
         v-else
@@ -58,6 +65,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
 import ShellToolResult from './ShellToolResult.vue'
 
 interface ToolCall {
@@ -96,6 +104,10 @@ const toggleExpand = (index: number) => {
 
 const isShellCall = (call: ToolCall) => {
   return call.name?.toLowerCase?.() === 'shell'
+}
+
+const isAskUserQuestionCall = (call: ToolCall) => {
+  return call.name?.toLowerCase?.() === 'ask_user_question'
 }
 
 const parseArgs = (raw: string | undefined) => {

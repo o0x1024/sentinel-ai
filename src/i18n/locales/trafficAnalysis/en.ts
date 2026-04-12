@@ -35,6 +35,27 @@ export default {
     capture: 'fa-broadcast-tower',
     proxyConfig: 'fa-cog'
   },
+  messageSearch: {
+    placeholder: 'Search current content. Enter: next, Shift+Enter: previous',
+    next: 'Next match',
+    previous: 'Previous match',
+    caseSensitive: 'Case sensitive',
+    regexp: 'Regular expression',
+    activeSide: 'Active side',
+    left: 'Left',
+    right: 'Right',
+    clear: 'Clear search',
+    noMatches: 'No matches',
+    invalidRegexp: 'Invalid regex'
+  },
+  httpEditor: {
+    toolbar: {
+      showLineEndings: 'Show line endings',
+      hideLineEndings: 'Hide line endings',
+      enableLineWrap: 'Enable line wrapping',
+      disableLineWrap: 'Disable line wrapping',
+    },
+  },
   comparer: {
     tabs: {
       pretty: 'Pretty',
@@ -400,12 +421,23 @@ export default {
       },
       request: 'Request',
       response: 'Response',
+      loading: 'Loading details',
       decompressed: 'Decompressed',
       close: 'close',
       originalRequest: 'Original request',
       editedRequest: 'Edited request',
       originalResponse: 'Original response',
-      editedResponse: 'Edited response'
+      editedResponse: 'Edited response',
+      search: {
+        placeholder: 'Search current content. Enter: next, Shift+Enter: previous',
+        next: 'Next match',
+        previous: 'Previous match',
+        caseSensitive: 'Case sensitive',
+        regexp: 'Regular expression',
+        clear: 'Clear search',
+        noMatches: 'No matches',
+        invalidRegexp: 'Invalid regex'
+      }
     },
     // ProxifierProxies Component
     proxifierProxies: {

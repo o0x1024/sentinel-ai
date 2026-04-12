@@ -25,12 +25,19 @@ pub struct ToolDigestEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RetrievedMemorySection {
+    pub title: String,
+    pub items: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextPacket {
     pub system_instructions: String,
     pub orchestrator_context: String,
     pub run_state: String,
     pub window_messages: Vec<ChatMessage>,
     pub retrieved_memories: Vec<String>,
+    pub retrieved_memory_sections: Vec<RetrievedMemorySection>,
     pub tool_digests: Vec<ToolDigestEntry>,
 }
 
@@ -42,6 +49,7 @@ impl ContextPacket {
             run_state: String::new(),
             window_messages: Vec::new(),
             retrieved_memories: Vec::new(),
+            retrieved_memory_sections: Vec::new(),
             tool_digests: Vec::new(),
         }
     }
@@ -57,16 +65,12 @@ impl ContextPacket {
             prompt.push_str(self.run_state.trim());
         }
 
-        if !self.retrieved_memories.is_empty() {
+        let rendered_retrieval = self.render_retrieved_memory_context();
+        if !rendered_retrieval.is_empty() {
             if !prompt.is_empty() {
                 prompt.push_str("\n\n");
             }
-            prompt.push_str("[RetrievedMemory]\n");
-            for item in &self.retrieved_memories {
-                prompt.push_str("- ");
-                prompt.push_str(item.trim());
-                prompt.push('\n');
-            }
+            prompt.push_str(&rendered_retrieval);
         }
 
         if !self.tool_digests.is_empty() {
@@ -112,13 +116,9 @@ impl ContextPacket {
                     )));
                 }
 
-                if !self.retrieved_memories.is_empty() {
-                    let mut body = String::from("[RetrievedMemory]\n");
-                    for item in &self.retrieved_memories {
-                        body.push_str("- ");
-                        body.push_str(item.trim());
-                        body.push('\n');
-                    }
+                let rendered_retrieval = self.render_retrieved_memory_context();
+                if !rendered_retrieval.is_empty() {
+                    let body = rendered_retrieval;
                     messages.push(ChatMessage::user(body.trim().to_string()));
                 }
 
@@ -155,6 +155,37 @@ impl ContextPacket {
                 artifact_id: digest.artifact_id.clone(),
             })
             .collect();
+    }
+
+    pub fn render_retrieved_memory_context(&self) -> String {
+        if !self.retrieved_memory_sections.is_empty() {
+            let mut body = String::from("[RetrievedMemory]\n");
+            for section in &self.retrieved_memory_sections {
+                if section.items.is_empty() {
+                    continue;
+                }
+                body.push_str(section.title.trim());
+                body.push_str(":\n");
+                for item in &section.items {
+                    body.push_str("- ");
+                    body.push_str(item.trim());
+                    body.push('\n');
+                }
+            }
+            return body.trim().to_string();
+        }
+
+        if self.retrieved_memories.is_empty() {
+            return String::new();
+        }
+
+        let mut body = String::from("[RetrievedMemory]\n");
+        for item in &self.retrieved_memories {
+            body.push_str("- ");
+            body.push_str(item.trim());
+            body.push('\n');
+        }
+        body.trim().to_string()
     }
 }
 

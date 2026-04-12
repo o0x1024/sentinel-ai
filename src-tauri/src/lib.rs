@@ -493,6 +493,38 @@ pub fn run() {
                     match crate::commands::rag_commands::ensure_memory_collection_exists(db_service.clone()).await {
                         Ok(collection_id) => {
                             tracing::info!("Memory collection ready: {}", collection_id);
+                            match crate::commands::rag_commands::get_or_init_rag_service(db_service.clone()).await {
+                                Ok(service) => match service.backfill_memory_lexical_from_collection("agent_memory").await {
+                                    Ok(count) => {
+                                        tracing::info!("Memory lexical backfill completed: {} document(s)", count);
+                                        match crate::skills::candidates::backfill_skill_candidates_from_memory(
+                                            &db_service,
+                                            "agent_memory",
+                                        )
+                                        .await
+                                        {
+                                            Ok(candidate_count) => {
+                                                tracing::info!(
+                                                    "Skill candidate backfill completed: {} candidate(s)",
+                                                    candidate_count
+                                                );
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(
+                                                    "Skill candidate backfill failed: {}",
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Memory lexical backfill failed: {}", e);
+                                    }
+                                },
+                                Err(e) => {
+                                    tracing::warn!("Failed to access RAG service for lexical backfill: {}", e);
+                                }
+                            }
                         }
                         Err(e) => {
                             tracing::warn!("Failed to ensure memory collection exists: {}", e);
@@ -504,12 +536,26 @@ pub fn run() {
                     let store_fn = Box::new(move |content: String, title: Option<String>, tags: Vec<String>| {
                         let db_inner = db_for_store.clone();
                         Box::pin(async move {
+                            let inferred_kind = sentinel_rag::infer_memory_kind(
+                                None,
+                                title.as_deref(),
+                                &tags,
+                                content.as_str(),
+                            );
+                            let durable_metadata = sentinel_rag::build_memory_durable_metadata(
+                                None,
+                                None,
+                                Some("memory_tool"),
+                                None,
+                                inferred_kind.as_str(),
+                                &tags,
+                            );
                             let service = crate::commands::rag_commands::get_or_init_rag_service(db_inner.clone())
                                 .await
                                 .map_err(|e| anyhow::anyhow!(e))?;
 
                             // Get memory collection ID
-                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists(db_inner)
+                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists(db_inner.clone())
                                 .await
                                 .map_err(|e| anyhow::anyhow!(e))?;
 
@@ -518,18 +564,30 @@ pub fn run() {
                                 meta.insert("tags".to_string(), tags.join(","));
                             }
                             meta.insert("type".to_string(), "agent_memory".to_string());
+                            meta.insert("kind".to_string(), inferred_kind.clone());
+                            meta.insert("scope".to_string(), durable_metadata.scope.clone());
+                            meta.insert("stability".to_string(), durable_metadata.stability.clone());
+                            meta.insert("source".to_string(), durable_metadata.source.clone());
+                            meta.insert(
+                                "confidence".to_string(),
+                                format!("{:.2}", durable_metadata.confidence),
+                            );
 
                             let final_title = if let Some(t) = title {
                                 if t.trim().is_empty() {
-                                    format!("Memory: {}", content.chars().take(30).collect::<String>())
+                                    format!("[{}] {}", inferred_kind, content.chars().take(30).collect::<String>())
                                 } else {
                                     t
                                 }
                             } else {
                                 // Default title based on content snippet and timestamp
                                 let snippet = content.chars().take(30).collect::<String>();
-                                format!("Memory: {}...", snippet.trim())
+                                format!("[{}] {}...", inferred_kind, snippet.trim())
                             };
+                            let candidate_scope = durable_metadata.scope.clone();
+                            let candidate_stability = durable_metadata.stability.clone();
+                            let candidate_source = durable_metadata.source.clone();
+                            let candidate_confidence = durable_metadata.confidence;
 
                             service
                                 .ingest_text(
@@ -540,6 +598,54 @@ pub fn run() {
                                 )
                                 .await
                                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+                            let now_ms = chrono::Utc::now().timestamp_millis();
+                            service
+                                .upsert_memory_lexical_document(sentinel_rag::MemoryLexicalDocument {
+                                    id: sentinel_rag::build_memory_document_id(
+                                        inferred_kind.as_str(),
+                                        content.as_str(),
+                                    ),
+                                    collection_name: "agent_memory".to_string(),
+                                    title: Some(final_title),
+                                    body: content.clone(),
+                                    normalized_text: sentinel_rag::normalize_memory_text(
+                                        content.as_str(),
+                                    ),
+                                    identifiers: sentinel_rag::extract_memory_identifiers(
+                                        content.as_str(),
+                                    ),
+                                    tags: tags.join(","),
+                                    kind: inferred_kind.clone(),
+                                    scope: durable_metadata.scope,
+                                    stability: durable_metadata.stability,
+                                    source: durable_metadata.source,
+                                    confidence: candidate_confidence,
+                                    importance: sentinel_rag::memory_kind_importance(
+                                        inferred_kind.as_str(),
+                                    ),
+                                    created_at_ms: now_ms,
+                                    updated_at_ms: now_ms,
+                                })
+                                .await
+                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+                            crate::skills::candidates::upsert_skill_candidate_from_memory(
+                                db_inner.as_ref(),
+                                &crate::skills::candidates::SkillCandidateMemoryInput {
+                                    memory_id: Some(sentinel_rag::build_memory_document_id(
+                                        inferred_kind.as_str(),
+                                        content.as_str(),
+                                    )),
+                                    text: content.clone(),
+                                    kind: inferred_kind,
+                                    scope: candidate_scope,
+                                    source: candidate_source,
+                                    stability: candidate_stability,
+                                    confidence: candidate_confidence,
+                                },
+                            )
+                            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
                             Ok(())
                         })
@@ -725,6 +831,9 @@ pub fn run() {
                 if let Err(e) = tool_commands::init_ask_user_question_handler(handle.clone()).await
                 {
                     tracing::error!("Failed to init ask user question handler: {}", e);
+                }
+                if let Err(e) = tool_commands::init_shell_background_runtime(handle.clone()).await {
+                    tracing::error!("Failed to init shell background runtime: {}", e);
                 }
 
                 tracing::info!("Workflow engine and scheduler initialized");
@@ -921,6 +1030,8 @@ pub fn run() {
             tool_commands::get_pending_ask_user_questions,
             tool_commands::respond_ask_user_question,
             tool_commands::reject_ask_user_question,
+            tool_commands::get_background_shell_tasks,
+            tool_commands::stop_background_shell_task,
             // Plugin generation commands
             commands::get_combined_plugin_prompt_api,
             // System Agent commands
@@ -929,6 +1040,8 @@ pub fn run() {
             commands::save_system_agent_profile,
             commands::delete_system_agent_profile,
             commands::list_system_agent_runs,
+            commands::delete_system_agent_run,
+            commands::clear_system_agent_runs,
             commands::list_system_agent_profile_versions,
             commands::trigger_system_agent_profile,
             commands::dispatch_system_agent_event,
@@ -1465,6 +1578,7 @@ pub fn run() {
 
             // Shell Tool commands
             tool_commands::init_ask_user_question_handler,
+            tool_commands::init_shell_background_runtime,
             tool_commands::init_shell_permission_handler,
             tool_commands::get_shell_tool_config,
             tool_commands::set_shell_tool_config,
@@ -1519,6 +1633,13 @@ pub fn run() {
             tool_commands::update_skill,
             tool_commands::delete_skill,
             tool_commands::refresh_skills_index,
+            tool_commands::list_skill_candidates,
+            tool_commands::list_skill_candidate_suppression_rules,
+            tool_commands::delete_skill_candidate_suppression_rule,
+            tool_commands::extend_skill_candidate_suppression_rule,
+            tool_commands::expire_skill_candidate_suppression_rule,
+            tool_commands::promote_skill_candidate,
+            tool_commands::review_skill_candidate,
             tool_commands::list_skill_files,
             tool_commands::read_skill_file,
             tool_commands::save_skill_file,

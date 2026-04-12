@@ -12,6 +12,11 @@ use crate::config::{EmbeddingConfig, RagConfig};
 use crate::database::SqliteVectorManager;
 use crate::db::RagDatabase;
 use crate::embeddings::{create_reranking_provider, RerankingManager};
+use crate::memory_lexical_index::{
+    build_memory_document_id, build_memory_durable_metadata, extract_memory_identifiers,
+    infer_memory_kind, memory_kind_importance, normalize_memory_text, MemoryLexicalDocument,
+    MemoryLexicalHit, MemoryLexicalIndex,
+};
 use crate::models::{
     CollectionInfo, DocumentChunk, DocumentSource, IngestRequest, IngestResponse, IngestionStatus,
     QueryResult, RagQueryRequest, RagQueryResponse, RagStatus,
@@ -22,12 +27,14 @@ pub struct RagService<D: RagDatabase> {
     _config: RagConfig,
     database: Arc<D>,
     vector_store: Arc<SqliteVectorManager>,
+    memory_lexical_index: Arc<MemoryLexicalIndex>,
     chunker: DocumentChunker,
     ingestion_status: RwLock<HashMap<String, IngestionStatus>>,
     reranker: Option<RerankingManager>,
 }
 
 const SQLITE_VECTOR_DB_FILENAME: &str = "rag_vectors.db";
+const SQLITE_MEMORY_LEXICAL_DB_FILENAME: &str = "rag_memory_lexical.db";
 const LEGACY_LANCEDB_DIR_NAME: &str = "lancedb";
 
 impl<D: RagDatabase> RagService<D> {
@@ -48,6 +55,13 @@ impl<D: RagDatabase> RagService<D> {
         }
 
         path.to_path_buf()
+    }
+
+    fn derive_memory_lexical_database_path(vector_db_path: &Path) -> PathBuf {
+        vector_db_path
+            .parent()
+            .map(|parent| parent.join(SQLITE_MEMORY_LEXICAL_DB_FILENAME))
+            .unwrap_or_else(|| PathBuf::from(SQLITE_MEMORY_LEXICAL_DB_FILENAME))
     }
 
     /// 创建新的RAG服务实例
@@ -102,11 +116,16 @@ impl<D: RagDatabase> RagService<D> {
 
         info!("RAG服务使用SQLite路径: {}", normalized_db_path.display());
 
+        let memory_lexical_db_path = Self::derive_memory_lexical_database_path(&normalized_db_path);
         let vector_store = Arc::new(SqliteVectorManager::new(
             normalized_db_path.to_string_lossy().to_string(),
             embedding_config,
         ));
         vector_store.initialize().await?;
+        let memory_lexical_index = Arc::new(MemoryLexicalIndex::new(
+            memory_lexical_db_path.to_string_lossy().to_string(),
+        ));
+        memory_lexical_index.initialize().await?;
 
         let mut reranker: Option<RerankingManager> = None;
         // Initialize reranking provider if enabled in config
@@ -147,6 +166,7 @@ impl<D: RagDatabase> RagService<D> {
             _config: config,
             database,
             vector_store,
+            memory_lexical_index,
             chunker,
             ingestion_status: RwLock::new(HashMap::new()),
             reranker,
@@ -212,6 +232,103 @@ impl<D: RagDatabase> RagService<D> {
     pub async fn get_collections(&self) -> Result<Vec<CollectionInfo>> {
         info!("获取RAG集合列表");
         self.database.get_rag_collections().await
+    }
+
+    pub async fn upsert_memory_lexical_document(
+        &self,
+        document: MemoryLexicalDocument,
+    ) -> Result<()> {
+        self.memory_lexical_index.upsert_document(&document).await
+    }
+
+    pub async fn search_memory_lexical(
+        &self,
+        collection_name: &str,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<MemoryLexicalHit>> {
+        self.memory_lexical_index
+            .search(collection_name, query, top_k)
+            .await
+    }
+
+    pub async fn backfill_memory_lexical_from_collection(
+        &self,
+        collection_name: &str,
+    ) -> Result<usize> {
+        let Some(collection) = self.database.get_rag_collection_by_name(collection_name).await? else {
+            return Ok(0);
+        };
+
+        let documents = self.database.get_rag_documents(&collection.id).await?;
+        if documents.is_empty() {
+            return Ok(0);
+        }
+
+        let mut backfilled = 0usize;
+        for document in documents {
+            let chunks = self.database.get_rag_chunks(&document.id).await?;
+            let body = chunks
+                .iter()
+                .map(|chunk| chunk.content.trim())
+                .filter(|content| !content.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            if body.trim().is_empty() {
+                continue;
+            }
+
+            let tags = document
+                .metadata
+                .get("tags")
+                .cloned()
+                .unwrap_or_default();
+            let tag_items = tags
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let kind = infer_memory_kind(
+                document.metadata.get("kind").map(String::as_str),
+                Some(document.file_name.as_str()),
+                &tag_items,
+                body.as_str(),
+            );
+            let durable_metadata = build_memory_durable_metadata(
+                document.metadata.get("scope").map(String::as_str),
+                document.metadata.get("stability").map(String::as_str),
+                document.metadata.get("source").map(String::as_str),
+                document.metadata.get("confidence").map(String::as_str),
+                kind.as_str(),
+                &tag_items,
+            );
+            let created_at_ms = document.created_at.timestamp_millis();
+            let updated_at_ms = document.updated_at.timestamp_millis();
+            let lexical_doc = MemoryLexicalDocument {
+                id: build_memory_document_id(kind.as_str(), body.as_str()),
+                collection_name: collection_name.to_string(),
+                title: Some(document.file_name.clone()),
+                body: body.clone(),
+                normalized_text: normalize_memory_text(body.as_str()),
+                identifiers: extract_memory_identifiers(body.as_str()),
+                tags,
+                kind: kind.clone(),
+                scope: durable_metadata.scope,
+                stability: durable_metadata.stability,
+                source: durable_metadata.source,
+                confidence: durable_metadata.confidence,
+                importance: memory_kind_importance(kind.as_str()),
+                created_at_ms,
+                updated_at_ms,
+            };
+
+            self.upsert_memory_lexical_document(lexical_doc).await?;
+            backfilled += 1;
+        }
+
+        Ok(backfilled)
     }
 
     /// 删除RAG集合

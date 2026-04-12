@@ -11,7 +11,9 @@ use uuid::Uuid;
 use sentinel_db::{Database, DatabaseService, SystemAgentProfileRecord, SystemAgentRunRecord};
 use sentinel_traffic::HttpRequestRecord;
 
-use crate::agents::executor::{execute_agent, AgentExecuteParams};
+use crate::agents::executor::{
+    execute_agent, take_execution_tool_trace, AgentExecuteParams, ToolCallRecord,
+};
 use crate::services::system_agents::behavior_session::build_behavior_session;
 use crate::services::system_agents::behavior_signal::TrafficBehaviorSignalSettings;
 use crate::services::system_agents::clusters::TrafficClusterStore;
@@ -22,9 +24,14 @@ use crate::services::system_agents::findings::persist_passive_agent_finding;
 use crate::services::system_agents::language::{output_language_instruction, resolve_ui_language};
 use crate::services::system_agents::logic_hypotheses::build_logic_hypotheses;
 use crate::services::system_agents::logic_invariants::evaluate_logic_invariants;
+use crate::services::system_agents::logic_sop_context::{
+    build_logic_sop_context, render_logic_sop_prompt,
+};
 use crate::services::system_agents::logic_skill_context::build_logic_skill_context;
 use crate::services::system_agents::process_graph::build_process_graph;
-use crate::services::system_agents::prompts::resolve_base_prompt;
+use crate::services::system_agents::prompts::{
+    resolve_base_prompt, triage_verification_bootstrap_prompt,
+};
 use crate::services::system_agents::safety::SystemAgentSafetyPolicy;
 use crate::services::system_agents::semantic_mapper::{
     build_semantic_feature_payload, build_semantic_signature, deterministic_semantic_abstraction,
@@ -33,8 +40,15 @@ use crate::services::system_agents::semantic_mapper::{
 };
 use crate::services::system_agents::skill_recommendation::recommend_logic_skills;
 use crate::services::system_agents::tool_policy::SystemAgentToolPolicy;
+use crate::services::system_agents::triage_enrichment::{
+    merge_triage_bootstrap_decision, should_attempt_triage_bootstrap, TriageBootstrapDecision,
+};
 use crate::services::system_agents::types::{
     SystemAgentDispatchResult, SystemAgentEvent, SystemAgentRunUpdateEvent,
+};
+use crate::services::system_agents::verification_hypothesis_memory::{
+    derive_triage_hypothesis_state, extract_hypothesis_state, normalize_hypothesis_state,
+    seed_hypothesis_state_from_logic_hypotheses,
 };
 use crate::services::system_agents::verifier::verify_finding_for_runtime;
 use crate::services::AiServiceManager;
@@ -243,6 +257,7 @@ impl SystemAgentRuntime {
             .update_system_agent_run(
                 run_id,
                 "completed",
+                None,
                 Some(&output_json),
                 None,
                 Some(finished_at),
@@ -270,6 +285,7 @@ impl SystemAgentRuntime {
             .update_system_agent_run(
                 run_id,
                 "failed",
+                None,
                 None,
                 Some(&error_message),
                 Some(finished_at),
@@ -507,6 +523,7 @@ impl SystemAgentRuntime {
         trigger_event: Option<String>,
         priority: i64,
     ) -> Result<String> {
+        let payload = self.augment_payload_for_profile(&profile, payload);
         let cooldown_key = self.cooldown_key(&profile, &payload, trigger_event.as_deref());
         self.check_runtime_limits(&profile, &payload, &cooldown_key)
             .await?;
@@ -575,13 +592,22 @@ impl SystemAgentRuntime {
             self.run_profile_llm(&profile, &payload, trigger_event.as_deref(), &run_id)
                 .await
         };
+        let tool_calls_json = tool_calls_json_from_records(&take_execution_tool_trace(&run_id));
 
         match run_result {
             Ok(output_json) => {
                 let mut persistence_warning: Option<String> = None;
+                let mut output_json = output_json;
                 if profile.mode == "passive" && profile.capability == "triage" {
                     match serde_json::from_str::<Value>(&output_json) {
                         Ok(output_value) => {
+                            let output_value = self
+                                .bootstrap_triage_verification_plan(&payload, output_value)
+                                .await;
+                            let output_value =
+                                ensure_triage_output_hypothesis_state(output_value, &payload);
+                            output_json =
+                                serde_json::to_string(&output_value).unwrap_or(output_json);
                             match persist_passive_agent_finding(
                                 self.db.as_ref(),
                                 &self.app_handle,
@@ -597,16 +623,19 @@ impl SystemAgentRuntime {
                                         SystemAgentSafetyPolicy::from_profile(&profile);
                                     if safety_policy.allows_auto_mode() {
                                         self.schedule_event_dispatch(
-                                            "traffic.hypothesis.ready".to_string(),
-                                            json!({
-                                                "findingId": finding_id,
-                                                "sourceProfileId": profile.id,
-                                                "riskType": output_value.get("riskType").cloned().unwrap_or(Value::Null),
-                                                "confidence": output_value.get("confidence").cloned().unwrap_or(Value::Null),
-                                                "verificationPlan": output_value.get("verificationPlan").cloned().unwrap_or(Value::Null),
-                                            }),
-                                            "system_agent_triage".to_string(),
-                                        );
+                                        "traffic.hypothesis.ready".to_string(),
+                                        json!({
+                                            "findingId": finding_id,
+                                            "sourceProfileId": profile.id,
+                                            "riskType": output_value.get("riskType").cloned().unwrap_or(Value::Null),
+                                            "confidence": output_value.get("confidence").cloned().unwrap_or(Value::Null),
+                                            "hypothesisState": output_value.get("hypothesisState").cloned().unwrap_or(Value::Null),
+                                            "verificationPlan": output_value.get("verificationPlan").cloned().unwrap_or(Value::Null),
+                                            "logicSkillContext": payload.get("logicSkillContext").cloned().unwrap_or(Value::Array(vec![])),
+                                            "logicSopContext": payload.get("logicSopContext").cloned().unwrap_or(Value::Array(vec![])),
+                                        }),
+                                        "system_agent_triage".to_string(),
+                                    );
                                     }
                                     let _ = self.app_handle.emit(
                                         "traffic.hypothesis.ready",
@@ -615,7 +644,10 @@ impl SystemAgentRuntime {
                                             "sourceProfileId": profile.id,
                                             "riskType": output_value.get("riskType").cloned().unwrap_or(Value::Null),
                                             "confidence": output_value.get("confidence").cloned().unwrap_or(Value::Null),
+                                            "hypothesisState": output_value.get("hypothesisState").cloned().unwrap_or(Value::Null),
                                             "verificationPlan": output_value.get("verificationPlan").cloned().unwrap_or(Value::Null),
+                                            "logicSkillContext": payload.get("logicSkillContext").cloned().unwrap_or(Value::Array(vec![])),
+                                            "logicSopContext": payload.get("logicSopContext").cloned().unwrap_or(Value::Array(vec![])),
                                         }),
                                     );
                                 }
@@ -645,6 +677,7 @@ impl SystemAgentRuntime {
                     .update_system_agent_run(
                         &run_id,
                         "completed",
+                        tool_calls_json.as_deref(),
                         Some(&output_json),
                         persistence_warning.as_deref(),
                         Some(finished_at),
@@ -675,6 +708,7 @@ impl SystemAgentRuntime {
                     .update_system_agent_run(
                         &run_id,
                         "dead_letter",
+                        tool_calls_json.as_deref(),
                         Some(&queue_metadata_json(
                             &self.cooldown_key(&profile, &payload, trigger_event.as_deref()),
                             priority,
@@ -702,6 +736,7 @@ impl SystemAgentRuntime {
         payload: Value,
         trigger_event: Option<String>,
     ) -> Result<SystemAgentRunRecord> {
+        let payload = self.augment_payload_for_profile(&profile, payload);
         let cooldown_key = self.cooldown_key(&profile, &payload, trigger_event.as_deref());
         self.check_runtime_limits(&profile, &payload, &cooldown_key)
             .await?;
@@ -724,12 +759,14 @@ impl SystemAgentRuntime {
         let result = self
             .run_profile_llm(&profile, &payload, trigger_event.as_deref(), &run_id)
             .await;
+        let tool_calls_json = tool_calls_json_from_records(&take_execution_tool_trace(&run_id));
         let updated = match result {
             Ok(output_json) => {
                 self.db
                     .update_system_agent_run(
                         &run_id,
                         "completed",
+                        tool_calls_json.as_deref(),
                         Some(&output_json),
                         None,
                         Some(finished_at),
@@ -745,6 +782,7 @@ impl SystemAgentRuntime {
                     .update_system_agent_run(
                         &run_id,
                         "failed",
+                        tool_calls_json.as_deref(),
                         None,
                         Some(&error.to_string()),
                         Some(finished_at),
@@ -778,6 +816,7 @@ impl SystemAgentRuntime {
             trigger_event,
             status: status.to_string(),
             input_summary_json: serde_json::to_string(&payload)?,
+            tool_calls: None,
             output_json,
             error_message: None,
             started_at: now,
@@ -806,17 +845,33 @@ impl SystemAgentRuntime {
                 prompt_sections.push(format!("Additional instructions:\n{}", prompt_patch));
             }
         }
+        if let Some(sop_prompt) = render_logic_sop_prompt(profile, payload) {
+            prompt_sections.push(format!(
+                "Matched SOP guidance. Use these procedures only when the current evidence fits the same scenario:\n{}",
+                sop_prompt
+            ));
+        }
         if let Some(tool_policy_note) = tool_policy.prompt_note() {
             prompt_sections.push(tool_policy_note);
         }
         let system_prompt = prompt_sections.join("\n\n");
+
+        let mut effective_payload = payload.clone();
+        if let Some(object) = effective_payload.as_object_mut() {
+            if !object.contains_key("logicSopContext") {
+                let logic_sop_context = build_logic_sop_context(profile, payload);
+                if logic_sop_context.as_array().is_some_and(|items| !items.is_empty()) {
+                    object.insert("logicSopContext".to_string(), logic_sop_context);
+                }
+            }
+        }
 
         let user_input = serde_json::to_string_pretty(&json!({
             "profileId": profile.id,
             "mode": profile.mode,
             "capability": profile.capability,
             "triggerEvent": trigger_event,
-            "payload": payload,
+            "payload": effective_payload,
         }))?;
 
         if let Some(tool_config) = tool_policy.build_runtime_tool_config() {
@@ -878,6 +933,62 @@ impl SystemAgentRuntime {
             ],
             "payloadEcho": payload
         }))?)
+    }
+
+    pub(crate) async fn run_ad_hoc_json_llm(
+        &self,
+        system_prompt: &str,
+        user_input: &str,
+    ) -> Result<Value> {
+        let llm_config = self
+            .ai_manager
+            .resolve_generation_llm_config(None, None)
+            .await?;
+        let client = sentinel_llm::LlmClient::new(llm_config);
+        let raw = client.completion(Some(system_prompt), user_input).await?;
+        Ok(normalize_llm_json_output(&raw))
+    }
+
+    async fn bootstrap_triage_verification_plan(
+        &self,
+        payload: &Value,
+        output: Value,
+    ) -> Value {
+        if !should_attempt_triage_bootstrap(&output) {
+            return output;
+        }
+
+        let user_input = match serde_json::to_string_pretty(&json!({
+            "payload": payload,
+            "triageOutput": &output,
+        })) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("Failed to serialize triage bootstrap input: {}", error);
+                return output;
+            }
+        };
+
+        let bootstrap_raw = match self
+            .run_ad_hoc_json_llm(triage_verification_bootstrap_prompt(), &user_input)
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::debug!("Skipped LLM triage bootstrap planning: {}", error);
+                return output;
+            }
+        };
+
+        let decision = match serde_json::from_value::<TriageBootstrapDecision>(bootstrap_raw) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("Invalid triage bootstrap planner output: {}", error);
+                return output;
+            }
+        };
+
+        merge_triage_bootstrap_decision(&output, decision)
     }
 
     async fn build_semantic_abstraction(&self, payload: &Value) -> Value {
@@ -964,6 +1075,32 @@ impl SystemAgentRuntime {
             .map_err(|error| anyhow!("System agent '{}' execution failed: {}", profile.id, error))
     }
 
+    fn augment_payload_for_profile(
+        &self,
+        profile: &SystemAgentProfileRecord,
+        payload: Value,
+    ) -> Value {
+        let mut enriched = payload;
+        if let Some(mut hypothesis_state) = extract_hypothesis_state(&enriched)
+            .or_else(|| seed_hypothesis_state_from_logic_hypotheses(&enriched))
+        {
+            normalize_hypothesis_state(&mut hypothesis_state);
+            if let Some(object) = enriched.as_object_mut() {
+                object.insert(
+                    "hypothesisState".to_string(),
+                    serde_json::to_value(hypothesis_state).unwrap_or(Value::Null),
+                );
+            }
+        }
+        let logic_sop_context = build_logic_sop_context(profile, &enriched);
+        if logic_sop_context.as_array().is_some_and(|items| !items.is_empty()) {
+            if let Some(object) = enriched.as_object_mut() {
+                object.insert("logicSopContext".to_string(), logic_sop_context);
+            }
+        }
+        enriched
+    }
+
     async fn check_runtime_limits(
         &self,
         profile: &SystemAgentProfileRecord,
@@ -1028,6 +1165,10 @@ impl SystemAgentRuntime {
             profile_id: run.profile_id.clone(),
             status: run.status.clone(),
             trigger_event: run.trigger_event.clone(),
+            tool_calls: run
+                .tool_calls
+                .as_deref()
+                .and_then(|raw| serde_json::from_str(raw).ok()),
             started_at: run.started_at,
             finished_at: run.finished_at,
             error_message: run.error_message.clone(),
@@ -1510,4 +1651,64 @@ fn insert_queued_run(queue: &mut VecDeque<QueuedSystemAgentRun>, queued: QueuedS
         .position(|item| item.priority < queued.priority)
         .unwrap_or(queue.len());
     queue.insert(position, queued);
+}
+
+fn tool_calls_json_from_records(tool_calls: &[ToolCallRecord]) -> Option<String> {
+    if tool_calls.is_empty() {
+        None
+    } else {
+        serde_json::to_string(tool_calls).ok()
+    }
+}
+
+fn ensure_triage_output_hypothesis_state(output: Value, payload: &Value) -> Value {
+    let Some(mut hypothesis_state) = derive_triage_hypothesis_state(&output, payload) else {
+        return output;
+    };
+    normalize_hypothesis_state(&mut hypothesis_state);
+
+    let mut enriched = output;
+    let Some(object) = enriched.as_object_mut() else {
+        return enriched;
+    };
+    object.insert(
+        "hypothesisState".to_string(),
+        serde_json::to_value(hypothesis_state).unwrap_or(Value::Null),
+    );
+    enriched
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_seeded_hypothesis_state_when_triage_output_omits_it() {
+        let payload = json!({
+            "logicHypotheses": [{
+                "id": "repeatable_single_use_action",
+                "riskType": "logic",
+                "confidence": "high",
+                "summary": "The action may violate single-use expectations."
+            }]
+        });
+        let output = json!({
+            "summary": "需要进一步确认",
+            "riskType": "logic",
+            "confidence": "medium"
+        });
+
+        let enriched = ensure_triage_output_hypothesis_state(output, &payload);
+
+        assert_eq!(
+            enriched
+                .get("hypothesisState")
+                .and_then(|value| value.get("active"))
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(Value::as_str),
+            Some("The action may violate single-use expectations.")
+        );
+    }
 }

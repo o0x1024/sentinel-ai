@@ -21,11 +21,8 @@
             <span class="badge badge-xs" :class="severityClass(finding.severity)">
               {{ finding.severity }}
             </span>
-            <span
-              class="badge badge-xs"
-              :class="hasVerificationEvidence(finding) ? 'badge-success' : 'badge-warning'"
-            >
-              {{ hasVerificationEvidence(finding) ? '已验证' : '分诊中' }}
+            <span class="badge badge-xs" :class="getSystemAgentFindingStageBadgeClass(finding)">
+              {{ getSystemAgentFindingStageLabel(finding) }}
             </span>
           </div>
         </div>
@@ -43,6 +40,10 @@
 import { computed } from 'vue'
 
 import type { SystemAgentFindingSummary } from '../systemAgentSettingsSupport'
+import {
+  getSystemAgentFindingStageBadgeClass,
+  getSystemAgentFindingStageLabel,
+} from './systemAgentFindingPresentation'
 
 const props = defineProps<{
   findings: SystemAgentFindingSummary[]
@@ -60,10 +61,6 @@ const windowedRecentFindings = computed(() => {
     return Number.isFinite(seenAt) && seenAt >= props.windowStart
   })
 })
-
-function hasVerificationEvidence(finding: SystemAgentFindingSummary) {
-  return !!finding.evidence?.some(evidence => evidence.location === 'system_agent_verification')
-}
 
 function severityClass(severity: string) {
   if (severity === 'high' || severity === 'critical') return 'badge-error'

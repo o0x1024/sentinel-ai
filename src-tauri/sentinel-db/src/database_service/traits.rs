@@ -555,6 +555,8 @@ pub trait Database: Send + Sync + std::fmt::Debug {
         profile_id: Option<&str>,
         limit: Option<u32>,
     ) -> Result<Vec<SystemAgentRunRecord>>;
+    async fn delete_system_agent_run(&self, id: &str) -> Result<u64>;
+    async fn clear_system_agent_runs(&self, profile_id: Option<&str>) -> Result<u64>;
     async fn list_system_agent_profile_versions(
         &self,
         profile_id: &str,
@@ -566,6 +568,7 @@ pub trait Database: Send + Sync + std::fmt::Debug {
         &self,
         id: &str,
         status: &str,
+        tool_calls: Option<&str>,
         output_json: Option<&str>,
         error_message: Option<&str>,
         finished_at: Option<chrono::DateTime<chrono::Utc>>,

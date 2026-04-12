@@ -2,7 +2,12 @@ use anyhow::{anyhow, Result};
 use serde_json::Value;
 use url::Url;
 
-use crate::services::system_agents::verification_plan::{VerificationBaseline, VerificationPlan};
+use crate::services::system_agents::verification_plan::{
+    VerificationBaseline, VerificationPlan, VerificationTarget,
+};
+use crate::services::system_agents::verification_mutation::{
+    mutate_business_parameter_request, AppliedVerificationMutation, VerificationMutationSelectors,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerificationExecutionMode {
@@ -27,6 +32,7 @@ pub struct PreparedVerificationRequest {
     pub execution_mode: VerificationExecutionMode,
     pub execution_count: usize,
     pub sequence_mode: VerificationSequenceMode,
+    pub applied_mutations: Vec<AppliedVerificationMutation>,
 }
 
 pub fn prepare_verification_request(
@@ -46,6 +52,7 @@ pub fn prepare_verification_request(
             execution_mode: VerificationExecutionMode::Single,
             execution_count: 1,
             sequence_mode: VerificationSequenceMode::None,
+            applied_mutations: Vec::new(),
         });
     };
 
@@ -98,6 +105,7 @@ pub fn prepare_verification_request(
             execution_mode: VerificationExecutionMode::ConcurrentDuplicate,
             execution_count: normalize_concurrent_count(plan.concurrent_requests),
             sequence_mode: VerificationSequenceMode::None,
+            applied_mutations: Vec::new(),
         }),
         "swap_identity" => Ok(single_request(
             baseline.url.clone(),
@@ -109,12 +117,13 @@ pub fn prepare_verification_request(
             VerificationSequenceMode::None,
         )),
         "swap_resource_reference" => {
-            let (mutated_url, mutated_body) = mutate_request_reference(
+            let (mutated_url, mutated_body, applied_mutations) = mutate_request_reference(
                 &baseline.url,
                 baseline.request_body.as_deref(),
+                &plan.candidate_targets,
                 &plan.candidate_parameters,
             )?;
-            Ok(single_request(
+            let mut prepared = single_request(
                 mutated_url,
                 mutated_body,
                 true,
@@ -122,7 +131,33 @@ pub fn prepare_verification_request(
                 "Mutated a candidate resource reference before replay.",
                 1,
                 VerificationSequenceMode::None,
-            ))
+            );
+            prepared.applied_mutations = applied_mutations;
+            Ok(prepared)
+        }
+        "mutate_business_parameter" => {
+            if plan.parameter_mutations.is_empty() {
+                return Err(anyhow!(
+                    "Business-parameter mutation strategy requires parameterMutations"
+                ));
+            }
+            let (mutated_url, mutated_body, applied_mutations) = mutate_business_parameter_request(
+                &baseline.url,
+                baseline.request_body.as_deref(),
+                &plan.parameter_mutations,
+                &build_mutation_selectors(plan),
+            )?;
+            let mut prepared = single_request(
+                mutated_url,
+                mutated_body,
+                true,
+                plan,
+                "Mutated a business-sensitive request parameter before replay.",
+                1,
+                VerificationSequenceMode::None,
+            );
+            prepared.applied_mutations = applied_mutations;
+            Ok(prepared)
         }
         "manual_review" => Err(anyhow!(
             "Verification plan requires manual review and was not auto-replayed"
@@ -152,6 +187,7 @@ fn single_request(
         execution_mode: VerificationExecutionMode::Single,
         execution_count,
         sequence_mode,
+        applied_mutations: Vec::new(),
     }
 }
 
@@ -191,14 +227,22 @@ fn normalize_concurrent_count(value: Option<u32>) -> usize {
 fn mutate_request_reference(
     url: &str,
     body: Option<&str>,
+    candidate_targets: &[VerificationTarget],
     candidate_parameters: &[String],
-) -> Result<(String, Option<String>)> {
-    if let Some(mutated_url) = mutate_url_reference(url, candidate_parameters)? {
-        return Ok((mutated_url, body.map(str::to_string)));
+) -> Result<(String, Option<String>, Vec<AppliedVerificationMutation>)> {
+    let query_keys = target_selectors(candidate_targets, "query");
+    let path_values = target_selectors(candidate_targets, "pathSegment");
+    let json_body_keys = target_selectors(candidate_targets, "jsonBody");
+    if let Some((mutated_url, applied_mutation)) =
+        mutate_url_reference(url, &query_keys, &path_values, candidate_parameters)?
+    {
+        return Ok((mutated_url, body.map(str::to_string), vec![applied_mutation]));
     }
 
-    if let Some(mutated_body) = mutate_json_body_reference(body, candidate_parameters)? {
-        return Ok((url.to_string(), Some(mutated_body)));
+    if let Some((mutated_body, applied_mutation)) =
+        mutate_json_body_reference(body, &json_body_keys, candidate_parameters)?
+    {
+        return Ok((url.to_string(), Some(mutated_body), vec![applied_mutation]));
     }
 
     Err(anyhow!(
@@ -206,7 +250,12 @@ fn mutate_request_reference(
     ))
 }
 
-fn mutate_url_reference(url: &str, candidate_parameters: &[String]) -> Result<Option<String>> {
+fn mutate_url_reference(
+    url: &str,
+    query_keys: &[String],
+    path_values: &[String],
+    candidate_parameters: &[String],
+) -> Result<Option<(String, AppliedVerificationMutation)>> {
     let mut parsed = match Url::parse(url) {
         Ok(value) => value,
         Err(_) => return Ok(None),
@@ -216,10 +265,12 @@ fn mutate_url_reference(url: &str, candidate_parameters: &[String]) -> Result<Op
     if !query_items.is_empty() {
         let mut updated = Vec::with_capacity(query_items.len());
         let mut mutated = false;
+        let mut mutated_selector = None;
         for (key, value) in query_items {
             let key_text = key.to_string();
             let value_text = value.to_string();
-            if !mutated && parameter_matches(&key_text, candidate_parameters) {
+            if !mutated && parameter_matches(&key_text, query_keys, candidate_parameters) {
+                mutated_selector = Some(key_text.clone());
                 updated.push((key_text, mutate_scalar_value(&value_text)));
                 mutated = true;
             } else {
@@ -229,7 +280,14 @@ fn mutate_url_reference(url: &str, candidate_parameters: &[String]) -> Result<Op
 
         if mutated {
             parsed.query_pairs_mut().clear().extend_pairs(updated);
-            return Ok(Some(parsed.to_string()));
+            return Ok(Some((
+                parsed.to_string(),
+                AppliedVerificationMutation {
+                    location: "query".to_string(),
+                    selector: mutated_selector.unwrap_or_default(),
+                    mutation_kind: "mutate_reference".to_string(),
+                },
+            )));
         }
     }
 
@@ -244,11 +302,21 @@ fn mutate_url_reference(url: &str, candidate_parameters: &[String]) -> Result<Op
     let mut updated_segments = path_segments.clone();
     for index in (0..updated_segments.len()).rev() {
         let candidate = updated_segments[index].clone();
-        if let Some(mutated_segment) = mutate_path_segment(&candidate) {
+        if path_segment_matches(&candidate, path_values, candidate_parameters) {
+            let Some(mutated_segment) = mutate_path_segment(&candidate) else {
+                continue;
+            };
             updated_segments[index] = mutated_segment;
             let next_path = format!("/{}", updated_segments.join("/"));
             parsed.set_path(&next_path);
-            return Ok(Some(parsed.to_string()));
+            return Ok(Some((
+                parsed.to_string(),
+                AppliedVerificationMutation {
+                    location: "pathSegment".to_string(),
+                    selector: candidate,
+                    mutation_kind: "mutate_reference".to_string(),
+                },
+            )));
         }
     }
 
@@ -257,8 +325,9 @@ fn mutate_url_reference(url: &str, candidate_parameters: &[String]) -> Result<Op
 
 fn mutate_json_body_reference(
     body: Option<&str>,
+    json_body_keys: &[String],
     candidate_parameters: &[String],
-) -> Result<Option<String>> {
+) -> Result<Option<(String, AppliedVerificationMutation)>> {
     let Some(body) = body else {
         return Ok(None);
     };
@@ -271,7 +340,7 @@ fn mutate_json_body_reference(
         return Ok(None);
     };
 
-    for key in prioritized_candidate_keys(candidate_parameters) {
+    for key in prioritized_candidate_keys(json_body_keys, candidate_parameters) {
         if let Some(field) = map.get_mut(&key) {
             let replacement = match field {
                 Value::String(text) => Value::String(mutate_scalar_value(text)),
@@ -282,46 +351,62 @@ fn mutate_json_body_reference(
                 _ => continue,
             };
             *field = replacement;
-            return Ok(Some(serde_json::to_string(&value)?));
+            return Ok(Some((
+                serde_json::to_string(&value)?,
+                AppliedVerificationMutation {
+                    location: "jsonBody".to_string(),
+                    selector: key,
+                    mutation_kind: "mutate_reference".to_string(),
+                },
+            )));
         }
     }
 
     Ok(None)
 }
 
-fn prioritized_candidate_keys(candidate_parameters: &[String]) -> Vec<String> {
-    let mut keys = candidate_parameters
-        .iter()
-        .filter(|item| !item.trim().is_empty())
-        .cloned()
-        .collect::<Vec<_>>();
-    for fallback in [
-        "id",
-        "userId",
-        "user_id",
-        "orderId",
-        "order_id",
-        "projectId",
-        "resourceId",
-    ] {
-        if !keys.iter().any(|item| item == fallback) {
-            keys.push(fallback.to_string());
+fn prioritized_candidate_keys(explicit_keys: &[String], legacy_keys: &[String]) -> Vec<String> {
+    let mut keys = Vec::new();
+    for item in explicit_keys.iter().chain(legacy_keys.iter()) {
+        let trimmed = item.trim();
+        if trimmed.is_empty() || keys.iter().any(|existing| existing == trimmed) {
+            continue;
         }
+        keys.push(trimmed.to_string());
     }
     keys
 }
 
-fn parameter_matches(key: &str, candidate_parameters: &[String]) -> bool {
-    if candidate_parameters.is_empty() {
-        return matches!(
-            key,
-            "id" | "userId" | "user_id" | "orderId" | "order_id" | "projectId" | "resourceId"
-        );
-    }
-
-    candidate_parameters
+fn parameter_matches(key: &str, explicit_keys: &[String], legacy_keys: &[String]) -> bool {
+    explicit_keys
         .iter()
+        .chain(legacy_keys.iter())
         .any(|candidate| candidate.eq_ignore_ascii_case(key))
+}
+
+fn path_segment_matches(segment: &str, explicit_values: &[String], legacy_values: &[String]) -> bool {
+    explicit_values
+        .iter()
+        .chain(legacy_values.iter())
+        .any(|candidate| candidate.eq_ignore_ascii_case(segment))
+}
+
+fn target_selectors(candidate_targets: &[VerificationTarget], location: &str) -> Vec<String> {
+    candidate_targets
+        .iter()
+        .filter(|target| target.location.eq_ignore_ascii_case(location))
+        .map(|target| target.selector.trim().to_string())
+        .filter(|selector| !selector.is_empty())
+        .collect()
+}
+
+fn build_mutation_selectors(plan: &VerificationPlan) -> VerificationMutationSelectors {
+    VerificationMutationSelectors {
+        query: target_selectors(&plan.candidate_targets, "query"),
+        json_body: target_selectors(&plan.candidate_targets, "jsonBody"),
+        form_body: target_selectors(&plan.candidate_targets, "formBody"),
+        legacy: plan.candidate_parameters.clone(),
+    }
 }
 
 fn mutate_path_segment(segment: &str) -> Option<String> {
@@ -363,4 +448,38 @@ fn split_numeric_suffix(value: &str) -> Option<(&str, i64)> {
         .map(|(index, _)| index)?;
     let (prefix, suffix) = value.split_at(split_index);
     suffix.parse::<i64>().ok().map(|number| (prefix, number))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_reference_mutation_requires_explicit_candidates() {
+        let result = mutate_request_reference(
+            "https://example.test/api/orders/123",
+            Some(r#"{"orderId":"123"}"#),
+            &[],
+            &[],
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resource_reference_mutates_explicit_path_candidate() {
+        let (url, body, _applied_mutations) = mutate_request_reference(
+            "https://example.test/api/orders/123",
+            Some(r#"{"note":"keep"}"#),
+            &[VerificationTarget {
+                location: "pathSegment".to_string(),
+                selector: "123".to_string(),
+            }],
+            &["123".to_string()],
+        )
+        .expect("mutation to succeed");
+
+        assert_eq!(url, "https://example.test/api/orders/124");
+        assert_eq!(body.as_deref(), Some(r#"{"note":"keep"}"#));
+    }
 }

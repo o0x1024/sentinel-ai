@@ -378,6 +378,7 @@ function selectSourceFilter(filter: BuiltinSourceFilter) {
 
 function getToolIcon(toolName: string) {
   const iconMap: Record<string, string> = {
+    'ask_user_question': 'fas fa-list-check',
     'shell': 'fas fa-terminal',
     'interactive_shell': 'fas fa-terminal',
     'web_search': 'fas fa-search',

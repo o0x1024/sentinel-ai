@@ -210,6 +210,10 @@ impl ToolServer {
                                                 "description": {
                                                     "type": "string",
                                                     "description": "Short explanation of the option."
+                                                },
+                                                "preview": {
+                                                    "type": "string",
+                                                    "description": "Optional preview content for the option."
                                                 }
                                             },
                                             "required": ["label", "description"]
@@ -277,6 +281,11 @@ impl ToolServer {
                         "type": "integer",
                         "description": "Command timeout in seconds",
                         "default": 60
+                    },
+                    "run_in_background": {
+                        "type": "boolean",
+                        "description": "Run the command in a dedicated interactive shell session and return immediately.",
+                        "default": false
                     }
                 },
                 "required": ["command"]
@@ -287,7 +296,7 @@ impl ToolServer {
                 mutating: true,
                 concurrency_safe: false,
                 requires_permission: true,
-                supports_background: false,
+                supports_background: true,
             })
             .executor(|args| async move {
                 use crate::buildin_tools::shell::ShellArgs;

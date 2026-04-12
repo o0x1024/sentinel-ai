@@ -4,7 +4,7 @@
       <div>
         <div class="font-semibold text-sm">调试与测试</div>
         <p class="text-xs text-base-content/60 mt-1">
-          通过测试事件回放被动系统智能体链路；只有在需要调试时再展开编辑原始 JSON。
+          通过测试事件回放后台 Agent 链路；只有在需要调试时再展开编辑原始 JSON。
         </p>
       </div>
       <div class="flex flex-wrap gap-2">

@@ -27,6 +27,12 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
                 } else {
                     "error".to_string()
                 }
+            } else if map
+                .get("backgrounded")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                "ok".to_string()
             } else if let Some(exit_code) = map.get("exit_code").and_then(|v| v.as_i64()) {
                 if exit_code == 0 {
                     "ok".to_string()
@@ -72,25 +78,63 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
                     "HTTP {} {} {} ({} bytes, truncated: {})",
                     status_code, status_text, url, body_len, truncated
                 )
+            } else if tool_name == "ask_user_question" {
+                let answer_count = map
+                    .get("answers")
+                    .and_then(|v| v.as_object())
+                    .map(|answers| answers.len())
+                    .unwrap_or(0);
+                let question_count = map
+                    .get("questions")
+                    .and_then(|v| v.as_array())
+                    .map(|questions| questions.len())
+                    .unwrap_or(0);
+                format!(
+                    "AskUserQuestion collected {} / {} answers",
+                    answer_count, question_count
+                )
             } else if tool_name.contains("shell") || tool_name.contains("interactive_shell") {
                 let command = map
                     .get("command")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                let exit_code = map.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1);
-                let stdout = map.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-                let stderr = map.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-                let output = if !stdout.trim().is_empty() {
-                    stdout
+                if map
+                    .get("backgrounded")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    let task_id = map
+                        .get("background_task_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let session_id = map
+                        .get("background_session_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let status = map
+                        .get("background_status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("running");
+                    format!(
+                        "Shell `{}` -> background {} | task {} | session {}",
+                        command, status, task_id, session_id
+                    )
                 } else {
-                    stderr
-                };
-                format!(
-                    "Shell `{}` -> exit {} | {}",
-                    command,
-                    exit_code,
-                    condense_text(output, 160)
-                )
+                    let exit_code = map.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1);
+                    let stdout = map.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+                    let stderr = map.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+                    let output = if !stdout.trim().is_empty() {
+                        stdout
+                    } else {
+                        stderr
+                    };
+                    format!(
+                        "Shell `{}` -> exit {} | {}",
+                        command,
+                        exit_code,
+                        condense_text(output, 160)
+                    )
+                }
             } else if tool_name.contains("todos") {
                 let action = args
                     .get("action")

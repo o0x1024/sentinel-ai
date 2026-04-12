@@ -7,13 +7,18 @@ import type {
 } from './types'
 import { applyPayloadProcessingRules } from './payloadProcessing'
 import { expandPayloadSet } from './payloads'
-
-const MARKER = '§'
-
-interface TemplateParts {
-  segments: string[]
-  tokens: string[]
-}
+import {
+  INTRUDER_PRIMARY_MARKER,
+  clearIntruderMarkers,
+  extractIntruderPositions,
+  splitIntruderTemplate,
+  wrapSelectionWithMarkers,
+} from './intruderMarkers'
+export {
+  clearIntruderMarkers,
+  extractIntruderPositions,
+  wrapSelectionWithMarkers,
+} from './intruderMarkers'
 
 export interface IntruderPayloadResolutionContext {
   template: string
@@ -27,71 +32,6 @@ export interface IntruderPayloadPluginProcessingContext {
   positionIndex: number
   template: string
   positions: IntruderPosition[]
-}
-
-export function clearIntruderMarkers(input: string): string {
-  return input.split(MARKER).join('')
-}
-
-export function wrapSelectionWithMarkers(input: string, selectionStart: number, selectionEnd: number): string {
-  if (selectionStart === selectionEnd) return input
-
-  const start = Math.min(selectionStart, selectionEnd)
-  const end = Math.max(selectionStart, selectionEnd)
-  const selected = input.slice(start, end)
-
-  if (!selected) return input
-
-  return `${input.slice(0, start)}${MARKER}${selected}${MARKER}${input.slice(end)}`
-}
-
-export function extractIntruderPositions(input: string): IntruderPosition[] {
-  const positions: IntruderPosition[] = []
-  let cursor = 0
-  let index = 0
-
-  while (cursor < input.length) {
-    const start = input.indexOf(MARKER, cursor)
-    if (start === -1) break
-
-    const end = input.indexOf(MARKER, start + 1)
-    if (end === -1) break
-
-    const value = input.slice(start + 1, end)
-    positions.push({
-      index,
-      start,
-      end,
-      value,
-      preview: value.length > 32 ? `${value.slice(0, 29)}...` : value,
-    })
-
-    cursor = end + 1
-    index += 1
-  }
-
-  return positions
-}
-
-function splitTemplate(input: string): TemplateParts {
-  const segments: string[] = []
-  const tokens: string[] = []
-  let cursor = 0
-
-  while (cursor < input.length) {
-    const start = input.indexOf(MARKER, cursor)
-    if (start === -1) break
-
-    const end = input.indexOf(MARKER, start + 1)
-    if (end === -1) break
-
-    segments.push(input.slice(cursor, start))
-    tokens.push(input.slice(start + 1, end))
-    cursor = end + 1
-  }
-
-  segments.push(input.slice(cursor))
-  return { segments, tokens }
 }
 
 function joinTemplate(segments: string[], values: string[]): string {
@@ -222,7 +162,7 @@ function markQueryStringValues(requestLine: string): string {
   const params = query.split('&').map((entry) => {
     const equalIndex = entry.indexOf('=')
     if (equalIndex === -1) return entry
-    return `${entry.slice(0, equalIndex + 1)}${MARKER}${entry.slice(equalIndex + 1)}${MARKER}`
+    return `${entry.slice(0, equalIndex + 1)}${INTRUDER_PRIMARY_MARKER}${entry.slice(equalIndex + 1)}${INTRUDER_PRIMARY_MARKER}`
   })
 
   return `${prefix}${path}?${params.join('&')}${suffix}`
@@ -234,7 +174,7 @@ function markFormUrlEncodedValues(body: string): string {
     .map((entry) => {
       const equalIndex = entry.indexOf('=')
       if (equalIndex === -1) return entry
-      return `${entry.slice(0, equalIndex + 1)}${MARKER}${entry.slice(equalIndex + 1)}${MARKER}`
+      return `${entry.slice(0, equalIndex + 1)}${INTRUDER_PRIMARY_MARKER}${entry.slice(equalIndex + 1)}${INTRUDER_PRIMARY_MARKER}`
     })
     .join('&')
 }
@@ -242,7 +182,7 @@ function markFormUrlEncodedValues(body: string): string {
 function markJsonPrimitiveValues(body: string): string {
   return body.replace(
     /:\s*("(?:\\.|[^"])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
-    (_, value: string) => `: ${MARKER}${value}${MARKER}`,
+    (_, value: string) => `: ${INTRUDER_PRIMARY_MARKER}${value}${INTRUDER_PRIMARY_MARKER}`,
   )
 }
 
@@ -285,7 +225,7 @@ export async function buildIntruderAttackPlan(options: {
       return expandPayloadSet(payloadSet)
     }),
   )
-  const { segments, tokens } = splitTemplate(template)
+  const { segments, tokens } = splitIntruderTemplate(template)
   const requests: IntruderAttackPlan['requests'] = []
   const totalGenerated = estimateAttackCountFromPayloadLists(attackType, positions.length, payloadLists)
   let truncated = false

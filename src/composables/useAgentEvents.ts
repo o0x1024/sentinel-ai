@@ -303,6 +303,7 @@ export function useAgentEvents(
       document_attachments?: any[]
       image_attachments?: any[]
       referenced_files?: any[]
+      referenced_messages?: any[]
       referenced_assets?: any[]
       referenced_traffic?: any[]
     }>('agent:user_message', (event) => {
@@ -327,6 +328,7 @@ export function useAgentEvents(
       )
       const imgAttachments = payload.image_attachments
       const referencedFiles = payload.referenced_files
+      const referencedMessages = payload.referenced_messages
       const referencedAssets = payload.referenced_assets
       const referencedTraffic = payload.referenced_traffic
       pendingDocumentAttachments.value = [] // Clear after use
@@ -344,6 +346,9 @@ export function useAgentEvents(
       }
       if (referencedFiles) {
         metadata.referenced_files = referencedFiles
+      }
+      if (referencedMessages) {
+        metadata.referenced_messages = referencedMessages
       }
       if (referencedAssets) {
         metadata.referenced_assets = referencedAssets
@@ -1424,6 +1429,48 @@ export function useAgentEvents(
       })
     })
     unlisteners.push(unlistenTenthManIntervention)
+
+    const unlistenShellBackgroundTask = await listen<{
+      id: string
+      execution_id?: string | null
+      session_id: string
+      command: string
+      status: 'running' | 'completed' | 'failed' | 'cancelled'
+      exit_code?: number | null
+      output_preview?: string
+    }>('shell-background-task-update', (event) => {
+      const payload = event.payload
+      if (!payload?.execution_id || !matchesTarget(payload.execution_id)) return
+      if (payload.status === 'running') return
+
+      const msgId = crypto.randomUUID()
+      const statusLabel = payload.status === 'completed'
+        ? '后台 Shell 任务完成'
+        : payload.status === 'failed'
+          ? '后台 Shell 任务失败'
+          : '后台 Shell 任务已停止'
+      const exitSuffix = typeof payload.exit_code === 'number'
+        ? `\n\nExit code: ${payload.exit_code}`
+        : ''
+      const preview = String(payload.output_preview || '').trim()
+      const previewBlock = preview ? `\n\n${preview}` : ''
+
+      messages.value.push({
+        id: msgId,
+        type: 'system',
+        content: `**${statusLabel}**\n\n\`${payload.command}\`${exitSuffix}${previewBlock}`,
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'shell_background_task',
+          task_id: payload.id,
+          session_id: payload.session_id,
+          command: payload.command,
+          status: payload.status,
+          exit_code: payload.exit_code ?? undefined,
+        },
+      })
+    })
+    unlisteners.push(unlistenShellBackgroundTask)
   }
 
   const stopListening = () => {

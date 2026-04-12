@@ -193,6 +193,11 @@ export const buildConversationTimeline = (
       if (referencedFiles && Array.isArray(referencedFiles) && referencedFiles.length > 0) {
         finalMetadata = { ...finalMetadata, referenced_files: referencedFiles }
       }
+      const referencedMessages =
+        parsedMetadata?.referenced_messages || parsedStructured?.referenced_messages
+      if (referencedMessages && Array.isArray(referencedMessages) && referencedMessages.length > 0) {
+        finalMetadata = { ...finalMetadata, referenced_messages: referencedMessages }
+      }
       const referencedAssets =
         parsedMetadata?.referenced_assets || parsedStructured?.referenced_assets
       if (referencedAssets && Array.isArray(referencedAssets) && referencedAssets.length > 0) {

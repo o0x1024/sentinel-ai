@@ -1,11 +1,13 @@
 import type { PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
 import type {
+  ReferencedConversationMessage,
   ReferencedAsset,
   ReferencedFile,
   ReferencedTraffic,
   TrafficSendType,
 } from '@/types/agentReferences'
 export type {
+  ReferencedConversationMessage,
   ReferencedAsset,
   ReferencedFile,
   ReferencedTraffic,
@@ -17,6 +19,7 @@ export interface DraftArtifactState {
   pendingDocuments: PendingDocumentAttachment[]
   processedDocuments: ProcessedDocumentResult[]
   referencedFiles: ReferencedFile[]
+  referencedMessages: ReferencedConversationMessage[]
   referencedTraffic: ReferencedTraffic[]
   referencedAssets: ReferencedAsset[]
 }

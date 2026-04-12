@@ -32,31 +32,41 @@ export interface SubmissionReferencedFile {
   truncated: boolean
 }
 
-export interface SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset, TFile> {
+export interface SubmissionReferencedMessage {
+  content: string
+  roleLabel: string
+  timestamp: number
+  type: string
+}
+
+export interface SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset, TFile, TMessage> {
   usedAssets: TAsset[]
   usedAttachments: TAttachment[]
   usedDocuments: ProcessedDocumentResult[]
   usedFiles: TFile[]
+  usedMessages: TMessage[]
   usedTraffic: TTraffic[]
 }
 
-export interface PreparedSubmission<TAttachment, TTraffic, TAsset, TFile>
-  extends SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset, TFile> {
+export interface PreparedSubmission<TAttachment, TTraffic, TAsset, TFile, TMessage>
+  extends SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset, TFile, TMessage> {
   displayContent?: string
   fullTask: string
 }
 
-export const collectSubmissionResourceSnapshot = <TAttachment, TTraffic, TAsset, TFile>(params: {
+export const collectSubmissionResourceSnapshot = <TAttachment, TTraffic, TAsset, TFile, TMessage>(params: {
   pendingAttachments: TAttachment[]
   processedDocuments: ProcessedDocumentResult[]
   referencedAssets: TAsset[]
   referencedFiles: TFile[]
+  referencedMessages: TMessage[]
   referencedTraffic: TTraffic[]
-}): SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset, TFile> => ({
+}): SubmissionResourceSnapshot<TAttachment, TTraffic, TAsset, TFile, TMessage> => ({
   usedAssets: [...params.referencedAssets],
   usedAttachments: [...params.pendingAttachments],
   usedDocuments: params.processedDocuments.filter((doc) => doc.status === 'ready'),
   usedFiles: [...params.referencedFiles],
+  usedMessages: [...params.referencedMessages],
   usedTraffic: [...params.referencedTraffic],
 })
 
@@ -164,9 +174,24 @@ export const buildFileContext = (files: SubmissionReferencedFile[]): string => {
   return parts.join('\n')
 }
 
+export const buildMessageContext = (messages: SubmissionReferencedMessage[]): string => {
+  const parts: string[] = ['Referenced conversation messages:\n']
+
+  messages.forEach((message, index) => {
+    parts.push(`\n--- Message #${index + 1} ---`)
+    parts.push(`Role: ${message.roleLabel}`)
+    parts.push(`Type: ${message.type}`)
+    parts.push(`Timestamp: ${new Date(message.timestamp).toISOString()}`)
+    parts.push(`Content:\n${message.content}`)
+  })
+
+  return parts.join('\n')
+}
+
 export const buildSubmissionTask = (params: {
   assets: SubmissionReferencedAsset[]
   files: SubmissionReferencedFile[]
+  messages: SubmissionReferencedMessage[]
   task: string
   traffic: SubmissionReferencedTraffic[]
 }): { displayContent?: string; fullTask: string } => {
@@ -194,32 +219,44 @@ export const buildSubmissionTask = (params: {
     displayContent = params.task
   }
 
+  if (params.messages.length > 0) {
+    const messageContext = buildMessageContext(params.messages)
+    fullTask = fullTask === params.task
+      ? `${messageContext}\n\nUser task: ${params.task}`
+      : `${messageContext}\n\n${fullTask}`
+    displayContent = params.task
+  }
+
   return { displayContent, fullTask }
 }
 
-export const prepareSubmission = <TAttachment, TTraffic, TAsset, TFile>(params: {
+export const prepareSubmission = <TAttachment, TTraffic, TAsset, TFile, TMessage>(params: {
   clearDraftState: () => void
   pendingAttachments: TAttachment[]
   processedDocuments: ProcessedDocumentResult[]
   referencedAssets: TAsset[]
   referencedFiles: TFile[]
+  referencedMessages: TMessage[]
   referencedTraffic: TTraffic[]
   setPendingDocumentAttachments: (documents: ProcessedDocumentResult[]) => void
   task: string
   toAssetContextItems: (assets: TAsset[]) => SubmissionReferencedAsset[]
   toFileContextItems: (files: TFile[]) => SubmissionReferencedFile[]
+  toMessageContextItems: (messages: TMessage[]) => SubmissionReferencedMessage[]
   toTrafficContextItems: (traffic: TTraffic[]) => SubmissionReferencedTraffic[]
-}): PreparedSubmission<TAttachment, TTraffic, TAsset, TFile> => {
+}): PreparedSubmission<TAttachment, TTraffic, TAsset, TFile, TMessage> => {
   const usedResources = collectSubmissionResourceSnapshot({
     pendingAttachments: params.pendingAttachments,
     processedDocuments: params.processedDocuments,
     referencedAssets: params.referencedAssets,
     referencedFiles: params.referencedFiles,
+    referencedMessages: params.referencedMessages,
     referencedTraffic: params.referencedTraffic,
   })
   const { displayContent, fullTask } = buildSubmissionTask({
     assets: params.toAssetContextItems(params.referencedAssets),
     files: params.toFileContextItems(params.referencedFiles),
+    messages: params.toMessageContextItems(params.referencedMessages),
     task: params.task,
     traffic: params.toTrafficContextItems(params.referencedTraffic),
   })

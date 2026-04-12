@@ -10,6 +10,16 @@
       :height="height"
       :display-mode="displayMode"
       :state-key="stateKey"
+      :marker-mode="markerMode"
+      :show-search-bar="showSearchBar"
+      :search-placeholder="searchPlaceholder"
+      :search-next-title="searchNextTitle"
+      :search-previous-title="searchPreviousTitle"
+      :search-case-sensitive-title="searchCaseSensitiveTitle"
+      :search-regexp-title="searchRegexpTitle"
+      :search-clear-title="searchClearTitle"
+      :search-no-matches-text="searchNoMatchesText"
+      :search-invalid-regexp-text="searchInvalidRegexpText"
       @contextmenu="emit('contextmenu', $event)"
     />
     <HttpMessageTextEditor
@@ -24,6 +34,16 @@
       :placeholder="placeholder"
       :display-mode="displayMode"
       :state-key="stateKey"
+      :marker-mode="markerMode"
+      :show-search-bar="showSearchBar"
+      :search-placeholder="searchPlaceholder"
+      :search-next-title="searchNextTitle"
+      :search-previous-title="searchPreviousTitle"
+      :search-case-sensitive-title="searchCaseSensitiveTitle"
+      :search-regexp-title="searchRegexpTitle"
+      :search-clear-title="searchClearTitle"
+      :search-no-matches-text="searchNoMatchesText"
+      :search-invalid-regexp-text="searchInvalidRegexpText"
       @update:model-value="emit('update:modelValue', $event)"
       @contextmenu="emit('contextmenu', $event)"
     />
@@ -45,6 +65,16 @@ const props = withDefaults(defineProps<{
   messageType?: TrafficMessageType
   displayMode?: 'pretty' | 'raw'
   stateKey?: string
+  markerMode?: 'none' | 'intruder'
+  showSearchBar?: boolean
+  searchPlaceholder?: string
+  searchNextTitle?: string
+  searchPreviousTitle?: string
+  searchCaseSensitiveTitle?: string
+  searchRegexpTitle?: string
+  searchClearTitle?: string
+  searchNoMatchesText?: string
+  searchInvalidRegexpText?: string
 }>(), {
   modelValue: '',
   readonly: false,
@@ -55,6 +85,16 @@ const props = withDefaults(defineProps<{
   messageType: 'generic',
   displayMode: 'raw',
   stateKey: '',
+  markerMode: 'none',
+  showSearchBar: false,
+  searchPlaceholder: 'Search',
+  searchNextTitle: 'Next match',
+  searchPreviousTitle: 'Previous match',
+  searchCaseSensitiveTitle: 'Case sensitive',
+  searchRegexpTitle: 'Regex',
+  searchClearTitle: 'Clear search',
+  searchNoMatchesText: 'No matches',
+  searchInvalidRegexpText: 'Invalid regex',
 })
 
 const emit = defineEmits<{
@@ -64,6 +104,7 @@ const emit = defineEmits<{
 
 const surfaceEditor = ref<{
   focus?: () => void
+  focusSearch?: () => void
   getContent?: () => string
   getSelectionRange?: () => { from: number; to: number }
   undo?: () => void
@@ -78,6 +119,7 @@ const surfaceStyle = computed(() => ({
 
 defineExpose({
   focus: () => surfaceEditor.value?.focus?.(),
+  focusSearch: () => surfaceEditor.value?.focusSearch?.(),
   getContent: () => surfaceEditor.value?.getContent?.() || props.modelValue,
   getSelectionRange: () => surfaceEditor.value?.getSelectionRange?.() || { from: 0, to: 0 },
   undo: () => surfaceEditor.value?.undo?.(),

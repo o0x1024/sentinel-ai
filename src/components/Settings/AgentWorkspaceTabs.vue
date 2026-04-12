@@ -1,6 +1,6 @@
 <template>
   <div class="rounded-lg border border-base-300 bg-base-100 p-2">
-    <div class="tabs tabs-boxed bg-transparent gap-2" role="tablist" aria-label="智能体工作区标签">
+    <div class="tabs tabs-boxed gap-2 bg-transparent" role="tablist" aria-label="智能体工作区标签">
       <button
         v-for="item in items"
         :key="item.key"

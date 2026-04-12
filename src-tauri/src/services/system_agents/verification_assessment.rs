@@ -14,6 +14,7 @@ pub fn assess_verification_result(
     plan: Option<&VerificationPlan>,
     strategy_used: &str,
     response_status: u16,
+    response_body: &str,
     response_body_matches: bool,
     attempt_status_codes: &[u16],
     parallel_status_codes: &[u16],
@@ -53,6 +54,13 @@ pub fn assess_verification_result(
             matched_status,
             response_body_matches,
             response_status,
+            &mut reasons,
+        ),
+        "mutate_business_parameter" => assess_business_parameter_mutation(
+            baseline,
+            response_status,
+            response_body,
+            response_body_matches,
             &mut reasons,
         ),
         "skip_prerequisite" => assess_sequence_bypass(
@@ -204,6 +212,38 @@ fn assess_identity_or_resource_swap(
     false
 }
 
+fn assess_business_parameter_mutation(
+    baseline: &VerificationBaseline,
+    response_status: u16,
+    response_body: &str,
+    response_body_matches: bool,
+    reasons: &mut Vec<String>,
+) -> bool {
+    let baseline_denied = baseline
+        .response_status
+        .map(|status| !is_success_status(status as u16))
+        .unwrap_or(false)
+        || contains_denial_marker(baseline.response_body.as_deref());
+    let mutation_became_more_favorable = is_success_status(response_status)
+        || (!contains_denial_marker(Some(response_body)) && !response_body_matches);
+
+    if baseline_denied && mutation_became_more_favorable {
+        reasons.push(format!(
+            "Business-parameter mutation changed a baseline denial into a more favorable response (status={}, bodyMatch={}).",
+            response_status, response_body_matches
+        ));
+        return true;
+    }
+
+    reasons.push(format!(
+        "Business-parameter mutation did not overturn the baseline denial semantics (status={}, bodyMatch={}, denialStillPresent={}).",
+        response_status,
+        response_body_matches,
+        contains_denial_marker(Some(response_body))
+    ));
+    false
+}
+
 fn assess_sequence_bypass(
     bypass_kind: &str,
     matched_status: bool,
@@ -242,4 +282,56 @@ fn assess_sequence_bypass(
 
 fn is_success_status(status: u16) -> bool {
     (200..400).contains(&status)
+}
+
+fn contains_denial_marker(text: Option<&str>) -> bool {
+    let Some(text) = text else {
+        return false;
+    };
+    let normalized = text.to_ascii_lowercase();
+    [
+        "insufficient_funds",
+        "insufficient funds",
+        "insufficient balance",
+        "balance_insufficient",
+        "not_enough_balance",
+        "余额不足",
+        "资金不足",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn confirms_business_parameter_mutation_when_denial_disappears() {
+        let baseline = VerificationBaseline {
+            source_request_id: Some(1),
+            url: "https://shop.test/api/checkout".to_string(),
+            method: "POST".to_string(),
+            request_headers: None,
+            request_body: Some(r#"{"quantity":1}"#.to_string()),
+            response_status: Some(402),
+            response_headers: None,
+            response_body: Some(r#"{"error":"INSUFFICIENT_FUNDS"}"#.to_string()),
+        };
+
+        let result = assess_verification_result(
+            &baseline,
+            None,
+            "mutate_business_parameter",
+            200,
+            r#"{"success":true}"#,
+            false,
+            &[],
+            &[],
+            &[],
+            VerificationExecutionMode::Single,
+        );
+
+        assert!(result.verified);
+    }
 }

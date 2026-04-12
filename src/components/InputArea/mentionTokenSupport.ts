@@ -1,4 +1,4 @@
-export type MentionTokenKind = 'file' | 'asset' | 'traffic'
+export type MentionTokenKind = 'file' | 'asset' | 'message' | 'traffic'
 
 export interface MentionTokenMatch {
   end: number
@@ -9,7 +9,7 @@ export interface MentionTokenMatch {
   text: string
 }
 
-const TOKEN_REGEX = /@(file|asset|http)\[([^\]\n]+)\]/g
+const TOKEN_REGEX = /@(file|asset|http|message)\[([^\]\n]+)\]/g
 
 const sanitizeTokenPart = (value: string) => value.replace(/[\]\n\r]/g, ' ').replace(/\|/g, '/').trim()
 
@@ -37,6 +37,9 @@ export const buildMentionToken = (params: {
   if (params.kind === 'asset') {
     return `@asset[${safeId}|${safeLabel}]`
   }
+  if (params.kind === 'message') {
+    return `@message[${safeId}|${safeLabel}]`
+  }
   return `@http[${safeId}|${safeLabel}]`
 }
 
@@ -53,6 +56,8 @@ export const parseMentionTokens = (text: string): MentionTokenMatch[] => {
     const kind: MentionTokenKind =
       rawKind === 'http'
         ? 'traffic'
+        : rawKind === 'message'
+          ? 'message'
         : rawKind === 'asset'
           ? 'asset'
           : 'file'

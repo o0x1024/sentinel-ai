@@ -3,7 +3,18 @@ use serde_json::Value;
 
 use sentinel_db::{ProxyRequestRecord, TrafficEvidenceRecord};
 
+pub use crate::services::system_agents::verification_mutation::VerificationParameterMutation;
+
 const SYSTEM_AGENT_CONTEXT_LOCATION: &str = "system_agent_context";
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct VerificationTarget {
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub selector: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -12,6 +23,9 @@ pub struct VerificationPlan {
     pub preferred_strategy: String,
     #[serde(default)]
     pub target_request_id: Option<i64>,
+    #[serde(default)]
+    pub candidate_targets: Vec<VerificationTarget>,
+    // Legacy compatibility field. New planners should use candidateTargets.
     #[serde(default)]
     pub candidate_parameters: Vec<String>,
     #[serde(default)]
@@ -22,6 +36,8 @@ pub struct VerificationPlan {
     pub sequence_request_ids: Vec<i64>,
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub parameter_mutations: Vec<VerificationParameterMutation>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,10 +67,17 @@ fn value_to_payload_string(value: Option<&Value>) -> Option<String> {
 pub fn extract_verification_plan(output: &Value) -> Option<VerificationPlan> {
     let raw = output.get("verificationPlan")?;
     let mut plan = serde_json::from_value::<VerificationPlan>(raw.clone()).ok()?;
+    normalize_verification_plan(&mut plan);
+    Some(plan)
+}
+
+pub fn normalize_verification_plan(plan: &mut VerificationPlan) {
     if plan.preferred_strategy.trim().is_empty() {
         plan.preferred_strategy = default_strategy();
     }
-    Some(plan)
+    plan.candidate_targets.retain(|target| {
+        !target.location.trim().is_empty() && !target.selector.trim().is_empty()
+    });
 }
 
 pub fn extract_context_output(evidence: &[TrafficEvidenceRecord]) -> Option<Value> {

@@ -79,12 +79,50 @@
           </button>
         </div>
       </div>
+
+      <div
+        v-if="isBackgroundTask"
+        class="mt-3 rounded-md border border-info/40 bg-info/10 px-3 py-2 text-[11px] text-info-content"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="font-semibold text-info">
+              后台 Shell 任务
+            </div>
+            <div class="mt-1 whitespace-pre-wrap break-words text-info/90">
+              {{ backgroundStatusLabel }}
+            </div>
+            <div v-if="backgroundNote" class="mt-1 whitespace-pre-wrap break-words text-info/80">
+              {{ backgroundNote }}
+            </div>
+            <div v-if="backgroundTaskId" class="mt-1 text-[10px] text-info/70">
+              Task: {{ backgroundTaskId }}
+            </div>
+          </div>
+          <div class="flex flex-shrink-0 items-center gap-2">
+            <button
+              @click.stop="openBackgroundTerminal"
+              class="btn btn-xs btn-info"
+            >
+              打开终端
+            </button>
+            <button
+              v-if="canStopBackgroundTask"
+              @click.stop="handleStopBackgroundTask"
+              class="btn btn-xs btn-ghost text-info"
+              :disabled="isStoppingBackgroundTask"
+            >
+              停止
+            </button>
+          </div>
+        </div>
+      </div>
       
       <!-- Error message -->
       <div v-if="error && !stderr" class="error text-[#f14c4c] whitespace-pre-wrap break-all">{{ error }}</div>
       
       <!-- No output indicator -->
-      <div v-if="!stdout && !stderr && !error && isCompleted" class="no-output text-[#6a9955] italic">
+      <div v-if="!stdout && !stderr && !error && isCompleted && !isBackgroundTask" class="no-output text-[#6a9955] italic">
         {{ $t('tools.shell.noOutput') }}
       </div>
       
@@ -168,12 +206,15 @@ const emit = defineEmits<{
 const copied = ref(false)
 const copiedAll = ref(false)
 const isCancelling = ref(false)
+const isStoppingBackgroundTask = ref(false)
 const pendingPermissionId = ref<string | null>(null)
 const pendingCommand = ref<string>('')
 const isExpanded = ref(false)
 const hasOverflow = ref(false)
 const terminalBodyRef = ref<HTMLElement | null>(null)
+const backgroundRuntimeState = ref<Record<string, any> | null>(null)
 let unlisten: (() => void) | null = null
+let unlistenBackgroundTask: (() => void) | null = null
 const terminal = useTerminal()
 const todos = useTodos()
 
@@ -272,6 +313,14 @@ function openInteractiveTerminal() {
   terminal.openTerminal()
 }
 
+function openBackgroundTerminal() {
+  todos.close()
+  if (backgroundSessionId.value) {
+    terminal.setSessionId(backgroundSessionId.value)
+  }
+  terminal.openTerminal(backgroundSessionId.value || undefined)
+}
+
 // Check if needs confirmation - show when status is running and we have a pending permission request
 const needsConfirmation = computed(() => {
   // Show confirmation bar if:
@@ -293,6 +342,65 @@ const canCancel = computed(() => {
 // Check if completed
 const isCompleted = computed(() => {
   return props.status === 'completed' || props.status === 'failed'
+})
+
+const backgroundTaskId = computed(() => {
+  const runtimeTaskId = backgroundRuntimeState.value?.id
+  if (runtimeTaskId) return String(runtimeTaskId)
+  const r = parsedResult.value
+  if (!r) return ''
+  return String(r.output?.background_task_id || r.background_task_id || '')
+})
+
+const backgroundSessionId = computed(() => {
+  const runtimeSessionId = backgroundRuntimeState.value?.session_id
+  if (runtimeSessionId) return String(runtimeSessionId)
+  const r = parsedResult.value
+  if (!r) return ''
+  return String(r.output?.background_session_id || r.background_session_id || '')
+})
+
+const backgroundStatus = computed(() => {
+  const runtimeStatus = backgroundRuntimeState.value?.status
+  if (runtimeStatus) return String(runtimeStatus)
+  const r = parsedResult.value
+  if (!r) return ''
+  return String(r.output?.background_status || r.background_status || '')
+})
+
+const backgroundNote = computed(() => {
+  const r = parsedResult.value
+  if (!r) return ''
+  return String(r.output?.note || r.note || '')
+})
+
+const isBackgroundTask = computed(() => {
+  const r = parsedResult.value
+  if (!r) return false
+  return Boolean(r.output?.backgrounded || r.backgrounded || backgroundTaskId.value)
+})
+
+const canStopBackgroundTask = computed(() => {
+  return isBackgroundTask.value && backgroundTaskId.value && backgroundStatus.value === 'running'
+})
+
+const backgroundStatusLabel = computed(() => {
+  if (!isBackgroundTask.value) return ''
+  const exit = backgroundRuntimeState.value?.exit_code
+  switch (backgroundStatus.value) {
+    case 'completed':
+      return exit === 0 || exit === undefined
+        ? '后台任务已完成。'
+        : `后台任务已完成，退出码 ${exit}。`
+    case 'failed':
+      return exit === undefined
+        ? '后台任务执行失败。'
+        : `后台任务执行失败，退出码 ${exit}。`
+    case 'cancelled':
+      return '后台任务已停止。'
+    default:
+      return '命令正在独立终端会话中运行，不会阻塞当前对话。'
+  }
 })
 
 // Check if has any output
@@ -445,6 +553,20 @@ const executionTime = computed((): number | null => {
   return null
 })
 
+async function handleStopBackgroundTask() {
+  if (!backgroundTaskId.value || isStoppingBackgroundTask.value) return
+  isStoppingBackgroundTask.value = true
+  try {
+    await invoke('stop_background_shell_task', {
+      taskId: backgroundTaskId.value,
+    })
+  } catch (error) {
+    console.error('Failed to stop background shell task:', error)
+  } finally {
+    isStoppingBackgroundTask.value = false
+  }
+}
+
 // Handle accept
 async function handleAccept() {
   if (pendingPermissionId.value) {
@@ -583,6 +705,21 @@ async function checkPendingPermissions() {
   }
 }
 
+async function loadBackgroundTaskState() {
+  if (!backgroundTaskId.value || !props.executionId) return
+  try {
+    const tasks = await invoke<Array<Record<string, any>>>('get_background_shell_tasks', {
+      executionId: props.executionId,
+    })
+    const matched = tasks.find((task) => String(task.id || '') === backgroundTaskId.value)
+    if (matched) {
+      backgroundRuntimeState.value = matched
+    }
+  } catch (error) {
+    console.error('Failed to load background shell task state:', error)
+  }
+}
+
 // Listen for permission requests matching this command
 onMounted(async () => {
   console.log('ShellToolResult mounted, listening for permission requests, command:', command.value)
@@ -605,6 +742,16 @@ onMounted(async () => {
       pendingCommand.value = payload.command
     }
   }) as unknown as () => void
+
+  unlistenBackgroundTask = await listen('shell-background-task-update', (event: any) => {
+    const payload = event.payload
+    if (!payload || String(payload.id || '') !== backgroundTaskId.value) {
+      return
+    }
+    backgroundRuntimeState.value = payload
+  }) as unknown as () => void
+
+  await loadBackgroundTaskState()
   
   // Check overflow on mount and when content changes
   checkOverflow()
@@ -614,6 +761,9 @@ onMounted(async () => {
 onUnmounted(() => {
   if (unlisten) {
     unlisten()
+  }
+  if (unlistenBackgroundTask) {
+    unlistenBackgroundTask()
   }
   if (pollInterval) {
     clearInterval(pollInterval)
@@ -632,6 +782,10 @@ function handleKeyDown(e: KeyboardEvent) {
 // Watch for content changes to check overflow
 watch([stdout, stderr, () => props.error], () => {
   checkOverflow()
+})
+
+watch(backgroundTaskId, () => {
+  void loadBackgroundTaskState()
 })
 </script>
 

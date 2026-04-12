@@ -2,10 +2,21 @@
   <div class="border border-base-300 rounded-lg overflow-hidden">
     <div class="px-4 py-3 bg-base-200 flex items-center justify-between">
       <div class="font-semibold text-sm">运行记录</div>
-      <button class="btn btn-xs btn-ghost" @click="$emit('refresh')" :disabled="disabled">
-        <i class="fas fa-rotate mr-1"></i>
-        刷新
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          v-if="runs.length > 0"
+          class="btn btn-xs btn-ghost text-error"
+          @click="$emit('clear-runs')"
+          :disabled="disabled"
+        >
+          <i class="fas fa-trash-alt mr-1"></i>
+          清空
+        </button>
+        <button class="btn btn-xs btn-ghost" @click="$emit('refresh')" :disabled="disabled">
+          <i class="fas fa-rotate mr-1"></i>
+          刷新
+        </button>
+      </div>
     </div>
     <div v-if="runs.length === 0" class="p-4 text-sm text-base-content/60">当前没有运行记录。</div>
     <div v-else class="divide-y divide-base-300 max-h-[420px] overflow-y-auto">
@@ -18,8 +29,80 @@
             {{ formatRunStatus(run.status) }}
           </span>
         </div>
+        <div class="mt-2 flex justify-end">
+          <button
+            class="btn btn-ghost btn-xs text-error"
+            @click="$emit('delete-run', run.id)"
+            :disabled="disabled || deletingRunId === run.id"
+          >
+            <i class="fas fa-trash mr-1"></i>
+            {{ deletingRunId === run.id ? '删除中...' : '删除' }}
+          </button>
+        </div>
         <div class="text-xs text-base-content/60 mt-1">
           {{ formatTriggerEvent(run.triggerEvent) }} · {{ formatDate(run.startedAt) }}
+        </div>
+        <div
+          v-if="getToolCalls(run).length"
+          class="mt-3 rounded-lg border border-base-300 bg-base-200/40 p-3 space-y-3"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="text-xs font-semibold">工具调用</div>
+            <span class="badge badge-primary badge-xs">
+              {{ `共 ${getToolCalls(run).length} 次` }}
+            </span>
+            <span class="badge badge-ghost badge-xs">
+              {{ formatToolSuccessSummary(run) }}
+            </span>
+          </div>
+
+          <div class="space-y-2">
+            <details
+              v-for="toolCall in getToolCalls(run)"
+              :key="`${run.id}-${toolCall.id}`"
+              class="rounded-md border border-base-300 bg-base-100 px-3 py-2"
+            >
+              <summary class="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs select-none">
+                <span class="font-medium text-base-content">{{ toolCall.name }}</span>
+                <span
+                  class="badge badge-xs"
+                  :class="toolCall.success ? 'badge-success' : 'badge-error'"
+                >
+                  {{ toolCall.success ? '成功' : '失败' }}
+                </span>
+                <span class="badge badge-outline badge-xs">
+                  #{{ toolCall.sequence + 1 }}
+                </span>
+                <span class="badge badge-ghost badge-xs">
+                  {{ formatDuration(toolCall.duration_ms) }}
+                </span>
+              </summary>
+
+              <div class="mt-3 space-y-3">
+                <div class="flex flex-wrap gap-2 text-[11px] text-base-content/60">
+                  <span class="rounded-md border border-base-300 bg-base-200/60 px-2 py-1 font-mono">
+                    {{ `tool_call_id: ${toolCall.id}` }}
+                  </span>
+                  <span class="rounded-md border border-base-300 bg-base-200/60 px-2 py-1">
+                    {{ `开始: ${formatTimestampFromMillis(toolCall.started_at_ms)}` }}
+                  </span>
+                  <span class="rounded-md border border-base-300 bg-base-200/60 px-2 py-1">
+                    {{ `结束: ${formatTimestampFromMillis(toolCall.completed_at_ms)}` }}
+                  </span>
+                </div>
+
+                <div class="space-y-1">
+                  <div class="text-[11px] font-medium text-base-content/70">入参</div>
+                  <pre class="rounded-md bg-base-200 p-3 text-[11px] text-base-content/70 overflow-auto whitespace-pre-wrap break-all">{{ formatJsonLikeText(toolCall.arguments) }}</pre>
+                </div>
+
+                <div class="space-y-1">
+                  <div class="text-[11px] font-medium text-base-content/70">响应</div>
+                  <pre class="rounded-md bg-base-200 p-3 text-[11px] text-base-content/70 overflow-auto whitespace-pre-wrap break-all">{{ formatJsonLikeText(toolCall.result || '') }}</pre>
+                </div>
+              </div>
+            </details>
+          </div>
         </div>
         <details class="mt-2">
           <summary class="cursor-pointer text-xs text-base-content/50 select-none">
@@ -213,7 +296,10 @@
 </template>
 
 <script setup lang="ts">
-import type { SystemAgentRunPayload } from '../systemAgentSettingsSupport'
+import type {
+  SystemAgentRunPayload,
+  SystemAgentToolCallRecord,
+} from '../systemAgentSettingsSupport'
 import {
   formatContextExtractionEntry,
   formatSemanticActionEntry,
@@ -226,10 +312,13 @@ import {
 defineProps<{
   runs: SystemAgentRunPayload[]
   disabled?: boolean
+  deletingRunId?: string
 }>()
 
 defineEmits<{
   refresh: []
+  'delete-run': [runId: string]
+  'clear-runs': []
 }>()
 
 function formatDate(value?: string | null) {
@@ -271,6 +360,43 @@ function getContextExtractionSummary(run: SystemAgentRunPayload) {
 
 function getSemanticAbstractionSummary(run: SystemAgentRunPayload) {
   return getSemanticAbstractionSummaryFromPayload(run.inputSummary)
+}
+
+function getToolCalls(run: SystemAgentRunPayload): SystemAgentToolCallRecord[] {
+  return Array.isArray(run.toolCalls) ? run.toolCalls : []
+}
+
+function formatToolSuccessSummary(run: SystemAgentRunPayload) {
+  const toolCalls = getToolCalls(run)
+  const successful = toolCalls.filter(item => item.success).length
+  return `${successful} 成功 / ${toolCalls.length - successful} 失败`
+}
+
+function formatDuration(durationMs?: number | null) {
+  if (typeof durationMs !== 'number' || Number.isNaN(durationMs) || durationMs < 0) {
+    return '-'
+  }
+  if (durationMs < 1000) return `${durationMs}ms`
+  return `${(durationMs / 1000).toFixed(durationMs >= 10_000 ? 0 : 1)}s`
+}
+
+function formatTimestampFromMillis(value?: number | null) {
+  if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) return '-'
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return String(value)
+  }
+}
+
+function formatJsonLikeText(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return '(empty)'
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2)
+  } catch {
+    return value
+  }
 }
 
 const formatExtractionEntry = formatContextExtractionEntry

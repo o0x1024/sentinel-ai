@@ -112,6 +112,10 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                                             "description": {
                                                 "type": "string",
                                                 "description": "Short option description."
+                                            },
+                                            "preview": {
+                                                "type": "string",
+                                                "description": "Optional preview content for the option."
                                             }
                                         },
                                         "required": ["label", "description"]
@@ -189,6 +193,11 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                         "type": "integer",
                         "description": "Command timeout in seconds",
                         "default": 60
+                    },
+                    "run_in_background": {
+                        "type": "boolean",
+                        "description": "Run the command in a dedicated interactive shell session and return immediately.",
+                        "default": false
                     }
                 },
                 "required": ["command"]
@@ -1251,6 +1260,7 @@ pub use agent_config::{
 };
 
 mod exploitdb;
+mod skill_candidates;
 mod skills;
 
 pub async fn init_exploitdb_runtime_config(
@@ -1267,6 +1277,12 @@ pub async fn init_shell_permission_handler(app: tauri::AppHandle) -> Result<(), 
 #[tauri::command]
 pub async fn init_ask_user_question_handler(app: tauri::AppHandle) -> Result<(), String> {
     ask_user_question::init_ask_user_question_handler(app).await
+}
+
+#[tauri::command]
+pub async fn init_shell_background_runtime(app: tauri::AppHandle) -> Result<(), String> {
+    sentinel_tools::buildin_tools::shell_background::set_shell_background_app_handle(app).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1306,6 +1322,24 @@ pub async fn respond_ask_user_question(
 #[tauri::command]
 pub async fn reject_ask_user_question(id: String) -> Result<(), String> {
     ask_user_question::reject_ask_user_question(id).await
+}
+
+#[tauri::command]
+pub async fn get_background_shell_tasks(
+    execution_id: Option<String>,
+) -> Result<Vec<sentinel_tools::buildin_tools::shell_background::BackgroundShellTaskRecord>, String>
+{
+    Ok(
+        sentinel_tools::buildin_tools::shell_background::list_background_shell_tasks(
+            execution_id.as_deref(),
+        )
+        .await,
+    )
+}
+
+#[tauri::command]
+pub async fn stop_background_shell_task(task_id: String) -> Result<(), String> {
+    sentinel_tools::buildin_tools::shell_background::stop_background_shell_task(&task_id).await
 }
 
 #[tauri::command]
@@ -1391,6 +1425,61 @@ pub async fn refresh_skills_index(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<usize, String> {
     skills::refresh_skills_index(db_service).await
+}
+
+#[tauri::command]
+pub async fn list_skill_candidates(
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Vec<crate::skills::candidates::SkillCandidate>, String> {
+    skill_candidates::list_skill_candidates(db_service).await
+}
+
+#[tauri::command]
+pub async fn list_skill_candidate_suppression_rules(
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Vec<crate::skills::candidates::SkillCandidateSuppressionRule>, String> {
+    skill_candidates::list_skill_candidate_suppression_rules(db_service).await
+}
+
+#[tauri::command]
+pub async fn delete_skill_candidate_suppression_rule(
+    rule_id: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<bool, String> {
+    skill_candidates::delete_skill_candidate_suppression_rule_by_id(rule_id, db_service).await
+}
+
+#[tauri::command]
+pub async fn extend_skill_candidate_suppression_rule(
+    rule_id: String,
+    days: i64,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<crate::skills::candidates::SkillCandidateSuppressionRule, String> {
+    skill_candidates::extend_skill_candidate_suppression_rule(rule_id, days, db_service).await
+}
+
+#[tauri::command]
+pub async fn expire_skill_candidate_suppression_rule(
+    rule_id: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<crate::skills::candidates::SkillCandidateSuppressionRule, String> {
+    skill_candidates::expire_skill_candidate_suppression_rule(rule_id, db_service).await
+}
+
+#[tauri::command]
+pub async fn promote_skill_candidate(
+    payload: skill_candidates::PromoteSkillCandidateRequest,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<sentinel_db::Skill, String> {
+    skill_candidates::promote_skill_candidate(payload, db_service).await
+}
+
+#[tauri::command]
+pub async fn review_skill_candidate(
+    payload: skill_candidates::ReviewSkillCandidateRequest,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<crate::skills::candidates::SkillCandidate, String> {
+    skill_candidates::review_skill_candidate(payload, db_service).await
 }
 
 #[tauri::command]

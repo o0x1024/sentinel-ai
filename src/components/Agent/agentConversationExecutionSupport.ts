@@ -1,5 +1,10 @@
 import type { ProcessedDocumentResult } from '@/types/agent'
-import type { ReferencedAsset, ReferencedFile, ReferencedTraffic } from '@/types/agentReferences'
+import type {
+  ReferencedAsset,
+  ReferencedConversationMessage,
+  ReferencedFile,
+  ReferencedTraffic,
+} from '@/types/agentReferences'
 
 export const takeOverConversationExecution = async (params: {
   appendPartialAssistantMessage: (message: {
@@ -118,6 +123,7 @@ export const executeConversationTask = async (params: {
       model_override?: string
       referenced_assets?: ReferencedAsset[]
       referenced_files?: ReferencedFile[]
+      referenced_messages?: ReferencedConversationMessage[]
       referenced_traffic?: ReferencedTraffic[]
       timeout_secs: number
       tool_config: unknown
@@ -129,6 +135,7 @@ export const executeConversationTask = async (params: {
   usedAttachments: unknown[]
   usedDocuments: ProcessedDocumentResult[]
   usedFiles: ReferencedFile[]
+  usedMessages: ReferencedConversationMessage[]
   usedTraffic: ReferencedTraffic[]
 }): Promise<any> => {
   params.maybeAutoRenameConversation({
@@ -155,6 +162,7 @@ export const executeConversationTask = async (params: {
       model_override: buildAssistantModelOverride(params.assistantSelectedModel),
       referenced_assets: params.usedAssets.length > 0 ? params.usedAssets : undefined,
       referenced_files: params.usedFiles.length > 0 ? params.usedFiles : undefined,
+      referenced_messages: params.usedMessages.length > 0 ? params.usedMessages : undefined,
       referenced_traffic: params.usedTraffic.length > 0 ? params.usedTraffic : undefined,
       timeout_secs: 300,
       tool_config: params.runtimeToolConfig,

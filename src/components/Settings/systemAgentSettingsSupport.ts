@@ -1,3 +1,11 @@
+export interface SystemAgentSopDefinition {
+  id: string
+  name: string
+  description: string
+  procedure: string
+  updatedAt: string
+}
+
 export interface SystemAgentProfileSummary {
   id: string
   name: string
@@ -35,6 +43,7 @@ export interface SystemAgentProfilePayload {
   llmModelOverride?: string | null
   basePromptId?: string | null
   promptPatch?: string | null
+  sopDefinitions: SystemAgentSopDefinition[]
   inputSchema?: Record<string, unknown> | null
   outputSchema?: Record<string, unknown> | null
   requiredTools: string[]
@@ -58,12 +67,25 @@ export interface SystemAgentRunPayload {
   triggerEvent?: string | null
   status: string
   inputSummary?: Record<string, unknown> | null
+  toolCalls?: SystemAgentToolCallRecord[] | null
   output?: Record<string, unknown> | null
   errorMessage?: string | null
   startedAt: string
   finishedAt?: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface SystemAgentToolCallRecord {
+  id: string
+  name: string
+  arguments: string
+  result?: string | null
+  success: boolean
+  sequence: number
+  started_at_ms: number
+  completed_at_ms: number
+  duration_ms: number
 }
 
 export interface SystemAgentProfileVersionPayload {
@@ -88,6 +110,8 @@ export interface SystemAgentFindingSummary {
   confidence: string
   title: string
   status: string
+  analysisStage?: string
+  analysisStageLabel?: string
   hit_count: number
   last_seen_at: string
   url?: string | null
@@ -247,6 +271,7 @@ export const createEmptySystemAgentProfile = (): SystemAgentProfilePayload => ({
   llmModelOverride: null,
   basePromptId: null,
   promptPatch: '',
+  sopDefinitions: [],
   inputSchema: {},
   outputSchema: {},
   requiredTools: [],

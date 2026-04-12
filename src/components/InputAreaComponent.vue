@@ -17,6 +17,42 @@
 
     <!-- Input area (refactored) -->
     <div class="px-4 pb-3 pt-2">
+      <div v-if="props.referencedMessages && props.referencedMessages.length > 0" class="mb-2">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs text-base-content/60 flex items-center gap-1">
+            <i class="fas fa-comment-dots text-info"></i>
+            引用的消息 ({{ props.referencedMessages.length }})
+          </span>
+          <button
+            @click="clearReferencedMessages"
+            class="btn btn-xs btn-ghost text-base-content/60 hover:text-error"
+            title="清除所有消息引用"
+          >
+            <i class="fas fa-times"></i>
+            清除
+          </button>
+        </div>
+        <div class="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+          <div
+            v-for="(message, idx) in props.referencedMessages"
+            :key="message.id"
+            class="group relative flex items-center gap-2 px-2 py-1 bg-info/10 border border-info/25 rounded-lg text-xs"
+          >
+            <span class="badge badge-xs badge-info">{{ message.roleLabel }}</span>
+            <span class="text-base-content/80 truncate max-w-80" :title="message.content">
+              {{ message.content }}
+            </span>
+            <button
+              @click="removeReferencedMessage(idx)"
+              class="w-4 h-4 rounded-full bg-error/80 text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs ml-1"
+              title="移除"
+            >
+              <i class="fas fa-times text-[10px]"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div v-if="props.referencedFiles && props.referencedFiles.length > 0" class="mb-2">
         <div class="flex items-center justify-between mb-1">
           <span class="text-xs text-base-content/60 flex items-center gap-1">
@@ -210,7 +246,15 @@
 
       <div ref="containerRef" class="chat-input rounded-2xl bg-base-200/60 border border-base-300/60 backdrop-blur-sm flex flex-col gap-2 px-3 py-2 shadow-sm focus-within:border-primary transition-colors">
         <!-- Text input (auto-resize textarea) -->
-        <div class="flex-1 min-w-0">
+        <div class="input-editor-shell flex-1 min-w-0">
+          <div
+            v-if="inputMessage"
+            ref="textareaMirrorRef"
+            class="textarea-mirror"
+            aria-hidden="true"
+          >
+            <pre class="textarea-mirror-content">{{ highlightedPlainPrefix }}<template v-for="(segment, idx) in highlightedMentionSegments" :key="`${segment.start}-${idx}`"><span v-if="segment.type === 'text'">{{ segment.value }}</span><span v-else :class="['mention-inline-token', getMentionInlineClass(segment.kind)]" @mouseenter="showMentionPreview(segment, $event)" @mousemove="showMentionPreview(segment, $event)" @mousedown.prevent="handleMentionTokenPointerDown" @click.prevent="beginMentionReplacement(segment)" @mouseleave="scheduleHideMentionPreview">{{ segment.value }}</span></template>{{ highlightedPlainSuffix }}</pre>
+          </div>
           <textarea
             ref="textareaRef"
             :value="inputMessage"
@@ -218,13 +262,62 @@
             @keydown="onKeydown"
             @click="onCaretChanged"
             @keyup="onCaretChanged"
+            @select="onCaretChanged"
+            @scroll="onTextareaScroll"
             @compositionstart="onCompositionStart"
             @compositionend="onCompositionEnd"
             :disabled="isLoading && !allowTakeover"
             :placeholder="placeholderText"
-            class="w-full bg-transparent outline-none resize-none leading-relaxed text-sm placeholder:text-base-content/50 max-h-40"
+            :class="[
+              'w-full bg-transparent outline-none resize-none leading-relaxed text-sm placeholder:text-base-content/50 max-h-40 input-textarea',
+              inputMessage ? 'text-transparent caret-base-content' : ''
+            ]"
             rows="1"
           />
+        </div>
+        <div
+          v-if="activeMentionPreview"
+          class="mention-preview-popover"
+          @mouseenter="cancelHideMentionPreview"
+          @mouseleave="scheduleHideMentionPreview"
+          :style="{
+            left: `${activeMentionPreview.x}px`,
+            top: `${activeMentionPreview.y}px`,
+          }"
+        >
+          <div class="mention-preview-title">{{ activeMentionPreview.title }}</div>
+          <div class="mention-preview-body">{{ activeMentionPreview.body }}</div>
+          <div class="mention-preview-actions">
+            <button type="button" class="mention-preview-btn" @click="removePreviewReference">
+              移除
+            </button>
+            <template v-if="activeMentionPreview.kind === 'traffic'">
+              <button
+                type="button"
+                class="mention-preview-btn"
+                :class="{ 'mention-preview-btn-active': activeMentionPreview.sendType === 'request' }"
+                @click="setPreviewTrafficSendType('request')"
+              >
+                Request
+              </button>
+              <button
+                type="button"
+                class="mention-preview-btn"
+                :class="{ 'mention-preview-btn-active': activeMentionPreview.sendType === 'response' }"
+                @click="setPreviewTrafficSendType('response')"
+              >
+                Response
+              </button>
+              <button
+                type="button"
+                class="mention-preview-btn"
+                :class="{ 'mention-preview-btn-active': activeMentionPreview.sendType === 'both' || !activeMentionPreview.sendType }"
+                @click="setPreviewTrafficSendType('both')"
+              >
+                Both
+              </button>
+            </template>
+          </div>
         </div>
         <div v-if="mentionOpen" class="slash-popover border border-base-300 bg-base-100 rounded-xl shadow-xl">
           <div class="px-3 py-2 border-b border-base-300/60 text-xs text-base-content/60">
@@ -525,16 +618,25 @@ import SearchableSelect from '@/components/SearchableSelect.vue'
 import InputToolbarActions from '@/components/InputArea/InputToolbarActions.vue'
 import { useInputAttachments } from '@/components/InputArea/useInputAttachments'
 import {
+  expandSelectionToMentionBoundaries,
   findMentionTokenAdjacentToCursor,
   findMentionTokenForDeletion,
+  parseMentionTokens,
   removeMentionTokenText,
   removeTextRange,
   snapCursorToMentionBoundary,
 } from '@/components/InputArea/mentionTokenSupport'
 import { useInputMentions } from '@/components/InputArea/useInputMentions'
 import { useInputSlashCommands } from '@/components/InputArea/useInputSlashCommands'
-import type { ReferencedAsset, ReferencedFile, ReferencedTraffic, TrafficSendType } from '@/components/Agent/agentDraftTypes'
-import type { PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
+import type {
+  ReferencedAsset,
+  ReferencedConversationMessage,
+  ReferencedFile,
+  ReferencedTraffic,
+  TrafficSendType,
+} from '@/components/Agent/agentDraftTypes'
+import type { AgentMessage, PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
+import type { MentionTokenKind } from '@/components/InputArea/mentionTokenSupport'
 
 const { t } = useI18n()
 
@@ -571,8 +673,10 @@ const props = defineProps<{
   pendingDocuments?: PendingDocumentAttachment[]
   processedDocuments?: ProcessedDocumentResult[]
   referencedFiles?: ReferencedFile[]
+  referencedMessages?: ReferencedConversationMessage[]
   referencedTraffic?: ReferencedTraffic[]
   referencedAssets?: ReferencedAsset[]
+  availableConversationMessages?: AgentMessage[]
   contextUsage?: ContextUsageInfo | null
   availableAgents?: AgentOption[]
   selectedAgent?: string
@@ -597,13 +701,17 @@ const emit = defineEmits<{
   (e: 'remove-document', index: number): void
   (e: 'document-processed', result: ProcessedDocumentResult): void
   (e: 'add-file-reference', files: ReferencedFile[]): void
+  (e: 'add-message-reference', messages: ReferencedConversationMessage[]): void
   (e: 'add-traffic-reference', traffic: ReferencedTraffic[]): void
   (e: 'add-asset-reference', assets: ReferencedAsset[]): void
   (e: 'sync-file-references', files: ReferencedFile[]): void
+  (e: 'sync-message-references', messages: ReferencedConversationMessage[]): void
   (e: 'sync-traffic-references', traffic: ReferencedTraffic[]): void
   (e: 'sync-asset-references', assets: ReferencedAsset[]): void
   (e: 'remove-file', index: number): void
   (e: 'clear-files'): void
+  (e: 'remove-message', index: number): void
+  (e: 'clear-messages'): void
   (e: 'remove-traffic', index: number): void
   (e: 'clear-traffic'): void
   (e: 'remove-asset', index: number): void
@@ -630,12 +738,14 @@ const getAssetRiskBadgeClass = (level?: string) => {
   }
 }
 
-const getMentionBadgeClass = (kind: 'file' | 'asset' | 'traffic') => {
+const getMentionBadgeClass = (kind: 'file' | 'asset' | 'message' | 'traffic') => {
   switch (kind) {
     case 'file':
       return 'badge-secondary'
     case 'asset':
       return 'badge-primary'
+    case 'message':
+      return 'badge-info'
     case 'traffic':
       return 'badge-accent'
     default:
@@ -643,12 +753,14 @@ const getMentionBadgeClass = (kind: 'file' | 'asset' | 'traffic') => {
   }
 }
 
-const getMentionBadgeLabel = (kind: 'file' | 'asset' | 'traffic') => {
+const getMentionBadgeLabel = (kind: 'file' | 'asset' | 'message' | 'traffic') => {
   switch (kind) {
     case 'file':
       return 'FILE'
     case 'asset':
       return 'ASSET'
+    case 'message':
+      return 'MSG'
     case 'traffic':
       return 'HTTP'
     default:
@@ -656,9 +768,27 @@ const getMentionBadgeLabel = (kind: 'file' | 'asset' | 'traffic') => {
   }
 }
 
+const getMentionInlineClass = (kind: 'file' | 'asset' | 'message' | 'traffic') => {
+  switch (kind) {
+    case 'file':
+      return 'mention-inline-file'
+    case 'asset':
+      return 'mention-inline-asset'
+    case 'message':
+      return 'mention-inline-message'
+    case 'traffic':
+      return 'mention-inline-traffic'
+    default:
+      return ''
+  }
+}
+
 // --- New input logic ---
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const textareaMirrorRef = ref<HTMLDivElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
+const hoveredMentionPreview = ref<{ id: string; kind: MentionTokenKind; x: number; y: number } | null>(null)
+let hideMentionPreviewTimer: ReturnType<typeof setTimeout> | null = null
 
 // Feature states are fully controlled by parent.
 const effectiveRagEnabled = computed(() => !!props.ragEnabled)
@@ -675,6 +805,129 @@ const availableAgentOptions = computed(() => props.availableAgents || [])
 
 const placeholderText = computed(() => '在这里输入消息，按 Enter 发送')
 
+const highlightedMentionSegments = computed(() => {
+  const text = props.inputMessage || ''
+  const tokens = parseMentionTokens(text)
+  const segments: Array<
+    | { start: number; type: 'text'; value: string }
+    | { end: number; id: string; kind: 'file' | 'asset' | 'message' | 'traffic'; label: string; start: number; type: 'mention'; value: string }
+  > = []
+  let cursor = 0
+
+  for (const token of tokens) {
+    if (token.start > cursor) {
+      segments.push({
+        start: cursor,
+        type: 'text',
+        value: text.slice(cursor, token.start),
+      })
+    }
+    segments.push({
+      end: token.end,
+      id: token.id,
+      kind: token.kind,
+      label: token.label,
+      start: token.start,
+      type: 'mention',
+      value: token.text,
+    })
+    cursor = token.end
+  }
+
+  if (cursor < text.length) {
+    segments.push({
+      start: cursor,
+      type: 'text',
+      value: text.slice(cursor),
+    })
+  }
+
+  return segments
+})
+
+const highlightedPlainPrefix = computed(() => '')
+const highlightedPlainSuffix = computed(() => '\n')
+
+const buildMentionReplacementQuery = (segment: {
+  id: string
+  kind: MentionTokenKind
+  label: string
+}) => {
+  if (segment.kind === 'file') {
+    return segment.id
+  }
+  if (segment.kind === 'asset') {
+    return segment.label
+  }
+  if (segment.kind === 'message') {
+    return segment.label
+  }
+  return segment.label.replace(/^[A-Z]+\s+/, '').trim() || segment.label
+}
+
+const getMentionPreviewPayload = (kind: MentionTokenKind, id: string) => {
+  if (kind === 'file') {
+    const file = (props.referencedFiles || []).find((item) => item.relativePath === id || item.id === id)
+    if (!file) return null
+    const body = file.preview.length > 280 ? `${file.preview.slice(0, 280)}...` : file.preview
+    return {
+      body: body || file.relativePath,
+      title: `FILE · ${file.relativePath}`,
+    }
+  }
+
+  if (kind === 'asset') {
+    const asset = (props.referencedAssets || []).find((item) => item.id === id)
+    if (!asset) return null
+    const details = [
+      asset.value,
+      asset.description,
+      asset.risk_level ? `risk=${asset.risk_level}` : '',
+    ].filter(Boolean).join('\n')
+    return {
+      body: details || asset.name,
+      title: `ASSET · ${asset.name}`,
+    }
+  }
+
+  if (kind === 'message') {
+    const message = (props.referencedMessages || []).find((item) => item.id === id)
+    if (!message) return null
+    return {
+      body: message.content,
+      title: `MESSAGE · ${message.roleLabel}`,
+    }
+  }
+
+  const traffic = (props.referencedTraffic || []).find((item) => String(item.id) === id)
+  if (!traffic) return null
+  const responsePart = traffic.response_body
+    ? `\n\n${traffic.response_body.slice(0, 220)}${traffic.response_body.length > 220 ? '...' : ''}`
+    : ''
+  return {
+    kind,
+    body: `${traffic.method} ${traffic.url}\nstatus=${traffic.status_code || 'N/A'}${responsePart}`,
+    sendType: traffic.sendType,
+    title: `HTTP · ${traffic.host}`,
+  }
+}
+
+const activeMentionPreview = computed(() => {
+  if (!hoveredMentionPreview.value) return null
+  const payload = getMentionPreviewPayload(
+    hoveredMentionPreview.value.kind,
+    hoveredMentionPreview.value.id,
+  )
+  if (!payload) return null
+  return {
+    ...payload,
+    id: hoveredMentionPreview.value.id,
+    kind: hoveredMentionPreview.value.kind,
+    x: hoveredMentionPreview.value.x,
+    y: hoveredMentionPreview.value.y,
+  }
+})
+
 const autoResize = () => {
   const el = textareaRef.value
   if (!el) return
@@ -689,6 +942,18 @@ const setCursorPosition = (cursor: number, preference: 'left' | 'right' | 'neare
   el.setSelectionRange(normalizedCursor, normalizedCursor)
 }
 
+const normalizeSelectionRange = (
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+) => {
+  if (selectionStart === selectionEnd) {
+    const cursor = snapCursorToMentionBoundary(text, selectionStart, 'nearest')
+    return { end: cursor, start: cursor }
+  }
+  return expandSelectionToMentionBoundaries(text, selectionStart, selectionEnd)
+}
+
 const setInputValue = (value: string, cursor = value.length) => {
   emit('update:input-message', value)
   nextTick(() => {
@@ -700,6 +965,7 @@ const setInputValue = (value: string, cursor = value.length) => {
     updateSlashState(value, normalizedCursor)
     updateMentionState(value, normalizedCursor)
     autoResize()
+    onTextareaScroll({ target: el } as unknown as Event)
   })
 }
 
@@ -712,15 +978,143 @@ const onInput = (e: Event) => {
   autoResize()
 }
 
+const onTextareaScroll = (e: Event) => {
+  const target = e.target as HTMLTextAreaElement
+  const mirror = textareaMirrorRef.value
+  if (!mirror) return
+  mirror.scrollTop = target.scrollTop
+  mirror.scrollLeft = target.scrollLeft
+  hoveredMentionPreview.value = null
+}
+
+const showMentionPreview = (
+  segment: { id: string; kind: MentionTokenKind; type: 'mention' },
+  event: MouseEvent,
+) => {
+  cancelHideMentionPreview()
+  const payload = getMentionPreviewPayload(segment.kind, segment.id)
+  const container = containerRef.value
+  if (!payload || !container) {
+    hoveredMentionPreview.value = null
+    return
+  }
+  const rect = container.getBoundingClientRect()
+  hoveredMentionPreview.value = {
+    id: segment.id,
+    kind: segment.kind,
+    x: Math.max(8, event.clientX - rect.left),
+    y: Math.max(8, event.clientY - rect.top - 12),
+  }
+}
+
+const hideMentionPreview = () => {
+  hoveredMentionPreview.value = null
+}
+
+const cancelHideMentionPreview = () => {
+  if (!hideMentionPreviewTimer) return
+  clearTimeout(hideMentionPreviewTimer)
+  hideMentionPreviewTimer = null
+}
+
+const scheduleHideMentionPreview = () => {
+  cancelHideMentionPreview()
+  hideMentionPreviewTimer = setTimeout(() => {
+    hoveredMentionPreview.value = null
+    hideMentionPreviewTimer = null
+  }, 120)
+}
+
+const handleMentionTokenPointerDown = () => {
+  focusInput()
+}
+
+const beginMentionReplacement = (segment: {
+  end: number
+  id: string
+  kind: MentionTokenKind
+  label: string
+  start: number
+  type: 'mention'
+}) => {
+  const currentValue = props.inputMessage || ''
+  const query = buildMentionReplacementQuery(segment)
+  const replacement = `@${query}`
+  const nextValue = `${currentValue.slice(0, segment.start)}${replacement}${currentValue.slice(segment.end)}`
+  hideMentionPreview()
+  setInputValue(nextValue, segment.start + replacement.length)
+}
+
+const removePreviewReference = () => {
+  const preview = activeMentionPreview.value
+  if (!preview) return
+  if (preview.kind === 'file') {
+    const index = (props.referencedFiles || []).findIndex((item) => item.relativePath === preview.id || item.id === preview.id)
+    if (index >= 0) {
+      removeReferencedFile(index)
+    }
+    hideMentionPreview()
+    return
+  }
+  if (preview.kind === 'asset') {
+    const index = (props.referencedAssets || []).findIndex((item) => item.id === preview.id)
+    if (index >= 0) {
+      removeReferencedAsset(index)
+    }
+    hideMentionPreview()
+    return
+  }
+  if (preview.kind === 'message') {
+    const index = (props.referencedMessages || []).findIndex((item) => item.id === preview.id)
+    if (index >= 0) {
+      removeReferencedMessage(index)
+    }
+    hideMentionPreview()
+    return
+  }
+  const index = (props.referencedTraffic || []).findIndex((item) => String(item.id) === preview.id)
+  if (index >= 0) {
+    removeReferencedTraffic(index)
+  }
+  hideMentionPreview()
+}
+
+const setPreviewTrafficSendType = (nextType: TrafficSendType) => {
+  const preview = activeMentionPreview.value
+  if (!preview || preview.kind !== 'traffic') return
+  const nextTraffic = (props.referencedTraffic || []).map((item) => (
+    String(item.id) === preview.id
+      ? { ...item, sendType: nextType }
+      : item
+  ))
+  emit('sync-traffic-references', nextTraffic)
+  hoveredMentionPreview.value = {
+    ...hoveredMentionPreview.value!,
+    id: preview.id,
+    kind: 'traffic',
+    x: preview.x,
+    y: preview.y,
+  }
+}
+
 const onCaretChanged = (e: Event) => {
   const target = e.target as HTMLTextAreaElement
-  const cursor = target.selectionStart || 0
-  const normalizedCursor = snapCursorToMentionBoundary(target.value, cursor, 'nearest')
-  if (normalizedCursor !== cursor) {
-    target.setSelectionRange(normalizedCursor, normalizedCursor)
+  const selectionStart = target.selectionStart || 0
+  const selectionEnd = target.selectionEnd || selectionStart
+  const normalizedSelection = normalizeSelectionRange(target.value, selectionStart, selectionEnd)
+  if (
+    normalizedSelection.start !== selectionStart ||
+    normalizedSelection.end !== selectionEnd
+  ) {
+    target.setSelectionRange(normalizedSelection.start, normalizedSelection.end)
   }
-  updateSlashState(target.value, normalizedCursor)
-  updateMentionState(target.value, normalizedCursor)
+  if (normalizedSelection.start !== normalizedSelection.end) {
+    closeMentionPopover()
+    closeSlashPopover()
+    return
+  }
+  updateSlashState(target.value, normalizedSelection.start)
+  updateMentionState(target.value, normalizedSelection.start)
 }
 const {
   fileInputRef,
@@ -826,12 +1220,26 @@ const {
   getInputMessage: () => props.inputMessage || '',
   getReferencedAssets: () => props.referencedAssets || [],
   getReferencedFiles: () => props.referencedFiles || [],
+  getReferencedMessages: () => props.referencedMessages || [],
   getReferencedTraffic: () => props.referencedTraffic || [],
+  getConversationMessages: () => (props.availableConversationMessages || [])
+    .filter((item) => item?.content?.trim())
+    .filter((item) => item.type === 'user' || item.type === 'final' || item.type === 'thinking' || item.type === 'planning')
+    .map((item) => ({
+      content: item.content,
+      id: item.id,
+      roleLabel: item.type === 'user' ? 'User' : item.type === 'final' ? 'Assistant' : item.type,
+      timestamp: item.timestamp,
+      type: item.type,
+    })),
   onAddReferencedAsset: (asset) => {
     emit('add-asset-reference', [asset])
   },
   onAddReferencedFile: (file) => {
     emit('add-file-reference', [file])
+  },
+  onAddReferencedMessage: (message) => {
+    emit('add-message-reference', [message])
   },
   onAddReferencedTraffic: (traffic) => {
     emit('add-traffic-reference', [traffic])
@@ -844,6 +1252,9 @@ const {
   },
   onSyncReferencedFiles: (files) => {
     emit('sync-file-references', files)
+  },
+  onSyncReferencedMessages: (messages) => {
+    emit('sync-message-references', messages)
   },
   onSyncReferencedTraffic: (traffic) => {
     emit('sync-traffic-references', traffic)
@@ -992,12 +1403,15 @@ const onCompositionStart = () => {
 const onCompositionEnd = () => {
   isComposing.value = false
   const el = textareaRef.value
-  if (el) {
-    const cursor = el.selectionStart || 0
-    const normalizedCursor = snapCursorToMentionBoundary(el.value || '', cursor, 'nearest')
-    if (normalizedCursor !== cursor) {
-      el.setSelectionRange(normalizedCursor, normalizedCursor)
-    }
+  if (!el) return
+  const selectionStart = el.selectionStart || 0
+  const selectionEnd = el.selectionEnd || selectionStart
+  const normalizedSelection = normalizeSelectionRange(el.value || '', selectionStart, selectionEnd)
+  if (
+    normalizedSelection.start !== selectionStart ||
+    normalizedSelection.end !== selectionEnd
+  ) {
+    el.setSelectionRange(normalizedSelection.start, normalizedSelection.end)
   }
 }
 
@@ -1234,6 +1648,23 @@ const removeReferencedTraffic = (index: number) => {
   emit('remove-traffic', index)
 }
 
+const removeReferencedMessage = (index: number) => {
+  const message = props.referencedMessages?.[index]
+  if (message?.mentionText) {
+    setInputValue(removeMentionTokenText(props.inputMessage || '', message.mentionText))
+  }
+  emit('remove-message', index)
+}
+
+const clearReferencedMessages = () => {
+  let nextValue = props.inputMessage || ''
+  for (const message of props.referencedMessages || []) {
+    nextValue = removeMentionTokenText(nextValue, message.mentionText)
+  }
+  setInputValue(nextValue)
+  emit('clear-messages')
+}
+
 const clearReferencedTraffic = () => {
   let nextValue = props.inputMessage || ''
   for (const traffic of props.referencedTraffic || []) {
@@ -1283,6 +1714,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('click', handleClickOutside, true)
   teardownNativeDragDrop()
+  cancelHideMentionPreview()
 })
 
 watch(
@@ -1318,6 +1750,118 @@ defineExpose({
 
 .chat-input { 
   position: relative; 
+}
+
+.input-editor-shell {
+  position: relative;
+}
+
+.input-textarea,
+.textarea-mirror-content {
+  font: inherit;
+  line-height: 1.625;
+  letter-spacing: 0;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.input-textarea {
+  position: relative;
+  z-index: 1;
+  caret-color: hsl(var(--bc));
+}
+
+.textarea-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.textarea-mirror-content {
+  margin: 0;
+  color: hsl(var(--bc) / 0.85);
+}
+
+.mention-inline-token {
+  display: inline;
+  border-radius: 4px;
+  padding: 0 2px;
+  font-weight: 500;
+  pointer-events: auto;
+}
+
+.mention-inline-file {
+  background: hsl(var(--s) / 0.14);
+  color: hsl(var(--s));
+}
+
+.mention-inline-asset {
+  background: hsl(var(--p) / 0.14);
+  color: hsl(var(--p));
+}
+
+.mention-inline-traffic {
+  background: hsl(var(--a) / 0.14);
+  color: hsl(var(--a));
+}
+
+.mention-preview-popover {
+  position: absolute;
+  z-index: 30;
+  max-width: min(32rem, calc(100% - 1rem));
+  transform: translateY(-100%);
+  border: 1px solid hsl(var(--b3) / 0.9);
+  border-radius: 8px;
+  background: hsl(var(--b1) / 0.98);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  padding: 0.5rem 0.625rem;
+  pointer-events: auto;
+}
+
+.mention-preview-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: hsl(var(--bc) / 0.75);
+  margin-bottom: 0.25rem;
+}
+
+.mention-preview-body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: hsl(var(--bc) / 0.88);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mention-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}
+
+.mention-preview-btn {
+  border: 1px solid hsl(var(--b3) / 0.9);
+  background: hsl(var(--b2) / 0.7);
+  color: hsl(var(--bc) / 0.82);
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  font-size: 11px;
+  line-height: 1.2;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.mention-preview-btn:hover {
+  background: hsl(var(--b3) / 0.85);
+}
+
+.mention-preview-btn-active {
+  background: hsl(var(--p) / 0.16);
+  border-color: hsl(var(--p) / 0.35);
+  color: hsl(var(--p));
 }
 
 .slash-popover {

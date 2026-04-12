@@ -1,22 +1,22 @@
 <template>
-  <div class="border border-base-300 rounded-lg overflow-hidden">
-    <div class="px-4 py-3 bg-base-200 flex items-center justify-between gap-3">
-      <div>
-        <div class="font-semibold text-sm flex items-center gap-2">
-          <i class="fas fa-tools text-primary"></i>
-          <span>工具绑定</span>
-        </div>
-        <p class="text-xs text-base-content/60 mt-1">
-          为系统智能体选择 `required / optional / forbidden` 工具。
-        </p>
-      </div>
+  <AgentToolPolicyPanel
+    title="工具绑定"
+    description="为当前后台 Agent 选择 `required / optional / forbidden` 工具，用来约束事件驱动执行时的工具边界。"
+  >
+    <template #actions>
       <button class="btn btn-xs btn-ghost" @click="loadTools">
         <i class="fas fa-rotate mr-1"></i>
         刷新工具
       </button>
-    </div>
+    </template>
 
-    <div class="p-4 space-y-4">
+    <template #summary>
+      <span class="badge badge-primary badge-sm">{{ `Required ${localValue.requiredTools.length}` }}</span>
+      <span class="badge badge-info badge-sm">{{ `Optional ${localValue.optionalTools.length}` }}</span>
+      <span class="badge badge-error badge-sm">{{ `Forbidden ${localValue.forbiddenTools.length}` }}</span>
+    </template>
+
+    <div class="space-y-4">
       <div class="stats stats-horizontal shadow-sm w-full">
         <div class="stat px-4 py-3">
           <div class="stat-title text-xs">Required</div>
@@ -130,12 +130,13 @@
         </div>
       </div>
     </div>
-  </div>
+  </AgentToolPolicyPanel>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import AgentToolPolicyPanel from './AgentToolPolicyPanel.vue'
 import {
   SYSTEM_AGENT_VIRTUAL_TOOLS,
   type SystemAgentToolMetadata as ToolMetadata,

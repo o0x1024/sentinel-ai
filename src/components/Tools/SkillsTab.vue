@@ -82,12 +82,29 @@
 
     <div class="card bg-base-200 p-4">
       <div class="flex items-center justify-between mb-2">
-        <h3 class="font-semibold">{{ $t('Tools.skillsInstallHistory') }}</h3>
-        <button @click="loadHistory" class="btn btn-xs btn-ghost">
-          <i class="fas fa-sync-alt"></i>
-        </button>
+        <div class="flex items-center gap-2">
+          <button @click="toggleInstallHistory" class="btn btn-xs btn-ghost">
+            <i :class="showInstallHistory ? 'fas fa-chevron-down' : 'fas fa-chevron-right'"></i>
+          </button>
+          <h3 class="font-semibold">{{ $t('Tools.skillsInstallHistory') }}</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <span v-if="installHistory.length > 0" class="badge badge-sm badge-outline">
+            {{ installHistory.length }}
+          </span>
+          <button
+            v-if="showInstallHistory"
+            @click="loadHistory"
+            class="btn btn-xs btn-ghost"
+          >
+            <i class="fas fa-sync-alt"></i>
+          </button>
+        </div>
       </div>
-      <div v-if="historyLoading" class="flex justify-center py-4">
+      <div v-if="!showInstallHistory" class="text-sm text-base-content/60">
+        {{ $t('tools.expand') }} {{ $t('Tools.skillsInstallHistory') }}
+      </div>
+      <div v-else-if="historyLoading" class="flex justify-center py-4">
         <span class="loading loading-spinner loading-sm"></span>
       </div>
       <div v-else-if="installHistory.length === 0" class="text-sm text-base-content/60">
@@ -203,6 +220,8 @@ const installSourcePath = ref('')
 const installSourceType = ref('')
 const installHistory = ref<any[]>([])
 const historyLoading = ref(false)
+const showInstallHistory = ref(false)
+const historyLoaded = ref(false)
 const skillsEnabled = ref(true)
 const skillsViewMode = ref<'card' | 'list'>('card')
 const isDragOver = ref(false)
@@ -225,11 +244,19 @@ const loadHistory = async () => {
   historyLoading.value = true
   try {
     installHistory.value = await invoke('list_skill_install_history')
+    historyLoaded.value = true
   } catch (error) {
     console.error('Failed to load skill install history:', error)
     dialog.toast.error(`${error}`)
   } finally {
     historyLoading.value = false
+  }
+}
+
+const toggleInstallHistory = async () => {
+  showInstallHistory.value = !showInstallHistory.value
+  if (showInstallHistory.value && !historyLoaded.value) {
+    await loadHistory()
   }
 }
 
@@ -439,7 +466,6 @@ onUnmounted(() => {
   isDragOver.value = false
 })
 
-loadHistory()
 loadSkillsEnabled()
 
 defineExpose({ refresh })

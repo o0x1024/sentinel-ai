@@ -5,6 +5,7 @@ pub mod memory;
 pub mod ocr;
 pub mod search_exploit;
 pub mod shell;
+pub mod shell_background;
 pub mod skills;
 pub mod subagent_tool;
 pub mod subdomain_brute;

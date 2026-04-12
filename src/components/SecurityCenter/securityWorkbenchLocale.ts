@@ -397,6 +397,7 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
         skip_prerequisite: '跳过前置步骤',
         reorder_sequence: '重排执行顺序',
         concurrent_submit: '并发提交',
+        mutate_business_parameter: '业务参数变异',
         manual_review: '人工复核',
       },
       evidence: {
@@ -848,6 +849,7 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
         skip_prerequisite: 'skip prerequisite',
         reorder_sequence: 'reorder sequence',
         concurrent_submit: 'concurrent submit',
+        mutate_business_parameter: 'mutate business parameter',
         manual_review: 'manual review',
       },
       evidence: {

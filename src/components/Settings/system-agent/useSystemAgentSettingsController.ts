@@ -1,6 +1,7 @@
 import { computed, onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { useI18n } from 'vue-i18n'
 
 import { dialog } from '@/composables/useDialog'
 import {
@@ -10,6 +11,7 @@ import {
 } from '@/components/traffic/proxyConfigurationTypes'
 import {
   getSystemAgentDescription,
+  getSystemAgentDisplayName,
   getSystemAgentModeBadge,
   getSystemAgentPassiveEventName,
   getSystemAgentPromptPatchGuidance,
@@ -23,20 +25,23 @@ import {
   cloneProfile,
   parseJsonText,
   type CommandResponse,
-  type SystemAgentBehaviorEffectStats,
-  type SystemAgentFindingSummary,
-  type SystemAgentListItem,
   type SystemAgentProfilePayload,
   type SystemAgentProfileVersionPayload,
   type SystemAgentProfileSummary,
   type SystemAgentRunPayload,
   type SystemAgentSafetyPolicyForm,
+  type SystemAgentBehaviorEffectStats,
+  type SystemAgentFindingSummary,
 } from '../systemAgentSettingsSupport'
+import type { AgentListItemViewModel } from '../agentListItemSupport'
 
 export function useSystemAgentSettingsController() {
+  const { locale } = useI18n({ useScope: 'global' })
   const loading = ref(false)
   const saving = ref(false)
   const dispatching = ref(false)
+  const mutatingRuns = ref(false)
+  const deletingRunId = ref('')
   const autoSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const profiles = ref<SystemAgentProfileSummary[]>([])
   const runs = ref<SystemAgentRunPayload[]>([])
@@ -152,13 +157,31 @@ export function useSystemAgentSettingsController() {
     return now - 24 * 60 * 60 * 1000
   })
 
-  const profileListItems = computed<SystemAgentListItem[]>(() => {
+  const profileListItems = computed<AgentListItemViewModel[]>(() => {
     return profiles.value.map(profile => ({
       id: profile.id,
-      name: profile.name,
+      title: getSystemAgentDisplayName(profile, locale.value),
       description: getProfileDescription(profile),
-      enabled: profile.enabled,
-      modeBadge: getModeBadge(profile),
+      metaLine: `${profile.capability} · ${profile.triggerMode}`,
+      badges: [
+        getModeBadge(profile),
+        {
+          label: profile.enabled ? '已启用' : '已停用',
+          className: profile.enabled ? 'badge-success' : 'badge-ghost',
+        },
+      ],
+      searchText: [
+        profile.name,
+        getSystemAgentDisplayName(profile, locale.value),
+        profile.capability,
+        profile.triggerMode,
+        profile.riskLevel,
+        profile.description,
+      ].join(' '),
+      filterKeys: [
+        profile.enabled ? 'enabled' : 'disabled',
+        profile.capability,
+      ],
     }))
   })
 
@@ -166,6 +189,11 @@ export function useSystemAgentSettingsController() {
     const provider = selectedProfile.value?.llmProviderOverride?.trim().toLowerCase()
     if (!provider) return []
     return llmProviderModelsMap.value[provider] || []
+  })
+
+  const selectedProfileDisplayName = computed(() => {
+    if (!selectedProfile.value) return ''
+    return getSystemAgentDisplayName(selectedProfile.value, locale.value)
   })
 
   const editableProfileSnapshot = computed(() => buildProfileSnapshot(buildProfilePayload()))
@@ -220,7 +248,7 @@ export function useSystemAgentSettingsController() {
       }
     } catch (error) {
       console.error('Failed to load system agent profiles', error)
-      dialog.toast.error('加载系统智能体列表失败')
+      dialog.toast.error('加载后台 Agent 列表失败')
     } finally {
       loading.value = false
     }
@@ -320,6 +348,56 @@ export function useSystemAgentSettingsController() {
     } catch (error) {
       console.error('Failed to load system agent runs', error)
       dialog.toast.error('加载运行记录失败')
+    }
+  }
+
+  const deleteRun = async (runId: string) => {
+    if (!runId) return
+
+    const confirmed = await dialog.confirm('确认删除这条运行记录吗？此操作不可恢复。')
+    if (!confirmed) return
+
+    try {
+      deletingRunId.value = runId
+      const response = await invoke<CommandResponse<number>>('delete_system_agent_run', {
+        id: runId,
+      })
+      const deleted = response.data ?? 0
+      if (deleted === 0) {
+        dialog.toast.error('运行记录不存在或已被删除')
+        return
+      }
+      dialog.toast.success('运行记录已删除')
+      await loadRuns()
+    } catch (error) {
+      console.error('Failed to delete system agent run', error)
+      dialog.toast.error(`删除运行记录失败: ${String(error)}`)
+    } finally {
+      deletingRunId.value = ''
+    }
+  }
+
+  const clearRuns = async () => {
+    if (!selectedProfileId.value) return
+
+    const confirmed = await dialog.confirm(
+      `确认清空「${selectedProfile.value?.name || selectedProfileId.value}」的全部运行记录吗？此操作不可恢复。`
+    )
+    if (!confirmed) return
+
+    try {
+      mutatingRuns.value = true
+      const response = await invoke<CommandResponse<number>>('clear_system_agent_runs', {
+        profileId: selectedProfileId.value,
+      })
+      const deleted = response.data ?? 0
+      dialog.toast.success(deleted > 0 ? `已清空 ${deleted} 条运行记录` : '运行记录已清空')
+      await loadRuns()
+    } catch (error) {
+      console.error('Failed to clear system agent runs', error)
+      dialog.toast.error(`清空运行记录失败: ${String(error)}`)
+    } finally {
+      mutatingRuns.value = false
     }
   }
 
@@ -455,6 +533,7 @@ export function useSystemAgentSettingsController() {
       llmProviderOverride: profile.llmProviderOverride || '',
       llmModelOverride: profile.llmModelOverride || '',
       promptPatch: profile.promptPatch || '',
+      sopDefinitions: profile.sopDefinitions || [],
       requiredTools: profile.requiredTools,
       optionalTools: profile.optionalTools,
       forbiddenTools: profile.forbiddenTools,
@@ -546,7 +625,7 @@ export function useSystemAgentSettingsController() {
     try {
       await invoke<CommandResponse<number>>('seed_system_agent_profiles')
       await refreshAll()
-      dialog.toast.success('默认系统智能体已初始化')
+      dialog.toast.success('默认后台 Agent 已初始化')
     } catch (error) {
       console.error('Failed to seed system agents', error)
       dialog.toast.error('初始化默认智能体失败')
@@ -634,6 +713,8 @@ export function useSystemAgentSettingsController() {
   return {
     loading,
     dispatching,
+    mutatingRuns,
+    deletingRunId,
     profiles,
     runs,
     versions,
@@ -652,6 +733,7 @@ export function useSystemAgentSettingsController() {
     promptPatchPlaceholder,
     promptPatchGuidance,
     selectedProfileDescription,
+    selectedProfileDisplayName,
     autoSaveStatusText,
     autoSaveStatusClass,
     behaviorSignalSettings,
@@ -672,6 +754,8 @@ export function useSystemAgentSettingsController() {
     refreshAll,
     saveContextExtractionSettings,
     loadRuns,
+    deleteRun,
+    clearRuns,
     loadVersions,
     loadRecentFindings,
   }

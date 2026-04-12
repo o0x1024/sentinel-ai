@@ -45,6 +45,8 @@ fn parse_ingestion_status(status: &str) -> sentinel_rag::models::IngestionStatus
 }
 
 fn rag_doc_source_to_model(row: RagDocumentSourceRow) -> sentinel_rag::models::DocumentSource {
+    let metadata = serde_json::from_str::<std::collections::HashMap<String, String>>(&row.metadata)
+        .unwrap_or_default();
     sentinel_rag::models::DocumentSource {
         id: row.id,
         file_path: row.file_path,
@@ -60,7 +62,7 @@ fn rag_doc_source_to_model(row: RagDocumentSourceRow) -> sentinel_rag::models::D
         updated_at: chrono::DateTime::parse_from_rfc3339(&row.updated_at)
             .unwrap_or_default()
             .with_timezone(&chrono::Utc),
-        metadata: std::collections::HashMap::new(),
+        metadata,
     }
 }
 

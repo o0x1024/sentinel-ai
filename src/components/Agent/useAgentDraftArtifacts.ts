@@ -2,13 +2,20 @@ import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage, PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
 import { restoreDraftArtifactsFromMessage } from './agentMessageReplaySupport'
-import type { ReferencedAsset, ReferencedFile, ReferencedTraffic, TrafficSendType } from './agentDraftTypes'
+import type {
+  ReferencedAsset,
+  ReferencedConversationMessage,
+  ReferencedFile,
+  ReferencedTraffic,
+  TrafficSendType,
+} from './agentDraftTypes'
 
 export const useAgentDraftArtifacts = () => {
   const pendingAttachments = ref<any[]>([])
   const pendingDocuments = ref<PendingDocumentAttachment[]>([])
   const processedDocuments = ref<ProcessedDocumentResult[]>([])
   const referencedFiles = ref<ReferencedFile[]>([])
+  const referencedMessages = ref<ReferencedConversationMessage[]>([])
   const referencedTraffic = ref<ReferencedTraffic[]>([])
   const referencedAssets = ref<ReferencedAsset[]>([])
 
@@ -17,6 +24,7 @@ export const useAgentDraftArtifacts = () => {
     pendingDocuments.value = []
     processedDocuments.value = []
     referencedFiles.value = []
+    referencedMessages.value = []
     referencedTraffic.value = []
     referencedAssets.value = []
   }
@@ -79,6 +87,7 @@ export const useAgentDraftArtifacts = () => {
     pendingDocuments.value = restored.pendingDocuments
     processedDocuments.value = restored.processedDocuments
     referencedFiles.value = restored.referencedFiles
+    referencedMessages.value = restored.referencedMessages
     referencedTraffic.value = restored.referencedTraffic
     referencedAssets.value = restored.referencedAssets
   }
@@ -101,6 +110,16 @@ export const useAgentDraftArtifacts = () => {
 
   const handleClearFiles = () => {
     referencedFiles.value = []
+  }
+
+  const handleRemoveMessage = (index: number) => {
+    if (index >= 0 && index < referencedMessages.value.length) {
+      referencedMessages.value.splice(index, 1)
+    }
+  }
+
+  const handleClearMessages = () => {
+    referencedMessages.value = []
   }
 
   const handleRemoveAsset = (index: number) => {
@@ -133,6 +152,12 @@ export const useAgentDraftArtifacts = () => {
     referencedFiles.value.push(...newFiles)
   }
 
+  const addReferencedMessages = (messages: ReferencedConversationMessage[]) => {
+    const existingIds = new Set(referencedMessages.value.map((item) => item.id))
+    const newMessages = messages.filter((item) => item?.id && !existingIds.has(item.id))
+    referencedMessages.value.push(...newMessages)
+  }
+
   const syncReferencedTraffic = (traffic: ReferencedTraffic[]) => {
     referencedTraffic.value = [...traffic]
   }
@@ -145,31 +170,40 @@ export const useAgentDraftArtifacts = () => {
     referencedFiles.value = [...files]
   }
 
+  const syncReferencedMessages = (messages: ReferencedConversationMessage[]) => {
+    referencedMessages.value = [...messages]
+  }
+
   return {
     addReferencedAssets,
     addReferencedFiles,
+    addReferencedMessages,
     addReferencedTraffic,
     clearDraftArtifacts,
     handleAddAttachments,
     handleAddDocuments,
     handleClearAssets,
     handleClearFiles,
+    handleClearMessages,
     handleClearTraffic,
     handleDocumentProcessed,
     handleRemoveAsset,
     handleRemoveAttachment,
     handleRemoveDocument,
     handleRemoveFile,
+    handleRemoveMessage,
     handleRemoveTraffic,
     pendingAttachments,
     pendingDocuments,
     processedDocuments,
     referencedAssets,
     referencedFiles,
+    referencedMessages,
     referencedTraffic,
     restoreArtifactsFromMessage,
     syncReferencedAssets,
     syncReferencedFiles,
+    syncReferencedMessages,
     syncReferencedTraffic,
   }
 }

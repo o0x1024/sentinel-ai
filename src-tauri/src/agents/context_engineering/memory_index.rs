@@ -7,13 +7,52 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::agents::context_engineering::checkpoint::{ContextMemoryItem, ContextRunState};
+use sentinel_rag::{
+    build_memory_document_id, build_memory_durable_metadata, canonicalize_memory_source,
+    canonicalize_memory_stability, extract_memory_identifiers, infer_memory_kind,
+    memory_kind_importance, normalize_memory_text, MemoryLexicalDocument, MemoryLexicalHit,
+};
 
 const MAX_MEMORY_ITEMS: usize = 200;
-const VECTOR_WEIGHT: f64 = 0.55;
-const KEYWORD_WEIGHT: f64 = 0.25;
-const IMPORTANCE_WEIGHT: f64 = 0.12;
-const RECENCY_WEIGHT: f64 = 0.08;
 const RECENCY_HALF_LIFE_DAYS: f64 = 14.0;
+const MEMORY_COLLECTION_NAME: &str = "agent_memory";
+const RRF_K: f64 = 60.0;
+const VECTOR_RRF_WEIGHT: f64 = 1.0;
+const LEXICAL_RRF_WEIGHT: f64 = 0.9;
+const KEYWORD_RRF_WEIGHT: f64 = 0.75;
+
+#[derive(Debug, Clone)]
+struct LocalKeywordHit {
+    id: String,
+    text: String,
+    kind: String,
+    scope: String,
+    stability: String,
+    source: String,
+    confidence: f64,
+    importance: u8,
+    created_at_ms: i64,
+    keyword_score: f64,
+}
+
+#[derive(Debug, Clone)]
+struct MemoryCandidate {
+    id: String,
+    text: String,
+    kind: String,
+    scope: String,
+    stability: String,
+    source: String,
+    confidence: f64,
+    importance: u8,
+    created_at_ms: i64,
+    vector_rank: Option<usize>,
+    vector_score: Option<f64>,
+    lexical_rank: Option<usize>,
+    lexical_bm25: Option<f64>,
+    keyword_rank: Option<usize>,
+    keyword_score: Option<f64>,
+}
 
 #[derive(Debug, Clone)]
 pub struct MemoryQuery {
@@ -27,6 +66,10 @@ pub struct RetrievedMemoryItem {
     pub id: String,
     pub text: String,
     pub kind: String,
+    pub scope: String,
+    pub stability: String,
+    pub source: String,
+    pub confidence: f64,
     pub importance: u8,
     pub created_at_ms: i64,
     pub score: f64,
@@ -43,7 +86,13 @@ pub fn ingest_memory_items(
     todos: &[String],
 ) {
     for text in facts {
-        push_memory(state, text, "fact", 3);
+        let inferred_kind = infer_memory_kind(None, None, &[], text);
+        push_memory(
+            state,
+            text,
+            inferred_kind.as_str(),
+            memory_kind_importance(inferred_kind.as_str()),
+        );
     }
     for text in decisions {
         push_memory(state, text, "decision", 4);
@@ -70,7 +119,7 @@ pub async fn ingest_memory_items_persistent(
 
     let items_to_persist: Vec<(String, String)> = facts
         .iter()
-        .map(|t| (t.clone(), "fact".to_string()))
+        .map(|t| (t.clone(), infer_memory_kind(None, None, &[], t)))
         .chain(
             decisions
                 .iter()
@@ -115,10 +164,22 @@ pub fn retrieve_memory_items(
         .take(keep)
         .map(|(item, score)| {
             item.last_used_at_ms = now_ms;
+            let durable_metadata = build_memory_durable_metadata(
+                Some("session"),
+                None,
+                Some("run_state"),
+                None,
+                item.kind.as_str(),
+                &[],
+            );
             RetrievedMemoryItem {
                 id: item.id.clone(),
                 text: item.text.clone(),
                 kind: item.kind.clone(),
+                scope: durable_metadata.scope,
+                stability: durable_metadata.stability,
+                source: durable_metadata.source,
+                confidence: durable_metadata.confidence,
                 importance: item.importance,
                 created_at_ms: item.created_at_ms,
                 score,
@@ -138,7 +199,7 @@ pub async fn retrieve_memory_items_hybrid(
 ) -> Vec<RetrievedMemoryItem> {
     let now_ms = Utc::now().timestamp_millis();
 
-    // 1) Snapshot keyword scores (avoids holding mutable borrow across async)
+    // 1) Snapshot local keyword candidates (avoids holding mutable borrow across async)
     let keyword_scores: HashMap<String, (f64, String, String, u8, i64)> = state
         .memory_items
         .iter()
@@ -156,84 +217,235 @@ pub async fn retrieve_memory_items_hybrid(
             )
         })
         .collect();
+    let mut local_keyword_hits = state
+        .memory_items
+        .iter()
+        .filter_map(|item| {
+            let keyword_score = keyword_score_raw(&query.query, &item.text);
+            if keyword_score <= 0.0 {
+                return None;
+            }
+            let durable_metadata = build_memory_durable_metadata(
+                Some("session"),
+                None,
+                Some("run_state"),
+                None,
+                item.kind.as_str(),
+                &[],
+            );
+            Some(LocalKeywordHit {
+                id: item.id.clone(),
+                text: item.text.clone(),
+                kind: item.kind.clone(),
+                scope: durable_metadata.scope,
+                stability: durable_metadata.stability,
+                source: durable_metadata.source,
+                confidence: durable_metadata.confidence,
+                importance: item.importance,
+                created_at_ms: item.created_at_ms,
+                keyword_score,
+            })
+        })
+        .collect::<Vec<_>>();
+    local_keyword_hits.sort_by(|a, b| {
+        b.keyword_score
+            .partial_cmp(&a.keyword_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.created_at_ms.cmp(&a.created_at_ms))
+    });
+    local_keyword_hits.truncate(query.top_k.max(1) * 2);
 
-    // 2) Get vector scores from SQLite vector store
-    let vector_results = match vector_retrieve(app_handle, &query.query, query.top_k * 2).await {
+    // 2) Retrieve durable vector and lexical candidates in parallel
+    let durable_top_k = query.top_k.max(1) * 2;
+    let (vector_result, lexical_result) = tokio::join!(
+        vector_retrieve(app_handle, &query.query, durable_top_k),
+        lexical_retrieve(app_handle, &query.query, durable_top_k)
+    );
+    let vector_results = match vector_result {
         Ok(results) => results,
         Err(e) => {
             tracing::warn!(
-                "Vector retrieval failed, falling back to keyword-only: {}",
+                "Vector retrieval failed, continuing without vector candidates: {}",
                 e
             );
-            return retrieve_memory_items(state, query);
+            Vec::new()
         }
     };
+    let lexical_results = match lexical_result {
+        Ok(results) => results,
+        Err(e) => {
+            tracing::warn!(
+                "Lexical retrieval failed, continuing without lexical candidates: {}",
+                e
+            );
+            Vec::new()
+        }
+    };
+    if vector_results.is_empty() && lexical_results.is_empty() && local_keyword_hits.is_empty() {
+        return Vec::new();
+    }
 
-    // 3) Merge: combine vector results with keyword scores
-    let mut scored: Vec<RetrievedMemoryItem> = Vec::new();
-    let mut seen_texts: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // 3) Merge candidates by normalized text, then fuse by rank
+    let mut candidates: HashMap<String, MemoryCandidate> = HashMap::new();
 
-    for (text, vec_score) in &vector_results {
+    for (index, (text, vec_score)) in vector_results.iter().enumerate() {
         let normalized_text = text.trim().to_string();
-        if normalized_text.is_empty() || !seen_texts.insert(normalized_text.clone()) {
+        if normalized_text.is_empty() {
             continue;
         }
 
-        let (ks, importance, kind, id, created_at_ms) =
+        let (ks, id, kind, importance, created_at_ms) =
             if let Some((kw_score, item_id, item_kind, imp, cat)) =
                 keyword_scores.get(&normalized_text)
             {
-                (*kw_score, *imp, item_kind.clone(), item_id.clone(), *cat)
+                (*kw_score, item_id.clone(), item_kind.clone(), *imp, *cat)
             } else {
                 let ks = keyword_score_raw(&query.query, &normalized_text);
                 (
                     ks,
-                    3u8,
+                    build_memory_document_id("fact", normalized_text.as_str()),
                     "fact".to_string(),
-                    uuid::Uuid::new_v4().to_string(),
+                    3u8,
                     now_ms,
                 )
             };
+        let durable_metadata = build_memory_durable_metadata(
+            Some("project"),
+            None,
+            Some("context_engineering"),
+            None,
+            kind.as_str(),
+            &[],
+        );
 
-        let recency = recency_score(created_at_ms, now_ms);
-        let imp = (importance as f64 / 5.0).clamp(0.2, 1.0);
-        let hybrid = (vec_score * VECTOR_WEIGHT)
-            + (ks * KEYWORD_WEIGHT)
-            + (imp * IMPORTANCE_WEIGHT)
-            + (recency * RECENCY_WEIGHT);
-
-        if hybrid > 0.05 {
-            scored.push(RetrievedMemoryItem {
+        let entry = candidates
+            .entry(normalized_text.clone())
+            .or_insert_with(|| MemoryCandidate {
                 id,
                 text: normalized_text,
                 kind,
+                scope: durable_metadata.scope,
+                stability: durable_metadata.stability,
+                source: durable_metadata.source,
+                confidence: durable_metadata.confidence,
                 importance,
                 created_at_ms,
-                score: hybrid,
+                vector_rank: None,
+                vector_score: None,
+                lexical_rank: None,
+                lexical_bm25: None,
+                keyword_rank: None,
+                keyword_score: (ks > 0.0).then_some(ks),
             });
-        }
+        entry.vector_rank = Some(index);
+        entry.vector_score = Some(*vec_score);
+        entry.keyword_score = entry.keyword_score.or((ks > 0.0).then_some(ks));
     }
 
-    // Add keyword-only hits not covered by vector results
-    for (text, (ks, item_id, item_kind, imp, cat)) in &keyword_scores {
-        if *ks > 0.0 && !seen_texts.contains(text) {
-            seen_texts.insert(text.clone());
-            let recency = recency_score(*cat, now_ms);
-            let importance_norm = (*imp as f64 / 5.0).clamp(0.2, 1.0);
-            let hybrid = (ks * (VECTOR_WEIGHT + KEYWORD_WEIGHT))
-                + (importance_norm * IMPORTANCE_WEIGHT)
-                + (recency * RECENCY_WEIGHT);
-
-            scored.push(RetrievedMemoryItem {
-                id: item_id.clone(),
-                text: text.clone(),
-                kind: item_kind.clone(),
-                importance: *imp,
-                created_at_ms: *cat,
-                score: hybrid,
-            });
+    for (index, hit) in lexical_results.iter().enumerate() {
+        let normalized_text = hit.body.trim().to_string();
+        if normalized_text.is_empty() {
+            continue;
         }
+
+        let ks = keyword_score_raw(&query.query, &normalized_text);
+        let entry = candidates
+            .entry(normalized_text.clone())
+            .or_insert_with(|| MemoryCandidate {
+                id: hit.id.clone(),
+                text: normalized_text,
+                kind: hit.kind.clone(),
+                scope: hit.scope.clone(),
+                stability: hit.stability.clone(),
+                source: hit.source.clone(),
+                confidence: hit.confidence,
+                importance: hit.importance,
+                created_at_ms: hit.created_at_ms,
+                vector_rank: None,
+                vector_score: None,
+                lexical_rank: None,
+                lexical_bm25: None,
+                keyword_rank: None,
+                keyword_score: (ks > 0.0).then_some(ks),
+            });
+        entry.lexical_rank = Some(index);
+        entry.lexical_bm25 = Some(hit.bm25_score);
+        if entry.id.trim().is_empty() {
+            entry.id = hit.id.clone();
+        }
+        if entry.kind.trim().is_empty() {
+            entry.kind = hit.kind.clone();
+        }
+        if entry.scope.trim().is_empty() {
+            entry.scope = hit.scope.clone();
+        }
+        if entry.stability.trim().is_empty() {
+            entry.stability = hit.stability.clone();
+        }
+        if entry.source.trim().is_empty() {
+            entry.source = hit.source.clone();
+        }
+        entry.confidence = entry.confidence.max(hit.confidence);
+        entry.importance = entry.importance.max(hit.importance);
+        entry.created_at_ms = entry.created_at_ms.min(hit.created_at_ms);
     }
+
+    for (index, hit) in local_keyword_hits.iter().enumerate() {
+        let normalized_text = hit.text.trim().to_string();
+        if normalized_text.is_empty() {
+            continue;
+        }
+
+        let entry = candidates
+            .entry(normalized_text.clone())
+            .or_insert_with(|| MemoryCandidate {
+                id: hit.id.clone(),
+                text: normalized_text,
+                kind: hit.kind.clone(),
+                scope: hit.scope.clone(),
+                stability: hit.stability.clone(),
+                source: hit.source.clone(),
+                confidence: hit.confidence,
+                importance: hit.importance,
+                created_at_ms: hit.created_at_ms,
+                vector_rank: None,
+                vector_score: None,
+                lexical_rank: None,
+                lexical_bm25: None,
+                keyword_rank: None,
+                keyword_score: Some(hit.keyword_score),
+            });
+        entry.keyword_rank = Some(index);
+        entry.keyword_score = Some(hit.keyword_score);
+        entry.scope = hit.scope.clone();
+        entry.stability = hit.stability.clone();
+        entry.source = hit.source.clone();
+        entry.confidence = entry.confidence.max(hit.confidence);
+        entry.importance = entry.importance.max(hit.importance);
+        entry.created_at_ms = entry.created_at_ms.min(hit.created_at_ms);
+    }
+
+    let mut scored: Vec<RetrievedMemoryItem> = candidates
+        .into_values()
+        .filter_map(|candidate| {
+            let score = fused_candidate_score(&candidate, now_ms);
+            if score <= 0.0 {
+                return None;
+            }
+            Some(RetrievedMemoryItem {
+                id: candidate.id,
+                text: candidate.text,
+                kind: candidate.kind,
+                scope: candidate.scope,
+                stability: candidate.stability,
+                source: candidate.source,
+                confidence: candidate.confidence,
+                importance: candidate.importance,
+                created_at_ms: candidate.created_at_ms,
+                score,
+            })
+        })
+        .collect();
 
     scored.sort_by(|a, b| {
         b.score
@@ -300,6 +512,24 @@ async fn vector_retrieve(
     Ok(results)
 }
 
+async fn lexical_retrieve(
+    app_handle: &AppHandle,
+    query_text: &str,
+    top_k: usize,
+) -> Result<Vec<MemoryLexicalHit>> {
+    let db = app_handle
+        .try_state::<Arc<sentinel_db::DatabaseService>>()
+        .ok_or_else(|| anyhow::anyhow!("DatabaseService not available"))?;
+
+    let rag_service = crate::commands::rag_commands::get_or_init_rag_service(db.inner().clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("RAG service init failed: {}", e))?;
+
+    rag_service
+        .search_memory_lexical(MEMORY_COLLECTION_NAME, query_text, top_k)
+        .await
+}
+
 async fn persist_to_vector_store(app_handle: &AppHandle, items: &[(String, String)]) -> Result<()> {
     let db = app_handle
         .try_state::<Arc<sentinel_db::DatabaseService>>()
@@ -344,10 +574,26 @@ async fn persist_to_vector_store(app_handle: &AppHandle, items: &[(String, Strin
             }
         }
 
-        let title = format!("[{}] {}", kind, truncate_str(trimmed, 80));
+        let inferred_kind = infer_memory_kind(Some(kind.as_str()), None, &[], trimmed);
+        let durable_metadata = build_memory_durable_metadata(
+            Some("project"),
+            None,
+            Some("context_engineering"),
+            None,
+            inferred_kind.as_str(),
+            &[],
+        );
+        let title = format!("[{}] {}", inferred_kind, truncate_str(trimmed, 80));
         let mut metadata = HashMap::new();
         metadata.insert("type".to_string(), "agent_memory".to_string());
-        metadata.insert("kind".to_string(), kind.clone());
+        metadata.insert("kind".to_string(), inferred_kind.clone());
+        metadata.insert("scope".to_string(), durable_metadata.scope.clone());
+        metadata.insert("stability".to_string(), durable_metadata.stability.clone());
+        metadata.insert("source".to_string(), durable_metadata.source.clone());
+        metadata.insert(
+            "confidence".to_string(),
+            format!("{:.2}", durable_metadata.confidence),
+        );
         metadata.insert(
             "created_at".to_string(),
             Utc::now().timestamp_millis().to_string(),
@@ -358,6 +604,55 @@ async fn persist_to_vector_store(app_handle: &AppHandle, items: &[(String, Strin
             .await
         {
             tracing::warn!("Failed to ingest memory item to vector store: {}", e);
+            continue;
+        }
+
+        let now_ms = Utc::now().timestamp_millis();
+        let candidate_scope = durable_metadata.scope.clone();
+        let candidate_stability = durable_metadata.stability.clone();
+        let candidate_source = durable_metadata.source.clone();
+        let candidate_confidence = durable_metadata.confidence;
+        let lexical_doc = MemoryLexicalDocument {
+            id: build_memory_document_id(inferred_kind.as_str(), trimmed),
+            collection_name: MEMORY_COLLECTION_NAME.to_string(),
+            title: Some(title),
+            body: trimmed.to_string(),
+            normalized_text: normalize_memory_text(trimmed),
+            identifiers: extract_memory_identifiers(trimmed),
+            tags: inferred_kind.clone(),
+            kind: inferred_kind.clone(),
+            scope: durable_metadata.scope,
+            stability: durable_metadata.stability,
+            source: durable_metadata.source,
+            confidence: candidate_confidence,
+            importance: memory_kind_importance(inferred_kind.as_str()),
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+
+        if let Err(e) = rag_service
+            .upsert_memory_lexical_document(lexical_doc)
+            .await
+        {
+            tracing::warn!("Failed to index memory item in lexical store: {}", e);
+        }
+
+        if let Err(e) = crate::skills::candidates::upsert_skill_candidate_from_memory(
+            db.inner().as_ref(),
+            &crate::skills::candidates::SkillCandidateMemoryInput {
+                memory_id: Some(build_memory_document_id(inferred_kind.as_str(), trimmed)),
+                text: trimmed.to_string(),
+                kind: inferred_kind.clone(),
+                scope: candidate_scope,
+                source: candidate_source,
+                stability: candidate_stability,
+                confidence: candidate_confidence,
+            },
+        ) {
+            tracing::warn!(
+                "Failed to capture skill candidate from durable memory: {}",
+                e
+            );
         }
     }
 
@@ -553,4 +848,66 @@ fn truncate_str(s: &str, max_len: usize) -> &str {
         Some((idx, _)) => &s[..idx],
         None => s,
     }
+}
+
+fn lexical_score_to_signal(bm25_score: f64) -> f64 {
+    let adjusted = if bm25_score.is_finite() {
+        bm25_score.max(0.0)
+    } else {
+        5.0
+    };
+    (1.0 / (1.0 + adjusted)).clamp(0.05, 1.0)
+}
+
+fn reciprocal_rank(rank: Option<usize>, weight: f64) -> f64 {
+    rank.map(|value| weight / (RRF_K + value as f64 + 1.0))
+        .unwrap_or(0.0)
+}
+
+fn stability_signal(stability: &str) -> f64 {
+    match canonicalize_memory_stability(stability).as_str() {
+        "stable" => 0.05,
+        "tentative" => -0.02,
+        _ => 0.0,
+    }
+}
+
+fn source_signal(source: &str) -> f64 {
+    match canonicalize_memory_source(source).as_str() {
+        "memory_tool" => 0.04,
+        "context_engineering" => 0.02,
+        "legacy" => 0.0,
+        _ => 0.0,
+    }
+}
+
+fn fused_candidate_score(candidate: &MemoryCandidate, now_ms: i64) -> f64 {
+    let vector_rrf = reciprocal_rank(candidate.vector_rank, VECTOR_RRF_WEIGHT);
+    let lexical_rrf = reciprocal_rank(candidate.lexical_rank, LEXICAL_RRF_WEIGHT);
+    let keyword_rrf = reciprocal_rank(candidate.keyword_rank, KEYWORD_RRF_WEIGHT);
+
+    let vector_signal = candidate.vector_score.unwrap_or(0.0) * 0.35;
+    let lexical_signal = candidate
+        .lexical_bm25
+        .map(lexical_score_to_signal)
+        .unwrap_or(0.0)
+        * 0.18;
+    let keyword_signal = candidate.keyword_score.unwrap_or(0.0) * 0.12;
+    let importance_signal = (candidate.importance as f64 / 5.0).clamp(0.2, 1.0) * 0.06;
+    let recency_signal = recency_score(candidate.created_at_ms, now_ms) * 0.04;
+    let confidence_signal = candidate.confidence.clamp(0.0, 1.0) * 0.08;
+    let stability_signal = stability_signal(candidate.stability.as_str());
+    let source_signal = source_signal(candidate.source.as_str());
+
+    vector_rrf
+        + lexical_rrf
+        + keyword_rrf
+        + vector_signal
+        + lexical_signal
+        + keyword_signal
+        + importance_signal
+        + recency_signal
+        + confidence_signal
+        + stability_signal
+        + source_signal
 }

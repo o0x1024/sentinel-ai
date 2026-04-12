@@ -1022,6 +1022,116 @@ function handleScroll(event: Event) {
   });
 }
 
+function isEditableKeyboardTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  if (target.closest('input, textarea, select, [contenteditable="true"]')) {
+    return true
+  }
+
+  return Boolean(target.closest('.editor-search-bar, .cm-textfield'))
+}
+
+function shouldHandleHistoryArrowNavigation(event: KeyboardEvent) {
+  if (!mainContainer.value || mainContainer.value.offsetParent === null) {
+    return false
+  }
+
+  if (protocolFilter.value === 'websocket' || sortedRequests.value.length === 0) {
+    return false
+  }
+
+  if (contextMenu.value.visible || detailContextMenu.value.visible) {
+    return false
+  }
+
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+    return false
+  }
+
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') {
+    return false
+  }
+
+  if (isEditableKeyboardTarget(event.target)) {
+    return false
+  }
+
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement) {
+    if (isEditableKeyboardTarget(activeElement)) {
+      return false
+    }
+
+    if (activeElement !== document.body && !mainContainer.value.contains(activeElement)) {
+      return false
+    }
+  }
+
+  return true
+}
+
+function scrollRequestRowIntoView(requestId: number) {
+  if (!scrollContainer.value) {
+    return
+  }
+
+  const rowIndex = sortedRequests.value.findIndex((request) => request.id === requestId)
+  if (rowIndex < 0) {
+    return
+  }
+
+  const rowTop = rowIndex * itemHeight + headerHeight
+  const rowBottom = rowTop + itemHeight
+  const currentScrollTop = scrollContainer.value.scrollTop
+  const visibleTop = currentScrollTop + headerHeight
+  const visibleBottom = currentScrollTop + scrollContainer.value.clientHeight
+  let nextScrollTop: number | null = null
+
+  if (rowTop < visibleTop) {
+    nextScrollTop = Math.max(0, rowTop - headerHeight)
+  } else if (rowBottom > visibleBottom) {
+    nextScrollTop = Math.max(0, rowBottom - scrollContainer.value.clientHeight)
+  }
+
+  if (nextScrollTop === null) {
+    return
+  }
+
+  scrollContainer.value.scrollTop = nextScrollTop
+  scrollTop.value = nextScrollTop
+  schedulePrefetchCheck()
+}
+
+function navigateHistorySelection(direction: -1 | 1) {
+  const navigableRequests = sortedRequests.value.filter((request) => request.status_code !== 0)
+  if (navigableRequests.length === 0) {
+    return false
+  }
+
+  const currentIndex = selectedRequest.value
+    ? navigableRequests.findIndex((request) => request.id === selectedRequest.value?.id)
+    : -1
+
+  const nextIndex = currentIndex < 0
+    ? (direction > 0 ? 0 : navigableRequests.length - 1)
+    : Math.min(navigableRequests.length - 1, Math.max(0, currentIndex + direction))
+
+  const nextRequest = navigableRequests[nextIndex]
+  if (!nextRequest) {
+    return false
+  }
+
+  if (selectedRequest.value?.id !== nextRequest.id) {
+    selectRequest(nextRequest)
+  }
+
+  scrollRequestRowIntoView(nextRequest.id)
+  return true
+}
+
 function schedulePrefetchCheck() {
   if (prefetchTimer !== null) {
     clearTimeout(prefetchTimer);
@@ -1373,6 +1483,13 @@ function setupMainContainerResizeObserver() {
 async function handleKeydown(event: KeyboardEvent) {
   if (event.defaultPrevented || event.repeat) return;
   if (!mainContainer.value || mainContainer.value.offsetParent === null) return;
+
+  if (shouldHandleHistoryArrowNavigation(event)) {
+    event.preventDefault();
+    event.stopPropagation();
+    navigateHistorySelection(event.key === 'ArrowDown' ? 1 : -1);
+    return;
+  }
 
   // Cmd/Ctrl + R 发送到 Repeater
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'r') {

@@ -47,10 +47,20 @@
         ref="requestEditor"
         :model-value="requestText"
         custom-context-menu
+        show-search-bar
         message-type="request"
+        marker-mode="intruder"
         height="100%"
         display-mode="raw"
         :state-key="`intruder:editor:${targetUrl || 'default'}`"
+        :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+        :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+        :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+        :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+        :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+        :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+        :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+        :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
         @update:model-value="$emit('update:requestText', $event)"
         @contextmenu="showContextMenu($event)"
       />
@@ -76,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
@@ -87,6 +97,7 @@ import { buildTrafficRequestSendMenuItems } from '@/components/traffic/trafficSe
 import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
 import type { IntruderPosition } from './types'
 import { buildFullUrl, buildSourceRequestFromRawRequest, extractTargetFromRequest } from './http'
+import { wrapSelectionWithMarkers } from './intruderMarkers'
 
 const { t } = useI18n()
 const { enabledTargets } = useTrafficSendTargets()
@@ -102,7 +113,6 @@ const emit = defineEmits<{
   (e: 'update:requestText', value: string): void
   (e: 'update:targetUrl', value: string): void
   (e: 'update:updateHostHeader', value: boolean): void
-  (e: 'markSelection', payload: { start: number; end: number }): void
   (e: 'autoMark'): void
   (e: 'clearMarkers'): void
   (e: 'sendToRepeater'): void
@@ -157,16 +167,22 @@ const contextMenuSections = computed(() =>
   }),
 )
 
-function markSelection() {
+async function markSelection() {
   const selection = requestEditor.value?.getSelectionRange()
   if (!selection || selection.from === selection.to) {
     dialog.toast.info(t('trafficAnalysis.intruder.messages.selectTextFirst'))
     return
   }
 
-  emit('markSelection', {
-    start: selection.from,
-    end: selection.to,
+  const start = Math.min(selection.from, selection.to)
+  const end = Math.max(selection.from, selection.to)
+  const wrapped = wrapSelectionWithMarkers(props.requestText, start, end)
+  emit('update:requestText', wrapped)
+
+  await nextTick()
+  requestAnimationFrame(() => {
+    requestEditor.value?.setSelection?.(start + 1, end + 1)
+    requestEditor.value?.focus?.()
   })
 }
 

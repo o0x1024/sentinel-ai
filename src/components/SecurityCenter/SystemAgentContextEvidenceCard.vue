@@ -235,6 +235,26 @@
         </div>
       </div>
     </div>
+    <div v-if="sopEntries.length > 0">
+      <p class="text-sm font-semibold text-info mb-2">命中 SOP</p>
+      <div class="space-y-2">
+        <div v-for="sop in sopEntries" :key="sop.id" class="bg-base-300 p-3 rounded-lg space-y-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="badge badge-info badge-sm">{{ sop.id }}</span>
+            <span class="text-sm font-medium">{{ sop.name || sop.id }}</span>
+          </div>
+          <p v-if="sop.description" class="text-xs opacity-80 whitespace-pre-wrap break-words">
+            {{ sop.description }}
+          </p>
+          <div v-if="sop.procedure" class="text-xs">
+            <p class="font-semibold mb-1">SOP 步骤</p>
+            <pre
+              class="bg-base-200 p-2 rounded whitespace-pre-wrap break-words overflow-x-auto max-h-40"
+            >{{ sop.procedure }}</pre>
+          </div>
+        </div>
+      </div>
+    </div>
     <div v-if="invariantEntries.length > 0">
       <p class="text-sm font-semibold text-warning mb-2">命中不变量</p>
       <div class="flex flex-col gap-2">
@@ -289,6 +309,7 @@ import {
   getContextInvariantEntriesFromPayload,
   getContextProcessGraphFromPayload,
   getContextSkillEntriesFromPayload,
+  getContextSopEntriesFromPayload,
   parseStructuredPayload,
   parseSystemAgentMeta,
 } from '../system-agent/systemAgentContextEvidenceSupport'
@@ -314,6 +335,7 @@ const contextExtractionSummary = computed(() =>
 const semanticSummary = computed(() => getSemanticAbstractionSummaryFromPayload(contextPayload.value))
 const behaviorSummary = computed(() => getContextBehaviorSummaryFromPayload(contextPayload.value))
 const skillEntries = computed(() => getContextSkillEntriesFromPayload(contextPayload.value))
+const sopEntries = computed(() => getContextSopEntriesFromPayload(contextPayload.value))
 const invariantEntries = computed(() => getContextInvariantEntriesFromPayload(contextPayload.value))
 const processGraph = computed(() => getContextProcessGraphFromPayload(contextPayload.value))
 

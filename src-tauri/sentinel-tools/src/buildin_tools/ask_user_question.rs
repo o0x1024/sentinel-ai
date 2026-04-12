@@ -12,6 +12,9 @@ pub struct AskUserQuestionOption {
     pub label: String,
     /// Short description explaining the choice.
     pub description: String,
+    /// Optional preview content for side-by-side comparison.
+    #[serde(default)]
+    pub preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -205,6 +208,10 @@ impl Tool for AskUserQuestionTool {
                                             "description": {
                                                 "type": "string",
                                                 "description": "Short explanation of the option."
+                                            },
+                                            "preview": {
+                                                "type": "string",
+                                                "description": "Optional preview content for this option."
                                             }
                                         },
                                         "required": ["label", "description"]
@@ -242,10 +249,12 @@ mod tests {
                 AskUserQuestionOption {
                     label: "Safe".to_string(),
                     description: "Conservative execution".to_string(),
+                    preview: None,
                 },
                 AskUserQuestionOption {
                     label: "Fast".to_string(),
                     description: "Optimize for speed".to_string(),
+                    preview: None,
                 },
             ],
         }
@@ -262,6 +271,7 @@ mod tests {
         q.options.push(AskUserQuestionOption {
             label: "Safe".to_string(),
             description: "Duplicate".to_string(),
+            preview: None,
         });
         assert!(validate_questions(&[q]).is_err());
     }

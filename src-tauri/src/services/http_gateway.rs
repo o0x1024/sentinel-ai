@@ -685,6 +685,8 @@ async fn web_ui() -> Html<&'static str> {
             if (evt.type === "assistant_delta" || evt.type === "delta" || evt.type === "reasoning") out.textContent += (evt.content || "");
             if (evt.type && evt.type.startsWith("tool_")) toolMeta = (toolMeta + "\\n[" + evt.type + "] " + JSON.stringify(evt)).trim();
             if (evt.type === "permission_required" && evt.permission) upsertPermission(evt.permission);
+            if (evt.type === "ask_user_question_required" && evt.question) __gwDispatch("ask-user-question-request", evt.question);
+            if (evt.type === "shell_background_task" && evt.task) __gwDispatch("shell-background-task-update", evt.task);
             if (evt.type === "error") throw new Error(evt.message || "stream error");
             if (evt.type === "task_status" && evt.status) setStatus(String(evt.status));
             if (evt.type === "completed" || evt.type === "done") setStatus("done");
@@ -1086,6 +1088,10 @@ window.__TAURI_INTERNALS__.invoke = async (cmd, payload) => {
           });
         } else if (evt.type === "permission_required" && evt.permission) {
           __gwDispatch("shell-permission-request", evt.permission);
+        } else if (evt.type === "ask_user_question_required" && evt.question) {
+          __gwDispatch("ask-user-question-request", evt.question);
+        } else if (evt.type === "shell_background_task" && evt.task) {
+          __gwDispatch("shell-background-task-update", evt.task);
         }
       }
     }
@@ -1868,6 +1874,87 @@ async fn bridge_invoke(
                 match crate::commands::tool_commands::respond_shell_permission(id, allowed).await {
                     Ok(_) => Ok(json!(null)),
                     Err(e) => Err(format!("respond_shell_permission failed: {}", e)),
+                }
+            }
+        }
+        "get_pending_ask_user_questions" => {
+            match crate::commands::tool_commands::get_pending_ask_user_questions().await {
+                Ok(items) => Ok(json!(items)),
+                Err(e) => Err(format!("get_pending_ask_user_questions failed: {}", e)),
+            }
+        }
+        "respond_ask_user_question" => {
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let answers = req
+                .payload
+                .get("answers")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            if id.is_empty() {
+                Err("respond_ask_user_question missing id".to_string())
+            } else {
+                match serde_json::from_value::<HashMap<String, String>>(answers) {
+                    Ok(parsed_answers) => {
+                        match crate::commands::tool_commands::respond_ask_user_question(
+                            id,
+                            parsed_answers,
+                        )
+                        .await
+                        {
+                            Ok(_) => Ok(json!(null)),
+                            Err(e) => Err(format!("respond_ask_user_question failed: {}", e)),
+                        }
+                    }
+                    Err(e) => Err(format!("respond_ask_user_question invalid answers: {}", e)),
+                }
+            }
+        }
+        "reject_ask_user_question" => {
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if id.is_empty() {
+                Err("reject_ask_user_question missing id".to_string())
+            } else {
+                match crate::commands::tool_commands::reject_ask_user_question(id).await {
+                    Ok(_) => Ok(json!(null)),
+                    Err(e) => Err(format!("reject_ask_user_question failed: {}", e)),
+                }
+            }
+        }
+        "get_background_shell_tasks" => {
+            let execution_id = req
+                .payload
+                .get("execution_id")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            match crate::commands::tool_commands::get_background_shell_tasks(execution_id).await {
+                Ok(items) => Ok(json!(items)),
+                Err(e) => Err(format!("get_background_shell_tasks failed: {}", e)),
+            }
+        }
+        "stop_background_shell_task" => {
+            let task_id = req
+                .payload
+                .get("task_id")
+                .or_else(|| req.payload.get("taskId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if task_id.is_empty() {
+                Err("stop_background_shell_task missing task_id".to_string())
+            } else {
+                match crate::commands::tool_commands::stop_background_shell_task(task_id).await {
+                    Ok(_) => Ok(json!(null)),
+                    Err(e) => Err(format!("stop_background_shell_task failed: {}", e)),
                 }
             }
         }
@@ -3730,6 +3817,65 @@ async fn chat_stream(
                                     json!({
                                         "type":"permission_required",
                                         "permission": req,
+                                        "request_id": request_id_for_poll,
+                                    })
+                                    .to_string(),
+                                )
+                                .is_err()
+                            {
+                                let _ = crate::managers::cancellation_manager::cancel_execution(
+                                    &poll_sid,
+                                )
+                                .await;
+                                return;
+                            }
+                        }
+                    }
+                    if let Ok(pending_questions) =
+                        crate::commands::tool_commands::get_pending_ask_user_questions().await
+                    {
+                        for req in pending_questions {
+                            if req.execution_id.as_deref() != Some(&poll_sid) {
+                                continue;
+                            }
+                            if !seen_permission_ids.insert(format!("question:{}", req.id)) {
+                                continue;
+                            }
+                            if tx_poll
+                                .send(
+                                    json!({
+                                        "type":"ask_user_question_required",
+                                        "question": req,
+                                        "request_id": request_id_for_poll,
+                                    })
+                                    .to_string(),
+                                )
+                                .is_err()
+                            {
+                                let _ = crate::managers::cancellation_manager::cancel_execution(
+                                    &poll_sid,
+                                )
+                                .await;
+                                return;
+                            }
+                        }
+                    }
+                    if let Ok(background_tasks) =
+                        crate::commands::tool_commands::get_background_shell_tasks(Some(
+                            poll_sid.clone(),
+                        ))
+                        .await
+                    {
+                        for task in background_tasks {
+                            let key = format!("shell-bg:{}:{:?}", task.id, task.status);
+                            if !seen_permission_ids.insert(key) {
+                                continue;
+                            }
+                            if tx_poll
+                                .send(
+                                    json!({
+                                        "type":"shell_background_task",
+                                        "task": task,
                                         "request_id": request_id_for_poll,
                                     })
                                     .to_string(),

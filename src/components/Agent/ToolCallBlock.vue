@@ -184,6 +184,7 @@ const badgeClass = computed(() => {
     case 'running': return 'bg-primary/20 text-primary animate-pulse'
     case 'completed': return 'bg-success/20 text-success'
     case 'failed': return 'bg-error/20 text-error'
+    case 'cancelled': return 'bg-neutral/20 text-neutral'
     default: return 'bg-base-300 text-base-content/60'
   }
 })
@@ -194,6 +195,7 @@ const statusText = computed(() => {
     running: 'Running...',
     completed: 'Completed',
     failed: 'Failed',
+    cancelled: 'Cancelled',
   }
   return statusMap[props.status]
 })

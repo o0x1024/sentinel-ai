@@ -12,6 +12,10 @@ use crate::services::system_agents::finding_lifecycle::{
 use crate::services::system_agents::finding_observation::TrafficFindingObservation;
 use crate::services::system_agents::language::{is_chinese_ui_language, resolve_ui_language};
 use crate::services::system_agents::safety::SystemAgentSafetyPolicy;
+use crate::services::system_agents::verification_plan::{
+    build_baseline_from_context_payload, build_baseline_from_proxy_request, extract_verification_plan,
+};
+use crate::services::system_agents::verification_strategy::prepare_verification_request;
 use crate::services::system_agents::types::SystemAgentEvent;
 
 fn context_baseline_string(payload: &Value, key: &str) -> Option<String> {
@@ -340,6 +344,15 @@ async fn build_observation_from_output(
         Some(request_id) => db.get_proxy_request_by_id(request_id).await?,
         None => None,
     };
+    let verification_plan_executable = extract_verification_plan(output)
+        .and_then(|plan| {
+            proxy_request
+                .as_ref()
+                .map(build_baseline_from_proxy_request)
+                .or_else(|| build_baseline_from_context_payload(payload))
+                .and_then(|baseline| prepare_verification_request(&baseline, Some(&plan)).ok())
+        })
+        .is_some();
 
     let url = proxy_request
         .as_ref()
@@ -413,6 +426,7 @@ async fn build_observation_from_output(
         has_auth_material,
         path_template,
         db_request_id,
+        verification_plan_executable,
     }))
 }
 

@@ -374,6 +374,7 @@ impl DatabaseService {
                     llm_model_override TEXT,
                     base_prompt_id TEXT,
                     prompt_patch TEXT,
+                    sop_definitions_json TEXT NOT NULL DEFAULT '[]',
                     input_schema_json TEXT NOT NULL DEFAULT '{}',
                     output_schema_json TEXT NOT NULL DEFAULT '{}',
                     required_tools_json TEXT NOT NULL DEFAULT '[]',
@@ -419,6 +420,19 @@ impl DatabaseService {
             sqlx::query("ALTER TABLE system_agent_profiles ADD COLUMN llm_model_override TEXT")
                 .execute(pool)
                 .await?;
+        }
+
+        let system_agent_profiles_has_sop_definitions_json: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'system_agent_profiles' AND column_name = 'sop_definitions_json')"
+        )
+        .fetch_one(pool)
+        .await?;
+        if !system_agent_profiles_has_sop_definitions_json {
+            sqlx::query(
+                "ALTER TABLE system_agent_profiles ADD COLUMN sop_definitions_json TEXT NOT NULL DEFAULT '[]'",
+            )
+            .execute(pool)
+            .await?;
         }
 
         let system_agent_bindings_exists: bool = sqlx::query_scalar(
@@ -468,6 +482,7 @@ impl DatabaseService {
                     trigger_event TEXT,
                     status TEXT NOT NULL,
                     input_summary_json TEXT NOT NULL DEFAULT '{}',
+                    tool_calls TEXT,
                     output_json TEXT,
                     error_message TEXT,
                     started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -478,6 +493,17 @@ impl DatabaseService {
             )
             .execute(pool)
             .await?;
+        }
+
+        let system_agent_runs_has_tool_calls: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'system_agent_runs' AND column_name = 'tool_calls')"
+        )
+        .fetch_one(pool)
+        .await?;
+        if !system_agent_runs_has_tool_calls {
+            sqlx::query("ALTER TABLE system_agent_runs ADD COLUMN tool_calls TEXT")
+                .execute(pool)
+                .await?;
         }
 
         let system_agent_profile_versions_exists: bool = sqlx::query_scalar(
@@ -1177,6 +1203,7 @@ impl DatabaseService {
                     llm_model_override TEXT,
                     base_prompt_id TEXT,
                     prompt_patch TEXT,
+                    sop_definitions_json TEXT NOT NULL DEFAULT '[]',
                     input_schema_json TEXT NOT NULL DEFAULT '{}',
                 output_schema_json TEXT NOT NULL DEFAULT '{}',
                 required_tools_json TEXT NOT NULL DEFAULT '[]',
@@ -1208,6 +1235,7 @@ impl DatabaseService {
                 trigger_event TEXT,
                 status TEXT NOT NULL,
                 input_summary_json TEXT NOT NULL DEFAULT '{}',
+                tool_calls TEXT,
                 output_json TEXT,
                 error_message TEXT,
                 started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1272,6 +1300,18 @@ impl DatabaseService {
         self.execute_runtime_ddl(
             runtime,
             "ALTER TABLE system_agent_profiles ADD COLUMN llm_model_override TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE system_agent_profiles ADD COLUMN sop_definitions_json TEXT NOT NULL DEFAULT '[]'",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE system_agent_runs ADD COLUMN tool_calls TEXT",
         )
         .await
         .ok();

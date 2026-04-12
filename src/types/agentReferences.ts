@@ -36,3 +36,12 @@ export interface ReferencedFile {
   truncated: boolean
   size: number
 }
+
+export interface ReferencedConversationMessage {
+  id: string
+  content: string
+  mentionText?: string
+  roleLabel: string
+  timestamp: number
+  type: string
+}

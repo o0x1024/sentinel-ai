@@ -1,7 +1,11 @@
 <template>
   <div v-if="selectedRequest" class="flex-1 flex min-h-0 overflow-hidden relative">
-    <div v-if="isLoadingSelectedRequest" class="absolute inset-0 z-10 flex items-center justify-center bg-base-100/40 backdrop-blur-[1px] pointer-events-none">
-      <span class="loading loading-spinner loading-sm text-primary"></span>
+    <div
+      v-if="isLoadingSelectedRequest"
+      class="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-md border border-base-300 bg-base-100/95 px-2 py-1 text-xs text-base-content/70 shadow-sm pointer-events-none"
+    >
+      <span class="loading loading-spinner loading-xs text-primary"></span>
+      <span>{{ $t('trafficAnalysis.history.detailsPanel.loading') }}</span>
     </div>
     <div class="flex flex-col overflow-hidden border-r border-base-300" :style="{ width: leftPanelWidth + 'px' }">
       <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
@@ -30,12 +34,39 @@
           :model-value="requestContent"
           readonly
           custom-context-menu
+          show-search-bar
           message-type="request"
           :display-mode="requestTab"
           :state-key="selectedRequest ? `history:request:${selectedRequest.id}:${requestTab}:${requestViewMode}` : ''"
+          :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+          :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+          :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+          :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+          :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+          :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+          :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+          :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
           @contextmenu="showDetailContextMenu($event, 'request')"
         />
-        <div v-else class="h-full overflow-auto p-2 font-mono text-xs bg-base-100"><pre>{{ stringToHex(formatRequestRaw(selectedRequest, requestViewMode)) }}</pre></div>
+        <HttpMessageSurface
+          v-else
+          :model-value="stringToHex(formatRequestRaw(selectedRequest, requestViewMode))"
+          readonly
+          custom-context-menu
+          show-search-bar
+          message-type="generic"
+          display-mode="raw"
+          :state-key="selectedRequest ? `history:request:${selectedRequest.id}:hex:${requestViewMode}` : ''"
+          :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+          :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+          :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+          :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+          :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+          :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+          :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+          :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+          @contextmenu="showDetailContextMenu($event, 'request')"
+        />
       </div>
     </div>
     <div class="w-1 bg-base-300 cursor-col-resize hover:bg-primary/50 transition-colors flex-shrink-0" @mousedown="startVerticalResize"></div>
@@ -64,15 +95,42 @@
       </div>
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'response')">
         <iframe v-if="responseTab === 'render'" :srcdoc="getResponseBody(selectedRequest, responseViewMode)" class="w-full h-full border-0 bg-white" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"></iframe>
-        <div v-else-if="responseTab === 'hex'" class="h-full overflow-auto p-2 font-mono text-xs bg-base-100"><pre>{{ stringToHex(formatResponseRaw(selectedRequest, responseViewMode)) }}</pre></div>
+        <HttpMessageSurface
+          v-else-if="responseTab === 'hex'"
+          :model-value="stringToHex(formatResponseRaw(selectedRequest, responseViewMode))"
+          readonly
+          custom-context-menu
+          show-search-bar
+          message-type="generic"
+          display-mode="raw"
+          :state-key="selectedRequest ? `history:response:${selectedRequest.id}:hex:${responseViewMode}` : ''"
+          :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+          :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+          :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+          :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+          :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+          :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+          :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+          :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+          @contextmenu="showDetailContextMenu($event, 'response')"
+        />
         <HttpMessageSurface
           v-else
           :model-value="responseContent"
           readonly
           custom-context-menu
+          show-search-bar
           message-type="response"
           :display-mode="responseTab === 'pretty' ? 'pretty' : 'raw'"
           :state-key="selectedRequest ? `history:response:${selectedRequest.id}:${responseTab}:${responseViewMode}` : ''"
+          :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+          :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+          :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+          :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+          :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+          :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+          :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+          :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
           @contextmenu="showDetailContextMenu($event, 'response')"
         />
       </div>

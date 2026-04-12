@@ -96,7 +96,7 @@
           </button>
         </div>
           
-        <span v-if="currentTab.useTls" class="badge badge-sm badge-outline">HTTP/2</span>
+        <span class="badge badge-sm badge-outline">{{ currentRequestProtocol }}</span>
       </div>
       
       <!-- Target 配置对话框 -->
@@ -220,11 +220,20 @@
                 @update:modelValue="onPrettyRequestUpdate"
                 :readonly="false"
                 custom-context-menu
+                show-search-bar
                 @contextmenu="showContextMenu($event, 'request')"
                 message-type="request"
                 height="100%"
                 display-mode="pretty"
                 :state-key="`repeater:${currentTab.id}:request:pretty`"
+                :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
               />
             </template>
             <template v-else-if="currentTab.requestTab === 'raw'">
@@ -233,17 +242,43 @@
                 v-model="currentTab.rawRequest"
                 :readonly="false"
                 custom-context-menu
+                show-search-bar
                 @contextmenu="showContextMenu($event, 'request')"
                 message-type="request"
                 height="100%"
                 display-mode="raw"
                 :state-key="`repeater:${currentTab.id}:request:raw`"
+                :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
               />
             </template>
             <template v-else>
-              <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
-                <pre>{{ toHex(currentTab.rawRequest) }}</pre>
-              </div>
+              <HttpMessageSurface
+                ref="requestEditor"
+                :modelValue="toHex(currentTab.rawRequest)"
+                :readonly="true"
+                custom-context-menu
+                show-search-bar
+                @contextmenu="showContextMenu($event, 'request')"
+                message-type="generic"
+                height="100%"
+                display-mode="raw"
+                :state-key="`repeater:${currentTab.id}:request:hex`"
+                :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+              />
             </template>
           </div>
         </div>
@@ -310,19 +345,45 @@
                   :modelValue="currentTab.responseTab === 'pretty' ? formatPrettyResponse() : currentTab.rawResponse"
                   :readonly="true"
                   custom-context-menu
+                  show-search-bar
                   @contextmenu="showContextMenu($event, 'response')"
                   message-type="response"
                   height="100%"
                   :display-mode="currentTab.responseTab === 'pretty' ? 'pretty' : 'raw'"
                   :state-key="`repeater:${currentTab.id}:response:${currentTab.responseTab}`"
+                  :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                  :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                  :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                  :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                  :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                  :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                  :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                  :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
                 />
               </template>
               
               <!-- Hex View -->
               <template v-else-if="currentTab.responseTab === 'hex'">
-                <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
-                  <pre>{{ toHex(currentTab.rawResponse) }}</pre>
-                </div>
+                <HttpMessageSurface
+                  ref="responseEditor"
+                  :modelValue="toHex(currentTab.rawResponse)"
+                  :readonly="true"
+                  custom-context-menu
+                  show-search-bar
+                  @contextmenu="showContextMenu($event, 'response')"
+                  message-type="generic"
+                  height="100%"
+                  display-mode="raw"
+                  :state-key="`repeater:${currentTab.id}:response:hex`"
+                  :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                  :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                  :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                  :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                  :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                  :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                  :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                  :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                />
               </template>
               
               <!-- Render View -->
@@ -361,7 +422,10 @@ import { useI18n } from 'vue-i18n';
 import { dialog } from '@/composables/useDialog';
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue';
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
-import { buildSourceRequestFromRawRequest } from '@/components/traffic/intruder/http'
+import {
+  buildSourceRequestFromRawRequest,
+  ensureRawRequestTerminator,
+} from '@/components/traffic/intruder/http'
 import type {
   TrafficComparePayload,
   TrafficComparerDraftRequestInput,
@@ -487,6 +551,12 @@ const showPort = computed(() => {
   if (!useTls && port === 80) return false;
   return true;
 });
+
+const currentRequestProtocol = computed(() => {
+  const requestLine = currentTab.value?.rawRequest.split(/\r\n|\r|\n/)[0]?.trim() || ''
+  const protocol = requestLine.split(/\s+/)[2] || ''
+  return protocol || (currentTab.value?.useTls ? 'HTTP/1.1' : 'HTTP/1.1')
+})
 
 // 向后兼容的 isSending（用于模板）
 const isSending = computed(() => currentTab.value?.isSending || false);
@@ -731,16 +801,7 @@ async function sendRequest() {
   const tabId = tab.id;
   
   try {
-    let rawRequest = tab.rawRequest;
-    rawRequest = rawRequest.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');
-    
-    if (!rawRequest.endsWith('\r\n\r\n')) {
-      if (rawRequest.endsWith('\r\n')) {
-        rawRequest += '\r\n';
-      } else {
-        rawRequest += '\r\n\r\n';
-      }
-    }
+    const rawRequest = ensureRawRequestTerminator(tab.rawRequest);
     
     const response = await invoke<any>('replay_raw_request', {
       host: tab.targetHost,

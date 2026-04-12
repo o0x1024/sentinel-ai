@@ -1,3 +1,5 @@
+pub mod candidates;
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::fs;
@@ -126,8 +128,8 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
     fs::create_dir_all(&root)
         .with_context(|| format!("Failed to create skills root: {}", root.display()))?;
 
-    // Install built-in skills
-    install_builtin_skills(&root);
+    // Install built-in SOP
+    install_builtin_sop(&root);
 
     let mut count = 0usize;
     let entries = fs::read_dir(&root)
@@ -219,32 +221,32 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
     Ok(count)
 }
 
-// ── Built-in Skills ─────────────────────────────────────────────────────────
+// ── Built-in SOP ────────────────────────────────────────────────────────────
 
-/// Embedded built-in skills that ship with the binary.
-const BUILTIN_SKILLS: &[(&str, &str)] = &[
+/// Embedded built-in SOP documents that ship with the binary.
+const BUILTIN_SOP: &[(&str, &str)] = &[
     (
         "payment-flow",
-        include_str!("builtin/payment-flow.SKILL.md"),
+        include_str!("builtin/payment-flow.SOP.md"),
     ),
     (
         "approval-workflow",
-        include_str!("builtin/approval-workflow.SKILL.md"),
+        include_str!("builtin/approval-workflow.SOP.md"),
     ),
     (
         "resource-ownership",
-        include_str!("builtin/resource-ownership.SKILL.md"),
+        include_str!("builtin/resource-ownership.SOP.md"),
     ),
     (
         "single-use-consumption",
-        include_str!("builtin/single-use-consumption.SKILL.md"),
+        include_str!("builtin/single-use-consumption.SOP.md"),
     ),
 ];
 
-/// Install built-in skills to the skills directory if not already present.
-fn install_builtin_skills(skills_root: &Path) {
-    for (skill_id, content) in BUILTIN_SKILLS {
-        let skill_dir = skills_root.join(skill_id);
+/// Install built-in SOP documents to the skills directory if not already present.
+fn install_builtin_sop(skills_root: &Path) {
+    for (sop_id, content) in BUILTIN_SOP {
+        let skill_dir = skills_root.join(sop_id);
         let skill_md = skill_dir.join("SKILL.md");
 
         // Only write if the skill doesn't exist yet or content has changed
@@ -259,14 +261,14 @@ fn install_builtin_skills(skills_root: &Path) {
 
         if should_write {
             if let Err(e) = fs::create_dir_all(&skill_dir) {
-                tracing::warn!("Failed to create built-in skill dir '{}': {}", skill_id, e);
+                tracing::warn!("Failed to create built-in SOP dir '{}': {}", sop_id, e);
                 continue;
             }
             if let Err(e) = fs::write(&skill_md, content) {
-                tracing::warn!("Failed to write built-in skill '{}': {}", skill_id, e);
+                tracing::warn!("Failed to write built-in SOP '{}': {}", sop_id, e);
                 continue;
             }
-            tracing::info!("Installed built-in skill: {}", skill_id);
+            tracing::info!("Installed built-in SOP: {}", sop_id);
         }
     }
 }
