@@ -216,6 +216,7 @@ interface McpConnection {
   status: string
   command: string
   args: string[]
+  headers: Record<string, string>
 }
 
 // 定义事件
@@ -308,11 +309,7 @@ async function toggleServer(connection: McpConnection) {
         dialog.toast.warning(`服务器 ${connection.name} 已经连接`)
         return
       }
-      await invoke('add_child_process_mcp_server', { 
-        name: connection.name, 
-        command: connection.command, 
-        args: connection.args 
-      })
+      await invoke('mcp_connect_server', { payload: connection })
       dialog.toast.success(`已连接服务器 ${connection.name}`)
     }
     await fetchConnections()
@@ -338,11 +335,7 @@ async function disconnect(connection: McpConnection) {
 
 async function connect(connection: McpConnection) {
   try {
-    await invoke('add_child_process_mcp_server', { 
-      name: connection.name, 
-      command: connection.command, 
-      args: connection.args 
-    })
+    await invoke('mcp_connect_server', { payload: connection })
     dialog.toast.success(`已连接服务器 ${connection.name}`)
     await fetchConnections()
     await tauriEmit('mcp:tools-changed', { action: 'server_connected', serverName: connection.name })
@@ -382,4 +375,3 @@ onMounted(() => {
   fetchConnections()
 })
 </script>
-

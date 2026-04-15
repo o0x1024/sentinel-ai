@@ -182,6 +182,76 @@
           <pre class="mt-3 bg-base-100 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{
             getWorkbenchEvidenceSnippet(evidence)
           }}</pre>
+          <div class="mt-3 grid gap-3 xl:grid-cols-2">
+            <div
+              v-if="getBaselineExchange(evidence)"
+              class="rounded-lg border border-base-300 bg-base-100 p-3"
+            >
+              <p class="text-xs font-semibold text-base-content/70 mb-2">{{ wb('verification.baselineExchange') }}</p>
+              <div class="space-y-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="badge badge-outline">{{ getBaselineExchange(evidence)?.requestMethod || 'GET' }}</span>
+                  <span
+                    v-if="typeof getBaselineExchange(evidence)?.responseStatus === 'number'"
+                    :class="['badge badge-sm', (getBaselineExchange(evidence)?.responseStatus || 0) >= 400 ? 'badge-error' : 'badge-success']"
+                  >
+                    {{ getBaselineExchange(evidence)?.responseStatus }}
+                  </span>
+                </div>
+                <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ getBaselineExchange(evidence)?.requestUrl }}</pre>
+                <div v-if="getBaselineExchange(evidence)?.requestHeaders">
+                  <p class="text-xs text-base-content/60">{{ wb('verification.requestHeaders') }}</p>
+                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ formatExchangePayload(getBaselineExchange(evidence)?.requestHeaders) }}</pre>
+                </div>
+                <div v-if="getBaselineExchange(evidence)?.requestBody">
+                  <p class="text-xs text-base-content/60">{{ wb('verification.requestBody') }}</p>
+                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ getBaselineExchange(evidence)?.requestBody }}</pre>
+                </div>
+                <div v-if="getBaselineExchange(evidence)?.responseHeaders">
+                  <p class="text-xs text-base-content/60">{{ wb('verification.responseHeaders') }}</p>
+                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ formatExchangePayload(getBaselineExchange(evidence)?.responseHeaders) }}</pre>
+                </div>
+                <div v-if="getBaselineExchange(evidence)?.responseBody">
+                  <p class="text-xs text-base-content/60">{{ wb('verification.responseBody') }}</p>
+                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ getBaselineExchange(evidence)?.responseBody }}</pre>
+                </div>
+              </div>
+            </div>
+            <div
+              v-if="getReplayExchange(evidence)"
+              class="rounded-lg border border-base-300 bg-base-100 p-3"
+            >
+              <p class="text-xs font-semibold text-base-content/70 mb-2">{{ wb('verification.replayExchange') }}</p>
+              <div class="space-y-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="badge badge-outline">{{ getReplayExchange(evidence)?.requestMethod || 'GET' }}</span>
+                  <span
+                    v-if="typeof getReplayExchange(evidence)?.responseStatus === 'number'"
+                    :class="['badge badge-sm', (getReplayExchange(evidence)?.responseStatus || 0) >= 400 ? 'badge-error' : 'badge-success']"
+                  >
+                    {{ getReplayExchange(evidence)?.responseStatus }}
+                  </span>
+                </div>
+                <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ getReplayExchange(evidence)?.requestUrl }}</pre>
+                <div v-if="getReplayExchange(evidence)?.requestHeaders">
+                  <p class="text-xs text-base-content/60">{{ wb('verification.requestHeaders') }}</p>
+                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ formatExchangePayload(getReplayExchange(evidence)?.requestHeaders) }}</pre>
+                </div>
+                <div v-if="getReplayExchange(evidence)?.requestBody">
+                  <p class="text-xs text-base-content/60">{{ wb('verification.requestBody') }}</p>
+                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ getReplayExchange(evidence)?.requestBody }}</pre>
+                </div>
+                <div v-if="getReplayExchange(evidence)?.responseHeaders">
+                  <p class="text-xs text-base-content/60">{{ wb('verification.responseHeaders') }}</p>
+                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ formatExchangePayload(getReplayExchange(evidence)?.responseHeaders) }}</pre>
+                </div>
+                <div v-if="getReplayExchange(evidence)?.responseBody">
+                  <p class="text-xs text-base-content/60">{{ wb('verification.responseBody') }}</p>
+                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ getReplayExchange(evidence)?.responseBody }}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <p v-else class="text-sm text-base-content/60">
@@ -210,7 +280,14 @@ import {
   getWorkbenchStatusLabel,
 } from './securityWorkbenchPresentation'
 import { wb } from './securityWorkbenchLocale'
-import { getWorkbenchEvidenceSnippet } from './securityWorkbenchSystemAgentContent'
+import {
+  formatWorkbenchRawPayload,
+  getWorkbenchEvidenceSnippet,
+  getWorkbenchVerificationBaselineExchange,
+  getWorkbenchVerificationReplayExchange,
+} from './securityWorkbenchSystemAgentContent'
+import type { Evidence } from './vulnerabilityFindingTypes'
+import type { WorkbenchEvidenceExchange } from './securityWorkbenchSystemAgentContent'
 
 const props = defineProps<{
   caseItem: WorkbenchCase
@@ -306,4 +383,12 @@ const getSimilarityLevelLabel = (level: WorkbenchExecutionSimilarityLevel) => {
       return wb('verification.similarityLevel.low')
   }
 }
+
+const getBaselineExchange = (evidence: Evidence): WorkbenchEvidenceExchange | null =>
+  getWorkbenchVerificationBaselineExchange(evidence)
+
+const getReplayExchange = (evidence: Evidence): WorkbenchEvidenceExchange | null =>
+  getWorkbenchVerificationReplayExchange(evidence)
+
+const formatExchangePayload = (raw?: string | null) => formatWorkbenchRawPayload(raw)
 </script>

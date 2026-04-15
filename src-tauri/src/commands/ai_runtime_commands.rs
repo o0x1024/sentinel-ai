@@ -47,6 +47,10 @@ pub struct AgentExecuteConfig {
     #[serde(default)]
     pub display_content: Option<String>,
     #[serde(default)]
+    pub current_terminal_session_fingerprint: Option<String>,
+    #[serde(default)]
+    pub current_terminal_session_id: Option<String>,
+    #[serde(default)]
     pub referenced_files: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     pub referenced_messages: Option<Vec<serde_json::Value>>,
@@ -614,6 +618,8 @@ pub async fn agent_execute(
         tool_config: None,
         traffic_context: None,
         display_content: None,
+        current_terminal_session_fingerprint: None,
+        current_terminal_session_id: None,
         referenced_files: None,
         referenced_messages: None,
         referenced_assets: None,
@@ -1134,6 +1140,10 @@ pub async fn agent_execute(
                     model: model_name_for_closure.clone(),
                     system_prompt: base_system_prompt.unwrap_or_default(),
                     task: augmented_task.clone(),
+                    active_terminal_session_fingerprint: config
+                        .current_terminal_session_fingerprint
+                        .clone(),
+                    active_terminal_session_id: config.current_terminal_session_id.clone(),
                     rig_provider: provider_for_closure.clone(),
                     api_key: provider_config_for_closure.api_key.clone(),
                     api_base: provider_config_for_closure.api_base.clone(),

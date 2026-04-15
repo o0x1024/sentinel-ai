@@ -125,9 +125,11 @@ impl LlmConfig {
 
     /// 获取实际使用的 rig provider（优先使用 rig_provider，否则使用 provider）
     pub fn get_effective_rig_provider(&self) -> String {
-        self.rig_provider
-            .clone()
-            .unwrap_or_else(|| self.provider.to_lowercase())
+        normalize_rig_provider_name(
+            self.rig_provider
+                .as_deref()
+                .unwrap_or(self.provider.as_str()),
+        )
     }
 
     /// 设置 rig 库所需的环境变量
@@ -213,5 +215,30 @@ impl LlmConfig {
                 tracing::debug!("Set DeepSeek default base URL: {}", deepseek_base);
             }
         }
+    }
+}
+
+fn normalize_rig_provider_name(value: &str) -> String {
+    match value.trim().to_lowercase().as_str() {
+        "openapi" => "openai".to_string(),
+        "lm studio" | "lmstudio" | "lm_studio" => "openai".to_string(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LlmConfig;
+
+    #[test]
+    fn normalizes_openapi_provider_to_openai_rig() {
+        let config = LlmConfig::new("openapi", "ark-code-latest");
+        assert_eq!(config.get_effective_rig_provider(), "openai");
+    }
+
+    #[test]
+    fn normalizes_openapi_rig_provider_override_to_openai() {
+        let config = LlmConfig::new("openapi", "ark-code-latest").with_rig_provider("openapi");
+        assert_eq!(config.get_effective_rig_provider(), "openai");
     }
 }

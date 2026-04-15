@@ -396,6 +396,7 @@ export default {
       method: 'Method',
       host: 'Host',
       url: 'URL',
+      httpVersion: 'HTTP',
       params: 'Params',
       status: 'Status',
       length: 'Length',
@@ -428,6 +429,8 @@ export default {
       editedRequest: 'Edited request',
       originalResponse: 'Original response',
       editedResponse: 'Edited response',
+      scheme: 'Scheme',
+      httpVersion: 'HTTP version',
       search: {
         placeholder: 'Search current content. Enter: next, Shift+Enter: previous',
         next: 'Next match',

@@ -319,8 +319,11 @@ pub trait Database: Send + Sync + std::fmt::Debug {
         &self,
         name: &str,
         description: Option<&str>,
+        url: &str,
+        connection_type: &str,
         command: &str,
         args: &[String],
+        headers_json: Option<&str>,
     ) -> Result<String>;
     async fn get_all_mcp_server_configs(&self) -> Result<Vec<McpServerConfig>>;
     async fn get_auto_connect_mcp_servers(&self) -> Result<Vec<McpServerConfig>>;
@@ -333,8 +336,11 @@ pub trait Database: Send + Sync + std::fmt::Debug {
         id: &str,
         name: &str,
         description: Option<&str>,
+        url: &str,
+        connection_type: &str,
         command: &str,
         args: &[String],
+        headers_json: Option<&str>,
         enabled: bool,
     ) -> Result<()>;
     async fn get_rag_config(&self) -> Result<Option<RagConfig>>;

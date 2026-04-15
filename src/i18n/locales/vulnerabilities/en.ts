@@ -9,6 +9,7 @@ export default {
   infoVulnerabilities: 'Informational Vulnerabilities',
   vulnerabilityDetails: 'Vulnerability Details',
   details: 'Details',
+  openWorkbench: 'Open Workbench',
   vulnerabilityName: 'Vulnerability Name',
   vulnerabilityType: 'Vulnerability Type',
   plugin: 'Plugin',
@@ -18,7 +19,7 @@ export default {
     critical: 'Critical',
     high: 'High',
     medium: 'Medium',
-    low: 'Low'
+    low: 'Low',
   },
   allSeverities: 'All Severities',
   noFindings: 'No findings found',
@@ -29,7 +30,7 @@ export default {
     firstPage: 'First',
     lastPage: 'Last',
     jumpPlaceholder: 'Page',
-    jump: 'Go'
+    jump: 'Go',
   },
   cvss: 'CVSS Score',
   cve: 'CVE ID',
@@ -58,7 +59,7 @@ export default {
     inProgress: 'In Progress',
     verified: 'Verified',
     exploitable: 'Exploitable',
-    notExploitable: 'Not Exploitable'
+    notExploitable: 'Not Exploitable',
   },
   form: {
     namePlaceholder: 'Enter vulnerability name',
@@ -71,7 +72,7 @@ export default {
     discoveryDatePlaceholder: 'Select discovery date',
     statusPlaceholder: 'Select status',
     notesPlaceholder: 'Enter additional notes',
-    referencesPlaceholder: 'Enter reference URLs'
+    referencesPlaceholder: 'Enter reference URLs',
   },
   types: {
     sqlInjection: 'SQL Injection',
@@ -91,7 +92,7 @@ export default {
     sessionManagement: 'Session Management Issues',
     informationDisclosure: 'Information Disclosure',
     infoDisclosure: 'Information Disclosure',
-    other: 'Other'
+    other: 'Other',
   },
   notifications: {
     vulnerabilityAdded: 'Vulnerability added successfully',
@@ -102,6 +103,16 @@ export default {
     vulnerabilityMarkedAsExploitable: 'Vulnerability marked as exploitable',
     vulnerabilityMarkedAsNotExploitable: 'Vulnerability marked as not exploitable',
     vulnerabilityExportSuccess: 'Vulnerabilities exported successfully',
-    vulnerabilityExportFailed: 'Failed to export vulnerabilities'
-  }
+    vulnerabilityExportFailed: 'Failed to export vulnerabilities',
+  },
+  transfer: {
+    triggerLabel: 'Send To',
+    sendToRepeater: 'Send to Repeater',
+    sendToIntruder: 'Send to Intruder',
+    noTransferableRequest: 'No raw request is available for this evidence.',
+    noFindingTransferableRequest: 'No raw request is available for this finding.',
+    sentToRepeater: 'Sent to Repeater',
+    sentToIntruder: 'Sent to Intruder',
+    transferFailed: 'Failed to send request: {error}',
+  },
 }

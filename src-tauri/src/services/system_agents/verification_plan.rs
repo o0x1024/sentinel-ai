@@ -7,7 +7,7 @@ pub use crate::services::system_agents::verification_mutation::VerificationParam
 
 const SYSTEM_AGENT_CONTEXT_LOCATION: &str = "system_agent_context";
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationTarget {
     #[serde(default)]
@@ -75,9 +75,9 @@ pub fn normalize_verification_plan(plan: &mut VerificationPlan) {
     if plan.preferred_strategy.trim().is_empty() {
         plan.preferred_strategy = default_strategy();
     }
-    plan.candidate_targets.retain(|target| {
-        !target.location.trim().is_empty() && !target.selector.trim().is_empty()
-    });
+    plan.candidate_targets
+        .retain(|target| !target.location.trim().is_empty() && !target.selector.trim().is_empty());
+    dedupe_candidate_targets(&mut plan.candidate_targets);
 }
 
 pub fn extract_context_output(evidence: &[TrafficEvidenceRecord]) -> Option<Value> {
@@ -176,4 +176,214 @@ pub fn select_fallback_evidence<'a>(
             "system_agent_context" | "system_agent_verification" | "system_agent_feedback"
         ) && item.method != "SYSTEM"
     })
+}
+
+pub fn hydrate_candidate_targets_from_context(
+    plan: &mut VerificationPlan,
+    payload: Option<&Value>,
+) {
+    if !plan.candidate_targets.is_empty() {
+        dedupe_candidate_targets(&mut plan.candidate_targets);
+        return;
+    }
+
+    let Some(payload) = payload else {
+        return;
+    };
+    plan.candidate_targets =
+        infer_candidate_targets_from_context(payload, &plan.candidate_parameters);
+}
+
+pub fn infer_candidate_targets_from_context(
+    payload: &Value,
+    candidate_parameters: &[String],
+) -> Vec<VerificationTarget> {
+    let body_location = infer_body_target_location(payload);
+    let mut targets = Vec::new();
+
+    if candidate_parameters.is_empty()
+        || candidate_parameters
+            .iter()
+            .any(|item| item.eq_ignore_ascii_case("pathSegments"))
+    {
+        if let Some(path_segments) = payload
+            .get("resourceKeys")
+            .and_then(|value| value.get("pathSegments"))
+            .and_then(Value::as_array)
+        {
+            for segment in path_segments.iter().filter_map(Value::as_str) {
+                push_candidate_target(
+                    &mut targets,
+                    VerificationTarget {
+                        location: "pathSegment".to_string(),
+                        selector: segment.to_string(),
+                    },
+                );
+            }
+        }
+    }
+
+    let resource_matches = payload
+        .get("contextExtraction")
+        .and_then(|value| value.get("resourceMatches"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for item in resource_matches {
+        let Some(matched_key) = item.get("matchedKey").and_then(Value::as_str) else {
+            continue;
+        };
+        if !candidate_parameters.is_empty()
+            && !candidate_parameters
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(matched_key))
+        {
+            continue;
+        }
+        let Some(source) = item.get("source").and_then(Value::as_str) else {
+            continue;
+        };
+        let location = match source {
+            "query" => "query",
+            "body" => body_location.as_str(),
+            _ => continue,
+        };
+        push_candidate_target(
+            &mut targets,
+            VerificationTarget {
+                location: location.to_string(),
+                selector: matched_key.to_string(),
+            },
+        );
+    }
+
+    targets
+}
+
+fn infer_body_target_location(payload: &Value) -> String {
+    let Some(raw_body) = payload
+        .get("baselineRequest")
+        .and_then(|value| value.get("requestBody"))
+    else {
+        return "jsonBody".to_string();
+    };
+
+    match raw_body {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                "jsonBody".to_string()
+            } else if serde_json::from_str::<Value>(trimmed).is_ok() {
+                "jsonBody".to_string()
+            } else if trimmed.contains('=') {
+                "formBody".to_string()
+            } else {
+                "jsonBody".to_string()
+            }
+        }
+        Value::Object(_) | Value::Array(_) => "jsonBody".to_string(),
+        _ => "jsonBody".to_string(),
+    }
+}
+
+fn push_candidate_target(targets: &mut Vec<VerificationTarget>, target: VerificationTarget) {
+    if target.location.trim().is_empty() || target.selector.trim().is_empty() {
+        return;
+    }
+    if targets.iter().any(|existing| {
+        existing.location.eq_ignore_ascii_case(&target.location)
+            && existing.selector.eq_ignore_ascii_case(&target.selector)
+    }) {
+        return;
+    }
+    targets.push(target);
+}
+
+fn dedupe_candidate_targets(targets: &mut Vec<VerificationTarget>) {
+    let mut deduped = Vec::with_capacity(targets.len());
+    for target in targets.drain(..) {
+        push_candidate_target(&mut deduped, target);
+    }
+    *targets = deduped;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn infers_explicit_targets_from_context_payload() {
+        let payload = json!({
+            "resourceKeys": {
+                "pathSegments": ["1524234490"],
+                "imageId": "1524234490"
+            },
+            "contextExtraction": {
+                "resourceMatches": [
+                    {
+                        "matchedKey": "imageId",
+                        "source": "query"
+                    },
+                    {
+                        "matchedKey": "pathSegments",
+                        "source": "path"
+                    }
+                ]
+            },
+            "baselineRequest": {
+                "requestBody": null
+            }
+        });
+
+        let targets = infer_candidate_targets_from_context(
+            &payload,
+            &["imageId".to_string(), "pathSegments".to_string()],
+        );
+
+        assert!(targets
+            .iter()
+            .any(|item| { item.location == "query" && item.selector == "imageId" }));
+        assert!(targets
+            .iter()
+            .any(|item| { item.location == "pathSegment" && item.selector == "1524234490" }));
+    }
+
+    #[test]
+    fn hydrates_legacy_plan_without_overwriting_explicit_targets() {
+        let payload = json!({
+            "resourceKeys": {
+                "pathSegments": ["123"]
+            },
+            "contextExtraction": {
+                "resourceMatches": [
+                    {
+                        "matchedKey": "pathSegments",
+                        "source": "path"
+                    }
+                ]
+            },
+            "baselineRequest": {
+                "requestBody": null
+            }
+        });
+
+        let mut plan = VerificationPlan {
+            preferred_strategy: "swap_resource_reference".to_string(),
+            candidate_parameters: vec!["pathSegments".to_string()],
+            ..VerificationPlan::default()
+        };
+        hydrate_candidate_targets_from_context(&mut plan, Some(&payload));
+        assert_eq!(plan.candidate_targets.len(), 1);
+        assert_eq!(plan.candidate_targets[0].location, "pathSegment");
+        assert_eq!(plan.candidate_targets[0].selector, "123");
+
+        let explicit = VerificationTarget {
+            location: "query".to_string(),
+            selector: "imageId".to_string(),
+        };
+        plan.candidate_targets = vec![explicit.clone()];
+        hydrate_candidate_targets_from_context(&mut plan, Some(&payload));
+        assert_eq!(plan.candidate_targets, vec![explicit]);
+    }
 }

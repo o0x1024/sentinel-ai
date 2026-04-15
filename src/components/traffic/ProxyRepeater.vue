@@ -389,7 +389,7 @@
               <!-- Render View -->
               <iframe 
                 v-else-if="currentTab.responseTab === 'render'"
-                :srcdoc="currentTab.response?.body || ''"
+                :srcdoc="currentTab.response?.bodyText || ''"
                 class="w-full h-full border-0 bg-white"
                 sandbox="allow-scripts allow-forms allow-popups allow-modals"
               ></iframe>
@@ -422,14 +422,16 @@ import { useI18n } from 'vue-i18n';
 import { dialog } from '@/composables/useDialog';
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue';
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
+import { buildSourceRequestFromRawRequest } from '@/components/traffic/intruder/http'
+import type { HttpExchangeRequest, HttpHeaderEntry, HttpReplayResponse } from './http/model'
+import { headerEntriesToRecord, serializeHeaderEntries } from './http/headers'
 import {
-  buildSourceRequestFromRawRequest,
-  ensureRawRequestTerminator,
-} from '@/components/traffic/intruder/http'
+  buildHttpReplayResponseFromCommandResult,
+  type RawReplayCommandResult,
+} from './http/response'
 import type {
   TrafficComparePayload,
   TrafficComparerDraftRequestInput,
-  TrafficTransferRequest,
 } from './transfers'
 import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
 import { useTrafficSendTargets } from './trafficSendTargets'
@@ -447,32 +449,29 @@ import {
   canCompareRepeaterRequestVersions,
   canCompareRepeaterResponseVersions,
 } from './trafficRepeaterComparerSupport'
+import {
+  convertRepeaterPrettyRequestToRaw,
+  formatRepeaterPrettyRequest,
+} from './trafficRepeaterPrettyRequestSupport'
 
 const { t } = useI18n();
 const { enabledTargets } = useTrafficSendTargets()
 const emit = defineEmits<{
   (e: 'sendToComparer', payload: TrafficComparePayload): void
   (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
-  (e: 'sendToIntruder', request: TrafficTransferRequest): void
+  (e: 'sendToIntruder', request: HttpExchangeRequest): void
 }>()
+
+interface ReplayCommandResponse<T> {
+  success: boolean
+  data?: T
+  error?: string
+}
 
 // Props
 const props = defineProps<{
-  initialRequest?: {
-    method: string;
-    url: string;
-    headers: Record<string, string>;
-    body?: string;
-  };
+  initialRequest?: HttpExchangeRequest;
 }>();
-
-// Types
-interface ReplayResponse {
-  statusCode: number;
-  headers: Record<string, string>;
-  body: string;
-  responseTimeMs: number;
-}
 
 interface RepeaterTab {
   id: string;
@@ -484,11 +483,12 @@ interface RepeaterTab {
   sniHost: string;
   initialRawRequest: string;
   rawRequest: string;
+  prettyRequest: string;
   previousRawResponse: string;
   rawResponse: string;
   requestTab: 'pretty' | 'raw' | 'hex';
   responseTab: 'pretty' | 'raw' | 'hex' | 'render';
-  response: ReplayResponse | null;
+  response: HttpReplayResponse | null;
   isSending: boolean; // 每个 tab 独立的发送状态
   modified: boolean; // 标记是否有未保存的修改
 }
@@ -641,15 +641,15 @@ const canCompareCurrentRequestVersions = computed(() => canCompareRepeaterReques
 const canCompareCurrentResponseVersions = computed(() => canCompareRepeaterResponseVersions(currentTab.value ?? null));
 
 // Methods
-function createTab(request?: { method: string; url: string; headers: Record<string, string>; body?: string }): RepeaterTab {
+function createTab(request?: HttpExchangeRequest): RepeaterTab {
   let targetHost = '';
   let targetPort = 443;
   let useTls = true;
   let rawRequest = '';
   
-  if (request?.url) {
+  if (request?.absoluteUrl) {
     try {
-      const urlObj = new URL(request.url);
+      const urlObj = new URL(request.absoluteUrl);
       targetHost = urlObj.hostname;
       
       // 安全的端口解析
@@ -662,18 +662,18 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
       
       useTls = urlObj.protocol === 'https:';
       
-      const path = urlObj.pathname + urlObj.search;
-      rawRequest = `${request.method || 'GET'} ${path} HTTP/1.1\r\n`;
-      rawRequest += `Host: ${urlObj.hostname}\r\n`;
+      const path = request.request.target || (urlObj.pathname + urlObj.search);
+      rawRequest = `${request.request.method || 'GET'} ${path} ${request.request.versionPreference === 'AUTO' ? 'HTTP/1.1' : request.request.versionPreference}\r\n`;
+      rawRequest += `Host: ${urlObj.host}\r\n`;
       
-      for (const [key, value] of Object.entries(request.headers || {})) {
-        if (key.toLowerCase() !== 'host') {
-          rawRequest += `${key}: ${value}\r\n`;
+      for (const header of request.request.headers || []) {
+        if (header.name.toLowerCase() !== 'host') {
+          rawRequest += `${header.name}: ${header.value}\r\n`;
         }
       }
       rawRequest += '\r\n';
-      if (request.body) {
-        rawRequest += request.body;
+      if (request.request.bodyText) {
+        rawRequest += request.request.bodyText;
       }
     } catch (error) {
       console.error('Failed to parse URL:', error);
@@ -684,6 +684,8 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
     rawRequest = 'GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Sentinel-AI/1.0\r\nAccept: */*\r\n\r\n';
   }
   
+  const prettyRequest = formatRepeaterPrettyRequest(rawRequest)
+
   return {
     id: generateRepeaterId(),
     name: targetHost || `Request ${tabs.value.length + 1}`,
@@ -694,6 +696,7 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
     sniHost: '',
     initialRawRequest: rawRequest,
     rawRequest,
+    prettyRequest,
     previousRawResponse: '',
     rawResponse: '',
     requestTab: getDefaultTrafficMessageViewTab(),
@@ -801,13 +804,21 @@ async function sendRequest() {
   const tabId = tab.id;
   
   try {
-    const rawRequest = ensureRawRequestTerminator(tab.rawRequest);
-    
-    const response = await invoke<any>('replay_raw_request', {
+    const exchangeRequest = buildSourceRequestFromRawRequest(tab.rawRequest, {
       host: tab.targetHost,
       port: tab.targetPort || 443,
       useTls: tab.useTls,
-      rawRequest: rawRequest,
+    })
+    if (!exchangeRequest) {
+      throw new Error('Invalid request')
+    }
+    if (tab.overrideSni && tab.sniHost.trim()) {
+      exchangeRequest.endpoint.sniHost = tab.sniHost.trim()
+    }
+    
+    const response = await invoke<ReplayCommandResponse<RawReplayCommandResult>>('replay_raw_request', {
+      endpoint: exchangeRequest.endpoint,
+      request: exchangeRequest.request,
       timeoutSecs: 30,
     });
     
@@ -820,10 +831,11 @@ async function sendRequest() {
     
     if (response.success && response.data) {
       targetTab.previousRawResponse = targetTab.rawResponse;
-      targetTab.rawResponse = response.data.raw_response;
+      const replayResponse = buildHttpReplayResponseFromCommandResult(response.data)
+      targetTab.rawResponse = replayResponse.rawText;
       
       // 检查响应体大小
-      const responseSize = response.data.raw_response?.length || 0;
+      const responseSize = replayResponse.rawText.length;
       const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB
       if (responseSize > MAX_RESPONSE_SIZE) {
         dialog.toast.warning(t('trafficAnalysis.repeater.messages.largeResponse', { 
@@ -832,10 +844,7 @@ async function sendRequest() {
       }
       
       // 解析响应
-      const parsedResponse = parseRawResponse(response.data.raw_response, response.data.response_time_ms);
-      if (parsedResponse) {
-        targetTab.response = parsedResponse;
-      }
+      targetTab.response = replayResponse;
       
       targetTab.name = targetTab.targetHost;
       targetTab.modified = false;
@@ -861,58 +870,6 @@ async function sendRequest() {
   }
 }
 
-// 解析原始响应
-function parseRawResponse(rawResp: string, responseTimeMs: number): ReplayResponse | null {
-  if (!rawResp) return null;
-  
-  // 支持多种分隔符
-  let headerEnd = rawResp.indexOf('\r\n\r\n');
-  let separatorLen = 4;
-  
-  if (headerEnd === -1) {
-    headerEnd = rawResp.indexOf('\n\n');
-    separatorLen = 2;
-  }
-  
-  if (headerEnd === -1) {
-    headerEnd = rawResp.indexOf('\r\r');
-    separatorLen = 2;
-  }
-  
-  if (headerEnd === -1) {
-    // 没有找到分隔符，可能是纯头部
-    return null;
-  }
-  
-  const headerPart = rawResp.substring(0, headerEnd);
-  const bodyPart = rawResp.substring(headerEnd + separatorLen);
-  
-  // 解析状态行
-  const lines = headerPart.split(/\r\n|\r|\n/);
-  const statusLine = lines[0];
-  const statusMatch = statusLine.match(/HTTP\/[\d.]+\s+(\d+)/);
-  const statusCode = statusMatch ? parseInt(statusMatch[1]) : 0;
-  
-  // 解析响应头
-  const headers: Record<string, string> = {};
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    const colonIndex = line.indexOf(':');
-    if (colonIndex > 0) {
-      const key = line.substring(0, colonIndex).trim();
-      const value = line.substring(colonIndex + 1).trim();
-      headers[key] = value;
-    }
-  }
-  
-  return {
-    statusCode,
-    headers,
-    body: bodyPart,
-    responseTimeMs,
-  };
-}
-
 // 解析错误信息
 function parseErrorMessage(error: any): string {
   if (!error) return t('trafficAnalysis.repeater.messages.unknownError');
@@ -935,78 +892,14 @@ function parseErrorMessage(error: any): string {
 }
 
 function formatPrettyRequest(): string {
-  if (!currentTab.value?.rawRequest) return '';
-  
-  const raw = currentTab.value.rawRequest;
-  
-  // 查找 header 和 body 的分隔位置（支持 \r\n\r\n 和 \n\n）
-  let headerBodySplit = raw.indexOf('\r\n\r\n');
-  let separatorLen = 4;
-  
-  if (headerBodySplit === -1) {
-    headerBodySplit = raw.indexOf('\n\n');
-    separatorLen = 2;
-  }
-  
-  if (headerBodySplit === -1) {
-    // 没有 body，直接返回
-    return raw.replace(/\r\n/g, '\n');
-  }
-  
-  const headerPart = raw.substring(0, headerBodySplit);
-  const bodyPart = raw.substring(headerBodySplit + separatorLen);
-  
-  let result = headerPart.replace(/\r\n/g, '\n') + '\n\n';
-  
-  if (bodyPart && bodyPart.trim()) {
-    // 尝试格式化 JSON body
-    try {
-      const json = JSON.parse(bodyPart.trim());
-      result += JSON.stringify(json, null, 2);
-    } catch {
-      result += bodyPart;
-    }
-  }
-  
-  return result;
+  return currentTab.value?.prettyRequest || ''
 }
 
 function onPrettyRequestUpdate(value: string) {
   if (!currentTab.value) return;
-  
-  // 将格式化的内容转换回原始格式
-  const lines = value.split('\n');
-  let headerEnd = -1;
-  
-  // 查找空行分隔 headers 和 body
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === '') {
-      headerEnd = i;
-      break;
-    }
-  }
-  
-  if (headerEnd === -1) {
-    // 没有 body
-    currentTab.value.rawRequest = value.replace(/\n/g, '\r\n');
-    autoDetectHostFromRequest(value);
-    currentTab.value.modified = true;
-    return;
-  }
-  
-  const headerPart = lines.slice(0, headerEnd).join('\r\n');
-  const bodyPart = lines.slice(headerEnd + 1).join('\n').trim();
-  
-  // 尝试压缩 JSON body（如果是 JSON 的话）
-  let finalBody = bodyPart;
-  try {
-    const json = JSON.parse(bodyPart);
-    finalBody = JSON.stringify(json);
-  } catch {
-    finalBody = bodyPart;
-  }
-  
-  currentTab.value.rawRequest = headerPart + '\r\n\r\n' + finalBody;
+
+  currentTab.value.prettyRequest = value
+  currentTab.value.rawRequest = convertRepeaterPrettyRequestToRaw(value)
   autoDetectHostFromRequest(value);
   currentTab.value.modified = true;
 }
@@ -1015,23 +908,24 @@ function formatPrettyResponse(): string {
   if (!currentTab.value?.response) return '';
   
   const resp = currentTab.value.response;
-  let result = `HTTP/1.1 ${resp.statusCode} OK\r\n`;
+  const responseHeaders = headerEntriesToRecord(resp.headers)
+  let result = `${resp.versionObserved || 'HTTP/1.1'} ${resp.statusCode} ${resp.statusText || ''}`.trimEnd() + '\r\n';
   
-  for (const [key, value] of Object.entries(resp.headers)) {
-    result += `${key}: ${value}\r\n`;
+  for (const header of resp.headers) {
+    result += `${header.name}: ${header.value}\r\n`;
   }
   result += '\r\n';
   
-  const contentType = resp.headers['content-type'] || resp.headers['Content-Type'] || '';
+  const contentType = responseHeaders['content-type'] || responseHeaders['Content-Type'] || '';
   if (contentType.includes('json')) {
     try {
-      const json = JSON.parse(resp.body);
+      const json = JSON.parse(resp.bodyText);
       result += JSON.stringify(json, null, 2);
     } catch {
-      result += resp.body;
+      result += resp.bodyText;
     }
   } else {
-    result += resp.body;
+    result += resp.bodyText;
   }
   
   return result;
@@ -1143,6 +1037,7 @@ function contextMenuSendToNewTab() {
   newTab.useTls = currentTab.value.useTls;
   newTab.initialRawRequest = currentTab.value.rawRequest;
   newTab.rawRequest = currentTab.value.rawRequest;
+  newTab.prettyRequest = currentTab.value.prettyRequest;
   tabs.value.push(newTab);
   activeTabIndex.value = tabs.value.length - 1;
 }
@@ -1157,7 +1052,7 @@ function contextMenuCopyUrl() {
   }
 }
 
-function buildCurrentRequestTransfer(): TrafficTransferRequest | null {
+function buildCurrentRequestTransfer(): HttpExchangeRequest | null {
   if (!currentTab.value) return null
 
   return buildSourceRequestFromRawRequest(currentTab.value.rawRequest, {
@@ -1291,7 +1186,7 @@ async function sendRequestToAssistant() {
   const path = methodMatch ? methodMatch[2] : '/';
   
   // 解析请求头
-  const requestHeaders: Record<string, string> = {};
+  const requestHeaders: HttpHeaderEntry[] = [];
   let inBody = false;
   const bodyLines: string[] = [];
   
@@ -1304,9 +1199,10 @@ async function sendRequestToAssistant() {
     if (!inBody) {
       const colonIndex = line.indexOf(':');
       if (colonIndex > 0) {
-        const key = line.substring(0, colonIndex).trim();
-        const value = line.substring(colonIndex + 1).trim();
-        requestHeaders[key] = value;
+        requestHeaders.push({
+          name: line.substring(0, colonIndex).trim(),
+          value: line.substring(colonIndex + 1).trim(),
+        });
       }
     } else {
       bodyLines.push(line);
@@ -1323,10 +1219,10 @@ async function sendRequestToAssistant() {
     method,
     host: currentTab.value.targetHost,
     status_code: currentTab.value.response?.statusCode || 0,
-    request_headers: JSON.stringify(requestHeaders),
+    request_headers: serializeHeaderEntries(requestHeaders),
     request_body: requestBody || undefined,
-    response_headers: currentTab.value.response ? JSON.stringify(currentTab.value.response.headers) : undefined,
-    response_body: currentTab.value.response?.body || undefined,
+    response_headers: currentTab.value.response ? serializeHeaderEntries(currentTab.value.response.headers) : undefined,
+    response_body: currentTab.value.response?.bodyText || undefined,
   };
   
   // 发送全局事件
@@ -1463,6 +1359,7 @@ function loadTabs() {
     tabs.value = tabsData.map(data => ({
       ...data,
       initialRawRequest: data.initialRawRequest || data.rawRequest,
+      prettyRequest: formatRepeaterPrettyRequest(data.rawRequest),
       previousRawResponse: '',
       rawResponse: '',
       response: null,
@@ -1572,7 +1469,7 @@ function stopResize() {
 }
 
 // Expose
-function addRequestFromHistory(request: { method: string; url: string; headers: Record<string, string>; body?: string }) {
+function addRequestFromHistory(request: HttpExchangeRequest) {
   // 限制标签页数量
   if (tabs.value.length >= MAX_TABS) {
     dialog.toast.warning(t('trafficAnalysis.repeater.messages.tooManyTabs', { max: MAX_TABS }));
@@ -1622,6 +1519,10 @@ watch(tabs, () => {
 // 监听 rawRequest 变化，自动检测 Host（使用防抖避免频繁触发）
 watch(() => currentTab.value?.rawRequest, (newRequest, oldRequest) => {
   if (newRequest && currentTab.value && newRequest !== oldRequest) {
+    if (currentTab.value.requestTab !== 'pretty') {
+      currentTab.value.prettyRequest = formatRepeaterPrettyRequest(newRequest)
+    }
+
     // 清除之前的定时器
     if (hostDetectionTimer !== null) {
       clearTimeout(hostDetectionTimer);

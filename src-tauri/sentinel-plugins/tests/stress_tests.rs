@@ -112,6 +112,7 @@ fn create_test_transaction(size_kb: usize) -> HttpTransaction {
             id: uuid::Uuid::new_v4().to_string(),
             method: "POST".to_string(),
             url: "https://example.com/api/test".to_string(),
+            http_version: Some("HTTP/1.1".to_string()),
             headers: HashMap::from([
                 ("Content-Type".to_string(), "application/json".to_string()),
                 ("User-Agent".to_string(), "StressTest/1.0".to_string()),
@@ -130,6 +131,7 @@ fn create_test_transaction(size_kb: usize) -> HttpTransaction {
         response: Some(ResponseContext {
             request_id: uuid::Uuid::new_v4().to_string(),
             status: 200,
+            http_version: Some("HTTP/1.1".to_string()),
             headers: HashMap::from([("Content-Type".to_string(), "application/json".to_string())]),
             body,
             content_type: Some("application/json".to_string()),

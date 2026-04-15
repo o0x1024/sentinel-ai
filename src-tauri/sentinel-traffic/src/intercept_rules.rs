@@ -251,6 +251,7 @@ mod tests {
             id: "req-1".to_string(),
             method: "GET".to_string(),
             url: "https://example.com/api/orders?id=1".to_string(),
+            http_version: Some("HTTP/1.1".to_string()),
             headers: HashMap::from([("host".to_string(), "example.com".to_string())]),
             body: Vec::new(),
             content_type: None,
@@ -269,6 +270,7 @@ mod tests {
         ResponseContext {
             request_id: "req-1".to_string(),
             status: 200,
+            http_version: Some("HTTP/1.1".to_string()),
             headers: HashMap::from([("content-type".to_string(), "text/html".to_string())]),
             body: b"<html>ok</html>".to_vec(),
             content_type: Some("text/html".to_string()),

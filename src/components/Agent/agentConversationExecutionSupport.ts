@@ -5,6 +5,7 @@ import type {
   ReferencedFile,
   ReferencedTraffic,
 } from '@/types/agentReferences'
+import { useTerminal } from '@/composables/useTerminal'
 
 export const takeOverConversationExecution = async (params: {
   appendPartialAssistantMessage: (message: {
@@ -114,6 +115,8 @@ export const executeConversationTask = async (params: {
       attachments?: unknown[]
       conversation_id: string
       context_mode: 'claude-like' | 'codex-like'
+      current_terminal_session_fingerprint?: string
+      current_terminal_session_id?: string
       display_content?: string
       document_attachments?: ProcessedDocumentResult[]
       enable_rag: boolean
@@ -138,6 +141,11 @@ export const executeConversationTask = async (params: {
   usedMessages: ReferencedConversationMessage[]
   usedTraffic: ReferencedTraffic[]
 }): Promise<any> => {
+  const terminal = useTerminal()
+  const currentTerminalSessionId = terminal.currentSessionId.value?.trim() || undefined
+  const currentTerminalSessionFingerprint =
+    terminal.currentSessionFingerprint.value?.trim() || undefined
+
   params.maybeAutoRenameConversation({
     convId: params.conversationId,
     currentConversationId: params.conversationId,
@@ -153,6 +161,8 @@ export const executeConversationTask = async (params: {
       attachments: params.usedAttachments.length > 0 ? params.usedAttachments : undefined,
       conversation_id: params.conversationId,
       context_mode: params.assistantContextMode,
+      current_terminal_session_fingerprint: currentTerminalSessionFingerprint,
+      current_terminal_session_id: currentTerminalSessionId,
       display_content: params.displayContent,
       document_attachments: params.usedDocuments.length > 0 ? params.usedDocuments : undefined,
       enable_rag: params.enableRag,

@@ -103,7 +103,8 @@ const toggleExpand = (index: number) => {
 }
 
 const isShellCall = (call: ToolCall) => {
-  return call.name?.toLowerCase?.() === 'shell'
+  const name = call.name?.toLowerCase?.()
+  return name === 'shell' || name === 'bash' || name === 'cmd' || name === 'powershell'
 }
 
 const isAskUserQuestionCall = (call: ToolCall) => {

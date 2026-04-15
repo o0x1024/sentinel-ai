@@ -26,10 +26,13 @@ export const formatToolIds = (items: string[] | null | undefined) =>
 
 const normalizeToolIds = (items: string[] | null | undefined) => parseToolIds((items || []).join('\n'))
 
-const parseToolSelectionStrategy = (strategy: unknown) => {
+const parseToolSelectionStrategy = (
+  strategy: unknown,
+  fallbackManualTools: string[] = [],
+) => {
   if (typeof strategy === 'string') {
     return {
-      manualTools: [] as string[],
+      manualTools: strategy === 'Manual' ? normalizeToolIds(fallbackManualTools) : [] as string[],
       strategy,
     }
   }
@@ -58,7 +61,10 @@ export const applyToolConfigToProfile = (
   profile: AssistantProfileOption,
   config: UiToolConfigPayload,
 ) => {
-  const parsedStrategy = parseToolSelectionStrategy(config.selection_strategy)
+  const parsedStrategy = parseToolSelectionStrategy(
+    config.selection_strategy,
+    normalizeToolIds(config.manual_tools),
+  )
   profile.defaultToolsEnabled = config.enabled === true
   profile.defaultToolSelectionStrategy = parsedStrategy.strategy
   profile.defaultMaxTools = Math.max(1, Math.floor(Number(config.max_tools) || 1))

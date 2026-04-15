@@ -4,6 +4,12 @@ import { javascript, json } from '@codemirror/legacy-modes/mode/javascript'
 import { html, xml } from '@codemirror/legacy-modes/mode/xml'
 import { tags as t } from '@lezer/highlight'
 import type { Extension } from '@codemirror/state'
+import {
+  createCookieHeaderTokenizerState,
+  getCookieHeaderValueMode,
+  tokenizeCookieHeaderValue,
+  type CookieHeaderTokenizerState,
+} from './httpEditorCookieHighlight'
 import { detectHttpBodyLanguage, parseHttpMessageDocument } from './httpDocument'
 
 type BodyModeKey = 'none' | 'html' | 'xml' | 'json' | 'css' | 'javascript'
@@ -15,6 +21,7 @@ type BurpHttpState = {
   bodyState: unknown
   headerNameToken: string
   headerValueToken: string
+  cookieTokenizer: CookieHeaderTokenizerState
 }
 
 const BURP_HTTP_TOKEN_TABLE = {
@@ -45,13 +52,19 @@ const BURP_HTTP_TOKEN_TABLE = {
   'http-status-server-error': [t.number, t.invalid, t.strong],
   'http-status-text': t.name,
   'http-header-name': t.attributeName,
-  'http-header-name-important': [t.attributeName, t.strong],
-  'http-header-name-meta': [t.attributeName, t.meta],
-  'http-header-name-sensitive': [t.attributeName, t.invalid],
+  'http-header-name-important': t.attributeName,
+  'http-header-name-meta': t.attributeName,
+  'http-header-name-sensitive': t.attributeName,
   'http-header-value': t.string,
-  'http-header-value-important': [t.string, t.strong],
-  'http-header-value-meta': [t.string, t.meta],
-  'http-header-value-sensitive': [t.string, t.invalid],
+  'http-header-value-important': t.string,
+  'http-header-value-meta': t.string,
+  'http-header-value-sensitive': t.string,
+  'http-cookie-name': t.special(t.attributeName),
+  'http-cookie-attribute': t.special(t.attributeName),
+  'http-cookie-attribute-value': t.string,
+  'http-cookie-value-sensitive': t.string,
+  'http-cookie-flag': t.special(t.attributeName),
+  'http-cookie-separator': t.punctuation,
 } as const
 
 const IMPORTANT_HEADERS = new Set([
@@ -113,20 +126,25 @@ const cloneLegacyState = (value: unknown) => {
   return value
 }
 
+const withBurpTokenTable = (mode: LegacyMode): LegacyMode => ({
+  ...mode,
+  tokenTable: BURP_HTTP_TOKEN_TABLE,
+})
+
 const detectBodyMode = (content: string): { key: BodyModeKey; mode: LegacyMode | null } => {
   const parsed = parseHttpMessageDocument(content)
 
   switch (detectHttpBodyLanguage(parsed.body, parsed.contentType)) {
     case 'html':
-      return { key: 'html', mode: html as LegacyMode }
+      return { key: 'html', mode: withBurpTokenTable(html as LegacyMode) }
     case 'xml':
-      return { key: 'xml', mode: xml as LegacyMode }
+      return { key: 'xml', mode: withBurpTokenTable(xml as LegacyMode) }
     case 'json':
-      return { key: 'json', mode: json as LegacyMode }
+      return { key: 'json', mode: withBurpTokenTable(json as LegacyMode) }
     case 'css':
-      return { key: 'css', mode: css as LegacyMode }
+      return { key: 'css', mode: withBurpTokenTable(css as LegacyMode) }
     case 'javascript':
-      return { key: 'javascript', mode: javascript as LegacyMode }
+      return { key: 'javascript', mode: withBurpTokenTable(javascript as LegacyMode) }
     default:
       return { key: 'none', mode: null }
   }
@@ -142,6 +160,7 @@ const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
       bodyState: bodyMode?.startState ? bodyMode.startState() : null,
       headerNameToken: 'http-header-name',
       headerValueToken: 'http-header-value',
+      cookieTokenizer: createCookieHeaderTokenizerState('none'),
     }
   },
   copyState(state: unknown): BurpHttpState {
@@ -152,6 +171,7 @@ const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
       bodyState: bodyMode?.copyState ? bodyMode.copyState(current.bodyState) : cloneLegacyState(current.bodyState),
       headerNameToken: current.headerNameToken,
       headerValueToken: current.headerValueToken,
+      cookieTokenizer: { ...current.cookieTokenizer },
     }
   },
   blankLine(state: unknown) {
@@ -161,6 +181,7 @@ const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
     }
     current.inBody = true
     current.phase = 'body'
+    current.cookieTokenizer = createCookieHeaderTokenizerState('none')
     return bodyMode?.blankLine ? bodyMode.blankLine(current.bodyState) : null
   },
   token(stream, state: unknown) {
@@ -235,6 +256,7 @@ const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
             const headerName = stream.current()
             current.headerNameToken = getHeaderNameToken(headerName)
             current.headerValueToken = getHeaderValueToken(headerName)
+            current.cookieTokenizer = createCookieHeaderTokenizerState(getCookieHeaderValueMode(headerName))
             current.phase = 'headerColon'
             return current.headerNameToken
           }
@@ -252,6 +274,14 @@ const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
         return null
       case 'headerValue':
         if (stream.eatSpace()) return null
+        if (current.cookieTokenizer.mode !== 'none') {
+          const token = tokenizeCookieHeaderValue(stream, current.cookieTokenizer)
+          if (stream.eol()) {
+            current.phase = 'header'
+            current.cookieTokenizer = createCookieHeaderTokenizerState('none')
+          }
+          return token
+        }
         stream.skipToEnd()
         current.phase = 'header'
         return current.headerValueToken

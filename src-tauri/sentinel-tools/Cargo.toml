@@ -8,27 +8,33 @@ name = "sentinel_tools"
 path = "src/lib.rs"
 
 [features]
-default = ["db-sqlite"]
+default = ["db-sqlite", "plugins", "ocr"]
+db = ["dep:sentinel-db"]
+plugins = ["dep:sentinel-plugins"]
+ocr = ["dep:oar-ocr"]
 db-sqlite = [
+    "db",
     "sentinel-core/db-sqlite",
-    "sentinel-db/db-sqlite",
-    "sentinel-plugins/db-sqlite",
+    "sentinel-db?/db-sqlite",
+    "sentinel-plugins?/db-sqlite",
 ]
 db-postgres = [
+    "db",
     "sentinel-core/db-postgres",
-    "sentinel-db/db-postgres",
-    "sentinel-plugins/db-postgres",
+    "sentinel-db?/db-postgres",
+    "sentinel-plugins?/db-postgres",
 ]
 db-mysql = [
+    "db",
     "sentinel-core/db-mysql",
-    "sentinel-db/db-mysql",
-    "sentinel-plugins/db-mysql",
+    "sentinel-db?/db-mysql",
+    "sentinel-plugins?/db-mysql",
 ]
 
 [dependencies]
 sentinel-core = { path = "../sentinel-core", default-features = false }
-sentinel-db = { path = "../sentinel-db", default-features = false }
-sentinel-plugins = { path = "../sentinel-plugins", default-features = false }
+sentinel-db = { path = "../sentinel-db", default-features = false, optional = true }
+sentinel-plugins = { path = "../sentinel-plugins", default-features = false, optional = true }
 anyhow = "1.0"
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
@@ -60,7 +66,7 @@ rig-core = { workspace = true }
 schemars = "1.1.0"
 rsubdomain = "1.2.9"
 jsonschema = "0.17.1"
-oar-ocr = "0.5.0"
+oar-ocr = { version = "0.5.0", optional = true }
 
 # Code Property Graph (CPG) engine - tree-sitter parsers
 tree-sitter = "0.24"

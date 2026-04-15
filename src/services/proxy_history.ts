@@ -9,7 +9,8 @@ export interface HttpRequestRecord {
     id: number;
     url: string;
     host: string;
-    protocol: string;
+    scheme: string;
+    http_version_observed?: string;
     method: string;
     status_code: number;
     request_headers?: string;
@@ -85,7 +86,7 @@ interface ApiResponse<T> {
 export async function listHttpRequests(options?: {
     limit?: number;
     offset?: number;
-    protocol?: string;
+    scheme?: string;
     method?: string;
     host?: string;
     statusCodeMin?: number;
@@ -94,7 +95,7 @@ export async function listHttpRequests(options?: {
     const response = await invoke<ApiResponse<HttpRequestRecord[]>>('list_proxy_requests', {
         limit: options?.limit ?? 100,
         offset: options?.offset ?? 0,
-        protocol: options?.protocol,
+        scheme: options?.scheme,
         method: options?.method,
         host: options?.host,
         statusCodeMin: options?.statusCodeMin,

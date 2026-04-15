@@ -2,7 +2,8 @@ export interface ProxyRequest {
   id: number
   url: string
   host: string
-  protocol: string
+  scheme: string
+  http_version_observed?: string
   method: string
   status_code: number
   request_headers?: string

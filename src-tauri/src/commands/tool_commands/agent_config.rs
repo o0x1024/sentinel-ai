@@ -493,7 +493,7 @@ pub async fn load_shell_config_from_db(db: &sentinel_db::DatabaseService) -> She
 }
 
 /// Save shell config to database
-async fn save_shell_config_to_db(
+pub(crate) async fn save_shell_config_to_db(
     config: &ShellConfig,
     db: &sentinel_db::DatabaseService,
 ) -> Result<(), String> {

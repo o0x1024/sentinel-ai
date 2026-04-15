@@ -10,6 +10,7 @@ use crate::database_service::surface_migrations::SurfaceGraphMigration;
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1060,6 +1061,24 @@ impl DatabaseService {
                 first_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS proxy_requests (
+                id INTEGER PRIMARY KEY,
+                url TEXT NOT NULL,
+                host TEXT NOT NULL,
+                scheme TEXT NOT NULL DEFAULT 'http',
+                http_version_observed TEXT,
+                method TEXT NOT NULL,
+                status_code INTEGER NOT NULL,
+                request_headers TEXT,
+                request_body TEXT,
+                response_headers TEXT,
+                response_body TEXT,
+                response_size INTEGER NOT NULL DEFAULT 0,
+                response_time INTEGER NOT NULL DEFAULT 0,
+                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                request_body_compressed BOOLEAN NOT NULL DEFAULT FALSE,
+                response_body_compressed BOOLEAN NOT NULL DEFAULT FALSE
+            )"#,
             r#"CREATE TABLE IF NOT EXISTS mcp_server_configs (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -1068,6 +1087,7 @@ impl DatabaseService {
                 connection_type TEXT NOT NULL,
                 command TEXT NOT NULL,
                 args TEXT NOT NULL,
+                headers_json TEXT,
                 is_enabled BOOLEAN DEFAULT TRUE,
                 auto_connect BOOLEAN DEFAULT FALSE,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1317,9 +1337,16 @@ impl DatabaseService {
         .ok();
         self.execute_runtime_ddl(
             runtime,
+            "ALTER TABLE mcp_server_configs ADD COLUMN headers_json TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
             "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_vuln_id ON traffic_evidence(vuln_id)",
         )
         .await?;
+        self.ensure_runtime_proxy_request_schema(runtime).await?;
         self.execute_runtime_ddl(
             runtime,
             "CREATE INDEX IF NOT EXISTS idx_system_agent_profiles_mode_enabled ON system_agent_profiles(mode, enabled)",
@@ -1348,6 +1375,122 @@ impl DatabaseService {
         SurfaceGraphMigration::apply_runtime(runtime).await?;
 
         Ok(())
+    }
+
+    async fn ensure_runtime_proxy_request_schema(&self, runtime: &DatabasePool) -> Result<()> {
+        let existing_columns = self
+            .runtime_table_columns(runtime, "proxy_requests")
+            .await?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if existing_columns.is_empty() {
+            return Ok(());
+        }
+
+        let required_columns = [
+            (
+                "scheme",
+                "ALTER TABLE proxy_requests ADD COLUMN scheme TEXT NOT NULL DEFAULT 'http'",
+            ),
+            (
+                "http_version_observed",
+                "ALTER TABLE proxy_requests ADD COLUMN http_version_observed TEXT",
+            ),
+            (
+                "request_body_compressed",
+                "ALTER TABLE proxy_requests ADD COLUMN request_body_compressed BOOLEAN NOT NULL DEFAULT FALSE",
+            ),
+            (
+                "response_body_compressed",
+                "ALTER TABLE proxy_requests ADD COLUMN response_body_compressed BOOLEAN NOT NULL DEFAULT FALSE",
+            ),
+        ];
+        for (column, ddl) in required_columns {
+            if existing_columns.contains(column) {
+                continue;
+            }
+            self.execute_runtime_ddl(runtime, ddl).await?;
+        }
+
+        if existing_columns.contains("protocol") {
+            self.execute_runtime_ddl(
+                runtime,
+                "UPDATE proxy_requests SET scheme = LOWER(protocol) WHERE (scheme IS NULL OR scheme = '') AND protocol IS NOT NULL",
+            )
+            .await?;
+        }
+
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_host ON proxy_requests(host)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_timestamp ON proxy_requests(timestamp DESC)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_scheme ON proxy_requests(scheme)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)",
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn runtime_table_columns(
+        &self,
+        runtime: &DatabasePool,
+        table_name: &str,
+    ) -> Result<Vec<String>> {
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let pragma = format!("PRAGMA table_info({table_name})");
+                let rows = sqlx::query(&pragma).fetch_all(pool).await?;
+                Ok(rows
+                    .into_iter()
+                    .filter_map(|row| row.try_get::<String, _>("name").ok())
+                    .collect())
+            }
+            DatabasePool::MySQL(pool) => {
+                let rows = sqlx::query(
+                    r#"
+                    SELECT COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+                    "#,
+                )
+                .bind(table_name)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows
+                    .into_iter()
+                    .filter_map(|row| row.try_get::<String, _>("COLUMN_NAME").ok())
+                    .collect())
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let rows = sqlx::query(
+                    r#"
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = $1
+                    "#,
+                )
+                .bind(table_name)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows
+                    .into_iter()
+                    .filter_map(|row| row.try_get::<String, _>("column_name").ok())
+                    .collect())
+            }
+        }
     }
 
     async fn ensure_runtime_default_data(&self) -> Result<()> {

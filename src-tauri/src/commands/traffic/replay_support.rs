@@ -1,12 +1,24 @@
+use bytes::Bytes;
 use flate2::read::{DeflateDecoder, GzDecoder};
+use http::{uri::Authority, Request, Uri, Version};
+use http_body_util::{BodyExt, Full};
+use hyper::body::Incoming;
+use hyper::client::conn::http2;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     Method, StatusCode,
 };
+use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector as RustlsTlsConnector;
 use url::Url;
 
 const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
@@ -25,18 +37,47 @@ pub struct RawReplayResult {
     pub response_time_ms: u64,
     pub final_url: String,
     pub redirect_chain: Vec<RawReplayRedirectHop>,
+    pub status_code: u16,
+    pub version_observed: Option<String>,
+    pub status_text: String,
+    pub headers: Vec<ReplayHeaderInput>,
+    pub body_text: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct RawReplayConfig {
-    pub host: String,
-    pub port: u16,
-    pub use_tls: bool,
-    pub raw_request: String,
+    pub endpoint: ReplayEndpointInput,
+    pub request: ReplayRequestInput,
     pub timeout_secs: Option<u64>,
     pub follow_redirects: bool,
     pub max_redirects: usize,
     pub process_cookies_in_redirects: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayHeaderInput {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayEndpointInput {
+    pub scheme: String,
+    pub host: String,
+    pub port: u16,
+    pub sni_host: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayRequestInput {
+    pub method: String,
+    pub target: String,
+    pub version_preference: String,
+    pub headers: Vec<ReplayHeaderInput>,
+    pub body_text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -50,7 +91,11 @@ struct ParsedRawRequest {
 
 #[derive(Debug, Clone)]
 struct ParsedRawResponse {
+    protocol: Option<String>,
     status_code: u16,
+    status_text: String,
+    headers: Vec<(String, String)>,
+    body_text: String,
     location: Option<String>,
     set_cookie_headers: Vec<String>,
 }
@@ -65,20 +110,142 @@ struct RedirectCookie {
     host_only: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ReplayTransportContext {
+    connect_host: String,
+    connect_port: u16,
+    request_scheme: String,
+    request_authority: String,
+    tls_server_name: String,
+}
+
+#[derive(Debug)]
+struct InsecureReplayServerCertVerifier;
+
+enum ReplayHttp2Stream {
+    Plain(TcpStream),
+    Tls(tokio_rustls::client::TlsStream<TcpStream>),
+}
+
+impl ServerCertVerifier for InsecureReplayServerCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+        ]
+    }
+}
+
+impl AsyncRead for ReplayHttp2Stream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ReplayHttp2Stream::Plain(stream) => Pin::new(stream).poll_read(cx, buf),
+            ReplayHttp2Stream::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for ReplayHttp2Stream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            ReplayHttp2Stream::Plain(stream) => Pin::new(stream).poll_write(cx, buf),
+            ReplayHttp2Stream::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ReplayHttp2Stream::Plain(stream) => Pin::new(stream).poll_flush(cx),
+            ReplayHttp2Stream::Tls(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ReplayHttp2Stream::Plain(stream) => Pin::new(stream).poll_shutdown(cx),
+            ReplayHttp2Stream::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            ReplayHttp2Stream::Plain(stream) => stream.is_write_vectored(),
+            ReplayHttp2Stream::Tls(stream) => stream.is_write_vectored(),
+        }
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            ReplayHttp2Stream::Plain(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
+            ReplayHttp2Stream::Tls(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
+        }
+    }
+}
+
 pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResult, String> {
     let timeout = std::time::Duration::from_secs(config.timeout_secs.unwrap_or(30));
     let start = std::time::Instant::now();
 
-    let mut current_request = parse_raw_request(&config.raw_request)?;
+    let mut current_request = build_parsed_request(&config.request)?;
     let mut current_url = build_request_url(
         &current_request.target,
-        &config.host,
-        config.port,
-        config.use_tls,
+        &config.endpoint.host,
+        config.endpoint.port,
+        config.endpoint.scheme.eq_ignore_ascii_case("https"),
     )?;
     let mut cookie_jar = build_initial_cookie_jar(&current_request, &current_url);
     let mut redirect_chain = Vec::new();
     let mut last_raw_response = String::new();
+    let mut last_response_head: Option<ParsedRawResponse> = None;
 
     for redirect_index in 0..=config.max_redirects {
         let elapsed = start.elapsed();
@@ -87,24 +254,21 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
             return Err("Total timeout exceeded".to_string());
         }
 
-        let raw_response = if is_http2_protocol(&current_request.protocol) {
-            execute_single_http2_request(&current_request, &current_url, &cookie_jar, remaining_timeout).await?
-        } else {
-            let outbound_request =
-                build_outbound_request(&current_request, &current_url, &cookie_jar);
-            let response_buf = execute_single_raw_request(
-                current_url.host_str().unwrap_or(&config.host),
-                current_url.port_or_known_default().unwrap_or(config.port),
-                current_url.scheme() == "https",
-                &outbound_request,
-                remaining_timeout,
-            )
-            .await?;
-
-            decode_http_response(&response_buf)
-        };
+        let (raw_response, used_http1_fallback) = execute_replay_request(
+            &current_request,
+            &current_url,
+            &cookie_jar,
+            &config.endpoint,
+            remaining_timeout,
+        )
+        .await?;
         let response_head = parse_raw_response(&raw_response);
         last_raw_response = raw_response;
+        last_response_head = response_head.clone();
+
+        if used_http1_fallback {
+            current_request.protocol = "HTTP/1.1".to_string();
+        }
 
         let Some(response_head) = response_head else {
             break;
@@ -155,47 +319,237 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
         response_time_ms: start.elapsed().as_millis() as u64,
         final_url: current_url.to_string(),
         redirect_chain,
+        status_code: last_response_head
+            .as_ref()
+            .map(|response| response.status_code)
+            .unwrap_or(0),
+        version_observed: last_response_head
+            .as_ref()
+            .and_then(|response| response.protocol.clone()),
+        status_text: last_response_head
+            .as_ref()
+            .map(|response| response.status_text.clone())
+            .unwrap_or_default(),
+        headers: last_response_head
+            .as_ref()
+            .map(|response| {
+                response
+                    .headers
+                    .iter()
+                    .map(|(name, value)| ReplayHeaderInput {
+                        name: name.clone(),
+                        value: value.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        body_text: last_response_head
+            .as_ref()
+            .map(|response| response.body_text.clone())
+            .unwrap_or_default(),
     })
 }
 
+async fn execute_replay_request(
+    request: &ParsedRawRequest,
+    target_url: &Url,
+    cookie_jar: &[RedirectCookie],
+    endpoint: &ReplayEndpointInput,
+    timeout: std::time::Duration,
+) -> Result<(String, bool), String> {
+    let transport = build_replay_transport_context(request, target_url, endpoint)?;
+
+    if is_http2_protocol(&request.protocol) {
+        match execute_single_http2_request(request, target_url, cookie_jar, &transport, timeout)
+            .await
+        {
+            Ok(raw_response) => return Ok((raw_response, false)),
+            Err(error) if should_fallback_from_http2_to_http1(&error) => {
+                tracing::warn!(
+                    target = "sentinel::traffic::replay",
+                    url = %target_url,
+                    error = %error,
+                    "HTTP/2 replay failed; falling back to HTTP/1.1"
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let http1_request = if is_http2_protocol(&request.protocol) {
+        downgrade_request_to_http1(request)
+    } else {
+        request.clone()
+    };
+    let outbound_request = build_outbound_request(&http1_request, target_url, cookie_jar);
+    let response_buf = execute_single_raw_request(
+        &transport.connect_host,
+        transport.connect_port,
+        transport.request_scheme.eq_ignore_ascii_case("https"),
+        &transport.tls_server_name,
+        &outbound_request,
+        timeout,
+    )
+    .await?;
+
+    Ok((decode_http_response(&response_buf), true))
+}
+
+fn build_replay_transport_context(
+    request: &ParsedRawRequest,
+    target_url: &Url,
+    endpoint: &ReplayEndpointInput,
+) -> Result<ReplayTransportContext, String> {
+    let request_authority = build_effective_request_authority(request, target_url)?;
+    let tls_server_name = endpoint
+        .sni_host
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| extract_host_from_authority(&request_authority))
+        .unwrap_or_else(|| endpoint.host.clone());
+
+    Ok(ReplayTransportContext {
+        connect_host: endpoint.host.clone(),
+        connect_port: target_url.port_or_known_default().unwrap_or(endpoint.port),
+        request_scheme: target_url.scheme().to_string(),
+        request_authority,
+        tls_server_name,
+    })
+}
+
+fn build_effective_request_authority(
+    request: &ParsedRawRequest,
+    target_url: &Url,
+) -> Result<String, String> {
+    if let Some(host_header) = request
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("host"))
+        .map(|(_, value)| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        Authority::from_maybe_shared(host_header.to_string().into_bytes())
+            .map_err(|error| format!("Invalid Host header for replay authority: {error}"))?;
+        return Ok(host_header.to_string());
+    }
+
+    Ok(build_host_header(target_url))
+}
+
+fn extract_host_from_authority(authority: &str) -> Option<String> {
+    Authority::from_maybe_shared(authority.trim().to_string().into_bytes())
+        .ok()
+        .map(|parsed| parsed.host().to_string())
+}
+
+fn downgrade_request_to_http1(request: &ParsedRawRequest) -> ParsedRawRequest {
+    let mut downgraded = request.clone();
+    downgraded.protocol = "HTTP/1.1".to_string();
+    downgraded
+}
+
+fn build_parsed_request(request: &ReplayRequestInput) -> Result<ParsedRawRequest, String> {
+    if request.method.trim().is_empty() {
+        return Err("Replay request is missing the HTTP method".to_string());
+    }
+
+    if request.target.trim().is_empty() {
+        return Err("Replay request is missing the request target".to_string());
+    }
+
+    Ok(ParsedRawRequest {
+        method: request.method.trim().to_string(),
+        target: request.target.trim().to_string(),
+        protocol: normalize_http_version(&request.version_preference),
+        headers: request
+            .headers
+            .iter()
+            .filter(|header| !header.name.trim().is_empty())
+            .map(|header| (header.name.trim().to_string(), header.value.clone()))
+            .collect(),
+        body: request.body_text.clone(),
+    })
+}
+
+fn normalize_http_version(version: &str) -> String {
+    match version.trim().to_ascii_uppercase().as_str() {
+        "HTTP/1.0" => "HTTP/1.0".to_string(),
+        "HTTP/2" | "HTTP/2.0" => "HTTP/2".to_string(),
+        _ => "HTTP/1.1".to_string(),
+    }
+}
+
 fn is_http2_protocol(protocol: &str) -> bool {
-    matches!(protocol.trim().to_ascii_uppercase().as_str(), "HTTP/2" | "HTTP/2.0")
+    matches!(
+        protocol.trim().to_ascii_uppercase().as_str(),
+        "HTTP/2" | "HTTP/2.0"
+    )
+}
+
+fn should_fallback_from_http2_to_http1(error: &str) -> bool {
+    let normalized = error.trim().to_ascii_lowercase();
+
+    normalized.contains("failed to send http/2 request")
+        || normalized.contains("http2 error")
+        || normalized.contains("error sending request")
+        || normalized.contains("connection closed")
+        || normalized.contains("connection reset")
+        || normalized.contains("broken pipe")
+        || normalized.contains("tls")
+        || normalized.contains("frame size")
+        || normalized.contains("protocol error")
 }
 
 async fn execute_single_http2_request(
     request: &ParsedRawRequest,
     target_url: &Url,
     cookie_jar: &[RedirectCookie],
+    transport: &ReplayTransportContext,
     timeout: std::time::Duration,
 ) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .danger_accept_invalid_hostnames(true)
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(timeout)
-        .build()
-        .map_err(|error| format!("Failed to create HTTP/2 client: {error}"))?;
-
     let method = Method::from_bytes(request.method.as_bytes())
         .map_err(|error| format!("Unsupported HTTP method for HTTP/2 replay: {error}"))?;
+    let request_uri = build_http2_request_uri(request, target_url, transport)?;
+    let mut headers = build_http2_headers(request, target_url, cookie_jar)?;
+    let authority_header = HeaderValue::from_str(&transport.request_authority)
+        .map_err(|error| format!("Invalid HTTP/2 authority header: {error}"))?;
+    headers.insert(HeaderName::from_static("host"), authority_header);
 
-    let mut reqwest_headers = build_http2_headers(request, target_url, cookie_jar)?;
-    let mut builder = client
-        .request(method, target_url.clone())
-        .version(reqwest::Version::HTTP_2);
-
-    if !reqwest_headers.is_empty() {
-        builder = builder.headers(std::mem::take(&mut reqwest_headers));
+    let mut request_builder = Request::builder()
+        .method(method)
+        .uri(request_uri)
+        .version(Version::HTTP_2);
+    for (name, value) in headers.iter() {
+        request_builder = request_builder.header(name, value);
     }
 
-    if !request.body.is_empty() {
-        builder = builder.body(request.body.clone());
-    }
+    let outbound_request = request_builder
+        .body(Full::new(Bytes::from(request.body.clone())))
+        .map_err(|error| format!("Failed to build HTTP/2 request: {error}"))?;
 
-    let response = builder
-        .send()
+    let stream = connect_http2_stream(transport, timeout).await?;
+    let io = TokioIo::new(stream);
+    let (mut sender, connection) =
+        tokio::time::timeout(timeout, http2::handshake(TokioExecutor::new(), io))
+            .await
+            .map_err(|_| "HTTP/2 handshake timeout".to_string())?
+            .map_err(|error| format!("Failed to establish HTTP/2 session: {error}"))?;
+
+    tokio::spawn(async move {
+        if let Err(error) = connection.await {
+            tracing::debug!(
+                target = "sentinel::traffic::replay",
+                error = %error,
+                "HTTP/2 replay connection closed"
+            );
+        }
+    });
+
+    let response = tokio::time::timeout(timeout, sender.send_request(outbound_request))
         .await
+        .map_err(|_| "HTTP/2 request timeout".to_string())?
         .map_err(|error| format!("Failed to send HTTP/2 request: {error}"))?;
 
     build_http2_raw_response(response).await
@@ -242,7 +596,108 @@ fn should_skip_http2_header(name: &str, value: &str) -> bool {
     }
 }
 
-async fn build_http2_raw_response(response: reqwest::Response) -> Result<String, String> {
+fn build_http2_request_uri(
+    request: &ParsedRawRequest,
+    target_url: &Url,
+    transport: &ReplayTransportContext,
+) -> Result<Uri, String> {
+    let target = if request.target.starts_with("http://") || request.target.starts_with("https://")
+    {
+        Url::parse(&request.target)
+            .map_err(|error| format!("Failed to parse HTTP/2 target URI: {error}"))?
+    } else {
+        let path = if request.target.starts_with('/') {
+            request.target.clone()
+        } else {
+            format!("/{}", request.target)
+        };
+        target_url
+            .join(&path)
+            .map_err(|error| format!("Failed to resolve HTTP/2 target URI: {error}"))?
+    };
+
+    let mut path_and_query = target.path().to_string();
+    if path_and_query.is_empty() {
+        path_and_query.push('/');
+    }
+    if let Some(query) = target.query() {
+        path_and_query.push('?');
+        path_and_query.push_str(query);
+    }
+
+    let uri = format!(
+        "{}://{}{}",
+        transport.request_scheme, transport.request_authority, path_and_query
+    );
+
+    uri.parse::<Uri>()
+        .map_err(|error| format!("Failed to build HTTP/2 URI: {error}"))
+}
+
+async fn connect_http2_stream(
+    transport: &ReplayTransportContext,
+    timeout: std::time::Duration,
+) -> Result<ReplayHttp2Stream, String> {
+    let tcp_stream = tokio::time::timeout(
+        timeout,
+        TcpStream::connect((transport.connect_host.as_str(), transport.connect_port)),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "Connection timeout to {}:{}",
+            transport.connect_host, transport.connect_port
+        )
+    })?
+    .map_err(|error| {
+        format!(
+            "Failed to connect to {}:{}: {}",
+            transport.connect_host, transport.connect_port, error
+        )
+    })?;
+
+    if !transport.request_scheme.eq_ignore_ascii_case("https") {
+        return Ok(ReplayHttp2Stream::Plain(tcp_stream));
+    }
+
+    let mut tls_config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(InsecureReplayServerCertVerifier))
+        .with_no_client_auth();
+    tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    let tls_server_name =
+        ServerName::try_from(transport.tls_server_name.clone()).map_err(|error| {
+            format!(
+                "Invalid TLS server name `{}`: {error}",
+                transport.tls_server_name
+            )
+        })?;
+    let connector = RustlsTlsConnector::from(Arc::new(tls_config));
+    let tls_stream = tokio::time::timeout(timeout, connector.connect(tls_server_name, tcp_stream))
+        .await
+        .map_err(|_| "TLS handshake timeout".to_string())?
+        .map_err(|error| format!("TLS handshake failed: {error}"))?;
+
+    let negotiated = tls_stream
+        .get_ref()
+        .1
+        .alpn_protocol()
+        .map(|protocol| protocol.to_vec());
+    if negotiated.as_deref() != Some(b"h2".as_slice()) {
+        return Err(match negotiated {
+            Some(protocol) => format!(
+                "Failed to send HTTP/2 request: ALPN negotiated `{}` instead of `h2`",
+                String::from_utf8_lossy(&protocol)
+            ),
+            None => "Failed to send HTTP/2 request: server did not negotiate ALPN".to_string(),
+        });
+    }
+
+    Ok(ReplayHttp2Stream::Tls(tls_stream))
+}
+
+async fn build_http2_raw_response(response: hyper::Response<Incoming>) -> Result<String, String> {
     let status = response.status();
     let reason = canonical_reason(status);
     let mut raw_response = if reason.is_empty() {
@@ -262,10 +717,11 @@ async fn build_http2_raw_response(response: reqwest::Response) -> Result<String,
 
     raw_response.push_str("\r\n");
     let body = response
-        .bytes()
+        .into_body()
+        .collect()
         .await
         .map_err(|error| format!("Failed to read HTTP/2 response body: {error}"))?;
-    raw_response.push_str(&String::from_utf8_lossy(&body));
+    raw_response.push_str(&String::from_utf8_lossy(&body.to_bytes()));
 
     Ok(raw_response)
 }
@@ -278,14 +734,14 @@ async fn execute_single_raw_request(
     host: &str,
     port: u16,
     use_tls: bool,
+    tls_server_name: &str,
     raw_request: &str,
     timeout: std::time::Duration,
 ) -> Result<Vec<u8>, String> {
-    let addr = format!("{host}:{port}");
-    let stream = tokio::time::timeout(timeout, TcpStream::connect(&addr))
+    let stream = tokio::time::timeout(timeout, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| format!("Connection timeout to {addr}"))?
-        .map_err(|error| format!("Failed to connect to {addr}: {error}"))?;
+        .map_err(|_| format!("Connection timeout to {host}:{port}"))?
+        .map_err(|error| format!("Failed to connect to {host}:{port}: {error}"))?;
 
     if use_tls {
         let connector = tokio_native_tls::TlsConnector::from(
@@ -296,10 +752,11 @@ async fn execute_single_raw_request(
                 .map_err(|error| format!("Failed to create TLS connector: {error}"))?,
         );
 
-        let mut tls_stream = tokio::time::timeout(timeout, connector.connect(host, stream))
-            .await
-            .map_err(|_| "TLS handshake timeout".to_string())?
-            .map_err(|error| format!("TLS handshake failed: {error}"))?;
+        let mut tls_stream =
+            tokio::time::timeout(timeout, connector.connect(tls_server_name, stream))
+                .await
+                .map_err(|_| "TLS handshake timeout".to_string())?
+                .map_err(|error| format!("TLS handshake failed: {error}"))?;
 
         tls_stream
             .write_all(raw_request.as_bytes())
@@ -326,6 +783,7 @@ async fn execute_single_raw_request(
     }
 }
 
+#[cfg(test)]
 fn parse_raw_request(raw_request: &str) -> Result<ParsedRawRequest, String> {
     let normalized = raw_request.replace("\r\n", "\n").replace('\r', "\n");
     let separator_index = normalized.find("\n\n").unwrap_or(normalized.len());
@@ -482,37 +940,61 @@ fn build_redirect_request(
 }
 
 fn parse_raw_response(raw_response: &str) -> Option<ParsedRawResponse> {
-    let header_end = raw_response
-        .find("\r\n\r\n")
-        .or_else(|| raw_response.find("\n\n"))?;
+    let (header_end, separator_len) = if let Some(index) = raw_response.find("\r\n\r\n") {
+        (index, 4)
+    } else if let Some(index) = raw_response.find("\n\n") {
+        (index, 2)
+    } else {
+        return None;
+    };
     let header_part = &raw_response[..header_end];
+    let body_text = raw_response[header_end + separator_len..].to_string();
     let mut lines = header_part.lines();
     let status_line = lines.next()?;
-    let status_code = status_line
-        .split_whitespace()
-        .nth(1)
+    let mut status_parts = status_line.split_whitespace();
+    let protocol = status_parts
+        .next()
+        .and_then(normalize_observed_http_version);
+    let status_code = status_parts
+        .next()
         .and_then(|value| value.parse::<u16>().ok())?;
+    let status_text = status_parts.collect::<Vec<_>>().join(" ");
 
     let mut location = None;
     let mut set_cookie_headers = Vec::new();
+    let mut headers = Vec::new();
 
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };
         let trimmed_value = value.trim().to_string();
+        headers.push((name.trim().to_string(), trimmed_value.clone()));
         if name.eq_ignore_ascii_case("location") {
-            location = Some(trimmed_value);
+            location = Some(trimmed_value.clone());
         } else if name.eq_ignore_ascii_case("set-cookie") {
             set_cookie_headers.push(trimmed_value);
         }
     }
 
     Some(ParsedRawResponse {
+        protocol,
         status_code,
+        status_text,
+        headers,
+        body_text,
         location,
         set_cookie_headers,
     })
+}
+
+fn normalize_observed_http_version(protocol: &str) -> Option<String> {
+    match protocol.trim().to_ascii_uppercase().as_str() {
+        "HTTP/1.0" => Some("HTTP/1.0".to_string()),
+        "HTTP/1.1" => Some("HTTP/1.1".to_string()),
+        "HTTP/2" | "HTTP/2.0" => Some("HTTP/2".to_string()),
+        _ => None,
+    }
 }
 
 fn update_cookie_jar(
@@ -866,9 +1348,11 @@ async fn read_http_response<S: AsyncRead + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_initial_cookie_jar, build_outbound_request, build_redirect_request,
-        build_request_url, cookie_matches, is_http2_protocol, parse_raw_request,
-        parse_set_cookie, should_skip_http2_header, RedirectCookie,
+        build_effective_request_authority, build_http2_request_uri, build_initial_cookie_jar,
+        build_outbound_request, build_redirect_request, build_replay_transport_context,
+        build_request_url, cookie_matches, downgrade_request_to_http1, is_http2_protocol,
+        parse_raw_request, parse_raw_response, parse_set_cookie,
+        should_fallback_from_http2_to_http1, should_skip_http2_header, RedirectCookie,
     };
     use url::Url;
 
@@ -960,5 +1444,104 @@ mod tests {
         assert!(should_skip_http2_header("TE", "gzip"));
         assert!(!should_skip_http2_header("TE", "trailers"));
         assert!(!should_skip_http2_header("Accept", "*/*"));
+    }
+
+    #[test]
+    fn detects_http2_errors_that_should_fallback() {
+        assert!(should_fallback_from_http2_to_http1(
+            "Failed to send HTTP/2 request: error sending request for url (https://woa.wps.cn/api/v2/contacts)"
+        ));
+        assert!(should_fallback_from_http2_to_http1(
+            "Failed to send HTTP/2 request: connection closed before message completed"
+        ));
+        assert!(!should_fallback_from_http2_to_http1(
+            "Unsupported HTTP method for HTTP/2 replay: invalid method"
+        ));
+    }
+
+    #[test]
+    fn downgrades_http2_request_line_to_http11_for_raw_fallback() {
+        let request =
+            parse_raw_request("POST /api HTTP/2\r\nHost: example.com\r\n\r\nx=1").unwrap();
+        let downgraded = downgrade_request_to_http1(&request);
+        let target_url = build_request_url(&request.target, "example.com", 443, true).unwrap();
+        let outbound = build_outbound_request(&downgraded, &target_url, &[]);
+
+        assert!(outbound.starts_with("POST /api HTTP/1.1\r\n"));
+    }
+
+    #[test]
+    fn transport_context_uses_host_header_for_authority_and_sni_override() {
+        let request = parse_raw_request("GET /v1 HTTP/2\r\nHost: api.example.com\r\n\r\n").unwrap();
+        let target_url = build_request_url(&request.target, "1.2.3.4", 443, true).unwrap();
+        let transport = build_replay_transport_context(
+            &request,
+            &target_url,
+            &super::ReplayEndpointInput {
+                scheme: "https".to_string(),
+                host: "1.2.3.4".to_string(),
+                port: 443,
+                sni_host: Some("console.volcengine.com".to_string()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(transport.connect_host, "1.2.3.4");
+        assert_eq!(transport.request_authority, "api.example.com");
+        assert_eq!(transport.tls_server_name, "console.volcengine.com");
+    }
+
+    #[test]
+    fn http2_uri_uses_effective_authority_instead_of_connect_host() {
+        let request =
+            parse_raw_request("GET /v1/list?q=1 HTTP/2\r\nHost: api.example.com\r\n\r\n").unwrap();
+        let target_url = build_request_url(&request.target, "1.2.3.4", 443, true).unwrap();
+        let transport = build_replay_transport_context(
+            &request,
+            &target_url,
+            &super::ReplayEndpointInput {
+                scheme: "https".to_string(),
+                host: "1.2.3.4".to_string(),
+                port: 443,
+                sni_host: None,
+            },
+        )
+        .unwrap();
+        let uri = build_http2_request_uri(&request, &target_url, &transport).unwrap();
+
+        assert_eq!(uri.to_string(), "https://api.example.com/v1/list?q=1");
+    }
+
+    #[test]
+    fn effective_authority_falls_back_to_target_url_when_host_header_absent() {
+        let request = parse_raw_request("GET /v1 HTTP/2\r\nAccept: */*\r\n\r\n").unwrap();
+        let target_url = Url::parse("https://console.volcengine.com:8443/v1").unwrap();
+
+        let authority = build_effective_request_authority(&request, &target_url).unwrap();
+
+        assert_eq!(authority, "console.volcengine.com:8443");
+    }
+
+    #[test]
+    fn parses_structured_response_details_from_raw_response() {
+        let parsed = parse_raw_response(
+            "HTTP/2 302 Found\r\nLocation: /next\r\nSet-Cookie: sid=1\r\nContent-Type: text/plain\r\n\r\nhello",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.protocol.as_deref(), Some("HTTP/2"));
+        assert_eq!(parsed.status_code, 302);
+        assert_eq!(parsed.status_text, "Found");
+        assert_eq!(parsed.location.as_deref(), Some("/next"));
+        assert_eq!(parsed.set_cookie_headers, vec!["sid=1".to_string()]);
+        assert_eq!(parsed.body_text, "hello");
+        assert_eq!(
+            parsed.headers,
+            vec![
+                ("Location".to_string(), "/next".to_string()),
+                ("Set-Cookie".to_string(), "sid=1".to_string()),
+                ("Content-Type".to_string(), "text/plain".to_string()),
+            ]
+        );
     }
 }

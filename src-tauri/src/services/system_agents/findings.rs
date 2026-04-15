@@ -12,11 +12,12 @@ use crate::services::system_agents::finding_lifecycle::{
 use crate::services::system_agents::finding_observation::TrafficFindingObservation;
 use crate::services::system_agents::language::{is_chinese_ui_language, resolve_ui_language};
 use crate::services::system_agents::safety::SystemAgentSafetyPolicy;
+use crate::services::system_agents::types::SystemAgentEvent;
 use crate::services::system_agents::verification_plan::{
-    build_baseline_from_context_payload, build_baseline_from_proxy_request, extract_verification_plan,
+    build_baseline_from_context_payload, build_baseline_from_proxy_request,
+    extract_verification_plan,
 };
 use crate::services::system_agents::verification_strategy::prepare_verification_request;
-use crate::services::system_agents::types::SystemAgentEvent;
 
 fn context_baseline_string(payload: &Value, key: &str) -> Option<String> {
     payload

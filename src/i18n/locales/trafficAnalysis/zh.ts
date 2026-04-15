@@ -399,6 +399,8 @@ export default {
       editedRequest: '修改后的请求',
       originalResponse: '原始响应',
       editedResponse: '修改后的响应',
+      scheme: '传输协议',
+      httpVersion: 'HTTP 版本',
       search: {
         placeholder: '搜索当前内容，回车下一个，Shift+回车上一个',
         next: '下一个匹配',
@@ -416,6 +418,7 @@ export default {
       method: '方法',
       host: '主机',
       url: 'URL',
+      httpVersion: 'HTTP版本',
       params: '参数',
       status: '状态',
       length: '长度',

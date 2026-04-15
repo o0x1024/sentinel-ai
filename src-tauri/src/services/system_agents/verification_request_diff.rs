@@ -55,9 +55,9 @@ fn diff_url(baseline_url: &str, request_url: &str, summary: &mut RequestDiffSumm
         Ok(value) => value,
         Err(_) => {
             if baseline_url != request_url {
-                summary
-                    .notes
-                    .push("URL changed but baseline URL could not be parsed structurally.".to_string());
+                summary.notes.push(
+                    "URL changed but baseline URL could not be parsed structurally.".to_string(),
+                );
             }
             return;
         }
@@ -66,9 +66,9 @@ fn diff_url(baseline_url: &str, request_url: &str, summary: &mut RequestDiffSumm
         Ok(value) => value,
         Err(_) => {
             if baseline_url != request_url {
-                summary
-                    .notes
-                    .push("URL changed but replay URL could not be parsed structurally.".to_string());
+                summary.notes.push(
+                    "URL changed but replay URL could not be parsed structurally.".to_string(),
+                );
             }
             return;
         }
@@ -140,7 +140,9 @@ fn diff_body(
         return;
     }
 
-    notes.push("Request body changed but could not be parsed as JSON object or form body.".to_string());
+    notes.push(
+        "Request body changed but could not be parsed as JSON object or form body.".to_string(),
+    );
     changed_targets.push(RequestDiffTarget {
         location: "rawBody".to_string(),
         selector: "body".to_string(),
@@ -256,7 +258,9 @@ mod tests {
         assert!(summary
             .changed_targets
             .iter()
-            .any(|item| item.location == "jsonBody" && item.selector == "coupon" && item.change_kind == "removed"));
+            .any(|item| item.location == "jsonBody"
+                && item.selector == "coupon"
+                && item.change_kind == "removed"));
     }
 
     #[test]

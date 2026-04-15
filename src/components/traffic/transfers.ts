@@ -1,14 +1,8 @@
 import type { TrafficMessageType } from './trafficDisplaySettings'
-
-export interface TrafficTransferRequest {
-  method: string
-  url: string
-  headers: Record<string, string>
-  body?: string
-}
+import type { HttpExchangeRequest } from './http/model'
 
 export interface TrafficComparerDraftRequestInput {
-  request?: TrafficTransferRequest
+  request?: HttpExchangeRequest
   text?: string
   messageType?: TrafficMessageType
   name?: string
@@ -22,10 +16,16 @@ interface TransferEnvelope<T> {
 }
 
 export const REPEATER_TRANSFER_STORAGE_KEY = 'trafficAnalysis.transfer.repeater'
+export const INTRUDER_TRANSFER_STORAGE_KEY = 'trafficAnalysis.transfer.intruder'
 export const COMPARER_TRANSFER_STORAGE_KEY = 'trafficAnalysis.transfer.comparer'
 
 export type TrafficCompareSource = 'history' | 'repeater' | 'intruder' | 'generic'
-export type TrafficCompareKind = 'requestVersions' | 'responseVersions' | 'responseDiff' | 'baselineDiff' | 'generic'
+export type TrafficCompareKind =
+  | 'requestVersions'
+  | 'responseVersions'
+  | 'responseDiff'
+  | 'baselineDiff'
+  | 'generic'
 
 export interface TrafficCompareMeta {
   source: TrafficCompareSource
@@ -35,7 +35,7 @@ export interface TrafficCompareMeta {
 export interface TrafficCompareSideMeta {
   messageType: TrafficMessageType
   protocol?: 'http' | 'https'
-  repeaterRequest?: TrafficTransferRequest
+  repeaterRequest?: HttpExchangeRequest
 }
 
 export interface TrafficComparePayload {
@@ -49,12 +49,20 @@ export interface TrafficComparePayload {
   compareMeta?: TrafficCompareMeta
 }
 
-export function queueRepeaterTransfer(request: TrafficTransferRequest): void {
-  const envelope: TransferEnvelope<TrafficTransferRequest> = {
+export function queueRepeaterTransfer(request: HttpExchangeRequest): void {
+  const envelope: TransferEnvelope<HttpExchangeRequest> = {
     id: `transfer-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     payload: request,
   }
   localStorage.setItem(REPEATER_TRANSFER_STORAGE_KEY, JSON.stringify(envelope))
+}
+
+export function queueIntruderTransfer(request: HttpExchangeRequest): void {
+  const envelope: TransferEnvelope<HttpExchangeRequest> = {
+    id: `transfer-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    payload: request,
+  }
+  localStorage.setItem(INTRUDER_TRANSFER_STORAGE_KEY, JSON.stringify(envelope))
 }
 
 export function queueComparerTransfer(payload: TrafficComparePayload): void {

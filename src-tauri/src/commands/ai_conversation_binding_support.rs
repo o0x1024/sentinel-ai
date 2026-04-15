@@ -17,6 +17,7 @@ pub struct AssistantConversationBinding {
     pub tenth_man_enabled: bool,
     pub selected_model: Option<String>,
     pub tools_enabled: Option<bool>,
+    pub tool_config: Option<serde_json::Value>,
 }
 
 const BINDING_KEY: &str = "assistant_conversation_binding";

@@ -35,6 +35,23 @@
         <i class="fas fa-filter mr-1"></i>{{ $t('trafficAnalysis.history.filters') }}
       </button>
       <div class="flex-1"></div>
+      <div class="dropdown dropdown-end">
+        <label tabindex="0" class="btn btn-xs btn-ghost">
+          <i class="fas fa-wand-magic-sparkles mr-1"></i>词典候选
+        </label>
+        <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56 mt-1">
+          <li>
+            <a :class="{ 'pointer-events-none opacity-50': filteredCount === 0 }" @click="generateCandidatesFromFiltered">
+              基于当前过滤结果
+            </a>
+          </li>
+          <li>
+            <a :class="{ 'pointer-events-none opacity-50': selectedCount === 0 }" @click="generateCandidatesFromSelection">
+              基于当前多选记录
+            </a>
+          </li>
+        </ul>
+      </div>
       <button class="btn btn-xs" :class="isMultiSelectMode ? 'btn-accent' : 'btn-ghost'" @click="toggleMultiSelectMode">
         <i class="fas fa-check-square mr-1"></i>{{ $t('trafficAnalysis.history.multiSelect') }}
       </button>
@@ -68,6 +85,6 @@
 
 <script setup lang="ts">
 import type { ProxyHistoryProtocolFilter } from './proxyHistoryTypes'
-defineProps<{ protocolFilter: ProxyHistoryProtocolFilter; hasActiveFilters: boolean; filtersEnabled: boolean; filterSummary: string; isMultiSelectMode: boolean; openFilterDialog: () => void; toggleFiltersEnabled: () => void; toggleMultiSelectMode: () => void; selectAllVisible: () => void; clearSelection: () => void; sendSelectedToAssistant: (type?: 'request') => void; sendSelectedRequestVersionsToComparer: () => void; sendSelectedResponseVersionsToComparer: () => void; exportSelectedToFile: (type: 'request' | 'response') => void; exportAsHAR: () => void; refreshRequests: () => void; clearHistory: () => void }>()
+defineProps<{ protocolFilter: ProxyHistoryProtocolFilter; hasActiveFilters: boolean; filtersEnabled: boolean; filterSummary: string; isMultiSelectMode: boolean; selectedCount: number; filteredCount: number; openFilterDialog: () => void; toggleFiltersEnabled: () => void; toggleMultiSelectMode: () => void; selectAllVisible: () => void; clearSelection: () => void; generateCandidatesFromFiltered: () => void; generateCandidatesFromSelection: () => void; sendSelectedToAssistant: (type?: 'request') => void; sendSelectedRequestVersionsToComparer: () => void; sendSelectedResponseVersionsToComparer: () => void; exportSelectedToFile: (type: 'request' | 'response') => void; exportAsHAR: () => void; refreshRequests: () => void; clearHistory: () => void }>()
 defineEmits<{ 'update:protocolFilter': [value: ProxyHistoryProtocolFilter] }>()
 </script>

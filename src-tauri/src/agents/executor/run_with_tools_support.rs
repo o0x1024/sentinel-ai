@@ -133,6 +133,13 @@ pub(super) fn apply_allowed_tools_policy(
 }
 
 pub(super) fn infer_tool_result_success(raw: &str) -> bool {
+    fn is_structured_http_response(map: &serde_json::Map<String, serde_json::Value>) -> bool {
+        map.get("status_code").and_then(|v| v.as_u64()).is_some()
+            && map.get("headers").and_then(|v| v.as_object()).is_some()
+            && (map.get("url").and_then(|v| v.as_str()).is_some()
+                || map.get("status_text").and_then(|v| v.as_str()).is_some())
+    }
+
     fn has_hard_error(text: &str) -> bool {
         let lower = text.trim().to_lowercase();
         if lower.is_empty() {
@@ -169,6 +176,12 @@ pub(super) fn infer_tool_result_success(raw: &str) -> bool {
             }
             serde_json::Value::Array(arr) => arr.iter().all(visit),
             serde_json::Value::Object(map) => {
+                // For http_request, any structured HTTP response means the tool call itself succeeded.
+                // Application-layer status (4xx/5xx) and response payload fields must not be treated as
+                // tool-execution failure.
+                if is_structured_http_response(map) {
+                    return true;
+                }
                 if let Some(v) = map.get("success").and_then(|v| v.as_bool()) {
                     return v;
                 }
@@ -809,6 +822,27 @@ mod tests {
         ));
         assert!(!infer_tool_result_success(
             r#"{"success":false,"error":"boom"}"#
+        ));
+    }
+
+    #[test]
+    fn infer_tool_result_success_treats_http_response_body_as_payload() {
+        assert!(infer_tool_result_success(
+            r#"{"url":"http://example.com","status_code":200,"status_text":"200 OK","headers":{"content-type":"text/html"},"body":"Warning: file_get_contents(/home/flag): failed to open stream: No such file or directory","body_length":123}"#
+        ));
+    }
+
+    #[test]
+    fn infer_tool_result_success_treats_http_404_as_tool_success() {
+        assert!(infer_tool_result_success(
+            r#"{"url":"http://example.com/missing","status_code":404,"status_text":"404 Not Found","headers":{"content-type":"application/json"},"body":"{\"error\":\"resource not found\",\"code\":404}","body_length":43}"#
+        ));
+    }
+
+    #[test]
+    fn infer_tool_result_success_prefers_http_shape_over_generic_error_field() {
+        assert!(infer_tool_result_success(
+            r#"{"url":"http://example.com","status_code":500,"status_text":"500 Internal Server Error","headers":{"content-type":"application/json"},"error":"upstream application error","body":"{\"message\":\"boom\"}","body_length":18}"#
         ));
     }
 }

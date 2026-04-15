@@ -1,24 +1,17 @@
 //! MCP Commands - Tauri commands for MCP server management
 //!
-//! Uses rmcp library to connect to MCP servers via stdio.
+//! Uses rmcp library to connect to MCP servers via stdio, SSE, and streamable HTTP.
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
-use tokio::process::Command as TokioCommand;
 use tokio::sync::RwLock;
 
 use sentinel_db::Database;
 use sentinel_db::DatabaseService;
-
-use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
-use rmcp::service::RunningService;
-use rmcp::{RoleClient, ServiceExt};
-
-/// Type alias for MCP client service
-type McpClient = RunningService<RoleClient, ClientInfo>;
+use sentinel_tools::mcp_transport::{connect_mcp_client, McpClient, McpTransportConfig};
 
 /// Persistent MCP client connections - keeps the client alive for tool calls
 static PERSISTENT_CLIENTS: Lazy<RwLock<HashMap<String, Arc<tokio::sync::Mutex<McpClient>>>>> =
@@ -36,6 +29,8 @@ pub struct McpConnection {
     pub status: String,
     pub command: String,
     pub args: Vec<String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
 }
 
 /// MCP tool info for frontend
@@ -52,27 +47,57 @@ struct ActiveMcpConnection {
     pub connection_id: String,
     pub name: String,
     pub status: String,
-    pub command: String,
-    pub args: Vec<String>,
+    pub transport: McpTransportConfig,
     pub tools: Vec<McpToolInfo>,
-    #[allow(dead_code)]
-    pub process_id: Option<u32>,
 }
 
 /// Global state for active MCP connections
 static ACTIVE_CONNECTIONS: Lazy<RwLock<HashMap<String, ActiveMcpConnection>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-/// Create rmcp client info
-fn create_client_info() -> ClientInfo {
-    ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "sentinel-ai".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            ..Default::default()
-        },
+fn parse_headers_json(headers_json: Option<&str>) -> HashMap<String, String> {
+    headers_json
+        .and_then(|raw| serde_json::from_str::<HashMap<String, String>>(raw).ok())
+        .unwrap_or_default()
+}
+
+fn serialize_headers(headers: &HashMap<String, String>) -> Result<Option<String>, String> {
+    if headers.is_empty() {
+        return Ok(None);
+    }
+
+    serde_json::to_string(headers)
+        .map(Some)
+        .map_err(|e| format!("Failed to serialize MCP headers: {}", e))
+}
+
+fn infer_transport_type(server_config: &serde_json::Value) -> String {
+    let explicit = ["transportType", "transport_type", "type", "serverType"]
+        .into_iter()
+        .find_map(|key| server_config.get(key).and_then(|value| value.as_str()));
+
+    if let Some(transport_type) = explicit {
+        return sentinel_tools::mcp_transport::normalize_transport_type(transport_type);
+    }
+
+    if server_config
+        .get("command")
+        .and_then(|value| value.as_str())
+        .is_some()
+    {
+        return "stdio".to_string();
+    }
+
+    let url = server_config
+        .get("url")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if url.contains("/sse") {
+        "sse".to_string()
+    } else {
+        "streamableHttp".to_string()
     }
 }
 
@@ -117,6 +142,7 @@ pub async fn mcp_get_connections(
                 status,
                 command: config.command,
                 args,
+                headers: parse_headers_json(config.headers_json.as_deref()),
             }
         })
         .collect();
@@ -158,31 +184,51 @@ pub async fn get_active_mcp_connections() -> Vec<McpConnection> {
             id: Some(conn.connection_id.clone()),
             name: conn.name.clone(),
             description: None,
-            transport_type: "stdio".to_string(),
-            endpoint: String::new(),
+            transport_type: conn.transport.transport_type.clone(),
+            endpoint: conn.transport.url.clone(),
             status: conn.status.clone(),
-            command: conn.command.clone(),
-            args: conn.args.clone(),
+            command: conn.transport.command.clone(),
+            args: conn.transport.args.clone(),
+            headers: conn.transport.headers.clone(),
         })
         .collect()
 }
 
-/// Connect to an MCP server via stdio (child process)
-#[tauri::command]
-pub async fn add_child_process_mcp_server(
+fn transport_from_connection(connection: &McpConnection) -> McpTransportConfig {
+    McpTransportConfig {
+        transport_type: connection.transport_type.clone(),
+        url: connection.endpoint.clone(),
+        command: connection.command.clone(),
+        args: connection.args.clone(),
+        headers: connection.headers.clone(),
+    }
+}
+
+fn transport_from_db_config(
+    config: &sentinel_core::models::database::McpServerConfig,
+) -> McpTransportConfig {
+    McpTransportConfig {
+        transport_type: config.connection_type.clone(),
+        url: config.url.clone(),
+        command: config.command.clone(),
+        args: serde_json::from_str(&config.args).unwrap_or_default(),
+        headers: parse_headers_json(config.headers_json.as_deref()),
+    }
+}
+
+async fn connect_server_internal(
     name: String,
-    command: String,
-    args: Vec<String>,
-    db: State<'_, Arc<DatabaseService>>,
+    transport: McpTransportConfig,
 ) -> Result<String, String> {
     tracing::info!(
-        "Connecting to MCP server: {} (command: {} {:?})",
+        "Connecting to MCP server: {} (transport: {}, endpoint: {}, command: {} {:?})",
         name,
-        command,
-        args
+        transport.transport_type,
+        transport.url,
+        transport.command,
+        transport.args
     );
 
-    // Check if already connected
     {
         let active = ACTIVE_CONNECTIONS.read().await;
         if active.contains_key(&name) {
@@ -190,31 +236,11 @@ pub async fn add_child_process_mcp_server(
         }
     }
 
-    // Generate a connection ID
     let connection_id = uuid::Uuid::new_v4().to_string();
+    let client = connect_mcp_client(&transport).await?;
 
-    // Create the transport using TokioCommand
-    let mut cmd = TokioCommand::new(&command);
-    cmd.args(&args);
+    tracing::info!("Connected to MCP server: {:?}", client.peer_info());
 
-    let transport = rmcp::transport::TokioChildProcess::new(cmd)
-        .map_err(|e| format!("Failed to create transport: {}", e))?;
-
-    // Get process ID before we move the transport
-    let process_id = transport.id();
-
-    // Connect using rmcp client
-    let client_info = create_client_info();
-    let client = client_info
-        .serve(transport)
-        .await
-        .map_err(|e| format!("Failed to connect to MCP server: {}", e))?;
-
-    // Get server info
-    let server_info = client.peer_info();
-    tracing::info!("Connected to MCP server: {:?}", server_info);
-
-    // List tools from the server
     let tools_result = client
         .list_tools(Default::default())
         .await
@@ -230,20 +256,12 @@ pub async fn add_child_process_mcp_server(
         })
         .collect();
 
-    tracing::info!("MCP server {} has {} tools", name, tools.len());
-    for tool in &tools {
-        tracing::info!("  Tool: {} - {:?}", tool.name, tool.description);
-    }
-
-    // Store the active connection state (client will be dropped but we keep the info)
     let active_conn = ActiveMcpConnection {
         connection_id: connection_id.clone(),
         name: name.clone(),
         status: "Connected".to_string(),
-        command: command.clone(),
-        args: args.clone(),
+        transport: transport.clone(),
         tools: tools.clone(),
-        process_id,
     };
 
     {
@@ -251,7 +269,6 @@ pub async fn add_child_process_mcp_server(
         active.insert(name.clone(), active_conn);
     }
 
-    // Convert tools to McpToolMeta for caching
     let tool_metas: Vec<sentinel_tools::mcp_adapter::McpToolMeta> = tools
         .iter()
         .map(|t| sentinel_tools::mcp_adapter::McpToolMeta {
@@ -263,22 +280,18 @@ pub async fn add_child_process_mcp_server(
         })
         .collect();
 
-    // 同时注册到 mcp_adapter 的全局状态，以便 refresh_mcp_tools 能正确工作
     sentinel_tools::mcp_adapter::register_mcp_connection(
         sentinel_tools::mcp_adapter::McpConnectionInfo {
             connection_id: connection_id.clone(),
             server_name: name.clone(),
-            command: command.clone(),
-            args: args.clone(),
+            transport,
             tools: Some(tool_metas),
         },
     )
     .await;
 
-    // 将工具注册到全局 ToolServer
     let tool_server = sentinel_tools::get_tool_server();
     for tool in &tools {
-        let input_schema = tool.input_schema.clone();
         let executor =
             sentinel_tools::mcp_adapter::create_mcp_tool_executor(name.clone(), tool.name.clone());
         tool_server
@@ -286,25 +299,12 @@ pub async fn add_child_process_mcp_server(
                 &name,
                 &tool.name,
                 tool.description.as_deref().unwrap_or("MCP tool"),
-                input_schema,
+                tool.input_schema.clone(),
                 executor,
             )
             .await;
-        tracing::debug!(
-            "Registered MCP tool to ToolServer: mcp::{}::{}",
-            name,
-            tool.name
-        );
     }
 
-    // Update auto_connect in database
-    if let Ok(Some(config)) = db.get_mcp_server_config_by_name(&name).await {
-        if let Err(e) = db.update_mcp_server_auto_connect(&config.id, true).await {
-            tracing::warn!("Failed to update auto_connect for server {}: {}", name, e);
-        }
-    }
-
-    // Keep the client alive in persistent storage
     {
         let mut clients = PERSISTENT_CLIENTS.write().await;
         clients.insert(name.clone(), Arc::new(tokio::sync::Mutex::new(client)));
@@ -316,6 +316,71 @@ pub async fn add_child_process_mcp_server(
         connection_id
     );
 
+    Ok(connection_id)
+}
+
+async fn mark_server_auto_connect(
+    db: &Arc<DatabaseService>,
+    db_id: &str,
+    name: &str,
+    auto_connect: bool,
+) {
+    let config_id = if !db_id.is_empty() {
+        Some(db_id.to_string())
+    } else {
+        db.get_mcp_server_config_by_name(name)
+            .await
+            .ok()
+            .flatten()
+            .map(|config| config.id)
+    };
+
+    if let Some(config_id) = config_id {
+        if let Err(e) = db
+            .update_mcp_server_auto_connect(&config_id, auto_connect)
+            .await
+        {
+            tracing::warn!(
+                "Failed to update auto_connect={} for MCP server {}: {}",
+                auto_connect,
+                name,
+                e
+            );
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn mcp_connect_server(
+    payload: McpConnection,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<String, String> {
+    let connection_id =
+        connect_server_internal(payload.name.clone(), transport_from_connection(&payload)).await?;
+    mark_server_auto_connect(db.inner(), &payload.db_id, &payload.name, true).await;
+    Ok(connection_id)
+}
+
+/// Connect to an MCP server via stdio (child process)
+#[tauri::command]
+pub async fn add_child_process_mcp_server(
+    name: String,
+    command: String,
+    args: Vec<String>,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<String, String> {
+    let connection_id = connect_server_internal(
+        name.clone(),
+        McpTransportConfig {
+            transport_type: "stdio".to_string(),
+            url: String::new(),
+            command,
+            args,
+            headers: HashMap::new(),
+        },
+    )
+    .await?;
+    mark_server_auto_connect(db.inner(), "", &name, true).await;
     Ok(connection_id)
 }
 
@@ -335,29 +400,18 @@ pub async fn mcp_disconnect_server(
 
     if let Some(name) = name_to_remove {
         active.remove(&name);
+        drop(active);
 
-        // Remove persistent client and cancel it properly
         {
             let mut clients = PERSISTENT_CLIENTS.write().await;
             if let Some(client_arc) = clients.remove(&name) {
                 tracing::info!("Removing persistent MCP client for server: {}", name);
-
-                // Try to clean up gracefully if we can acquire the lock
-                // We use try_lock to avoid deadlocks in shutdown scenarios
-                if let Ok(_client) = client_arc.try_lock() {
-                    // Note: RunningService doesn't implement Cancel in version 0.9.1 the way we expect
-                    // Drop will handle cleanup via Drop trait in rmcp/tokio transport
-                    // Just letting it drop is sufficient
-                }
+                if let Ok(_client) = client_arc.try_lock() {}
             }
         }
 
-        // Update auto_connect in database
-        if let Ok(Some(config)) = db.get_mcp_server_config_by_name(&name).await {
-            if let Err(e) = db.update_mcp_server_auto_connect(&config.id, false).await {
-                tracing::warn!("Failed to update auto_connect for server {}: {}", name, e);
-            }
-        }
+        sentinel_tools::mcp_adapter::unregister_mcp_connection(&name).await;
+        mark_server_auto_connect(db.inner(), "", &name, false).await;
 
         tracing::info!("MCP server disconnected: {} (id: {})", name, connection_id);
         Ok(())
@@ -398,9 +452,6 @@ pub async fn mcp_auto_connect_servers(db: Arc<DatabaseService>, app: AppHandle) 
     };
 
     for config in configs {
-        let args: Vec<String> = serde_json::from_str(&config.args).unwrap_or_default();
-
-        // Check if already connected
         {
             let active = ACTIVE_CONNECTIONS.read().await;
             if active.contains_key(&config.name) {
@@ -409,126 +460,9 @@ pub async fn mcp_auto_connect_servers(db: Arc<DatabaseService>, app: AppHandle) 
             }
         }
 
-        tracing::info!(
-            "Auto-connecting MCP server: {} (command: {} {:?})",
-            config.name,
-            config.command,
-            args
-        );
-
-        // Create the transport using TokioCommand
-        let mut cmd = TokioCommand::new(&config.command);
-        cmd.args(&args);
-
-        let transport = match rmcp::transport::TokioChildProcess::new(cmd) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!("Failed to create transport for {}: {}", config.name, e);
-                continue;
-            }
-        };
-
-        let process_id = transport.id();
-        let client_info = create_client_info();
-
-        match client_info.serve(transport).await {
-            Ok(client) => {
-                // List tools
-                let tools = match client.list_tools(Default::default()).await {
-                    Ok(result) => result
-                        .tools
-                        .into_iter()
-                        .map(|tool| McpToolInfo {
-                            name: tool.name.to_string(),
-                            description: tool.description.map(|d| d.to_string()),
-                            input_schema: serde_json::to_value(&*tool.input_schema)
-                                .unwrap_or_default(),
-                        })
-                        .collect(),
-                    Err(e) => {
-                        tracing::warn!("Failed to list tools for {}: {}", config.name, e);
-                        Vec::new()
-                    }
-                };
-
-                let connection_id = uuid::Uuid::new_v4().to_string();
-                let active_conn = ActiveMcpConnection {
-                    connection_id: connection_id.clone(),
-                    name: config.name.clone(),
-                    status: "Connected".to_string(),
-                    command: config.command.clone(),
-                    args: args.clone(),
-                    tools: tools.clone(),
-                    process_id,
-                };
-
-                {
-                    let mut active = ACTIVE_CONNECTIONS.write().await;
-                    active.insert(config.name.clone(), active_conn);
-                }
-
-                // Convert tools to McpToolMeta for caching
-                let tool_metas: Vec<sentinel_tools::mcp_adapter::McpToolMeta> = tools
-                    .iter()
-                    .map(|t| sentinel_tools::mcp_adapter::McpToolMeta {
-                        server_name: config.name.clone(),
-                        connection_id: connection_id.clone(),
-                        tool_name: t.name.clone(),
-                        description: t.description.clone(),
-                        input_schema: t.input_schema.clone(),
-                    })
-                    .collect();
-
-                // 同时注册到 mcp_adapter 的全局状态
-                sentinel_tools::mcp_adapter::register_mcp_connection(
-                    sentinel_tools::mcp_adapter::McpConnectionInfo {
-                        connection_id: connection_id.clone(),
-                        server_name: config.name.clone(),
-                        command: config.command.clone(),
-                        args: args.clone(),
-                        tools: Some(tool_metas),
-                    },
-                )
-                .await;
-
-                // 将工具注册到全局 ToolServer
-                let tool_server = sentinel_tools::get_tool_server();
-                for tool in &tools {
-                    let input_schema = tool.input_schema.clone();
-                    let executor = sentinel_tools::mcp_adapter::create_mcp_tool_executor(
-                        config.name.clone(),
-                        tool.name.clone(),
-                    );
-                    tool_server
-                        .register_mcp_tool(
-                            &config.name,
-                            &tool.name,
-                            tool.description.as_deref().unwrap_or("MCP tool"),
-                            input_schema,
-                            executor,
-                        )
-                        .await;
-                    tracing::debug!(
-                        "Registered MCP tool to ToolServer: mcp::{}::{}",
-                        config.name,
-                        tool.name
-                    );
-                }
-
-                // Store the client in persistent storage for reuse
-                {
-                    let mut clients = PERSISTENT_CLIENTS.write().await;
-                    clients.insert(
-                        config.name.clone(),
-                        Arc::new(tokio::sync::Mutex::new(client)),
-                    );
-                }
-                tracing::info!(
-                    "Auto-connected MCP server: {} (persistent client stored)",
-                    config.name
-                );
-
-                // Notify frontend to update status
+        match connect_server_internal(config.name.clone(), transport_from_db_config(&config)).await
+        {
+            Ok(_) => {
                 let _ = app.emit(
                     "mcp:tools-changed",
                     serde_json::json!({
@@ -566,12 +500,16 @@ pub async fn mcp_update_server_config(
     payload: McpConnection,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
+    let headers_json = serialize_headers(&payload.headers)?;
     db.update_mcp_server_config(
         &payload.db_id,
         &payload.name,
         payload.description.as_deref(),
+        &payload.endpoint,
+        &payload.transport_type,
         &payload.command,
         &payload.args,
+        headers_json.as_deref(),
         true, // enabled by default when updating
     )
     .await
@@ -663,24 +601,15 @@ pub async fn mcp_call_tool(
             server_name
         );
 
-        let (command, args) = {
+        let transport = {
             let active = ACTIVE_CONNECTIONS.read().await;
             active
                 .get(&server_name)
-                .map(|c| (c.command.clone(), c.args.clone()))
+                .map(|c| c.transport.clone())
                 .ok_or_else(|| format!("Server {} not active", server_name))?
         };
 
-        let mut cmd = TokioCommand::new(&command);
-        cmd.args(&args);
-
-        // ... standard connection setup ...
-        let transport = rmcp::transport::TokioChildProcess::new(cmd)
-            .map_err(|e| format!("Creation failed: {}", e))?;
-
-        let client_info = create_client_info();
-        let client = client_info
-            .serve(transport)
+        let client = connect_mcp_client(&transport)
             .await
             .map_err(|e| format!("Connection failed: {}", e))?;
 
@@ -771,8 +700,11 @@ pub async fn quick_create_mcp_server(
             } else {
                 Some(&config.description)
             },
+            "",
+            "stdio",
             &command,
             &args,
+            None,
         )
         .await
         .map_err(|e| format!("Failed to create MCP config: {}", e))?;
@@ -814,6 +746,12 @@ pub async fn import_mcp_servers_from_json(
     // Handle mcpServers format (from Claude Desktop config)
     if let Some(servers) = config.get("mcpServers").and_then(|v| v.as_object()) {
         for (name, server_config) in servers {
+            let transport_type = infer_transport_type(server_config);
+            let url = server_config
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let command = server_config
                 .get("command")
                 .and_then(|v| v.as_str())
@@ -830,9 +768,35 @@ pub async fn import_mcp_servers_from_json(
                 })
                 .unwrap_or_default();
 
-            if !command.is_empty() {
+            let headers = server_config
+                .get("headers")
+                .and_then(|v| v.as_object())
+                .map(|object| {
+                    object
+                        .iter()
+                        .filter_map(|(key, value)| {
+                            value.as_str().map(|value| (key.clone(), value.to_string()))
+                        })
+                        .collect::<HashMap<String, String>>()
+                })
+                .unwrap_or_default();
+
+            let headers_json = serialize_headers(&headers)?;
+            let is_valid_stdio = transport_type == "stdio" && !command.is_empty();
+            let is_valid_remote =
+                matches!(transport_type.as_str(), "sse" | "streamableHttp") && !url.is_empty();
+
+            if is_valid_stdio || is_valid_remote {
                 let _ = db
-                    .create_mcp_server_config(name, Some("Imported from JSON"), &command, &args)
+                    .create_mcp_server_config(
+                        name,
+                        Some("Imported from JSON"),
+                        &url,
+                        &transport_type,
+                        &command,
+                        &args,
+                        headers_json.as_deref(),
+                    )
                     .await;
                 count += 1;
             }

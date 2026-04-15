@@ -119,6 +119,16 @@ export function useAgentEvents(
   }
 
   const inferToolSuccess = (raw: any): boolean => {
+    const isStructuredHttpResponse = (value: Record<string, any>): boolean => {
+      return typeof value.status_code === 'number'
+        && typeof value.headers === 'object'
+        && value.headers !== null
+        && (
+          typeof value.url === 'string'
+          || typeof value.status_text === 'string'
+        )
+    }
+
     const visit = (value: any): boolean => {
       if (value == null) return true
       if (typeof value === 'boolean') return value
@@ -145,6 +155,7 @@ export function useAgentEvents(
         if (typeof value.exit_code === 'number') return value.exit_code === 0
         if (typeof value.code === 'number') return value.code === 0
         if (typeof value.error === 'string' && value.error.trim()) return false
+        if (isStructuredHttpResponse(value)) return true
         return Object.values(value).every(item => visit(item))
       }
       return true

@@ -147,13 +147,21 @@
                   <option value="streamableHttp">{{ $t('Tools.transportTypes.streamableHttp') }}</option>
                 </select>
               </div>
-              <div class="form-control">
+              <div v-if="editableServer.transport_type === 'stdio'" class="form-control">
                 <label class="label"><span class="label-text">{{ $t('Tools.addServer.command') }}</span></label>
                 <input type="text" v-model="editableServer.command" class="input input-bordered font-mono" />
               </div>
-              <div class="form-control">
+              <div v-if="editableServer.transport_type === 'stdio'" class="form-control">
                 <label class="label"><span class="label-text">{{ $t('Tools.addServer.args') }}</span></label>
                 <textarea v-model="editableServer.args" class="textarea textarea-bordered font-mono" rows="3"></textarea>
+              </div>
+              <div v-if="editableServer.transport_type !== 'stdio'" class="form-control">
+                <label class="label"><span class="label-text">{{ $t('Tools.endpoint') }}</span></label>
+                <input type="text" v-model="editableServer.endpoint" class="input input-bordered font-mono" />
+              </div>
+              <div v-if="editableServer.transport_type !== 'stdio'" class="form-control">
+                <label class="label"><span class="label-text">Headers JSON</span></label>
+                <textarea v-model="editableServer.headers" class="textarea textarea-bordered font-mono" rows="5" spellcheck="false"></textarea>
               </div>
             </div>
 
@@ -371,6 +379,7 @@ interface McpConnection {
   status: string
   command: string
   args: string[]
+  headers: Record<string, string>
 }
 
 interface FrontendTool {
@@ -422,7 +431,17 @@ const showDetailsModal = ref(false)
 const detailsTab = ref('general')
 const editMode = ref('form')
 const selectedServer = ref<McpConnection | null>(null)
-const editableServer = reactive({ db_id: '', name: '', description: '', command: '', args: '', enabled: true, transport_type: 'stdio' })
+const editableServer = reactive({
+  db_id: '',
+  name: '',
+  description: '',
+  command: '',
+  args: '',
+  endpoint: '',
+  headers: '{}',
+  enabled: true,
+  transport_type: 'stdio'
+})
 const editableServerJson = ref('')
 const serverTools = ref<FrontendTool[]>([])
 const isLoadingTools = ref(false)
@@ -558,13 +577,15 @@ function openDetailsModal(connection: McpConnection) {
     description: connection.description || '',
     command: connection.command,
     args: connection.args.join(' '),
+    endpoint: connection.endpoint,
+    headers: JSON.stringify(connection.headers || {}, null, 2),
     enabled: true,
     transport_type: connection.transport_type
   })
   editableServerJson.value = JSON.stringify({
     db_id: connection.db_id, id: connection.id, name: connection.name,
     description: connection.description || '', transport_type: connection.transport_type,
-    endpoint: connection.endpoint, status: connection.status, command: connection.command, args: connection.args,
+    endpoint: connection.endpoint, status: connection.status, command: connection.command, args: connection.args, headers: connection.headers || {},
   }, null, 2)
   detailsTab.value = 'general'
   editMode.value = 'form'
@@ -599,15 +620,29 @@ async function saveServerDetails() {
           db_id: jsonData.db_id, id: jsonData.id || null, name: jsonData.name, description: jsonData.description || '',
           command: jsonData.command, args: Array.isArray(jsonData.args) ? jsonData.args : [],
           transport_type: jsonData.transport_type || 'stdio', endpoint: jsonData.endpoint || '',
+          headers: jsonData.headers && typeof jsonData.headers === 'object' ? jsonData.headers : {},
           status: jsonData.status || selectedServer.value.status || 'Disconnected',
         }
       } catch (e) { dialog.toast.error(t('Tools.jsonFormatError')); return }
     } else {
+      let headers: Record<string, string> = {}
+      if (editableServer.transport_type !== 'stdio' && editableServer.headers.trim()) {
+        try {
+          const parsedHeaders = JSON.parse(editableServer.headers)
+          headers = parsedHeaders && typeof parsedHeaders === 'object' ? parsedHeaders : {}
+        } catch (e) {
+          dialog.toast.error('Headers JSON 格式错误')
+          return
+        }
+      }
       payload = {
         db_id: editableServer.db_id, id: selectedServer.value.id, name: editableServer.name,
         description: editableServer.description || '', command: editableServer.command,
         args: editableServer.args.split(' ').filter(s => s.trim() !== ''),
-        transport_type: editableServer.transport_type, endpoint: selectedServer.value.endpoint, status: selectedServer.value.status,
+        transport_type: editableServer.transport_type,
+        endpoint: editableServer.endpoint || '',
+        headers,
+        status: selectedServer.value.status,
       }
     }
     await invoke('mcp_update_server_config', { payload })
@@ -616,7 +651,7 @@ async function saveServerDetails() {
       try {
         await invoke('mcp_disconnect_server', { connectionId: selectedServer.value.id })
         await new Promise(resolve => setTimeout(resolve, 500))
-        await invoke('add_child_process_mcp_server', { name: payload.name, command: payload.command, args: payload.args })
+        await invoke('mcp_connect_server', { payload })
         dialog.toast.success(t('Tools.updateSuccess') + t('Tools.reconnected'))
       } catch (reconnectError) {
         console.error('Failed to reconnect server:', reconnectError)
@@ -681,8 +716,12 @@ async function runTestTool() {
 async function handleImportFromJson() {
   if (!jsonImportConfig.value.trim()) { await dialog.error(t('Tools.addServer.jsonRequired')); return }
   try {
-    await invoke('import_mcp_servers_from_json', { jsonConfig: jsonImportConfig.value })
-    dialog.toast.success(t('Tools.importSuccess'))
+    const importedCount = await invoke<number>('import_mcp_servers_from_json', { jsonConfig: jsonImportConfig.value })
+    if (!importedCount) {
+      dialog.toast.warning('没有导入任何 MCP 配置，请检查 transport 字段以及 command/url 是否完整')
+      return
+    }
+    dialog.toast.success(`${t('Tools.importSuccess')} (${importedCount})`)
     showAddServerModal.value = false
     mcpServersRef.value?.fetchConnections?.()
     await emit('mcp:tools-changed', { action: 'servers_imported' })

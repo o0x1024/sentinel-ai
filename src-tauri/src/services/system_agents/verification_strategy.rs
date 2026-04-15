@@ -2,11 +2,11 @@ use anyhow::{anyhow, Result};
 use serde_json::Value;
 use url::Url;
 
-use crate::services::system_agents::verification_plan::{
-    VerificationBaseline, VerificationPlan, VerificationTarget,
-};
 use crate::services::system_agents::verification_mutation::{
     mutate_business_parameter_request, AppliedVerificationMutation, VerificationMutationSelectors,
+};
+use crate::services::system_agents::verification_plan::{
+    VerificationBaseline, VerificationPlan, VerificationTarget,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,7 +236,11 @@ fn mutate_request_reference(
     if let Some((mutated_url, applied_mutation)) =
         mutate_url_reference(url, &query_keys, &path_values, candidate_parameters)?
     {
-        return Ok((mutated_url, body.map(str::to_string), vec![applied_mutation]));
+        return Ok((
+            mutated_url,
+            body.map(str::to_string),
+            vec![applied_mutation],
+        ));
     }
 
     if let Some((mutated_body, applied_mutation)) =
@@ -384,7 +388,11 @@ fn parameter_matches(key: &str, explicit_keys: &[String], legacy_keys: &[String]
         .any(|candidate| candidate.eq_ignore_ascii_case(key))
 }
 
-fn path_segment_matches(segment: &str, explicit_values: &[String], legacy_values: &[String]) -> bool {
+fn path_segment_matches(
+    segment: &str,
+    explicit_values: &[String],
+    legacy_values: &[String],
+) -> bool {
     explicit_values
         .iter()
         .chain(legacy_values.iter())

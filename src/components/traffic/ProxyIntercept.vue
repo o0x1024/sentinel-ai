@@ -481,6 +481,7 @@ import {
   getInterceptMethodClass as getMethodClass,
   getInterceptStatusClass as getStatusClass,
   truncateInterceptText as truncate,
+  buildExchangeRequestFromInterceptedRequest,
   type InterceptedItem,
   type InterceptedRequest,
   type InterceptedResponse,
@@ -489,6 +490,8 @@ import {
   type ProxyStats,
   type ProxyStatus,
 } from './proxyInterceptSupport';
+import type { HttpExchangeRequest } from './http/model'
+import { normalizeHttpVersionToken } from './http/version'
 
 const { t } = useI18n();
 const router = useRouter();
@@ -501,9 +504,9 @@ const refreshTrigger = inject<any>('refreshTrigger', ref(0));
 const emit = defineEmits<{
   (e: 'openResponseInterceptionSettings'): void
   (e: 'interceptQueueChanged', count: number): void
-  (e: 'sendToRepeater', request: InterceptedRequest): void
+  (e: 'sendToRepeater', request: HttpExchangeRequest): void
   (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
-  (e: 'sendToIntruder', request: InterceptedRequest): void
+  (e: 'sendToIntruder', request: HttpExchangeRequest): void
   (e: 'sendToAssistant', requests: any[]): void
 }>();
 
@@ -915,7 +918,7 @@ async function contextMenuDrop() {
 
 function contextMenuSendToRepeater() {
   if (contextMenu.value.item?.type === 'request') {
-    emit('sendToRepeater', contextMenu.value.item.data as InterceptedRequest);
+    emit('sendToRepeater', buildExchangeRequestFromInterceptedRequest(contextMenu.value.item.data as InterceptedRequest));
     dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToRepeater'));
   }
   closeContextMenu();
@@ -923,7 +926,7 @@ function contextMenuSendToRepeater() {
 
 function contextMenuSendToIntruder() {
   if (contextMenu.value.item?.type === 'request') {
-    emit('sendToIntruder', contextMenu.value.item.data as InterceptedRequest);
+    emit('sendToIntruder', buildExchangeRequestFromInterceptedRequest(contextMenu.value.item.data as InterceptedRequest));
     dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToIntruder'));
   }
   closeContextMenu();
@@ -932,7 +935,7 @@ function contextMenuSendToIntruder() {
 function contextMenuSendToComparer() {
   if (contextMenu.value.item?.type === 'request') {
     emit('sendDraftRequestToComparer', {
-      request: contextMenu.value.item.data as InterceptedRequest,
+      request: buildExchangeRequestFromInterceptedRequest(contextMenu.value.item.data as InterceptedRequest),
       label: t('trafficAnalysis.comparer.draft.leftLabel'),
     });
     dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
@@ -1373,18 +1376,18 @@ async function dropAll() {
 
 function sendToRepeater() {
   if (!currentRequest.value) return;
-  emit('sendToRepeater', currentRequest.value);
+  emit('sendToRepeater', buildExchangeRequestFromInterceptedRequest(currentRequest.value));
 }
 
 function sendToIntruder() {
   if (!currentRequest.value) return;
-  emit('sendToIntruder', currentRequest.value);
+  emit('sendToIntruder', buildExchangeRequestFromInterceptedRequest(currentRequest.value));
 }
 
 function sendToComparer() {
   if (currentItem.value?.type === 'request' && currentRequest.value) {
     emit('sendDraftRequestToComparer', {
-      request: currentRequest.value,
+      request: buildExchangeRequestFromInterceptedRequest(currentRequest.value),
       label: t('trafficAnalysis.comparer.draft.leftLabel'),
     });
     dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
@@ -1412,8 +1415,13 @@ function loadRequestContent(request: InterceptedRequest) {
   requestContent.value = content;
 }
 
+function getInterceptResponseProtocol(response: InterceptedResponse) {
+  const matchingRequest = interceptedRequests.value.find((request) => request.id === response.request_id)
+  return normalizeHttpVersionToken(matchingRequest?.protocol)
+}
+
 function buildInterceptResponseText(response: InterceptedResponse) {
-  let content = `HTTP/1.1 ${response.status}\n`;
+  let content = `${getInterceptResponseProtocol(response)} ${response.status}\n`;
   for (const [key, value] of Object.entries(response.headers)) {
     content += `${key}: ${value}\n`;
   }

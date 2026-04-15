@@ -5,6 +5,8 @@ type VerificationMeta = {
   verificationOutcome?: string
   strategyUsed?: string
   mutated?: boolean
+  baselineExchange?: WorkbenchEvidenceExchange | null
+  replayExchange?: WorkbenchEvidenceExchange | null
 }
 
 type ObservationPayload = {
@@ -76,17 +78,20 @@ const normalizeRiskLabel = (riskType?: string | null) =>
 const normalizeConfidenceLabel = (confidence?: string | null) =>
   readMessage(
     `priority.${confidence === 'high' ? 'high' : confidence === 'medium' ? 'medium' : 'low'}`,
-    confidence || wb('common.unknown'),
+    confidence || wb('common.unknown')
   )
 
 const normalizeOutcomeLabel = (outcome?: string | null) =>
   readMessage(
     `systemAgent.outcome.${outcome || 'verification_not_confirmed'}`,
-    outcome || wb('common.unknown'),
+    outcome || wb('common.unknown')
   )
 
 const normalizeStrategyLabel = (strategy?: string | null) =>
-  readMessage(`systemAgent.strategy.${strategy || 'manual_review'}`, strategy || wb('common.unknown'))
+  readMessage(
+    `systemAgent.strategy.${strategy || 'manual_review'}`,
+    strategy || wb('common.unknown')
+  )
 
 const normalizeMutatedLabel = (mutated?: boolean | null) =>
   mutated ? wb('common.yes') : wb('common.no')
@@ -107,7 +112,7 @@ const buildObservationSummary = (evidence: Evidence) => {
       risk: normalizeRiskLabel(payload.riskType),
       confidence: normalizeConfidenceLabel(payload.confidence),
     }),
-    payload.signals,
+    payload.signals
   )
 }
 
@@ -120,16 +125,17 @@ const buildContextSummary = (evidence: Evidence) => {
       path: normalizePath(evidence.url),
       risk: normalizeRiskLabel(payload.riskType),
     }),
-    payload.signals,
+    payload.signals
   )
 }
 
 const buildVerificationSummary = (evidence: Evidence) => {
   const meta = parseJson<VerificationMeta>(evidence.response_headers)
   if (!meta) return evidence.evidence_snippet
-  const key = meta.verificationOutcome === 'verification_confirmed'
-    ? 'systemAgent.evidence.verificationConfirmed'
-    : 'systemAgent.evidence.verificationNotConfirmed'
+  const key =
+    meta.verificationOutcome === 'verification_confirmed'
+      ? 'systemAgent.evidence.verificationConfirmed'
+      : 'systemAgent.evidence.verificationNotConfirmed'
   return wb(key, {
     strategy: normalizeStrategyLabel(meta.strategyUsed),
     status: evidence.response_status ?? '-',
@@ -151,10 +157,13 @@ type SystemAgentLikeFinding = {
   title: string
 }
 
-const readPluginId = (finding: SystemAgentLikeFinding) => finding.plugin_id || finding.pluginId || ''
-const readRiskType = (finding: SystemAgentLikeFinding) => finding.vuln_type || finding.vulnType || 'none'
+const readPluginId = (finding: SystemAgentLikeFinding) =>
+  finding.plugin_id || finding.pluginId || ''
+const readRiskType = (finding: SystemAgentLikeFinding) =>
+  finding.vuln_type || finding.vulnType || 'none'
 
-const isSystemAgentFinding = (finding: SystemAgentLikeFinding) => readPluginId(finding).startsWith('agent:')
+const isSystemAgentFinding = (finding: SystemAgentLikeFinding) =>
+  readPluginId(finding).startsWith('agent:')
 
 export const getWorkbenchEvidenceLocationLabel = (location: string) => {
   if (location.startsWith('system_agent_')) {
@@ -186,8 +195,11 @@ export const formatWorkbenchRawPayload = (raw?: string | null) => {
 }
 
 const buildDirectEvidenceExchange = (evidence: Evidence): WorkbenchEvidenceExchange | null => {
-  const hasRequestDetails = Boolean(evidence.request_headers || evidence.request_body || evidence.url || evidence.method)
-  const hasResponseDetails = evidence.response_status != null || Boolean(evidence.response_headers || evidence.response_body)
+  const hasRequestDetails = Boolean(
+    evidence.request_headers || evidence.request_body || evidence.url || evidence.method
+  )
+  const hasResponseDetails =
+    evidence.response_status != null || Boolean(evidence.response_headers || evidence.response_body)
   if (!hasRequestDetails && !hasResponseDetails) return null
   return {
     requestMethod: evidence.method || 'GET',
@@ -201,7 +213,9 @@ const buildDirectEvidenceExchange = (evidence: Evidence): WorkbenchEvidenceExcha
 }
 
 const buildContextEvidenceExchange = (evidence: Evidence): WorkbenchEvidenceExchange | null => {
-  const payload = parseJson<ContextPayload>(evidence.request_body)
+  const payload =
+    parseJson<ContextPayload>(evidence.response_body) ||
+    parseJson<ContextPayload>(evidence.request_body)
   const baselineRequest = payload?.baselineRequest
   if (!baselineRequest) return buildDirectEvidenceExchange(evidence)
   return {
@@ -215,11 +229,30 @@ const buildContextEvidenceExchange = (evidence: Evidence): WorkbenchEvidenceExch
   }
 }
 
-export const getWorkbenchEvidenceExchange = (evidence: Evidence): WorkbenchEvidenceExchange | null => {
+export const getWorkbenchEvidenceExchange = (
+  evidence: Evidence
+): WorkbenchEvidenceExchange | null => {
+  if (evidence.location === 'system_agent_verification') {
+    return getWorkbenchVerificationReplayExchange(evidence) || buildDirectEvidenceExchange(evidence)
+  }
   if (evidence.location === 'system_agent_context') {
     return buildContextEvidenceExchange(evidence)
   }
   return buildDirectEvidenceExchange(evidence)
+}
+
+export const getWorkbenchVerificationBaselineExchange = (
+  evidence: Evidence
+): WorkbenchEvidenceExchange | null => {
+  const meta = parseJson<VerificationMeta>(evidence.response_headers)
+  return meta?.baselineExchange || null
+}
+
+export const getWorkbenchVerificationReplayExchange = (
+  evidence: Evidence
+): WorkbenchEvidenceExchange | null => {
+  const meta = parseJson<VerificationMeta>(evidence.response_headers)
+  return meta?.replayExchange || null
 }
 
 export const hasWorkbenchEvidenceExchange = (evidence: Evidence) =>
@@ -237,12 +270,16 @@ export const getWorkbenchFindingTitle = (finding: Finding | SystemAgentLikeFindi
 export const getWorkbenchFindingDescription = (finding: Finding | SystemAgentLikeFinding) => {
   if (!isSystemAgentFinding(finding)) return finding.description
 
-  const contextEvidence = (finding.evidence || []).find(item => item.location === 'system_agent_context')
+  const contextEvidence = (finding.evidence || []).find(
+    item => item.location === 'system_agent_context'
+  )
   if (contextEvidence) {
     return getWorkbenchEvidenceSnippet(contextEvidence)
   }
 
-  const observationEvidence = (finding.evidence || []).find(item => item.location === 'system_agent_observation')
+  const observationEvidence = (finding.evidence || []).find(
+    item => item.location === 'system_agent_observation'
+  )
   if (observationEvidence) {
     return getWorkbenchEvidenceSnippet(observationEvidence)
   }

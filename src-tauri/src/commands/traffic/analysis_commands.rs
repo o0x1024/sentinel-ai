@@ -37,6 +37,7 @@ use super::finding_support::TrafficFindingView;
 use super::intercept_commands::InterceptFilterRules;
 use super::replay_support::{
     replay_raw_request as replay_raw_request_impl, RawReplayConfig, RawReplayResult,
+    ReplayEndpointInput, ReplayRequestInput,
 };
 
 pub use super::analysis_state_support::{
@@ -48,7 +49,8 @@ fn build_proxy_request_record(record: &HttpRequestRecord) -> sentinel_db::ProxyR
         id: None,
         url: record.url.clone(),
         host: record.host.clone(),
-        protocol: record.protocol.clone(),
+        scheme: record.scheme.clone(),
+        http_version_observed: record.http_version_observed.clone(),
         method: record.method.clone(),
         status_code: record.status_code,
         request_headers: record.request_headers.clone(),
@@ -981,20 +983,16 @@ pub async fn replay_request(
 /// 重放 Raw 请求（通过 TCP socket 直接发送原始字节）
 #[tauri::command]
 pub async fn replay_raw_request(
-    host: String,
-    port: u16,
-    use_tls: bool,
-    raw_request: String,
+    endpoint: ReplayEndpointInput,
+    request: ReplayRequestInput,
     timeout_secs: Option<u64>,
     follow_redirects: Option<bool>,
     max_redirects: Option<usize>,
     process_cookies_in_redirects: Option<bool>,
 ) -> Result<CommandResponse<RawReplayResult>, String> {
     let result = replay_raw_request_impl(RawReplayConfig {
-        host,
-        port,
-        use_tls,
-        raw_request,
+        endpoint,
+        request,
         timeout_secs,
         follow_redirects: follow_redirects.unwrap_or(false),
         max_redirects: max_redirects.unwrap_or(5),

@@ -7,9 +7,30 @@
           给逻辑漏洞检测补充自定义身份字段、资源主键、凭证字段和动作别名。
         </div>
       </div>
-      <button class="btn btn-sm btn-primary" :disabled="saving" @click="emitSave">
-        {{ saving ? '保存中' : '保存设置' }}
-      </button>
+      <div class="flex items-center gap-2">
+        <label class="form-control">
+          <select
+            class="select select-bordered select-sm min-w-24"
+            :value="recentHistoryLimit"
+            :disabled="saving || recommending"
+            @change="updateRecentHistoryLimit"
+          >
+            <option
+              v-for="option in recentHistoryLimitOptions"
+              :key="option"
+              :value="option"
+            >
+              最近 {{ option }} 条
+            </option>
+          </select>
+        </label>
+        <button class="btn btn-sm btn-ghost" :disabled="saving || recommending" @click="emitRecommend">
+          {{ recommending ? '分析中' : '从最近历史推荐' }}
+        </button>
+        <button class="btn btn-sm btn-primary" :disabled="saving" @click="emitSave">
+          {{ saving ? '保存中' : '保存设置' }}
+        </button>
+      </div>
     </div>
 
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -103,11 +124,16 @@ import { computed } from 'vue'
 const props = defineProps<{
   settings: TrafficContextExtractionSettings
   saving?: boolean
+  recommending?: boolean
+  recentHistoryLimit: number
+  recentHistoryLimitOptions: number[]
 }>()
 
 const emit = defineEmits<{
   (event: 'update:settings', value: TrafficContextExtractionSettings): void
+  (event: 'update:recentHistoryLimit', value: number): void
   (event: 'save'): void
+  (event: 'recommend-from-history'): void
 }>()
 
 const principalKeysText = computed(() => props.settings.principalKeys.join('\n'))
@@ -124,6 +150,18 @@ const actionAliasesText = computed(() =>
 
 function emitSave() {
   emit('save')
+}
+
+function emitRecommend() {
+  emit('recommend-from-history')
+}
+
+function updateRecentHistoryLimit(event: Event) {
+  const target = event.target as HTMLSelectElement
+  const nextValue = Number.parseInt(target.value, 10)
+  if (Number.isFinite(nextValue) && nextValue > 0) {
+    emit('update:recentHistoryLimit', nextValue)
+  }
 }
 
 function updateListField(

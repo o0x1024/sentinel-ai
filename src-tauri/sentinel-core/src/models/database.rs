@@ -604,6 +604,7 @@ pub struct McpServerConfig {
     pub connection_type: String,
     pub command: String,
     pub args: String,
+    pub headers_json: Option<String>,
     pub enabled: bool,
     pub auto_connect: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,

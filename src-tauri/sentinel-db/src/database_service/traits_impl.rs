@@ -625,10 +625,23 @@ impl Database for DatabaseService {
         &self,
         name: &str,
         description: Option<&str>,
+        url: &str,
+        connection_type: &str,
         command: &str,
         args: &[String],
+        headers_json: Option<&str>,
     ) -> Result<String> {
-        Self::create_mcp_server_config_internal(self, name, description, command, args).await
+        Self::create_mcp_server_config_internal(
+            self,
+            name,
+            description,
+            url,
+            connection_type,
+            command,
+            args,
+            headers_json,
+        )
+        .await
     }
     async fn get_all_mcp_server_configs(&self) -> Result<Vec<McpServerConfig>> {
         Self::get_all_mcp_server_configs_internal(self).await
@@ -653,12 +666,26 @@ impl Database for DatabaseService {
         id: &str,
         name: &str,
         description: Option<&str>,
+        url: &str,
+        connection_type: &str,
         command: &str,
         args: &[String],
+        headers_json: Option<&str>,
         enabled: bool,
     ) -> Result<()> {
-        Self::update_mcp_server_config_internal(self, id, name, description, command, args, enabled)
-            .await
+        Self::update_mcp_server_config_internal(
+            self,
+            id,
+            name,
+            description,
+            url,
+            connection_type,
+            command,
+            args,
+            headers_json,
+            enabled,
+        )
+        .await
     }
     async fn get_rag_config(&self) -> Result<Option<RagConfig>> {
         Self::get_rag_config_internal(self).await

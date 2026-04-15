@@ -1,29 +1,76 @@
 <template>
   <div class="shell-message-block rounded-lg overflow-hidden border border-base-300 bg-[#1e1e1e]">
     <!-- Pending Confirmation Bar -->
-    <div v-if="needsConfirmation" class="confirmation-bar flex items-center justify-between px-3 py-2 bg-[#2d2d2d] border-b border-[#404040]">
-      <span class="text-sm text-[#a0a0a0]">{{ $t('tools.shell.runCommand') }}</span>
-      <div class="flex items-center gap-2">
-        <button 
-          @click="handleReject" 
-          class="text-sm text-[#a0a0a0] hover:text-white px-3 py-1"
-        >
-          {{ $t('tools.shell.reject') }}
-        </button>
-        <button   
-          @click="handleAlwaysAccept" 
-          class="btn btn-sm btn-ghost text-[#a0a0a0] hover:text-white"
-          :title="$t('tools.shell.alwaysAcceptHint')"
-        >
-          {{ $t('tools.shell.alwaysAccept') }}
-        </button>
-        <button 
-          @click="handleAccept" 
-          class="btn btn-sm btn-primary gap-1"
-        >
-          {{ $t('tools.shell.accept') }}
-          <kbd class="kbd kbd-xs bg-primary-focus">⏎</kbd>
-        </button>
+    <div v-if="needsConfirmation" class="confirmation-bar px-3 py-2 bg-[#2d2d2d] border-b border-[#404040]">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <div class="text-sm text-[#a0a0a0]">{{ $t('tools.shell.runCommand') }}</div>
+          <div
+            v-if="pendingSemanticTitle || pendingSemanticSummaryKey"
+            class="mt-1 flex flex-wrap items-center gap-2 text-xs"
+          >
+            <span
+              v-if="pendingSemanticTitle"
+              :class="['rounded-full px-2 py-0.5 font-medium', pendingSemanticBadgeClass]"
+            >
+              {{ pendingSemanticTitle }}
+            </span>
+            <span v-if="pendingSemanticSummaryKey" class="text-[#c2c2c2] break-words">
+              {{ $t(pendingSemanticSummaryKey) }}
+            </span>
+          </div>
+          <div
+            v-if="pendingSemanticReasonKey"
+            class="mt-1 text-[11px] text-[#8f8f8f] whitespace-pre-wrap break-words"
+          >
+            {{ $t(pendingSemanticReasonKey) }}
+          </div>
+          <div
+            v-if="suggestedAllowRules.length > 0"
+            class="mt-2 rounded-md border border-[#404040] bg-[#242424] px-2 py-1.5"
+          >
+            <div class="text-[11px] text-[#a0a0a0]">
+              {{ $t('tools.shell.allowRulePreviewTitle') }}
+            </div>
+            <div class="mt-1 space-y-1">
+              <div
+                v-for="item in suggestedAllowRules"
+                :key="item.rule"
+                class="rounded bg-[#1a1a1a] px-2 py-1"
+              >
+                <code class="text-[11px] text-[#d4d4d4]">
+                  {{ item.rule }}
+                </code>
+                <div class="mt-1 text-[10px] text-[#8f8f8f]">
+                  {{ $t(item.reason_key) }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button 
+            @click="handleReject" 
+            class="text-sm text-[#a0a0a0] hover:text-white px-3 py-1"
+          >
+            {{ $t('tools.shell.reject') }}
+          </button>
+          <button
+            v-if="canAlwaysAccept"
+            @click="handleAlwaysAccept"
+            class="btn btn-sm btn-ghost text-[#a0a0a0] hover:text-white"
+            :title="$t('tools.shell.alwaysAcceptHint')"
+          >
+            {{ $t('tools.shell.alwaysAccept') }}
+          </button>
+          <button 
+            @click="handleAccept" 
+            class="btn btn-sm btn-primary gap-1"
+          >
+            {{ $t('tools.shell.accept') }}
+            <kbd class="kbd kbd-xs bg-primary-focus">⏎</kbd>
+          </button>
+        </div>
       </div>
     </div>
     
@@ -185,6 +232,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { useI18n } from 'vue-i18n'
 import { highlightShellCommand } from '@/utils/shellHighlight'
 import { useTerminal } from '@/composables/useTerminal'
 import { useTodos } from '@/composables/useTodos'
@@ -203,12 +251,26 @@ const emit = defineEmits<{
   (e: 'rejected'): void
 }>()
 
+type PendingPermissionInfo = {
+  id: string
+  command: string
+  semantic_kind?: 'read_only' | 'mutating' | 'dangerous' | ''
+  semantic_code?: string
+  semantic_summary_key?: string
+  semantic_reason_key?: string | null
+  suggested_allow_rules?: Array<{
+    rule: string
+    reason_key: string
+  }>
+}
+
 const copied = ref(false)
 const copiedAll = ref(false)
 const isCancelling = ref(false)
 const isStoppingBackgroundTask = ref(false)
 const pendingPermissionId = ref<string | null>(null)
 const pendingCommand = ref<string>('')
+const pendingPermissionInfo = ref<PendingPermissionInfo | null>(null)
 const isExpanded = ref(false)
 const hasOverflow = ref(false)
 const terminalBodyRef = ref<HTMLElement | null>(null)
@@ -217,6 +279,7 @@ let unlisten: (() => void) | null = null
 let unlistenBackgroundTask: (() => void) | null = null
 const terminal = useTerminal()
 const todos = useTodos()
+const { t } = useI18n()
 
 // Extract command from args
 const command = computed(() => {
@@ -328,6 +391,52 @@ const needsConfirmation = computed(() => {
   // 2. OR status is 'pending' (explicitly marked as needing confirmation)
   // 3. AND we're not already completed
   return (pendingPermissionId.value !== null || props.status === 'pending') && props.status !== 'completed' && props.status !== 'failed'
+})
+
+const pendingSemanticKind = computed(() => {
+  return pendingPermissionInfo.value?.semantic_kind || ''
+})
+
+const pendingSemanticSummaryKey = computed(() => {
+  return pendingPermissionInfo.value?.semantic_summary_key || ''
+})
+
+const pendingSemanticReasonKey = computed(() => {
+  return pendingPermissionInfo.value?.semantic_reason_key || ''
+})
+
+const suggestedAllowRules = computed(() => {
+  return pendingPermissionInfo.value?.suggested_allow_rules || []
+})
+
+const pendingSemanticTitle = computed(() => {
+  switch (pendingSemanticKind.value) {
+    case 'read_only':
+      return t('tools.shell.semanticLabels.readOnly')
+    case 'dangerous':
+      return t('tools.shell.semanticLabels.dangerous')
+    case 'mutating':
+      return t('tools.shell.semanticLabels.mutating')
+    default:
+      return ''
+  }
+})
+
+const pendingSemanticBadgeClass = computed(() => {
+  switch (pendingSemanticKind.value) {
+    case 'read_only':
+      return 'bg-info/20 text-info border border-info/30'
+    case 'dangerous':
+      return 'bg-error/20 text-error border border-error/30'
+    case 'mutating':
+      return 'bg-warning/20 text-warning border border-warning/30'
+    default:
+      return 'bg-base-300/20 text-base-content/80 border border-base-300/30'
+  }
+})
+
+const canAlwaysAccept = computed(() => {
+  return suggestedAllowRules.value.length > 0
 })
 
 // Check if running
@@ -579,6 +688,8 @@ async function handleAccept() {
       console.error('Failed to respond permission:', e)
     }
     pendingPermissionId.value = null
+    pendingCommand.value = ''
+    pendingPermissionInfo.value = null
   }
   emit('accepted')
 }
@@ -595,71 +706,34 @@ async function handleReject() {
       console.error('Failed to respond permission:', e)
     }
     pendingPermissionId.value = null
+    pendingCommand.value = ''
+    pendingPermissionInfo.value = null
   }
   emit('rejected')
 }
 
-// Extract base command from full command line
-function extractBaseCommand(fullCommand: string): string {
-  // Remove leading/trailing whitespace
-  const trimmed = fullCommand.trim()
-  
-  // Handle pipes and redirects - get the first command
-  const pipeMatch = trimmed.match(/^([^|>&<]+)/)
-  const firstPart = pipeMatch ? pipeMatch[1].trim() : trimmed
-  
-  // Split by whitespace and get the first token (the actual command)
-  const parts = firstPart.split(/\s+/)
-  const baseCmd = parts[0]
-  
-  // Remove any quotes
-  return baseCmd.replace(/['"]/g, '')
-}
-
 // Handle always accept - add to allow list and accept
 async function handleAlwaysAccept() {
+  if (!canAlwaysAccept.value) {
+    return
+  }
+
   console.log('handleAlwaysAccept called, pendingPermissionId:', pendingPermissionId.value)
   
   // Store the permission ID before any async operation
   const permissionId = pendingPermissionId.value
   
-  // Get the full command and extract base command
-  const fullCommand = pendingCommand.value || command.value
-  const baseCommand = extractBaseCommand(fullCommand)
-  
-  // First, respond to the current permission request to allow execution
   if (permissionId) {
     try {
-      console.log('Responding to permission with stored ID:', permissionId)
-      await invoke('respond_shell_permission', { 
-        id: permissionId, 
-        allowed: true 
+      const result = await invoke<{ added_rules: string[], all_rules: string[] }>('allow_shell_permission_forever', {
+        id: permissionId,
       })
+      console.log('Shell allow rules persisted:', result)
       pendingPermissionId.value = null
+      pendingCommand.value = ''
+      pendingPermissionInfo.value = null
     } catch (e) {
-      console.error('Failed to respond permission:', e)
-    }
-  }
-  
-  // Then, add the base command to allow list for future executions
-  if (baseCommand) {
-    try {
-      // Get current agent config
-      const agentConfig = await invoke<{shell: {default_policy: string, allowed_commands: string[], denied_commands: string[]}}>('get_agent_config')
-      
-      // Add base command to allowed_commands if not already there
-      if (!agentConfig.shell.allowed_commands.includes(baseCommand)) {
-        agentConfig.shell.allowed_commands.push(baseCommand)
-        
-        // Save updated config
-        await invoke('save_agent_config', { config: agentConfig })
-        console.log('Base command added to allow list:', baseCommand, 'from:', fullCommand)
-        console.log('Future executions of', baseCommand, 'will be auto-approved')
-      } else {
-        console.log('Base command already in allow list:', baseCommand)
-      }
-    } catch (e) {
-      console.error('Failed to add command to allow list:', e)
+      console.error('Failed to persist shell allow rules:', e)
     }
   }
   
@@ -687,7 +761,8 @@ async function checkPendingPermissions() {
   if (!command.value || isCompleted.value) return
   
   try {
-    const pending = await invoke<Array<{id: string, command: string}>>('get_pending_shell_permissions')
+    const pending = await invoke<PendingPermissionInfo[]>('get_pending_shell_permissions')
+    let matched = false
     
     for (const req of pending) {
       // Check if this permission request matches our command
@@ -697,8 +772,16 @@ async function checkPendingPermissions() {
         console.log('Found pending permission request:', req.id, 'for command:', req.command)
         pendingPermissionId.value = req.id
         pendingCommand.value = req.command
+        pendingPermissionInfo.value = req
+        matched = true
         break
       }
+    }
+
+    if (!matched && pendingPermissionId.value !== null) {
+      pendingPermissionId.value = null
+      pendingCommand.value = ''
+      pendingPermissionInfo.value = null
     }
   } catch (e) {
     // Ignore errors
@@ -729,7 +812,7 @@ onMounted(async () => {
   pollInterval = setInterval(checkPendingPermissions, 500)
   
   unlisten = await listen('shell-permission-request', (event: any) => {
-    const payload = event.payload
+    const payload = event.payload as PendingPermissionInfo
     console.log('Received shell-permission-request:', payload, 'our command:', command.value)
     
     // Check if this permission request matches our command
@@ -740,6 +823,7 @@ onMounted(async () => {
       console.log('Permission request matched! Setting pendingPermissionId:', payload.id)
       pendingPermissionId.value = payload.id
       pendingCommand.value = payload.command
+      pendingPermissionInfo.value = payload
     }
   }) as unknown as () => void
 

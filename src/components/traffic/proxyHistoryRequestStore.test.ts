@@ -6,7 +6,7 @@ const createRequest = (id: number, overrides: Partial<ProxyRequest> = {}): Proxy
   id,
   url: `https://example.com/${id}`,
   host: 'example.com',
-  protocol: 'https',
+  scheme: 'https',
   method: 'GET',
   status_code: 200,
   response_size: 128,

@@ -227,6 +227,7 @@ import {
   createEmptyComparerDraft,
   type ComparerDraft,
 } from './trafficComparerDraftSupport'
+import type { HttpExchangeRequest } from './http/model'
 
 interface CompareItem extends TrafficComparePayload {
   id: string
@@ -239,7 +240,7 @@ interface PinnedBaseline {
 }
 
 const emit = defineEmits<{
-  (e: 'sendToRepeater', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
+  (e: 'sendToRepeater', request: HttpExchangeRequest): void
 }>()
 
 const { t } = useI18n()

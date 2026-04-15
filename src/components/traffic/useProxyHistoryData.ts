@@ -60,9 +60,9 @@ export const useProxyHistoryData = (params: Params) => {
     let totalResponseTime = 0
 
     requests.forEach((request) => {
-      if (request.protocol === 'https') {
+      if (request.scheme === 'https') {
         https += 1
-      } else if (request.protocol === 'http') {
+      } else if (request.scheme === 'http') {
         http += 1
       }
       totalResponseTime += request.response_time
@@ -101,9 +101,9 @@ export const useProxyHistoryData = (params: Params) => {
 
   const updateStatsIncremental = (request: ProxyRequest) => {
     params.stats.value.total += 1
-    if (request.protocol === 'https') {
+    if (request.scheme === 'https') {
       params.stats.value.https += 1
-    } else if (request.protocol === 'http') {
+    } else if (request.scheme === 'http') {
       params.stats.value.http += 1
     }
     if (params.stats.value.total > 0) {

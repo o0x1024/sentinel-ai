@@ -230,6 +230,37 @@ export default {
     reject: '拒绝',
     alwaysAccept: '始终接受',
     alwaysAcceptHint: '将此命令添加到允许列表并执行',
+    allowRulePreviewTitle: '始终接受将保存以下规则：',
+    semanticLabels: {
+      readOnly: '只读',
+      mutating: '变更',
+      dangerous: '高风险'
+    },
+    semanticSummaries: {
+      readOnly: '检测到只读命令。',
+      mutating: '该命令可能会更改文件、进程或系统状态。',
+      dangerous: '检测到高风险命令。'
+    },
+    semanticReasons: {
+      readOnly: '该命令看起来只是在检查文件、Git 状态或系统信息，不会改变当前状态。',
+      mutating: '该命令未被识别为只读操作，可能会修改文件、进程或系统状态。',
+      dangerousPrivilegeEscalation: '该命令试图提升权限。',
+      dangerousUserContextSwitch: '该命令试图切换用户上下文。'
+    },
+    allowRuleReasons: {
+      keepOriginalReadOnly: '没有识别出更窄且安全的前缀，因此保留原始只读命令。',
+      narrowReadOnlyBase: '规则收窄为只读基础命令，便于后续复用，同时避免放宽范围。',
+      narrowTestCommand: '规则收窄为只读测试命令。',
+      narrowCommandExists: '规则收窄为命令存在性检查。',
+      narrowFind: '规则收窄为只读文件发现。',
+      narrowGitInspection: '规则收窄为 Git 检查类命令。',
+      narrowGitSubcommand: '规则收窄为具体的只读 Git 子命令。',
+      narrowGitRemoteShow: '规则收窄为只读 Git 远端检查。',
+      narrowGitRemoteGetUrl: '规则收窄为只读 Git 远端 URL 检查。',
+      narrowGitStashList: '规则收窄为只读 stash 列表查看。',
+      narrowGitStashShow: '规则收窄为只读 stash 内容检查。',
+      exactMutatingSubcommand: '变更类命令保持精确子命令匹配，避免后续审批范围被放宽。'
+    },
     success: '成功',
     failed: '失败',
     copyAll: '复制',

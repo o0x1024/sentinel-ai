@@ -671,6 +671,17 @@ impl TrafficProxyHandler {
         ctx.client_addr.to_string()
     }
 
+    fn format_http_version(version: hyper::Version) -> Option<String> {
+        match version {
+            hyper::Version::HTTP_09 => Some("HTTP/0.9".to_string()),
+            hyper::Version::HTTP_10 => Some("HTTP/1.0".to_string()),
+            hyper::Version::HTTP_11 => Some("HTTP/1.1".to_string()),
+            hyper::Version::HTTP_2 => Some("HTTP/2".to_string()),
+            hyper::Version::HTTP_3 => Some("HTTP/3".to_string()),
+            _ => None,
+        }
+    }
+
     /// 生成 WebSocket 连接关联键（基于连接信息）
     fn generate_ws_connection_key(ctx: &WebSocketContext) -> String {
         let debug_str = format!("{:?}", ctx);
@@ -1155,6 +1166,8 @@ impl TrafficProxyHandler {
             format!("{}://{}{}?{}", scheme, authority, path, query)
         };
 
+        let http_version = Self::format_http_version(req.version());
+
         // 提取方法
         let method = req.method().to_string();
 
@@ -1216,6 +1229,7 @@ impl TrafficProxyHandler {
             id,
             method,
             url,
+            http_version,
             headers,
             body: body_vec,
             content_type,
@@ -1238,6 +1252,8 @@ impl TrafficProxyHandler {
         request_id: String,
         res: Response<Body>,
     ) -> Result<(ResponseContext, Response<Body>)> {
+        let http_version = Self::format_http_version(res.version());
+
         // 提取状态码
         let status = res.status().as_u16();
 
@@ -1336,6 +1352,7 @@ impl TrafficProxyHandler {
         let resp_ctx = ResponseContext {
             request_id,
             status,
+            http_version,
             headers,
             body: body_vec, // 保存解压后的数据
             content_type,
@@ -1387,6 +1404,8 @@ impl TrafficProxyHandler {
         res: Response<Body>,
         scan_tx: Option<ScanSender>,
     ) -> Result<(Response<Body>, tokio::task::JoinHandle<Vec<u8>>)> {
+        let http_version = Self::format_http_version(res.version());
+
         // 提取状态码
         let status = res.status().as_u16();
 
@@ -1452,6 +1471,7 @@ impl TrafficProxyHandler {
                 let resp_ctx = ResponseContext {
                     request_id: request_id_clone,
                     status,
+                    http_version: http_version.clone(),
                     headers: headers_clone,
                     body: collected_data.clone(),
                     content_type,

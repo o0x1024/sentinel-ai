@@ -21,16 +21,17 @@ pub mod message_store;
 pub mod run_simple;
 pub mod run_with_tools;
 mod run_with_tools_support;
-pub mod tool_trace_store;
 pub mod tool_exec;
+pub mod tool_trace_store;
 pub mod types;
 pub mod utils;
 
-pub use tool_trace_store::{
-    append_execution_tool_trace, clear_execution_tool_trace, take_execution_tool_trace,
-};
 pub use tool_exec::{
     execute_builtin_tool, execute_mcp_tool, execute_plugin_tool, execute_workflow_tool,
+};
+pub use tool_trace_store::{
+    append_execution_tool_trace, clear_execution_tool_trace, next_execution_tool_trace_sequence,
+    take_execution_tool_trace,
 };
 pub use types::ToolCallRecord;
 
@@ -41,6 +42,8 @@ pub struct AgentExecuteParams {
     pub model: String,
     pub system_prompt: String,
     pub task: String,
+    pub active_terminal_session_fingerprint: Option<String>,
+    pub active_terminal_session_id: Option<String>,
     pub rig_provider: String,
     pub api_key: Option<String>,
     pub api_base: Option<String>,
@@ -106,7 +109,9 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     let tool_server = get_tool_server();
     tool_server.init_builtin_tools().await;
 
+    use sentinel_tools::buildin_tools::set_sops_app_handle;
     use sentinel_tools::buildin_tools::todos::set_todos_app_handle;
+    set_sops_app_handle(app_handle.clone()).await;
     set_todos_app_handle(app_handle.clone()).await;
 
     use crate::agents::tenth_man_executor;

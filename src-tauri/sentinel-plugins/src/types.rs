@@ -87,6 +87,8 @@ pub struct RequestContext {
     pub id: String,
     pub method: String,
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_version: Option<String>,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
     pub content_type: Option<String>,
@@ -115,6 +117,8 @@ pub struct RequestContext {
 pub struct ResponseContext {
     pub request_id: String,
     pub status: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_version: Option<String>,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
     pub content_type: Option<String>,

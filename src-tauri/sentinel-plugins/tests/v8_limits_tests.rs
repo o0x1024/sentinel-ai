@@ -20,6 +20,7 @@ fn create_test_transaction(body_size_kb: usize) -> HttpTransaction {
             id: uuid::Uuid::new_v4().to_string(),
             method: "POST".to_string(),
             url: "https://example.com/test".to_string(),
+            http_version: Some("HTTP/1.1".to_string()),
             headers: HashMap::new(),
             body,
             content_type: Some("application/octet-stream".to_string()),

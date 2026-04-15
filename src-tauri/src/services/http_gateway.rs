@@ -198,6 +198,10 @@ struct ChatRequest {
     timeout_secs: Option<u64>,
     #[serde(default)]
     enable_tenth_man_rule: Option<bool>,
+    #[serde(default)]
+    current_terminal_session_fingerprint: Option<String>,
+    #[serde(default)]
+    current_terminal_session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -328,6 +332,10 @@ struct SessionChatRequest {
     timeout_secs: Option<u64>,
     #[serde(default)]
     enable_tenth_man_rule: Option<bool>,
+    #[serde(default)]
+    current_terminal_session_fingerprint: Option<String>,
+    #[serde(default)]
+    current_terminal_session_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -983,6 +991,8 @@ window.__TAURI_INTERNALS__.invoke = async (cmd, payload) => {
         max_iterations: p?.config?.max_iterations,
         timeout_secs: p?.config?.timeout_secs,
         enable_tenth_man_rule: p?.config?.enable_tenth_man_rule,
+        current_terminal_session_fingerprint: p?.config?.current_terminal_session_fingerprint,
+        current_terminal_session_id: p?.config?.current_terminal_session_id,
       }),
     });
     if (streamResp.status === 401) {
@@ -1673,6 +1683,8 @@ async fn run_agent_execution(
     max_iterations: Option<usize>,
     timeout_secs: Option<u64>,
     enable_tenth_man_rule: Option<bool>,
+    active_terminal_session_id: Option<&str>,
+    active_terminal_session_fingerprint: Option<&str>,
 ) -> Result<String, String> {
     let (provider, model_name) = state
         .ai_manager
@@ -1703,6 +1715,9 @@ async fn run_agent_execution(
         model: model_name,
         system_prompt: system_prompt.unwrap_or_default().to_string(),
         task: task.to_string(),
+        active_terminal_session_fingerprint: active_terminal_session_fingerprint
+            .map(|v| v.to_string()),
+        active_terminal_session_id: active_terminal_session_id.map(|v| v.to_string()),
         rig_provider,
         api_key: provider_config.api_key.clone(),
         api_base: provider_config.api_base.clone(),
@@ -1874,6 +1889,27 @@ async fn bridge_invoke(
                 match crate::commands::tool_commands::respond_shell_permission(id, allowed).await {
                     Ok(_) => Ok(json!(null)),
                     Err(e) => Err(format!("respond_shell_permission failed: {}", e)),
+                }
+            }
+        }
+        "allow_shell_permission_forever" => {
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if id.is_empty() {
+                Err("allow_shell_permission_forever missing id".to_string())
+            } else {
+                match crate::commands::tool_commands::allow_shell_permission_forever_with_db(
+                    id,
+                    state.db.as_ref(),
+                )
+                .await
+                {
+                    Ok(result) => Ok(json!(result)),
+                    Err(e) => Err(format!("allow_shell_permission_forever failed: {}", e)),
                 }
             }
         }
@@ -2464,7 +2500,10 @@ async fn bridge_invoke(
             let tools = router
                 .list_all_tools()
                 .into_iter()
-                .filter(|t| t.id != sentinel_tools::buildin_tools::SkillsTool::NAME)
+                .filter(|t| {
+                    t.id != sentinel_tools::buildin_tools::SkillsTool::NAME
+                        && t.id != sentinel_tools::buildin_tools::SopsTool::NAME
+                })
                 .collect::<Vec<_>>();
             Ok(json!(tools))
         }
@@ -3321,6 +3360,15 @@ async fn bridge_invoke(
                             max_iterations,
                             timeout_secs,
                             enable_tenth_man_rule,
+                            v.config
+                                .as_ref()
+                                .and_then(|c| {
+                                    c.get("current_terminal_session_id").and_then(|x| x.as_str())
+                                }),
+                            v.config.as_ref().and_then(|c| {
+                                c.get("current_terminal_session_fingerprint")
+                                    .and_then(|x| x.as_str())
+                            }),
                         )
                         .await
                         {
@@ -3529,6 +3577,8 @@ async fn chat(State(state): State<GatewayAppState>, Json(payload): Json<ChatRequ
             payload.max_iterations,
             payload.timeout_secs,
             payload.enable_tenth_man_rule,
+            payload.current_terminal_session_id.as_deref(),
+            payload.current_terminal_session_fingerprint.as_deref(),
         )
         .await
         {
@@ -3641,6 +3691,8 @@ async fn session_chat(
         max_iterations: payload.max_iterations,
         timeout_secs: payload.timeout_secs,
         enable_tenth_man_rule: payload.enable_tenth_man_rule,
+        current_terminal_session_fingerprint: payload.current_terminal_session_fingerprint,
+        current_terminal_session_id: payload.current_terminal_session_id,
     };
     chat(State(state), Json(req)).await
 }
@@ -3903,6 +3955,8 @@ async fn chat_stream(
                 max_iterations,
                 timeout_secs,
                 enable_tenth_man_rule,
+                payload.current_terminal_session_id.as_deref(),
+                payload.current_terminal_session_fingerprint.as_deref(),
             )
             .await;
             finished.store(true, Ordering::Relaxed);

@@ -20,7 +20,9 @@ pub mod error_classifier;
 pub mod error_config_loader;
 pub mod exploitdb;
 pub mod mcp_adapter;
+pub mod mcp_transport;
 pub mod output_storage;
+#[cfg(feature = "plugins")]
 pub mod plugin_adapter;
 pub mod terminal;
 pub mod tool_server;
@@ -34,7 +36,9 @@ pub use error_classifier::*;
 pub use error_config_loader::*;
 pub use exploitdb::*;
 pub use mcp_adapter::*;
+pub use mcp_transport::*;
 pub use output_storage::*;
+#[cfg(feature = "plugins")]
 pub use plugin_adapter::*;
 pub use terminal::*;
 pub use tool_server::*;

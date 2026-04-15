@@ -2,13 +2,14 @@ import {
   buildSourceRequestFromRawRequest,
   extractTargetFromRequest,
 } from '@/components/traffic/intruder/http'
-import type { IntruderAttackResult, IntruderSourceRequest } from '@/components/traffic/intruder/types'
+import type { HttpExchangeRequest } from '@/components/traffic/http/model'
+import type { IntruderAttackResult } from '@/components/traffic/intruder/types'
 
 function escapeSingleQuotes(value: string): string {
   return value.replace(/'/g, "'\\''")
 }
 
-export function buildIntruderResultRequest(result: IntruderAttackResult): IntruderSourceRequest | null {
+export function buildIntruderResultRequest(result: IntruderAttackResult): HttpExchangeRequest | null {
   if (!result.rawRequest.trim()) {
     return null
   }
@@ -19,7 +20,7 @@ export function buildIntruderResultRequest(result: IntruderAttackResult): Intrud
 
 export function resolveIntruderResultRequestUrl(result: IntruderAttackResult): string {
   const request = buildIntruderResultRequest(result)
-  return request?.url ?? result.finalUrl ?? ''
+  return request?.absoluteUrl ?? result.finalUrl ?? ''
 }
 
 export function buildIntruderResultCurlCommand(result: IntruderAttackResult): string | null {
@@ -28,14 +29,14 @@ export function buildIntruderResultCurlCommand(result: IntruderAttackResult): st
     return null
   }
 
-  let curl = `curl -X ${request.method} '${escapeSingleQuotes(request.url)}'`
+  let curl = `curl -X ${request.request.method} '${escapeSingleQuotes(request.absoluteUrl)}'`
 
-  for (const [key, value] of Object.entries(request.headers)) {
-    curl += ` \\\n  -H '${escapeSingleQuotes(`${key}: ${value}`)}'`
+  for (const header of request.request.headers) {
+    curl += ` \\\n  -H '${escapeSingleQuotes(`${header.name}: ${header.value}`)}'`
   }
 
-  if (request.body) {
-    curl += ` \\\n  -d '${escapeSingleQuotes(request.body)}'`
+  if (request.request.bodyText) {
+    curl += ` \\\n  -d '${escapeSingleQuotes(request.request.bodyText)}'`
   }
 
   return curl

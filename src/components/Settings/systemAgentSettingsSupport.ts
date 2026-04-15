@@ -195,6 +195,13 @@ export const SYSTEM_AGENT_VIRTUAL_TOOLS: SystemAgentToolMetadata[] = [
     virtual: true,
   },
   {
+    id: 'sops',
+    name: 'SOP Registry',
+    description: '读取当前后台 Agent 已登记的 SOP 目录与步骤明细。默认会注入到被动型后台 Agent，可按需显式禁用。',
+    category: 'system',
+    virtual: true,
+  },
+  {
     id: 'plugin_prompt_reader',
     name: 'Plugin Prompt Reader',
     description: '读取插件生成相关提示词模板。',

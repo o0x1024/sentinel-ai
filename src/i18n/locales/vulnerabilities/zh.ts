@@ -9,6 +9,7 @@ export default {
   infoVulnerabilities: '信息性漏洞',
   vulnerabilityDetails: '漏洞详情',
   details: '详情',
+  openWorkbench: '进入工作台',
   vulnerabilityName: '漏洞名称',
   vulnerabilityType: '漏洞类型',
   plugin: '插件',
@@ -18,7 +19,7 @@ export default {
     critical: '严重',
     high: '高危',
     medium: '中危',
-    low: '低危'
+    low: '低危',
   },
   allSeverities: '所有严重程度',
   noFindings: '未发现结果',
@@ -29,7 +30,7 @@ export default {
     firstPage: '第一页',
     lastPage: '最后一页',
     jumpPlaceholder: '页码',
-    jump: '跳转'
+    jump: '跳转',
   },
   cvss: 'CVSS评分',
   cve: 'CVE编号',
@@ -58,7 +59,7 @@ export default {
     inProgress: '进行中',
     verified: '已验证',
     exploitable: '可利用',
-    notExploitable: '不可利用'
+    notExploitable: '不可利用',
   },
   form: {
     namePlaceholder: '输入漏洞名称',
@@ -71,7 +72,7 @@ export default {
     discoveryDatePlaceholder: '选择发现日期',
     statusPlaceholder: '选择状态',
     notesPlaceholder: '输入额外备注',
-    referencesPlaceholder: '输入参考URL'
+    referencesPlaceholder: '输入参考URL',
   },
   types: {
     sqlInjection: 'SQL注入',
@@ -91,7 +92,7 @@ export default {
     sessionManagement: '会话管理问题',
     informationDisclosure: '信息泄露',
     infoDisclosure: '信息泄露',
-    other: '其他'
+    other: '其他',
   },
   notifications: {
     vulnerabilityAdded: '漏洞添加成功',
@@ -102,6 +103,16 @@ export default {
     vulnerabilityMarkedAsExploitable: '漏洞标记为可利用',
     vulnerabilityMarkedAsNotExploitable: '漏洞标记为不可利用',
     vulnerabilityExportSuccess: '漏洞导出成功',
-    vulnerabilityExportFailed: '漏洞导出失败'
-  }
+    vulnerabilityExportFailed: '漏洞导出失败',
+  },
+  transfer: {
+    triggerLabel: '发送到',
+    sendToRepeater: '发送到重放器',
+    sendToIntruder: '发送到爆破器',
+    noTransferableRequest: '当前证据没有可发送的原始请求',
+    noFindingTransferableRequest: '当前漏洞没有可发送的原始请求',
+    sentToRepeater: '已发送到重放器',
+    sentToIntruder: '已发送到爆破器',
+    transferFailed: '发送请求失败: {error}',
+  },
 }

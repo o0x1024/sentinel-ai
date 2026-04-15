@@ -54,11 +54,14 @@ static IDENTIFIER_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
         Regex::new(r"(?i)\bCVE-\d{4}-\d{4,}\b").expect("valid cve regex"),
         Regex::new(r"(?i)\bhttps?://[^\s]+").expect("valid url regex"),
-        Regex::new(r"(?i)\b[a-z0-9._-]+\.[a-z]{2,}(?::\d+)?(?:/[^\s]*)?").expect("valid host regex"),
+        Regex::new(r"(?i)\b[a-z0-9._-]+\.[a-z]{2,}(?::\d+)?(?:/[^\s]*)?")
+            .expect("valid host regex"),
         Regex::new(r"(?i)(?:[a-z]:)?(?:/|\\)[^\s]+").expect("valid path regex"),
-        Regex::new(r"(?i)\b(?:\./)?(?:[a-z0-9_.-]+/)+[a-z0-9_.-]+\b").expect("valid relative path regex"),
+        Regex::new(r"(?i)\b(?:\./)?(?:[a-z0-9_.-]+/)+[a-z0-9_.-]+\b")
+            .expect("valid relative path regex"),
         Regex::new(r"(?i)\b[a-z0-9_]+::[a-z0-9_:+<>-]+\b").expect("valid rust path regex"),
-        Regex::new(r"(?i)\b[a-z0-9_]+(?:[.-][a-z0-9_]+){1,}\b").expect("valid dotted identifier regex"),
+        Regex::new(r"(?i)\b[a-z0-9_]+(?:[.-][a-z0-9_]+){1,}\b")
+            .expect("valid dotted identifier regex"),
     ]
 });
 
@@ -275,28 +278,28 @@ impl MemoryLexicalIndex {
                 ORDER BY rank ASC, d.updated_at_ms DESC
                 LIMIT ?3
                 "#,
-            )?;
+                )?;
 
-            let rows = stmt
-                .query_map(
-                    rusqlite::params![collection_name, match_query, limit],
-                    |row| {
-                        Ok(MemoryLexicalHit {
-                            id: row.get(0)?,
-                            title: row.get(1)?,
-                            body: row.get(2)?,
-                            kind: row.get(3)?,
-                            scope: row.get(4)?,
-                            stability: row.get(5)?,
-                            source: row.get(6)?,
-                            confidence: row.get::<_, f64>(7)?,
-                            importance: row.get::<_, i64>(8)?.clamp(1, 5) as u8,
-                            created_at_ms: row.get(9)?,
-                            bm25_score: row.get(10)?,
-                        })
-                    },
-                )?
-                .collect::<Result<Vec<_>, _>>()?;
+                let rows = stmt
+                    .query_map(
+                        rusqlite::params![collection_name, match_query, limit],
+                        |row| {
+                            Ok(MemoryLexicalHit {
+                                id: row.get(0)?,
+                                title: row.get(1)?,
+                                body: row.get(2)?,
+                                kind: row.get(3)?,
+                                scope: row.get(4)?,
+                                stability: row.get(5)?,
+                                source: row.get(6)?,
+                                confidence: row.get::<_, f64>(7)?,
+                                importance: row.get::<_, i64>(8)?.clamp(1, 5) as u8,
+                                created_at_ms: row.get(9)?,
+                                bm25_score: row.get(10)?,
+                            })
+                        },
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)
             })
             .await
@@ -586,7 +589,9 @@ fn build_match_query(input: &str) -> String {
     }
 
     let mut terms = normalized
-        .split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/' | ':' | '#')))
+        .split(|ch: char| {
+            !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/' | ':' | '#'))
+        })
         .filter(|term| !term.trim().is_empty())
         .map(|term| term.trim().to_string())
         .collect::<Vec<_>>();
@@ -666,7 +671,12 @@ mod tests {
             "anti_pattern"
         );
         assert_eq!(
-            infer_memory_kind(None, None, &[], "Prefer ripgrep for searches in large repos"),
+            infer_memory_kind(
+                None,
+                None,
+                &[],
+                "Prefer ripgrep for searches in large repos"
+            ),
             "preference"
         );
     }
@@ -680,14 +690,8 @@ mod tests {
 
     #[test]
     fn build_memory_durable_metadata_defaults_from_kind() {
-        let metadata = build_memory_durable_metadata(
-            None,
-            None,
-            Some("context"),
-            None,
-            "todo",
-            &[],
-        );
+        let metadata =
+            build_memory_durable_metadata(None, None, Some("context"), None, "todo", &[]);
         assert_eq!(metadata.scope, "project");
         assert_eq!(metadata.stability, "tentative");
         assert_eq!(metadata.source, "context_engineering");

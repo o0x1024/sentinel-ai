@@ -77,21 +77,17 @@
           <label class="label">
             <span class="label-text font-medium">模型</span>
           </label>
-          <select
-            :value="selectedModel || ''"
-            class="select select-bordered w-full"
+          <SearchableSelect
+            :model-value="selectedModel || ''"
+            :options="displayModels"
+            placeholder="跟随默认模型"
+            search-placeholder="搜索模型或提供商..."
+            no-results-text="没有匹配的模型"
             :disabled="modelLoading"
-            @change="handleModelChange"
-          >
-            <option value="">跟随默认模型</option>
-            <option
-              v-for="model in availableModels"
-              :key="model.value"
-              :value="model.value"
-            >
-              {{ model.label }}
-            </option>
-          </select>
+            size="md"
+            group-by="description"
+            @update:model-value="handleModelChange"
+          />
           <label class="label">
             <span class="label-text-alt text-base-content/60">
               {{ modelLoading ? '正在加载模型列表…' : '覆盖当前会话的根助手模型。' }}
@@ -115,6 +111,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import SearchableSelect from '@/components/SearchableSelect.vue'
 import type { AssistantModelOption, AssistantContextMode, AssistantRunMode } from './agentDraftTypes'
 import type { AssistantProfileOption } from './assistantProfiles'
 import ToolConfigPanel from './ToolConfigPanel.vue'
@@ -135,6 +132,31 @@ const props = defineProps<{
 const selectedProfileDescription = computed(() =>
   props.profileOptions.find((profile) => profile.id === props.profileId)?.description ||
   '当前会话会跟随这个 profile 的默认上下文与运行模式。',
+)
+
+const displayModels = computed(() =>
+  [
+    {
+      value: '',
+      label: '跟随默认模型',
+      description: '',
+    },
+    ...[...props.availableModels]
+      .map((model) => {
+        const providerLabel = model.description?.trim()
+          || model.value.split('/')[0]?.trim()
+          || 'Unknown'
+        return {
+          ...model,
+          description: providerLabel,
+        }
+      }),
+  ]
+    .sort((a, b) => {
+      if (!a.value) return -1
+      if (!b.value) return 1
+      return `${a.description || ''}/${a.label}`.localeCompare(`${b.description || ''}/${b.label}`)
+    }),
 )
 
 const emit = defineEmits<{
@@ -161,10 +183,9 @@ const handleRunModeChange = (event: Event) => {
   emit('update:run-mode', target.value as AssistantRunMode)
 }
 
-const handleModelChange = (event: Event) => {
-  const target = event.target as HTMLSelectElement
-  const value = target.value.trim()
-  emit('update:model', value || null)
+const handleModelChange = (value: string) => {
+  const normalized = value.trim()
+  emit('update:model', normalized || null)
 }
 </script>
 

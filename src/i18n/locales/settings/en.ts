@@ -462,6 +462,33 @@ export default {
       cpuLimitDesc: 'Container CPU cores limit, e.g., 1.0, 2.0, 4.0',
       cpuLimitPlaceholder: 'e.g., 4.0'
     },
+    permissionHistory: {
+      title: 'Shell Permission History',
+      desc: 'Review recent shell approval decisions, semantic classifications, and persisted allow rules.',
+      filtersTitle: 'Filters',
+      refresh: 'Refresh',
+      applyFilters: 'Apply Filters',
+      clearFilters: 'Clear Filters',
+      loading: 'Loading shell permission history...',
+      empty: 'No shell permission decisions recorded yet.',
+      emptyFiltered: 'No records match the current filters.',
+      executionId: 'Execution ID',
+      executionIdPlaceholder: 'Filter by execution id',
+      exactDate: 'Exact Date',
+      recentDays: 'Recent Days',
+      decision: 'Decision',
+      allDecisions: 'All Decisions',
+      semanticKind: 'Semantic Kind',
+      allSemanticKinds: 'All Semantic Kinds',
+      semanticCode: 'Semantic Code',
+      suggestedRules: 'Suggested Allow Rules',
+      persistedRules: 'Persisted Allow Rules',
+      decisions: {
+        allow: 'Allowed',
+        deny: 'Denied',
+        allowForever: 'Allowed Forever'
+      }
+    },
     imageAttachments: {
       title: 'Image Attachments',
       mode: 'Processing Mode',

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>phpweb</title>
+    <style type="text/css">
+        body {
+            background: url("bg.jpg") no-repeat;
+            background-size: 100%;
+        }
+        p {
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+<script language=javascript>
+    setTimeout("document.form1.submit()",5000)
+</script>
+<p>
+    <br />
+<b>Warning</b>:  readfile(/proc/11/environ): failed to open stream: Permission denied in <b>/var/www/html/index.php</b> on line <b>24</b><br />
+</p>
+<form  id=form1 name=form1 action="index.php" method=post>
+    <input type=hidden id=func name=func value='date'>
+    <input type=hidden id=p name=p value='Y-m-d h:i:s a'>
+</body>
+</html>

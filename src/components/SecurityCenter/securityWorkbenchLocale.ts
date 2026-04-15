@@ -85,6 +85,9 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       deleteCase: '删除案件',
       backToList: '关闭',
       notFound: '未找到对应案件。',
+      sendTo: '发送到',
+      sendToRepeater: '发送到重放器',
+      sendToIntruder: '发送到爆破器',
       tabs: {
         overview: '案件概览',
         evidence: '请求与证据链',
@@ -129,6 +132,9 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       baseline: '基线',
       focused: '已定位',
       setBaseline: '设为基线',
+      sendTo: '发送到',
+      sendToRepeater: '发送到重放器',
+      sendToIntruder: '发送到爆破器',
       rawExchange: '原始请求/响应',
       requestPanel: '请求详情',
       responsePanel: '响应详情',
@@ -138,6 +144,11 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       responseHeaders: '响应头',
       responseBody: '响应体',
       empty: '当前案件还没有关联证据。',
+      noTransferableRequest: '当前证据没有可发送的原始请求',
+      noCaseTransferableRequest: '当前案件没有可发送的原始请求',
+      sentToRepeater: '已发送到重放器',
+      sentToIntruder: '已发送到爆破器',
+      transferFailed: '发送请求失败: {error}',
     },
     analysis: {
       behaviorTitle: '行为链推断',
@@ -202,7 +213,8 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
         owner_swap: '当前字段更像所有者/成员标识，替换后如果仍成功，容易形成水平越权。',
         tenant_swap: '当前字段更像租户或空间边界，跨值访问如果成功，影响通常更大。',
         detail_probe: '当前基线是读取类请求，替换对象值后最适合先验证是否能读到其他对象。',
-        export_check: '导出、下载、预览类接口对对象边界最敏感，且往往比修改类动作更适合先做只读验证。',
+        export_check:
+          '导出、下载、预览类接口对对象边界最敏感，且往往比修改类动作更适合先做只读验证。',
       },
     },
     plan: {
@@ -240,11 +252,13 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
         candidateTitle: '使用候选值做有限替换',
         candidateDetail: '按顺序尝试这些候选值：{values}',
         compareTitle: '比较对象边界结果',
-        compareDetail: '重点比较响应对象是否变化、是否返回相似业务结构、是否出现权限拒绝或资源不存在。',
+        compareDetail:
+          '重点比较响应对象是否变化、是否返回相似业务结构、是否出现权限拒绝或资源不存在。',
         readonlyTitle: '保持只读路径',
         readonlyDetail: '优先对导出、下载、预览链路做只读检查，避免先触碰有副作用的修改类接口。',
         ownerTitle: '观察所有者边界',
-        ownerDetail: '如果替换后仍返回成功，重点检查对象所有者字段、创建者字段、成员字段是否已切换。',
+        ownerDetail:
+          '如果替换后仍返回成功，重点检查对象所有者字段、创建者字段、成员字段是否已切换。',
         tenantTitle: '观察租户边界',
         tenantDetail: '替换后如果仍成功，优先确认是否跨空间、跨组织、跨租户读取到了同类资源。',
       },
@@ -312,6 +326,12 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       emptyRuns: '当前案件还没有工作台执行记录。可先在执行草案里运行只读计划。',
       currentSummary: '当前验证摘要',
       verificationRecord: '验证记录',
+      baselineExchange: '原始基线请求与响应',
+      replayExchange: '验证回放请求与响应',
+      requestHeaders: '请求头',
+      requestBody: '请求体',
+      responseHeaders: '响应头',
+      responseBody: '响应体',
       emptyVerification: '当前案件还没有验证执行记录。后续可在这里接入主动验证与基线/变异对比。',
       runStatus: {
         completed: '已完成',
@@ -401,10 +421,14 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
         manual_review: '人工复核',
       },
       evidence: {
-        verificationConfirmed: '系统 Agent 使用 {strategy} 完成验证，已确认该假设。回放状态码 {status}，结果 {outcome}，请求{mutated}变异。',
-        verificationNotConfirmed: '系统 Agent 使用 {strategy} 完成验证，尚未确认该假设。回放状态码 {status}，结果 {outcome}，请求{mutated}变异。',
-        observationSummary: '系统 Agent 观察到 {method} {path} 可能存在 {risk} 风险，当前置信度为 {confidence}。',
-        contextSummary: '系统 Agent 已将 {method} {path} 标记为潜在 {risk} 风险，并生成了后续验证建议。',
+        verificationConfirmed:
+          '系统 Agent 使用 {strategy} 完成验证，已确认该假设。回放状态码 {status}，结果 {outcome}，请求{mutated}变异。',
+        verificationNotConfirmed:
+          '系统 Agent 使用 {strategy} 完成验证，尚未确认该假设。回放状态码 {status}，结果 {outcome}，请求{mutated}变异。',
+        observationSummary:
+          '系统 Agent 观察到 {method} {path} 可能存在 {risk} 风险，当前置信度为 {confidence}。',
+        contextSummary:
+          '系统 Agent 已将 {method} {path} 标记为潜在 {risk} 风险，并生成了后续验证建议。',
         signals: '信号：{signals}',
       },
       outcome: {
@@ -422,15 +446,18 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       deleteCaseTitle: '删除案件',
       deleteCasesTitle: '批量删除案件',
       deleteCaseMessage: '删除后会同时清理该案件的备注、活动、执行草案和执行记录，且不可恢复。',
-      deleteCasesMessage: '将删除 {count} 个案件，并同时清理它们的备注、活动、执行草案和执行记录。该操作不可恢复。',
+      deleteCasesMessage:
+        '将删除 {count} 个案件，并同时清理它们的备注、活动、执行草案和执行记录。该操作不可恢复。',
       confirmDeleteCase: '确认删除',
       confirmDeleteCases: '确认批量删除',
       cancel: '取消',
       syncWithSuggestionTitle: '按建议回写漏洞',
-      syncWithSuggestionMessage: '建议状态：{status}\n\n{summary}\n\n确认后会先把建议状态和建议结论应用到案件，再同步到漏洞状态。',
+      syncWithSuggestionMessage:
+        '建议状态：{status}\n\n{summary}\n\n确认后会先把建议状态和建议结论应用到案件，再同步到漏洞状态。',
       confirmSyncWithSuggestion: '确认回写',
       executeMutableTitle: '执行非只读草案',
-      executeMutableMessage: '该草案被标记为需人工确认。\n\n确认后只会执行极小批次的变异请求，用于保守验证目标行为。\n请确保当前目标环境允许进行此类测试。',
+      executeMutableMessage:
+        '该草案被标记为需人工确认。\n\n确认后只会执行极小批次的变异请求，用于保守验证目标行为。\n请确保当前目标环境允许进行此类测试。',
       confirmExecute: '确认执行',
     },
     toast: {
@@ -515,7 +542,8 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
     },
     caseList: {
       loading: 'Loading workbench cases...',
-      selectedSummary: '{selectedCount} selected, {pageCount} on this page, {total} total under current filters',
+      selectedSummary:
+        '{selectedCount} selected, {pageCount} on this page, {total} total under current filters',
       clearSelection: 'Clear selection',
       deleteSelected: 'Delete selected',
       case: 'Case',
@@ -531,12 +559,16 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       pageIndicator: 'Page {page} / {totalPages}',
       nextPage: 'Next',
       lastPage: 'Last',
-      empty: 'No cases yet. New pending-verification or non-formal findings will flow into the workbench automatically.',
+      empty:
+        'No cases yet. New pending-verification or non-formal findings will flow into the workbench automatically.',
     },
     caseDetail: {
       deleteCase: 'Delete case',
       backToList: 'Close',
       notFound: 'Case not found.',
+      sendTo: 'Send To',
+      sendToRepeater: 'Send to Repeater',
+      sendToIntruder: 'Send to Intruder',
       tabs: {
         overview: 'Overview',
         evidence: 'Request & Evidence',
@@ -558,7 +590,8 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       priority: 'Priority',
       lastActivity: 'Last activity',
       agentPolicyTitle: 'Agent policy status',
-      agentPolicySummary: 'Shows the active logic / verifier safety boundaries currently used by the workbench.',
+      agentPolicySummary:
+        'Shows the active logic / verifier safety boundaries currently used by the workbench.',
       agentLogic: 'Logic',
       agentVerifier: 'Verifier',
       agentEnabled: 'Enabled',
@@ -581,6 +614,9 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       baseline: 'Baseline',
       focused: 'Focused',
       setBaseline: 'Set baseline',
+      sendTo: 'Send To',
+      sendToRepeater: 'Send to Repeater',
+      sendToIntruder: 'Send to Intruder',
       rawExchange: 'Raw request / response',
       requestPanel: 'Request details',
       responsePanel: 'Response details',
@@ -590,19 +626,28 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       responseHeaders: 'Response headers',
       responseBody: 'Response body',
       empty: 'No evidence is attached to this case yet.',
+      noTransferableRequest: 'No raw request is available for this evidence.',
+      noCaseTransferableRequest: 'No raw request is available for this case.',
+      sentToRepeater: 'Sent to Repeater',
+      sentToIntruder: 'Sent to Intruder',
+      transferFailed: 'Failed to send request: {error}',
     },
     analysis: {
       behaviorTitle: 'Behavior chain inference',
-      behaviorSummary: 'Infer list, detail, update, export, and other steps from evidence in chronological order.',
+      behaviorSummary:
+        'Infer list, detail, update, export, and other steps from evidence in chronological order.',
       behaviorCount: '{count} steps',
       behaviorEmpty: 'Not enough evidence to infer a behavior chain yet.',
       objectPoolTitle: 'Object pool',
-      objectPoolSummary: 'Candidate object references extracted from path, query, body, and response.',
+      objectPoolSummary:
+        'Candidate object references extracted from path, query, body, and response.',
       objectPoolCount: '{count} reference groups',
       objectPoolMeta: '{evidenceCount} evidence items, {referenceCount} references',
-      objectPoolEmpty: 'Not enough stable object references have been extracted yet. Automatic replacement is not recommended for now.',
+      objectPoolEmpty:
+        'Not enough stable object references have been extracted yet. Automatic replacement is not recommended for now.',
       suggestionsTitle: 'Horizontal access test suggestions',
-      suggestionsSummary: 'Readonly-first, boundary-first suggestions only. No requests are sent automatically.',
+      suggestionsSummary:
+        'Readonly-first, boundary-first suggestions only. No requests are sent automatically.',
       suggestionsCount: '{count} suggestions',
       suggestionsEmpty: 'No stable object-boundary test suggestions are available yet.',
       moreValues: '+{count}',
@@ -650,16 +695,22 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
         export_check: 'Use object-pool candidates to test export / download boundaries',
       },
       suggestionWhy: {
-        cross_replace: 'The same field was observed with multiple object values in historical evidence, which makes it suitable for peer replacement.',
-        owner_swap: 'This field looks like an owner / member identifier. If the request still succeeds after replacement, it may indicate horizontal access control failure.',
-        tenant_swap: 'This field looks like a tenant or workspace boundary. Cross-value success would usually have broader impact.',
-        detail_probe: 'The baseline is a read-style request, so replacing the object value is a good first step to test whether other objects can be read.',
-        export_check: 'Export, download, and preview flows are highly sensitive to object boundaries and are usually safer readonly probes than write endpoints.',
+        cross_replace:
+          'The same field was observed with multiple object values in historical evidence, which makes it suitable for peer replacement.',
+        owner_swap:
+          'This field looks like an owner / member identifier. If the request still succeeds after replacement, it may indicate horizontal access control failure.',
+        tenant_swap:
+          'This field looks like a tenant or workspace boundary. Cross-value success would usually have broader impact.',
+        detail_probe:
+          'The baseline is a read-style request, so replacing the object value is a good first step to test whether other objects can be read.',
+        export_check:
+          'Export, download, and preview flows are highly sensitive to object boundaries and are usually safer readonly probes than write endpoints.',
       },
     },
     plan: {
       title: 'Replay Plan',
-      summary: 'Turn object-boundary suggestions into executable plans that still require analyst confirmation.',
+      summary:
+        'Turn object-boundary suggestions into executable plans that still require analyst confirmation.',
       count: '{count} plans',
       readonlyPreferred: 'Readonly first',
       manualConfirm: 'Manual confirmation required',
@@ -669,7 +720,8 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       stopConditions: 'Stop conditions',
       copySummary: 'Copy plan summary',
       saveDraft: 'Save as execution draft',
-      empty: 'No usable replay plan is available yet, usually because the object pool is still too weak or the suggestions are not stable enough.',
+      empty:
+        'No usable replay plan is available yet, usually because the object pool is still too weak or the suggestions are not stable enough.',
       copySuccess: 'Plan summary copied',
       copyFailed: 'Failed to copy plan summary',
       formatted: {
@@ -686,24 +738,33 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       },
       step: {
         baselineTitle: 'Confirm the baseline request',
-        baselineDetail: 'Use {method} {url} as the baseline and confirm it returns the expected target object.',
+        baselineDetail:
+          'Use {method} {url} as the baseline and confirm it returns the expected target object.',
         fieldTitle: 'Locate the target field',
-        fieldDetail: 'Locate {field} in the request and replace only that field without changing other business parameters.',
+        fieldDetail:
+          'Locate {field} in the request and replace only that field without changing other business parameters.',
         candidateTitle: 'Try limited candidate replacements',
         candidateDetail: 'Try these candidate values in order: {values}',
         compareTitle: 'Compare boundary outcomes',
-        compareDetail: 'Focus on whether the returned object changes, whether the business structure remains similar, and whether the server returns authorization or not-found signals.',
+        compareDetail:
+          'Focus on whether the returned object changes, whether the business structure remains similar, and whether the server returns authorization or not-found signals.',
         readonlyTitle: 'Keep the path readonly',
-        readonlyDetail: 'Prefer readonly checks on export, download, and preview paths before touching endpoints with side effects.',
+        readonlyDetail:
+          'Prefer readonly checks on export, download, and preview paths before touching endpoints with side effects.',
         ownerTitle: 'Observe owner boundaries',
-        ownerDetail: 'If the request still succeeds after replacement, inspect owner, creator, and membership fields closely.',
+        ownerDetail:
+          'If the request still succeeds after replacement, inspect owner, creator, and membership fields closely.',
         tenantTitle: 'Observe tenant boundaries',
-        tenantDetail: 'If the request still succeeds after replacement, verify whether similar resources are reachable across spaces, organizations, or tenants.',
+        tenantDetail:
+          'If the request still succeeds after replacement, verify whether similar resources are reachable across spaces, organizations, or tenants.',
       },
       stop: {
-        authBlocked: 'If the endpoint consistently returns 403/401 without object content, stop widening the candidate range.',
-        mutationRisk: 'If the endpoint is not clearly readonly and its side effects are uncertain, stop before attempting further batch replacements.',
-        fileDownload: 'If a real file download or preview succeeds, stop further replacements and preserve the evidence and reproduction path first.',
+        authBlocked:
+          'If the endpoint consistently returns 403/401 without object content, stop widening the candidate range.',
+        mutationRisk:
+          'If the endpoint is not clearly readonly and its side effects are uncertain, stop before attempting further batch replacements.',
+        fileDownload:
+          'If a real file download or preview succeeds, stop further replacements and preserve the evidence and reproduction path first.',
       },
     },
     drafts: {
@@ -761,10 +822,18 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       bodyChanged: 'Body changed',
       similarity: 'Similarity {value}',
       length: 'Length {baseline} -> {response}',
-      emptyRuns: 'This case does not have workbench execution runs yet. Start with a readonly draft execution first.',
+      emptyRuns:
+        'This case does not have workbench execution runs yet. Start with a readonly draft execution first.',
       currentSummary: 'Current verification summary',
       verificationRecord: 'Verification record',
-      emptyVerification: 'This case does not have verification records yet. Active verification and baseline / mutation diff can be wired in here later.',
+      baselineExchange: 'Baseline request and response',
+      replayExchange: 'Replay request and response',
+      requestHeaders: 'Request headers',
+      requestBody: 'Request body',
+      responseHeaders: 'Response headers',
+      responseBody: 'Response body',
+      emptyVerification:
+        'This case does not have verification records yet. Active verification and baseline / mutation diff can be wired in here later.',
       runStatus: {
         completed: 'Completed',
         blocked: 'Blocked',
@@ -822,7 +891,8 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
     },
     finding: {
       title: '[AI] Potential {risk} risk on {method} {path}',
-      fallbackDescription: 'System agent detected a potential {risk} issue with {confidence} confidence.',
+      fallbackDescription:
+        'System agent detected a potential {risk} issue with {confidence} confidence.',
       summaryWithSignals: '{summary}\n\nSignals:\n- {signals}',
     },
     systemAgent: {
@@ -853,10 +923,14 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
         manual_review: 'manual review',
       },
       evidence: {
-        verificationConfirmed: 'System agent verification using {strategy} confirmed the hypothesis. Replay status {status}, outcome {outcome}, request {mutated}.',
-        verificationNotConfirmed: 'System agent verification using {strategy} did not confirm the hypothesis. Replay status {status}, outcome {outcome}, request {mutated}.',
-        observationSummary: 'System agent observed a potential {risk} issue on {method} {path} with {confidence} confidence.',
-        contextSummary: 'System agent marked {method} {path} as a potential {risk} issue and generated follow-up verification guidance.',
+        verificationConfirmed:
+          'System agent verification using {strategy} confirmed the hypothesis. Replay status {status}, outcome {outcome}, request {mutated}.',
+        verificationNotConfirmed:
+          'System agent verification using {strategy} did not confirm the hypothesis. Replay status {status}, outcome {outcome}, request {mutated}.',
+        observationSummary:
+          'System agent observed a potential {risk} issue on {method} {path} with {confidence} confidence.',
+        contextSummary:
+          'System agent marked {method} {path} as a potential {risk} issue and generated follow-up verification guidance.',
         signals: 'Signals: {signals}',
       },
       outcome: {
@@ -873,16 +947,20 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
     confirm: {
       deleteCaseTitle: 'Delete case',
       deleteCasesTitle: 'Delete cases',
-      deleteCaseMessage: 'This will also remove the case notes, activities, execution drafts, and execution runs. The action cannot be undone.',
-      deleteCasesMessage: 'This will delete {count} cases together with their notes, activities, execution drafts, and execution runs. The action cannot be undone.',
+      deleteCaseMessage:
+        'This will also remove the case notes, activities, execution drafts, and execution runs. The action cannot be undone.',
+      deleteCasesMessage:
+        'This will delete {count} cases together with their notes, activities, execution drafts, and execution runs. The action cannot be undone.',
       confirmDeleteCase: 'Delete case',
       confirmDeleteCases: 'Delete selected',
       cancel: 'Cancel',
       syncWithSuggestionTitle: 'Sync finding with suggestion',
-      syncWithSuggestionMessage: 'Suggested status: {status}\n\n{summary}\n\nThis will first apply the suggested status and conclusion to the case, then sync the result back to the finding.',
+      syncWithSuggestionMessage:
+        'Suggested status: {status}\n\n{summary}\n\nThis will first apply the suggested status and conclusion to the case, then sync the result back to the finding.',
       confirmSyncWithSuggestion: 'Confirm sync',
       executeMutableTitle: 'Execute mutable draft',
-      executeMutableMessage: 'This draft requires manual confirmation.\n\nOnly a very small batch of mutated requests will be executed to validate the target conservatively.\nMake sure the target environment allows this kind of testing.',
+      executeMutableMessage:
+        'This draft requires manual confirmation.\n\nOnly a very small batch of mutated requests will be executed to validate the target conservatively.\nMake sure the target environment allows this kind of testing.',
       confirmExecute: 'Execute',
     },
     toast: {
@@ -914,7 +992,11 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
 }
 
 const getLocaleValue = () => {
-  if (i18n.global.locale && typeof i18n.global.locale === 'object' && 'value' in i18n.global.locale) {
+  if (
+    i18n.global.locale &&
+    typeof i18n.global.locale === 'object' &&
+    'value' in i18n.global.locale
+  ) {
     return String(i18n.global.locale.value || '')
   }
   return 'en'
@@ -937,10 +1019,11 @@ const resolveMessage = (source: WorkbenchMessages, path: string): string | undef
 
 export const wb = (
   path: string,
-  params: Record<string, string | number | boolean | null | undefined> = {},
+  params: Record<string, string | number | boolean | null | undefined> = {}
 ) => {
   const locale = getWorkbenchLocale()
-  const template = resolveMessage(messages[locale], path) ?? resolveMessage(messages.en, path) ?? path
+  const template =
+    resolveMessage(messages[locale], path) ?? resolveMessage(messages.en, path) ?? path
   return template.replace(/\{(\w+)\}/g, (_, key: string) => {
     const value = params[key]
     return value == null ? '' : String(value)

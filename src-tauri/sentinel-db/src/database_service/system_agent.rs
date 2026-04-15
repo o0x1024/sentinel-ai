@@ -859,20 +859,16 @@ impl DatabaseService {
                     .await?
                     .rows_affected()
             }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM system_agent_runs WHERE id = ?")
-                    .bind(id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM system_agent_runs WHERE id = ?")
-                    .bind(id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
+            DatabasePool::SQLite(pool) => sqlx::query("DELETE FROM system_agent_runs WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query("DELETE FROM system_agent_runs WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
         };
 
         Ok(affected_rows)

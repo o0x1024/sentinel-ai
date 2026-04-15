@@ -452,6 +452,33 @@ export default {
       cpuLimitDesc: '容器 CPU 核心数限制，例如 1.0、2.0、4.0',
       cpuLimitPlaceholder: '例如: 4.0'
     },
+    permissionHistory: {
+      title: 'Shell 权限历史',
+      desc: '查看最近的 shell 审批决策、语义分类，以及持久化的 allow rule。',
+      filtersTitle: '筛选条件',
+      refresh: '刷新',
+      applyFilters: '应用筛选',
+      clearFilters: '清空筛选',
+      loading: '正在加载 shell 权限历史...',
+      empty: '暂时还没有 shell 权限审批记录。',
+      emptyFiltered: '当前筛选条件下没有匹配记录。',
+      executionId: '执行 ID',
+      executionIdPlaceholder: '按执行 ID 筛选',
+      exactDate: '指定日期',
+      recentDays: '最近天数',
+      decision: '审批结果',
+      allDecisions: '全部结果',
+      semanticKind: '语义类别',
+      allSemanticKinds: '全部语义类别',
+      semanticCode: '语义代码',
+      suggestedRules: '建议持久化规则',
+      persistedRules: '已持久化规则',
+      decisions: {
+        allow: '已允许',
+        deny: '已拒绝',
+        allowForever: '永久允许'
+      }
+    },
     imageAttachments: {
       title: '图片附件',
       mode: '处理方式',

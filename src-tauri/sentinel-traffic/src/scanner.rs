@@ -1183,7 +1183,7 @@ impl ScanPipeline {
                 .and_then(|u| u.host_str())
                 .unwrap_or("unknown")
                 .to_string();
-            let protocol = parsed_url
+            let scheme = parsed_url
                 .as_ref()
                 .map(|u| u.scheme())
                 .unwrap_or("http")
@@ -1281,7 +1281,11 @@ impl ScanPipeline {
                 db_request_id: None,
                 url: req_ctx.url.clone(),
                 host,
-                protocol,
+                scheme,
+                http_version_observed: resp_ctx
+                    .http_version
+                    .clone()
+                    .or_else(|| req_ctx.http_version.clone()),
                 method: req_ctx.method.clone(),
                 status_code: resp_ctx.status as i32,
                 request_headers,

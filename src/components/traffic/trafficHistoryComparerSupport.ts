@@ -1,4 +1,8 @@
-import type { TrafficComparePayload, TrafficTransferRequest } from './transfers'
+import type { TrafficComparePayload } from './transfers'
+import type { HttpExchangeRequest } from './http/model'
+import { parseStoredHeaderEntries } from './http/headers'
+import { endpointFromUrl } from './http/url'
+import { normalizeProxyHistoryHttpVersion } from './proxyHistoryHttpSupport'
 import type { ProxyRequest } from './proxyHistoryTypes'
 import {
   formatRequestRaw,
@@ -16,19 +20,6 @@ type CompareVersionLabels = {
   editedResponse: string
 }
 
-function parseHeaderRecord(rawHeaders?: string): Record<string, string> {
-  if (!rawHeaders) return {}
-
-  try {
-    const parsed = JSON.parse(rawHeaders)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, string>
-      : {}
-  } catch {
-    return {}
-  }
-}
-
 function inferProtocol(url: string, fallbackProtocol?: string): 'http' | 'https' {
   try {
     return new URL(url).protocol === 'http:' ? 'http' : 'https'
@@ -37,18 +28,31 @@ function inferProtocol(url: string, fallbackProtocol?: string): 'http' | 'https'
   }
 }
 
-function buildRequestTransferRequest(request: ProxyRequest, viewMode: 'original' | 'edited'): TrafficTransferRequest {
+function buildRequestTransferRequest(request: ProxyRequest, viewMode: 'original' | 'edited'): HttpExchangeRequest {
   const useEdited = viewMode === 'edited' && request.was_edited
   const url = useEdited && request.edited_url ? request.edited_url : request.url
   const method = useEdited && request.edited_method ? request.edited_method : request.method
-  const headers = parseHeaderRecord(useEdited ? request.edited_request_headers : request.request_headers)
+  const headers = parseStoredHeaderEntries(useEdited ? request.edited_request_headers : request.request_headers)
   const body = useEdited && request.edited_request_body != null ? request.edited_request_body : request.request_body
+  const endpoint = endpointFromUrl(url)
+  let target = '/'
+  try {
+    const parsedUrl = new URL(url)
+    target = `${parsedUrl.pathname}${parsedUrl.search}`
+  } catch {
+    target = '/'
+  }
 
   return {
-    method,
-    url,
-    headers,
-    body: body || undefined,
+    endpoint,
+    absoluteUrl: url,
+    request: {
+      method,
+      target,
+      versionPreference: normalizeProxyHistoryHttpVersion(request.http_version_observed),
+      headers,
+      bodyText: body || '',
+    },
   }
 }
 
@@ -80,12 +84,12 @@ export function buildRequestVersionComparePayload(
     },
     leftMeta: {
       messageType: 'request',
-      protocol: inferProtocol(originalRequest.url, request.protocol),
+      protocol: inferProtocol(originalRequest.absoluteUrl, request.scheme),
       repeaterRequest: originalRequest,
     },
     rightMeta: {
       messageType: 'request',
-      protocol: inferProtocol(editedRequest.url, request.protocol),
+      protocol: inferProtocol(editedRequest.absoluteUrl, request.scheme),
       repeaterRequest: editedRequest,
     },
   }
@@ -97,7 +101,7 @@ export function buildResponseVersionComparePayload(
 ): TrafficComparePayload | null {
   if (!request.was_edited || !hasEditedResponse(request)) return null
 
-  const protocol = inferProtocol(request.url, request.protocol)
+  const protocol = inferProtocol(request.url, request.scheme)
 
   return {
     name: buildCompareName(request, 'response', labels),

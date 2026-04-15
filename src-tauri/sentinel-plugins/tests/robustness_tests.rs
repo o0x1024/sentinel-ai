@@ -42,6 +42,7 @@ fn tx(
             id: uuid::Uuid::new_v4().to_string(),
             method,
             url,
+            http_version: Some("HTTP/1.1".to_string()),
             headers,
             body,
             content_type: None,

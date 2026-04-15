@@ -225,10 +225,7 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
 
 /// Embedded built-in SOP documents that ship with the binary.
 const BUILTIN_SOP: &[(&str, &str)] = &[
-    (
-        "payment-flow",
-        include_str!("builtin/payment-flow.SOP.md"),
-    ),
+    ("payment-flow", include_str!("builtin/payment-flow.SOP.md")),
     (
         "approval-workflow",
         include_str!("builtin/approval-workflow.SOP.md"),

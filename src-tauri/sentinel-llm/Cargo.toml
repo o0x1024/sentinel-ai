@@ -30,5 +30,5 @@ uuid = { version = "1.8", features = ["v4"] }
 rig-core = { workspace = true } 
 
 # Tools (for native tool calling)
-sentinel-tools = { path = "../sentinel-tools" }
+sentinel-tools = { path = "../sentinel-tools", default-features = false }
 async-stream = "0.3.6"

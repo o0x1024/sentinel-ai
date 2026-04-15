@@ -219,13 +219,16 @@ fn assess_business_parameter_mutation(
     response_body_matches: bool,
     reasons: &mut Vec<String>,
 ) -> bool {
+    let baseline_status = baseline.response_status.map(|status| status as u16);
+    let baseline_denial_marker = contains_denial_marker(baseline.response_body.as_deref());
+    let replay_denial_marker = contains_denial_marker(Some(response_body));
     let baseline_denied = baseline
         .response_status
         .map(|status| !is_success_status(status as u16))
         .unwrap_or(false)
-        || contains_denial_marker(baseline.response_body.as_deref());
-    let mutation_became_more_favorable = is_success_status(response_status)
-        || (!contains_denial_marker(Some(response_body)) && !response_body_matches);
+        || baseline_denial_marker;
+    let mutation_became_more_favorable =
+        is_success_status(response_status) || (!replay_denial_marker && !response_body_matches);
 
     if baseline_denied && mutation_became_more_favorable {
         reasons.push(format!(
@@ -235,11 +238,30 @@ fn assess_business_parameter_mutation(
         return true;
     }
 
+    let baseline_success =
+        baseline_status.map(is_success_status).unwrap_or(false) && !baseline_denial_marker;
+    let success_semantics_preserved = baseline_status
+        .map(|status| same_success_family(status, response_status))
+        .unwrap_or(false)
+        || response_body_matches;
+    if baseline_success
+        && is_success_status(response_status)
+        && !replay_denial_marker
+        && success_semantics_preserved
+    {
+        reasons.push(format!(
+            "Business-parameter mutation was still accepted after changing a sensitive client-controlled parameter (baselineStatus={:?}, replayStatus={}, bodyMatch={}).",
+            baseline.response_status, response_status, response_body_matches
+        ));
+        return true;
+    }
+
     reasons.push(format!(
-        "Business-parameter mutation did not overturn the baseline denial semantics (status={}, bodyMatch={}, denialStillPresent={}).",
+        "Business-parameter mutation was not rejected strongly enough to confirm a server-side validation gap (baselineStatus={:?}, replayStatus={}, bodyMatch={}, denialStillPresent={}).",
+        baseline.response_status,
         response_status,
         response_body_matches,
-        contains_denial_marker(Some(response_body))
+        replay_denial_marker
     ));
     false
 }
@@ -282,6 +304,13 @@ fn assess_sequence_bypass(
 
 fn is_success_status(status: u16) -> bool {
     (200..400).contains(&status)
+}
+
+fn same_success_family(left: u16, right: u16) -> bool {
+    matches!(
+        (left, right),
+        (200..=299, 200..=299) | (300..=399, 300..=399)
+    )
 }
 
 fn contains_denial_marker(text: Option<&str>) -> bool {
@@ -333,5 +362,63 @@ mod tests {
         );
 
         assert!(result.verified);
+    }
+
+    #[test]
+    fn confirms_business_parameter_mutation_when_success_semantics_are_preserved() {
+        let baseline = VerificationBaseline {
+            source_request_id: Some(2),
+            url: "https://shop.test/cart".to_string(),
+            method: "POST".to_string(),
+            request_headers: None,
+            request_body: Some("price=133700&quantity=1".to_string()),
+            response_status: Some(302),
+            response_headers: None,
+            response_body: Some(String::new()),
+        };
+
+        let result = assess_verification_result(
+            &baseline,
+            None,
+            "mutate_business_parameter",
+            302,
+            "",
+            false,
+            &[],
+            &[],
+            &[],
+            VerificationExecutionMode::Single,
+        );
+
+        assert!(result.verified);
+    }
+
+    #[test]
+    fn rejects_business_parameter_mutation_when_success_semantics_do_not_hold() {
+        let baseline = VerificationBaseline {
+            source_request_id: Some(3),
+            url: "https://shop.test/cart".to_string(),
+            method: "POST".to_string(),
+            request_headers: None,
+            request_body: Some("price=133700&quantity=1".to_string()),
+            response_status: Some(302),
+            response_headers: None,
+            response_body: Some(String::new()),
+        };
+
+        let result = assess_verification_result(
+            &baseline,
+            None,
+            "mutate_business_parameter",
+            500,
+            "internal error",
+            false,
+            &[],
+            &[],
+            &[],
+            VerificationExecutionMode::Single,
+        );
+
+        assert!(!result.verified);
     }
 }

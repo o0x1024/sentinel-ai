@@ -103,6 +103,13 @@ fn normalize_jsonish_string(raw: &str) -> serde_json::Value {
 }
 
 fn infer_tool_result_success_for_turn(value: &serde_json::Value) -> bool {
+    fn is_structured_http_response(map: &serde_json::Map<String, serde_json::Value>) -> bool {
+        map.get("status_code").and_then(|v| v.as_u64()).is_some()
+            && map.get("headers").and_then(|v| v.as_object()).is_some()
+            && (map.get("url").and_then(|v| v.as_str()).is_some()
+                || map.get("status_text").and_then(|v| v.as_str()).is_some())
+    }
+
     fn has_hard_error(text: &str) -> bool {
         let lower = text.trim().to_lowercase();
         if lower.is_empty() {
@@ -160,6 +167,9 @@ fn infer_tool_result_success_for_turn(value: &serde_json::Value) -> bool {
                     if !v.trim().is_empty() {
                         return false;
                     }
+                }
+                if is_structured_http_response(map) {
+                    return true;
                 }
                 map.values().all(visit)
             }

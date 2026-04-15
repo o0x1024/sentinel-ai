@@ -1,3 +1,8 @@
+import type { HttpExchangeRequest } from './http/model'
+import { serializeHeaderEntries } from './http/headers'
+import { endpointFromUrl } from './http/url'
+import { normalizeHttpVersionToken } from './http/version'
+
 export interface ProxyRequestForAI {
   id: number
   url: string
@@ -61,6 +66,22 @@ export type InterceptedItem =
   | { type: 'request'; data: InterceptedRequest }
   | { type: 'response'; data: InterceptedResponse }
   | { type: 'websocket'; data: InterceptedWebSocketMessage }
+
+export function buildExchangeRequestFromInterceptedRequest(request: InterceptedRequest): HttpExchangeRequest {
+  const endpoint = endpointFromUrl(request.url)
+  const parsedUrl = new URL(request.url)
+  return {
+    endpoint,
+    absoluteUrl: request.url,
+    request: {
+      method: request.method,
+      target: request.path || `${parsedUrl.pathname}${parsedUrl.search}`,
+      versionPreference: normalizeHttpVersionToken(request.protocol),
+      headers: Object.entries(request.headers).map(([name, value]) => ({ name, value })),
+      bodyText: request.body || '',
+    },
+  }
+}
 
 export function formatInterceptBody(body: string): string {
   if (!body) return ''
@@ -139,7 +160,7 @@ export function convertInterceptedItemToProxyRequest(item: InterceptedItem): Pro
       protocol: request.protocol || 'HTTP/1.1',
       method: request.method,
       status_code: 0,
-      request_headers: JSON.stringify(request.headers),
+      request_headers: serializeHeaderEntries(Object.entries(request.headers).map(([name, value]) => ({ name, value }))),
       request_body: request.body,
       response_headers: undefined,
       response_body: undefined,
@@ -160,7 +181,7 @@ export function convertInterceptedItemToProxyRequest(item: InterceptedItem): Pro
       status_code: response.status,
       request_headers: undefined,
       request_body: undefined,
-      response_headers: JSON.stringify(response.headers),
+      response_headers: serializeHeaderEntries(Object.entries(response.headers).map(([name, value]) => ({ name, value }))),
       response_body: response.body,
       response_size: response.body?.length || 0,
       response_time: 0,

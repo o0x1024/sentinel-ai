@@ -24,11 +24,12 @@ use crate::services::system_agents::verification_assessment::assess_verification
 use crate::services::system_agents::verification_hypothesis_memory::{
     extract_hypothesis_state, normalize_hypothesis_state, VerificationHypothesisState,
 };
+use crate::services::system_agents::verification_mutation::AppliedVerificationMutation;
 use crate::services::system_agents::verification_plan::{
-    build_baseline_from_context_payload, build_baseline_from_evidence, build_baseline_from_proxy_request,
-    extract_context_output, extract_context_payload, extract_target_request_id,
-    extract_verification_plan, normalize_verification_plan, select_fallback_evidence,
-    VerificationBaseline, VerificationPlan,
+    build_baseline_from_context_payload, build_baseline_from_evidence,
+    build_baseline_from_proxy_request, extract_context_output, extract_context_payload,
+    extract_target_request_id, extract_verification_plan, hydrate_candidate_targets_from_context,
+    normalize_verification_plan, select_fallback_evidence, VerificationBaseline, VerificationPlan,
 };
 use crate::services::system_agents::verification_request_diff::{
     build_request_diff_summary, RequestDiffSummary,
@@ -40,7 +41,6 @@ use crate::services::system_agents::verification_strategy::{
     prepare_verification_request, PreparedVerificationRequest, VerificationExecutionMode,
     VerificationSequenceMode,
 };
-use crate::services::system_agents::verification_mutation::AppliedVerificationMutation;
 use crate::services::SystemAgentRuntime;
 
 const TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID: &str = "traffic_active_verifier";
@@ -187,17 +187,16 @@ pub async fn verify_finding_for_runtime(
         .and_then(|raw| serde_json::from_value::<VerificationPlan>(raw.clone()).ok());
     let hypothesis_state_hint = extract_hypothesis_state(payload);
 
-    let result =
-        execute_verification(
-            runtime,
-            db,
-            app_handle,
-            finding_id,
-            run_id,
-            plan_hint,
-            hypothesis_state_hint,
-        )
-        .await?;
+    let result = execute_verification(
+        runtime,
+        db,
+        app_handle,
+        finding_id,
+        run_id,
+        plan_hint,
+        hypothesis_state_hint,
+    )
+    .await?;
     Ok(serde_json::to_value(result)?)
 }
 
@@ -252,7 +251,7 @@ async fn execute_verification(
         .map_err(|_| anyhow!("Unsupported HTTP method: {}", baseline.method))?;
     let client = Client::builder()
         .danger_accept_invalid_certs(true)
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))
         .build()?;
     let mut attempted_strategies = Vec::new();
@@ -491,6 +490,7 @@ async fn execute_verification_attempt(
         sequence_mode,
         applied_mutations,
     } = prepared_request;
+    let request_headers_json = headers_to_json(&headers)?;
     let request_diff_summary =
         build_request_diff_summary(baseline, &request_url, request_body.as_deref());
 
@@ -546,6 +546,24 @@ async fn execute_verification_attempt(
         &verification_response.response_headers_json,
         &verification_response.response_body,
     );
+    let baseline_exchange = build_verification_exchange(
+        &baseline.method,
+        &baseline.url,
+        baseline.request_headers.clone(),
+        baseline.request_body.clone(),
+        baseline.response_status,
+        baseline.response_headers.clone(),
+        baseline.response_body.clone(),
+    );
+    let replay_exchange = build_verification_exchange(
+        &baseline.method,
+        &request_url,
+        Some(request_headers_json.clone()),
+        request_body.clone(),
+        Some(verification_response.response_status as i32),
+        Some(verification_response.response_headers_json.clone()),
+        Some(verification_response.response_body.clone()),
+    );
 
     let summary = format_attempt_summary(
         ui_language,
@@ -568,7 +586,7 @@ async fn execute_verification_attempt(
         method: baseline.method.clone(),
         location: "system_agent_verification".to_string(),
         evidence_snippet: summary.clone(),
-        request_headers: baseline.request_headers.clone(),
+        request_headers: Some(request_headers_json),
         request_body: request_body.clone(),
         response_status: Some(verification_response.response_status as i32),
         response_headers: Some(
@@ -587,6 +605,8 @@ async fn execute_verification_attempt(
                 "appliedMutations": applied_mutations,
                 "requestDiffSummary": request_diff_summary,
                 "responseDiffSummary": response_diff_summary,
+                "baselineExchange": baseline_exchange,
+                "replayExchange": replay_exchange,
                 "hypothesisState": hypothesis_state,
                 "notes": strategy_notes,
                 "assessmentReasons": assessment.reasons,
@@ -690,6 +710,16 @@ async fn record_blocked_verification_attempt(
                 "appliedMutations": [],
                 "requestDiffSummary": RequestDiffSummary::default(),
                 "responseDiffSummary": ResponseDiffSummary::default(),
+                "baselineExchange": build_verification_exchange(
+                    &baseline.method,
+                    &baseline.url,
+                    baseline.request_headers.clone(),
+                    baseline.request_body.clone(),
+                    baseline.response_status,
+                    baseline.response_headers.clone(),
+                    baseline.response_body.clone(),
+                ),
+                "replayExchange": Value::Null,
                 "hypothesisState": hypothesis_state,
                 "attemptIndex": attempt_index,
                 "totalAttempts": total_attempts,
@@ -846,7 +876,11 @@ async fn resolve_verification_context(
 ) -> Result<(VerificationBaseline, Option<VerificationPlan>)> {
     let context_output = extract_context_output(evidence);
     let context_payload = extract_context_payload(evidence);
-    let plan = plan_hint.or_else(|| context_output.as_ref().and_then(extract_verification_plan));
+    let mut plan =
+        plan_hint.or_else(|| context_output.as_ref().and_then(extract_verification_plan));
+    if let Some(plan) = plan.as_mut() {
+        hydrate_candidate_targets_from_context(plan, context_payload.as_ref());
+    }
     let target_request_id =
         extract_target_request_id(context_output.as_ref(), context_payload.as_ref())
             .or_else(|| plan.as_ref().and_then(|item| item.target_request_id));
@@ -1153,6 +1187,26 @@ fn normalize_text(input: &str) -> String {
 
 fn truncate_text(text: Option<String>) -> Option<String> {
     text.map(|text| text.chars().take(MAX_RECORDED_BODY_LEN).collect())
+}
+
+fn build_verification_exchange(
+    request_method: &str,
+    request_url: &str,
+    request_headers: Option<String>,
+    request_body: Option<String>,
+    response_status: Option<i32>,
+    response_headers: Option<String>,
+    response_body: Option<String>,
+) -> Value {
+    json!({
+        "requestMethod": request_method,
+        "requestUrl": request_url,
+        "requestHeaders": request_headers,
+        "requestBody": truncate_text(request_body),
+        "responseStatus": response_status,
+        "responseHeaders": response_headers,
+        "responseBody": truncate_text(response_body),
+    })
 }
 
 fn method_allows_body(method: &Method) -> bool {

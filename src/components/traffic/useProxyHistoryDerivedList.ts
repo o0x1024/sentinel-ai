@@ -8,6 +8,10 @@ import {
   isProxyHistoryDefaultSort,
   sortProxyHistoryRequests,
 } from './proxyHistoryTableSupport'
+import {
+  areProxyHistoryRequestIdsEqual,
+  classifyProxyHistoryRequestIdStep,
+} from './proxyHistoryListStepSupport'
 import type {
   ProxyHistoryFilterCache,
   ProxyHistoryFilterConfig,
@@ -21,75 +25,6 @@ type Params = {
   effectiveFilterConfig: ComputedRef<ProxyHistoryFilterConfig>
   filterCache: ComputedRef<ProxyHistoryFilterCache>
   sortState: Ref<ProxyHistorySortState>
-}
-
-type DerivedStep = {
-  type: 'stable' | 'prepend' | 'append' | 'full'
-  addedFrontCount: number
-  addedTailStart: number
-  preservedCount: number
-}
-
-const areIdsEqual = (left: number[], right: number[]) =>
-  left.length === right.length && left.every((id, index) => id === right[index])
-
-const classifyRequestIdStep = (previousIds: number[], nextIds: number[]): DerivedStep => {
-  if (areIdsEqual(previousIds, nextIds)) {
-    return {
-      type: 'stable',
-      addedFrontCount: 0,
-      addedTailStart: nextIds.length,
-      preservedCount: nextIds.length,
-    }
-  }
-
-  for (let addedFrontCount = 1; addedFrontCount <= nextIds.length; addedFrontCount += 1) {
-    const preservedCount = nextIds.length - addedFrontCount
-    if (preservedCount > previousIds.length) continue
-
-    let matches = true
-    for (let index = 0; index < preservedCount; index += 1) {
-      if (nextIds[addedFrontCount + index] !== previousIds[index]) {
-        matches = false
-        break
-      }
-    }
-
-    if (matches) {
-      return {
-        type: 'prepend',
-        addedFrontCount,
-        addedTailStart: nextIds.length,
-        preservedCount,
-      }
-    }
-  }
-
-  if (nextIds.length >= previousIds.length) {
-    let matchesPrefix = true
-    for (let index = 0; index < previousIds.length; index += 1) {
-      if (nextIds[index] !== previousIds[index]) {
-        matchesPrefix = false
-        break
-      }
-    }
-
-    if (matchesPrefix) {
-      return {
-        type: 'append',
-        addedFrontCount: 0,
-        addedTailStart: previousIds.length,
-        preservedCount: previousIds.length,
-      }
-    }
-  }
-
-  return {
-    type: 'full',
-    addedFrontCount: 0,
-    addedTailStart: nextIds.length,
-    preservedCount: 0,
-  }
 }
 
 const insertSortedRequest = (
@@ -173,7 +108,7 @@ export const useProxyHistoryDerivedList = (params: Params) => {
       const nextIds = nextRequests.map((request) => request.id)
       const previousIds = (previousRequests || []).map((request) => request.id)
 
-      if (areIdsEqual(nextIds, previousIds)) {
+      if (areProxyHistoryRequestIdsEqual(nextIds, previousIds)) {
         recomputeAll()
       }
     },
@@ -188,7 +123,7 @@ export const useProxyHistoryDerivedList = (params: Params) => {
       return
     }
 
-    const step = classifyRequestIdStep(previousIds, nextIds)
+    const step = classifyProxyHistoryRequestIdStep(previousIds, nextIds)
     if (step.type === 'stable') {
       return
     }

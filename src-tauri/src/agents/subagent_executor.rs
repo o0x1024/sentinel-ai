@@ -730,6 +730,8 @@ async fn run_task(task_id: String) {
         model: pending_data.parent.model,
         system_prompt,
         task: task_with_context,
+        active_terminal_session_fingerprint: None,
+        active_terminal_session_id: None,
         rig_provider: pending_data.parent.rig_provider,
         api_key: pending_data.parent.api_key,
         api_base: pending_data.parent.api_base,

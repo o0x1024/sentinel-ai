@@ -37,6 +37,8 @@ const USER_FORCED_RULES_BLOCK_MARKER: &str = "[User Forced Rules]";
 pub struct ContextBuildInput {
     pub app_handle: AppHandle,
     pub execution_id: String,
+    pub active_terminal_session_fingerprint: Option<String>,
+    pub active_terminal_session_id: Option<String>,
     pub base_system_prompt: String,
     pub injected_skill_prompt: Option<String>,
     pub task: String,
@@ -293,6 +295,35 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 "Injected working directory into system prompt: {}",
                 working_dir
             );
+        }
+    }
+
+    if let Some(active_terminal_session_id) = input
+        .active_terminal_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        system_prompt.push_str(&format!(
+            "\n\n[Interactive Terminal Session]\n\
+            - An interactive terminal session is already active.\n\
+            - Reusable session_id: {}\n\
+            - If you call `interactive_shell` and want to target the existing terminal, use this exact session_id.\n\
+            - Do not invent, rename, summarize, or paraphrase session IDs.\n\
+            - If you are unsure whether reuse is necessary, omit `session_id` instead of guessing.",
+            active_terminal_session_id
+        ));
+
+        if let Some(fingerprint) = input
+            .active_terminal_session_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            system_prompt.push_str(&format!(
+                "\n- Active terminal fingerprint: {}",
+                fingerprint
+            ));
         }
     }
 

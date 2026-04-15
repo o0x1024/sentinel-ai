@@ -1,5 +1,6 @@
 import type { Column, ProxyHistorySortDirection, ProxyHistorySortState, ProxyRequest, VirtualItem } from './proxyHistoryTypes'
 import { getProxyHistoryDerived } from './proxyHistoryDerivedSupport'
+import { normalizeProxyHistoryHttpVersion } from './proxyHistoryHttpSupport'
 
 export const PROXY_HISTORY_COLUMNS_STORAGE_KEY = 'proxyHistory.columns'
 export const PROXY_HISTORY_SORT_STORAGE_KEY = 'proxyHistory.sort'
@@ -16,6 +17,7 @@ export const defaultProxyHistoryColumns: Column[] = [
   { id: 'id', label: 'ID', visible: true, width: 52, minWidth: 46 },
   { id: 'host', label: 'Host', visible: true, width: 220, minWidth: 120 },
   { id: 'method', label: 'Method', visible: true, width: 78, minWidth: 64 },
+  { id: 'httpVersion', label: 'HTTP', visible: true, width: 92, minWidth: 84 },
   { id: 'url', label: 'URL', visible: true, width: 380, minWidth: 180 },
   { id: 'params', label: 'Params', visible: true, width: 62, minWidth: 56 },
   { id: 'status', label: 'Status', visible: true, width: 78, minWidth: 68 },
@@ -65,6 +67,7 @@ export const translateProxyHistoryColumns = (
       column.id === 'id' ? t('trafficAnalysis.history.table.id')
         : column.id === 'host' ? t('trafficAnalysis.history.table.host')
         : column.id === 'method' ? t('trafficAnalysis.history.table.method')
+        : column.id === 'httpVersion' ? t('trafficAnalysis.history.table.httpVersion')
         : column.id === 'url' ? t('trafficAnalysis.history.table.url')
         : column.id === 'params' ? t('trafficAnalysis.history.table.params')
         : column.id === 'status' ? t('trafficAnalysis.history.table.status')
@@ -110,6 +113,8 @@ function getProxyHistorySortValue(request: ProxyRequest, columnId: string): numb
       return request.host || ''
     case 'method':
       return request.method || ''
+    case 'httpVersion':
+      return normalizeProxyHistoryHttpVersion(request.http_version_observed)
     case 'url':
       return request.url || ''
     case 'params':
@@ -125,7 +130,7 @@ function getProxyHistorySortValue(request: ProxyRequest, columnId: string): numb
     case 'title':
       return request.title || ''
     case 'tls':
-      return request.protocol === 'https' ? 1 : 0
+      return request.scheme === 'https' ? 1 : 0
     case 'ip':
       return request.ip || ''
     case 'time':

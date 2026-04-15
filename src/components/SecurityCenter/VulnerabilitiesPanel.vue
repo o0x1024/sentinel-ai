@@ -303,26 +303,24 @@
               v-else-if="detailTab === 'system_agent'"
               :finding="selectedFinding"
               :feedbacking-id="feedbackingId"
-              @feedback="({ findingId, feedbackType }) => submitSystemAgentFeedback(findingId, feedbackType)"
+              @feedback="
+                ({ findingId, feedbackType }) => submitSystemAgentFeedback(findingId, feedbackType)
+              "
             />
 
-            <VulnerabilityTimelinePanel
-              v-else
-              :finding="selectedFinding"
-            />
+            <VulnerabilityTimelinePanel v-else :finding="selectedFinding" />
           </div>
         </div>
 
-        <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
-          <button
-            v-if="selectedFinding"
-            @click="openWorkbenchForFinding(selectedFinding)"
-            class="btn btn-sm btn-outline btn-primary"
-          >
-            进入工作台
-          </button>
-          <button @click="closeDetails" class="btn btn-sm">{{ $t('common.close') }}</button>
-        </div>
+        <VulnerabilityDetailFooterActions
+          :transferable-evidence="primaryTransferableEvidence"
+          :transfer-messages="transferMessages"
+          :finding="selectedFinding"
+          :open-workbench-label="t('vulnerabilities.openWorkbench')"
+          :close-label="t('common.close')"
+          @open-workbench="openWorkbenchForFinding"
+          @close="closeDetails"
+        />
       </div>
       <form method="dialog" class="modal-backdrop">
         <button @click="closeDetails">close</button>
@@ -398,6 +396,7 @@ import {
   findEvaluationHistoryEntry,
   mergeEvaluationHistory,
 } from './vulnerabilitiesEvaluationHistorySupport'
+import VulnerabilityDetailFooterActions from './VulnerabilityDetailFooterActions.vue'
 import VulnerabilityDetailOverview from './VulnerabilityDetailOverview.vue'
 import VulnerabilityEvidenceList from './VulnerabilityEvidenceList.vue'
 import VulnerabilityFindingRow from './VulnerabilityFindingRow.vue'
@@ -406,6 +405,10 @@ import VulnerabilityTimelinePanel from './VulnerabilityTimelinePanel.vue'
 import VulnerabilitiesStatsOverview from './VulnerabilitiesStatsOverview.vue'
 import VulnerabilitiesEvaluationSummaryPanel from './VulnerabilitiesEvaluationSummaryPanel.vue'
 import { getOrCreateWorkbenchCaseForFinding } from './securityWorkbenchCaseSupport'
+import {
+  findFirstTransferableSecurityEvidence,
+  type SecurityEvidenceTransferMessages,
+} from './securityEvidenceTransferSupport'
 import type { Finding } from './vulnerabilityFindingTypes'
 import { isSystemAgentFinding } from './vulnerabilityFindingPresentation'
 
@@ -448,6 +451,18 @@ const totalPages = computed(() => Math.max(1, Math.ceil(totalCount.value / pageS
 const isAllSelected = computed(
   () => findings.value.length > 0 && findings.value.every(f => selectedIds.value.has(f.id))
 )
+const primaryTransferableEvidence = computed(() =>
+  findFirstTransferableSecurityEvidence(selectedFinding.value?.evidence)
+)
+const transferMessages = computed<SecurityEvidenceTransferMessages>(() => ({
+  triggerLabel: t('vulnerabilities.transfer.triggerLabel'),
+  sendToRepeater: t('vulnerabilities.transfer.sendToRepeater'),
+  sendToIntruder: t('vulnerabilities.transfer.sendToIntruder'),
+  noTransferableRequest: t('vulnerabilities.transfer.noFindingTransferableRequest'),
+  sentToRepeater: t('vulnerabilities.transfer.sentToRepeater'),
+  sentToIntruder: t('vulnerabilities.transfer.sentToIntruder'),
+  transferFailed: t('vulnerabilities.transfer.transferFailed', { error: '{error}' }),
+}))
 const detailTabs = computed<Array<{ id: DetailTabId; label: string }>>(() => {
   const tabs: Array<{ id: DetailTabId; label: string }> = [
     { id: 'overview', label: '概览' },
@@ -522,13 +537,7 @@ const refreshFindings = async () => {
     const search = filters.value.search.trim() || null
     const offset = (currentPage.value - 1) * pageSize.value
     const [filteredTotal, lifecycleStatsResponse, response] = await Promise.all([
-      countFindings(
-        severityFilter,
-        statusFilter,
-        statusFilters,
-        analysisStageFilters,
-        search
-      ),
+      countFindings(severityFilter, statusFilter, statusFilters, analysisStageFilters, search),
       invoke<any>('get_finding_lifecycle_stats'),
       invoke<any>('list_findings', {
         limit: pageSize.value,
@@ -607,7 +616,8 @@ const applyStatusFilter = () => {
 }
 
 const syncFiltersFromRouteQuery = () => {
-  const nextSeverity = typeof route.query.severity === 'string' ? route.query.severity.trim().toLowerCase() : ''
+  const nextSeverity =
+    typeof route.query.severity === 'string' ? route.query.severity.trim().toLowerCase() : ''
   const normalizedSeverity = VALID_SEVERITY_FILTERS.has(nextSeverity) ? nextSeverity : ''
 
   if (filters.value.severity === normalizedSeverity) {
@@ -618,7 +628,6 @@ const syncFiltersFromRouteQuery = () => {
   return true
 }
 
-
 const loadEvaluationComparison = async () => {
   try {
     const imported = await importEvaluationComparison()
@@ -627,7 +636,7 @@ const loadEvaluationComparison = async () => {
       await persistEvaluationComparison(imported)
       evaluationComparisonHistory.value = mergeEvaluationHistory(
         evaluationComparisonHistory.value,
-        imported,
+        imported
       )
       await persistEvaluationComparisonHistory(evaluationComparisonHistory.value)
     }
@@ -949,7 +958,7 @@ watch(
   () => route.query.findingId,
   () => {
     void openFindingFromRoute()
-  },
+  }
 )
 
 watch(
@@ -967,7 +976,7 @@ watch(
     }
 
     refreshFindings()
-  },
+  }
 )
 
 const handleKeyDown = (e: KeyboardEvent) => {
@@ -992,7 +1001,7 @@ onMounted(async () => {
   if (evaluationComparison.value) {
     evaluationComparisonHistory.value = mergeEvaluationHistory(
       evaluationComparisonHistory.value,
-      evaluationComparison.value,
+      evaluationComparison.value
     )
   }
   refreshFindings()

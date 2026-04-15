@@ -129,6 +129,13 @@ pub fn turn_log_jsonl_paths_for_date(date: &str) -> Vec<PathBuf> {
     ]
 }
 
+pub fn tool_calls_log_jsonl_paths_for_date(date: &str) -> Vec<PathBuf> {
+    vec![
+        categorized_llm_log_path_for_date(TOOL_CALLS_LOG_CATEGORY, date, "jsonl"),
+        legacy_llm_log_path(TOOL_CALLS_LOG_CATEGORY, date, "jsonl"),
+    ]
+}
+
 fn categorize_legacy_llm_log_file(file_name: &str) -> Option<(LlmLogCategory, &str)> {
     MIGRATED_LOG_CATEGORIES.iter().find_map(|category| {
         file_name
@@ -559,6 +566,44 @@ pub fn write_tool_log(
         }
         Err(e) => {
             tracing::error!("Failed to open tool log file: {}", e);
+        }
+    }
+}
+
+pub fn log_structured_tool_event(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    event_type: &str,
+    payload: &serde_json::Value,
+) {
+    let timestamp = chrono::Utc::now();
+    let sanitized_payload = truncate_json_value_strings(payload, TOOL_LOG_MAX_CHARS);
+    let event = serde_json::json!({
+        "timestamp": timestamp.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "event_type": event_type,
+        "session_id": session_id,
+        "conversation_id": conversation_id.unwrap_or("N/A"),
+        "provider": provider,
+        "model": model,
+        "payload": sanitized_payload,
+    });
+
+    match open_categorized_llm_log_file(TOOL_CALLS_LOG_CATEGORY, "jsonl") {
+        Ok((jsonl_file_path, mut file)) => {
+            if let Err(e) = writeln!(file, "{}", event) {
+                tracing::error!(
+                    "Failed to write to tool JSONL log file {}: {}",
+                    jsonl_file_path.display(),
+                    e
+                );
+            } else {
+                let _ = file.flush();
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to open tool JSONL log file: {}", e);
         }
     }
 }

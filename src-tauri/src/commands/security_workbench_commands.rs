@@ -1897,17 +1897,18 @@ pub async fn security_workbench_execute_execution_draft(
         let Some(case_item) = cases.iter().find(|item| item.id == draft.case_id) else {
             return Ok(CommandResponse::ok(None));
         };
+        let finding_snapshot = load_finding_snapshot(&state, &case_item.finding_id)
+            .await?
+            .unwrap_or_else(|| case_item.finding.clone());
 
-        let baseline = case_item
-            .finding
+        let baseline = finding_snapshot
             .evidence
             .iter()
             .find(|item| item.id == draft.target_evidence_id)
             .cloned()
             .or_else(|| {
                 case_item.baseline_evidence_id.as_ref().and_then(|id| {
-                    case_item
-                        .finding
+                    finding_snapshot
                         .evidence
                         .iter()
                         .find(|item| &item.id == id)
@@ -1941,7 +1942,7 @@ pub async fn security_workbench_execute_execution_draft(
         };
 
         let client = Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(5))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|error| format!("Failed to build workbench HTTP client: {error}"))?;
 

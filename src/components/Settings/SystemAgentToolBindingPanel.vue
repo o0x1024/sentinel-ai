@@ -17,6 +17,10 @@
     </template>
 
     <div class="space-y-4">
+      <div class="rounded-lg border border-info/30 bg-info/10 px-3 py-2 text-xs text-base-content/70">
+        `sops` 默认会注入到后台型 Agent，用于读取当前 Profile 的 SOP 目录。通常不需要显式设为 `required`，只有在你要禁用它时才建议标记为 `forbidden`。
+      </div>
+
       <div class="stats stats-horizontal shadow-sm w-full">
         <div class="stat px-4 py-3">
           <div class="stat-title text-xs">Required</div>

@@ -108,12 +108,14 @@ import { defaultKeymap, indentWithTab, history, undo, redo } from '@codemirror/c
 import { SearchQuery, findNext, findPrevious, getSearchQuery, search, setSearchQuery } from '@codemirror/search'
 import { useI18n } from 'vue-i18n'
 import { getHttpCodeThemeExtensions, isDarkHttpEditorTheme } from './httpEditorTheme'
+import { computeMinimalTextChange } from './httpEditorContentSync'
 import { createLineEndingIndicatorExtension, getDetectedLineEndingLabel } from './httpEditorDisplayExtensions'
 import { getHttpEditorLanguageExtensions, getHttpLanguageSignature } from './httpEditorHttpMode'
 import { shouldHighlightTrafficMessageSyntax, useTrafficDisplaySettings, type TrafficMessageType } from '@/components/traffic/trafficDisplaySettings'
 import { getIntruderMarkerEditorExtensions } from '@/components/traffic/intruder/intruderMarkerEditorExtension'
 
 const scrollStateCache = new Map<string, { top: number; left: number }>()
+const MAX_SCROLL_STATE_CACHE_SIZE = 100
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -171,10 +173,20 @@ const totalSearchMatches = ref(0)
 const activeSearchMatch = ref(0)
 let editorView: EditorView | null = null
 let currentLanguageSignature = ''
+let currentThemeSignature = ''
+let currentMarkerSignature = ''
+let currentReadonlyAccessibilitySignature = ''
+let currentSearchExtensionSignature = ''
+let contextMenuListenerAttached = false
 const readOnlyCompartment = new Compartment()
 const editableCompartment = new Compartment()
 const lineWrapCompartment = new Compartment()
 const lineEndingCompartment = new Compartment()
+const languageCompartment = new Compartment()
+const themeCompartment = new Compartment()
+const markerCompartment = new Compartment()
+const readonlyAccessibilityCompartment = new Compartment()
+const searchCompartment = new Compartment()
 const { t } = useI18n()
 const { settings } = useTrafficDisplaySettings()
 const editorStyle = computed(() => ({
@@ -233,6 +245,15 @@ function getThemeExtensions() {
       })
 }
 
+function getThemeSignature() {
+  return [
+    props.messageType,
+    shouldHighlightTrafficMessageSyntax(props.messageType) ? 'highlight' : 'plain',
+    props.readonly ? 'readonly' : 'editable',
+    isDarkHttpEditorTheme() ? 'dark' : 'light',
+  ].join(':')
+}
+
 function getLanguageSignature(content: string) {
   if (!shouldHighlightTrafficMessageSyntax(props.messageType)) {
     return `${props.messageType}:plain`
@@ -240,19 +261,36 @@ function getLanguageSignature(content: string) {
   return `${props.messageType}:${getHttpLanguageSignature(content)}`
 }
 
-function getLanguageExtensions() {
+function getLanguageExtensions(content: string) {
   if (!shouldHighlightTrafficMessageSyntax(props.messageType)) return []
-  currentLanguageSignature = getLanguageSignature(props.modelValue)
-  return getHttpEditorLanguageExtensions(props.modelValue)
+  return getHttpEditorLanguageExtensions(content)
+}
+
+function getMarkerExtensions() {
+  return props.markerMode === 'intruder' ? getIntruderMarkerEditorExtensions() : []
+}
+
+function getSearchExtensions() {
+  return props.showSearchBar ? [search()] : []
+}
+
+function getReadonlyAccessibilityExtensions() {
+  return props.readonly
+    ? [EditorView.contentAttributes.of({ tabindex: '0' })]
+    : []
+}
+
+function getEditorContent() {
+  return editorView?.state.doc.toString() ?? props.modelValue
 }
 
 function getLineWrapExtension() {
   return settings.value.wrapLongLines ? EditorView.lineWrapping : []
 }
 
-function getLineEndingExtension() {
+function getLineEndingExtension(content: string) {
   return settings.value.showLineEndings
-    ? createLineEndingIndicatorExtension(getDetectedLineEndingLabel(props.modelValue))
+    ? createLineEndingIndicatorExtension(getDetectedLineEndingLabel(content))
     : []
 }
 
@@ -306,11 +344,6 @@ function getBaseExtensions() {
       },
     },
   ])
-  const searchExtensions = props.showSearchBar ? [search()] : []
-  const markerExtensions = props.markerMode === 'intruder' ? getIntruderMarkerEditorExtensions() : []
-  const readonlyFocusExtensions = props.readonly
-    ? [EditorView.contentAttributes.of({ tabindex: '0' })]
-    : []
   const baseEditorExtensions = [
     lineNumbers(),
     drawSelection(),
@@ -321,11 +354,9 @@ function getBaseExtensions() {
 
   return [
     sharedKeymap,
-    ...searchExtensions,
-    ...markerExtensions,
     ...baseEditorExtensions,
-    ...readonlyFocusExtensions,
-    ...(props.readonly ? [] : [history(), keymap.of([...defaultKeymap, indentWithTab])]),
+    history(),
+    keymap.of([...defaultKeymap, indentWithTab]),
   ]
 }
 
@@ -336,13 +367,34 @@ function handleEditorContextMenu(event: MouseEvent) {
   emit('contextmenu', event)
 }
 
+function updateContextMenuBinding() {
+  if (!editorView) return
+  if (props.customContextMenu && !contextMenuListenerAttached) {
+    editorView.dom.addEventListener('contextmenu', handleEditorContextMenu, { capture: true })
+    contextMenuListenerAttached = true
+    return
+  }
+  if (!props.customContextMenu && contextMenuListenerAttached) {
+    editorView.dom.removeEventListener('contextmenu', handleEditorContextMenu, { capture: true })
+    contextMenuListenerAttached = false
+  }
+}
+
 function saveScrollStateForKey(stateKey: string) {
   if (!stateKey || !editorView) return
   const scroller = editorView.scrollDOM
+  if (scrollStateCache.has(stateKey)) {
+    scrollStateCache.delete(stateKey)
+  }
   scrollStateCache.set(stateKey, {
     top: scroller.scrollTop,
     left: scroller.scrollLeft,
   })
+  while (scrollStateCache.size > MAX_SCROLL_STATE_CACHE_SIZE) {
+    const oldestKey = scrollStateCache.keys().next().value
+    if (!oldestKey) break
+    scrollStateCache.delete(oldestKey)
+  }
 }
 
 function saveScrollState() {
@@ -469,8 +521,16 @@ function toggleRegexp() {
 
 function initEditor() {
   if (!editorContainer.value) return
+  let previousSelection: { anchor: number; head: number } | null = null
+  let previousFocused = false
+  const initialContent = props.modelValue
 
   if (editorView) {
+    previousSelection = {
+      anchor: editorView.state.selection.main.anchor,
+      head: editorView.state.selection.main.head,
+    }
+    previousFocused = editorView.hasFocus
     saveScrollState()
     if (props.customContextMenu) {
       editorView.dom.removeEventListener('contextmenu', handleEditorContextMenu, { capture: true })
@@ -481,13 +541,22 @@ function initEditor() {
   }
 
   editorContainer.value.innerHTML = ''
+  currentLanguageSignature = getLanguageSignature(initialContent)
+  currentThemeSignature = getThemeSignature()
+  currentMarkerSignature = props.markerMode
+  currentReadonlyAccessibilitySignature = props.readonly ? 'readonly' : 'editable'
+  currentSearchExtensionSignature = props.showSearchBar ? 'enabled' : 'disabled'
+  contextMenuListenerAttached = false
 
   const state = EditorState.create({
-    doc: props.modelValue,
+    doc: initialContent,
     extensions: [
       ...getBaseExtensions(),
-      ...getLanguageExtensions(),
-      ...getThemeExtensions(),
+      searchCompartment.of(getSearchExtensions()),
+      languageCompartment.of(getLanguageExtensions(initialContent)),
+      themeCompartment.of(getThemeExtensions()),
+      markerCompartment.of(getMarkerExtensions()),
+      readonlyAccessibilityCompartment.of(getReadonlyAccessibilityExtensions()),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !props.readonly) {
           emit('update:modelValue', update.state.doc.toString())
@@ -507,7 +576,7 @@ function initEditor() {
       readOnlyCompartment.of(EditorState.readOnly.of(props.readonly)),
       editableCompartment.of(EditorView.editable.of(!props.readonly)),
       lineWrapCompartment.of(getLineWrapExtension()),
-      lineEndingCompartment.of(getLineEndingExtension()),
+      lineEndingCompartment.of(getLineEndingExtension(initialContent)),
     ],
   })
 
@@ -516,29 +585,49 @@ function initEditor() {
     parent: editorContainer.value,
   })
 
-  if (props.customContextMenu) {
-    editorView.dom.addEventListener('contextmenu', handleEditorContextMenu, { capture: true })
-  }
+  updateContextMenuBinding()
   editorView.scrollDOM.addEventListener('scroll', saveScrollState, { passive: true })
   requestAnimationFrame(() => {
+    if (previousSelection && editorView) {
+      const docLength = editorView.state.doc.length
+      editorView.dispatch({
+        selection: {
+          anchor: Math.min(previousSelection.anchor, docLength),
+          head: Math.min(previousSelection.head, docLength),
+        },
+      })
+    }
+    if (previousFocused) {
+      editorView?.focus()
+    }
     restoreScrollState()
     syncLocalSearchState()
     updateSearchMetrics()
   })
 }
 
-function updateContent(content: string) {
+function syncContentAndLanguage(content: string) {
   if (!editorView) return
   const currentContent = editorView.state.doc.toString()
-  if (currentContent !== content) {
-    editorView.dispatch({
-      changes: {
-        from: 0,
-        to: currentContent.length,
-        insert: content,
-      },
-    })
+  const nextLanguageSignature = getLanguageSignature(content)
+  const effects = nextLanguageSignature !== currentLanguageSignature
+    ? [languageCompartment.reconfigure(getLanguageExtensions(content))]
+    : []
+
+  currentLanguageSignature = nextLanguageSignature
+
+  const minimalChange = computeMinimalTextChange(currentContent, content)
+  if (!minimalChange) {
+    if (effects.length) {
+      editorView.dispatch({ effects })
+    }
+    return
   }
+
+  editorView.dispatch({
+    changes: minimalChange,
+    effects,
+  })
 }
 
 function updateReadonly(readonly: boolean) {
@@ -563,10 +652,57 @@ function updateLineEndings(enabled: boolean) {
   editorView.dispatch({
     effects: lineEndingCompartment.reconfigure(
       enabled
-        ? createLineEndingIndicatorExtension(getDetectedLineEndingLabel(props.modelValue))
+        ? createLineEndingIndicatorExtension(getDetectedLineEndingLabel(getEditorContent()))
         : [],
     ),
   })
+}
+
+function updateTheme() {
+  if (!editorView) return
+  const nextSignature = getThemeSignature()
+  if (nextSignature === currentThemeSignature) return
+  currentThemeSignature = nextSignature
+  editorView.dispatch({
+    effects: themeCompartment.reconfigure(getThemeExtensions()),
+  })
+}
+
+function updateMarker() {
+  if (!editorView) return
+  const nextSignature = props.markerMode
+  if (nextSignature === currentMarkerSignature) return
+  currentMarkerSignature = nextSignature
+  editorView.dispatch({
+    effects: markerCompartment.reconfigure(getMarkerExtensions()),
+  })
+}
+
+function updateReadonlyAccessibility() {
+  if (!editorView) return
+  const nextSignature = props.readonly ? 'readonly' : 'editable'
+  if (nextSignature === currentReadonlyAccessibilitySignature) return
+  currentReadonlyAccessibilitySignature = nextSignature
+  editorView.dispatch({
+    effects: readonlyAccessibilityCompartment.reconfigure(getReadonlyAccessibilityExtensions()),
+  })
+}
+
+function updateSearchExtension() {
+  if (!editorView) return
+  const nextSignature = props.showSearchBar ? 'enabled' : 'disabled'
+  if (nextSignature === currentSearchExtensionSignature) return
+  currentSearchExtensionSignature = nextSignature
+  editorView.dispatch({
+    effects: searchCompartment.reconfigure(getSearchExtensions()),
+  })
+  if (!props.showSearchBar) {
+    totalSearchMatches.value = 0
+    activeSearchMatch.value = 0
+    return
+  }
+  syncLocalSearchState()
+  updateSearchMetrics()
 }
 
 function toggleLineWrap() {
@@ -606,31 +742,30 @@ defineExpose({
 
 watch(searchQuery, () => {
   if (!props.showSearchBar) return
-  applySearchState(true)
+  applySearchState(false)
 })
 
 watch(searchCaseSensitive, () => {
   if (!props.showSearchBar) return
-  applySearchState(true)
+  applySearchState(false)
 })
 
 watch(searchRegexp, () => {
   if (!props.showSearchBar) return
-  applySearchState(true)
+  applySearchState(false)
 })
 
 watch(() => props.modelValue, (newVal) => {
-  if (getLanguageSignature(newVal) !== currentLanguageSignature) {
-    initEditor()
-    return
-  }
-  updateContent(newVal)
+  syncContentAndLanguage(newVal)
   updateLineEndings(settings.value.showLineEndings)
+  updateTheme()
   updateSearchMetrics()
 })
 
 watch(() => props.readonly, (newVal) => {
   updateReadonly(newVal)
+  updateReadonlyAccessibility()
+  updateTheme()
 })
 
 watch(() => props.stateKey, (newKey, oldKey) => {
@@ -643,16 +778,26 @@ watch(() => props.stateKey, (newKey, oldKey) => {
   })
 })
 
+watch(() => props.showSearchBar, () => {
+  updateSearchExtension()
+})
+
+watch(() => props.customContextMenu, () => {
+  updateContextMenuBinding()
+})
+
 watch(
   () => [
     props.messageType,
-    props.readonly,
     props.markerMode,
     settings.value.highlightRequestSyntax,
     settings.value.highlightResponseSyntax,
   ],
   () => {
-    initEditor()
+    const content = getEditorContent()
+    syncContentAndLanguage(content)
+    updateMarker()
+    updateTheme()
   },
 )
 
@@ -671,7 +816,7 @@ onMounted(async () => {
   initEditor()
 
   themeObserver = new MutationObserver(() => {
-    initEditor()
+    updateTheme()
   })
   themeObserver.observe(document.documentElement, {
     attributes: true,
@@ -682,12 +827,13 @@ onMounted(async () => {
 onUnmounted(() => {
   saveScrollState()
   if (editorView) {
-    if (props.customContextMenu) {
+    if (contextMenuListenerAttached) {
       editorView.dom.removeEventListener('contextmenu', handleEditorContextMenu, { capture: true })
     }
     editorView.scrollDOM.removeEventListener('scroll', saveScrollState)
     editorView.destroy()
     editorView = null
+    contextMenuListenerAttached = false
   }
   if (themeObserver) {
     themeObserver.disconnect()

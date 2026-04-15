@@ -1,5 +1,5 @@
 <template>
-  <div class="tool-config-panel">
+  <div class="tool-config-panel min-w-0 w-full max-w-full">
     <!-- Header -->
     <div v-if="props.showHeader" class="panel-header flex items-center justify-between p-4 border-b border-base-300">
       <div class="flex items-center gap-2">
@@ -12,10 +12,10 @@
     </div>
 
     <!-- Content -->
-    <div class="panel-content p-4 space-y-4 overflow-y-auto">
+    <div class="panel-content min-w-0 overflow-x-hidden overflow-y-auto p-4 space-y-4">
       <!-- Enable Tools Toggle -->
-      <div class="form-control">
-        <label class="label cursor-pointer justify-start gap-3">
+      <div class="form-control min-w-0">
+        <label class="label min-w-0 cursor-pointer justify-start gap-3">
           <input 
             type="checkbox" 
             v-model="localConfig.enabled" 
@@ -29,9 +29,9 @@
         </label>
       </div>
 
-      <div v-if="localConfig.enabled" class="space-y-4">
+      <div v-if="localConfig.enabled" class="min-w-0 space-y-4">
         <!-- Tool Selection Strategy -->
-        <div class="form-control">
+        <div class="form-control min-w-0">
           <label class="label">
             <span class="label-text font-medium">{{ t('agent.toolSelectionStrategy') }}</span>
           </label>
@@ -54,7 +54,7 @@
         </div>
 
         <!-- Max Tools -->
-        <div class="form-control">
+        <div class="form-control min-w-0">
           <label class="label">
             <span class="label-text font-medium">{{ t('agent.maxTools') }}</span>
           </label>
@@ -71,7 +71,7 @@
         </div>
 
         <!-- Tool Management -->
-        <div class="form-control">
+        <div class="form-control min-w-0">
           <label class="label">
             <span class="label-text font-medium">
               {{ shouldUseCheckboxSelection ? t('agent.selectTools') : t('agent.toolManagement') }}
@@ -85,9 +85,9 @@
             <span class="loading loading-spinner loading-md"></span>
           </div>
           
-          <div v-else class="space-y-2 max-h-96 overflow-y-auto border border-base-300 rounded-lg p-3">
+          <div v-else class="min-w-0 max-w-full space-y-2 overflow-x-hidden overflow-y-auto max-h-96 rounded-lg border border-base-300 p-3">
             <!-- Search Box -->
-            <div class="sticky top-0 z-10 bg-base-100 pb-2 -mt-1 pt-1">
+            <div class="sticky top-0 z-10 -mt-1 min-w-0 bg-base-100 pb-2 pt-1">
               <div class="relative w-full">
                 <input 
                   type="text" 
@@ -109,40 +109,45 @@
             </div>
 
             <!-- Category Filters -->
-            <div class="flex flex-wrap gap-2 mb-3 pb-3 border-b border-base-300">
-              <!-- 全部按钮 -->
-              <button 
-                @click="clearCategoryFilter"
-                class="btn btn-xs"
-                :class="selectedCategories.length === 0 && !showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
-              >
-                {{ t('agent.all') }}
-              </button>
+            <div class="mb-3 min-w-0 space-y-2 border-b border-base-300 pb-3">
+              <div class="flex min-w-0 flex-wrap gap-2">
+                <!-- 全部按钮 -->
+                <button 
+                  @click="clearCategoryFilter"
+                  class="btn btn-xs"
+                  :class="selectedCategories.length === 0 && !showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
+                >
+                  {{ t('agent.all') }}
+                </button>
 
-              <!-- 已选按钮 (仅手动模式) -->
-              <button 
-                v-if="shouldUseCheckboxSelection"
-                @click="toggleShowSelected"
-                class="btn btn-xs"
-                :class="showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
-              >
-                {{ t('agent.selected') }} ({{ currentSelectionCount }})
-              </button>
-              
-              <!-- 所有分类按钮（包括插件和浏览器） -->
-              <button 
-                v-for="cat in allCategories" 
-                :key="cat"
-                @click="toggleCategory(cat)"
-                class="btn btn-xs"
-                :class="selectedCategories.includes(cat) ? getCategoryBadgeClass(cat) : 'btn-ghost'"
-              >
-                <i :class="getCategoryIcon(cat)" class="mr-1"></i>
-                {{ getCategoryDisplayName(cat) }}
-              </button>
+                <!-- 已选按钮 (仅手动模式) -->
+                <button 
+                  v-if="shouldUseCheckboxSelection"
+                  @click="toggleShowSelected"
+                  class="btn btn-xs"
+                  :class="showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
+                >
+                  {{ t('agent.selected') }} ({{ currentSelectionCount }})
+                </button>
+                
+                <!-- 所有分类按钮（包括插件和浏览器） -->
+                <button 
+                  v-for="cat in allCategories" 
+                  :key="cat"
+                  @click="toggleCategory(cat)"
+                  class="btn btn-xs"
+                  :class="selectedCategories.includes(cat) ? getCategoryBadgeClass(cat) : 'btn-ghost'"
+                >
+                  <i :class="getCategoryIcon(cat)" class="mr-1"></i>
+                  {{ getCategoryDisplayName(cat) }}
+                </button>
+              </div>
 
               <!-- 全选/取消全选按钮 (仅手动模式) -->
-              <div v-if="shouldUseCheckboxSelection" class="ml-auto flex gap-1">
+              <div
+                v-if="shouldUseCheckboxSelection"
+                class="flex min-w-0 flex-wrap gap-2 sm:justify-end"
+              >
                 <button 
                   @click="selectAllFilteredTools"
                   class="btn btn-xs btn-outline btn-success"
@@ -163,36 +168,46 @@
             </div>
 
             <!-- Tool List -->
-            <div v-for="tool in filteredTools" :key="tool.id" class="form-control hover:bg-base-200 rounded px-2 transition-colors">
-              <label v-if="shouldUseCheckboxSelection" class="label cursor-pointer justify-start gap-3 py-2">
+            <div v-for="tool in filteredTools" :key="tool.id" class="form-control min-w-0 hover:bg-base-200 rounded px-2 transition-colors">
+              <label v-if="shouldUseCheckboxSelection" class="label min-w-0 w-full cursor-pointer justify-start gap-3 py-2">
                 <input 
                   type="checkbox" 
                   :checked="isToolSelected(tool.id)"
                   class="checkbox checkbox-sm checkbox-primary"
                   @change="toggleToolSelection(tool.id)"
                 />
-                <div class="flex-1">
-                  <div class="flex items-center gap-2">
-                    <span class="font-medium text-sm">{{ tool.name }}</span>
-                    <span class="badge badge-xs" :class="getCategoryBadgeClass(tool.category)">
+                <div class="flex-1 min-w-0 overflow-hidden">
+                  <div class="flex min-w-0 flex-wrap items-center gap-2">
+                    <span class="truncate font-medium text-sm">{{ tool.name }}</span>
+                    <span class="badge badge-xs shrink-0" :class="getCategoryBadgeClass(tool.category)">
                       {{ getCategoryDisplayName(tool.category) }}
                     </span>
                   </div>
-                  <p class="text-xs text-base-content/60 mt-1 truncate" :title="tool.description">{{ tool.description }}</p>
+                  <p
+                    class="mt-1 w-full whitespace-normal break-words text-xs leading-5 text-base-content/60 [overflow-wrap:anywhere]"
+                    :title="tool.description"
+                  >
+                    {{ tool.description }}
+                  </p>
                 </div>
               </label>
 
-              <div v-else class="flex items-center justify-between py-2">
-                <div class="flex-1 min-w-0 mr-2">
-                  <div class="flex items-center gap-2">
+              <div v-else class="flex min-w-0 items-center justify-between gap-2 py-2">
+                <div class="mr-2 flex-1 min-w-0 overflow-hidden">
+                  <div class="flex min-w-0 flex-wrap items-center gap-2">
                     <span class="font-medium text-sm truncate">{{ tool.name }}</span>
-                    <span class="badge badge-xs flex-shrink-0" :class="getCategoryBadgeClass(tool.category)">
+                    <span class="badge badge-xs shrink-0" :class="getCategoryBadgeClass(tool.category)">
                       {{ getCategoryDisplayName(tool.category) }}
                     </span>
                   </div>
-                  <p class="text-xs text-base-content/60 mt-1 truncate" :title="tool.description">{{ tool.description }}</p>
+                  <p
+                    class="mt-1 w-full whitespace-normal break-words text-xs leading-5 text-base-content/60 [overflow-wrap:anywhere]"
+                    :title="tool.description"
+                  >
+                    {{ tool.description }}
+                  </p>
                 </div>
-                <div class="join flex-shrink-0">
+                <div class="join shrink-0">
                    <button 
                      class="join-item btn btn-xs" 
                      :class="!isFixed(tool.id) && !isDisabled(tool.id) ? 'btn-active shadow-inner' : 'btn-ghost'"
@@ -223,7 +238,7 @@
         </div>
 
         <!-- Fixed Tools -->
-        <div class="form-control">
+        <div class="form-control min-w-0">
           <label class="label">
             <span class="label-text font-medium">{{ t('agent.alwaysEnabledTools') }}</span>
           </label>
@@ -251,7 +266,7 @@
         </div>
 
         <!-- Tool Statistics -->
-        <div v-if="statistics" class="stats stats-vertical shadow w-full">
+        <div v-if="statistics" class="stats stats-vertical w-full min-w-0 shadow">
           <div class="stat">
             <div class="stat-title">{{ t('agent.totalAvailableTools') }}</div>
             <div class="stat-value text-primary">{{ statistics.total_tools }}</div>
@@ -268,7 +283,7 @@
         <div class="divider">{{ t('agent.usageStatistics') }}</div>
         
         <div v-if="usageStats" class="space-y-3">
-          <div class="stats stats-horizontal shadow w-full">
+          <div class="stats stats-vertical w-full min-w-0 shadow lg:stats-horizontal">
             <div class="stat">
               <div class="stat-title">{{ t('agent.totalExecutions') }}</div>
               <div class="stat-value text-sm">{{ usageStats.total_executions }}</div>
@@ -295,16 +310,16 @@
               <div 
                 v-for="tool in topUsedTools.slice(0, 5)" 
                 :key="tool.tool_id"
-                class="flex items-center justify-between p-2 bg-base-200 rounded text-xs"
+                class="flex min-w-0 items-center justify-between gap-2 rounded bg-base-200 p-2 text-xs"
               >
-                <div class="flex-1">
-                  <div class="font-medium">{{ tool.tool_name }}</div>
-                  <div class="text-base-content/60">
+                <div class="min-w-0 flex-1">
+                  <div class="truncate font-medium">{{ tool.tool_name }}</div>
+                  <div class="truncate text-base-content/60">
                     {{ t('agent.successRate') }}: {{ ((tool.success_count / tool.execution_count) * 100).toFixed(1) }}% | 
                     {{ t('agent.averageTime') }}: {{ tool.avg_execution_time_ms.toFixed(0) }}ms
                   </div>
                 </div>
-                <div class="badge badge-sm">{{ tool.execution_count }}{{ t('agent.times') }}</div>
+                <div class="badge badge-sm shrink-0">{{ tool.execution_count }}{{ t('agent.times') }}</div>
               </div>
             </div>
           </div>
@@ -316,15 +331,15 @@
               <div 
                 v-for="record in usageStats.recent_executions.slice(0, 10)" 
                 :key="`${record.execution_id}-${record.timestamp}`"
-                class="flex items-center gap-2 p-2 bg-base-200 rounded text-xs"
+                class="flex min-w-0 items-center gap-2 rounded bg-base-200 p-2 text-xs"
               >
                 <i 
                   class="fas" 
                   :class="record.success ? 'fa-check-circle text-success' : 'fa-times-circle text-error'"
                 ></i>
-                <div class="flex-1">
-                  <div class="font-medium">{{ record.tool_name }}</div>
-                  <div class="text-base-content/60">
+                <div class="min-w-0 flex-1">
+                  <div class="truncate font-medium">{{ record.tool_name }}</div>
+                  <div class="truncate text-base-content/60">
                     {{ formatTimestamp(record.timestamp) }} | {{ record.execution_time_ms }}ms
                   </div>
                 </div>
@@ -364,6 +379,7 @@ import { ref, computed, onMounted, watch, withDefaults } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '../../composables/useDialog'
+import { normalizeToolIdList, parseToolSelectionStrategy } from './toolConfigRuntime'
 
 interface ToolMetadata {
   id: string
@@ -437,56 +453,21 @@ const emit = defineEmits<{
   'close': []
 }>()
 
-const LEGACY_SKILLS_TOOL_IDS = [
-  'skills',
-  'shell',
-  'http_request',
-  'spawn_agent',
-  'wait_agents',
-  'list_agents',
-  'close_agent',
-  'tenth_man_review',
-  'memory',
-  'todos',
-]
-
-// 初始化 localConfig，兼容旧的 Skills 枚举格式并降级为 Manual
-const initLocalConfig = () => {
-  let manualTools: string[] = []
-  const rawStrategy = props.config.selection_strategy
-  let strategy: string = 'Keyword'
-  
-  if (rawStrategy !== null && rawStrategy !== undefined) {
-    // 如果 selection_strategy 是枚举格式 { Manual: [...] } 或旧版 { Skills: [...] }，提取列表
-    if (typeof rawStrategy === 'object') {
-      const manualValue = (rawStrategy as any).Manual
-      const skillsValue = (rawStrategy as any).Skills
-      if (manualValue) {
-        // 统一工具 ID 格式：将 :: 替换为 __
-        manualTools = manualValue.map((id: string) => id.replace(/::/g, '__'))
-        strategy = 'Manual'
-      } else if (skillsValue !== undefined) {
-        manualTools = [...LEGACY_SKILLS_TOOL_IDS]
-        strategy = 'Manual'
-      }
-    } else {
-      strategy = rawStrategy === 'Skills' ? 'Manual' : rawStrategy as string
-      if (rawStrategy === 'Skills') {
-        manualTools = [...LEGACY_SKILLS_TOOL_IDS]
-      }
-    }
-  }
-  
+const toEditableConfig = (config: ToolConfig): ToolConfig => {
+  const manualFallback = normalizeToolIdList(config.manual_tools)
+  const parsedStrategy = parseToolSelectionStrategy(config.selection_strategy, manualFallback)
   return {
-    ...props.config, 
-    selection_strategy: strategy,
-    manual_tools: manualTools,
+    ...config,
+    selection_strategy: parsedStrategy.mode,
+    manual_tools: parsedStrategy.mode === 'Manual'
+      ? parsedStrategy.manualTools
+      : manualFallback,
   }
 }
 
 const { t } = useI18n()
 
-const localConfig = ref<ToolConfig>(initLocalConfig())
+const localConfig = ref<ToolConfig>(toEditableConfig(props.config))
 const allTools = ref<ToolMetadata[]>([])
 const statistics = ref<ToolStatistics | null>(null)
 const usageStats = ref<ToolUsageStatistics | null>(null)
@@ -773,35 +754,7 @@ const emitUpdate = () => {
 }
 
 watch(() => props.config, (newConfig) => {
-  // 处理 Manual/旧版 Skills 枚举格式
-  let manualTools: string[] = []
-  const rawStrategy = newConfig.selection_strategy
-  let strategy: string = 'Keyword'
-  
-  if (rawStrategy !== null && rawStrategy !== undefined) {
-    if (typeof rawStrategy === 'object') {
-      const manualValue = (rawStrategy as any).Manual
-      const skillsValue = (rawStrategy as any).Skills
-      if (manualValue) {
-        manualTools = manualValue.map((id: string) => id.replace(/::/g, '__'))
-        strategy = 'Manual'
-      } else if (skillsValue !== undefined) {
-        manualTools = [...LEGACY_SKILLS_TOOL_IDS]
-        strategy = 'Manual'
-      }
-    } else {
-      strategy = rawStrategy === 'Skills' ? 'Manual' : rawStrategy as string
-      if (rawStrategy === 'Skills') {
-        manualTools = [...LEGACY_SKILLS_TOOL_IDS]
-      }
-    }
-  }
-  
-  localConfig.value = { 
-    ...newConfig, 
-    selection_strategy: strategy,
-    manual_tools: manualTools,
-  }
+  localConfig.value = toEditableConfig(newConfig)
 }, { deep: true })
 
 onMounted(() => {

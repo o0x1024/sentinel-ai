@@ -79,6 +79,14 @@
               </summary>
 
               <div class="mt-3 space-y-3">
+                <div
+                  v-if="getSopsCallSummary(toolCall)"
+                  class="rounded-md border border-info/30 bg-info/10 px-3 py-2 text-[11px] text-base-content/70"
+                >
+                  <div class="font-medium text-base-content/80">SOP 摘要</div>
+                  <div class="mt-1 whitespace-pre-wrap break-all">{{ getSopsCallSummary(toolCall) }}</div>
+                </div>
+
                 <div class="flex flex-wrap gap-2 text-[11px] text-base-content/60">
                   <span class="rounded-md border border-base-300 bg-base-200/60 px-2 py-1 font-mono">
                     {{ `tool_call_id: ${toolCall.id}` }}
@@ -397,6 +405,56 @@ function formatJsonLikeText(value: string) {
   } catch {
     return value
   }
+}
+
+function parseJsonObject(value?: string | null): Record<string, unknown> | null {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+function getSopsCallSummary(toolCall: SystemAgentToolCallRecord) {
+  if (toolCall.name !== 'sops') return ''
+
+  const args = parseJsonObject(toolCall.arguments)
+  const result = parseJsonObject(toolCall.result)
+  const action = typeof args?.action === 'string' ? args.action : 'unknown'
+  const profileId = typeof args?.profile_id === 'string' ? args.profile_id : ''
+  const sopId = typeof args?.sop_id === 'string' ? args.sop_id : ''
+
+  if (action === 'list') {
+    const count = Array.isArray(result?.sops) ? result.sops.length : 0
+    return [`动作: 列出 SOP`, profileId ? `Profile: ${profileId}` : '', `结果: ${count} 条`]
+      .filter(Boolean)
+      .join(' · ')
+  }
+
+  if (action === 'load') {
+    const sop = result?.sop && typeof result.sop === 'object'
+      ? (result.sop as Record<string, unknown>)
+      : null
+    const name = typeof sop?.name === 'string' ? sop.name : ''
+    const id = typeof sop?.id === 'string' ? sop.id : sopId
+    const procedure = typeof sop?.procedure === 'string' ? sop.procedure : ''
+    const headline = [
+      '动作: 加载 SOP',
+      profileId ? `Profile: ${profileId}` : '',
+      id ? `SOP: ${name || id}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    if (!procedure.trim()) return headline
+    const firstLine = procedure.trim().split('\n')[0] || ''
+    return `${headline}\n步骤首行: ${firstLine}`
+  }
+
+  return profileId ? `动作: ${action} · Profile: ${profileId}` : `动作: ${action}`
 }
 
 const formatExtractionEntry = formatContextExtractionEntry

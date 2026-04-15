@@ -273,6 +273,8 @@
         </div>
       </div>
 
+      <ShellPermissionHistoryPanel />
+
       <!-- Working Directory Section -->
       <div class="card bg-base-100 shadow-sm mb-6">
         <div class="card-body">
@@ -709,6 +711,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
+import ShellPermissionHistoryPanel from './ShellPermissionHistoryPanel.vue'
 
 interface ShellConfig {
   default_policy: 'AlwaysProceed' | 'RequestReview'

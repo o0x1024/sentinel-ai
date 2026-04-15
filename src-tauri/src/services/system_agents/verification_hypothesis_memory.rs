@@ -215,7 +215,10 @@ mod tests {
     #[test]
     fn normalizes_and_deduplicates_hypothesis_state() {
         let mut state = VerificationHypothesisState {
-            active: vec!["  price manipulation ".to_string(), "price manipulation".to_string()],
+            active: vec![
+                "  price manipulation ".to_string(),
+                "price manipulation".to_string(),
+            ],
             strengthened: vec!["workflow bypass".to_string(), String::new()],
             weakened: vec!["  ".to_string(), "resource swap".to_string()],
             exhausted: vec!["repeat replay".to_string(), "repeat replay".to_string()],
@@ -298,7 +301,9 @@ mod tests {
         assert!(state
             .strengthened
             .contains(&"triage signal: target action appears before approval state".to_string()));
-        assert!(state.active.contains(&"Approval may be reachable without prerequisite state.".to_string()));
+        assert!(state
+            .active
+            .contains(&"Approval may be reachable without prerequisite state.".to_string()));
     }
 
     #[test]
@@ -326,9 +331,9 @@ mod tests {
             &"Current request looks like a normal denial and no actionable follow-up exists."
                 .to_string()
         ));
-        assert!(state.weakened.contains(
-            &"triage signal: denial matches normal business constraint".to_string()
-        ));
+        assert!(state
+            .weakened
+            .contains(&"triage signal: denial matches normal business constraint".to_string()));
         assert!(state.exhausted.contains(
             &"triage concluded no actionable hypothesis: Current request looks like a normal denial and no actionable follow-up exists.".to_string()
         ));

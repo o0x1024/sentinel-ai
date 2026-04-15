@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Once;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio_rusqlite::Connection;
 use tracing::{error, info, warn};
@@ -29,6 +30,9 @@ type OpenRouterEmbedding = rig::providers::openrouter::EmbeddingModel<HttpClient
 type OllamaEmbedding = rig::providers::ollama::EmbeddingModel<HttpClient>;
 type CohereEmbedding = rig::providers::cohere::EmbeddingModel<HttpClient>;
 type GeminiEmbedding = rig::providers::gemini::EmbeddingModel<HttpClient>;
+
+const EMBEDDING_REQUEST_TIMEOUT_SECS: u64 = 2;
+const VECTOR_SEARCH_TIMEOUT_SECS: u64 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct RagVectorRow {
@@ -90,6 +94,12 @@ impl SqliteVectorManager {
             conn: RwLock::new(None),
             store: RwLock::new(None),
         }
+    }
+    fn embedding_endpoint_hint(&self) -> &str {
+        self.embedding_config
+            .base_url
+            .as_deref()
+            .unwrap_or("provider default base URL")
     }
     pub async fn initialize(&self) -> Result<()> {
         let db_path = Path::new(&self.database_path);
@@ -322,9 +332,14 @@ impl SqliteVectorManager {
         let mut retry_count = 0;
         let max_retries = 3;
         let embeddings = loop {
-            match embedding_model.embed_texts(definitions.clone()).await {
-                Ok(emb) => break emb,
-                Err(e) => {
+            match tokio::time::timeout(
+                Duration::from_secs(EMBEDDING_REQUEST_TIMEOUT_SECS),
+                embedding_model.embed_texts(definitions.clone()),
+            )
+            .await
+            {
+                Ok(Ok(emb)) => break emb,
+                Ok(Err(e)) => {
                     retry_count += 1;
                     if retry_count >= max_retries {
                         error!(
@@ -341,6 +356,37 @@ impl SqliteVectorManager {
                     warn!(
                         "Embedding request failed (attempt {}/{}): {}. Retrying in {:?}...",
                         retry_count, max_retries, e, delay
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Err(_) => {
+                    retry_count += 1;
+                    if retry_count >= max_retries {
+                        error!(
+                            "Embedding request timed out after {} retries (provider: {}, base_url: {}, model: {})",
+                            max_retries,
+                            self.embedding_config.provider,
+                            self.embedding_endpoint_hint(),
+                            self.embedding_config.model
+                        );
+                        return Err(anyhow!(
+                            "Embedding request timed out after {}s (provider: {}, base_url: {}, model: {}). Please check whether the embedding service is reachable.",
+                            EMBEDDING_REQUEST_TIMEOUT_SECS,
+                            self.embedding_config.provider,
+                            self.embedding_endpoint_hint(),
+                            self.embedding_config.model
+                        ));
+                    }
+
+                    let delay = Duration::from_secs(2u64.pow(retry_count));
+                    warn!(
+                        "Embedding request timed out (attempt {}/{}). Provider: {}, base_url: {}, model: {}. Retrying in {:?}...",
+                        retry_count,
+                        max_retries,
+                        self.embedding_config.provider,
+                        self.embedding_endpoint_hint(),
+                        self.embedding_config.model,
+                        delay
                     );
                     tokio::time::sleep(delay).await;
                 }
@@ -619,10 +665,21 @@ impl SqliteVectorManager {
             .build()
             .map_err(|e| anyhow!("Failed to build vector search request: {}", e))?;
 
-        let hits = index
-            .top_n::<RagVectorRow>(req)
-            .await
-            .map_err(|e| anyhow!("Vector search failed: {}", e))?;
+        let hits = tokio::time::timeout(
+            Duration::from_secs(VECTOR_SEARCH_TIMEOUT_SECS),
+            index.top_n::<RagVectorRow>(req),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "Vector search timed out after {}s (provider: {}, base_url: {}, model: {}).",
+                VECTOR_SEARCH_TIMEOUT_SECS,
+                self.embedding_config.provider,
+                self.embedding_endpoint_hint(),
+                self.embedding_config.model
+            )
+        })?
+        .map_err(|e| anyhow!("Vector search failed: {}", e))?;
 
         let mut results = Vec::with_capacity(hits.len());
         for (rank, (score, _id, row)) in hits.into_iter().enumerate() {

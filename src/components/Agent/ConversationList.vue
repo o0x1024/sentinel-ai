@@ -69,7 +69,7 @@
                 {{ conv.title || t('agent.unnamedConversation') }}
               </h4>
               <p class="text-xs text-base-content/60 mt-1">
-                {{ formatDate(conv.updated_at) }}
+                {{ formatDate(conv.created_at || conv.updated_at) }}
               </p>
               <div class="flex items-center gap-2 mt-1 text-xs text-base-content/50">
                 <span v-if="conv.total_messages > 0">
@@ -174,11 +174,16 @@ let unlistenExecutionFinished: UnlistenFn | null = null
 // Search debounce
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
 
-const sortConversationsByUpdatedAt = () => {
+const sortConversationsByCreatedAt = () => {
   conversations.value = [...conversations.value].sort((left, right) => {
-    const leftTs = new Date(left.updated_at).getTime()
-    const rightTs = new Date(right.updated_at).getTime()
-    return rightTs - leftTs
+    const leftTs = new Date(left.created_at || 0).getTime()
+    const rightTs = new Date(right.created_at || 0).getTime()
+    if (rightTs !== leftTs) {
+      return rightTs - leftTs
+    }
+    const leftUpdatedTs = new Date(left.updated_at || 0).getTime()
+    const rightUpdatedTs = new Date(right.updated_at || 0).getTime()
+    return rightUpdatedTs - leftUpdatedTs
   })
 }
 
@@ -195,7 +200,7 @@ const updateConversationExecutionState = (
     updated_at: updatedAt,
     execution_state: state,
   }
-  sortConversationsByUpdatedAt()
+  sortConversationsByCreatedAt()
 }
 
 const loadConversations = async (reset = false) => {
@@ -231,6 +236,7 @@ const loadConversations = async (reset = false) => {
     } else {
       conversations.value = [...conversations.value, ...result]
     }
+    sortConversationsByCreatedAt()
 
     currentOffset += result.length
     hasMore.value = currentOffset < totalCount && result.length === PAGE_SIZE
@@ -272,6 +278,7 @@ const handleSearch = () => {
             (conv.title || '').toLowerCase().includes(query) ||
             conv.model_name.toLowerCase().includes(query)
           )
+        sortConversationsByCreatedAt()
         hasMore.value = false
       } catch (error) {
         console.error('Failed to search conversations:', error)

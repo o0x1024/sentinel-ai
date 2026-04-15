@@ -6,6 +6,7 @@ import type {
   ReferencedTraffic,
   TrafficSendType,
 } from '@/types/agentReferences'
+import type { UiToolConfigPayload } from './toolConfigRuntime'
 export type {
   ReferencedConversationMessage,
   ReferencedAsset,
@@ -47,4 +48,5 @@ export interface AssistantConversationBinding extends AssistantSessionSettings {
   schemaVersion: number
   selectedModel?: string | null
   toolsEnabled?: boolean
+  toolConfig?: UiToolConfigPayload | null
 }

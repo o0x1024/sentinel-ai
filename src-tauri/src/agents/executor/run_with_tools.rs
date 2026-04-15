@@ -118,6 +118,8 @@ pub async fn execute_agent_with_tools(
     let context_result = build_context(ContextBuildInput {
         app_handle: app_handle.clone(),
         execution_id: params.execution_id.clone(),
+        active_terminal_session_fingerprint: params.active_terminal_session_fingerprint.clone(),
+        active_terminal_session_id: params.active_terminal_session_id.clone(),
         base_system_prompt: params.system_prompt.clone(),
         injected_skill_prompt: selection_plan.injected_system_prompt.clone(),
         task: params.task.clone(),

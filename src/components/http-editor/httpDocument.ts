@@ -59,6 +59,12 @@ export const isLikelyTextBody = (body: string): boolean => {
   return suspiciousCount === 0
 }
 
+const isLikelyJsonBody = (trimmed: string): boolean => {
+  if (!trimmed) return false
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return true
+  return false
+}
+
 export const detectHttpBodyLanguage = (body: string, contentType: string): HttpBodyLanguage => {
   const normalizedContentType = contentType.toLowerCase()
   const trimmed = body.trim()
@@ -72,12 +78,13 @@ export const detectHttpBodyLanguage = (body: string, contentType: string): HttpB
   if (normalizedContentType.includes('css')) return 'css'
   if (normalizedContentType.includes('text/')) return 'text'
 
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+  if (isLikelyJsonBody(trimmed)) {
     try {
       JSON.parse(trimmed)
       return 'json'
     } catch {
-      // Ignore parse failures and keep falling back.
+      // Keep JSON highlighting stable while the user is editing incomplete JSON.
+      return 'json'
     }
   }
 

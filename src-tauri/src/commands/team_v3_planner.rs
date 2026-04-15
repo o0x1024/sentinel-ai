@@ -548,6 +548,8 @@ async fn generate_team_v3_execution_plan_with_main_agent(
         model: model.to_string(),
         system_prompt: build_team_v3_planner_system_prompt(main_agent_id),
         task: planner_prompt,
+        active_terminal_session_fingerprint: None,
+        active_terminal_session_id: None,
         rig_provider: rig_provider.to_string(),
         api_key: provider_config.api_key.clone(),
         api_base: provider_config.api_base.clone(),

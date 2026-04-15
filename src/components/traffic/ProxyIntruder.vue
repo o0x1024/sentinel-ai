@@ -213,8 +213,8 @@ import {
   createRawRequestFromSource,
   ensureRawRequestTerminator,
   extractTargetFromRequest,
-  parseRawHttpResponse,
 } from './intruder/http'
+import type { RawReplayCommandResult } from './http/response'
 import { queueComparerTransfer, queueRepeaterTransfer } from './transfers'
 import type { TrafficComparePayload } from './transfers'
 import {
@@ -266,10 +266,10 @@ import type {
   IntruderPayloadProcessingRule,
   IntruderPayloadSet,
   IntruderPosition,
+  IntruderRequestInput,
   IntruderResourcePool,
   IntruderResultFilter,
   IntruderResultSort,
-  IntruderSourceRequest,
   IntruderTarget,
 } from './intruder/types'
 
@@ -277,18 +277,6 @@ interface ReplayCommandResponse<T> {
   success: boolean
   data?: T
   error?: string
-}
-
-interface RawReplayResult {
-  raw_response: string
-  response_time_ms: number
-  final_url: string
-  redirect_chain: Array<{
-    url: string
-    status_code: number
-    location?: string | null
-    set_cookie_count: number
-  }>
 }
 
 interface IntruderWorkspace {
@@ -323,13 +311,13 @@ const INTRUDER_SIDEBAR_MIN_WIDTH = 320
 const INTRUDER_SIDEBAR_MAX_WIDTH = 720
 
 const props = defineProps<{
-  initialRequest?: IntruderSourceRequest
+  initialRequest?: IntruderRequestInput
 }>()
 
 const emit = defineEmits<{
-  (e: 'sendToRepeater', request: IntruderSourceRequest): void
+  (e: 'sendToRepeater', request: IntruderRequestInput): void
   (e: 'sendToComparer', payload: TrafficComparePayload): void
-  (e: 'sendDraftRequestToComparer', payload: { request: IntruderSourceRequest; label?: string }): void
+  (e: 'sendDraftRequestToComparer', payload: { request: IntruderRequestInput; label?: string }): void
 }>()
 
 const { t } = useI18n()
@@ -556,9 +544,9 @@ function createDefaultPluginProcessorBinding(): IntruderPluginProcessorBinding {
   }
 }
 
-function createWorkspace(source?: IntruderSourceRequest): IntruderWorkspace {
+function createWorkspace(source?: IntruderRequestInput): IntruderWorkspace {
   const requestText = createRawRequestFromSource(source)
-  const target = extractTargetFromRequest(requestText, source?.url)
+  const target = extractTargetFromRequest(requestText, source?.absoluteUrl)
   const positions = extractIntruderPositions(requestText)
 
   return {
@@ -771,13 +759,13 @@ function parseTargetUrl(value: string): IntruderTarget | null {
   }
 }
 
-function addWorkspace(source?: IntruderSourceRequest) {
+function addWorkspace(source?: IntruderRequestInput) {
   const workspace = createWorkspace(source)
   workspaces.value.push(workspace)
   activeWorkspaceId.value = workspace.id
 }
 
-function addRequestFromHistory(request: IntruderSourceRequest) {
+function addRequestFromHistory(request: IntruderRequestInput) {
   addWorkspace(request)
 }
 
@@ -1609,11 +1597,14 @@ async function executeAttackRequest(
   let attempt = 0
   while (true) {
     try {
-      const response = await invoke<ReplayCommandResponse<RawReplayResult>>('replay_raw_request', {
-        host: workspace.target.host,
-        port: workspace.target.port,
-        useTls: workspace.target.useTls,
-        rawRequest: preparedRequest,
+      const exchangeRequest = buildSourceRequestFromRawRequest(preparedRequest, workspace.target)
+      if (!exchangeRequest) {
+        throw new Error('Invalid request')
+      }
+
+      const response = await invoke<ReplayCommandResponse<RawReplayCommandResult>>('replay_raw_request', {
+        endpoint: exchangeRequest.endpoint,
+        request: exchangeRequest.request,
         timeoutSecs: workspace.attackOptions.timeoutSecs,
         followRedirects: workspace.attackOptions.followRedirects,
         maxRedirects: workspace.attackOptions.maxRedirects,
@@ -1624,8 +1615,7 @@ async function executeAttackRequest(
         throw new Error(parseReplayError(response.error))
       }
 
-      const parsed = parseRawHttpResponse(response.data.raw_response, response.data.response_time_ms)
-      const responseText = parsed?.body ?? response.data.raw_response
+      const responseText = response.data.body_text || ''
       const payloadReflectionCount = evaluateIntruderPayloadReflections(
         response.data.raw_response,
         payloadValues,
@@ -1639,7 +1629,7 @@ async function executeAttackRequest(
         index,
         payloadSummary: workspace.attackOptions.storeFullPayloads ? payloadSummary : payloadValues.join(', '),
         payloadValues,
-        statusCode: parsed?.statusCode ?? null,
+        statusCode: response.data.status_code ?? null,
         responseLength: response.data.raw_response.length,
         wordCount: countWords(responseText),
         lineCount: countLines(responseText),

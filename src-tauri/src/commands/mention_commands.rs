@@ -178,7 +178,7 @@ pub async fn search_recent_proxy_requests(
         .clamp(1, MAX_SEARCH_RESULTS);
 
     let filters = sentinel_traffic::HttpRequestFilters {
-        protocol: None,
+        scheme: None,
         method: None,
         host: None,
         status_code_min: None,

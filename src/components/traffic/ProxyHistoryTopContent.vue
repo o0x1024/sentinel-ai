@@ -92,7 +92,7 @@
           <span v-if="hasParams(item.data.url)" class="text-success">✓</span>
         </template>
         <template v-else-if="col.id === 'tls'">
-          <span v-if="item.data.protocol === 'https'" class="text-success">✓</span>
+          <span v-if="item.data.scheme === 'https'" class="text-success">✓</span>
         </template>
         <template v-else>
           <span class="truncate" :title="item.cellValues[col.id]">{{ item.cellValues[col.id] }}</span>

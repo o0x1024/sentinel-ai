@@ -1,5 +1,8 @@
 //! Shell command execution tool using rig-core Tool trait
 
+use crate::buildin_tools::shell_policy::{
+    analyze_shell_command, classify_shell_command, split_policy_commands, ShellCommandSemantic,
+};
 use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
 use once_cell::sync::Lazy;
 use rig::tool::Tool;
@@ -91,6 +94,15 @@ pub struct ShellOutput {
     pub note: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ShellCommandReviewInfo {
+    pub semantic_kind: String,
+    pub semantic_code: String,
+    pub semantic_summary_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_reason_key: Option<String>,
+}
+
 /// Shell command errors
 #[derive(Debug, thiserror::Error)]
 pub enum ShellError {
@@ -133,6 +145,12 @@ pub struct ShellConfig {
     /// Default execution mode
     #[serde(default)]
     pub default_execution_mode: ShellExecutionMode,
+    /// Default timeout applied when the caller does not override it.
+    #[serde(default = "default_timeout")]
+    pub default_timeout_secs: u64,
+    /// Maximum timeout allowed for a single shell command.
+    #[serde(default)]
+    pub max_timeout_secs: Option<u64>,
     /// Docker sandbox configuration
     #[serde(default)]
     pub docker_config: Option<DockerSandboxConfig>,
@@ -150,12 +168,40 @@ impl Default for ShellConfig {
                 "dd".to_string(),
             ],
             default_execution_mode: ShellExecutionMode::Docker,
+            default_timeout_secs: default_timeout(),
+            max_timeout_secs: None,
             docker_config: Some(DockerSandboxConfig::default()),
         }
     }
 }
 
 impl ShellConfig {
+    fn policy_targets(&self, command: &str) -> Vec<String> {
+        let parts = split_policy_commands(command);
+        if parts.is_empty() {
+            vec![command.trim().to_string()]
+        } else {
+            parts
+                .iter()
+                .map(|part| part.trim().to_string())
+                .filter(|part| !part.is_empty())
+                .collect()
+        }
+    }
+
+    fn matches_explicit_allow(&self, command: &str) -> bool {
+        let targets = self.policy_targets(command);
+        if targets.is_empty() {
+            return false;
+        }
+
+        targets.iter().all(|target| {
+            self.allowed_commands
+                .iter()
+                .any(|allowed| command_matches_pattern(target, allowed))
+        })
+    }
+
     /// Check if a command should be auto-allowed
     pub fn is_allowed(&self, command: &str) -> bool {
         // Denied list takes precedence
@@ -163,25 +209,17 @@ impl ShellConfig {
             return false;
         }
 
-        // Check allowed list
-        for allowed in &self.allowed_commands {
-            if command_matches_pattern(command, allowed) {
-                return true;
-            }
-        }
-
-        // If AlwaysProceed, allow by default
-        self.default_policy == ShellDefaultPolicy::AlwaysProceed
+        self.matches_explicit_allow(command)
+            || self.default_policy == ShellDefaultPolicy::AlwaysProceed
     }
 
     /// Check if a command should be denied
     pub fn is_denied(&self, command: &str) -> bool {
-        for denied in &self.denied_commands {
-            if command_matches_pattern(command, denied) {
-                return true;
-            }
-        }
-        false
+        self.policy_targets(command).iter().any(|target| {
+            self.denied_commands
+                .iter()
+                .any(|denied| command_matches_pattern(target, denied))
+        })
     }
 
     /// Check if a command needs user confirmation
@@ -191,15 +229,31 @@ impl ShellConfig {
             return true;
         }
 
-        // Allowed commands don't need confirmation
-        for allowed in &self.allowed_commands {
-            if command_matches_pattern(command, allowed) {
-                return false;
-            }
+        let targets = self.policy_targets(command);
+        if targets.is_empty() {
+            return self.default_policy == ShellDefaultPolicy::RequestReview;
         }
 
-        // Default policy determines
-        self.default_policy == ShellDefaultPolicy::RequestReview
+        targets.iter().any(|target| {
+            !self
+                .allowed_commands
+                .iter()
+                .any(|allowed| command_matches_pattern(target, allowed))
+                && self.default_policy == ShellDefaultPolicy::RequestReview
+        })
+    }
+
+    pub fn resolve_timeout_secs(&self, requested_timeout_secs: u64) -> u64 {
+        let base_timeout = if requested_timeout_secs == default_timeout() {
+            self.default_timeout_secs
+        } else {
+            requested_timeout_secs
+        };
+
+        match self.max_timeout_secs {
+            Some(max_timeout_secs) => base_timeout.min(max_timeout_secs),
+            None => base_timeout,
+        }
     }
 }
 
@@ -293,6 +347,30 @@ pub async fn check_shell_permission(
     check_shell_permission_with_config(command, &config, execution_id).await
 }
 
+pub fn describe_shell_command_for_review(command: &str) -> ShellCommandReviewInfo {
+    let analysis = analyze_shell_command(command);
+    match analysis.semantic {
+        ShellCommandSemantic::ReadOnly => ShellCommandReviewInfo {
+            semantic_kind: "read_only".to_string(),
+            semantic_code: analysis.classification_code.to_string(),
+            semantic_summary_key: "tools.shell.semanticSummaries.readOnly".to_string(),
+            semantic_reason_key: Some("tools.shell.semanticReasons.readOnly".to_string()),
+        },
+        ShellCommandSemantic::Mutating => ShellCommandReviewInfo {
+            semantic_kind: "mutating".to_string(),
+            semantic_code: analysis.classification_code.to_string(),
+            semantic_summary_key: "tools.shell.semanticSummaries.mutating".to_string(),
+            semantic_reason_key: Some("tools.shell.semanticReasons.mutating".to_string()),
+        },
+        ShellCommandSemantic::Dangerous(reason) => ShellCommandReviewInfo {
+            semantic_kind: "dangerous".to_string(),
+            semantic_code: analysis.classification_code.to_string(),
+            semantic_summary_key: "tools.shell.semanticSummaries.dangerous".to_string(),
+            semantic_reason_key: Some(reason.to_string()),
+        },
+    }
+}
+
 async fn check_shell_permission_with_config(
     command: &str,
     config: &ShellConfig,
@@ -306,11 +384,20 @@ async fn check_shell_permission_with_config(
         )));
     }
 
-    // Check if command is auto-allowed
-    if config.is_allowed(command) {
+    // Explicit user allow-rules still win over semantic heuristics.
+    if config.matches_explicit_allow(command) {
         return Ok(());
     }
 
+    match classify_shell_command(command) {
+        ShellCommandSemantic::ReadOnly => return Ok(()),
+        ShellCommandSemantic::Dangerous(_) => {
+            return ask_permission(command, execution_id).await;
+        }
+        ShellCommandSemantic::Mutating => {}
+    }
+
+    // Check if command is auto-allowed
     // Check if needs confirmation based on policy
     if config.needs_confirmation(command) {
         return ask_permission(command, execution_id).await;
@@ -497,7 +584,9 @@ run_in_background=true / interactive_shell for long-lived processes, or fully de
 
     fn command_matches_long_running_pattern(command: &str, patterns: &[&str]) -> bool {
         let normalized = command.trim().to_lowercase();
-        patterns.iter().any(|pattern| normalized.starts_with(pattern))
+        patterns
+            .iter()
+            .any(|pattern| normalized.starts_with(pattern))
     }
 
     fn foreground_command_looks_long_running(command: &str) -> bool {
@@ -799,20 +888,25 @@ impl Tool for ShellTool {
             None
         };
 
+        // Apply the same permission policy regardless of whether the command
+        // ultimately runs on host, in Docker, or in a background session.
+        self.check_permission(&args.command, execution_id.as_deref())
+            .await?;
+
         // Determine execution mode
         let config = SHELL_CONFIG.read().await;
+        let effective_timeout_secs = config.resolve_timeout_secs(args.timeout_secs);
         let execution_mode = args
             .execution_mode
             .clone()
             .unwrap_or_else(|| config.default_execution_mode.clone());
-        let docker_image = config.docker_config.as_ref().map(|value| value.image.clone());
+        let docker_image = config
+            .docker_config
+            .as_ref()
+            .map(|value| value.image.clone());
         drop(config);
 
         if args.run_in_background {
-            if matches!(execution_mode, ShellExecutionMode::Host) {
-                self.check_permission(&args.command, execution_id.as_deref())
-                    .await?;
-            }
             let launch = crate::buildin_tools::shell_background::launch_background_shell_task(
                 crate::buildin_tools::shell_background::LaunchBackgroundShellTaskRequest {
                     execution_id: execution_id.clone(),
@@ -868,22 +962,22 @@ impl Tool for ShellTool {
             match execution_mode {
             ShellExecutionMode::Docker => {
                 tracing::info!("Attempting to execute command in Docker sandbox: {}", args.command);
-                
+
                 // Try Docker execution, fallback to host if Docker is unavailable
-                match self.execute_in_docker(&args.command, args.timeout_secs, cancellation_token.clone()).await {
+                match self.execute_in_docker(&args.command, effective_timeout_secs, cancellation_token.clone()).await {
                     Ok((stdout, stderr, exit_code, sandbox)) => {
                         // Docker execution successful
                         tracing::info!("Command executed successfully in Docker sandbox");
-                        
+
                         // Check if command is reading context files to avoid recursive storage
                         let is_reading_context = Self::is_reading_context_file(&args.command);
-                        
+
                         // Check if output should be stored in container
                         let storage_threshold = crate::output_storage::get_storage_threshold();
                         let mut stored = false;
                         let mut final_stdout = stdout.clone();
                         let mut final_stderr = stderr.clone();
-                        
+
                         // Store stdout if large (unless reading context files to avoid recursion)
                         if enable_large_output_storage && stdout.len() > storage_threshold && !is_reading_context {
                             match crate::output_storage::store_output_in_container(
@@ -909,7 +1003,7 @@ impl Tool for ShellTool {
                             final_stdout = stdout.chars().take(storage_threshold).collect();
                             final_stdout.push_str(&format!("\n... [Truncated: {}/{} chars | Reading context file]", storage_threshold, stdout.len()));
                         }
-                        
+
                         // Store stderr if large
                         if enable_large_output_storage && stderr.len() > storage_threshold {
                             match crate::output_storage::store_output_in_container(
@@ -930,7 +1024,7 @@ impl Tool for ShellTool {
                                 }
                             }
                         }
-                        
+
                         Ok((
                             final_stdout,
                             final_stderr,
@@ -948,22 +1042,19 @@ impl Tool for ShellTool {
                             tracing::warn!("Docker execution failed ({}), falling back to host execution", e);
                             tracing::warn!("Executing command on host machine: {}", args.command);
 
-                            // Host execution requires permission check
-                            self.check_permission(&args.command, execution_id.as_deref()).await?;
-                            
                             let (stdout, stderr, exit_code) = self.execute_on_host(
                                 &args.command,
                                 args.cwd.as_deref(),
-                                args.timeout_secs,
+                                effective_timeout_secs,
                                 cancellation_token.clone(),
                             ).await?;
-                            
+
                             // For host execution fallback, force host storage for clear path semantics
                             let storage_threshold = crate::output_storage::get_storage_threshold();
                             let mut stored = false;
                             let mut final_stdout = stdout.clone();
                             let mut final_stderr = stderr.clone();
-                            
+
                             // Store stdout if large
                             if enable_large_output_storage && stdout.len() > storage_threshold {
                                 match crate::output_storage::store_output_on_host(
@@ -982,7 +1073,7 @@ impl Tool for ShellTool {
                                     }
                                 }
                             }
-                            
+
                             // Store stderr if large
                             if enable_large_output_storage && stderr.len() > storage_threshold {
                                 match crate::output_storage::store_output_on_host(
@@ -1001,7 +1092,7 @@ impl Tool for ShellTool {
                                     }
                                 }
                             }
-                            
+
                             Ok((
                                 final_stdout,
                                 final_stderr,
@@ -1020,16 +1111,16 @@ impl Tool for ShellTool {
                 let (stdout, stderr, exit_code) = self.execute_on_host(
                     &args.command,
                     args.cwd.as_deref(),
-                    args.timeout_secs,
+                    effective_timeout_secs,
                     cancellation_token.clone(),
                 ).await?;
-                
+
                 // In explicit host mode, always store outputs on host so displayed paths match mode.
                 let storage_threshold = crate::output_storage::get_storage_threshold();
                 let mut stored = false;
                 let mut final_stdout = stdout.clone();
                 let mut final_stderr = stderr.clone();
-                
+
                 // Store stdout if large
                 if enable_large_output_storage && stdout.len() > storage_threshold {
                     match crate::output_storage::store_output_on_host(
@@ -1049,7 +1140,7 @@ impl Tool for ShellTool {
                         }
                     }
                 }
-                
+
                 // Store stderr if large
                 if enable_large_output_storage && stderr.len() > storage_threshold {
                     match crate::output_storage::store_output_on_host(
@@ -1069,7 +1160,7 @@ impl Tool for ShellTool {
                         }
                     }
                 }
-                
+
                 Ok((
                     final_stdout,
                     final_stderr,
@@ -1157,10 +1248,7 @@ mod tests {
         assert!(ShellTool::foreground_command_looks_long_running(
             "python3 -m http.server 8000"
         ));
-        assert!(ShellTool::build_foreground_long_running_command_guidance(
-            "npm run dev"
-        )
-        .is_some());
+        assert!(ShellTool::build_foreground_long_running_command_guidance("npm run dev").is_some());
         assert!(!ShellTool::foreground_command_looks_long_running(
             "cargo test -p sentinel-ai"
         ));
@@ -1173,6 +1261,62 @@ mod tests {
         // Denied by default rule
         assert!(matches!(
             tool.check_permission("rm -rf /", None).await,
+            Err(ShellError::PermissionDenied(_))
+        ));
+    }
+
+    #[test]
+    fn test_split_policy_commands_handles_top_level_compound_commands() {
+        assert_eq!(
+            split_policy_commands("git status && npm test; echo done"),
+            vec!["git status", "npm test", "echo done"]
+        );
+        assert_eq!(
+            split_policy_commands("python -c \"print('a && b')\" | jq ."),
+            vec!["python -c \"print('a && b')\"", "jq ."]
+        );
+    }
+
+    #[test]
+    fn test_shell_config_applies_policy_per_subcommand() {
+        let config = ShellConfig {
+            default_policy: ShellDefaultPolicy::RequestReview,
+            allowed_commands: vec!["git status".to_string(), "echo".to_string()],
+            denied_commands: vec!["rm".to_string()],
+            ..ShellConfig::default()
+        };
+
+        assert!(config.is_allowed("git status && echo ok"));
+        assert!(!config.is_allowed("git status && git push"));
+        assert!(config.needs_confirmation("git status && git push"));
+        assert!(config.is_denied("git status && rm -rf /tmp/demo"));
+    }
+
+    #[tokio::test]
+    async fn test_read_only_commands_are_auto_allowed_under_request_review() {
+        let config = ShellConfig {
+            default_policy: ShellDefaultPolicy::RequestReview,
+            allowed_commands: vec![],
+            denied_commands: vec![],
+            ..ShellConfig::default()
+        };
+
+        assert!(check_shell_permission_with_config("git status && rg TODO src", &config, None)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_dangerous_commands_still_require_review_under_always_proceed() {
+        let config = ShellConfig {
+            default_policy: ShellDefaultPolicy::AlwaysProceed,
+            allowed_commands: vec![],
+            denied_commands: vec![],
+            ..ShellConfig::default()
+        };
+
+        assert!(matches!(
+            check_shell_permission_with_config("sudo ls /root", &config, None).await,
             Err(ShellError::PermissionDenied(_))
         ));
     }

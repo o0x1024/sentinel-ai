@@ -1,10 +1,11 @@
 import { parseHttpMessageDocument } from '@/components/http-editor/httpDocument'
 import { parseRawHttpRequest } from '@/components/traffic/intruder/http'
+import type { HttpExchangeRequest } from './http/model'
+import { buildAbsoluteUrl, endpointFromUrl } from './http/url'
 import type {
   TrafficCompareMeta,
   TrafficComparePayload,
   TrafficCompareSideMeta,
-  TrafficTransferRequest,
 } from './transfers'
 import type { TrafficMessageViewTab } from './trafficDisplaySettings'
 
@@ -74,7 +75,7 @@ export function isComparerRequestText(text: string): boolean {
   return parsed.parsedStartLine.kind === 'request'
 }
 
-export function buildRepeaterRequestFromComparerText(text: string): TrafficTransferRequest | null {
+export function buildRepeaterRequestFromComparerText(text: string): HttpExchangeRequest | null {
   const normalized = normalizeText(text)
   const parsed = parseRawHttpRequest(normalized)
   if (!parsed) return null
@@ -82,15 +83,19 @@ export function buildRepeaterRequestFromComparerText(text: string): TrafficTrans
   const requestTarget = parsed.path.trim()
   if (requestTarget.startsWith('http://') || requestTarget.startsWith('https://')) {
     return {
-      method: parsed.method,
-      url: requestTarget,
-      headers: parsed.headers,
-      body: parsed.body || undefined,
+      endpoint: endpointFromUrl(requestTarget),
+      absoluteUrl: requestTarget,
+      request: {
+        method: parsed.method,
+        target: requestTarget,
+        versionPreference: parsed.version,
+        headers: parsed.headers,
+        bodyText: parsed.bodyText,
+      },
     }
   }
 
-  const hostHeaderEntry = Object.entries(parsed.headers).find(([key]) => key.toLowerCase() === 'host')
-  const hostHeader = hostHeaderEntry?.[1]?.trim()
+  const hostHeader = parsed.headers.find((header) => header.name.toLowerCase() === 'host')?.value?.trim()
   if (!hostHeader) return null
 
   const [host, portText] = hostHeader.split(':')
@@ -98,12 +103,19 @@ export function buildRepeaterRequestFromComparerText(text: string): TrafficTrans
   const protocol = port === 80 ? 'http' : 'https'
   const portSuffix = port && !Number.isNaN(port) && ![80, 443].includes(port) ? `:${port}` : ''
   const path = requestTarget.startsWith('/') ? requestTarget : `/${requestTarget}`
+  const absoluteUrl = `${protocol}://${host}${portSuffix}${path}`
+  const endpoint = endpointFromUrl(absoluteUrl)
 
   return {
-    method: parsed.method,
-    url: `${protocol}://${host}${portSuffix}${path}`,
-    headers: parsed.headers,
-    body: parsed.body || undefined,
+    endpoint,
+    absoluteUrl: buildAbsoluteUrl(endpoint, path),
+    request: {
+      method: parsed.method,
+      target: path,
+      versionPreference: parsed.version,
+      headers: parsed.headers,
+      bodyText: parsed.bodyText,
+    },
   }
 }
 

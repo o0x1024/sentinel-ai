@@ -1,12 +1,7 @@
+import type { HttpExchangeRequest, HttpHeaderEntry, HttpVersion } from '@/components/traffic/http/model'
+
 export type IntruderAttackType = 'sniper' | 'batteringRam' | 'pitchfork' | 'clusterBomb'
 export type IntruderPatternType = 'literal' | 'regex'
-
-export interface IntruderSourceRequest {
-  method: string
-  url: string
-  headers: Record<string, string>
-  body?: string
-}
 
 export interface IntruderTarget {
   host: string
@@ -228,17 +223,19 @@ export interface IntruderAttackOptions {
 export interface ParsedHttpRequest {
   method: string
   path: string
-  protocol: string
-  headers: Record<string, string>
-  body: string
+  version: HttpVersion
+  headers: HttpHeaderEntry[]
+  bodyText: string
 }
 
 export interface ParsedHttpResponse {
   statusCode: number
-  headers: Record<string, string>
+  headers: HttpHeaderEntry[]
   body: string
   responseTimeMs: number
 }
+
+export type IntruderRequestInput = HttpExchangeRequest
 
 export interface IntruderAttackCandidate {
   requestText: string

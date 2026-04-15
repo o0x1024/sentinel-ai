@@ -1,12 +1,24 @@
 import { computed, ref, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { buildPersistableToolConfigSignature, persistToolConfig } from './agentToolConfigPersistenceSupport'
-import { normalizeToolIdList, parseToolSelectionStrategy, type UiToolConfigPayload } from './toolConfigRuntime'
+import {
+  normalizeToolIdList,
+  normalizeUiToolConfigPayload,
+  parseToolSelectionStrategy,
+  type UiToolConfigPayload,
+} from './toolConfigRuntime'
 import type { AssistantModelOption } from './agentDraftTypes'
 
 const ASSISTANT_MODEL_STORAGE_KEY = 'sentinel:agent:assistant-model'
 const DEFAULT_MAX_CONTEXT_TOKENS = 128000
-const TOOL_CONFIG_SAVE_DEBOUNCE_MS = 300
+
+const createBaseToolConfig = (): UiToolConfigPayload => ({
+  enabled: true,
+  selection_strategy: 'Keyword',
+  max_tools: 5,
+  fixed_tools: ['interactive_shell', 'ask_user_question'],
+  disabled_tools: [],
+  allowed_tools: [],
+})
 
 const toPositiveTokenLimit = (value: unknown): number | null => {
   const parsed = Number(value)
@@ -49,21 +61,13 @@ export const useAgentModelAndToolConfig = (params: {
   localError: Ref<string | null>
   getFailedToSaveToolConfigLabel: () => string
 }) => {
-  const toolConfig = ref<UiToolConfigPayload>({
-    enabled: true,
-    selection_strategy: 'Keyword',
-    max_tools: 5,
-    fixed_tools: ['interactive_shell', 'ask_user_question'],
-    disabled_tools: [],
-  } as any)
+  const defaultToolConfig = ref<UiToolConfigPayload>(createBaseToolConfig())
+  const toolConfig = ref<UiToolConfigPayload>(createBaseToolConfig())
   const toolsEnabled = ref(true)
   const assistantModelOptions = ref<AssistantModelOption[]>([])
   const assistantSelectedModel = ref('')
   const isLoadingAssistantModels = ref(false)
   const assistantProviderMaxContextMap = ref<Record<string, number>>({})
-  const lastPersistedToolConfigSignature = ref('')
-  let pendingToolConfigSignature = ''
-  let toolConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
 
   const assistantDefaultMaxContextTokens = computed(() => {
     const selected = (assistantSelectedModel.value || '').trim()
@@ -210,81 +214,27 @@ export const useAgentModelAndToolConfig = (params: {
     } as Record<string, unknown>
   }
 
-  const schedulePersistToolConfig = (config: UiToolConfigPayload) => {
-    const signature = buildPersistableToolConfigSignature(config)
-    if (signature === lastPersistedToolConfigSignature.value || signature === pendingToolConfigSignature) {
-      return
-    }
-
-    pendingToolConfigSignature = signature
-    if (toolConfigSaveTimer) {
-      clearTimeout(toolConfigSaveTimer)
-    }
-
-    toolConfigSaveTimer = setTimeout(async () => {
-      try {
-        lastPersistedToolConfigSignature.value = await persistToolConfig({
-          config,
-          saveToolConfig: async (toolConfig) => {
-            await invoke('save_tool_config', { toolConfig })
-          },
-        })
-      } catch (error) {
-        console.error('[useAgentModelAndToolConfig] Failed to save tool config:', error)
-        params.localError.value = `${params.getFailedToSaveToolConfigLabel()}: ${error}`
-      } finally {
-        if (pendingToolConfigSignature === signature) {
-          pendingToolConfigSignature = ''
-        }
-        toolConfigSaveTimer = null
-      }
-    }, TOOL_CONFIG_SAVE_DEBOUNCE_MS)
-  }
-
-  const flushPendingToolConfigSave = async () => {
-    const config = toolConfig.value as unknown as UiToolConfigPayload
-    const signature = buildPersistableToolConfigSignature(config)
-
-    if (toolConfigSaveTimer) {
-      clearTimeout(toolConfigSaveTimer)
-      toolConfigSaveTimer = null
-    }
-
-    if (signature === lastPersistedToolConfigSignature.value) {
-      pendingToolConfigSignature = ''
-      return
-    }
-
-    try {
-      lastPersistedToolConfigSignature.value = await persistToolConfig({
-        config,
-        saveToolConfig: async (toolConfig) => {
-          await invoke('save_tool_config', { toolConfig })
-        },
-      })
-      pendingToolConfigSignature = ''
-    } catch (error) {
-      console.error('[useAgentModelAndToolConfig] Failed to flush tool config:', error)
-      params.localError.value = `${params.getFailedToSaveToolConfigLabel()}: ${error}`
-      throw error
-    }
-  }
+  const flushPendingToolConfigSave = async () => {}
 
   const handleToolConfigUpdate = (config: UiToolConfigPayload) => {
-    toolConfig.value = { ...config } as any
-    toolsEnabled.value = config.enabled
-    schedulePersistToolConfig(config)
+    const normalized = normalizeUiToolConfigPayload(config, defaultToolConfig.value)
+    toolConfig.value = normalized
+    toolsEnabled.value = normalized.enabled
   }
 
   const loadToolConfig = async () => {
     try {
       const savedConfig = await invoke<any>('get_tool_config')
-      if (!savedConfig) return
-      toolConfig.value = { ...savedConfig }
-      toolsEnabled.value = savedConfig.enabled
-      lastPersistedToolConfigSignature.value = buildPersistableToolConfigSignature({
-        ...(savedConfig as any),
-      })
+      if (!savedConfig) {
+        defaultToolConfig.value = createBaseToolConfig()
+        toolConfig.value = createBaseToolConfig()
+        toolsEnabled.value = toolConfig.value.enabled
+        return
+      }
+      const normalized = normalizeUiToolConfigPayload(savedConfig, createBaseToolConfig())
+      defaultToolConfig.value = normalized
+      toolConfig.value = normalized
+      toolsEnabled.value = normalized.enabled
     } catch (error) {
       console.error('[useAgentModelAndToolConfig] Failed to load tool config:', error)
     }
@@ -295,6 +245,7 @@ export const useAgentModelAndToolConfig = (params: {
     assistantModelOptions,
     assistantSelectedModel,
     buildTeamToolPolicyFromUiConfig,
+    defaultToolConfig,
     flushPendingToolConfigSave,
     handleAssistantModelChange,
     handleToolConfigUpdate,

@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::commands::command_response_support::CommandResponse;
 use crate::services::system_agents::finding_lifecycle::TrafficFindingLifecycle;
-use crate::services::system_agents::logic_sop_context::{
+use crate::services::system_agents::sop_registry::{
     parse_system_agent_sop_definitions, serialize_system_agent_sop_definitions,
     SystemAgentSopDefinition,
 };

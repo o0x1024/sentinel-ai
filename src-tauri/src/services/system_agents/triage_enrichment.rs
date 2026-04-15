@@ -4,7 +4,9 @@ use serde_json::{Map, Value};
 use crate::services::system_agents::verification_hypothesis_memory::{
     normalize_hypothesis_state, VerificationHypothesisState,
 };
-use crate::services::system_agents::verification_plan::{normalize_verification_plan, VerificationPlan};
+use crate::services::system_agents::verification_plan::{
+    normalize_verification_plan, VerificationPlan,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,19 +28,14 @@ pub struct TriageBootstrapDecision {
 }
 
 pub fn should_attempt_triage_bootstrap(output: &Value) -> bool {
-    output
-        .get("verificationPlan")
-        .is_none_or(Value::is_null)
+    output.get("verificationPlan").is_none_or(Value::is_null)
         && output
             .get("suggestedNextActions")
             .and_then(Value::as_array)
             .is_some_and(|items| !items.is_empty())
 }
 
-pub fn merge_triage_bootstrap_decision(
-    output: &Value,
-    decision: TriageBootstrapDecision,
-) -> Value {
+pub fn merge_triage_bootstrap_decision(output: &Value, decision: TriageBootstrapDecision) -> Value {
     if !decision.should_promote || decision.verification_plan.is_none() {
         return output.clone();
     }
@@ -208,7 +205,10 @@ mod tests {
         };
 
         let merged = merge_triage_bootstrap_decision(&output, decision);
-        assert_eq!(merged.get("riskType").and_then(Value::as_str), Some("logic"));
+        assert_eq!(
+            merged.get("riskType").and_then(Value::as_str),
+            Some("logic")
+        );
         assert_eq!(
             merged.get("confidence").and_then(Value::as_str),
             Some("medium")

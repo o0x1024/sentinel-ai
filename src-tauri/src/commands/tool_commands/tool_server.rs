@@ -3,7 +3,7 @@
 use sentinel_db::Database;
 use std::sync::Arc;
 
-use sentinel_tools::buildin_tools::SkillsTool;
+use sentinel_tools::buildin_tools::{SkillsTool, SopsTool};
 use sentinel_tools::get_tool_server;
 
 /// Initialize the global tool server with builtin tools
@@ -27,7 +27,7 @@ pub async fn list_tool_server_tools() -> Result<Vec<sentinel_tools::ToolInfo>, S
         .list_tools()
         .await
         .into_iter()
-        .filter(|t| t.name != SkillsTool::NAME)
+        .filter(|t| t.name != SkillsTool::NAME && t.name != SopsTool::NAME)
         .collect())
 }
 
@@ -42,7 +42,7 @@ pub async fn list_tools_by_source(
         .list_tools_by_source(&source_type)
         .await
         .into_iter()
-        .filter(|t| t.name != SkillsTool::NAME)
+        .filter(|t| t.name != SkillsTool::NAME && t.name != SopsTool::NAME)
         .collect())
 }
 
@@ -51,7 +51,7 @@ pub async fn list_tools_by_source(
 pub async fn get_tool_server_tool(
     tool_name: String,
 ) -> Result<Option<sentinel_tools::ToolInfo>, String> {
-    if tool_name == SkillsTool::NAME {
+    if tool_name == SkillsTool::NAME || tool_name == SopsTool::NAME {
         return Ok(None);
     }
     let server = get_tool_server();
@@ -67,6 +67,9 @@ pub async fn get_tool_input_schema(tool_id: String) -> Result<serde_json::Value,
 
     if tool_id == SkillsTool::NAME {
         return Err("Tool not found: skills".to_string());
+    }
+    if tool_id == SopsTool::NAME {
+        return Err("Tool not found: sops".to_string());
     }
 
     // Get tool info
@@ -87,6 +90,9 @@ pub async fn get_tool_output_schema(tool_id: String) -> Result<serde_json::Value
 
     if tool_id == SkillsTool::NAME {
         return Err("Tool not found: skills".to_string());
+    }
+    if tool_id == SopsTool::NAME {
+        return Err("Tool not found: sops".to_string());
     }
 
     // Get tool info

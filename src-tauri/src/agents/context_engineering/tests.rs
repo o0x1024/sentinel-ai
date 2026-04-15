@@ -201,7 +201,9 @@ fn ask_user_question_digest_is_summarized_as_question_collection() {
     );
 
     assert_eq!(digest.status, "ok");
-    assert!(digest.summary.contains("AskUserQuestion collected 1 / 1 answers"));
+    assert!(digest
+        .summary
+        .contains("AskUserQuestion collected 1 / 1 answers"));
 }
 
 #[test]

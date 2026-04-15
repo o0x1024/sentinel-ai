@@ -518,6 +518,7 @@ export function scan_transaction(transaction) {
                 id: uuid::Uuid::new_v4().to_string(),
                 method: "GET".to_string(),
                 url: "https://example.com/test".to_string(),
+                http_version: Some("HTTP/1.1".to_string()),
                 headers: HashMap::new(),
                 body: vec![],
                 content_type: None,

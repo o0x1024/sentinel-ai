@@ -71,6 +71,36 @@ export const parseToolSelectionStrategy = (
   return { mode: 'Keyword', manualTools: [] as string[] }
 }
 
+export const normalizeUiToolConfigPayload = (
+  configRaw: Partial<UiToolConfigPayload> | Record<string, unknown> | null | undefined,
+  fallback?: UiToolConfigPayload,
+): UiToolConfigPayload => {
+  const raw = (configRaw && typeof configRaw === 'object')
+    ? configRaw as Record<string, unknown>
+    : {}
+  const fallbackManualTools = normalizeToolIdList(raw.manual_tools)
+  const strategy = parseToolSelectionStrategy(
+    raw.selection_strategy ?? fallback?.selection_strategy,
+    fallbackManualTools,
+  )
+  const normalizedSelectionStrategy = strategy.mode === 'Manual'
+    ? { Manual: strategy.manualTools }
+    : strategy.mode
+
+  return {
+    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : fallback?.enabled === true,
+    selection_strategy: normalizedSelectionStrategy,
+    max_tools: Math.max(1, Math.floor(
+      Number(raw.max_tools)
+      || Number(fallback?.max_tools)
+      || 1,
+    )),
+    fixed_tools: normalizeToolIdList(raw.fixed_tools ?? fallback?.fixed_tools),
+    disabled_tools: normalizeToolIdList(raw.disabled_tools ?? fallback?.disabled_tools),
+    allowed_tools: normalizeToolIdList(raw.allowed_tools ?? fallback?.allowed_tools),
+  }
+}
+
 const unionToolIds = (...groups: Array<string[] | undefined>) => {
   return dedupeToolIds(groups.flatMap((group) => group || []))
 }
@@ -87,11 +117,15 @@ export const buildRuntimeToolConfigForExecution = (
   const fixedTools = normalizeToolIdList(config.fixed_tools)
   const manualFallback = normalizeToolIdList(config.manual_tools)
   const allowedTools = normalizeToolIdList(config.allowed_tools)
+  const strategy = parseToolSelectionStrategy(config.selection_strategy, manualFallback)
+  const runtimeSelectionStrategy = strategy.mode === 'Manual'
+    ? { Manual: strategy.manualTools }
+    : strategy.mode
 
   if (!webSearchEnabled) {
     return {
       enabled: config.enabled,
-      selection_strategy: config.selection_strategy,
+      selection_strategy: runtimeSelectionStrategy,
       max_tools: Math.max(1, Number(config.max_tools) || 1),
       fixed_tools: fixedTools,
       disabled_tools: disabledTools,
@@ -110,7 +144,6 @@ export const buildRuntimeToolConfigForExecution = (
     }
   }
 
-  const strategy = parseToolSelectionStrategy(config.selection_strategy, manualFallback)
   const nextAllowedTools = allowedTools.length > 0
     ? unionToolIds(allowedTools, [WEB_SEARCH_TOOL_ID])
     : []
@@ -129,7 +162,7 @@ export const buildRuntimeToolConfigForExecution = (
 
   return {
     enabled: true,
-    selection_strategy: config.selection_strategy,
+    selection_strategy: runtimeSelectionStrategy,
     max_tools: Math.max(1, Number(config.max_tools) || 1),
     fixed_tools: unionToolIds(fixedTools, [WEB_SEARCH_TOOL_ID]),
     disabled_tools: disabledTools,

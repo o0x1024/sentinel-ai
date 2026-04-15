@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 
+use crate::services::system_agents::verification_plan::infer_candidate_targets_from_context;
+
 pub fn build_logic_hypotheses(payload: &Value) -> Value {
     let mut hypotheses = Vec::new();
 
@@ -40,6 +42,7 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
             fields
         })
         .unwrap_or_default();
+    let candidate_targets = infer_candidate_targets_from_context(payload, &resource_fields);
     let cluster_sequence_ids = payload
         .get("clusterSummary")
         .and_then(|value| value.get("recentRequestIds"))
@@ -68,6 +71,7 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
             "recommendedVerification": {
                 "preferredStrategy": "swap_resource_reference",
                 "targetRequestId": payload.get("dbRequestId").cloned().unwrap_or(Value::Null),
+                "candidateTargets": candidate_targets.clone(),
                 "candidateParameters": resource_fields.clone(),
                 "concurrentRequests": null,
                 "replayCount": null,
@@ -112,6 +116,7 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
             "recommendedVerification": {
                 "preferredStrategy": role_strategy,
                 "targetRequestId": payload.get("dbRequestId").cloned().unwrap_or(Value::Null),
+                "candidateTargets": candidate_targets.clone(),
                 "candidateParameters": resource_fields.clone(),
                 "concurrentRequests": null,
                 "replayCount": null,
@@ -137,6 +142,7 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
             "recommendedVerification": {
                 "preferredStrategy": "skip_prerequisite",
                 "targetRequestId": payload.get("dbRequestId").cloned().unwrap_or(Value::Null),
+                "candidateTargets": candidate_targets.clone(),
                 "candidateParameters": resource_fields.clone(),
                 "replayCount": 1,
                 "concurrentRequests": null,
@@ -165,6 +171,7 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
             "recommendedVerification": {
                 "preferredStrategy": "repeat_action",
                 "targetRequestId": payload.get("dbRequestId").cloned().unwrap_or(Value::Null),
+                "candidateTargets": candidate_targets.clone(),
                 "candidateParameters": resource_fields.clone(),
                 "replayCount": 2,
                 "concurrentRequests": null,
@@ -193,6 +200,7 @@ pub fn build_logic_hypotheses(payload: &Value) -> Value {
             "recommendedVerification": {
                 "preferredStrategy": "concurrent_submit",
                 "targetRequestId": payload.get("dbRequestId").cloned().unwrap_or(Value::Null),
+                "candidateTargets": candidate_targets,
                 "candidateParameters": resource_fields,
                 "replayCount": null,
                 "concurrentRequests": 3,
@@ -234,7 +242,17 @@ mod tests {
             "pathTemplate": "/api/orders/{id}",
             "dbRequestId": 77,
             "resourceKeys": {
+                "pathSegments": ["123"],
                 "orderId": "123"
+            },
+            "contextExtraction": {
+                "resourceMatches": [
+                    { "matchedKey": "pathSegments", "source": "path" },
+                    { "matchedKey": "orderId", "source": "query" }
+                ]
+            },
+            "baselineRequest": {
+                "requestBody": null
             },
             "logicInvariants": [
                 { "id": "ownership_invariant" }
@@ -259,6 +277,19 @@ mod tests {
                 .and_then(Value::as_str),
             Some("swap_resource_reference")
         );
+        let targets = items[0]
+            .get("recommendedVerification")
+            .and_then(|value| value.get("candidateTargets"))
+            .and_then(Value::as_array)
+            .expect("candidate targets");
+        assert!(targets.iter().any(|item| {
+            item.get("location").and_then(Value::as_str) == Some("pathSegment")
+                && item.get("selector").and_then(Value::as_str) == Some("123")
+        }));
+        assert!(targets.iter().any(|item| {
+            item.get("location").and_then(Value::as_str) == Some("query")
+                && item.get("selector").and_then(Value::as_str) == Some("orderId")
+        }));
     }
 
     #[test]

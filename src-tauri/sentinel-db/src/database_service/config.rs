@@ -407,8 +407,11 @@ impl DatabaseService {
         &self,
         name: &str,
         description: Option<&str>,
+        url: &str,
+        connection_type: &str,
         command: &str,
         args: &[String],
+        headers_json: Option<&str>,
     ) -> Result<String> {
         let args_json = serde_json::to_string(args)?;
         let runtime = self
@@ -417,58 +420,58 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
 
-        let url = "http://localhost:8080".to_string();
-        let connection_type = "stdio";
-
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
                     r#"
-                    INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args, headers_json)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                     "#,
                 )
                 .bind(&id)
                 .bind(name)
                 .bind(description)
-                .bind(&url)
+                .bind(url)
                 .bind(connection_type)
                 .bind(command)
                 .bind(args_json)
+                .bind(headers_json)
                 .execute(pool)
                 .await?;
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query(
                     r#"
-                    INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args, headers_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&id)
                 .bind(name)
                 .bind(description)
-                .bind(&url)
+                .bind(url)
                 .bind(connection_type)
                 .bind(command)
                 .bind(args_json.clone())
+                .bind(headers_json)
                 .execute(pool)
                 .await?;
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query(
                     r#"
-                    INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args, headers_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&id)
                 .bind(name)
                 .bind(description)
-                .bind(&url)
+                .bind(url)
                 .bind(connection_type)
                 .bind(command)
                 .bind(args_json)
+                .bind(headers_json)
                 .execute(pool)
                 .await?;
             }
@@ -484,21 +487,21 @@ impl DatabaseService {
         let configs = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as::<_, McpServerConfig>(
-                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
+                    "SELECT id, name, description, url, connection_type, command, args, headers_json, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
                 )
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, McpServerConfig>(
-                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
+                    "SELECT id, name, description, url, connection_type, command, args, headers_json, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
                 )
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, McpServerConfig>(
-                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
+                    "SELECT id, name, description, url, connection_type, command, args, headers_json, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
                 )
                 .fetch_all(pool)
                 .await?
@@ -515,21 +518,21 @@ impl DatabaseService {
         let configs = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as::<_, McpServerConfig>(
-                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE",
+                    "SELECT id, name, description, url, connection_type, command, args, headers_json, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE",
                 )
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, McpServerConfig>(
-                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE",
+                    "SELECT id, name, description, url, connection_type, command, args, headers_json, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE",
                 )
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, McpServerConfig>(
-                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE",
+                    "SELECT id, name, description, url, connection_type, command, args, headers_json, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE",
                 )
                 .fetch_all(pool)
                 .await?
@@ -647,7 +650,7 @@ impl DatabaseService {
         let config = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as::<_, McpServerConfig>(
-                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = $1",
+                    "SELECT id, name, description, url, connection_type, command, args, headers_json, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = $1",
                 )
                 .bind(name)
                 .fetch_optional(pool)
@@ -655,7 +658,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, McpServerConfig>(
-                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
+                    "SELECT id, name, description, url, connection_type, command, args, headers_json, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
                 )
                 .bind(name)
                 .fetch_optional(pool)
@@ -663,7 +666,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, McpServerConfig>(
-                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
+                    "SELECT id, name, description, url, connection_type, command, args, headers_json, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
                 )
                 .bind(name)
                 .fetch_optional(pool)
@@ -678,8 +681,11 @@ impl DatabaseService {
         id: &str,
         name: &str,
         description: Option<&str>,
+        url: &str,
+        connection_type: &str,
         command: &str,
         args: &[String],
+        headers_json: Option<&str>,
         enabled: bool,
     ) -> Result<()> {
         let runtime = self
@@ -688,28 +694,18 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let args_json = serde_json::to_string(args)?;
 
-        let existing = self.get_mcp_server_config_by_name_internal(name).await?;
-
-        let url = existing
-            .as_ref()
-            .map(|c| c.url.clone())
-            .unwrap_or_else(|| "http://localhost:8080".to_string());
-        let connection_type = existing
-            .as_ref()
-            .map(|c| c.connection_type.clone())
-            .unwrap_or_else(|| "stdio".to_string());
-
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
-                    "UPDATE mcp_server_configs SET name = $1, description = $2, url = $3, connection_type = $4, command = $5, args = $6, is_enabled = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8",
+                    "UPDATE mcp_server_configs SET name = $1, description = $2, url = $3, connection_type = $4, command = $5, args = $6, headers_json = $7, is_enabled = $8, updated_at = CURRENT_TIMESTAMP WHERE id = $9",
                 )
                 .bind(name)
                 .bind(description)
-                .bind(&url)
-                .bind(&connection_type)
+                .bind(url)
+                .bind(connection_type)
                 .bind(command)
                 .bind(&args_json)
+                .bind(headers_json)
                 .bind(enabled)
                 .bind(id)
                 .execute(pool)
@@ -717,14 +713,15 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query(
-                    "UPDATE mcp_server_configs SET name = ?, description = ?, url = ?, connection_type = ?, command = ?, args = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    "UPDATE mcp_server_configs SET name = ?, description = ?, url = ?, connection_type = ?, command = ?, args = ?, headers_json = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 )
                 .bind(name)
                 .bind(description)
-                .bind(&url)
-                .bind(&connection_type)
+                .bind(url)
+                .bind(connection_type)
                 .bind(command)
                 .bind(&args_json)
+                .bind(headers_json)
                 .bind(enabled)
                 .bind(id)
                 .execute(pool)
@@ -732,14 +729,15 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query(
-                    "UPDATE mcp_server_configs SET name = ?, description = ?, url = ?, connection_type = ?, command = ?, args = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    "UPDATE mcp_server_configs SET name = ?, description = ?, url = ?, connection_type = ?, command = ?, args = ?, headers_json = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 )
                 .bind(name)
                 .bind(description)
-                .bind(&url)
-                .bind(&connection_type)
+                .bind(url)
+                .bind(connection_type)
                 .bind(command)
                 .bind(&args_json)
+                .bind(headers_json)
                 .bind(enabled)
                 .bind(id)
                 .execute(pool)

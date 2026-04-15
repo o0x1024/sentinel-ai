@@ -5,11 +5,13 @@ import type {
   AssistantRunMode,
   AssistantSessionSettings,
 } from './agentDraftTypes'
+import { buildPersistableToolConfig } from './agentToolConfigPersistenceSupport'
+import type { UiToolConfigPayload } from './toolConfigRuntime'
 
 export const DEFAULT_ASSISTANT_PROFILE_ID = 'assistant.default'
 export const DEFAULT_ASSISTANT_CONTEXT_MODE: AssistantContextMode = 'claude-like'
 export const DEFAULT_ASSISTANT_RUN_MODE: AssistantRunMode = 'assistant'
-export const ASSISTANT_CONVERSATION_BINDING_VERSION = 1
+export const ASSISTANT_CONVERSATION_BINDING_VERSION = 2
 
 export const createDefaultAssistantSessionSettings = (): AssistantSessionSettings => ({
   profileId: DEFAULT_ASSISTANT_PROFILE_ID,
@@ -113,6 +115,7 @@ export const useAssistantSessionSettings = () => {
   const toConversationBinding = (extras?: {
     selectedModel?: string | null
     toolsEnabled?: boolean
+    toolConfig?: UiToolConfigPayload | null
   }): AssistantConversationBinding => {
     const selectedModel = extras?.selectedModel?.trim()
     return {
@@ -120,6 +123,7 @@ export const useAssistantSessionSettings = () => {
       ...sessionSettings.value,
       selectedModel: selectedModel || null,
       toolsEnabled: extras?.toolsEnabled,
+      toolConfig: extras?.toolConfig ? buildPersistableToolConfig(extras.toolConfig) : null,
     }
   }
 

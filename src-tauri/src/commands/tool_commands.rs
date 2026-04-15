@@ -1156,7 +1156,11 @@ pub async fn get_all_tool_metadata(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<ToolMetadata>, String> {
     let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    Ok(router.list_all_tools())
+    Ok(router
+        .list_all_tools()
+        .into_iter()
+        .filter(|tool| tool.id != sentinel_tools::buildin_tools::SopsTool::NAME)
+        .collect())
 }
 
 /// Get tool metadata by category
@@ -1250,9 +1254,12 @@ pub use tool_server::{
 // mod vision_bridge;
 
 mod ask_user_question;
+mod shell_permission_history;
 mod shell_permissions;
 pub use ask_user_question::PendingAskUserQuestionRequest;
+pub use shell_permission_history::{ShellPermissionHistoryEntry, ShellPermissionHistoryQuery};
 pub use shell_permissions::PendingPermissionRequest;
+pub use shell_permissions::PersistedShellAllowRules;
 
 pub mod agent_config;
 pub use agent_config::{
@@ -1301,8 +1308,30 @@ pub async fn respond_shell_permission(id: String, allowed: bool) -> Result<(), S
 }
 
 #[tauri::command]
+pub async fn allow_shell_permission_forever(
+    id: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<PersistedShellAllowRules, String> {
+    shell_permissions::allow_shell_permission_forever(id, db_service).await
+}
+
+pub(crate) async fn allow_shell_permission_forever_with_db(
+    id: String,
+    db: &sentinel_db::DatabaseService,
+) -> Result<PersistedShellAllowRules, String> {
+    shell_permissions::allow_shell_permission_forever_with_db(id, db).await
+}
+
+#[tauri::command]
 pub async fn get_pending_shell_permissions() -> Result<Vec<PendingPermissionRequest>, String> {
     shell_permissions::get_pending_shell_permissions().await
+}
+
+#[tauri::command]
+pub async fn get_shell_permission_history(
+    request: ShellPermissionHistoryQuery,
+) -> Result<Vec<ShellPermissionHistoryEntry>, String> {
+    shell_permission_history::get_shell_permission_history(request).await
 }
 
 #[tauri::command]

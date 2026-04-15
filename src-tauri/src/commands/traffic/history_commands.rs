@@ -10,7 +10,7 @@ pub async fn list_proxy_requests(
     state: State<'_, TrafficAnalysisState>,
     limit: Option<i64>,
     offset: Option<i64>,
-    protocol: Option<String>,
+    scheme: Option<String>,
     method: Option<String>,
     host: Option<String>,
     status_code_min: Option<i32>,
@@ -19,7 +19,7 @@ pub async fn list_proxy_requests(
     let cache = state.get_history_cache();
 
     let filters = sentinel_traffic::HttpRequestFilters {
-        protocol,
+        scheme,
         method,
         host,
         status_code_min,
@@ -71,7 +71,7 @@ pub async fn save_history_to_database(
     let db = state.get_db_service();
 
     let filters = sentinel_traffic::HttpRequestFilters {
-        protocol: None,
+        scheme: None,
         method: None,
         host: None,
         status_code_min: None,
@@ -98,7 +98,8 @@ pub async fn save_history_to_database(
             id: None,
             url: request.url,
             host: request.host,
-            protocol: request.protocol,
+            scheme: request.scheme,
+            http_version_observed: request.http_version_observed,
             method: request.method,
             status_code: request.status_code,
             request_headers: request.request_headers,
@@ -146,7 +147,7 @@ pub async fn load_history_from_database(
     );
 
     let filters = sentinel_db::ProxyRequestFilters {
-        protocol: None,
+        scheme: None,
         method: None,
         host: None,
         status_code_min: None,
@@ -167,7 +168,8 @@ pub async fn load_history_from_database(
             db_request_id: db_record.id,
             url: db_record.url,
             host: db_record.host,
-            protocol: db_record.protocol,
+            scheme: db_record.scheme,
+            http_version_observed: db_record.http_version_observed,
             method: db_record.method,
             status_code: db_record.status_code,
             request_headers: db_record.request_headers,

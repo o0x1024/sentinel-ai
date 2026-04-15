@@ -86,7 +86,9 @@ fn strip_ansi_codes(text: &str) -> String {
 }
 
 fn trim_preview(text: &str) -> String {
-    let normalized = strip_ansi_codes(text).replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = strip_ansi_codes(text)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
     let trimmed = normalized.trim();
     if trimmed.chars().count() <= PREVIEW_LIMIT_CHARS {
         return trimmed.to_string();
@@ -295,7 +297,8 @@ pub async fn list_background_shell_tasks(
 pub async fn stop_background_shell_task(task_id: &str) -> Result<(), String> {
     let session_id = {
         let tasks = SHELL_BACKGROUND_TASKS.read().await;
-        tasks.get(task_id)
+        tasks
+            .get(task_id)
             .map(|item| item.session_id.clone())
             .ok_or_else(|| format!("background shell task {} not found", task_id))?
     };

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>phpweb</title>
+    <style type="text/css">
+        body {
+            background: url("bg.jpg") no-repeat;
+            background-size: 100%;
+        }
+        p {
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+<script language=javascript>
+    setTimeout("document.form1.submit()",5000)
+</script>
+<p>
+    Array
+(
+    [APPLICATION_INSIGHTS_NO_STATSBEAT] => true
+    [BUN_INSTALL] => /Users/like/.bun
+    [BYTEDANCE_API_KEY] => 119dbd94-cfbc-4b10-a964-0b692ca1ec34
+    [COMMAND_MODE] => unix2003
+    [COPILOT_OTEL_ENABLED] => true
+    [COPILOT_OTEL_EXPORTER_TYPE] => file
+    [COPILOT_OTEL_FILE_EXPORTER_PATH] => /dev/null
+    [DEEPSEEK_API_KEY] => sk-1d860e84c04e43c5844e0103503ac8ca
+    [ELECTRON_RUN_AS_NODE] => 1
+    [HOME] => /Users/like
+    [HOMEBREW_CELLAR] => /opt/homebrew/Cellar
+    [HOMEBREW_PREFIX] => /opt/homebrew
+    [HOMEBREW_REPOSITORY] => /opt/homebrew
+    [INFOPATH] => /opt/homebrew/share/info:
+    [LANG] => C.UTF-8
+    [LC_ALL] => C.UTF-8
+    [LESS] => -R
+    [LOGNAME] => like
+    [LSCOLORS] => Gxfxcxdxbxegedabagacad
+    [LS_COLORS] => di=1;36:ln=35:so=32:pi=33:ex=31:bd=34;46:cd=34;43:su=30;41:sg=30;46:tw=30;42:ow=30;43
+    [LaunchInstanceID] => 52B6CCCB-E1B6-45AF-96AA-9BECB7365E8F
+    [MACH_PORT_RENDEZVOUS_PEER_VALDATION] => 0
+    [MallocNanoZone] => 0
+    [OLDPWD] => /Users/like/code/sentinel/sentinel-ai
+    [OMLX_API_KEY] => 1111
+    [OPENAI_API_BASE] => https://ark.cn-beijing.volces.com/api/coding/v3
+    [OPENAI_API_KEY] => 119dbd94-cfbc-4b10-a964-0b692ca1ec34
+    [OPENAI_BASE] => https://ark.cn-beijing.volces.com/api/coding/v3
+    [OPENAI_BASE_URL] => https://ark.cn-beijing.volces.com/api/coding/v3
+    [OSLogRateLimit] => 64
+    [OS_ACTIVITY_DT_MODE] => enable
+    [OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT] => true
+    [PAGER] => less
+    [PATH] => /Users/like/.bun/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/opt/pmk/env/global/bin:/Library/Apple/usr/bin:/usr/local/go/bin:/Users/like/.cargo/bin:/Users/like/.local/bin:/Users/like/.lmstudio/bin
+    [PWD] => /Users/like/code/sentinel/sentinel-ai
+    [RUST_TRACEBACK] => 1
+    [SECURITYSESSIONID] => 186b7
+    [SENTINEL_RIG_DEBUG] => 1
+    [SHELL] => /bin/zsh
+    [SHLVL] => 1
+    [SSH_AUTH_SOCK] => /private/tmp/com.apple.launchd.WrMxgvXl9y/Listeners
+    [TMPDIR] => /var/folders/p5/lm9xqy3x1ls7nq74x8cwh_lm0000gn/T/
+    [USER] => like
+    [VSCODE_CODE_CACHE_PATH] => /Users/like/Library/Application Support/Code/CachedData/41dd792b5e652393e7787322889ed5fdc58bd75b
+    [VSCODE_CRASH_REPORTER_PROCESS_TYPE] => extensionHost
+    [VSCODE_CWD] => /
+    [VSCODE_ESM_ENTRYPOINT] => vs/workbench/api/node/extensionHostProcess
+    [VSCODE_HANDLES_UNCAUGHT_ERRORS] => true
+    [VSCODE_IPC_HOOK] => /Users/like/Library/Application Support/Code/1.11-main.sock
+    [VSCODE_L10N_BUNDLE_LOCATION] => 
+    [VSCODE_NLS_CONFIG] => {"userLocale":"zh-cn","osLocale":"zh-cn","resolvedLanguage":"en","defaultMessagesFile":"/Applications/Visual Studio Code.app/Contents/Resources/app/out/nls.messages.json","locale":"zh-cn","availableLanguages":{}}
+    [VSCODE_PID] => 643
+    [XPC_FLAGS] => 0x0
+    [XPC_SERVICE_NAME] => 0
+    [ZSH] => /Users/like/.oh-my-zsh
+    [__CFBundleIdentifier] => com.microsoft.VSCode
+    [__CF_USER_TEXT_ENCODING] => 0x1F5:0x19:0x34
+    [_] => /opt/homebrew/bin/php
+    [PHP_SELF] => Standard input code
+    [SCRIPT_NAME] => Standard input code
+    [SCRIPT_FILENAME] => 
+    [PATH_TRANSLATED] => 
+    [DOCUMENT_ROOT] => 
+    [REQUEST_TIME_FLOAT] => 1776127195.5049
+    [REQUEST_TIME] => 1776127195
+    [argv] => Array
+        (
+            [0] => Standard input code
+        )
+
+    [argc] => 1
+)
+</p>
+<form  id=form1 name=form1 action="index.php" method=post>
+    <input type=hidden id=func name=func value='date'>
+    <input type=hidden id=p name=p value='Y-m-d h:i:s a'>
+</body>
+</html>

@@ -46,7 +46,11 @@ pub fn build_response_diff_summary(
         summary.changed_targets.push(ResponseDiffTarget {
             location: "status".to_string(),
             selector: "status".to_string(),
-            change_kind: classify_change_kind(baseline_status.map(|v| v.to_string()).as_deref(), Some(&response_status.to_string())).to_string(),
+            change_kind: classify_change_kind(
+                baseline_status.map(|v| v.to_string()).as_deref(),
+                Some(&response_status.to_string()),
+            )
+            .to_string(),
             before: baseline_status.map(|value| value.to_string()),
             after: Some(response_status.to_string()),
         });
@@ -91,8 +95,7 @@ fn diff_headers(
     }
 
     notes.push(
-        "Response headers changed but could not be parsed as a structured JSON object."
-            .to_string(),
+        "Response headers changed but could not be parsed as a structured JSON object.".to_string(),
     );
     changed_targets.push(ResponseDiffTarget {
         location: "responseHeadersRaw".to_string(),
@@ -237,8 +240,12 @@ mod tests {
     fn falls_back_to_raw_response_body_note_when_not_json() {
         let mut baseline = baseline();
         baseline.response_body = None;
-        let summary =
-            build_response_diff_summary(&baseline, 402, r#"{"content-type":"application/json"}"#, "");
+        let summary = build_response_diff_summary(
+            &baseline,
+            402,
+            r#"{"content-type":"application/json"}"#,
+            "",
+        );
 
         assert!(summary.response_body_changed);
         assert!(summary

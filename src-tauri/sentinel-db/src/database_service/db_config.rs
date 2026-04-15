@@ -167,6 +167,13 @@ fn default_true() -> bool {
 }
 
 fn default_config_dir() -> PathBuf {
+    if let Ok(explicit) = std::env::var("SENTINEL_STATE_DIR") {
+        let trimmed = explicit.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("sentinel-ai")
@@ -194,7 +201,7 @@ fn to_toml_file(config: &DatabaseConfig, existing: Option<DbConfigTomlFile>) -> 
     match config.db_type {
         DatabaseType::SQLite => {
             file.sqlite = Some(SqliteConfigSection {
-                path: Some(default_sqlite_db_path()),
+                path: Some(config.path.clone().unwrap_or_else(default_sqlite_db_path)),
                 enable_wal: config.enable_wal,
                 max_connections: Some(config.max_connections),
                 query_timeout: Some(config.query_timeout),

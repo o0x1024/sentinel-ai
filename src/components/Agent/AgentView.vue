@@ -369,6 +369,7 @@ import type {
   TeamStepMovePayload,
 } from './teamOrchestrationTypes'
 import {
+  normalizeUiToolConfigPayload,
   normalizeToolIdList,
   type UiToolConfigPayload,
 } from './toolConfigRuntime'
@@ -553,6 +554,7 @@ const {
   assistantModelOptions,
   assistantSelectedModel,
   buildTeamToolPolicyFromUiConfig,
+  defaultToolConfig,
   flushPendingToolConfigSave,
   handleAssistantModelChange,
   handleToolConfigUpdate,
@@ -864,6 +866,21 @@ const handleAssistantModelSelection = (value: string | null) => {
   handleAssistantModelChange(value || '')
 }
 
+const buildProfileToolConfigDefault = (profile: AssistantProfileOption, enabledOverride?: boolean) => {
+  const enabled = typeof enabledOverride === 'boolean'
+    ? enabledOverride
+    : profile.defaultToolsEnabled === true
+  return {
+    ...defaultToolConfig.value,
+    enabled,
+    selection_strategy: profile.defaultToolSelectionStrategy || defaultToolConfig.value.selection_strategy,
+    max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
+    fixed_tools: normalizeToolIdList(profile.defaultFixedTools),
+    disabled_tools: normalizeToolIdList(profile.defaultDisabledTools),
+    manual_tools: normalizeToolIdList(profile.defaultManualTools),
+  } as UiToolConfigPayload
+}
+
 const applyProfileModelDefault = (profile: AssistantProfileOption) => {
   const defaultModel = profile.defaultModel?.trim()
   if (!defaultModel) return
@@ -871,19 +888,9 @@ const applyProfileModelDefault = (profile: AssistantProfileOption) => {
 }
 
 const applyProfileToolsDefault = (profile: AssistantProfileOption, enabledOverride?: boolean) => {
-  const enabled = typeof enabledOverride === 'boolean'
-    ? enabledOverride
-    : profile.defaultToolsEnabled === true
-  toolsEnabled.value = enabled
-  toolConfig.value = {
-    ...toolConfig.value,
-    enabled,
-    selection_strategy: profile.defaultToolSelectionStrategy || toolConfig.value.selection_strategy,
-    max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
-    fixed_tools: normalizeToolIdList(profile.defaultFixedTools),
-    disabled_tools: normalizeToolIdList(profile.defaultDisabledTools),
-    manual_tools: normalizeToolIdList(profile.defaultManualTools),
-  } as UiToolConfigPayload
+  const nextToolConfig = buildProfileToolConfigDefault(profile, enabledOverride)
+  toolsEnabled.value = nextToolConfig.enabled
+  toolConfig.value = nextToolConfig
 }
 
 const applyProfileTeamPresetDefaults = (profile: AssistantProfileOption) => {
@@ -923,6 +930,12 @@ const handleAssistantRunModeChange = async (mode: 'assistant' | 'team') => {
 const applyConversationBindingState = (binding: AssistantConversationBinding | null) => {
   applyConversationBinding(binding)
   const boundProfile = binding?.profileId ? getAssistantProfileOption(binding.profileId) : null
+  const profileToolConfig = boundProfile
+    ? buildProfileToolConfigDefault(
+      boundProfile,
+      typeof binding?.toolsEnabled === 'boolean' ? binding.toolsEnabled : undefined,
+    )
+    : null
 
   if (binding?.selectedModel) {
     setAssistantSelectedModel(binding.selectedModel, { persist: false })
@@ -930,11 +943,16 @@ const applyConversationBindingState = (binding: AssistantConversationBinding | n
     applyProfileModelDefault(boundProfile)
   }
 
-  if (boundProfile) {
-    applyProfileToolsDefault(
-      boundProfile,
-      typeof binding?.toolsEnabled === 'boolean' ? binding.toolsEnabled : undefined,
+  if (binding?.toolConfig) {
+    const nextToolConfig = normalizeUiToolConfigPayload(
+      binding.toolConfig,
+      profileToolConfig || toolConfig.value,
     )
+    toolsEnabled.value = nextToolConfig.enabled
+    toolConfig.value = nextToolConfig
+  } else if (profileToolConfig) {
+    toolsEnabled.value = profileToolConfig.enabled
+    toolConfig.value = profileToolConfig
   } else if (typeof binding?.toolsEnabled === 'boolean') {
     toolsEnabled.value = binding.toolsEnabled
     toolConfig.value = {
@@ -996,6 +1014,7 @@ const persistConversationBinding = async (targetConversationId: string) => {
   const binding = toConversationBinding({
     selectedModel: assistantSelectedModel.value,
     toolsEnabled: toolsEnabled.value,
+    toolConfig: toolConfig.value,
   })
 
   await invoke('save_ai_conversation_binding', {
@@ -1462,7 +1481,6 @@ onMounted(async () => {
     loadAssistantProfiles(),
     loadDefaultAssistantProfile(),
   ])
-  assistantProfileRegistryReady.value = true
   unlistenAiConfigUpdated = await listen('ai_config_updated', async () => {
     await loadAssistantModelOptions()
   })
@@ -1518,6 +1536,7 @@ onMounted(async () => {
   }
 
   await Promise.allSettled(startupTasks)
+  assistantProfileRegistryReady.value = true
   
   // Preconnect terminal server in background (non-blocking)
   terminalComposable.preconnect()
@@ -1546,6 +1565,7 @@ watch(
     teamModeEnabled,
     assistantSelectedModel,
     toolsEnabled,
+    toolConfig,
   ],
   () => {
     schedulePersistConversationBinding()

@@ -5,7 +5,13 @@ import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useRouter } from 'vue-router'
 import { dialog } from '@/composables/useDialog'
+import type { HttpExchangeRequest } from './http/model'
+import { parseStoredHeaderEntries } from './http/headers'
 import { clearProxyHistoryDerivedCache } from './proxyHistoryDerivedSupport'
+import {
+  buildHttpExchangeRequestFromHistory,
+  normalizeProxyHistoryHttpVersion,
+} from './proxyHistoryHttpSupport'
 import {
   formatRequestRaw,
   formatResponseRaw,
@@ -62,8 +68,8 @@ type Params = {
   mainContainer: Ref<HTMLElement | null>
   hideContextMenu?: () => void
   hideDetailContextMenu?: () => void
-  emitSendToRepeater: (request: { method: string; url: string; headers: Record<string, string>; body?: string }) => void
-  emitSendToIntruder: (request: { method: string; url: string; headers: Record<string, string>; body?: string }) => void
+  emitSendToRepeater: (request: HttpExchangeRequest) => void
+  emitSendToIntruder: (request: HttpExchangeRequest) => void
   emitSendDraftRequestToComparer: (payload: TrafficComparerDraftRequestInput) => void
   emitSendToComparer: (payload: TrafficComparePayload) => void
   emitSendToAssistant: (requests: ProxyRequest[]) => void
@@ -73,22 +79,13 @@ type Params = {
   t: (key: string, params?: Record<string, unknown>) => string
 }
 
-const buildHeaders = (request: ProxyRequest) => {
-  if (!request.request_headers) {
-    return {}
-  }
-  try {
-    return JSON.parse(request.request_headers) as Record<string, string>
-  } catch {
-    return {}
-  }
-}
+const buildHeaders = (request: ProxyRequest) => parseStoredHeaderEntries(request.request_headers)
 
 const buildCurlCommand = (request: ProxyRequest) => {
   let curl = `curl -X ${request.method} '${request.url}'`
   const headers = buildHeaders(request)
-  for (const [key, value] of Object.entries(headers)) {
-    curl += ` \\\n  -H '${key}: ${value}'`
+  for (const header of headers) {
+    curl += ` \\\n  -H '${header.name}: ${header.value}'`
   }
   if (request.request_body) {
     curl += ` \\\n  -d '${request.request_body.replace(/'/g, "'\\''")}'`
@@ -205,24 +202,14 @@ export const useProxyHistoryActions = (params: Params) => {
     hideDetailContextMenu()
     const request = await resolveRequestDetails(params.selectedRequest.value)
     if (!request) return
-    params.emitSendToRepeater({
-      method: request.method,
-      url: request.url,
-      headers: buildHeaders(request),
-      body: request.request_body || undefined,
-    })
+    params.emitSendToRepeater(buildHttpExchangeRequestFromHistory(request))
   }
 
   const detailSendToIntruder = async () => {
     hideDetailContextMenu()
     const request = await resolveRequestDetails(params.selectedRequest.value)
     if (!request) return
-    params.emitSendToIntruder({
-      method: request.method,
-      url: request.url,
-      headers: buildHeaders(request),
-      body: request.request_body || undefined,
-    })
+    params.emitSendToIntruder(buildHttpExchangeRequestFromHistory(request))
   }
 
   const detailSendToComparer = async () => {
@@ -240,12 +227,7 @@ export const useProxyHistoryActions = (params: Params) => {
     }
 
     params.emitSendDraftRequestToComparer({
-      request: {
-        method: request.method,
-        url: request.url,
-        headers: buildHeaders(request),
-        body: request.request_body || undefined,
-      },
+      request: buildHttpExchangeRequestFromHistory(request),
       name: request.host || request.url,
       label: params.t('trafficAnalysis.history.detailsPanel.request'),
     })
@@ -307,24 +289,14 @@ export const useProxyHistoryActions = (params: Params) => {
   const sendToRepeater = async () => {
     const request = await resolveRequestDetails(params.contextMenu.value.request)
     if (!request) return
-    params.emitSendToRepeater({
-      method: request.method,
-      url: request.url,
-      headers: buildHeaders(request),
-      body: request.request_body || undefined,
-    })
+    params.emitSendToRepeater(buildHttpExchangeRequestFromHistory(request))
     hideContextMenu()
   }
 
   const sendToIntruder = async () => {
     const request = await resolveRequestDetails(params.contextMenu.value.request)
     if (!request) return
-    params.emitSendToIntruder({
-      method: request.method,
-      url: request.url,
-      headers: buildHeaders(request),
-      body: request.request_body || undefined,
-    })
+    params.emitSendToIntruder(buildHttpExchangeRequestFromHistory(request))
     hideContextMenu()
   }
 
@@ -332,12 +304,7 @@ export const useProxyHistoryActions = (params: Params) => {
     const request = await resolveRequestDetails(params.contextMenu.value.request)
     if (!request) return
     params.emitSendDraftRequestToComparer({
-      request: {
-        method: request.method,
-        url: request.url,
-        headers: buildHeaders(request),
-        body: request.request_body || undefined,
-      },
+      request: buildHttpExchangeRequestFromHistory(request),
       name: request.host || request.url,
       label: params.t('trafficAnalysis.history.detailsPanel.request'),
     })
@@ -609,7 +576,8 @@ export const useProxyHistoryActions = (params: Params) => {
           url: request.url,
           method: request.method,
           host: request.host,
-          protocol: request.protocol,
+          scheme: request.scheme,
+          http_version_observed: request.http_version_observed,
           status_code: request.status_code,
           request_headers: request.request_headers,
           request_body: request.request_body,
@@ -683,14 +651,10 @@ export const useProxyHistoryActions = (params: Params) => {
           creator: { name: 'Sentinel AI', version: '1.0.0' },
           entries: detailedSelected.map((request) => {
             const requestHeaders = buildHeaders(request)
-            let responseHeaders: Record<string, string> = {}
-            if (request.response_headers) {
-              try {
-                responseHeaders = JSON.parse(request.response_headers) as Record<string, string>
-              } catch {
-                responseHeaders = {}
-              }
-            }
+            const responseHeaders = parseStoredHeaderEntries(request.response_headers)
+            const requestContentType = requestHeaders.find((header) => header.name.toLowerCase() === 'content-type')?.value
+            const responseContentType = responseHeaders.find((header) => header.name.toLowerCase() === 'content-type')?.value
+            const httpVersion = normalizeProxyHistoryHttpVersion(request.http_version_observed)
             const urlObj = new URL(request.url)
             return {
               startedDateTime: request.timestamp,
@@ -698,26 +662,26 @@ export const useProxyHistoryActions = (params: Params) => {
               request: {
                 method: request.method,
                 url: request.url,
-                httpVersion: 'HTTP/1.1',
-                headers: Object.entries(requestHeaders).map(([name, value]) => ({ name, value })),
+                httpVersion,
+                headers: requestHeaders.map((header) => ({ name: header.name, value: header.value })),
                 queryString: Array.from(urlObj.searchParams.entries()).map(([name, value]) => ({ name, value })),
                 cookies: [],
                 headersSize: -1,
                 bodySize: request.request_body ? request.request_body.length : 0,
                 postData: request.request_body ? {
-                  mimeType: requestHeaders['content-type'] || 'text/plain',
+                  mimeType: requestContentType || 'text/plain',
                   text: request.request_body,
                 } : undefined,
               },
               response: {
                 status: request.status_code || 0,
                 statusText: getHarStatusText(request.status_code),
-                httpVersion: 'HTTP/1.1',
-                headers: Object.entries(responseHeaders).map(([name, value]) => ({ name, value })),
+                httpVersion,
+                headers: responseHeaders.map((header) => ({ name: header.name, value: header.value })),
                 cookies: [],
                 content: {
                   size: request.response_size || 0,
-                  mimeType: responseHeaders['content-type'] || 'text/plain',
+                  mimeType: responseContentType || 'text/plain',
                   text: request.response_body || '',
                 },
                 redirectURL: '',

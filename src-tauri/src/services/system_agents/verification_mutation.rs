@@ -285,7 +285,10 @@ fn parameter_matches(key: &str, parameter_keys: &[String]) -> bool {
 fn apply_mutation_to_value(value: &Value, mutation_kind: &str) -> Result<Value> {
     match value {
         Value::Number(number) => apply_mutation_to_json_number(number, mutation_kind),
-        Value::String(text) => Ok(Value::String(apply_mutation_to_scalar(text, mutation_kind)?)),
+        Value::String(text) => Ok(Value::String(apply_mutation_to_scalar(
+            text,
+            mutation_kind,
+        )?)),
         _ => Err(anyhow!(
             "Unsupported business-parameter mutation target type: {:?}",
             value
@@ -293,7 +296,10 @@ fn apply_mutation_to_value(value: &Value, mutation_kind: &str) -> Result<Value> 
     }
 }
 
-fn apply_mutation_to_json_number(number: &serde_json::Number, mutation_kind: &str) -> Result<Value> {
+fn apply_mutation_to_json_number(
+    number: &serde_json::Number,
+    mutation_kind: &str,
+) -> Result<Value> {
     let current = number
         .as_i64()
         .ok_or_else(|| anyhow!("Unsupported numeric mutation target: {}", number))?;
@@ -337,9 +343,12 @@ fn apply_mutation_to_scalar(value: &str, mutation_kind: &str) -> Result<String> 
 
 fn increment_scalar(value: &str) -> Result<String> {
     let trimmed = value.trim();
-    let parsed = trimmed
-        .parse::<i64>()
-        .map_err(|_| anyhow!("increment_one requires an integer-like scalar target: {}", value))?;
+    let parsed = trimmed.parse::<i64>().map_err(|_| {
+        anyhow!(
+            "increment_one requires an integer-like scalar target: {}",
+            value
+        )
+    })?;
     Ok((parsed + 1).to_string())
 }
 

@@ -36,8 +36,22 @@ pub struct RagService<D: RagDatabase> {
 const SQLITE_VECTOR_DB_FILENAME: &str = "rag_vectors.db";
 const SQLITE_MEMORY_LEXICAL_DB_FILENAME: &str = "rag_memory_lexical.db";
 const LEGACY_LANCEDB_DIR_NAME: &str = "lancedb";
+const AGENT_MEMORY_COLLECTION_NAME: &str = "agent_memory";
 
 impl<D: RagDatabase> RagService<D> {
+    fn resolve_state_dir() -> PathBuf {
+        if let Ok(explicit) = std::env::var("SENTINEL_STATE_DIR") {
+            let trimmed = explicit.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed);
+            }
+        }
+
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("sentinel-ai")
+    }
+
     fn normalize_sqlite_database_path(path: &Path) -> PathBuf {
         if path.as_os_str().is_empty() {
             return PathBuf::from(SQLITE_VECTOR_DB_FILENAME);
@@ -77,9 +91,7 @@ impl<D: RagDatabase> RagService<D> {
             .map(|p| {
                 // 如果是相对路径，转换为应用数据目录下的绝对路径
                 if p.is_relative() {
-                    let app_data_dir = dirs::data_dir()
-                        .unwrap_or_else(|| std::path::PathBuf::from("."))
-                        .join("sentinel-ai");
+                    let app_data_dir = Self::resolve_state_dir();
                     app_data_dir.join(p).to_string_lossy().to_string()
                 } else {
                     p.to_string_lossy().to_string()
@@ -87,9 +99,7 @@ impl<D: RagDatabase> RagService<D> {
             })
             .unwrap_or_else(|| {
                 // 默认路径也使用应用数据目录
-                let app_data_dir = dirs::data_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("sentinel-ai");
+                let app_data_dir = Self::resolve_state_dir();
                 app_data_dir
                     .join("rag_vectors.db")
                     .to_string_lossy()
@@ -256,7 +266,11 @@ impl<D: RagDatabase> RagService<D> {
         &self,
         collection_name: &str,
     ) -> Result<usize> {
-        let Some(collection) = self.database.get_rag_collection_by_name(collection_name).await? else {
+        let Some(collection) = self
+            .database
+            .get_rag_collection_by_name(collection_name)
+            .await?
+        else {
             return Ok(0);
         };
 
@@ -279,11 +293,7 @@ impl<D: RagDatabase> RagService<D> {
                 continue;
             }
 
-            let tags = document
-                .metadata
-                .get("tags")
-                .cloned()
-                .unwrap_or_default();
+            let tags = document.metadata.get("tags").cloned().unwrap_or_default();
             let tag_items = tags
                 .split(',')
                 .map(str::trim)
@@ -1047,8 +1057,6 @@ impl<D: RagDatabase> RagService<D> {
 
     /// 查询相似文档 - 使用 Rig + SQLite
     pub async fn query(&self, request: RagQueryRequest) -> Result<RagQueryResponse> {
-        info!("执行RAG查询 (使用 Rig + SQLite): {}", request.query);
-
         let start_time = std::time::Instant::now();
 
         // 获取集合名称
@@ -1066,6 +1074,11 @@ impl<D: RagDatabase> RagService<D> {
         } else {
             "default".to_string()
         };
+        let should_log_query = collection_name != AGENT_MEMORY_COLLECTION_NAME;
+
+        if should_log_query {
+            info!("执行RAG查询 (使用 Rig + SQLite): {}", request.query);
+        }
 
         let top_k = request.top_k.unwrap_or(5);
 
@@ -1075,14 +1088,16 @@ impl<D: RagDatabase> RagService<D> {
             .search_similar(&collection_name, &request.query, top_k)
             .await?;
 
-        info!("Vector search returned {} results", query_results.len());
-        for (i, r) in query_results.iter().enumerate() {
-            info!(
-                "  Result {}: score={:.4}, content_preview={}",
-                i + 1,
-                r.score,
-                r.chunk.content.chars().take(50).collect::<String>()
-            );
+        if should_log_query {
+            info!("Vector search returned {} results", query_results.len());
+            for (i, r) in query_results.iter().enumerate() {
+                info!(
+                    "  Result {}: score={:.4}, content_preview={}",
+                    i + 1,
+                    r.score,
+                    r.chunk.content.chars().take(50).collect::<String>()
+                );
+            }
         }
 
         // Deduplicate by content_hash to prevent duplicate chunks from multiple ingestions
@@ -1100,7 +1115,7 @@ impl<D: RagDatabase> RagService<D> {
         });
         let after_dedup = query_results.len();
 
-        if before_dedup > after_dedup {
+        if should_log_query && before_dedup > after_dedup {
             info!(
                 "Removed {} duplicate chunks (content_hash deduplication)",
                 before_dedup - after_dedup
@@ -1110,7 +1125,9 @@ impl<D: RagDatabase> RagService<D> {
         // 先进行chunk上下文扩展（在相似度过滤之前）
         // 这样可以确保POC等重要文档的完整性，即使某些部分相似度较低
         query_results = self.expand_chunk_context(query_results).await?;
-        info!("After chunk expansion: {} results", query_results.len());
+        if should_log_query {
+            info!("After chunk expansion: {} results", query_results.len());
+        }
 
         // 第二轮去重：去除扩展后产生的重复内容
         // 场景：同一个文档的不同chunk被检索到，扩展后变成了完全相同的内容
@@ -1131,10 +1148,12 @@ impl<D: RagDatabase> RagService<D> {
                 seen_expanded_hashes.insert(hash.clone());
                 unique_results.push(result);
             } else {
-                info!(
-                    "Removed duplicate expanded content (score: {:.4})",
-                    result.score
-                );
+                if should_log_query {
+                    info!(
+                        "Removed duplicate expanded content (score: {:.4})",
+                        result.score
+                    );
+                }
             }
         }
         query_results = unique_results;
@@ -1143,7 +1162,9 @@ impl<D: RagDatabase> RagService<D> {
         let similarity_threshold = request
             .similarity_threshold
             .unwrap_or(self._config.similarity_threshold as f64);
-        info!("Applying similarity threshold: {:.2}", similarity_threshold);
+        if should_log_query {
+            info!("Applying similarity threshold: {:.2}", similarity_threshold);
+        }
         let before_filter = query_results.len();
         query_results.retain(|r| {
             // 扩展后的chunk跳过相似度过滤
@@ -1156,10 +1177,12 @@ impl<D: RagDatabase> RagService<D> {
                 .unwrap_or(false);
 
             if skip_filter {
-                info!(
-                    "Skipping similarity filter for expanded chunk: {}",
-                    r.chunk.id
-                );
+                if should_log_query {
+                    info!(
+                        "Skipping similarity filter for expanded chunk: {}",
+                        r.chunk.id
+                    );
+                }
                 true
             } else {
                 r.score >= similarity_threshold
@@ -1167,7 +1190,7 @@ impl<D: RagDatabase> RagService<D> {
         });
         let after_filter = query_results.len();
 
-        if before_filter > after_filter {
+        if should_log_query && before_filter > after_filter {
             info!(
                 "Filtered out {} results below similarity threshold {:.2}",
                 before_filter - after_filter,
@@ -1175,16 +1198,18 @@ impl<D: RagDatabase> RagService<D> {
             );
         }
 
-        if query_results.is_empty() {
-            info!(
-                "No results above similarity threshold {:.2}, returning empty",
-                similarity_threshold
-            );
-        } else {
-            info!(
-                "Returning {} results after threshold filter",
-                query_results.len()
-            );
+        if should_log_query {
+            if query_results.is_empty() {
+                info!(
+                    "No results above similarity threshold {:.2}, returning empty",
+                    similarity_threshold
+                );
+            } else {
+                info!(
+                    "Returning {} results after threshold filter",
+                    query_results.len()
+                );
+            }
         }
 
         // 构建上下文
@@ -1584,8 +1609,6 @@ impl<D: RagDatabase> RagService<D> {
 
     /// 获取RAG状态
     pub async fn get_status(&self) -> Result<RagStatus> {
-        info!("获取RAG状态");
-
         let collections = self.database.get_rag_collections().await?;
         let total_documents: usize = collections.iter().map(|c| c.document_count).sum();
         let total_chunks: usize = collections.iter().map(|c| c.chunk_count).sum();

@@ -24,10 +24,10 @@ use crate::services::system_agents::findings::persist_passive_agent_finding;
 use crate::services::system_agents::language::{output_language_instruction, resolve_ui_language};
 use crate::services::system_agents::logic_hypotheses::build_logic_hypotheses;
 use crate::services::system_agents::logic_invariants::evaluate_logic_invariants;
+use crate::services::system_agents::logic_skill_context::build_logic_skill_context;
 use crate::services::system_agents::logic_sop_context::{
     build_logic_sop_context, render_logic_sop_prompt,
 };
-use crate::services::system_agents::logic_skill_context::build_logic_skill_context;
 use crate::services::system_agents::process_graph::build_process_graph;
 use crate::services::system_agents::prompts::{
     resolve_base_prompt, triage_verification_bootstrap_prompt,
@@ -52,6 +52,7 @@ use crate::services::system_agents::verification_hypothesis_memory::{
 };
 use crate::services::system_agents::verifier::verify_finding_for_runtime;
 use crate::services::AiServiceManager;
+use sentinel_tools::buildin_tools::SopsTool;
 
 #[derive(Debug)]
 pub struct SystemAgentRuntime {
@@ -851,6 +852,10 @@ impl SystemAgentRuntime {
                 sop_prompt
             ));
         }
+        prompt_sections.push(format!(
+            "For additional SOP lookup, use the `sops` tool with profile_id=\"{}\". Treat `sops` as the source of truth for this background agent's registered SOP catalog.",
+            profile.id
+        ));
         if let Some(tool_policy_note) = tool_policy.prompt_note() {
             prompt_sections.push(tool_policy_note);
         }
@@ -860,7 +865,10 @@ impl SystemAgentRuntime {
         if let Some(object) = effective_payload.as_object_mut() {
             if !object.contains_key("logicSopContext") {
                 let logic_sop_context = build_logic_sop_context(profile, payload);
-                if logic_sop_context.as_array().is_some_and(|items| !items.is_empty()) {
+                if logic_sop_context
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+                {
                     object.insert("logicSopContext".to_string(), logic_sop_context);
                 }
             }
@@ -874,7 +882,9 @@ impl SystemAgentRuntime {
             "payload": effective_payload,
         }))?;
 
-        if let Some(tool_config) = tool_policy.build_runtime_tool_config() {
+        if let Some(tool_config) =
+            Self::build_system_agent_runtime_tool_config(profile, &tool_policy)
+        {
             let raw = self
                 .run_profile_with_agent_executor(
                     profile,
@@ -949,11 +959,7 @@ impl SystemAgentRuntime {
         Ok(normalize_llm_json_output(&raw))
     }
 
-    async fn bootstrap_triage_verification_plan(
-        &self,
-        payload: &Value,
-        output: Value,
-    ) -> Value {
+    async fn bootstrap_triage_verification_plan(&self, payload: &Value, output: Value) -> Value {
         if !should_attempt_triage_bootstrap(&output) {
             return output;
         }
@@ -1050,6 +1056,8 @@ impl SystemAgentRuntime {
             model: config.model.clone(),
             system_prompt,
             task,
+            active_terminal_session_fingerprint: None,
+            active_terminal_session_id: None,
             rig_provider: config
                 .rig_provider
                 .clone()
@@ -1093,12 +1101,51 @@ impl SystemAgentRuntime {
             }
         }
         let logic_sop_context = build_logic_sop_context(profile, &enriched);
-        if logic_sop_context.as_array().is_some_and(|items| !items.is_empty()) {
+        if logic_sop_context
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+        {
             if let Some(object) = enriched.as_object_mut() {
                 object.insert("logicSopContext".to_string(), logic_sop_context);
             }
         }
         enriched
+    }
+
+    fn build_system_agent_runtime_tool_config(
+        profile: &SystemAgentProfileRecord,
+        tool_policy: &SystemAgentToolPolicy,
+    ) -> Option<crate::agents::ToolConfig> {
+        let config = tool_policy.build_runtime_tool_config();
+        let should_inject_sops = profile.mode == "passive"
+            && !tool_policy
+                .forbidden
+                .iter()
+                .any(|tool_id| tool_id == SopsTool::NAME);
+
+        if !should_inject_sops {
+            return config;
+        }
+
+        let mut effective = config.unwrap_or_default();
+        if !effective
+            .fixed_tools
+            .iter()
+            .any(|tool_id| tool_id == SopsTool::NAME)
+        {
+            effective.fixed_tools.push(SopsTool::NAME.to_string());
+        }
+        if !effective.allowed_tools.is_empty()
+            && !effective
+                .allowed_tools
+                .iter()
+                .any(|tool_id| tool_id == SopsTool::NAME)
+        {
+            effective.allowed_tools.push(SopsTool::NAME.to_string());
+        }
+        effective.max_tools = effective.max_tools.max(effective.fixed_tools.len()).max(1);
+        effective.enabled = true;
+        Some(effective)
     }
 
     async fn check_runtime_limits(
@@ -1682,7 +1729,6 @@ fn ensure_triage_output_hypothesis_state(output: Value, payload: &Value) -> Valu
 mod tests {
     use super::*;
     use serde_json::json;
-
     #[test]
     fn preserves_seeded_hypothesis_state_when_triage_output_omits_it() {
         let payload = json!({
@@ -1710,5 +1756,93 @@ mod tests {
                 .and_then(Value::as_str),
             Some("The action may violate single-use expectations.")
         );
+    }
+
+    #[test]
+    fn passive_profiles_inject_sops_tool_by_default() {
+        let profile = SystemAgentProfileRecord {
+            id: "traffic_logic_triage".to_string(),
+            name: "Traffic Logic Triage".to_string(),
+            description: String::new(),
+            mode: "passive".to_string(),
+            capability: "triage".to_string(),
+            enabled: true,
+            trigger_mode: "event".to_string(),
+            llm_provider_override: None,
+            llm_model_override: None,
+            base_prompt_id: None,
+            prompt_patch: None,
+            sop_definitions_json: "[]".to_string(),
+            input_schema_json: "{}".to_string(),
+            output_schema_json: "{}".to_string(),
+            required_tools_json: "[]".to_string(),
+            optional_tools_json: "[]".to_string(),
+            forbidden_tools_json: "[]".to_string(),
+            trigger_events_json: "[]".to_string(),
+            budget_json: "{}".to_string(),
+            safety_policy_json: "{}".to_string(),
+            cooldown_secs: 0,
+            max_concurrency: 1,
+            risk_level: "high".to_string(),
+            visibility: "system".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let config = SystemAgentRuntime::build_system_agent_runtime_tool_config(
+            &profile,
+            &SystemAgentToolPolicy::from_profile(&profile),
+        )
+        .expect("sops tool should be injected");
+
+        assert!(matches!(
+            config.selection_strategy,
+            crate::agents::ToolSelectionStrategy::Keyword
+        ));
+        assert!(config.fixed_tools.iter().any(|tool| tool == SopsTool::NAME));
+    }
+
+    #[test]
+    fn forbidden_sops_tool_is_respected() {
+        let profile = SystemAgentProfileRecord {
+            id: "traffic_logic_triage".to_string(),
+            name: "Traffic Logic Triage".to_string(),
+            description: String::new(),
+            mode: "passive".to_string(),
+            capability: "triage".to_string(),
+            enabled: true,
+            trigger_mode: "event".to_string(),
+            llm_provider_override: None,
+            llm_model_override: None,
+            base_prompt_id: None,
+            prompt_patch: None,
+            sop_definitions_json: "[]".to_string(),
+            input_schema_json: "{}".to_string(),
+            output_schema_json: "{}".to_string(),
+            required_tools_json: "[]".to_string(),
+            optional_tools_json: "[]".to_string(),
+            forbidden_tools_json: serde_json::to_string(&vec![SopsTool::NAME]).unwrap(),
+            trigger_events_json: "[]".to_string(),
+            budget_json: "{}".to_string(),
+            safety_policy_json: "{}".to_string(),
+            cooldown_secs: 0,
+            max_concurrency: 1,
+            risk_level: "high".to_string(),
+            visibility: "system".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let config = SystemAgentRuntime::build_system_agent_runtime_tool_config(
+            &profile,
+            &SystemAgentToolPolicy::from_profile(&profile),
+        )
+        .expect("forbidden policy should still return runtime restrictions");
+
+        assert!(!config.fixed_tools.iter().any(|tool| tool == SopsTool::NAME));
+        assert!(config
+            .disabled_tools
+            .iter()
+            .any(|tool| tool == SopsTool::NAME));
     }
 }

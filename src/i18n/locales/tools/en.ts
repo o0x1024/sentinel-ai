@@ -187,6 +187,37 @@ Any other command will be executed in the system shell.`,
     reject: 'Reject',
     alwaysAccept: 'Always Accept',
     alwaysAcceptHint: 'Add this command to allow list and execute',
+    allowRulePreviewTitle: 'Always Accept will save these rules:',
+    semanticLabels: {
+      readOnly: 'Read-only',
+      mutating: 'Mutating',
+      dangerous: 'High-risk'
+    },
+    semanticSummaries: {
+      readOnly: 'Read-only command detected.',
+      mutating: 'Command may change files, processes, or system state.',
+      dangerous: 'High-risk command detected.'
+    },
+    semanticReasons: {
+      readOnly: 'The command appears to inspect files, git state, or system information without changing state.',
+      mutating: 'This command is not recognized as read-only and may modify files, processes, or system state.',
+      dangerousPrivilegeEscalation: 'The command attempts to escalate privileges.',
+      dangerousUserContextSwitch: 'The command attempts to switch user context.'
+    },
+    allowRuleReasons: {
+      keepOriginalReadOnly: 'No narrower safe prefix was recognized, so the original read-only command is kept.',
+      narrowReadOnlyBase: 'Rule narrowed to the read-only base command so future approvals stay reusable without widening scope.',
+      narrowTestCommand: 'Rule narrowed to the read-only test command.',
+      narrowCommandExists: 'Rule narrowed to command-existence checks.',
+      narrowFind: 'Rule narrowed to read-only file discovery.',
+      narrowGitInspection: 'Rule narrowed to git inspection commands.',
+      narrowGitSubcommand: 'Rule narrowed to the specific read-only git subcommand.',
+      narrowGitRemoteShow: 'Rule narrowed to read-only git remote inspection.',
+      narrowGitRemoteGetUrl: 'Rule narrowed to read-only git remote URL inspection.',
+      narrowGitStashList: 'Rule narrowed to read-only stash listing.',
+      narrowGitStashShow: 'Rule narrowed to read-only stash inspection.',
+      exactMutatingSubcommand: 'Mutating commands keep the exact subcommand to avoid broadening future approvals.'
+    },
     success: 'Success',
     failed: 'Failed',
     copyAll: 'Copy',

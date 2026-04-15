@@ -1,12 +1,19 @@
-import type { UiToolConfigPayload } from './toolConfigRuntime'
+import {
+  normalizeUiToolConfigPayload,
+  type UiToolConfigPayload,
+} from './toolConfigRuntime'
 
-export const buildPersistableToolConfig = (config: UiToolConfigPayload) => ({
-  disabled_tools: config.disabled_tools,
-  enabled: config.enabled,
-  fixed_tools: config.fixed_tools,
-  max_tools: config.max_tools,
-  selection_strategy: config.selection_strategy,
-})
+export const buildPersistableToolConfig = (config: UiToolConfigPayload) => {
+  const normalized = normalizeUiToolConfigPayload(config)
+  return {
+    disabled_tools: normalized.disabled_tools,
+    enabled: normalized.enabled,
+    fixed_tools: normalized.fixed_tools,
+    max_tools: normalized.max_tools,
+    selection_strategy: normalized.selection_strategy,
+    allowed_tools: normalized.allowed_tools || [],
+  }
+}
 
 export const buildPersistableToolConfigSignature = (config: UiToolConfigPayload): string => (
   JSON.stringify(buildPersistableToolConfig(config))

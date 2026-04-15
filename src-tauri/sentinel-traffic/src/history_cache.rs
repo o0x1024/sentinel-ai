@@ -25,7 +25,8 @@ pub struct HttpRequestRecord {
     pub db_request_id: Option<i64>,
     pub url: String,
     pub host: String,
-    pub protocol: String,
+    pub scheme: String,
+    pub http_version_observed: Option<String>,
     pub method: String,
     pub status_code: i32,
     pub request_headers: Option<String>,
@@ -69,7 +70,8 @@ pub struct HttpRequestSummary {
     pub db_request_id: Option<i64>,
     pub url: String,
     pub host: String,
-    pub protocol: String,
+    pub scheme: String,
+    pub http_version_observed: Option<String>,
     pub method: String,
     pub status_code: i32,
     pub request_headers: Option<String>,
@@ -181,7 +183,7 @@ impl ProxyHistoryItem {
 /// HTTP 请求过滤条件
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HttpRequestFilters {
-    pub protocol: Option<String>,
+    pub scheme: Option<String>,
     pub method: Option<String>,
     pub host: Option<String>,
     pub status_code_min: Option<i32>,
@@ -436,8 +438,8 @@ impl ProxyHistoryCache {
     }
 
     fn matches_http_filters(record: &HttpRequestRecord, filters: &HttpRequestFilters) -> bool {
-        if let Some(ref protocol) = filters.protocol {
-            if &record.protocol != protocol {
+        if let Some(ref scheme) = filters.scheme {
+            if &record.scheme != scheme {
                 return false;
             }
         }
@@ -877,7 +879,8 @@ impl From<&HttpRequestRecord> for HttpRequestSummary {
             db_request_id: record.db_request_id,
             url: record.url.clone(),
             host: record.host.clone(),
-            protocol: record.protocol.clone(),
+            scheme: record.scheme.clone(),
+            http_version_observed: record.http_version_observed.clone(),
             method: record.method.clone(),
             status_code: record.status_code,
             request_headers: record.request_headers.clone(),

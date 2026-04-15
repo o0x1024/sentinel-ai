@@ -8,7 +8,8 @@ export const pickLatestConversation = (
   }
 
   const sorted = [...conversations].sort((a, b) => (
-    new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime()
+    new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    || new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime()
   ))
   return sorted[0] || null
 }

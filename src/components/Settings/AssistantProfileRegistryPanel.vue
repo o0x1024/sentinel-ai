@@ -1,17 +1,6 @@
 <template>
   <div class="card bg-transparent shadow-none">
     <div class="card-body gap-4 px-0 py-0">
-      <div class="flex flex-wrap items-center gap-2">
-        <div class="flex items-center gap-2">
-          <button class="btn btn-sm btn-ghost" :disabled="loading" @click="reloadProfiles">
-            刷新
-          </button>
-          <button class="btn btn-sm btn-primary" :disabled="!canSave" @click="saveProfiles">
-            {{ isSavingAssistantProfiles ? '保存中...' : '保存' }}
-          </button>
-        </div>
-      </div>
-
       <div v-if="loading" class="flex items-center justify-center py-10">
         <span class="loading loading-spinner loading-lg" />
       </div>
@@ -32,6 +21,19 @@
         </AgentListPanel>
 
         <SystemAgentDetailLayout :has-selection="!!selectedProfile">
+          <template #toolbar>
+            <div class="flex flex-wrap items-center justify-end gap-3">
+              <SystemAgentAutoSaveStatusBar
+                :status-text="autoSaveStatusText"
+                :status-class="autoSaveStatusClass"
+              />
+              <button class="btn btn-sm btn-ghost" :disabled="loading" @click="reloadProfiles">
+                <i class="fas fa-rotate mr-1"></i>
+                刷新
+              </button>
+            </div>
+          </template>
+
           <template #empty>
             <div class="py-12 text-center text-base-content/60">
               请选择一个交互型 Agent。
@@ -48,7 +50,7 @@
               >
                 <template #badges>
                   <span
-                    v-if="defaultAssistantProfileId === selectedProfile.id"
+                    v-if="draftDefaultAssistantProfileId === selectedProfile.id"
                     class="badge badge-primary badge-sm"
                   >
                     默认入口
@@ -57,13 +59,19 @@
 
                 <template #actions>
                   <div class="flex flex-wrap items-center justify-end gap-2">
-                    <button
-                      class="btn btn-sm btn-outline"
-                      :disabled="!selectedProfile || isSavingDefaultAssistantProfile"
-                      @click="saveSelectedAsDefault"
-                    >
-                      {{ defaultAssistantProfileId === selectedProfile.id ? '当前默认 Agent' : '设为默认 Agent' }}
-                    </button>
+                    <label class="label cursor-pointer justify-start gap-3">
+                      <input
+                        :checked="draftDefaultAssistantProfileId === selectedProfile.id"
+                        :disabled="!selectedProfile || isSavingDefaultAssistantProfile"
+                        type="radio"
+                        name="assistant-default-profile"
+                        class="radio radio-primary radio-sm"
+                        @change="markSelectedAsDefault"
+                      />
+                      <span class="label-text">
+                        {{ draftDefaultAssistantProfileId === selectedProfile.id ? '默认' : '设为默认' }}
+                      </span>
+                    </label>
                     <button
                       class="btn btn-sm btn-error btn-outline"
                       :disabled="draftProfiles.length <= 1"
@@ -107,8 +115,8 @@
                 description="配置交互型 Agent 默认使用的 provider/model；不设置时跟随 AI 全局默认。"
                 provider-label="默认提供商"
                 model-label="默认模型"
-                :provider-value="selectedProfileDefaultProvider"
-                :model-value="selectedProfileDefaultModel"
+                :provider-value="selectedProfileDefaultProviderDraft"
+                :model-value="selectedProfileDefaultModelDraft"
                 :provider-options="aiProviderOptions"
                 :model-options="selectedProfileModelOptions"
                 :global-default-label="aiDefaultModelLabel"
@@ -240,7 +248,7 @@
 
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { AssistantProfileOption } from '@/components/Agent/assistantProfiles'
 import { useAssistantProfiles } from '@/components/Agent/assistantProfiles'
 import ToolConfigPanel from '@/components/Agent/ToolConfigPanel.vue'
@@ -252,6 +260,7 @@ import AgentWorkspaceTabs from '@/components/Settings/AgentWorkspaceTabs.vue'
 import type { AgentListItemViewModel } from '@/components/Settings/agentListItemSupport'
 import type { UiToolConfigPayload } from '@/components/Agent/toolConfigRuntime'
 import AssistantAgentOverviewPanel from '@/components/Settings/assistant-agent/AssistantAgentOverviewPanel.vue'
+import SystemAgentAutoSaveStatusBar from '@/components/Settings/system-agent/SystemAgentAutoSaveStatusBar.vue'
 import SystemAgentDetailLayout from '@/components/Settings/system-agent/SystemAgentDetailLayout.vue'
 import {
   ASSISTANT_AGENT_LIST_FILTER_OPTIONS,
@@ -268,6 +277,7 @@ import {
   teamOrchestrationPresetOptions,
   teamRecoveryPresetOptions,
 } from '@/components/Settings/assistantProfileRegistrySupport'
+import { dialog } from '@/composables/useDialog'
 
 const {
   defaultAssistantProfileId,
@@ -283,12 +293,18 @@ const {
 } = useAssistantProfiles()
 
 type WorkspaceTabKey = 'overview' | 'config'
+type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 
 const draftProfiles = ref<AssistantProfileOption[]>([])
+const draftDefaultAssistantProfileId = ref('')
 const selectedProfileId = ref('')
 const activeWorkspaceTab = ref<WorkspaceTabKey>('overview')
 const aiConfig = ref<any | null>(null)
 const selectedProfileModelDatalistId = 'assistant-profile-default-model-options'
+const autoSaveState = ref<AutoSaveState>('idle')
+const suspendAutoSave = ref(false)
+const lastSavedProfilesSnapshot = ref('')
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 const normalizeProviderName = (provider: string) => {
   const lower = provider.toLowerCase()
@@ -342,20 +358,37 @@ const aiDefaultModelLabel = computed(() => {
   return defaultModel || '未设置，跟随 AI 全局默认'
 })
 
-const selectedProfileDefaultProvider = computed(() => {
-  const defaultModel = selectedProfile.value?.defaultModel?.trim() || ''
-  if (!defaultModel.includes('/')) return ''
-  return defaultModel.slice(0, defaultModel.indexOf('/')).toLowerCase()
-})
+const selectedProfileDefaultProviderDraft = ref('')
+const selectedProfileDefaultModelDraft = ref('')
 
-const selectedProfileDefaultModel = computed(() => {
-  const defaultModel = selectedProfile.value?.defaultModel?.trim() || ''
-  if (!defaultModel.includes('/')) return defaultModel
-  return defaultModel.slice(defaultModel.indexOf('/') + 1)
-})
+const splitDefaultModel = (defaultModel: string | null | undefined) => {
+  const normalized = defaultModel?.trim() || ''
+  if (!normalized) {
+    return {
+      provider: '',
+      model: '',
+    }
+  }
+  if (!normalized.includes('/')) {
+    return {
+      provider: '',
+      model: normalized,
+    }
+  }
+  return {
+    provider: normalized.slice(0, normalized.indexOf('/')).toLowerCase(),
+    model: normalized.slice(normalized.indexOf('/') + 1),
+  }
+}
+
+const syncSelectedProfileModelDraft = (profile: AssistantProfileOption | null = selectedProfile.value) => {
+  const { provider, model } = splitDefaultModel(profile?.defaultModel)
+  selectedProfileDefaultProviderDraft.value = provider
+  selectedProfileDefaultModelDraft.value = model
+}
 
 const selectedProfileModelOptions = computed(() => {
-  const providerConfig = getProviderConfigByKey(selectedProfileDefaultProvider.value)
+  const providerConfig = getProviderConfigByKey(selectedProfileDefaultProviderDraft.value)
   const models = Array.isArray(providerConfig?.models) ? providerConfig.models : []
   const out = models.map((model: any) => {
     const value = extractModelId(model)
@@ -377,7 +410,9 @@ const selectedProfileModelOptions = computed(() => {
 const updateSelectedProfileDefaultProvider = (value: string) => {
   if (!selectedProfile.value) return
   const provider = value.trim()
+  selectedProfileDefaultProviderDraft.value = provider
   if (!provider) {
+    selectedProfileDefaultModelDraft.value = ''
     selectedProfile.value.defaultModel = null
     return
   }
@@ -387,13 +422,22 @@ const updateSelectedProfileDefaultProvider = (value: string) => {
     ? providerConfig.models.map(extractModelId).find((modelId: string) => !!modelId) || ''
     : ''
   const model = providerDefaultModel || firstModel
+  selectedProfileDefaultModelDraft.value = model
   selectedProfile.value.defaultModel = model ? `${provider}/${model}` : null
 }
 
 const updateSelectedProfileDefaultModel = (value: string) => {
-  if (!selectedProfile.value || !selectedProfileDefaultProvider.value) return
+  if (!selectedProfile.value) return
+  selectedProfileDefaultModelDraft.value = value
+
+  const provider = selectedProfileDefaultProviderDraft.value.trim()
+  if (!provider) {
+    selectedProfile.value.defaultModel = null
+    return
+  }
+
   const model = value.trim()
-  selectedProfile.value.defaultModel = model ? `${selectedProfileDefaultProvider.value}/${model}` : null
+  selectedProfile.value.defaultModel = model ? `${provider}/${model}` : null
 }
 
 const selectedProfileToolConfig = computed(() =>
@@ -464,7 +508,7 @@ const assistantListItems = computed<AgentListItemViewModel[]>(() =>
   draftProfiles.value.map(profile => {
     const badges = []
 
-    if (defaultAssistantProfileId.value === profile.id) {
+    if (draftDefaultAssistantProfileId.value === profile.id) {
       badges.push({
         label: '默认',
         className: 'badge-primary',
@@ -489,7 +533,7 @@ const assistantListItems = computed<AgentListItemViewModel[]>(() =>
         profile.defaultTeamRecoveryPresetId || '',
       ].join(' '),
       filterKeys: [
-        ...(defaultAssistantProfileId.value === profile.id ? ['default'] : []),
+        ...(draftDefaultAssistantProfileId.value === profile.id ? ['default'] : []),
         profile.runMode === 'team' ? 'team' : 'assistant',
         profile.defaultModel?.trim() ? 'model-override' : 'model-global',
         profile.defaultToolsEnabled ? 'tools-on' : 'tools-off',
@@ -497,7 +541,7 @@ const assistantListItems = computed<AgentListItemViewModel[]>(() =>
     }
   })
 )
-const canSave = computed(
+const canSaveProfiles = computed(
   () =>
     !loading.value
     && !isSavingAssistantProfiles.value
@@ -507,31 +551,152 @@ const canSave = computed(
     )
 )
 
-const resetDraftProfiles = (profiles: AssistantProfileOption[]) => {
+const buildProfilesSnapshot = (profiles: AssistantProfileOption[]) =>
+  JSON.stringify(profiles.map(normalizeAssistantProfileDraft))
+
+const currentDraftStateSnapshot = computed(() =>
+  JSON.stringify({
+    profiles: draftProfiles.value.map(normalizeAssistantProfileDraft),
+    defaultProfileId: draftDefaultAssistantProfileId.value.trim(),
+  })
+)
+
+const hasProfileUnsavedChanges = computed(() =>
+  buildProfilesSnapshot(draftProfiles.value) !== lastSavedProfilesSnapshot.value
+)
+
+const hasDefaultProfileUnsavedChanges = computed(() =>
+  draftDefaultAssistantProfileId.value.trim() !== defaultAssistantProfileId.value.trim()
+)
+
+const hasUnsavedChanges = computed(() =>
+  hasProfileUnsavedChanges.value || hasDefaultProfileUnsavedChanges.value
+)
+
+const autoSaveStatusText = computed(() => {
+  if (autoSaveState.value === 'saving') return '自动保存中'
+  if (autoSaveState.value === 'saved') return '已自动保存'
+  if (autoSaveState.value === 'error') return '自动保存失败'
+  if (hasProfileUnsavedChanges.value && !canSaveProfiles.value) return '填写完整后自动保存'
+  return '修改后自动保存'
+})
+
+const autoSaveStatusClass = computed(() => {
+  if (autoSaveState.value === 'saving') return 'text-info'
+  if (autoSaveState.value === 'saved') return 'text-success'
+  if (autoSaveState.value === 'error') return 'text-error'
+  if (hasProfileUnsavedChanges.value && !canSaveProfiles.value) return 'text-warning'
+  return 'text-base-content/60'
+})
+
+const clearAutoSaveTimer = () => {
+  if (!autoSaveTimer) return
+  clearTimeout(autoSaveTimer)
+  autoSaveTimer = null
+}
+
+const resetDraftState = (
+  profiles: AssistantProfileOption[],
+  options?: { preserveStatus?: boolean },
+) => {
+  clearAutoSaveTimer()
   draftProfiles.value = profiles.map(profile => ({ ...profile }))
   if (!draftProfiles.value.some(profile => profile.id === selectedProfileId.value)) {
     selectedProfileId.value = draftProfiles.value[0]?.id || ''
   }
+  draftDefaultAssistantProfileId.value = defaultAssistantProfileId.value
+  lastSavedProfilesSnapshot.value = buildProfilesSnapshot(draftProfiles.value)
+  syncSelectedProfileModelDraft(
+    draftProfiles.value.find(profile => profile.id === selectedProfileId.value) || null
+  )
+  if (!options?.preserveStatus) {
+    autoSaveState.value = 'idle'
+  }
 }
 
 const reloadProfiles = async () => {
-  await Promise.all([
-    loadAssistantProfiles(true),
-    loadDefaultAssistantProfile(true),
-    loadAiConfig(),
-  ])
-  resetDraftProfiles(profileOptions.value)
+  clearAutoSaveTimer()
+  suspendAutoSave.value = true
+  try {
+    await Promise.all([
+      loadAssistantProfiles(true),
+      loadDefaultAssistantProfile(true),
+      loadAiConfig(),
+    ])
+    resetDraftState(profileOptions.value)
+  } finally {
+    suspendAutoSave.value = false
+  }
 }
 
 const loadAiConfig = async () => {
   aiConfig.value = await invoke('get_ai_config')
 }
 
-const saveProfiles = async () => {
-  await saveAssistantProfiles(
-    draftProfiles.value.map(normalizeAssistantProfileDraft)
-  )
-  resetDraftProfiles(profileOptions.value)
+const saveProfilesInternal = async (options?: { silent?: boolean }) => {
+  const shouldSaveProfiles = hasProfileUnsavedChanges.value
+  const shouldSaveDefault = hasDefaultProfileUnsavedChanges.value && !!draftDefaultAssistantProfileId.value.trim()
+
+  if (!shouldSaveProfiles && !shouldSaveDefault) return
+  if (shouldSaveProfiles && !canSaveProfiles.value && !shouldSaveDefault) return
+
+  clearAutoSaveTimer()
+  suspendAutoSave.value = true
+  autoSaveState.value = 'saving'
+  try {
+    if (shouldSaveProfiles && canSaveProfiles.value) {
+      const normalizedProfiles = draftProfiles.value.map(normalizeAssistantProfileDraft)
+      await saveAssistantProfiles(normalizedProfiles)
+      draftProfiles.value = normalizedProfiles.map(profile => ({ ...profile }))
+      lastSavedProfilesSnapshot.value = buildProfilesSnapshot(draftProfiles.value)
+    }
+
+    if (shouldSaveDefault) {
+      const profileId = draftDefaultAssistantProfileId.value.trim()
+      await saveDefaultAssistantProfile(profileId)
+      draftDefaultAssistantProfileId.value = profileId
+    }
+
+    autoSaveState.value = hasUnsavedChanges.value ? 'idle' : 'saved'
+  } catch (error) {
+    console.error('Failed to save assistant profiles:', error)
+    autoSaveState.value = 'error'
+    dialog.toast.error(
+      options?.silent
+        ? '交互型 Agent 配置自动保存失败'
+        : '交互型 Agent 配置保存失败'
+    )
+  } finally {
+    suspendAutoSave.value = false
+    if (hasUnsavedChanges.value) {
+      queueAutoSave()
+    }
+  }
+}
+
+const queueAutoSave = () => {
+  if (
+    suspendAutoSave.value
+    || loading.value
+    || isSavingAssistantProfiles.value
+    || isSavingDefaultAssistantProfile.value
+  ) return
+  if (!hasUnsavedChanges.value) return
+  if (hasProfileUnsavedChanges.value && !canSaveProfiles.value && !hasDefaultProfileUnsavedChanges.value) return
+
+  clearAutoSaveTimer()
+  autoSaveTimer = setTimeout(() => {
+    autoSaveTimer = null
+    if (
+      suspendAutoSave.value
+      || loading.value
+      || isSavingAssistantProfiles.value
+      || isSavingDefaultAssistantProfile.value
+    ) return
+    if (!hasUnsavedChanges.value) return
+    if (hasProfileUnsavedChanges.value && !canSaveProfiles.value && !hasDefaultProfileUnsavedChanges.value) return
+    void saveProfilesInternal({ silent: true })
+  }, 600)
 }
 
 const createProfile = () => {
@@ -557,28 +722,54 @@ const createProfile = () => {
   }
   draftProfiles.value.push(profile)
   selectedProfileId.value = profile.id
+  syncSelectedProfileModelDraft(profile)
 }
 
 const removeSelectedProfile = () => {
   if (!selectedProfile.value || draftProfiles.value.length <= 1) return
   draftProfiles.value = draftProfiles.value.filter(profile => profile !== selectedProfile.value)
+  if (draftDefaultAssistantProfileId.value === selectedProfile.value.id) {
+    draftDefaultAssistantProfileId.value = draftProfiles.value[0]?.id || ''
+  }
   selectedProfileId.value = draftProfiles.value[0]?.id || ''
 }
 
-const saveSelectedAsDefault = async () => {
-  if (!selectedProfile.value) return
-  await saveDefaultAssistantProfile(selectedProfile.value.id.trim())
+const markSelectedAsDefault = () => {
+  const nextProfileId = selectedProfile.value?.id?.trim() || ''
+  if (!nextProfileId) return
+  draftDefaultAssistantProfileId.value = nextProfileId
 }
 
 onMounted(() => {
   void reloadProfiles()
 })
 
+onUnmounted(() => {
+  clearAutoSaveTimer()
+})
+
 watch(
   profileOptions,
   profiles => {
-    resetDraftProfiles(profiles)
+    if (suspendAutoSave.value) return
+    resetDraftState(profiles)
   },
   { deep: true }
 )
+
+watch(defaultAssistantProfileId, () => {
+  if (suspendAutoSave.value) return
+  draftDefaultAssistantProfileId.value = defaultAssistantProfileId.value
+})
+
+watch(selectedProfileId, () => {
+  syncSelectedProfileModelDraft()
+})
+
+watch(currentDraftStateSnapshot, snapshot => {
+  if (!snapshot || suspendAutoSave.value || loading.value) return
+  if (!hasUnsavedChanges.value) return
+  autoSaveState.value = 'idle'
+  queueAutoSave()
+})
 </script>

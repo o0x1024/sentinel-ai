@@ -235,14 +235,14 @@ async function copyAsCurl() {
   const request = currentRequest.value
   if (!request) return
 
-  const parts = [`curl -X ${request.method}`]
-  for (const [key, value] of Object.entries(request.headers)) {
-    parts.push(`-H ${quoteForShell(`${key}: ${value}`)}`)
+  const parts = [`curl -X ${request.request.method}`]
+  for (const header of request.request.headers) {
+    parts.push(`-H ${quoteForShell(`${header.name}: ${header.value}`)}`)
   }
-  if (request.body) {
-    parts.push(`--data-raw ${quoteForShell(request.body)}`)
+  if (request.request.bodyText) {
+    parts.push(`--data-raw ${quoteForShell(request.request.bodyText)}`)
   }
-  parts.push(quoteForShell(request.url))
+  parts.push(quoteForShell(request.absoluteUrl))
 
   try {
     await navigator.clipboard.writeText(parts.join(' '))

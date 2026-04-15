@@ -36,6 +36,7 @@ pub fn validate_config(config: &LlmConfig) -> Result<()> {
 /// 获取 rig 使用的提供商名称（映射兼容提供商）
 pub fn get_rig_provider(provider: &str) -> String {
     match provider.to_lowercase().as_str() {
+        "openapi" => "openai".to_string(),
         "lm studio" | "lmstudio" | "lm_studio" => "openai".to_string(),
         other => other.to_string(),
     }

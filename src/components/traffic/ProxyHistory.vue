@@ -360,6 +360,23 @@
       </form>
     </AppDialog>
 
+    <TrafficContextCandidateDialog
+      :open="showContextCandidateDialog"
+      :loading="contextCandidateLoading"
+      :applying="contextCandidateApplying"
+      :previewing="contextCandidatePreviewLoading"
+      :result="contextCandidateResult"
+      :preview-result="contextCandidatePreviewResult"
+      :selected-candidate-ids="selectedCandidateIds"
+      :preferred-preview-focus="preferredPreviewFocus"
+      @close="showContextCandidateDialog = false"
+      @apply="applySelectedContextCandidates"
+      @open-evidence-request="openContextCandidateEvidenceRequest"
+      @preview="previewSelectedContextCandidates"
+      @update:preferred-preview-focus="preferredPreviewFocus = $event"
+      @update:selected-candidate-ids="updateSelectedCandidateIds"
+    />
+
     <!-- 可调整大小的上下分割布局 -->
     <div ref="mainContainer" class="flex-1 flex flex-col min-h-0 overflow-hidden">
       <!-- 上半部分：请求历史列表 -->
@@ -374,11 +391,15 @@
           :filters-enabled="filtersEnabled"
           :filter-summary="filterSummary"
           :is-multi-select-mode="isMultiSelectMode"
+          :selected-count="selectedRequests.size"
+          :filtered-count="filteredRequests.length"
           :open-filter-dialog="openFilterDialog"
           :toggle-filters-enabled="toggleFiltersEnabled"
           :toggle-multi-select-mode="toggleMultiSelectMode"
           :select-all-visible="selectAllVisible"
           :clear-selection="clearSelection"
+          :generate-candidates-from-filtered="generateContextCandidatesFromFiltered"
+          :generate-candidates-from-selection="generateContextCandidatesFromSelection"
           :send-selected-to-assistant="sendSelectedToAssistant"
           :send-selected-request-versions-to-comparer="sendSelectedRequestVersionsToComparer"
           :send-selected-response-versions-to-comparer="sendSelectedResponseVersionsToComparer"
@@ -451,6 +472,9 @@
           :response-tab="responseTab"
           :request-view-mode="requestViewMode"
           :response-view-mode="responseViewMode"
+          :context-evidence-pane="selectedRequestEvidence?.pane || 'request'"
+          :context-evidence-matched-locations="selectedRequestEvidence?.matchedLocations || []"
+          :context-evidence-search-terms="selectedRequestEvidence?.searchTerms || []"
           :show-detail-context-menu="showDetailContextMenu"
           :start-vertical-resize="startVerticalResize"
           @update:request-tab="requestTab = $event"
@@ -469,8 +493,18 @@ import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
+import {
+  getTrafficContextExtractionSettings,
+  mergeCandidatesIntoTrafficContextExtractionSettings,
+  previewTrafficContextExtractionChanges,
+  recommendTrafficContextDictionaryCandidates,
+  setTrafficContextExtractionSettings,
+} from '@/services/trafficContextCandidates'
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
+import TrafficContextCandidateDialog from './TrafficContextCandidateDialog.vue'
 import TrafficContextSubmenu from './TrafficContextSubmenu.vue'
+import { buildTrafficContextCandidateId } from './trafficContextCandidateSupport'
+import { useTrafficContextCandidatePreferences } from './useTrafficContextCandidatePreferences'
 import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
 import { buildTrafficRequestActionMenuItems } from './trafficRequestActionMenuSupport'
 import { buildTrafficContextSubmenu } from './trafficContextSubmenuSupport'
@@ -514,6 +548,7 @@ import {
   buildProxyHistoryVisibleItems,
   defaultProxyHistoryColumns,
   getProxyHistoryDefaultSortDirection,
+  isProxyHistoryDefaultSort,
   loadProxyHistoryColumnsFromStorage,
   loadProxyHistorySortFromStorage,
   PROXY_HISTORY_BUFFER_SIZE,
@@ -523,6 +558,7 @@ import {
   PROXY_HISTORY_SORT_STORAGE_KEY,
   translateProxyHistoryColumns,
 } from './proxyHistoryTableSupport';
+import { classifyProxyHistoryRequestIdStep } from './proxyHistoryListStepSupport';
 import { useProxyHistoryActions } from './useProxyHistoryActions';
 import { useProxyHistoryData } from './useProxyHistoryData';
 import {
@@ -531,6 +567,13 @@ import {
 } from './trafficHistoryComparerSupport';
 import { buildTrafficRequestContextMenuSections } from './trafficRequestContextMenuSupport';
 import type { TrafficComparePayload, TrafficComparerDraftRequestInput } from './transfers';
+import type { HttpExchangeRequest } from './http/model'
+import { buildHttpExchangeRequestFromHistory } from './proxyHistoryHttpSupport'
+import type {
+  RecommendTrafficContextDictionaryCandidatesResponse,
+  TrafficContextCandidateEvidenceSelection,
+  TrafficContextExtractionPreviewResponse,
+} from './trafficContextCandidateTypes'
 import type {
   Column,
   ProxyHistoryFilterCache,
@@ -547,6 +590,7 @@ import type {
 } from './proxyHistoryTypes';
 
 const { t } = useI18n();
+const { preferredPreviewFocus } = useTrafficContextCandidatePreferences()
 
 // 注入父组件的刷新触发器
 const refreshTrigger = inject<any>('refreshTrigger', ref(0));
@@ -558,8 +602,8 @@ defineOptions({
 
 // Emit 声明
 const emit = defineEmits<{
-  (e: 'sendToRepeater', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
-  (e: 'sendToIntruder', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
+  (e: 'sendToRepeater', request: HttpExchangeRequest): void
+  (e: 'sendToIntruder', request: HttpExchangeRequest): void
   (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
   (e: 'sendToComparer', payload: TrafficComparePayload): void
   (e: 'sendToAssistant', requests: ProxyRequest[]): void
@@ -591,6 +635,7 @@ const detailContextMenu = ref({
 // 响应式状态
 const requests = ref<ProxyRequest[]>([]);
 const selectedRequest = ref<ProxyRequest | null>(null);
+const selectedRequestEvidence = ref<TrafficContextCandidateEvidenceSelection | null>(null)
 const isSelectedRequestLoading = ref(false);
 // 协议类型过滤: 'all' | 'http' | 'websocket'
 const protocolFilter = ref<ProxyHistoryProtocolFilter>('all');
@@ -610,6 +655,11 @@ const showDetailsModal = ref(false);
 const showColumnSettings = ref(false);
 const isLoading = ref(false);
 const scrollContainer = ref<HTMLElement | null>(null);
+const showContextCandidateDialog = ref(false)
+const contextCandidateLoading = ref(false)
+const contextCandidateApplying = ref(false)
+const contextCandidateResult = ref<RecommendTrafficContextDictionaryCandidatesResponse | null>(null)
+const selectedCandidateIds = ref<string[]>([])
 
 // 面板引用
 const mainContainer = ref<HTMLElement | null>(null);
@@ -708,6 +758,7 @@ let scrollFrameId: number | null = null;
 let pendingScrollTop = 0;
 let prefetchTimer: number | null = null;
 let isPrefetching = false;
+const AUTO_FOLLOW_TOP_THRESHOLD = itemHeight;
 
 const effectiveFilterConfig = computed(() =>
   filtersEnabled.value ? appliedFilterConfig.value : showAllProxyHistoryFilters(appliedFilterConfig.value),
@@ -738,6 +789,7 @@ const totalHeight = computed(() => sortedRequests.value.length * itemHeight + he
 const visibleItems = computed((): VirtualItem[] =>
   buildProxyHistoryVisibleItems(sortedRequests.value, scrollTop.value, containerHeight.value),
 );
+const sortedRequestIds = computed(() => sortedRequests.value.map((request) => request.id))
 const visibleRows = computed(() =>
   visibleItems.value.map((item) => {
     const cellValues: Record<string, string> = {}
@@ -1005,8 +1057,157 @@ const historyFilterSubmenu = computed(() =>
     ],
   }),
 )
+const selectedContextCandidates = computed(() => {
+  const selectedIds = new Set(selectedCandidateIds.value)
+  return (contextCandidateResult.value?.candidates || []).filter(candidate =>
+    selectedIds.has(buildTrafficContextCandidateId(candidate)),
+  )
+})
+const contextCandidateRequestIds = ref<number[]>([])
+const contextCandidatePreviewLoading = ref(false)
+const contextCandidatePreviewResult = ref<TrafficContextExtractionPreviewResponse | null>(null)
 
 // 方法
+async function generateContextCandidatesFromFiltered() {
+  await generateContextCandidatesFromRequestIds(filteredRequests.value.map(request => request.id))
+}
+
+async function generateContextCandidatesFromSelection() {
+  await generateContextCandidatesFromRequestIds([...selectedRequests.value])
+}
+
+async function generateContextCandidatesFromRequestIds(requestIds: number[]) {
+  const dedupedRequestIds = [...new Set(requestIds)].slice(0, 300)
+  if (dedupedRequestIds.length === 0) {
+    dialog.toast.warning('当前没有可用于生成候选的历史记录')
+    return
+  }
+  if (dedupedRequestIds.length < requestIds.length) {
+    dialog.toast.info('首版候选生成最多分析前 300 条请求，请先缩小范围再重试')
+  }
+
+  showContextCandidateDialog.value = true
+  contextCandidateLoading.value = true
+  contextCandidateResult.value = null
+  contextCandidatePreviewResult.value = null
+  contextCandidateRequestIds.value = dedupedRequestIds
+  selectedCandidateIds.value = []
+
+  try {
+    const result = await recommendTrafficContextDictionaryCandidates({
+      requestIds: dedupedRequestIds,
+      maxCandidatesPerCategory: 12,
+    })
+    contextCandidateResult.value = result
+    selectedCandidateIds.value = result.candidates
+      .filter(candidate => candidate.confidence === 'high' && !candidate.alreadyCoveredBy)
+      .map(buildTrafficContextCandidateId)
+  } catch (error) {
+    console.error('Failed to recommend traffic context dictionary candidates:', error)
+    dialog.toast.error(`生成词典候选失败: ${String(error)}`)
+    showContextCandidateDialog.value = false
+  } finally {
+    contextCandidateLoading.value = false
+  }
+}
+
+async function applySelectedContextCandidates() {
+  if (selectedContextCandidates.value.length === 0) {
+    return
+  }
+
+  contextCandidateApplying.value = true
+  try {
+    const latestSettings = await getTrafficContextExtractionSettings()
+    const nextSettings = mergeCandidatesIntoTrafficContextExtractionSettings(
+      latestSettings,
+      selectedContextCandidates.value,
+    )
+    await setTrafficContextExtractionSettings(nextSettings)
+    dialog.toast.success(`已把 ${selectedContextCandidates.value.length} 项候选合并到上下文词典`)
+    showContextCandidateDialog.value = false
+    selectedCandidateIds.value = []
+  } catch (error) {
+    console.error('Failed to apply traffic context candidates:', error)
+    dialog.toast.error(`应用候选失败: ${String(error)}`)
+  } finally {
+    contextCandidateApplying.value = false
+  }
+}
+
+async function previewSelectedContextCandidates() {
+  if (selectedContextCandidates.value.length === 0 || contextCandidateRequestIds.value.length === 0) {
+    return
+  }
+
+  contextCandidatePreviewLoading.value = true
+  try {
+    const currentSettings = await getTrafficContextExtractionSettings()
+    const previewSettings = mergeCandidatesIntoTrafficContextExtractionSettings(
+      currentSettings,
+      selectedContextCandidates.value,
+    )
+    contextCandidatePreviewResult.value = await previewTrafficContextExtractionChanges({
+      requestIds: contextCandidateRequestIds.value,
+      currentSettings,
+      previewSettings,
+      sampleLimit: 6,
+    })
+  } catch (error) {
+    console.error('Failed to preview traffic context candidate changes:', error)
+    dialog.toast.error(`预览命中变化失败: ${String(error)}`)
+  } finally {
+    contextCandidatePreviewLoading.value = false
+  }
+}
+
+async function openRequestById(
+  requestId: number,
+  matchedLocations: string[] = [],
+  pane: 'request' | 'response' = 'request',
+  searchTerms: string[] = [],
+) {
+  if (!Number.isFinite(requestId)) {
+    return
+  }
+
+  protocolFilter.value = 'http'
+  selectedRequestEvidence.value = {
+    requestId,
+    pane,
+    matchedLocations: [...matchedLocations],
+    searchTerms: [...searchTerms],
+  }
+  let nextRequest = requests.value.find(request => request.id === requestId) || null
+
+  if (!nextRequest || nextRequest.has_full_details === false) {
+    nextRequest = await fetchRequestDetails(requestId) || nextRequest
+  }
+
+  if (!nextRequest) {
+    dialog.toast.warning(`未找到历史请求 #${requestId}`)
+    return
+  }
+
+  selectRequest(nextRequest)
+  await nextTick()
+  scrollRequestRowIntoView(requestId)
+}
+
+async function openContextCandidateEvidenceRequest(payload: TrafficContextCandidateEvidenceSelection) {
+  await openRequestById(
+    payload.requestId,
+    payload.matchedLocations,
+    payload.pane || 'request',
+    payload.searchTerms || [],
+  )
+}
+
+function updateSelectedCandidateIds(nextValue: string[]) {
+  selectedCandidateIds.value = nextValue
+  contextCandidatePreviewResult.value = null
+}
+
 function handleScroll(event: Event) {
   const target = event.target as HTMLElement;
   pendingScrollTop = target.scrollTop;
@@ -1141,6 +1342,30 @@ function schedulePrefetchCheck() {
     prefetchTimer = null;
     void ensurePrefetchBuffer();
   }, 60);
+}
+
+function preserveScrollAnchorOnPrependedRows(previousIds: number[], nextIds: number[]) {
+  if (!scrollContainer.value || protocolFilter.value === 'websocket') {
+    return
+  }
+
+  if (!isProxyHistoryDefaultSort(sortState.value)) {
+    return
+  }
+
+  const currentScrollTop = scrollContainer.value.scrollTop
+  if (currentScrollTop <= AUTO_FOLLOW_TOP_THRESHOLD) {
+    return
+  }
+
+  const step = classifyProxyHistoryRequestIdStep(previousIds, nextIds)
+  if (step.type !== 'prepend' || step.addedFrontCount <= 0) {
+    return
+  }
+
+  const nextScrollTop = currentScrollTop + step.addedFrontCount * itemHeight
+  scrollContainer.value.scrollTop = nextScrollTop
+  scrollTop.value = nextScrollTop
 }
 
 async function ensurePrefetchBuffer() {
@@ -1499,26 +1724,11 @@ async function handleKeydown(event: KeyboardEvent) {
       event.stopPropagation();
       
       const req = selectedRequest.value;
-      let headers: Record<string, string> = {};
-
       const detailedRequest = req.has_full_details === false
         ? await fetchRequestDetails(req.id) || req
         : req
-
-      if (detailedRequest.request_headers) {
-        try {
-          headers = JSON.parse(detailedRequest.request_headers);
-        } catch {
-          // ignore
-        }
-      }
       
-      emit('sendToRepeater', {
-        method: detailedRequest.method,
-        url: detailedRequest.url,
-        headers,
-        body: detailedRequest.request_body || undefined,
-      });
+      emit('sendToRepeater', buildHttpExchangeRequestFromHistory(detailedRequest));
     }
   }
 }
@@ -1578,6 +1788,9 @@ onUnmounted(() => {
 
 // 监听详情面板的打开/关闭，更新容器高度
 watch(selectedRequest, async () => {
+  if (selectedRequestEvidence.value && selectedRequest.value?.id !== selectedRequestEvidence.value.requestId) {
+    selectedRequestEvidence.value = null
+  }
   await nextTick();
   updateContainerHeight();
 });
@@ -1588,6 +1801,14 @@ watch(
     schedulePrefetchCheck();
   },
 );
+
+watch(
+  sortedRequestIds,
+  (nextIds, previousIds = []) => {
+    preserveScrollAnchorOnPrependedRows(previousIds, nextIds)
+  },
+  { flush: 'post' },
+)
 
 watch(
   () => [selectedRequest.value?.id, selectedRequest.value?.has_full_details] as const,
@@ -1626,6 +1847,7 @@ watch(protocolFilter, async (newFilter) => {
   
   // 清除详情面板选择，避免混淆
   selectedRequest.value = null;
+  selectedRequestEvidence.value = null
   
   if (newFilter === 'websocket') {
     // 切换到 WebSocket 时加载连接列表
@@ -1769,7 +1991,8 @@ function removeMatchingRecords(rule: { matchType: string; condition: string; rel
 
 // Expose methods for parent component
 defineExpose({
-  removeMatchingRecords
+  removeMatchingRecords,
+  openRequestById,
 });
 </script>
 

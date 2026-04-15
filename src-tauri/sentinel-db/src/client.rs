@@ -51,11 +51,22 @@ impl DatabaseClient {
         &self,
         name: &str,
         description: Option<&str>,
+        url: &str,
+        connection_type: &str,
         command: &str,
         args: &[String],
+        headers_json: Option<&str>,
     ) -> Result<String> {
         self.service
-            .create_mcp_server_config(name, description, command, args)
+            .create_mcp_server_config(
+                name,
+                description,
+                url,
+                connection_type,
+                command,
+                args,
+                headers_json,
+            )
             .await
     }
     pub async fn get_all_mcp_server_configs(
@@ -92,12 +103,25 @@ impl DatabaseClient {
         id: &str,
         name: &str,
         description: Option<&str>,
+        url: &str,
+        connection_type: &str,
         command: &str,
         args: &[String],
+        headers_json: Option<&str>,
         enabled: bool,
     ) -> Result<()> {
         self.service
-            .update_mcp_server_config(id, name, description, command, args, enabled)
+            .update_mcp_server_config(
+                id,
+                name,
+                description,
+                url,
+                connection_type,
+                command,
+                args,
+                headers_json,
+                enabled,
+            )
             .await
     }
 

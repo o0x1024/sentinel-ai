@@ -14,6 +14,58 @@ interface HttpEditorThemeOptions {
   caretColor?: string
 }
 
+interface HttpHighlightPalette {
+  headerKeyColor: string
+  bodyKeyColor: string
+  cookieKeyColor: string
+  valueColor: string
+  subtleValueColor: string
+  punctuationColor: string
+  commentColor: string
+  invalidColor: string
+  tagBracketColor: string
+  statusRedirectColor: string
+  statusClientErrorColor: string
+}
+
+const createHttpHighlightStyle = (palette: HttpHighlightPalette) => HighlightStyle.define([
+  { tag: t.meta, color: palette.subtleValueColor },
+  { tag: t.url, color: palette.valueColor },
+  { tag: t.string, color: palette.valueColor },
+  { tag: t.number, color: palette.valueColor },
+  { tag: t.bool, color: palette.valueColor, fontWeight: '500' },
+  { tag: t.atom, color: palette.valueColor },
+  { tag: t.variableName, color: palette.valueColor },
+  { tag: t.name, color: palette.valueColor },
+  { tag: t.standard(t.variableName), color: palette.valueColor },
+  { tag: t.definition(t.variableName), color: palette.valueColor },
+  { tag: t.local(t.variableName), color: palette.valueColor },
+  { tag: t.modifier, color: palette.valueColor },
+  { tag: t.typeName, color: palette.valueColor },
+  { tag: t.controlKeyword, color: palette.valueColor },
+  { tag: t.operatorKeyword, color: palette.valueColor },
+  { tag: t.special(t.string), color: palette.subtleValueColor, fontStyle: 'italic' },
+  { tag: t.special(t.attributeName), color: palette.cookieKeyColor, fontWeight: '600' },
+  { tag: t.attributeName, color: palette.headerKeyColor, fontWeight: '600' },
+  { tag: t.propertyName, color: palette.bodyKeyColor, fontWeight: '700' },
+  { tag: t.tagName, color: palette.bodyKeyColor, fontWeight: '600' },
+  { tag: t.keyword, color: palette.bodyKeyColor, fontWeight: '600' },
+  { tag: t.special(t.atom), color: palette.statusRedirectColor, fontWeight: '600' },
+  { tag: t.special(t.number), color: palette.statusClientErrorColor, fontWeight: '600' },
+  { tag: t.angleBracket, color: palette.tagBracketColor },
+  { tag: t.bracket, color: palette.tagBracketColor },
+  { tag: t.paren, color: palette.tagBracketColor },
+  { tag: t.squareBracket, color: palette.tagBracketColor },
+  { tag: t.brace, color: palette.tagBracketColor },
+  { tag: t.comment, color: palette.commentColor },
+  { tag: t.lineComment, color: palette.commentColor },
+  { tag: t.blockComment, color: palette.commentColor },
+  { tag: t.punctuation, color: palette.punctuationColor },
+  { tag: t.operator, color: palette.punctuationColor },
+  { tag: t.strong, fontWeight: '600', color: palette.valueColor },
+  { tag: t.invalid, color: palette.invalidColor },
+])
+
 const createLightHttpCodeTheme = (options: HttpEditorThemeOptions = {}) => EditorView.theme({
   '&': {
     height: '100%',
@@ -72,77 +124,33 @@ const createDarkHttpCodeTheme = (options: HttpEditorThemeOptions = {}) => Editor
   },
 }, { dark: true })
 
-export const lightHttpHighlightStyle = HighlightStyle.define([
-  { tag: t.attributeName, color: '#b45309' },
-  { tag: t.propertyName, color: '#b45309' },
-  { tag: t.keyword, color: '#b45309' },
-  { tag: t.controlKeyword, color: '#111827' },
-  { tag: t.operatorKeyword, color: '#111827' },
-  { tag: t.meta, color: '#5f6b7a' },
-  { tag: t.url, color: '#1f2937' },
-  { tag: t.string, color: '#111827' },
-  { tag: t.special(t.string), color: '#475569' },
-  { tag: t.number, color: '#0f172a' },
-  { tag: t.bool, color: '#15803d', fontWeight: '600' },
-  { tag: t.atom, color: '#111827' },
-  { tag: t.special(t.atom), color: '#b45309', fontWeight: '600' },
-  { tag: t.special(t.number), color: '#c2410c', fontWeight: '600' },
-  { tag: t.variableName, color: '#1f2937' },
-  { tag: t.name, color: '#1f2937' },
-  { tag: t.standard(t.variableName), color: '#1f2937' },
-  { tag: t.definition(t.variableName), color: '#1f2937' },
-  { tag: t.local(t.variableName), color: '#1f2937' },
-  { tag: t.modifier, color: '#1f2937' },
-  { tag: t.tagName, color: '#c218a1' },
-  { tag: t.angleBracket, color: '#c218a1' },
-  { tag: t.bracket, color: '#c218a1' },
-  { tag: t.paren, color: '#c218a1' },
-  { tag: t.squareBracket, color: '#c218a1' },
-  { tag: t.brace, color: '#c218a1' },
-  { tag: t.comment, color: '#6b7280' },
-  { tag: t.lineComment, color: '#6b7280' },
-  { tag: t.blockComment, color: '#6b7280' },
-  { tag: t.punctuation, color: '#6b7280' },
-  { tag: t.operator, color: '#6b7280' },
-  { tag: t.strong, fontWeight: '600', color: '#0f172a' },
-  { tag: t.invalid, color: '#dc2626' },
-])
+export const lightHttpHighlightStyle = createHttpHighlightStyle({
+  headerKeyColor: '#1d4ed8',
+  bodyKeyColor: '#6d28d9',
+  cookieKeyColor: '#0f766e',
+  valueColor: '#111827',
+  subtleValueColor: '#475569',
+  punctuationColor: '#6b7280',
+  commentColor: '#6b7280',
+  invalidColor: '#dc2626',
+  tagBracketColor: '#94a3b8',
+  statusRedirectColor: '#b45309',
+  statusClientErrorColor: '#c2410c',
+})
 
-export const darkHttpHighlightStyle = HighlightStyle.define([
-  { tag: t.attributeName, color: '#f59e0b' },
-  { tag: t.propertyName, color: '#f59e0b' },
-  { tag: t.keyword, color: '#f59e0b' },
-  { tag: t.controlKeyword, color: '#e5e7eb' },
-  { tag: t.operatorKeyword, color: '#e5e7eb' },
-  { tag: t.meta, color: '#94a3b8' },
-  { tag: t.url, color: '#e5e7eb' },
-  { tag: t.string, color: '#e5e7eb' },
-  { tag: t.special(t.string), color: '#cbd5e1' },
-  { tag: t.number, color: '#f8fafc' },
-  { tag: t.bool, color: '#4ade80', fontWeight: '600' },
-  { tag: t.atom, color: '#e5e7eb' },
-  { tag: t.special(t.atom), color: '#fbbf24', fontWeight: '600' },
-  { tag: t.special(t.number), color: '#fb923c', fontWeight: '600' },
-  { tag: t.variableName, color: '#e5e7eb' },
-  { tag: t.name, color: '#e5e7eb' },
-  { tag: t.standard(t.variableName), color: '#e5e7eb' },
-  { tag: t.definition(t.variableName), color: '#e5e7eb' },
-  { tag: t.local(t.variableName), color: '#e5e7eb' },
-  { tag: t.modifier, color: '#e5e7eb' },
-  { tag: t.tagName, color: '#f472d0' },
-  { tag: t.angleBracket, color: '#f472d0' },
-  { tag: t.bracket, color: '#f472d0' },
-  { tag: t.paren, color: '#f472d0' },
-  { tag: t.squareBracket, color: '#f472d0' },
-  { tag: t.brace, color: '#f472d0' },
-  { tag: t.comment, color: '#94a3b8' },
-  { tag: t.lineComment, color: '#94a3b8' },
-  { tag: t.blockComment, color: '#94a3b8' },
-  { tag: t.punctuation, color: '#94a3b8' },
-  { tag: t.operator, color: '#94a3b8' },
-  { tag: t.strong, fontWeight: '600', color: '#f8fafc' },
-  { tag: t.invalid, color: '#f87171' },
-])
+export const darkHttpHighlightStyle = createHttpHighlightStyle({
+  headerKeyColor: '#93c5fd',
+  bodyKeyColor: '#ddd6fe',
+  cookieKeyColor: '#5eead4',
+  valueColor: '#e5e7eb',
+  subtleValueColor: '#cbd5e1',
+  punctuationColor: '#94a3b8',
+  commentColor: '#94a3b8',
+  invalidColor: '#f87171',
+  tagBracketColor: '#94a3b8',
+  statusRedirectColor: '#fbbf24',
+  statusClientErrorColor: '#fb923c',
+})
 
 export const isDarkHttpEditorTheme = (): boolean => document.documentElement.getAttribute('data-theme') === 'dark'
 

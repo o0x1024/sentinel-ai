@@ -3,16 +3,29 @@
     <div class="shrink-0 border-b border-base-300 bg-base-100 px-6 py-5">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 class="text-xl font-semibold break-words">{{ getWorkbenchFindingTitle(caseItem.finding) }}</h2>
+          <h2 class="text-xl font-semibold break-words">
+            {{ getWorkbenchFindingTitle(caseItem.finding) }}
+          </h2>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <button class="btn btn-sm btn-error btn-outline" @click="$emit('delete-case', caseItem.id)">
+          <SecurityEvidenceTransferActions
+            :evidence="primaryTransferableEvidence"
+            size="sm"
+            direction="down"
+            :messages="transferMessages"
+          />
+          <button
+            class="btn btn-sm btn-error btn-outline"
+            @click="$emit('delete-case', caseItem.id)"
+          >
             {{ wb('caseDetail.deleteCase') }}
           </button>
           <button class="btn btn-sm btn-outline" @click="$emit('copy-location-link')">
             {{ wb('page.copyLocationLink') }}
           </button>
-          <button class="btn btn-sm btn-outline" @click="$emit('back')">{{ wb('caseDetail.backToList') }}</button>
+          <button class="btn btn-sm btn-outline" @click="$emit('back')">
+            {{ wb('caseDetail.backToList') }}
+          </button>
         </div>
       </div>
       <div class="mt-4 overflow-x-auto">
@@ -49,10 +62,7 @@
         :selected-evidence-id="selectedEvidenceId"
         @set-baseline="evidenceId => $emit('set-baseline', caseItem.id, evidenceId)"
       />
-      <WorkbenchObjectAnalysisPanel
-        v-else-if="activeTab === 'analysis'"
-        :case-item="caseItem"
-      />
+      <WorkbenchObjectAnalysisPanel v-else-if="activeTab === 'analysis'" :case-item="caseItem" />
       <WorkbenchReplayPlanPanel
         v-else-if="activeTab === 'plan'"
         :case-item="caseItem"
@@ -63,8 +73,12 @@
         :drafts="executionDrafts"
         :executing-draft-id="executingDraftId"
         :selected-draft-id="selectedDraftId"
-        @update-status="(draftId, status) => $emit('update-draft-status', caseItem.id, draftId, status)"
-        @execute-draft="(draftId, readOnly) => $emit('execute-draft', caseItem.id, draftId, readOnly)"
+        @update-status="
+          (draftId, status) => $emit('update-draft-status', caseItem.id, draftId, status)
+        "
+        @execute-draft="
+          (draftId, readOnly) => $emit('execute-draft', caseItem.id, draftId, readOnly)
+        "
       />
       <WorkbenchVerificationPanel
         v-else-if="activeTab === 'verification'"
@@ -90,7 +104,10 @@
     </div>
   </div>
 
-  <div v-else class="flex h-full min-h-[16rem] items-center justify-center px-6 text-center text-base-content/60">
+  <div
+    v-else
+    class="flex h-full min-h-[16rem] items-center justify-center px-6 text-center text-base-content/60"
+  >
     {{ wb('caseDetail.notFound') }}
   </div>
 </template>
@@ -110,6 +127,7 @@ import type {
   WorkbenchReplayPlan,
   WorkbenchSystemAgentStatus,
 } from './securityWorkbenchTypes'
+import SecurityEvidenceTransferActions from './SecurityEvidenceTransferActions.vue'
 import WorkbenchCaseOverviewPanel from './WorkbenchCaseOverviewPanel.vue'
 import WorkbenchExecutionDraftPanel from './WorkbenchExecutionDraftPanel.vue'
 import WorkbenchEvidenceChainPanel from './WorkbenchEvidenceChainPanel.vue'
@@ -117,10 +135,18 @@ import WorkbenchObjectAnalysisPanel from './WorkbenchObjectAnalysisPanel.vue'
 import WorkbenchReplayPlanPanel from './WorkbenchReplayPlanPanel.vue'
 import WorkbenchReviewNotesPanel from './WorkbenchReviewNotesPanel.vue'
 import WorkbenchVerificationPanel from './WorkbenchVerificationPanel.vue'
+import { findFirstTransferableSecurityEvidence } from './securityEvidenceTransferSupport'
 import { wb } from './securityWorkbenchLocale'
 import { getWorkbenchFindingTitle } from './securityWorkbenchSystemAgentContent'
 
-type CaseDetailTabId = 'overview' | 'evidence' | 'analysis' | 'plan' | 'drafts' | 'verification' | 'review'
+type CaseDetailTabId =
+  | 'overview'
+  | 'evidence'
+  | 'analysis'
+  | 'plan'
+  | 'drafts'
+  | 'verification'
+  | 'review'
 
 const props = defineProps<{
   caseItem: WorkbenchCase | null
@@ -154,10 +180,13 @@ const emit = defineEmits<{
   'copy-location-link': []
   'change-tab': [tab: CaseDetailTabId]
   'save-conclusion': [caseId: string, value: string]
-  'save-metadata': [caseId: string, patch: {
-    status: WorkbenchCase['status']
-    priority: WorkbenchCase['priority']
-  }]
+  'save-metadata': [
+    caseId: string,
+    patch: {
+      status: WorkbenchCase['status']
+      priority: WorkbenchCase['priority']
+    },
+  ]
   'set-baseline': [caseId: string, evidenceId: string]
   'add-note': [caseId: string, kind: WorkbenchNoteKind, body: string]
   'sync-finding': [caseId: string]
@@ -165,34 +194,52 @@ const emit = defineEmits<{
   'create-draft': [caseId: string, plan: WorkbenchReplayPlan]
   'update-draft-status': [caseId: string, draftId: string, status: WorkbenchExecutionDraftStatus]
   'execute-draft': [caseId: string, draftId: string, readOnly: boolean]
-  'open-target': [target: {
-    tab: Extract<CaseDetailTabId, 'overview' | 'evidence' | 'drafts' | 'verification'>
-    evidenceId?: string | null
-    draftId?: string | null
-    runId?: string | null
-  }]
-  'copy-target-link': [target: {
-    tab: Extract<CaseDetailTabId, 'overview' | 'evidence' | 'drafts' | 'verification'>
-    evidenceId?: string | null
-    draftId?: string | null
-    runId?: string | null
-  }]
+  'open-target': [
+    target: {
+      tab: Extract<CaseDetailTabId, 'overview' | 'evidence' | 'drafts' | 'verification'>
+      evidenceId?: string | null
+      draftId?: string | null
+      runId?: string | null
+    },
+  ]
+  'copy-target-link': [
+    target: {
+      tab: Extract<CaseDetailTabId, 'overview' | 'evidence' | 'drafts' | 'verification'>
+      evidenceId?: string | null
+      draftId?: string | null
+      runId?: string | null
+    },
+  ]
   'copy-timeline-item-link': [itemId: string]
-  'change-timeline-state': [state: {
-    search: string
-    filter:
-      | 'all'
-      | 'system'
-      | 'notes'
-      | 'draft_execution'
-      | 'finding_sync'
-      | 'suggestion_sync'
-      | WorkbenchNoteKind
-  }]
+  'change-timeline-state': [
+    state: {
+      search: string
+      filter:
+        | 'all'
+        | 'system'
+        | 'notes'
+        | 'draft_execution'
+        | 'finding_sync'
+        | 'suggestion_sync'
+        | WorkbenchNoteKind
+    },
+  ]
   'delete-case': [caseId: string]
 }>()
 
 const activeTab = ref<CaseDetailTabId>(props.initialTab || 'overview')
+const primaryTransferableEvidence = computed(() =>
+  findFirstTransferableSecurityEvidence(props.caseItem?.finding.evidence)
+)
+const transferMessages = computed(() => ({
+  triggerLabel: wb('caseDetail.sendTo'),
+  sendToRepeater: wb('caseDetail.sendToRepeater'),
+  sendToIntruder: wb('caseDetail.sendToIntruder'),
+  noTransferableRequest: wb('evidence.noCaseTransferableRequest'),
+  sentToRepeater: wb('evidence.sentToRepeater'),
+  sentToIntruder: wb('evidence.sentToIntruder'),
+  transferFailed: wb('evidence.transferFailed', { error: '{error}' }),
+}))
 
 const tabs = computed<Array<{ id: CaseDetailTabId; label: string }>>(() => [
   { id: 'overview', label: wb('caseDetail.tabs.overview') },
@@ -206,14 +253,14 @@ const tabs = computed<Array<{ id: CaseDetailTabId; label: string }>>(() => [
 
 watch(
   () => props.initialTab,
-  (nextTab) => {
+  nextTab => {
     if (nextTab && nextTab !== activeTab.value) {
       activeTab.value = nextTab
     }
-  },
+  }
 )
 
-watch(activeTab, (nextTab) => {
+watch(activeTab, nextTab => {
   emit('change-tab', nextTab)
 })
 </script>

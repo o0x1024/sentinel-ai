@@ -10,10 +10,16 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[cfg(feature = "ocr")]
+use crate::buildin_tools::OcrTool;
+#[cfg(feature = "plugins")]
+use crate::buildin_tools::SubdomainBruteTool;
 use crate::buildin_tools::{
-    AskUserQuestionTool, HttpRequestTool, MemoryManagerTool, OcrTool, SearchExploitTool,
-    ShellTool, SkillsTool, SubdomainBruteTool, TenthManTool, TodosTool, WebSearchTool,
+    AskUserQuestionTool, HttpRequestTool, MemoryManagerTool, SearchExploitTool, ShellTool,
+    SkillsTool, TenthManTool, WebSearchTool,
 };
+#[cfg(feature = "db")]
+use crate::buildin_tools::{SopsTool, TodosTool};
 
 use crate::terminal::server::TerminalServer;
 
@@ -319,6 +325,7 @@ impl ToolServer {
 
         self.registry.register(shell_def).await;
 
+        #[cfg(feature = "db")]
         // Register todos tool
         let todos_def = DynamicToolBuilder::new(TodosTool::NAME.to_string())
             .description(TodosTool::DESCRIPTION.to_string())
@@ -370,20 +377,21 @@ impl ToolServer {
             .executor(|args| async move {
                 use crate::buildin_tools::todos::{TodosArgs, TodosTool};
                 use rig::tool::Tool;
-                
+
                 let tool_args: TodosArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                
+
                 let tool = TodosTool;
                 let result = tool.call(tool_args).await
                     .map_err(|e| format!("Todos operation failed: {}", e))?;
-                
+
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
             .build()
             .expect("Failed to build todos tool");
 
+        #[cfg(feature = "db")]
         self.registry.register(todos_def).await;
 
         // Register skills tool
@@ -418,6 +426,39 @@ impl ToolServer {
 
         self.registry.register(skills_def).await;
 
+        #[cfg(feature = "db")]
+        let sops_def = DynamicToolBuilder::new(SopsTool::NAME.to_string())
+            .description(SopsTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::sops::SopsToolArgs
+                ))
+                .unwrap_or_default(),
+            )
+            .source(ToolSource::Builtin)
+            .category("system")
+            .executor(|args| async move {
+                use crate::buildin_tools::sops::{SopsTool, SopsToolArgs};
+                use rig::tool::Tool;
+
+                let tool_args: SopsToolArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = SopsTool;
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("Sops operation failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build sops tool");
+
+        #[cfg(feature = "db")]
+        self.registry.register(sops_def).await;
+
         // Register memory tool
         let memory_def = DynamicToolBuilder::new(MemoryManagerTool::NAME.to_string())
             .description(MemoryManagerTool::DESCRIPTION.to_string())
@@ -450,14 +491,14 @@ impl ToolServer {
             .executor(|args| async move {
                 use crate::buildin_tools::memory::{MemoryManagerTool, MemoryManagerArgs};
                 use rig::tool::Tool;
-                
+
                 let tool_args: MemoryManagerArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                
+
                 let tool = MemoryManagerTool;
                 let result = tool.call(tool_args).await
                     .map_err(|e| format!("Memory operation failed: {}", e))?;
-                
+
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
@@ -520,39 +561,41 @@ impl ToolServer {
 
         self.registry.register(web_search_def).await;
 
-        // Register subdomain_brute tool
-        let subdomain_brute_def = DynamicToolBuilder::new(SubdomainBruteTool::NAME.to_string())
-            .description(SubdomainBruteTool::DESCRIPTION.to_string())
-            .input_schema(
-                serde_json::to_value(schemars::schema_for!(
-                    crate::buildin_tools::subdomain_brute::SubdomainBruteArgs
-                ))
-                .unwrap_or_default(),
-            )
-            .source(ToolSource::Builtin)
-            .category("monitor")
-            .executor(|args| async move {
-                use crate::buildin_tools::subdomain_brute::{
-                    SubdomainBruteArgs, SubdomainBruteTool,
-                };
-                use rig::tool::Tool;
+        #[cfg(feature = "plugins")]
+        {
+            let subdomain_brute_def = DynamicToolBuilder::new(SubdomainBruteTool::NAME.to_string())
+                .description(SubdomainBruteTool::DESCRIPTION.to_string())
+                .input_schema(
+                    serde_json::to_value(schemars::schema_for!(
+                        crate::buildin_tools::subdomain_brute::SubdomainBruteArgs
+                    ))
+                    .unwrap_or_default(),
+                )
+                .source(ToolSource::Builtin)
+                .category("monitor")
+                .executor(|args| async move {
+                    use crate::buildin_tools::subdomain_brute::{
+                        SubdomainBruteArgs, SubdomainBruteTool,
+                    };
+                    use rig::tool::Tool;
 
-                let tool_args: SubdomainBruteArgs = serde_json::from_value(args)
-                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                    let tool_args: SubdomainBruteArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-                let tool = SubdomainBruteTool;
-                let result = tool
-                    .call(tool_args)
-                    .await
-                    .map_err(|e| format!("Subdomain brute failed: {}", e))?;
+                    let tool = SubdomainBruteTool;
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("Subdomain brute failed: {}", e))?;
 
-                serde_json::to_value(result)
-                    .map_err(|e| format!("Failed to serialize result: {}", e))
-            })
-            .build()
-            .expect("Failed to build subdomain_brute tool");
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build subdomain_brute tool");
 
-        self.registry.register(subdomain_brute_def).await;
+            self.registry.register(subdomain_brute_def).await;
+        }
 
         // Register search_exploit tool
         let search_exploit_def = DynamicToolBuilder::new(SearchExploitTool::NAME.to_string())
@@ -625,40 +668,43 @@ impl ToolServer {
 
         self.registry.register(search_exploit_def).await;
 
-        // Register ocr tool
-        let ocr_def = DynamicToolBuilder::new(OcrTool::NAME.to_string())
-            .description(OcrTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "image_path": {
-                        "type": "string",
-                        "description": "Path to the image file (absolute path or relative to CWD)"
-                    }
-                },
-                "required": ["image_path"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move {
-                use crate::buildin_tools::ocr::{OcrArgs, OcrTool};
-                use rig::tool::Tool;
+        #[cfg(feature = "ocr")]
+        {
+            // Register ocr tool
+            let ocr_def = DynamicToolBuilder::new(OcrTool::NAME.to_string())
+                .description(OcrTool::DESCRIPTION.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "image_path": {
+                            "type": "string",
+                            "description": "Path to the image file (absolute path or relative to CWD)"
+                        }
+                    },
+                    "required": ["image_path"]
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move {
+                    use crate::buildin_tools::ocr::{OcrArgs, OcrTool};
+                    use rig::tool::Tool;
 
-                let tool_args: OcrArgs = serde_json::from_value(args)
-                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                    let tool_args: OcrArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-                let tool = OcrTool;
-                let result = tool
-                    .call(tool_args)
-                    .await
-                    .map_err(|e| format!("OCR failed: {}", e))?;
+                    let tool = OcrTool;
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("OCR failed: {}", e))?;
 
-                serde_json::to_value(result)
-                    .map_err(|e| format!("Failed to serialize result: {}", e))
-            })
-            .build()
-            .expect("Failed to build ocr tool");
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build ocr tool");
 
-        self.registry.register(ocr_def).await;
+            self.registry.register(ocr_def).await;
+        }
 
         // Register subagent tools (spawn, wait, run)
         self.register_subagent_tools().await;
@@ -713,14 +759,14 @@ impl ToolServer {
             .executor(|args| async move {
                 use crate::buildin_tools::tenth_man_tool::{TenthManToolArgs, TenthManTool};
                 use rig::tool::Tool;
-                
+
                 let tool_args: TenthManToolArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                
+
                 let tool = TenthManTool::new();
                 let result = tool.call(tool_args).await
                     .map_err(|e| format!("Tenth Man review failed: {}", e))?;
-                
+
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
@@ -764,7 +810,7 @@ impl ToolServer {
                     },
                     "session_id": {
                         "type": "string",
-                        "description": "Optional session ID to reuse an existing terminal session"
+                        "description": "Optional exact terminal session ID returned by a previous interactive_shell call. Do not invent labels or aliases; omit this field if you do not know the real session ID."
                     },
                     "wait_strategy": {
                         "type": "string",
@@ -794,8 +840,8 @@ impl ToolServer {
                 use crate::terminal::{TERMINAL_MANAGER, TerminalSessionConfig, WaitStrategy, normalize_command, detect_shell_prompt, ExecutionMode};
                 use tokio::sync::mpsc;
                 use tokio::time::{timeout, Duration};
-                use tracing::info;
-                
+                use tracing::{info, warn};
+
                 // Parse arguments
                 let execution_mode = args.get("execution_mode")
                     .and_then(|v| v.as_str())
@@ -804,68 +850,108 @@ impl ToolServer {
                         _ => ExecutionMode::Docker,
                     })
                     .unwrap_or(ExecutionMode::Docker);
-                
+
                 let docker_image = args.get("docker_image")
                     .and_then(|v| v.as_str())
                     .unwrap_or("sentinel-sandbox:latest")
                     .to_string();
-                
+
                 // Support both 'command' and 'initial_command' for backward compatibility
                 let command = args.get("command")
                     .or_else(|| args.get("initial_command"))
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string());
-                
+
                 let requested_session_id = args.get("session_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                
+
                 // Parse wait strategy options
                 let wait_strategy = args.get("wait_strategy")
                     .and_then(|v| v.as_str())
                     .map(WaitStrategy::from_str)
                     .unwrap_or_default();
-                
+
                 let wait_timeout_secs = args.get("wait_timeout")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(30)
                     .min(120); // Cap at 120 seconds
-                
+
                 let expected_lines = args.get("expected_lines")
                     .and_then(|v| v.as_u64())
                     .map(|v| v as usize);
-                
+
                 let skip_normalize = args.get("skip_normalize")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                
-                // 1. Try to find an existing session (prefer requested_session_id, then first active)
+
+                // 1. Try to find an existing healthy session.
                 let sessions = TERMINAL_MANAGER.list_sessions().await;
+                let mut healthy_sessions = Vec::new();
+
+                for session_info in &sessions {
+                    let Some(session_lock) = TERMINAL_MANAGER.get_session(&session_info.id).await else {
+                        continue;
+                    };
+                    let session = session_lock.read().await;
+                    if session.is_healthy() {
+                        info!("Found healthy session: {}", session.id);
+                        drop(session);
+                        healthy_sessions.push(session_lock);
+                    } else {
+                        let unhealthy_id = session.id.clone();
+                        drop(session);
+                        info!("Session {} is not healthy (stdin closed), stopping it", unhealthy_id);
+                        let _ = TERMINAL_MANAGER.stop_session(&unhealthy_id).await;
+                    }
+                }
+
                 let active_session = if let Some(ref sid) = requested_session_id {
-                    // Use the requested session if it exists
-                    TERMINAL_MANAGER.get_session(sid).await
-                } else if !sessions.is_empty() {
-                    let session_opt = TERMINAL_MANAGER.get_session(&sessions[0].id).await;
-                    // Check if session is healthy
-                    if let Some(ref session_lock) = session_opt {
+                    let requested_session = if let Some(session_lock) = TERMINAL_MANAGER.get_session(sid).await {
                         let session = session_lock.read().await;
-                        if session.is_healthy() {
-                            info!("Found healthy session: {}", session.id);
-                            drop(session); // Release read lock
-                            session_opt
+                        let is_healthy = session.is_healthy();
+                        let requested_id = session.id.clone();
+                        drop(session);
+
+                        if is_healthy {
+                            Some(session_lock)
                         } else {
-                            let unhealthy_id = session.id.clone();
-                            drop(session); // Release read lock before stopping
-                            info!("Session {} is not healthy (stdin closed), stopping it", unhealthy_id);
-                            let _ = TERMINAL_MANAGER.stop_session(&unhealthy_id).await;
+                            info!("Requested session {} is unhealthy, stopping it", requested_id);
+                            let _ = TERMINAL_MANAGER.stop_session(&requested_id).await;
                             None
                         }
                     } else {
                         None
+                    };
+
+                    if requested_session.is_some() {
+                        requested_session
+                    } else if healthy_sessions.len() == 1 {
+                        let fallback_id = {
+                            let session = healthy_sessions[0].read().await;
+                            session.id.clone()
+                        };
+                        warn!(
+                            "Requested session '{}' not found; falling back to the only healthy active session '{}'",
+                            sid, fallback_id
+                        );
+                        Some(healthy_sessions.remove(0))
+                    } else if healthy_sessions.len() > 1 {
+                        return Err(format!(
+                            "Requested session_id '{}' was not found. {} healthy terminal sessions are active. Reuse the exact session_id returned by interactive_shell or omit session_id.",
+                            sid,
+                            healthy_sessions.len()
+                        ));
+                    } else {
+                        warn!(
+                            "Requested session '{}' not found and no healthy active session is available; creating a new session",
+                            sid
+                        );
+                        None
                     }
                 } else {
-                    None
+                    healthy_sessions.into_iter().next()
                 };
 
                 let (session_id, mut output_rx, session_execution_mode): (String, mpsc::UnboundedReceiver<Vec<u8>>, ExecutionMode) = if let Some(session_lock) = active_session {
@@ -874,7 +960,7 @@ impl ToolServer {
                         session.id.clone()
                     };
                     info!("Using existing terminal session: {}", id);
-                    
+
                     // Create a new subscriber to capture ONLY new output (skip history)
                     let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
                     {
@@ -895,7 +981,7 @@ impl ToolServer {
                         reuse_container: true,
                         container_name: Some("sentinel-sandbox-main".to_string()),
                     };
-                    
+
                     let (id, rx) = TERMINAL_MANAGER.create_session(config).await?;
                     info!("Created new persistent terminal session: {}", id);
                     (id, rx, execution_mode)
@@ -917,7 +1003,7 @@ impl ToolServer {
                 } else {
                     normalize_command(&original_cmd)
                 };
-                
+
                 if was_normalized {
                     info!("Command normalized: '{}' -> '{}'", original_cmd, cmd);
                 }
@@ -937,7 +1023,7 @@ impl ToolServer {
                 if let Err(e) = TERMINAL_MANAGER.write_to_session(&session_id, cmd_with_newline.into_bytes()).await {
                     return Err(format!("Failed to execute command: {}", e));
                 }
-                
+
                 // 6. Collect output with smart waiting strategy
                 let mut output = Vec::new();
                 let collect_timeout = Duration::from_secs(wait_timeout_secs);
@@ -945,7 +1031,7 @@ impl ToolServer {
                 let mut line_count = 0;
                 let mut idle_count = 0;
                 let mut completed = false;
-                
+
                 while start.elapsed() < collect_timeout {
                     match timeout(Duration::from_millis(300), output_rx.recv()).await {
                         Ok(Some(data)) => {
@@ -953,9 +1039,9 @@ impl ToolServer {
                             let text = String::from_utf8_lossy(&data);
                             line_count += text.matches('\n').count();
                             output.extend_from_slice(&data);
-                            
+
                             let current_output = String::from_utf8_lossy(&output);
-                            
+
                             match wait_strategy {
                                 WaitStrategy::Prompt => {
                                     if detect_shell_prompt(&current_output) {
@@ -990,7 +1076,7 @@ impl ToolServer {
                         Err(_) => {
                             // 300ms timeout - no new data
                             idle_count += 1;
-                            
+
                             if matches!(wait_strategy, WaitStrategy::Auto) && !output.is_empty() {
                                 // Auto mode: if idle for 1.5s (5 * 300ms), consider done
                                 if idle_count >= 5 {
@@ -1008,13 +1094,13 @@ impl ToolServer {
                         }
                     }
                 }
-                
+
                 let timed_out = start.elapsed() >= collect_timeout;
                 let output_str = String::from_utf8_lossy(&output).to_string();
-                
+
                 // Strip ANSI escape sequences for LLM (keep raw output for terminal display)
                 let clean_output = strip_ansi_codes(&output_str);
-                
+
                 // Build result with status info
                 let mut result = serde_json::json!({
                     "session_id": session_id,
@@ -1023,7 +1109,7 @@ impl ToolServer {
                     "completed": completed,
                     "truncated": timed_out && !completed,
                 });
-                
+
                 // Add helpful hints
                 if was_normalized {
                     result["original_command"] = serde_json::json!(original_cmd);
@@ -1032,13 +1118,13 @@ impl ToolServer {
                         original_cmd
                     ));
                 }
-                
+
                 if timed_out && !completed {
                     result["hint"] = serde_json::json!(
                         "Output was truncated due to timeout. The command may still be running. Consider: 1) Using 'wait_strategy: prompt' for commands that return to shell, 2) Adding flags to limit output (e.g., 'ping -c 4'), 3) Increasing 'wait_timeout'."
                     );
                 }
-                
+
                 Ok(result)
             })
             .build()

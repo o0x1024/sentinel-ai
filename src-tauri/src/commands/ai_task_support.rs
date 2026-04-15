@@ -302,6 +302,8 @@ pub async fn run_external_text_task(
             model: config.model.clone(),
             system_prompt: system_prompt.unwrap_or_default(),
             task: user_input,
+            active_terminal_session_fingerprint: None,
+            active_terminal_session_id: None,
             rig_provider: config
                 .rig_provider
                 .clone()
@@ -375,6 +377,8 @@ pub async fn run_external_chat_task(
             model: config.model.clone(),
             system_prompt: system_prompt.unwrap_or_default(),
             task,
+            active_terminal_session_fingerprint: None,
+            active_terminal_session_id: None,
             rig_provider: config
                 .rig_provider
                 .clone()

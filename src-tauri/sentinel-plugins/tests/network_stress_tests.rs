@@ -23,6 +23,7 @@ fn create_test_transaction() -> HttpTransaction {
             id: uuid::Uuid::new_v4().to_string(),
             method: "GET".to_string(),
             url: "https://httpbin.org/get".to_string(),
+            http_version: Some("HTTP/1.1".to_string()),
             headers: HashMap::from([(
                 "User-Agent".to_string(),
                 "Sentinel-AI-Test/1.0".to_string(),

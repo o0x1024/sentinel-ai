@@ -459,6 +459,7 @@ impl DatabaseService {
                 connection_type TEXT NOT NULL,
                 command TEXT NOT NULL,
                 args TEXT NOT NULL,
+                headers_json TEXT,
                 is_enabled BOOLEAN DEFAULT TRUE,
                 auto_connect BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -467,6 +468,9 @@ impl DatabaseService {
         )
         .execute(pool)
         .await?;
+        let _ = sqlx::query("ALTER TABLE mcp_server_configs ADD COLUMN headers_json TEXT")
+            .execute(pool)
+            .await;
 
         // AI 角色和 Prompt 模板表
         sqlx::query(
@@ -958,7 +962,8 @@ impl DatabaseService {
                 id SERIAL PRIMARY KEY,
                 url TEXT NOT NULL,
                 host TEXT NOT NULL,
-                protocol TEXT NOT NULL,
+                scheme TEXT NOT NULL,
+                http_version_observed TEXT,
                 method TEXT NOT NULL,
                 status_code INTEGER NOT NULL,
                 request_headers TEXT,
@@ -984,6 +989,20 @@ impl DatabaseService {
             "ALTER TABLE proxy_requests ADD COLUMN response_body_compressed BOOLEAN NOT NULL DEFAULT FALSE"
         ).execute(pool).await;
 
+        let _ = sqlx::query(
+            "ALTER TABLE proxy_requests ADD COLUMN scheme TEXT NOT NULL DEFAULT 'http'",
+        )
+        .execute(pool)
+        .await;
+
+        let _ = sqlx::query("ALTER TABLE proxy_requests ADD COLUMN http_version_observed TEXT")
+            .execute(pool)
+            .await;
+
+        let _ = sqlx::query(
+            "UPDATE proxy_requests SET scheme = LOWER(protocol) WHERE (scheme IS NULL OR scheme = '') AND protocol IS NOT NULL"
+        ).execute(pool).await;
+
         // 创建索引以优化查询性能
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_proxy_requests_host ON proxy_requests(host)")
             .execute(pool)
@@ -994,7 +1013,7 @@ impl DatabaseService {
         ).execute(pool).await?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_protocol ON proxy_requests(protocol)",
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_scheme ON proxy_requests(scheme)",
         )
         .execute(pool)
         .await?;

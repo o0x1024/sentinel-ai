@@ -1589,17 +1589,18 @@ impl DatabaseService {
                 let row: (i64,) = sqlx::query_as(
                     r#"
                     INSERT INTO proxy_requests (
-                        url, host, protocol, method, status_code,
+                        url, host, scheme, http_version_observed, method, status_code,
                         request_headers, request_body, response_headers, response_body,
                         response_size, response_time, timestamp,
                         request_body_compressed, response_body_compressed
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                     RETURNING id
                     "#,
                 )
                 .bind(&request.url)
                 .bind(&request.host)
-                .bind(&request.protocol)
+                .bind(&request.scheme)
+                .bind(&request.http_version_observed)
                 .bind(&request.method)
                 .bind(request.status_code)
                 .bind(&request.request_headers)
@@ -1619,17 +1620,18 @@ impl DatabaseService {
                 let row: (i64,) = sqlx::query_as(
                     r#"
                     INSERT INTO proxy_requests (
-                        url, host, protocol, method, status_code,
+                        url, host, scheme, http_version_observed, method, status_code,
                         request_headers, request_body, response_headers, response_body,
                         response_size, response_time, timestamp,
                         request_body_compressed, response_body_compressed
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id
                     "#,
                 )
                 .bind(&request.url)
                 .bind(&request.host)
-                .bind(&request.protocol)
+                .bind(&request.scheme)
+                .bind(&request.http_version_observed)
                 .bind(&request.method)
                 .bind(request.status_code)
                 .bind(&request.request_headers)
@@ -1649,16 +1651,17 @@ impl DatabaseService {
                 let result = sqlx::query(
                     r#"
                     INSERT INTO proxy_requests (
-                        url, host, protocol, method, status_code,
+                        url, host, scheme, http_version_observed, method, status_code,
                         request_headers, request_body, response_headers, response_body,
                         response_size, response_time, timestamp,
                         request_body_compressed, response_body_compressed
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&request.url)
                 .bind(&request.host)
-                .bind(&request.protocol)
+                .bind(&request.scheme)
+                .bind(&request.http_version_observed)
                 .bind(&request.method)
                 .bind(request.status_code)
                 .bind(&request.request_headers)
@@ -1698,7 +1701,7 @@ impl DatabaseService {
             DatabasePool::PostgreSQL(pool) => {
                 let mut query_builder = sqlx::QueryBuilder::<Postgres>::new(
                     r#"
-                    SELECT id, url, host, protocol, method, status_code,
+                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -1706,8 +1709,8 @@ impl DatabaseService {
                     WHERE 1=1
                     "#,
                 );
-                if let Some(ref protocol) = filters.protocol {
-                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                if let Some(ref scheme) = filters.scheme {
+                    query_builder.push(" AND scheme = ").push_bind(scheme);
                 }
                 if let Some(ref method) = filters.method {
                     query_builder.push(" AND method = ").push_bind(method);
@@ -1742,7 +1745,7 @@ impl DatabaseService {
             DatabasePool::SQLite(pool) => {
                 let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
                     r#"
-                    SELECT id, url, host, protocol, method, status_code,
+                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -1750,8 +1753,8 @@ impl DatabaseService {
                     WHERE 1=1
                     "#,
                 );
-                if let Some(ref protocol) = filters.protocol {
-                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                if let Some(ref scheme) = filters.scheme {
+                    query_builder.push(" AND scheme = ").push_bind(scheme);
                 }
                 if let Some(ref method) = filters.method {
                     query_builder.push(" AND method = ").push_bind(method);
@@ -1786,7 +1789,7 @@ impl DatabaseService {
             DatabasePool::MySQL(pool) => {
                 let mut query_builder = sqlx::QueryBuilder::<MySql>::new(
                     r#"
-                    SELECT id, url, host, protocol, method, status_code,
+                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -1794,8 +1797,8 @@ impl DatabaseService {
                     WHERE 1=1
                     "#,
                 );
-                if let Some(ref protocol) = filters.protocol {
-                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                if let Some(ref scheme) = filters.scheme {
+                    query_builder.push(" AND scheme = ").push_bind(scheme);
                 }
                 if let Some(ref method) = filters.method {
                     query_builder.push(" AND method = ").push_bind(method);
@@ -1869,8 +1872,8 @@ impl DatabaseService {
                     WHERE 1=1
                     "#,
                 );
-                if let Some(ref protocol) = filters.protocol {
-                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                if let Some(ref scheme) = filters.scheme {
+                    query_builder.push(" AND scheme = ").push_bind(scheme);
                 }
                 if let Some(ref method) = filters.method {
                     query_builder.push(" AND method = ").push_bind(method);
@@ -1901,8 +1904,8 @@ impl DatabaseService {
                     WHERE 1=1
                     "#,
                 );
-                if let Some(ref protocol) = filters.protocol {
-                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                if let Some(ref scheme) = filters.scheme {
+                    query_builder.push(" AND scheme = ").push_bind(scheme);
                 }
                 if let Some(ref method) = filters.method {
                     query_builder.push(" AND method = ").push_bind(method);
@@ -1933,8 +1936,8 @@ impl DatabaseService {
                     WHERE 1=1
                     "#,
                 );
-                if let Some(ref protocol) = filters.protocol {
-                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                if let Some(ref scheme) = filters.scheme {
+                    query_builder.push(" AND scheme = ").push_bind(scheme);
                 }
                 if let Some(ref method) = filters.method {
                     query_builder.push(" AND method = ").push_bind(method);
@@ -1971,7 +1974,7 @@ impl DatabaseService {
             DatabasePool::PostgreSQL(pool) => {
                 let record = sqlx::query_as::<_, ProxyRequestRecord>(
                     r#"
-                    SELECT id, url, host, protocol, method, status_code,
+                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -1987,7 +1990,7 @@ impl DatabaseService {
             DatabasePool::SQLite(pool) => {
                 let record = sqlx::query_as::<_, ProxyRequestRecord>(
                     r#"
-                    SELECT id, url, host, protocol, method, status_code,
+                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -2003,7 +2006,7 @@ impl DatabaseService {
             DatabasePool::MySQL(pool) => {
                 let record = sqlx::query_as::<_, ProxyRequestRecord>(
                     r#"
-                    SELECT id, url, host, protocol, method, status_code,
+                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -2300,7 +2303,8 @@ pub struct ProxyRequestRecord {
     pub id: Option<i64>,
     pub url: String,
     pub host: String,
-    pub protocol: String,
+    pub scheme: String,
+    pub http_version_observed: Option<String>,
     pub method: String,
     pub status_code: i32,
     pub request_headers: Option<String>,
@@ -2319,7 +2323,7 @@ pub struct ProxyRequestRecord {
 /// Proxy request filters
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProxyRequestFilters {
-    pub protocol: Option<String>,
+    pub scheme: Option<String>,
     pub method: Option<String>,
     pub host: Option<String>,
     pub status_code_min: Option<i32>,

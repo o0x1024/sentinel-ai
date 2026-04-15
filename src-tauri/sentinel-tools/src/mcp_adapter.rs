@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 use crate::dynamic_tool::{
     create_executor, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
 };
+use crate::mcp_transport::{connect_mcp_client, McpTransportConfig};
 use crate::tool_server::ToolServer;
 
 /// MCP tool metadata from server
@@ -28,9 +29,7 @@ pub struct McpToolMeta {
 pub struct McpConnectionInfo {
     pub connection_id: String,
     pub server_name: String,
-    pub command: String,
-
-    pub args: Vec<String>,
+    pub transport: McpTransportConfig,
     pub tools: Option<Vec<McpToolMeta>>,
 }
 
@@ -80,39 +79,17 @@ async fn execute_mcp_tool_internal(
     tool_name: &str,
     args: Value,
 ) -> Result<Value, String> {
-    use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
-    use rmcp::ServiceExt;
-    use tokio::process::Command as TokioCommand;
-
     tracing::info!(
-        "Executing MCP tool: {} on server {} (command: {} {:?})",
+        "Executing MCP tool: {} on server {} (transport: {}, endpoint: {}, command: {} {:?})",
         tool_name,
         conn_info.server_name,
-        conn_info.command,
-        conn_info.args
+        conn_info.transport.transport_type,
+        conn_info.transport.url,
+        conn_info.transport.command,
+        conn_info.transport.args
     );
 
-    // Create new connection for this execution
-    let mut cmd = TokioCommand::new(&conn_info.command);
-    cmd.args(&conn_info.args);
-
-    let transport = rmcp::transport::TokioChildProcess::new(cmd)
-        .map_err(|e| format!("Failed to create MCP transport: {}", e))?;
-
-    let client_info = ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "sentinel-ai".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            ..Default::default()
-        },
-    };
-
-    let client = client_info
-        .serve(transport)
-        .await
-        .map_err(|e| format!("Failed to connect to MCP server: {}", e))?;
+    let client = connect_mcp_client(&conn_info.transport).await?;
 
     // Convert arguments
     let args_map: Option<serde_json::Map<String, Value>> = if args.is_object() {
@@ -269,30 +246,7 @@ pub async fn refresh_mcp_tools(tool_server: &ToolServer) {
 async fn load_tools_from_mcp_server(
     conn_info: &McpConnectionInfo,
 ) -> Result<Vec<McpToolMeta>, String> {
-    use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
-    use rmcp::ServiceExt;
-    use tokio::process::Command as TokioCommand;
-
-    let mut cmd = TokioCommand::new(&conn_info.command);
-    cmd.args(&conn_info.args);
-
-    let transport = rmcp::transport::TokioChildProcess::new(cmd)
-        .map_err(|e| format!("Failed to create transport: {}", e))?;
-
-    let client_info = ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "sentinel-ai".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            ..Default::default()
-        },
-    };
-
-    let client = client_info
-        .serve(transport)
-        .await
-        .map_err(|e| format!("Failed to connect: {}", e))?;
+    let client = connect_mcp_client(&conn_info.transport).await?;
 
     let tools_result = client
         .list_tools(Default::default())
@@ -350,8 +304,12 @@ mod tests {
         let info = McpConnectionInfo {
             connection_id: "test-id".to_string(),
             server_name: "test-server".to_string(),
-            command: "echo".to_string(),
-            args: vec!["hello".to_string()],
+            transport: McpTransportConfig {
+                transport_type: "stdio".to_string(),
+                command: "echo".to_string(),
+                args: vec!["hello".to_string()],
+                ..Default::default()
+            },
             tools: None,
         };
 

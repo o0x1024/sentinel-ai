@@ -1,60 +1,37 @@
 import type {
-  IntruderSourceRequest,
-  IntruderTarget,
   IntruderAttackOptions,
+  IntruderRequestInput,
+  IntruderTarget,
   ParsedHttpRequest,
   ParsedHttpResponse,
 } from './types'
+import type { HttpEndpoint, HttpHeaderEntry } from '@/components/traffic/http/model'
+import {
+  buildHttpExchangeRequestFromRawRequest,
+  createRawRequestFromHttpExchangeRequest,
+  ensureRawRequestTerminator,
+  normalizeRequestLineEndings,
+  parseRawHttpRequest as parseStructuredRawHttpRequest,
+} from '@/components/traffic/http/parser'
+import { findHeaderValue, headerEntriesToRecord } from '@/components/traffic/http/headers'
+import { buildAbsoluteUrl, buildHostHeaderValue } from '@/components/traffic/http/url'
 
 export function createIntruderId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-export function normalizeRequestLineEndings(rawRequest: string): string {
-  return rawRequest.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n')
-}
-
-export function ensureRawRequestTerminator(rawRequest: string): string {
-  let normalized = normalizeRequestLineEndings(rawRequest)
-
-  const hasHeaderBodySplit = normalized.includes('\r\n\r\n')
-  if (!hasHeaderBodySplit) {
-    normalized += '\r\n\r\n'
-  } else if (normalized.endsWith('\r\n')) {
-    return normalized
-  }
-
-  return normalized
-}
+export { normalizeRequestLineEndings, ensureRawRequestTerminator }
 
 export function parseRawHttpRequest(rawRequest: string): ParsedHttpRequest | null {
-  const normalized = rawRequest.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  const separatorIndex = normalized.indexOf('\n\n')
-  const headerPart = separatorIndex === -1 ? normalized : normalized.slice(0, separatorIndex)
-  const body = separatorIndex === -1 ? '' : normalized.slice(separatorIndex + 2)
-  const lines = headerPart.split('\n')
-
-  if (!lines[0]) {
-    return null
-  }
-
-  const [method = 'GET', path = '/', protocol = 'HTTP/1.1'] = lines[0].trim().split(/\s+/)
-  const headers: Record<string, string> = {}
-
-  for (const line of lines.slice(1)) {
-    const colonIndex = line.indexOf(':')
-    if (colonIndex <= 0) continue
-    const key = line.slice(0, colonIndex).trim()
-    const value = line.slice(colonIndex + 1).trim()
-    headers[key] = value
-  }
+  const parsed = parseStructuredRawHttpRequest(rawRequest)
+  if (!parsed) return null
 
   return {
-    method,
-    path,
-    protocol,
-    headers,
-    body,
+    method: parsed.method,
+    path: parsed.target,
+    version: parsed.version,
+    headers: parsed.headers,
+    bodyText: parsed.bodyText,
   }
 }
 
@@ -77,14 +54,15 @@ export function parseRawHttpResponse(rawResponse: string, responseTimeMs: number
   const body = rawResponse.slice(headerEnd + separatorLength)
   const lines = headerPart.split(/\r\n|\r|\n/)
   const statusCodeMatch = lines[0]?.match(/HTTP\/[\d.]+\s+(\d+)/)
-  const headers: Record<string, string> = {}
+  const headers: HttpHeaderEntry[] = []
 
   for (const line of lines.slice(1)) {
     const colonIndex = line.indexOf(':')
     if (colonIndex <= 0) continue
-    const key = line.slice(0, colonIndex).trim()
-    const value = line.slice(colonIndex + 1).trim()
-    headers[key] = value
+    headers.push({
+      name: line.slice(0, colonIndex).trim(),
+      value: line.slice(colonIndex + 1).trim(),
+    })
   }
 
   return {
@@ -95,9 +73,17 @@ export function parseRawHttpResponse(rawResponse: string, responseTimeMs: number
   }
 }
 
+function buildEndpointFromTarget(target: IntruderTarget): HttpEndpoint {
+  return {
+    scheme: target.useTls ? 'https' : 'http',
+    host: target.host,
+    port: target.port,
+  }
+}
+
 export function extractTargetFromRequest(rawRequest: string, fallbackUrl?: string): IntruderTarget {
-  const parsed = parseRawHttpRequest(rawRequest)
-  const hostHeader = Object.entries(parsed?.headers ?? {}).find(([key]) => key.toLowerCase() === 'host')?.[1]
+  const parsed = parseStructuredRawHttpRequest(rawRequest)
+  const hostHeader = findHeaderValue(parsed?.headers ?? [], 'host')
 
   if (hostHeader) {
     const [host, portText] = hostHeader.split(':')
@@ -126,69 +112,21 @@ export function extractTargetFromRequest(rawRequest: string, fallbackUrl?: strin
   return { host: '', port: 443, useTls: true }
 }
 
-export function createRawRequestFromSource(request?: IntruderSourceRequest): string {
-  if (!request?.url) {
-    return 'GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Sentinel-AI/1.0\r\nAccept: */*\r\n\r\n'
-  }
-
-  try {
-    const url = new URL(request.url)
-    const path = `${url.pathname || '/'}${url.search}`
-    const lines: string[] = [
-      `${request.method || 'GET'} ${path || '/'} HTTP/1.1`,
-      `Host: ${url.host}`,
-    ]
-
-    for (const [key, value] of Object.entries(request.headers ?? {})) {
-      if (key.toLowerCase() === 'host') continue
-      lines.push(`${key}: ${value}`)
-    }
-
-    lines.push('', request.body ?? '')
-    return lines.join('\r\n')
-  } catch {
-    return 'GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Sentinel-AI/1.0\r\nAccept: */*\r\n\r\n'
-  }
+export function createRawRequestFromSource(request?: IntruderRequestInput): string {
+  return createRawRequestFromHttpExchangeRequest(request)
 }
 
 export function buildFullUrl(rawRequest: string, target: IntruderTarget): string {
-  const parsed = parseRawHttpRequest(rawRequest)
+  const parsed = parseStructuredRawHttpRequest(rawRequest)
   if (!parsed) return ''
-
-  if (parsed.path.startsWith('http://') || parsed.path.startsWith('https://')) {
-    return parsed.path
-  }
-
-  const protocol = target.useTls ? 'https' : 'http'
-  const defaultPort = target.useTls ? 443 : 80
-  const portSuffix = target.port !== defaultPort ? `:${target.port}` : ''
-  const path = parsed.path.startsWith('/') ? parsed.path : `/${parsed.path}`
-
-  return `${protocol}://${target.host}${portSuffix}${path}`
+  return buildAbsoluteUrl(buildEndpointFromTarget(target), parsed.target)
 }
 
 export function buildSourceRequestFromRawRequest(
   rawRequest: string,
   target: IntruderTarget,
-): IntruderSourceRequest | null {
-  const parsed = parseRawHttpRequest(rawRequest)
-  if (!parsed) return null
-
-  return {
-    method: parsed.method,
-    url: buildFullUrl(rawRequest, target),
-    headers: parsed.headers,
-    body: parsed.body || undefined,
-  }
-}
-
-export function formatBytes(bytes: number): string {
-  if (!bytes) return '0 B'
-
-  const units = ['B', 'KB', 'MB', 'GB']
-  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
-  const size = bytes / 1024 ** exponent
-  return `${Math.round(size * 100) / 100} ${units[exponent]}`
+): IntruderRequestInput | null {
+  return buildHttpExchangeRequestFromRawRequest(rawRequest, buildEndpointFromTarget(target))
 }
 
 export function applyIntruderRequestSettings(
@@ -210,65 +148,54 @@ export function applyIntruderRequestSettings(
   }
 
   const requestLine = lines[0]
-  const headers = lines.slice(1)
-  const updatedHeaders: string[] = []
-  let hasHost = false
-  let hasContentLength = false
-  let hasConnection = false
+  const parsed = parseStructuredRawHttpRequest(rawRequest)
+  const existingHeaders = parsed?.headers ?? []
+  let updatedHeaders = [...existingHeaders]
 
-  for (const header of headers) {
-    const colonIndex = header.indexOf(':')
-    if (colonIndex <= 0) {
-      updatedHeaders.push(header)
-      continue
-    }
+  if (options.updateHostHeader) {
+    const hostHeaderValue = buildHostHeaderValue(buildEndpointFromTarget(target))
+    updatedHeaders = upsertHeader(updatedHeaders, 'Host', hostHeaderValue)
+  }
 
-    const key = header.slice(0, colonIndex).trim()
-    const lowerKey = key.toLowerCase()
-
-    if (lowerKey === 'host') {
-      hasHost = true
-      updatedHeaders.push(
-        options.updateHostHeader ? `Host: ${buildHostHeaderValue(target)}` : header,
+  if (options.updateContentLength) {
+    if (body.length > 0) {
+      updatedHeaders = upsertHeader(
+        updatedHeaders,
+        'Content-Length',
+        new TextEncoder().encode(body).length.toString(),
       )
-      continue
+    } else {
+      updatedHeaders = updatedHeaders.filter((header) => header.name.toLowerCase() !== 'content-length')
     }
-
-    if (lowerKey === 'content-length') {
-      hasContentLength = true
-      updatedHeaders.push(
-        options.updateContentLength ? `Content-Length: ${new TextEncoder().encode(body).length}` : header,
-      )
-      continue
-    }
-
-    if (lowerKey === 'connection') {
-      hasConnection = true
-      updatedHeaders.push(options.setConnectionClose ? 'Connection: close' : header)
-      continue
-    }
-
-    updatedHeaders.push(header)
   }
 
-  if (options.updateHostHeader && !hasHost) {
-    updatedHeaders.unshift(`Host: ${buildHostHeaderValue(target)}`)
+  if (options.setConnectionClose) {
+    updatedHeaders = upsertHeader(updatedHeaders, 'Connection', 'close')
   }
 
-  if (options.updateContentLength && body.length > 0 && !hasContentLength) {
-    updatedHeaders.push(`Content-Length: ${new TextEncoder().encode(body).length}`)
-  }
-
-  if (options.setConnectionClose && !hasConnection) {
-    updatedHeaders.push('Connection: close')
-  }
-
-  return ensureRawRequestTerminator([requestLine, ...updatedHeaders, '', body].join('\n'))
+  const headerLines = updatedHeaders.map((header) => `${header.name}: ${header.value}`)
+  return ensureRawRequestTerminator([requestLine, ...headerLines, '', body].join('\n'))
 }
 
-function buildHostHeaderValue(target: IntruderTarget): string {
-  const defaultPort = target.useTls ? 443 : 80
-  return target.port === defaultPort ? target.host : `${target.host}:${target.port}`
+function upsertHeader(headers: HttpHeaderEntry[], name: string, value: string): HttpHeaderEntry[] {
+  const lowerName = name.toLowerCase()
+  const nextHeaders = headers.map((header) => ({ ...header }))
+  const existingIndex = nextHeaders.findIndex((header) => header.name.toLowerCase() === lowerName)
+
+  if (existingIndex >= 0) {
+    nextHeaders[existingIndex] = {
+      name: nextHeaders[existingIndex].name,
+      value,
+    }
+    return nextHeaders
+  }
+
+  nextHeaders.push({ name, value })
+  return nextHeaders
+}
+
+export function headersToRecord(headers: HttpHeaderEntry[]): Record<string, string> {
+  return headerEntriesToRecord(headers)
 }
 
 export function countWords(text: string): number {

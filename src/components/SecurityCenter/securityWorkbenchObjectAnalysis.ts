@@ -87,7 +87,37 @@ const looksLikeObjectValue = (value: string) => {
   return false
 }
 
+const NON_RESOURCE_FIELD_HINTS = new Set([
+  'k',
+  'ak',
+  'sig',
+  'sign',
+  'signature',
+  'token',
+  'auth',
+  'authorization',
+  'expires',
+  'expire',
+  'expiry',
+  'timestamp',
+  'ts',
+  'nonce',
+  'policy',
+])
+
+const leafFieldName = (fieldPath: string) =>
+  fieldPath
+    .split('.')
+    .pop()
+    ?.replace(/\[\d+\]/g, '')
+    .toLowerCase() || ''
+
+const isLikelySignatureField = (fieldPath: string) => NON_RESOURCE_FIELD_HINTS.has(leafFieldName(fieldPath))
+
 const inferRole = (fieldPath: string): WorkbenchObjectReferenceRole => {
+  if (isLikelySignatureField(fieldPath)) {
+    return 'unknown'
+  }
   const normalized = normalizeField(fieldPath)
   if (normalized.includes('tenant') || normalized.includes('workspace') || normalized.includes('org')) {
     return 'tenant'
@@ -134,6 +164,7 @@ const pushReference = (
 ) => {
   const trimmed = value.trim()
   if (!looksLikeObjectValue(trimmed)) return
+  if (source === 'query' && isLikelySignatureField(fieldPath)) return
 
   const role = inferRole(fieldPath)
   const normalizedField = normalizeField(fieldPath)

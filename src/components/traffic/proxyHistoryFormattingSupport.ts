@@ -1,4 +1,6 @@
 import { detectHttpBodyLanguage } from '@/components/http-editor/httpDocument'
+import { parseStoredHeaderEntries } from './http/headers'
+import { normalizeProxyHistoryHttpVersion } from './proxyHistoryHttpSupport'
 import { getProxyHistoryDerived } from './proxyHistoryDerivedSupport'
 import type {
   ProxyHistoryRequestTab,
@@ -16,14 +18,9 @@ export const formatBytes = (bytes: number) => {
 }
 
 export const formatHeaders = (headers: string) => {
-  try {
-    const parsed = JSON.parse(headers)
-    return Object.entries(parsed)
-      .map(([key, value]) => `${key}: ${value}`)
-      .join('\n')
-  } catch {
-    return headers
-  }
+  const parsed = parseStoredHeaderEntries(headers)
+  if (!parsed.length) return headers
+  return parsed.map((header) => `${header.name}: ${header.value}`).join('\n')
 }
 
 export const truncateText = (text: string, maxLength: number) => {
@@ -87,6 +84,8 @@ export const getColumnValue = (request: ProxyRequest, columnId: string): string 
       return request.host
     case 'method':
       return request.method
+    case 'httpVersion':
+      return normalizeProxyHistoryHttpVersion(request.http_version_observed)
     case 'url':
       return request.url
     case 'params':
@@ -102,7 +101,7 @@ export const getColumnValue = (request: ProxyRequest, columnId: string): string 
     case 'title':
       return request.title || ''
     case 'tls':
-      return request.protocol === 'https' ? '✓' : ''
+      return request.scheme === 'https' ? '✓' : ''
     case 'ip':
       return request.ip || ''
     case 'time':
@@ -118,22 +117,36 @@ export const getColumnValue = (request: ProxyRequest, columnId: string): string 
 
 export const getHarStatusText = (code: number): string => {
   const statusTexts: Record<number, string> = {
+    101: 'Switching Protocols',
     200: 'OK',
     201: 'Created',
+    202: 'Accepted',
     204: 'No Content',
+    206: 'Partial Content',
     301: 'Moved Permanently',
     302: 'Found',
+    303: 'See Other',
+    307: 'Temporary Redirect',
+    308: 'Permanent Redirect',
     304: 'Not Modified',
     400: 'Bad Request',
     401: 'Unauthorized',
     403: 'Forbidden',
     404: 'Not Found',
+    405: 'Method Not Allowed',
+    409: 'Conflict',
+    429: 'Too Many Requests',
     500: 'Internal Server Error',
     502: 'Bad Gateway',
     503: 'Service Unavailable',
   }
+  if (code === -1) return 'TUNNEL'
+  if (code === 0) return 'TLS ERR'
   return statusTexts[code] || 'Unknown'
 }
+
+const getStartLineHttpVersion = (request: ProxyRequest) =>
+  normalizeProxyHistoryHttpVersion(request.http_version_observed)
 
 const getRequestPath = (url: string): string => {
   try {
@@ -161,25 +174,12 @@ const formatHeaderBlock = (headersJsonOrRaw: string | undefined, opts: { skipHos
   const skip = new Set<string>()
   if (opts.skipHost) skip.add('host')
 
-  try {
-    const parsed = JSON.parse(headersJsonOrRaw)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      let output = ''
-      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-        const keyLower = key.toLowerCase()
-        if (skip.has(keyLower)) continue
-        if (Array.isArray(value)) {
-          for (const item of value) {
-            output += `${key}: ${String(item)}\n`
-          }
-        } else {
-          output += `${key}: ${String(value)}\n`
-        }
-      }
-      return output
-    }
-  } catch {
-    // fall through to raw mode
+  const parsedHeaders = parseStoredHeaderEntries(headersJsonOrRaw)
+  if (parsedHeaders.length > 0) {
+    const lines = parsedHeaders
+      .filter((header) => !skip.has(header.name.toLowerCase()))
+      .map((header) => `${header.name}: ${header.value}`)
+    return lines.length ? `${lines.join('\n')}\n` : ''
   }
 
   const lines = headersJsonOrRaw
@@ -223,7 +223,7 @@ export const formatRequest = (
   const body = useEdited && request.edited_request_body ? request.edited_request_body : request.request_body
 
   const requestPath = getRequestPath(url)
-  let result = `${method} ${requestPath} HTTP/1.1\n`
+  let result = `${method} ${requestPath} ${getStartLineHttpVersion(request)}\n`
   const hostValue = request.host || getHostFromUrl(url)
   if (hostValue) result += `Host: ${hostValue}\n`
   result += formatHeaderBlock(headers, { skipHost: !!hostValue })
@@ -247,7 +247,7 @@ export const formatRequestRaw = (
   const body = useEdited && request.edited_request_body ? request.edited_request_body : request.request_body
 
   const requestPath = getRequestPath(url)
-  let result = `${method} ${requestPath} HTTP/1.1\n`
+  let result = `${method} ${requestPath} ${getStartLineHttpVersion(request)}\n`
   const hostValue = request.host || getHostFromUrl(url)
   if (hostValue) result += `Host: ${hostValue}\n`
   result += formatHeaderBlock(headers, { skipHost: !!hostValue })
@@ -266,12 +266,8 @@ export const getResponseContentType = (
   const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
 
   if (headers) {
-    try {
-      const parsed = JSON.parse(headers)
-      return parsed['content-type'] || parsed['Content-Type'] || ''
-    } catch {
-      return ''
-    }
+    const parsed = parseStoredHeaderEntries(headers)
+    return parsed.find((header) => header.name.toLowerCase() === 'content-type')?.value || ''
   }
   return ''
 }
@@ -293,7 +289,7 @@ export const formatResponse = (
   const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
   const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
 
-  let result = `HTTP/1.2 ${statusCode} OK\n`
+  let result = `${getStartLineHttpVersion(request)} ${statusCode} ${getHarStatusText(statusCode)}\n`
   result += formatHeaderBlock(headers)
 
   if (body) {
@@ -342,7 +338,7 @@ export const formatResponseRaw = (
   const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
   const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
 
-  let result = `HTTP/1.2 ${statusCode} OK\n`
+  let result = `${getStartLineHttpVersion(request)} ${statusCode} ${getHarStatusText(statusCode)}\n`
   result += formatHeaderBlock(headers)
   if (body) {
     result += `\n${body}`
