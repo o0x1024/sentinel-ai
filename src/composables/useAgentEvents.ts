@@ -464,6 +464,18 @@ export function useAgentEvents(
       summary_global_tokens?: number
       summary_segment_tokens?: number
       summary_segment_count?: number
+      sentinel_mode?: boolean
+      sentinel_active_intent?: {
+        intent_id?: string
+        relation?: string
+        confidence?: number
+      } | null
+      sentinel_clarification?: {
+        needed?: boolean
+        status?: string
+        source?: string
+        compression_aggressiveness?: string
+      } | null
     }>('agent:context_usage', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
@@ -479,6 +491,13 @@ export function useAgentEvents(
         summaryGlobalTokens: payload.summary_global_tokens ?? 0,
         summarySegmentTokens: payload.summary_segment_tokens ?? 0,
         summarySegmentCount: payload.summary_segment_count ?? 0,
+        sentinelMode: payload.sentinel_mode === true,
+        sentinelIntentId: payload.sentinel_active_intent?.intent_id || null,
+        sentinelIntentConfidence: payload.sentinel_active_intent?.confidence ?? null,
+        sentinelClarificationNeeded: payload.sentinel_clarification?.needed === true,
+        sentinelClarificationStatus: payload.sentinel_clarification?.status || null,
+        sentinelCompressionAggressiveness:
+          payload.sentinel_clarification?.compression_aggressiveness || null,
       }
       console.log('[useAgentEvents] Context usage updated:', contextUsage.value)
     })

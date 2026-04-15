@@ -31,7 +31,7 @@ export const useAgentConversationFlow = (params: {
   agentMessages: Ref<AgentMessage[]>
   agentStreamingContent: Ref<string>
   agentSubagents: Ref<any[]>
-  assistantContextMode: Ref<'claude-like' | 'codex-like'>
+  assistantContextMode: Ref<'claude-like' | 'codex-like' | 'sentinel-like'>
   assistantSelectedModel: Ref<string>
   buildToolConfig: () => UiToolConfigPayload
   clearAgentMessages: () => void

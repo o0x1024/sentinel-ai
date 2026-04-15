@@ -6,7 +6,7 @@
       </div>
       <div>
         <div class="text-sm font-semibold text-info">用户选择</div>
-        <div class="text-xs text-base-content/60">AskUserQuestion 已收到回答</div>
+        <div class="text-xs text-base-content/60">{{ resultSummary }}</div>
       </div>
     </div>
 
@@ -27,6 +27,9 @@
     <div v-else class="px-4 py-4 text-sm">
       <div v-if="isFailed" class="rounded-lg border border-error/30 bg-error/10 px-3 py-3 text-error">
         {{ errorText }}
+      </div>
+      <div v-else-if="isTimeoutWithoutAnswers" class="rounded-lg border border-warning/30 bg-warning/10 px-3 py-3 text-base-content/75">
+        AskUserQuestion 已超时，本轮没有写入答案。
       </div>
       <div v-else class="space-y-3">
         <div
@@ -97,6 +100,8 @@ const answerEntries = computed(() => {
   const result = parsedResult.value as {
     questions?: QuestionItem[]
     answers?: Record<string, string>
+    status?: string
+    source?: string
   } | null
   if (!result?.questions || !result.answers) return []
   return result.questions.map((question) => ({
@@ -106,6 +111,21 @@ const answerEntries = computed(() => {
   }))
 })
 
+const resultSummary = computed(() => {
+  const result = parsedResult.value as { status?: string; source?: string } | null
+  if (!result) return 'AskUserQuestion 已收到回答'
+  if (result.status === 'timeout_with_default') {
+    return 'AskUserQuestion 超时后使用默认值继续'
+  }
+  if (result.status === 'timeout_without_default') {
+    return 'AskUserQuestion 超时，未写入默认答案'
+  }
+  if (result.source === 'system_default') {
+    return 'AskUserQuestion 使用系统默认值'
+  }
+  return 'AskUserQuestion 已收到回答'
+})
+
 const pendingQuestions = computed(() => {
   if (!props.args || typeof props.args !== 'object') return []
   const args = props.args as { questions?: QuestionItem[] }
@@ -113,6 +133,10 @@ const pendingQuestions = computed(() => {
 })
 
 const isFailed = computed(() => props.status === 'failed')
+const isTimeoutWithoutAnswers = computed(() => {
+  const result = parsedResult.value as { status?: string } | null
+  return result?.status === 'timeout_without_default'
+})
 
 const errorText = computed(() => {
   const raw = String(props.error || '').trim()

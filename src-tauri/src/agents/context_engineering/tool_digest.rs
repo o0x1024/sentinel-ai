@@ -1,7 +1,7 @@
 //! Tool result digest utilities.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDigest {
@@ -14,6 +14,8 @@ pub struct ToolDigest {
     pub artifact_kind: Option<String>,
     #[serde(default)]
     pub preview_snippets: Vec<String>,
+    #[serde(default)]
+    pub metadata: Option<Value>,
     pub created_at_ms: i64,
 }
 
@@ -21,6 +23,27 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
     let created_at_ms = chrono::Utc::now().timestamp_millis();
     let status = match serde_json::from_str::<Value>(result) {
         Ok(Value::Object(map)) => {
+            if tool_name == "ask_user_question" {
+                return ToolDigest {
+                    tool_name: tool_name.to_string(),
+                    status: match map.get("status").and_then(|v| v.as_str()).unwrap_or("resolved")
+                    {
+                        "timeout_with_default" | "timeout_without_default" => "timeout".to_string(),
+                        _ => "ok".to_string(),
+                    },
+                    summary: build_ask_user_question_summary(&map),
+                    artifact_id: None,
+                    artifact_kind: None,
+                    preview_snippets: Vec::new(),
+                    metadata: Some(json!({
+                        "status": map.get("status").and_then(|v| v.as_str()).unwrap_or("resolved"),
+                        "source": map.get("source").and_then(|v| v.as_str()).unwrap_or("user"),
+                        "answer_count": map.get("answers").and_then(|v| v.as_object()).map(|answers| answers.len()).unwrap_or(0),
+                        "question_count": map.get("questions").and_then(|v| v.as_array()).map(|questions| questions.len()).unwrap_or(0),
+                    })),
+                    created_at_ms,
+                };
+            }
             if let Some(success) = map.get("success").and_then(|v| v.as_bool()) {
                 if success {
                     "ok".to_string()
@@ -77,21 +100,6 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
                 format!(
                     "HTTP {} {} {} ({} bytes, truncated: {})",
                     status_code, status_text, url, body_len, truncated
-                )
-            } else if tool_name == "ask_user_question" {
-                let answer_count = map
-                    .get("answers")
-                    .and_then(|v| v.as_object())
-                    .map(|answers| answers.len())
-                    .unwrap_or(0);
-                let question_count = map
-                    .get("questions")
-                    .and_then(|v| v.as_array())
-                    .map(|questions| questions.len())
-                    .unwrap_or(0);
-                format!(
-                    "AskUserQuestion collected {} / {} answers",
-                    answer_count, question_count
                 )
             } else if tool_name.contains("shell") || tool_name.contains("interactive_shell") {
                 let command = map
@@ -161,7 +169,37 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
         artifact_id,
         artifact_kind,
         preview_snippets,
+        metadata: None,
         created_at_ms,
+    }
+}
+
+fn build_ask_user_question_summary(map: &serde_json::Map<String, Value>) -> String {
+    let answer_count = map
+        .get("answers")
+        .and_then(|v| v.as_object())
+        .map(|answers| answers.len())
+        .unwrap_or(0);
+    let question_count = map
+        .get("questions")
+        .and_then(|v| v.as_array())
+        .map(|questions| questions.len())
+        .unwrap_or(0);
+    let response_status = map
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("resolved");
+    let source = map.get("source").and_then(|v| v.as_str()).unwrap_or("user");
+    match response_status {
+        "timeout_with_default" => format!(
+            "AskUserQuestion timed out and used defaults for {} / {} answers ({})",
+            answer_count, question_count, source
+        ),
+        "timeout_without_default" => "AskUserQuestion timed out without answers".to_string(),
+        _ => format!(
+            "AskUserQuestion collected {} / {} answers ({})",
+            answer_count, question_count, source
+        ),
     }
 }
 

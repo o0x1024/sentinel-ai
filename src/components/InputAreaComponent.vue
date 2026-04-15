@@ -652,6 +652,12 @@ interface ContextUsageInfo {
   summaryGlobalTokens: number
   summarySegmentTokens: number
   summarySegmentCount: number
+  sentinelMode?: boolean
+  sentinelIntentId?: string | null
+  sentinelIntentConfidence?: number | null
+  sentinelClarificationNeeded?: boolean
+  sentinelClarificationStatus?: string | null
+  sentinelCompressionAggressiveness?: string | null
 }
 
 interface AgentOption {
@@ -1342,9 +1348,18 @@ const contextUsageTooltip = computed(() => {
     summaryTokens, 
     summaryGlobalTokens, 
     summarySegmentTokens, 
-    summarySegmentCount 
+    summarySegmentCount,
+    sentinelMode,
+    sentinelIntentId,
+    sentinelIntentConfidence,
+    sentinelClarificationNeeded,
+    sentinelClarificationStatus,
+    sentinelCompressionAggressiveness,
   } = effectiveContextUsage.value
   const inputHint = inputTokenEstimate.value > 0 ? `\n${t('agent.inputTokens')}: ~${formatTokenCount(inputTokenEstimate.value)}` : ''
+  const sentinelHint = sentinelMode
+    ? `\nSentinel intent: ${sentinelIntentId || '-'}\nSentinel confidence: ${sentinelIntentConfidence == null ? '-' : sentinelIntentConfidence.toFixed(2)}\nSentinel clarification: ${sentinelClarificationNeeded ? 'needed' : (sentinelClarificationStatus || 'stable')}\nSentinel compression: ${sentinelCompressionAggressiveness || '-'}`
+    : ''
   return `${t('agent.contextUsageDetails')}
 ${t('agent.systemPromptTokens')}: ${formatTokenCount(systemPromptTokens)}
 ${t('agent.summaryTokens')}: ${formatTokenCount(summaryTokens)}
@@ -1352,7 +1367,7 @@ ${t('agent.summaryGlobalTokens')}: ${formatTokenCount(summaryGlobalTokens)}
 ${t('agent.summarySegmentTokens')}: ${formatTokenCount(summarySegmentTokens)} (${t('agent.summarySegments')}: ${summarySegmentCount})
 ${t('agent.historyTokens')}: ${formatTokenCount(historyTokens)}
 ${t('agent.historyMessages')}: ${historyCount}
-${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}${inputHint}`
+${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}${inputHint}${sentinelHint}`
 })
 
 const formatTokenCount = (count: number): string => {

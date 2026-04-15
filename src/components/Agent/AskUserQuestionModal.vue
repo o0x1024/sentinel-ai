@@ -18,6 +18,13 @@
         </div>
 
         <div class="max-h-[70vh] space-y-5 overflow-y-auto px-6 py-5">
+          <div
+            v-if="timeoutHint"
+            class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-base-content/75"
+          >
+            {{ timeoutHint }}
+          </div>
+
           <section
             v-for="question in pendingRequest.questions"
             :key="question.question"
@@ -121,6 +128,10 @@ interface PendingAskUserQuestionRequest {
   execution_id?: string | null
   questions: AskUserQuestionItem[]
   timestamp: number
+  timeout_secs?: number
+  timeout_policy?: 'use_default' | 'return_timeout' | 'fail_closed'
+  default_answers?: Record<string, string>
+  expires_at?: number
 }
 
 const props = defineProps<{
@@ -190,6 +201,18 @@ const getAnswerForQuestion = (questionText: string) => {
 const canSubmit = computed(() => {
   if (!pendingRequest.value) return false
   return pendingRequest.value.questions.every((question) => getAnswerForQuestion(question.question))
+})
+
+const timeoutHint = computed(() => {
+  const request = pendingRequest.value
+  if (!request?.timeout_secs) return ''
+  if (request.timeout_policy === 'use_default') {
+    return `若 ${request.timeout_secs} 秒内未回答，系统会使用默认选项继续执行。`
+  }
+  if (request.timeout_policy === 'fail_closed') {
+    return `若 ${request.timeout_secs} 秒内未回答，当前高风险分支会停止执行。`
+  }
+  return `若 ${request.timeout_secs} 秒内未回答，这次澄清会返回超时状态。`
 })
 
 const selectOption = (questionText: string, label: string) => {

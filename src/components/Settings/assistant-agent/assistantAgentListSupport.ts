@@ -51,7 +51,13 @@ export function getAssistantAgentToolsBadge(profile: AssistantProfileOption): As
 export function getAssistantAgentSecondarySummary(profile: AssistantProfileOption): string {
   const parts: string[] = []
 
-  parts.push(profile.contextMode === 'codex-like' ? 'Codex-like 上下文' : 'Claude-like 上下文')
+  parts.push(
+    profile.contextMode === 'codex-like'
+      ? 'Codex-like 上下文'
+      : profile.contextMode === 'sentinel-like'
+        ? 'Sentinel-like 上下文'
+        : 'Claude-like 上下文',
+  )
   parts.push(profile.defaultModel?.trim() || '模型跟随全局')
 
   if (profile.runMode === 'team' && profile.defaultTeamOrchestrationPresetId) {

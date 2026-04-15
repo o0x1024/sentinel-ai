@@ -3,6 +3,7 @@ use sentinel_llm::ChatMessage;
 use crate::agents::context_engineering::memory_index::{
     ingest_memory_items, retrieve_memory_items, MemoryQuery,
 };
+use crate::agents::context_engineering::engine::ContextEngineMode;
 use crate::agents::context_engineering::tool_digest::build_tool_digest;
 use crate::agents::context_engineering::types::{
     trim_history_preserve_tool_pairs, ContextPacket, RetrievedMemorySection, ToolDigestEntry,
@@ -197,13 +198,43 @@ fn ask_user_question_digest_is_summarized_as_question_collection() {
                 }
             ]
         }),
-        r#"{"questions":[{"header":"Mode","question":"Which mode should we use?","options":[{"label":"Safe","description":"Conservative"},{"label":"Fast","description":"Quicker"}]}],"answers":{"Which mode should we use?":"Safe"}}"#,
+        r#"{"questions":[{"header":"Mode","question":"Which mode should we use?","options":[{"label":"Safe","description":"Conservative"},{"label":"Fast","description":"Quicker"}]}],"answers":{"Which mode should we use?":"Safe"},"status":"resolved","source":"user"}"#,
     );
 
     assert_eq!(digest.status, "ok");
     assert!(digest
         .summary
-        .contains("AskUserQuestion collected 1 / 1 answers"));
+        .contains("AskUserQuestion collected 1 / 1 answers (user)"));
+}
+
+#[test]
+fn ask_user_question_digest_marks_timeout_defaults() {
+    let digest = build_tool_digest(
+        "ask_user_question",
+        &serde_json::json!({
+            "questions": [
+                {
+                    "header": "Mode",
+                    "question": "Which mode should we use?",
+                    "options": [
+                        {"label": "Safe", "description": "Conservative"},
+                        {"label": "Fast", "description": "Quicker"}
+                    ]
+                }
+            ]
+        }),
+        r#"{"questions":[{"header":"Mode","question":"Which mode should we use?","options":[{"label":"Safe","description":"Conservative"},{"label":"Fast","description":"Quicker"}]}],"answers":{"Which mode should we use?":"Safe"},"status":"timeout_with_default","source":"system_default"}"#,
+    );
+
+    assert!(digest.summary.contains("timed out and used defaults"));
+}
+
+#[test]
+fn sentinel_like_context_mode_is_supported() {
+    assert_eq!(
+        ContextEngineMode::from_str("sentinel-like"),
+        Some(ContextEngineMode::SentinelLike)
+    );
 }
 
 #[test]

@@ -127,6 +127,7 @@ pub async fn execute_agent_with_tools(
         llm_config: llm_config.clone(),
         selected_tool_ids: selected_tool_ids.clone(),
         document_attachments: params.document_attachments.clone(),
+        engine_mode: params.context_engine_mode.unwrap_or_default(),
         policy: context_policy.clone(),
     })
     .await?;

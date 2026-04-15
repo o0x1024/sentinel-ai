@@ -7,6 +7,7 @@ pub mod memory_index;
 pub mod observability;
 pub mod policy;
 pub mod reflection;
+pub mod sentinel;
 pub mod token_utils;
 pub mod tool_digest;
 pub mod types;
@@ -28,6 +29,13 @@ pub use memory_index::{
 pub use observability::{record_context_snapshot, ContextSnapshot};
 pub use policy::{ContextMessageLayout, ContextPolicy, ContextScope};
 pub use reflection::{record_execution_reflection, ExecutionOutcome};
+pub use sentinel::{
+    analyze_intent, apply_sentinel_history_selection, build_sentinel_clarification_state,
+    reconcile_sentinel_clarification, render_sentinel_context, update_intent_registry,
+    update_pinned_context, SentinelClarificationState, SentinelCompressionAggressiveness,
+    SentinelCompressionState, SentinelIntentRelation, SentinelIntentState,
+    SentinelPinnedContext,
+};
 pub use token_utils::{
     estimate_message_tokens, estimate_tokens, MESSAGE_OVERHEAD_TOKENS,
     SYSTEM_MESSAGE_OVERHEAD_TOKENS, TOOL_CALLS_OVERHEAD_TOKENS,

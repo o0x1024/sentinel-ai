@@ -9,6 +9,10 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::agents::context_engineering::policy::ContextPolicy;
+use crate::agents::context_engineering::sentinel::{
+    SentinelClarificationState, SentinelCompressionState, SentinelIntentState,
+    SentinelPinnedContext,
+};
 use crate::agents::context_engineering::tool_digest::ToolDigest;
 
 /// Per-execution-id lock to prevent concurrent read-modify-write races on RunState.
@@ -52,6 +56,16 @@ pub struct ContextRunState {
     pub last_tool_digests: Vec<ToolDigest>,
     #[serde(default)]
     pub memory_items: Vec<ContextMemoryItem>,
+    #[serde(default)]
+    pub sentinel_active_intent: Option<SentinelIntentState>,
+    #[serde(default)]
+    pub sentinel_intent_registry: Vec<SentinelIntentState>,
+    #[serde(default)]
+    pub sentinel_pinned_context: SentinelPinnedContext,
+    #[serde(default)]
+    pub sentinel_compression_state: SentinelCompressionState,
+    #[serde(default)]
+    pub sentinel_last_clarification: Option<SentinelClarificationState>,
     #[serde(default)]
     pub run_state_version: i64,
     pub last_updated_at_ms: i64,

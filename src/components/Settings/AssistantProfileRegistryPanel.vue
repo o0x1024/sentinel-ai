@@ -190,6 +190,7 @@
                   <select v-model="selectedProfile.contextMode" class="select select-bordered">
                     <option value="claude-like">claude-like</option>
                     <option value="codex-like">codex-like</option>
+                    <option value="sentinel-like">sentinel-like</option>
                   </select>
                 </label>
 

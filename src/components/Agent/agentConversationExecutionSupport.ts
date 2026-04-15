@@ -90,7 +90,7 @@ export const buildAssistantModelOverride = (
 )
 
 export const executeConversationTask = async (params: {
-  assistantContextMode: 'claude-like' | 'codex-like'
+  assistantContextMode: 'claude-like' | 'codex-like' | 'sentinel-like'
   assistantSelectedModel?: string | null
   conversationId: string
   defaultConversationTitle: string
@@ -114,7 +114,7 @@ export const executeConversationTask = async (params: {
     config: {
       attachments?: unknown[]
       conversation_id: string
-      context_mode: 'claude-like' | 'codex-like'
+      context_mode: 'claude-like' | 'codex-like' | 'sentinel-like'
       current_terminal_session_fingerprint?: string
       current_terminal_session_id?: string
       display_content?: string

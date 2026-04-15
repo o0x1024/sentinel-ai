@@ -10,6 +10,7 @@ pub enum ContextEngineMode {
     #[default]
     ClaudeLike,
     CodexLike,
+    SentinelLike,
 }
 
 impl ContextEngineMode {
@@ -17,6 +18,7 @@ impl ContextEngineMode {
         match value.trim().to_ascii_lowercase().as_str() {
             "claude-like" | "claudelike" | "claude" => Some(Self::ClaudeLike),
             "codex-like" | "codexlike" | "codex" => Some(Self::CodexLike),
+            "sentinel-like" | "sentinellike" | "sentinel" => Some(Self::SentinelLike),
             _ => None,
         }
     }
@@ -36,6 +38,13 @@ pub fn resolve_context_policy(
             policy.run_state_max_digests = policy.run_state_max_digests.min(4);
             policy.run_state_max_chars = policy.run_state_max_chars.min(1800);
             policy.layer_max_chars = policy.layer_max_chars.min(10000);
+            policy
+        }
+        ContextEngineMode::SentinelLike => {
+            let mut policy = base.unwrap_or_else(ContextPolicy::sentinel_like);
+            policy.include_context_storage = false;
+            policy.include_task_mainline = true;
+            policy.include_run_state = true;
             policy
         }
     }

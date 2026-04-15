@@ -81,6 +81,29 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             run_mode: "assistant".to_string(),
         },
         AssistantProfilePayload {
+            id: "assistant.sentinel".to_string(),
+            label: "Sentinel".to_string(),
+            description: "长会话与多阶段任务入口，默认使用 Sentinel-like 上下文。".to_string(),
+            default_model: None,
+            default_rag_enabled: false,
+            default_web_search_enabled: false,
+            default_tools_enabled: true,
+            default_tenth_man_enabled: true,
+            default_tool_selection_strategy: "Hybrid".to_string(),
+            default_max_tools: 6,
+            default_fixed_tools: vec![
+                "interactive_shell".to_string(),
+                "ask_user_question".to_string(),
+                "tenth_man_review".to_string(),
+            ],
+            default_disabled_tools: vec![],
+            default_manual_tools: vec![],
+            default_team_orchestration_preset_id: None,
+            default_team_recovery_preset_id: None,
+            context_mode: "sentinel-like".to_string(),
+            run_mode: "assistant".to_string(),
+        },
+        AssistantProfilePayload {
             id: "team.lead".to_string(),
             label: "Team Lead".to_string(),
             description: "默认团队编排入口，使用 Claude-like 上下文和 Team 运行模式。".to_string(),
@@ -203,7 +226,10 @@ fn validate_profiles(profiles: &[AssistantProfilePayload]) -> Result<(), String>
         if !ids.insert(profile.id.clone()) {
             return Err(format!("duplicate assistant profile id: {}", profile.id));
         }
-        if profile.context_mode != "claude-like" && profile.context_mode != "codex-like" {
+        if profile.context_mode != "claude-like"
+            && profile.context_mode != "codex-like"
+            && profile.context_mode != "sentinel-like"
+        {
             return Err(format!(
                 "assistant profile {} has unsupported context mode {}",
                 profile.id, profile.context_mode

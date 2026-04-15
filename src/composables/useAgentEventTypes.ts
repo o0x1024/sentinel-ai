@@ -176,6 +176,12 @@ export interface ContextUsageInfo {
   summaryGlobalTokens: number
   summarySegmentTokens: number
   summarySegmentCount: number
+  sentinelMode?: boolean
+  sentinelIntentId?: string | null
+  sentinelIntentConfidence?: number | null
+  sentinelClarificationNeeded?: boolean
+  sentinelClarificationStatus?: string | null
+  sentinelCompressionAggressiveness?: string | null
 }
 
 export interface UseAgentEventsReturn {

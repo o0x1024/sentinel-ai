@@ -31,7 +31,7 @@ export interface AssistantModelOption {
   description?: string
 }
 
-export type AssistantContextMode = 'claude-like' | 'codex-like'
+export type AssistantContextMode = 'claude-like' | 'codex-like' | 'sentinel-like'
 
 export type AssistantRunMode = 'assistant' | 'team'
 

@@ -15,12 +15,18 @@ use sentinel_tools::shell::ShellExecutionMode;
 use crate::agents::context_engineering::checkpoint::{
     load_or_init_run_state, save_run_state, ContextRunState,
 };
+use crate::agents::context_engineering::engine::ContextEngineMode;
 use crate::agents::context_engineering::memory_index::{
     evict_low_value_items, ingest_memory_items, retrieve_memory_items_hybrid, MemoryQuery,
     RetrievedMemoryItem,
 };
 use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
 use crate::agents::context_engineering::policy::{ContextPolicy, ContextScope};
+use crate::agents::context_engineering::sentinel::{
+    analyze_intent, apply_sentinel_history_selection, build_sentinel_clarification_state,
+    reconcile_sentinel_clarification, render_sentinel_context, update_intent_registry,
+    update_pinned_context,
+};
 use crate::agents::context_engineering::token_utils::{
     estimate_message_tokens, estimate_tokens, SYSTEM_MESSAGE_OVERHEAD_TOKENS,
 };
@@ -46,6 +52,7 @@ pub struct ContextBuildInput {
     pub llm_config: LlmConfig,
     pub selected_tool_ids: Vec<String>,
     pub document_attachments: Option<Vec<DocumentAttachmentInfo>>,
+    pub engine_mode: ContextEngineMode,
     pub policy: ContextPolicy,
 }
 
@@ -106,6 +113,7 @@ fn env_label(env: ExecutionEnvironment) -> &'static str {
 }
 
 pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResult> {
+    let sentinel_mode = input.engine_mode == ContextEngineMode::SentinelLike;
     let mut system_prompt = input.base_system_prompt;
     if !system_prompt.contains(USER_FORCED_RULES_BLOCK_MARKER) {
         if let Some(db) = input
@@ -149,6 +157,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let mut retrieved_memory_sections = Vec::new();
     let mut retrieved_memory_ids: Vec<String> = Vec::new();
     let mut run_state_digests = Vec::new();
+    let mut sentinel_run_state: Option<ContextRunState> = None;
 
     if policy.include_skill_instructions {
         if let Some(injected) = input.injected_skill_prompt {
@@ -187,6 +196,11 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             current_plan: None,
             last_tool_digests: vec![],
             memory_items: Vec::new(),
+            sentinel_active_intent: None,
+            sentinel_intent_registry: Vec::new(),
+            sentinel_pinned_context: Default::default(),
+            sentinel_compression_state: Default::default(),
+            sentinel_last_clarification: None,
             run_state_version: 0,
             last_updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
@@ -202,6 +216,20 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         state.constraints.truncate(12);
         state.decisions.truncate(16);
         state.user_preferences.truncate(10);
+
+        if sentinel_mode {
+            let intent = analyze_intent(&input.task, &state.sentinel_intent_registry);
+            let clarification = build_sentinel_clarification_state(&intent);
+            update_intent_registry(&mut state.sentinel_intent_registry, &intent);
+            update_pinned_context(
+                &mut state.sentinel_pinned_context,
+                &input.task,
+                &intent,
+                &state.sentinel_compression_state,
+            );
+            state.sentinel_active_intent = Some(intent);
+            state.sentinel_last_clarification = Some(clarification);
+        }
 
         let todos = load_execution_todos(&input.app_handle, &input.execution_id).await;
         if let Some(ref items) = todos {
@@ -226,10 +254,31 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         ingest_memory_items(&mut state, &memory_facts, &memory_decisions, &memory_todos);
         evict_low_value_items(&mut state);
         run_state_digests = state.last_tool_digests.clone();
+        if sentinel_mode {
+            if let Some(clarification) = state.sentinel_last_clarification.take() {
+                state.sentinel_last_clarification =
+                    Some(reconcile_sentinel_clarification(clarification, &run_state_digests));
+            }
+        }
         if policy.feature_context_packet_v2 {
+            let retrieval_query = if sentinel_mode {
+                if let Some(intent) = state.sentinel_active_intent.as_ref() {
+                    format!(
+                        "{}\n{}\n{}\n{}",
+                        intent.goal,
+                        intent.focus_objects.join(" "),
+                        intent.constraints.join(" "),
+                        input.task
+                    )
+                } else {
+                    format!("{}\n{}", state.task_brief, input.task)
+                }
+            } else {
+                format!("{}\n{}", state.task_brief, input.task)
+            };
             let query = MemoryQuery {
                 execution_id: input.execution_id.clone(),
-                query: format!("{}\n{}", state.task_brief, input.task),
+                query: retrieval_query,
                 top_k: 8,
             };
             let retrieved =
@@ -257,6 +306,24 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
         // Pass None for todos to avoid duplicating what build_todos_context already rendered
         run_state_block.push_str(&render_run_state(&state, &policy, None));
+        if sentinel_mode {
+            if let (Some(intent), Some(clarification)) = (
+                state.sentinel_active_intent.as_ref(),
+                state.sentinel_last_clarification.as_ref(),
+            ) {
+                let sentinel_context = render_sentinel_context(
+                    intent,
+                    &state.sentinel_pinned_context,
+                    &state.sentinel_compression_state,
+                    clarification,
+                );
+                if !sentinel_context.trim().is_empty() {
+                    run_state_block.push_str("\n\n");
+                    run_state_block.push_str(&sentinel_context);
+                }
+            }
+            sentinel_run_state = Some(state.clone());
+        }
     }
 
     if policy.include_working_dir {
@@ -574,12 +641,41 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         .map(estimate_message_tokens)
         .sum();
 
-    let history_tokens: usize = history_messages.iter().map(estimate_message_tokens).sum();
     let available_for_history = safe_limit
         .saturating_sub(system_tokens)
         .saturating_sub(orchestrator_context_tokens)
         .min(budget.window_max_tokens);
 
+    if sentinel_mode {
+        if let Some(state) = sentinel_run_state.as_mut() {
+            if let (Some(intent), Some(clarification)) = (
+                state.sentinel_active_intent.clone(),
+                state.sentinel_last_clarification.clone(),
+            ) {
+                let selection = apply_sentinel_history_selection(
+                    &history_messages,
+                    &intent,
+                    &clarification,
+                    available_for_history,
+                    &mut state.sentinel_compression_state,
+                );
+                if !selection.dropped_slices.is_empty() {
+                    update_pinned_context(
+                        &mut state.sentinel_pinned_context,
+                        &input.task,
+                        &intent,
+                        &state.sentinel_compression_state,
+                    );
+                    state.last_updated_at_ms = chrono::Utc::now().timestamp_millis();
+                    save_run_state(&input.app_handle, &input.execution_id, state).await?;
+                }
+                history_messages = selection.kept_history;
+                trim_trace.extend(selection.trim_trace);
+            }
+        }
+    }
+
+    let history_tokens: usize = history_messages.iter().map(estimate_message_tokens).sum();
     if history_tokens > available_for_history {
         history_messages = trim_history_preserve_tool_pairs(
             &history_messages,
@@ -629,6 +725,24 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             "summary_segment_count": summary_stats.segment_count,
             "orchestrator_context_tokens": orchestrator_context_tokens,
             "trim_trace": trim_trace,
+            "sentinel_mode": sentinel_mode,
+            "sentinel_active_intent": sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_active_intent.as_ref())
+                .map(|intent| json!({
+                    "intent_id": intent.intent_id,
+                    "relation": format!("{:?}", intent.relation),
+                    "confidence": intent.confidence,
+                })),
+            "sentinel_clarification": sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_last_clarification.as_ref())
+                .map(|clarification| json!({
+                    "needed": clarification.needed,
+                    "status": clarification.resolution_status,
+                    "source": clarification.resolution_source,
+                    "compression_aggressiveness": format!("{:?}", clarification.compression_aggressiveness),
+                })),
         }),
     );
     tracing::info!(
@@ -669,6 +783,32 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             max_tokens,
             trim_trace,
             retrieval_ids: retrieved_memory_ids,
+            sentinel_mode,
+            sentinel_intent_id: sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_active_intent.as_ref())
+                .map(|intent| intent.intent_id.clone()),
+            sentinel_intent_confidence: sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_active_intent.as_ref())
+                .map(|intent| intent.confidence),
+            sentinel_intent_relation: sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_active_intent.as_ref())
+                .map(|intent| format!("{:?}", intent.relation)),
+            sentinel_clarification_needed: sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_last_clarification.as_ref())
+                .map(|clarification| clarification.needed)
+                .unwrap_or(false),
+            sentinel_compression_aggressiveness: sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_last_clarification.as_ref())
+                .map(|clarification| format!("{:?}", clarification.compression_aggressiveness)),
+            sentinel_clarification_status: sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_last_clarification.as_ref())
+                .map(|clarification| clarification.resolution_status.clone()),
         },
     );
 

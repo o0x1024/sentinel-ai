@@ -55,6 +55,7 @@
             >
               <option value="claude-like">Claude-like</option>
               <option value="codex-like">Codex-like</option>
+              <option value="sentinel-like">Sentinel-like</option>
             </select>
           </div>
 

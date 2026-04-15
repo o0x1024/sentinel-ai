@@ -27,6 +27,51 @@ pub struct AskUserQuestionItem {
     pub options: Vec<AskUserQuestionOption>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AskUserQuestionTimeoutPolicy {
+    UseDefault,
+    #[default]
+    ReturnTimeout,
+    FailClosed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AskUserQuestionResponseStatus {
+    #[default]
+    Resolved,
+    TimeoutWithDefault,
+    TimeoutWithoutDefault,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AskUserQuestionResponseSource {
+    #[default]
+    User,
+    SystemDefault,
+    Timeout,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AskUserQuestionRequest {
+    /// Questions to ask the user.
+    pub questions: Vec<AskUserQuestionItem>,
+    /// Internal execution id for session-scoped question delivery.
+    #[serde(default)]
+    pub execution_id: Option<String>,
+    /// Optional timeout in seconds before the tool returns.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// Timeout behavior when the user does not answer in time.
+    #[serde(default)]
+    pub timeout_policy: Option<AskUserQuestionTimeoutPolicy>,
+    /// Optional default answers keyed by question text.
+    #[serde(default)]
+    pub default_answers: Option<HashMap<String, String>>,
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct AskUserQuestionArgs {
     /// Questions to ask the user.
@@ -34,12 +79,30 @@ pub struct AskUserQuestionArgs {
     /// Internal execution id for session-scoped question delivery.
     #[serde(default)]
     pub execution_id: Option<String>,
+    /// Optional timeout in seconds before the tool returns.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// Timeout behavior when the user does not answer in time.
+    #[serde(default)]
+    pub timeout_policy: Option<AskUserQuestionTimeoutPolicy>,
+    /// Optional default answers keyed by question text.
+    #[serde(default)]
+    pub default_answers: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AskUserQuestionCollectedResponse {
+    pub answers: HashMap<String, String>,
+    pub status: AskUserQuestionResponseStatus,
+    pub source: AskUserQuestionResponseSource,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct AskUserQuestionOutput {
     pub questions: Vec<AskUserQuestionItem>,
     pub answers: HashMap<String, String>,
+    pub status: AskUserQuestionResponseStatus,
+    pub source: AskUserQuestionResponseSource,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -58,9 +121,8 @@ pub enum AskUserQuestionError {
 pub trait AskUserQuestionHandler: Send + Sync {
     async fn ask_questions(
         &self,
-        questions: &[AskUserQuestionItem],
-        execution_id: Option<&str>,
-    ) -> Result<HashMap<String, String>, AskUserQuestionError>;
+        request: AskUserQuestionRequest,
+    ) -> Result<AskUserQuestionCollectedResponse, AskUserQuestionError>;
 }
 
 static ASK_USER_QUESTION_HANDLER: Lazy<RwLock<Option<Arc<dyn AskUserQuestionHandler>>>> =
@@ -72,14 +134,13 @@ pub async fn set_ask_user_question_handler(handler: Arc<dyn AskUserQuestionHandl
 }
 
 async fn request_user_answers(
-    questions: &[AskUserQuestionItem],
-    execution_id: Option<&str>,
-) -> Result<HashMap<String, String>, AskUserQuestionError> {
+    request: AskUserQuestionRequest,
+) -> Result<AskUserQuestionCollectedResponse, AskUserQuestionError> {
     let guard = ASK_USER_QUESTION_HANDLER.read().await;
     let Some(handler) = &*guard else {
         return Err(AskUserQuestionError::NoHandler);
     };
-    handler.ask_questions(questions, execution_id).await
+    handler.ask_questions(request).await
 }
 
 fn validate_questions(questions: &[AskUserQuestionItem]) -> Result<(), AskUserQuestionError> {
@@ -148,6 +209,34 @@ fn validate_questions(questions: &[AskUserQuestionItem]) -> Result<(), AskUserQu
     Ok(())
 }
 
+fn validate_default_answers(
+    questions: &[AskUserQuestionItem],
+    default_answers: &HashMap<String, String>,
+) -> Result<(), AskUserQuestionError> {
+    for (question_text, answer) in default_answers {
+        let Some(question) = questions
+            .iter()
+            .find(|item| item.question.trim() == question_text.trim())
+        else {
+            return Err(AskUserQuestionError::InvalidInput(format!(
+                "default answer references unknown question '{}'",
+                question_text
+            )));
+        };
+        if !question
+            .options
+            .iter()
+            .any(|option| option.label.trim() == answer.trim())
+        {
+            return Err(AskUserQuestionError::InvalidInput(format!(
+                "default answer '{}' is not a valid option for question '{}'",
+                answer, question_text
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AskUserQuestionTool;
 
@@ -156,7 +245,8 @@ impl AskUserQuestionTool {
     pub const DESCRIPTION: &'static str = concat!(
         "Ask the user one or more structured multiple-choice questions and wait for answers. ",
         "Use when requirements are ambiguous, when you need the user to choose between concrete options, ",
-        "or when you must confirm a preference before continuing. Keep questions concise and decision-focused."
+        "or when you must confirm a preference before continuing. Keep questions concise and decision-focused. ",
+        "If you set timeout_policy=use_default, provide safe default_answers for low-risk clarifications."
     );
 
     pub fn new() -> Self {
@@ -220,6 +310,23 @@ impl Tool for AskUserQuestionTool {
                             },
                             "required": ["header", "question", "options"]
                         }
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional timeout in seconds before the tool returns."
+                    },
+                    "timeout_policy": {
+                        "type": "string",
+                        "enum": ["use_default", "return_timeout", "fail_closed"],
+                        "description": "What to do when the user does not answer before timeout."
+                    },
+                    "default_answers": {
+                        "type": "object",
+                        "description": "Optional default answers keyed by exact question text. Only use for low-risk clarifications.",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
                     }
                 },
                 "required": ["questions"]
@@ -229,10 +336,22 @@ impl Tool for AskUserQuestionTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         validate_questions(&args.questions)?;
-        let answers = request_user_answers(&args.questions, args.execution_id.as_deref()).await?;
+        if let Some(default_answers) = args.default_answers.as_ref() {
+            validate_default_answers(&args.questions, default_answers)?;
+        }
+        let response = request_user_answers(AskUserQuestionRequest {
+            questions: args.questions.clone(),
+            execution_id: args.execution_id,
+            timeout_secs: args.timeout_secs,
+            timeout_policy: args.timeout_policy,
+            default_answers: args.default_answers,
+        })
+        .await?;
         Ok(AskUserQuestionOutput {
             questions: args.questions,
-            answers,
+            answers: response.answers,
+            status: response.status,
+            source: response.source,
         })
     }
 }
@@ -274,5 +393,15 @@ mod tests {
             preview: None,
         });
         assert!(validate_questions(&[q]).is_err());
+    }
+
+    #[test]
+    fn validates_default_answers_against_options() {
+        let questions = vec![sample_question()];
+        let mut defaults = HashMap::new();
+        defaults.insert("Which mode should we use?".to_string(), "Safe".to_string());
+        assert!(validate_default_answers(&questions, &defaults).is_ok());
+        defaults.insert("Which mode should we use?".to_string(), "Broken".to_string());
+        assert!(validate_default_answers(&questions, &defaults).is_err());
     }
 }

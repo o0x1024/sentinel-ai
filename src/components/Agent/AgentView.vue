@@ -918,7 +918,7 @@ const handleAssistantProfileChange = (profileId: string) => {
   setProfileId(profileId)
 }
 
-const handleAssistantContextModeChange = (mode: 'claude-like' | 'codex-like') => {
+const handleAssistantContextModeChange = (mode: 'claude-like' | 'codex-like' | 'sentinel-like') => {
   setContextMode(mode)
 }
 
