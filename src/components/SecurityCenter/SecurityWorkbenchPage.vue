@@ -2,6 +2,22 @@
   <div class="">
     <div class="rounded-lg border border-base-300 bg-base-100 p-4">
       <div class="flex flex-wrap items-center gap-3">
+        <div class="join">
+          <button
+            class="join-item btn btn-sm"
+            :class="listView === 'cases' ? 'btn-primary' : 'btn-outline'"
+            @click="switchListView('cases')"
+          >
+            {{ wb('page.viewCases') }}
+          </button>
+          <button
+            class="join-item btn btn-sm"
+            :class="listView === 'ignored' ? 'btn-warning' : 'btn-outline'"
+            @click="switchListView('ignored')"
+          >
+            {{ wb('page.viewIgnored') }}
+          </button>
+        </div>
         <label class="form-control flex-1 min-w-[16rem]">
           <input
             v-model="search"
@@ -10,7 +26,7 @@
             @keyup.enter="reloadList"
           />
         </label>
-        <label class="form-control">
+        <label v-if="listView === 'cases'" class="form-control">
           <select v-model="statusFilter" class="select select-bordered select-sm" @change="applyListFilters">
             <option value="">{{ wb('page.allStatus') }}</option>
             <option value="new">{{ wb('status.new') }}</option>
@@ -19,6 +35,13 @@
             <option value="verified">{{ wb('status.verified') }}</option>
             <option value="false_positive">{{ wb('status.false_positive') }}</option>
             <option value="archived">{{ wb('status.archived') }}</option>
+          </select>
+        </label>
+        <label v-if="listView === 'cases'" class="form-control">
+          <select v-model="readFilter" class="select select-bordered select-sm" @change="applyListFilters">
+            <option value="">全部阅读状态</option>
+            <option value="unread">仅未读</option>
+            <option value="read">仅已读</option>
           </select>
         </label>
         <label class="form-control">
@@ -36,20 +59,41 @@
     </div>
 
     <SecurityWorkbenchCaseList
+      v-if="listView === 'cases'"
       :cases="caseItems"
       :total="totalCount"
       :page="page"
       :page-size="pageSize"
       :loading="isLoadingList"
       :selectedIds="selectedCaseIds"
+      :read-ids="readWorkbenchCaseIds"
+      :can-mark-all-read="canMarkAllFilteredCasesAsRead"
       @change-page="setPage"
       @change-page-size="setPageSize"
       @toggle-selection="toggleCaseSelection"
       @toggle-select-current-page="toggleSelectCurrentPage"
       @clear-selection="clearCaseSelection"
+      @mark-current-page-read="markCurrentPageCasesAsRead"
+      @mark-all-read="markAllFilteredCasesAsRead"
+      @mark-selected-read="markSelectedCasesAsRead"
+      @mark-read="markSingleCaseAsRead"
+      @ignore-case="ignoreCase"
+      @ignore-selected="ignoreSelectedCases"
       @delete-case="deleteCase"
       @delete-selected="deleteSelectedCases"
       @open-case="openCase"
+    />
+    <SecurityWorkbenchIgnoredFindingList
+      v-else
+      :findings="ignoredFindings"
+      :total="totalCount"
+      :page="page"
+      :page-size="pageSize"
+      :loading="isLoadingList"
+      @change-page="setPage"
+      @change-page-size="setPageSize"
+      @restore-finding="restoreIgnoredFinding"
+      @open-finding="openIgnoredFinding"
     />
 
     <AppDialog
@@ -115,8 +159,10 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
+import { useSecurityCenterActivity } from '@/composables/useSecurityCenterActivity'
 import SecurityWorkbenchCaseDetail from './SecurityWorkbenchCaseDetail.vue'
 import SecurityWorkbenchCaseList from './SecurityWorkbenchCaseList.vue'
+import SecurityWorkbenchIgnoredFindingList from './SecurityWorkbenchIgnoredFindingList.vue'
 import {
   addWorkbenchNote,
   createWorkbenchExecutionDraft,
@@ -124,7 +170,10 @@ import {
   executeWorkbenchExecutionDraft,
   getWorkbenchAutoModeEnabled,
   getWorkbenchCaseDetail,
+  getOrCreateWorkbenchCaseForFinding,
   getWorkbenchSystemAgentStatuses,
+  ignoreWorkbenchCases,
+  listIgnoredWorkbenchFindings,
   listWorkbenchCases,
   syncWorkbenchCaseToFinding,
   updateWorkbenchExecutionDraftStatus,
@@ -141,6 +190,7 @@ import type {
   WorkbenchCaseStatus,
   WorkbenchExecutionDraftStatus,
   WorkbenchExecutionRun,
+  WorkbenchIgnoredFindingListItem,
   WorkbenchNote,
   WorkbenchNoteKind,
   WorkbenchReplayPlan,
@@ -150,8 +200,12 @@ import type {
 
 const route = useRoute()
 const router = useRouter()
+const securityCenterActivity = useSecurityCenterActivity()
+const { readWorkbenchCaseIds } = securityCenterActivity
 
 type CaseDetailTabId = 'overview' | 'evidence' | 'analysis' | 'plan' | 'drafts' | 'verification' | 'review'
+type WorkbenchListView = 'cases' | 'ignored'
+type WorkbenchReadFilter = '' | 'unread' | 'read'
 type WorkbenchTimelineTarget = {
   tab: Extract<CaseDetailTabId, 'overview' | 'evidence' | 'drafts' | 'verification'>
   evidenceId?: string | null
@@ -159,8 +213,10 @@ type WorkbenchTimelineTarget = {
   runId?: string | null
 }
 type WorkbenchListRouteState = {
+  view: WorkbenchListView
   search: string
   status: WorkbenchCaseStatus | ''
+  read: WorkbenchReadFilter
   page: number
   pageSize: number
 }
@@ -180,16 +236,22 @@ const isLoadingCase = ref(false)
 const syncingFinding = ref(false)
 const executingDraftId = ref<string | null>(null)
 const caseItems = ref<WorkbenchCaseListItem[]>([])
+const ignoredFindings = ref<WorkbenchIgnoredFindingListItem[]>([])
 const selectedCaseDetail = ref<WorkbenchCaseDetailResult | null>(null)
 const totalCount = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+const listView = ref<WorkbenchListView>('cases')
 const search = ref('')
 const statusFilter = ref<WorkbenchCaseStatus | ''>('')
+const readFilter = ref<WorkbenchReadFilter>('')
 const selectedCaseIds = ref<string[]>([])
 const workbenchAutoModeEnabled = ref(false)
 const workbenchSystemAgentStatuses = ref<WorkbenchSystemAgentStatus[]>([])
 const autoAttemptedCaseIds = new Set<string>()
+const canMarkAllFilteredCasesAsRead = computed(() =>
+  totalCount.value > 0 && readFilter.value !== 'read',
+)
 let unlistenFinding: UnlistenFn | null = null
 let unlistenVerificationComplete: UnlistenFn | null = null
 let unlistenWorkbenchChanged: UnlistenFn | null = null
@@ -232,13 +294,19 @@ const normalizeListPage = (value: unknown, fallback: number) => {
   return Number.isFinite(nextValue) && nextValue > 0 ? Math.floor(nextValue) : fallback
 }
 
+const normalizeReadFilter = (value: unknown): WorkbenchReadFilter => (
+  value === 'unread' || value === 'read' ? value : ''
+)
+
 const readListRouteState = (): WorkbenchListRouteState => ({
+  view: route.query.view === 'ignored' ? 'ignored' : 'cases',
   search: typeof route.query.search === 'string' ? route.query.search.trim() : '',
   status:
     typeof route.query.status === 'string'
       && ['new', 'investigating', 'awaiting_verification', 'verified', 'false_positive', 'archived'].includes(route.query.status)
       ? (route.query.status as WorkbenchCaseStatus)
       : '',
+  read: normalizeReadFilter(route.query.read),
   page: normalizeListPage(route.query.page, 1),
   pageSize: [10, 20, 50].includes(Number(route.query.pageSize))
     ? Number(route.query.pageSize)
@@ -277,8 +345,10 @@ const workbenchRouteSnapshot = ref<WorkbenchRouteSnapshot>(
     ? buildWorkbenchRouteSnapshot()
     : {
         caseId: '',
+        view: 'cases',
         search: '',
         status: '',
+        read: '',
         page: 1,
         pageSize: 20,
         workbenchTab: 'overview',
@@ -312,16 +382,20 @@ const selectedTimelineSearch = computed(() => workbenchRouteSnapshot.value.timel
 const selectedTimelineFilter = computed<WorkbenchRouteSnapshot['timelineFilter']>(() => workbenchRouteSnapshot.value.timelineFilter)
 
 const applyListRouteState = () => {
+  listView.value = workbenchRouteSnapshot.value.view
   search.value = workbenchRouteSnapshot.value.search
   statusFilter.value = workbenchRouteSnapshot.value.status
+  readFilter.value = workbenchRouteSnapshot.value.read
   page.value = workbenchRouteSnapshot.value.page
   pageSize.value = workbenchRouteSnapshot.value.pageSize
 }
 
 const buildListRouteQuery = () => {
   const nextQuery: Record<string, string> = {}
+  if (listView.value === 'ignored') nextQuery.view = 'ignored'
   if (search.value.trim()) nextQuery.search = search.value.trim()
-  if (statusFilter.value) nextQuery.status = statusFilter.value
+  if (listView.value === 'cases' && statusFilter.value) nextQuery.status = statusFilter.value
+  if (listView.value === 'cases' && readFilter.value) nextQuery.read = readFilter.value
   if (page.value > 1) nextQuery.page = String(page.value)
   if (pageSize.value !== 20) nextQuery.pageSize = String(pageSize.value)
   return nextQuery
@@ -347,12 +421,48 @@ const syncCurrentListRoute = async () => {
 const loadCaseList = async () => {
   isLoadingList.value = true
   try {
-    const result = await listWorkbenchCases({
+    ignoredFindings.value = []
+    const query = {
       search: search.value,
       status: statusFilter.value,
       page: page.value,
       pageSize: pageSize.value,
-    })
+    }
+
+    if (readFilter.value) {
+      const initialResult = await listWorkbenchCases({
+        ...query,
+        page: 1,
+      })
+      const allItems = initialResult.total > initialResult.items.length
+        ? (
+            await listWorkbenchCases({
+              ...query,
+              page: 1,
+              pageSize: Math.max(initialResult.total, 1),
+            })
+          ).items
+        : initialResult.items
+
+      const filteredItems = allItems.filter(item =>
+        readFilter.value === 'unread'
+          ? !securityCenterActivity.isWorkbenchCaseRead(item.id)
+          : securityCenterActivity.isWorkbenchCaseRead(item.id),
+      )
+
+      totalCount.value = filteredItems.length
+      const maxPage = Math.max(1, Math.ceil(totalCount.value / pageSize.value))
+      if (page.value > maxPage) {
+        page.value = maxPage
+        return
+      }
+
+      const start = (page.value - 1) * pageSize.value
+      caseItems.value = filteredItems.slice(start, start + pageSize.value)
+      return
+    }
+
+    const result = await listWorkbenchCases(query)
     caseItems.value = result.items
     totalCount.value = result.total
     page.value = result.page
@@ -363,6 +473,57 @@ const loadCaseList = async () => {
   } finally {
     isLoadingList.value = false
   }
+}
+
+const loadIgnoredFindingList = async () => {
+  isLoadingList.value = true
+  try {
+    const result = await listIgnoredWorkbenchFindings({
+      search: search.value,
+      page: page.value,
+      pageSize: pageSize.value,
+    })
+    ignoredFindings.value = result.items
+    caseItems.value = []
+    totalCount.value = result.total
+    page.value = result.page
+    pageSize.value = result.pageSize
+    selectedCaseIds.value = []
+  } catch (error) {
+    console.error('Failed to load ignored workbench findings', error)
+    dialog.toast.error(wb('page.loadIgnoredListFailed'))
+  } finally {
+    isLoadingList.value = false
+  }
+}
+
+const loadAllFilteredCases = async () => {
+  const initialResult = await listWorkbenchCases({
+    search: search.value,
+    status: statusFilter.value,
+    page: 1,
+    pageSize: pageSize.value,
+  })
+  const allItems = initialResult.total > initialResult.items.length
+    ? (
+        await listWorkbenchCases({
+          search: search.value,
+          status: statusFilter.value,
+          page: 1,
+          pageSize: Math.max(initialResult.total, 1),
+        })
+      ).items
+    : initialResult.items
+
+  if (readFilter.value === 'unread') {
+    return allItems.filter(item => !securityCenterActivity.isWorkbenchCaseRead(item.id))
+  }
+
+  if (readFilter.value === 'read') {
+    return allItems.filter(item => securityCenterActivity.isWorkbenchCaseRead(item.id))
+  }
+
+  return allItems
 }
 
 const loadCaseDetail = async (caseId: string) => {
@@ -557,8 +718,12 @@ const reloadSelectedCase = async () => {
 }
 
 const refreshWorkbenchData = async () => {
-  if (selectedCaseId.value) {
+  if (listView.value === 'cases' && selectedCaseId.value) {
     await reloadSelectedCase()
+  }
+  if (listView.value === 'ignored') {
+    await loadIgnoredFindingList()
+    return
   }
   await loadCaseList()
 }
@@ -573,14 +738,35 @@ const handleWorkbenchFindingRefresh = () => {
 
 const applyListFilters = async () => {
   page.value = 1
+  selectedCaseIds.value = []
   await syncCurrentListRoute()
 }
 
 const resetListFilters = async () => {
   search.value = ''
-  statusFilter.value = ''
+  if (listView.value === 'cases') {
+    statusFilter.value = ''
+    readFilter.value = ''
+  }
   pageSize.value = 20
   page.value = 1
+  selectedCaseIds.value = []
+  await syncCurrentListRoute()
+}
+
+const switchListView = async (nextView: WorkbenchListView) => {
+  if (nextView === listView.value) return
+  listView.value = nextView
+  page.value = 1
+  selectedCaseIds.value = []
+  if (nextView === 'ignored') {
+    statusFilter.value = ''
+    readFilter.value = ''
+    if (selectedCaseId.value) {
+      await openCase(null)
+      return
+    }
+  }
   await syncCurrentListRoute()
 }
 
@@ -620,6 +806,61 @@ const clearCaseSelection = () => {
   selectedCaseIds.value = []
 }
 
+const markSingleCaseAsRead = (caseId: string) => {
+  securityCenterActivity.markWorkbenchCaseAsRead(caseId)
+  selectedCaseIds.value = selectedCaseIds.value.filter(id => id !== caseId)
+  if (readFilter.value) {
+    void loadCaseList()
+  }
+}
+
+const markSelectedCasesAsRead = () => {
+  if (!selectedCaseIds.value.length) return
+  const targetIds = selectedCaseIds.value.slice()
+  securityCenterActivity.markWorkbenchCasesAsRead(targetIds)
+  selectedCaseIds.value = selectedCaseIds.value.filter(id => !targetIds.includes(id))
+  if (readFilter.value) {
+    void loadCaseList()
+  }
+}
+
+const markCurrentPageCasesAsRead = () => {
+  if (!caseItems.value.length) return
+  const targetIds = caseItems.value.map(item => item.id)
+  securityCenterActivity.markWorkbenchCasesAsRead(targetIds)
+  selectedCaseIds.value = selectedCaseIds.value.filter(id => !targetIds.includes(id))
+  if (readFilter.value) {
+    void loadCaseList()
+  }
+}
+
+const markAllFilteredCasesAsRead = async () => {
+  if (!canMarkAllFilteredCasesAsRead.value) return
+
+  const confirmed = await dialog.confirm({
+    title: '全部标记已读',
+    message: `确认将当前筛选结果中的 ${totalCount.value} 条工作台记录全部标记为已读吗？`,
+    confirmText: '全部标记已读',
+    cancelText: wb('confirm.cancel'),
+    variant: 'warning',
+  })
+  if (!confirmed) return
+
+  try {
+    const targetIds = (await loadAllFilteredCases()).map(item => item.id)
+    if (!targetIds.length) return
+
+    securityCenterActivity.markWorkbenchCasesAsRead(targetIds)
+    selectedCaseIds.value = selectedCaseIds.value.filter(id => !targetIds.includes(id))
+    if (readFilter.value) {
+      await loadCaseList()
+    }
+  } catch (error) {
+    console.error('Failed to mark all filtered workbench cases as read', error)
+    dialog.toast.error('全部标记已读失败')
+  }
+}
+
 const removeDeletedCaseIdsFromSelection = (caseIds: string[]) => {
   if (!caseIds.length) return
   selectedCaseIds.value = selectedCaseIds.value.filter(caseId => !caseIds.includes(caseId))
@@ -646,6 +887,19 @@ const confirmDeleteCases = async (caseIds: string[]) => {
   })
 }
 
+const confirmIgnoreCases = async (caseIds: string[]) => {
+  if (!caseIds.length) return false
+  return dialog.confirm({
+    title: caseIds.length === 1 ? wb('confirm.ignoreCaseTitle') : wb('confirm.ignoreCasesTitle'),
+    message: caseIds.length === 1
+      ? wb('confirm.ignoreCaseMessage')
+      : wb('confirm.ignoreCasesMessage', { count: caseIds.length }),
+    confirmText: caseIds.length === 1 ? wb('confirm.confirmIgnoreCase') : wb('confirm.confirmIgnoreCases'),
+    cancelText: wb('confirm.cancel'),
+    variant: 'warning',
+  })
+}
+
 const deleteCase = async (caseId: string) => {
   const confirmed = await confirmDeleteCases([caseId])
   if (!confirmed) return
@@ -654,6 +908,7 @@ const deleteCase = async (caseId: string) => {
     const result = await deleteWorkbenchCases([caseId])
     removeDeletedCaseIdsFromSelection(result.deletedCaseIds)
     normalizePageAfterDeletion(result.deletedCaseCount)
+    await securityCenterActivity.refreshSecurityCenterActivity()
     if (selectedCaseId.value && result.deletedCaseIds.includes(selectedCaseId.value)) {
       await openCase(null)
       await loadCaseList()
@@ -683,6 +938,7 @@ const deleteSelectedCases = async () => {
     const result = await deleteWorkbenchCases(caseIds)
     removeDeletedCaseIdsFromSelection(result.deletedCaseIds)
     normalizePageAfterDeletion(result.deletedCaseCount)
+    await securityCenterActivity.refreshSecurityCenterActivity()
     await syncCurrentListRoute()
     await loadCaseList()
     dialog.toast.success(wb('toast.deletedCases', { count: result.deletedCaseCount }))
@@ -690,6 +946,83 @@ const deleteSelectedCases = async () => {
     console.error('Failed to bulk delete workbench cases', error)
     dialog.toast.error(wb('toast.deleteCasesFailed'))
   }
+}
+
+const ignoreCase = async (caseId: string) => {
+  const confirmed = await confirmIgnoreCases([caseId])
+  if (!confirmed) return
+
+  try {
+    const result = await ignoreWorkbenchCases([caseId])
+    removeDeletedCaseIdsFromSelection(result.deletedCaseIds)
+    normalizePageAfterDeletion(result.deletedCaseCount)
+    await securityCenterActivity.refreshSecurityCenterActivity()
+    if (selectedCaseId.value && result.deletedCaseIds.includes(selectedCaseId.value)) {
+      await openCase(null)
+      await loadCaseList()
+      selectedCaseDetail.value = null
+    } else {
+      await syncCurrentListRoute()
+      await loadCaseList()
+    }
+    dialog.toast.success(wb('toast.ignoredCases', { count: result.ignoredCount }))
+  } catch (error) {
+    console.error('Failed to ignore workbench case', error)
+    dialog.toast.error(wb('toast.ignoreCaseFailed'))
+  }
+}
+
+const ignoreSelectedCases = async () => {
+  const caseIds = selectedCaseIds.value.slice()
+  if (!caseIds.length) {
+    dialog.toast.warning(wb('toast.selectCasesFirst'))
+    return
+  }
+
+  const confirmed = await confirmIgnoreCases(caseIds)
+  if (!confirmed) return
+
+  try {
+    const result = await ignoreWorkbenchCases(caseIds)
+    removeDeletedCaseIdsFromSelection(result.deletedCaseIds)
+    normalizePageAfterDeletion(result.deletedCaseCount)
+    await securityCenterActivity.refreshSecurityCenterActivity()
+    await syncCurrentListRoute()
+    await loadCaseList()
+    dialog.toast.success(wb('toast.ignoredCases', { count: result.ignoredCount }))
+  } catch (error) {
+    console.error('Failed to ignore selected workbench cases', error)
+    dialog.toast.error(wb('toast.ignoreCasesFailed'))
+  }
+}
+
+const restoreIgnoredFinding = async (findingId: string) => {
+  try {
+    const caseItem = await getOrCreateWorkbenchCaseForFinding(findingId)
+    listView.value = 'cases'
+    selectedCaseIds.value = []
+    await securityCenterActivity.refreshSecurityCenterActivity()
+    dialog.toast.success(wb('toast.restoredIgnoredFindings', { count: 1 }))
+    await router.replace({
+      path: `/security-center/workbench/${caseItem.id}`,
+      query: {
+        workbenchTab: 'overview',
+      },
+    })
+  } catch (error) {
+    console.error('Failed to restore ignored workbench finding', error)
+    dialog.toast.error(wb('toast.restoreIgnoredFindingFailed'))
+  }
+}
+
+const openIgnoredFinding = async (findingId: string) => {
+  await router.replace({
+    path: '/security-center',
+    query: {
+      tab: 'vulnerabilities',
+      findingId,
+    },
+  })
 }
 
 const saveConclusion = async (caseId: string, value: string) => {
@@ -898,6 +1231,10 @@ watch(
   selectedCaseId,
   async caseId => {
     if (caseId) {
+      securityCenterActivity.markWorkbenchCaseAsRead(caseId)
+      if (readFilter.value) {
+        await loadCaseList()
+      }
       await loadCaseDetail(caseId)
       return
     }
@@ -920,8 +1257,10 @@ watch(
     route.path,
     route.params.caseId,
     route.query.caseId,
+    route.query.view,
     route.query.search,
     route.query.status,
+    route.query.read,
     route.query.page,
     route.query.pageSize,
     route.query.workbenchTab,
@@ -938,12 +1277,17 @@ watch(
     }
     workbenchRouteSnapshot.value = buildWorkbenchRouteSnapshot()
     applyListRouteState()
+    if (listView.value === 'ignored') {
+      await loadIgnoredFindingList()
+      return
+    }
     await loadCaseList()
   },
   { immediate: true },
 )
 
 onMounted(async () => {
+  await securityCenterActivity.initializeSecurityCenterActivity()
   try {
     workbenchAutoModeEnabled.value = await getWorkbenchAutoModeEnabled()
   } catch (error) {

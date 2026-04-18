@@ -205,6 +205,18 @@
           />
           
           <div class="divider my-1 h-px"></div>
+
+          <button
+            v-if="contextMenu.item?.type === 'request'"
+            type="button"
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="contextMenuAddToBasket"
+          >
+            <i class="fas fa-basket-shopping w-4 text-primary"></i>
+            加入请求篮子
+          </button>
+
+          <div v-if="contextMenu.item?.type === 'request'" class="divider my-1 h-px"></div>
           
           <TrafficContextMenuSections
             :sections="interceptRequestContextMenuSections"
@@ -260,6 +272,16 @@
             >
               <i :class="`${item.iconClass.replace(' text-primary', '').replace(' text-accent', '').replace(' text-secondary', '')} mr-1`"></i>
               {{ $t(`trafficAnalysis.intercept.buttons.${item.labelKey}`) }}
+            </button>
+
+            <button
+              type="button"
+              class="btn btn-outline btn-sm"
+              :disabled="currentItem?.type !== 'request'"
+              @click="addCurrentRequestToBasket"
+            >
+              <i class="fas fa-basket-shopping mr-1"></i>
+              加入篮子
             </button>
             
             <div class="flex-1"></div>
@@ -508,6 +530,7 @@ const emit = defineEmits<{
   (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
   (e: 'sendToIntruder', request: HttpExchangeRequest): void
   (e: 'sendToAssistant', requests: any[]): void
+  (e: 'addToBasket', payload: { request: HttpExchangeRequest; requestId?: number; title: string; host: string }): void
 }>();
 
 // 响应式状态
@@ -922,6 +945,29 @@ function contextMenuSendToRepeater() {
     dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToRepeater'));
   }
   closeContextMenu();
+}
+
+function emitRequestToBasket(request: InterceptedRequest) {
+  const host = (() => {
+    try {
+      return new URL(request.url).host
+    } catch {
+      return ''
+    }
+  })()
+  emit('addToBasket', {
+    request: buildExchangeRequestFromInterceptedRequest(request),
+    title: request.url,
+    host,
+  })
+  dialog.toast.success('已加入请求篮子')
+}
+
+function contextMenuAddToBasket() {
+  if (contextMenu.value.item?.type === 'request') {
+    emitRequestToBasket(contextMenu.value.item.data as InterceptedRequest)
+  }
+  closeContextMenu()
 }
 
 function contextMenuSendToIntruder() {
@@ -1382,6 +1428,14 @@ function sendToRepeater() {
 function sendToIntruder() {
   if (!currentRequest.value) return;
   emit('sendToIntruder', buildExchangeRequestFromInterceptedRequest(currentRequest.value));
+}
+
+function addCurrentRequestToBasket() {
+  if (!currentRequest.value) {
+    return
+  }
+
+  emitRequestToBasket(currentRequest.value)
 }
 
 function sendToComparer() {

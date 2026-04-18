@@ -16,14 +16,15 @@ use std::collections::BTreeSet;
 use std::fs::OpenOptions;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
-use tokio::task::JoinSet;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{oneshot, Mutex};
+use tokio::task::JoinSet;
 use tokio::time::sleep;
 
 const SUPERVISOR_POLL_INTERVAL_SECS: u64 = 2;
 const WORKER_SHUTDOWN_GRACE_SECS: u64 = 10;
+const STALE_ATTEMPT_GRACE_SECS: u64 = 120;
 
 #[derive(Debug)]
 struct AttemptTaskResult {
@@ -294,6 +295,7 @@ async fn worker_loop(
             )
             .await;
             let arena = load_agent_client().await?;
+            reconcile_stale_running_challenges(&arena, &store, &config).await;
             let list = match arena.list_challenges().await {
                 Ok(list) => {
                     arena_rate_limit_streak = 0;
@@ -575,6 +577,125 @@ async fn reconcile_visible_challenge_state(
     }
 }
 
+async fn reconcile_stale_running_challenges(
+    arena: &ArenaClient,
+    store: &RuntimeStateStore,
+    config: &AgentRuntimeConfig,
+) {
+    let stale_after_secs =
+        config.max_challenge_duration_secs + config.llm_timeout_secs + STALE_ATTEMPT_GRACE_SECS;
+
+    let Ok(running_challenges) = store.list_running_challenges().await else {
+        return;
+    };
+
+    for state in running_challenges {
+        if challenge_run_has_expired(&state) {
+            let reason = format!(
+                "challenge wall clock timeout reached after {} seconds",
+                config.max_challenge_duration_secs
+            );
+            let stop_result = arena.stop_challenge(&state.code).await;
+            let _ = store
+                .mark_challenge_terminal(&state.code, "give_up", Some(reason.clone()))
+                .await;
+            let _ = store
+                .append_event(
+                    "agent_expired_run_reconciled",
+                    &serde_json::json!({
+                        "code": state.code,
+                        "attempt_id": state.current_attempt_id,
+                        "attempt_deadline_at": state.attempt_deadline_at,
+                        "stop_ok": stop_result.is_ok(),
+                        "stop_error": stop_result.err().map(|error| error.to_string()),
+                        "reason": reason,
+                    }),
+                )
+                .await;
+            continue;
+        }
+
+        if !challenge_run_is_stale(&state, stale_after_secs) {
+            continue;
+        }
+
+        let progress_at = state
+            .last_progress_at
+            .clone()
+            .or(state.last_started_at.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let reason = format!(
+            "local run state cleared because attempt exceeded stale threshold of {} seconds without progress since {}",
+            stale_after_secs, progress_at
+        );
+
+        let stop_result = arena.stop_challenge(&state.code).await;
+        let _ = store
+            .mark_challenge_terminal(&state.code, "interrupted", Some(reason.clone()))
+            .await;
+        let _ = store
+            .append_event(
+                "agent_stale_run_reconciled",
+                &serde_json::json!({
+                    "code": state.code,
+                    "attempt_id": state.current_attempt_id,
+                    "stale_after_secs": stale_after_secs,
+                    "last_progress_at": state.last_progress_at,
+                    "last_started_at": state.last_started_at,
+                    "stop_ok": stop_result.is_ok(),
+                    "stop_error": stop_result.err().map(|error| error.to_string()),
+                    "reason": reason,
+                }),
+            )
+            .await;
+    }
+}
+
+fn challenge_run_is_stale(
+    state: &crate::runtime::ChallengeRunState,
+    stale_after_secs: u64,
+) -> bool {
+    let reference = state
+        .last_progress_at
+        .as_deref()
+        .or(state.last_started_at.as_deref());
+    let Some(reference) = reference else {
+        return false;
+    };
+
+    DateTime::parse_from_rfc3339(reference)
+        .map(|value| {
+            (Utc::now() - value.with_timezone(&Utc)).num_seconds() > stale_after_secs as i64
+        })
+        .unwrap_or(false)
+}
+
+fn challenge_run_has_expired(state: &crate::runtime::ChallengeRunState) -> bool {
+    let Some(deadline) = state.attempt_deadline_at.as_deref() else {
+        return false;
+    };
+
+    DateTime::parse_from_rfc3339(deadline)
+        .map(|value| value.with_timezone(&Utc) <= Utc::now())
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::challenge_run_has_expired;
+    use crate::runtime::ChallengeRunState;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn detects_expired_running_challenge_by_deadline() {
+        let state = ChallengeRunState {
+            attempt_deadline_at: Some((Utc::now() - Duration::seconds(1)).to_rfc3339()),
+            ..ChallengeRunState::default()
+        };
+        assert!(challenge_run_has_expired(&state));
+    }
+}
+
 async fn start_worker_heartbeat(
     paths: AgentPaths,
     state: Arc<Mutex<WorkerState>>,
@@ -763,7 +884,8 @@ async fn set_worker_status(
 ) {
     let mut guard = state.lock().await;
     guard.status = status.to_string();
-    guard.current_challenge = current_challenge.or_else(|| guard.active_challenges.first().cloned());
+    guard.current_challenge =
+        current_challenge.or_else(|| guard.active_challenges.first().cloned());
     guard.last_error = last_error;
     guard.updated_at = now_rfc3339();
 }

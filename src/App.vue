@@ -7,6 +7,7 @@ import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import TopNavbar from './components/Layout/TopNavbar.vue'
 import GlobalSearchPalette from './components/Layout/GlobalSearchPalette.vue'
+import ImmersiveDrillDock from './components/Layout/ImmersiveDrillDock.vue'
 import Sidebar from './components/Layout/Sidebar.vue'
 import LicenseActivation from './components/LicenseActivation.vue'
 import GlobalPluginEditor from './components/PluginManagement/GlobalPluginEditor.vue'
@@ -14,6 +15,11 @@ import GlobalPluginEditor from './components/PluginManagement/GlobalPluginEditor
 import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
 import { isGlobalSearchShortcut, requestGlobalSearchOpen } from './services/globalSearchFocus'
+import {
+  immersiveDrillModeEnabled,
+  toggleImmersiveDrillMode,
+} from './services/immersiveDrillMode'
+import { applyTheme } from './views/settingsUiSupport'
 
 const router = useRouter()
 const route = useRoute()
@@ -28,7 +34,7 @@ const { t, locale } = useI18n()
 
 
 
-// 侧边栏控制
+// 顶栏与侧边栏控制
 const sidebarCollapsed = ref(false)
 const toggleSidebar = () => {
   sidebarCollapsed.value = !sidebarCollapsed.value
@@ -151,35 +157,54 @@ onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
 })
 
-// 主题管理
+const updateStoredGeneralSettings = (mutate: (general: Record<string, any>) => void) => {
+  const savedSettings = localStorage.getItem('sentinel-settings')
+  let settings: Record<string, any> = {}
+
+  if (savedSettings) {
+    try {
+      settings = JSON.parse(savedSettings)
+    } catch (error) {
+      console.error(t('settings.saveFailed'), error)
+    }
+  }
+
+  if (!settings.general || typeof settings.general !== 'object') {
+    settings.general = {}
+  }
+
+  mutate(settings.general)
+  localStorage.setItem('sentinel-settings', JSON.stringify(settings))
+  return settings
+}
+
 const setTheme = (theme: string) => {
-  document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('theme', theme);
-};
+  const settings = updateStoredGeneralSettings(general => {
+    general.theme = theme
+  })
+  applyTheme(theme, settings)
+}
 
-// 语言管理
 const switchLanguage = (lang: string) => {
-  setLanguage(lang as 'zh' | 'en');
-};
+  updateStoredGeneralSettings(general => {
+    general.language = lang
+  })
+  locale.value = lang
+  setLanguage(lang as 'zh' | 'en')
+}
 
-// 可用语言
 const availableLanguages = [
   { code: 'zh', name: '中文', icon: 'fa-language' },
-  { code: 'en', name: 'English', icon: 'fa-globe' }
-];
+  { code: 'en', name: 'English', icon: 'fa-globe' },
+]
 
-// 可用主题
 const availableThemes = [
   { code: 'light', name: t('settings.themes.light'), icon: 'fa-sun' },
   { code: 'dark', name: t('settings.themes.dark'), icon: 'fa-moon' },
-  { code: 'corporate', name: t('settings.themes.corporate'), icon: 'fa-building' }
-];
+  { code: 'corporate', name: t('settings.themes.corporate'), icon: 'fa-building' },
+]
 
 onMounted(() => {
-  // 恢复保存的主题
-  const savedTheme = localStorage.getItem('theme') || 'light';
-  setTheme(savedTheme);
-
   // 加载FontAwesome
   const link = document.createElement('link');
   link.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css';
@@ -201,6 +226,14 @@ const appClasses = computed(() => {
   return classes.join(' ')
 })
 
+const shouldShowNavbar = computed(
+  () => !isStandaloneRoute.value && !immersiveDrillModeEnabled.value,
+)
+
+const shouldShowSidebar = computed(
+  () => !isStandaloneRoute.value && !immersiveDrillModeEnabled.value,
+)
+
 // 计算应用的内联样式
 const appStyles = computed(() => {
   return {
@@ -210,6 +243,37 @@ const appStyles = computed(() => {
     height: uiScale.value !== 100 ? `${10000 / uiScale.value}%` : '100%'
   }
 })
+
+const appShellStyle = computed(() => ({
+  '--app-navbar-height': shouldShowNavbar.value ? '4rem' : '0px',
+}))
+
+const appViewportStyle = computed(() => ({
+  height: '100vh',
+}))
+
+const sidebarStyle = computed(() => ({
+  top: 'var(--app-navbar-height, 4rem)',
+  height: 'calc(100vh - var(--app-navbar-height, 4rem))',
+}))
+
+const mainContentStyle = computed(() => ({
+  marginTop: 'var(--app-navbar-height, 4rem)',
+}))
+
+watch(
+  () => immersiveDrillModeEnabled.value,
+  enabled => {
+    if (!enabled || isStandaloneRoute.value) {
+      return
+    }
+
+    if (route.path !== '/traffic') {
+      void router.push('/traffic')
+    }
+  },
+  { immediate: true },
+)
 
 // 从localStorage加载设置
 onMounted(() => {
@@ -266,24 +330,33 @@ window.updateUIScale = (newScale: number) => {
 </script>
 
 <template>
-  <div id="app" class="h-screen bg-base-100 overflow-hidden">
+  <div id="app" class="h-screen bg-base-100 overflow-hidden" :style="appShellStyle">
     <!-- License Activation Dialog -->
     <LicenseActivation v-if="!isLicensed" @activated="onLicenseActivated" />
     <GlobalSearchPalette v-if="!isStandaloneRoute" />
 
     <template v-if="!isStandaloneRoute">
-      <TopNavbar @toggle-sidebar="toggleSidebar" @set-theme="setTheme" @switch-language="switchLanguage" />
+      <TopNavbar
+        v-if="shouldShowNavbar"
+        @toggle-sidebar="toggleSidebar"
+        @toggle-immersive-drill-mode="toggleImmersiveDrillMode"
+        @set-theme="setTheme"
+        @switch-language="switchLanguage"
+      />
 
-      <div :class="appClasses" :style="appStyles" class="flex h-[calc(100vh-4rem)]">
-        <Sidebar :collapsed="sidebarCollapsed"
-          class="fixed left-0 top-16 h-[calc(100vh-4rem)] transition-all duration-300 z-1000 " :class="{
+      <div :class="appClasses" :style="[appStyles, appViewportStyle]" class="flex">
+        <Sidebar
+          v-if="shouldShowSidebar"
+          :collapsed="sidebarCollapsed"
+          class="fixed left-0 transition-all duration-300 z-1000 " :style="sidebarStyle" :class="{
             'w-16': sidebarCollapsed,
             'w-64': !sidebarCollapsed
           }" />
 
-        <main class="flex-1 transition-all duration-300 overflow-y-auto mt-16" :class="{
-          'ml-16': sidebarCollapsed,
-          'ml-64': !sidebarCollapsed
+        <main class="flex-1 transition-all duration-300 overflow-y-auto" :style="mainContentStyle" :class="{
+          'ml-0': !shouldShowSidebar,
+          'ml-16': shouldShowSidebar && sidebarCollapsed,
+          'ml-64': shouldShowSidebar && !sidebarCollapsed
         }">
           <router-view v-slot="{ Component }">
             <keep-alive :include="['TrafficAnalysis', 'AIAssistant', 'Vulnerabilities','Settings','Plugin','SecurityCenter','WorkflowStudio','BugBountyView','AgentManagement']">
@@ -293,6 +366,7 @@ window.updateUIScale = (newScale: number) => {
         </main>
       </div>
 
+      <ImmersiveDrillDock v-if="immersiveDrillModeEnabled" />
       <GlobalPluginEditor />
     </template>
 

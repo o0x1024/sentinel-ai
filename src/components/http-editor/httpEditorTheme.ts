@@ -1,6 +1,10 @@
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { EditorView } from 'codemirror'
 import { tags as t } from '@lezer/highlight'
+import {
+  httpEditorParameterKeyTag,
+  httpEditorParameterValueTag,
+} from './httpEditorHighlightTags'
 
 interface HttpEditorThemeOptions {
   backgroundColor?: string
@@ -18,6 +22,8 @@ interface HttpHighlightPalette {
   headerKeyColor: string
   bodyKeyColor: string
   cookieKeyColor: string
+  parameterKeyColor: string
+  parameterValueColor: string
   valueColor: string
   subtleValueColor: string
   punctuationColor: string
@@ -47,6 +53,8 @@ const createHttpHighlightStyle = (palette: HttpHighlightPalette) => HighlightSty
   { tag: t.special(t.string), color: palette.subtleValueColor, fontStyle: 'italic' },
   { tag: t.special(t.attributeName), color: palette.cookieKeyColor, fontWeight: '600' },
   { tag: t.attributeName, color: palette.headerKeyColor, fontWeight: '600' },
+  { tag: httpEditorParameterKeyTag, color: palette.parameterKeyColor, fontWeight: '700' },
+  { tag: httpEditorParameterValueTag, color: palette.parameterValueColor },
   { tag: t.propertyName, color: palette.bodyKeyColor, fontWeight: '700' },
   { tag: t.tagName, color: palette.bodyKeyColor, fontWeight: '600' },
   { tag: t.keyword, color: palette.bodyKeyColor, fontWeight: '600' },
@@ -128,6 +136,8 @@ export const lightHttpHighlightStyle = createHttpHighlightStyle({
   headerKeyColor: '#1d4ed8',
   bodyKeyColor: '#6d28d9',
   cookieKeyColor: '#0f766e',
+  parameterKeyColor: '#1d4ed8',
+  parameterValueColor: '#b42318',
   valueColor: '#111827',
   subtleValueColor: '#475569',
   punctuationColor: '#6b7280',
@@ -142,6 +152,8 @@ export const darkHttpHighlightStyle = createHttpHighlightStyle({
   headerKeyColor: '#93c5fd',
   bodyKeyColor: '#ddd6fe',
   cookieKeyColor: '#5eead4',
+  parameterKeyColor: '#7dd3fc',
+  parameterValueColor: '#fca5a5',
   valueColor: '#e5e7eb',
   subtleValueColor: '#cbd5e1',
   punctuationColor: '#94a3b8',
@@ -152,7 +164,18 @@ export const darkHttpHighlightStyle = createHttpHighlightStyle({
   statusClientErrorColor: '#fb923c',
 })
 
-export const isDarkHttpEditorTheme = (): boolean => document.documentElement.getAttribute('data-theme') === 'dark'
+const DARK_HTTP_EDITOR_THEMES = new Set([
+  'dark',
+  'synthwave',
+  'halloween',
+  'forest',
+  'black',
+  'luxury',
+  'dracula',
+])
+
+export const isDarkHttpEditorTheme = (): boolean =>
+  DARK_HTTP_EDITOR_THEMES.has(document.documentElement.getAttribute('data-theme') || '')
 
 export const getHttpCodeThemeExtensions = (highlightEnabled: boolean, options: HttpEditorThemeOptions = {}) => {
   const dark = isDarkHttpEditorTheme()

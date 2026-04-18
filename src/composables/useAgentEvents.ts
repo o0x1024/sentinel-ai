@@ -7,7 +7,12 @@ import { ref, onMounted, onUnmounted, computed, type Ref } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage, MessageType } from '@/types/agent'
 import { useTodos } from '@/composables/useTodos'
-import { useTerminal } from '@/composables/useTerminal'
+import { buildTerminalSessionFingerprint, useTerminal } from '@/composables/useTerminal'
+import {
+  buildToolsActivatedMessage,
+  buildToolsPreview,
+} from '@/utils/agentToolActivation'
+import { applyFileVerificationStatuses } from '@/components/Agent/fileVerificationSupport'
 import type {
   AgentChunkEvent,
   AgentCompletionGuardFailedEvent,
@@ -23,8 +28,10 @@ import type {
   AgentToolExecutedEvent,
   AgentToolResultEvent,
   AgentToolResultNewEvent,
+  AgentToolsActivatedEvent,
   AgentToolsSelectedEvent,
   ContextUsageInfo,
+  MemoryRetrievalInfo,
   OrderedMessageChunk,
   RagMetaInfo,
   SubagentDoneEvent,
@@ -52,6 +59,7 @@ export function useAgentEvents(
   const ragMetaInfo = ref<RagMetaInfo | null>(null)
   const subagents = ref<SubagentItem[]>([])
   const contextUsage = ref<ContextUsageInfo | null>(null)
+  const suppressedExecutionId = ref<string | null>(null)
 
   // Thinking content buffer for incremental display
   const thinkingBuffer = ref('')
@@ -90,6 +98,33 @@ export function useAgentEvents(
     return 128000
   }
 
+  const buildContextUsageSkeleton = (): ContextUsageInfo => ({
+    usedTokens: 0,
+    maxTokens: resolveDefaultMaxContextTokens(),
+    usagePercentage: 0,
+    systemPromptTokens: 0,
+    historyTokens: 0,
+    historyCount: 0,
+    summaryTokens: 0,
+    summaryGlobalTokens: 0,
+    summarySegmentTokens: 0,
+    summarySegmentCount: 0,
+    memoryRetrieval: null,
+  })
+
+  const mapMemoryRetrieval = (raw: any): MemoryRetrievalInfo | null => {
+    if (!raw || typeof raw !== 'object') return null
+    return {
+      queryPreview: typeof raw.query_preview === 'string' ? raw.query_preview : '',
+      requestedTopK: Number(raw.requested_top_k ?? 0) || 0,
+      hitCount: Number(raw.hit_count ?? 0) || 0,
+      usedCanonicalFallback: raw.used_canonical_fallback === true,
+      includeReflection: raw.include_reflection === true,
+      sourceBreakdown: Array.isArray(raw.source_breakdown) ? raw.source_breakdown : [],
+      kindBreakdown: Array.isArray(raw.kind_breakdown) ? raw.kind_breakdown : [],
+    }
+  }
+
   const hasExplicitTarget = executionId !== undefined
 
   const getTargetId = (): string | undefined => {
@@ -103,10 +138,24 @@ export function useAgentEvents(
     // If caller provided an explicit target but it's currently empty (e.g. session switching),
     // reject all events to avoid cross-session message bleed.
     if (hasExplicitTarget && !targetId) return false
+    if (suppressedExecutionId.value && eventExecId === suppressedExecutionId.value) {
+      return false
+    }
     return !targetId || eventExecId === targetId
   }
 
+  const isSuppressedExecution = (eventExecId: string): boolean => {
+    return !!suppressedExecutionId.value && suppressedExecutionId.value === eventExecId
+  }
+
+  const releaseSuppressedExecution = (eventExecId: string): void => {
+    if (!isSuppressedExecution(eventExecId)) return
+    console.log('[useAgentEvents] Releasing suppressed execution:', eventExecId)
+    suppressedExecutionId.value = null
+  }
+
   const matchesSubagentParent = (parentExecutionId: string): boolean => {
+    if (isSuppressedExecution(parentExecutionId)) return false
     if (matchesTarget(parentExecutionId)) return true
     const matcher = options?.subagentParentExecutionMatcher
     if (!matcher) return false
@@ -116,6 +165,31 @@ export function useAgentEvents(
       console.warn('[useAgentEvents] subagent parent matcher failed:', e)
       return false
     }
+  }
+
+  const deriveInteractiveShellFingerprint = (
+    parsedResult: any,
+    toolArgs?: any,
+  ): string | undefined => {
+    const explicit = typeof parsedResult?.session_fingerprint === 'string'
+      ? parsedResult.session_fingerprint.trim()
+      : ''
+    if (explicit) {
+      return explicit
+    }
+
+    const executionMode = parsedResult?.execution_mode ?? toolArgs?.execution_mode ?? 'docker'
+    const dockerImage = parsedResult?.docker_image ?? toolArgs?.docker_image ?? 'sentinel-sandbox:latest'
+    const shell = parsedResult?.shell ?? toolArgs?.shell ?? 'bash'
+    if (typeof executionMode !== 'string' || typeof dockerImage !== 'string' || typeof shell !== 'string') {
+      return undefined
+    }
+
+    return buildTerminalSessionFingerprint(
+      executionMode === 'host' ? 'host' : 'docker',
+      dockerImage,
+      shell,
+    )
   }
 
   const inferToolSuccess = (raw: any): boolean => {
@@ -181,6 +255,10 @@ export function useAgentEvents(
     }
   }
 
+  const normalizeTrackedArtifacts = (raw: unknown): any[] | undefined => {
+    return Array.isArray(raw) ? raw : undefined
+  }
+
   const resetExecutionBuffers = (): void => {
     isExecuting.value = false
     streamingContent.value = ''
@@ -193,6 +271,15 @@ export function useAgentEvents(
 
   const handleExecutionFinished = (payload: AgentExecutionFinishedEvent): void => {
     if (!matchesTarget(payload.execution_id)) return
+
+    if (
+      payload.outcome === 'cancelled'
+      && isExecuting.value
+      && currentExecutionId.value === payload.execution_id
+    ) {
+      console.log('[useAgentEvents] Ignoring stale cancelled event for active execution:', payload.execution_id)
+      return
+    }
 
     resetExecutionBuffers()
 
@@ -283,6 +370,7 @@ export function useAgentEvents(
     ragMetaInfo.value = null
     subagents.value = []
     contextUsage.value = null
+    suppressedExecutionId.value = null
   }
 
   const resetError = () => {
@@ -292,6 +380,10 @@ export function useAgentEvents(
   // 停止执行：清空流式内容并更新状态
   const stopExecution = () => {
     console.log('[useAgentEvents] Stopping execution, current execution_id:', currentExecutionId.value)
+    const executionToSuppress = currentExecutionId.value || getTargetId() || null
+    if (executionToSuppress) {
+      suppressedExecutionId.value = executionToSuppress
+    }
     isExecuting.value = false
     streamingContent.value = ''
     contentBuffer.value = ''
@@ -319,6 +411,7 @@ export function useAgentEvents(
       referenced_traffic?: any[]
     }>('agent:user_message', (event) => {
       const payload = event.payload
+      releaseSuppressedExecution(payload.execution_id)
       if (!matchesTarget(payload.execution_id)) return
 
       isExecuting.value = true
@@ -412,6 +505,7 @@ export function useAgentEvents(
     // 监听 agent:start 事件（兼容旧版）
     const unlistenStart = await listen<AgentStartEvent>('agent:start', (event) => {
       const payload = event.payload
+      releaseSuppressedExecution(payload.execution_id)
       if (!matchesTarget(payload.execution_id)) return
 
       isExecuting.value = true
@@ -468,7 +562,9 @@ export function useAgentEvents(
       sentinel_active_intent?: {
         intent_id?: string
         relation?: string
+        transition?: string
         confidence?: number
+        parent_intent_id?: string | null
       } | null
       sentinel_clarification?: {
         needed?: boolean
@@ -494,6 +590,8 @@ export function useAgentEvents(
         sentinelMode: payload.sentinel_mode === true,
         sentinelIntentId: payload.sentinel_active_intent?.intent_id || null,
         sentinelIntentConfidence: payload.sentinel_active_intent?.confidence ?? null,
+        sentinelIntentTransition: payload.sentinel_active_intent?.transition || null,
+        sentinelParentIntentId: payload.sentinel_active_intent?.parent_intent_id || null,
         sentinelClarificationNeeded: payload.sentinel_clarification?.needed === true,
         sentinelClarificationStatus: payload.sentinel_clarification?.status || null,
         sentinelCompressionAggressiveness:
@@ -502,6 +600,45 @@ export function useAgentEvents(
       console.log('[useAgentEvents] Context usage updated:', contextUsage.value)
     })
     unlisteners.push(unlistenContextUsage)
+
+    const unlistenContextSnapshot = await listen<{
+      execution_id: string
+      memory_retrieval?: any
+      sentinel_mode?: boolean
+      sentinel_intent_id?: string | null
+      sentinel_intent_confidence?: number | null
+      sentinel_intent_transition?: string | null
+      sentinel_parent_intent_id?: string | null
+      sentinel_clarification_needed?: boolean
+      sentinel_clarification_status?: string | null
+      sentinel_compression_aggressiveness?: string | null
+    }>('agent:context_snapshot', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      const next = contextUsage.value ? { ...contextUsage.value } : buildContextUsageSkeleton()
+      next.memoryRetrieval = mapMemoryRetrieval(payload.memory_retrieval)
+      next.sentinelMode = payload.sentinel_mode === true
+      next.sentinelIntentId = payload.sentinel_intent_id || next.sentinelIntentId || null
+      next.sentinelIntentConfidence =
+        payload.sentinel_intent_confidence ?? next.sentinelIntentConfidence ?? null
+      next.sentinelIntentTransition =
+        payload.sentinel_intent_transition || next.sentinelIntentTransition || null
+      next.sentinelParentIntentId =
+        payload.sentinel_parent_intent_id || next.sentinelParentIntentId || null
+      next.sentinelClarificationNeeded =
+        payload.sentinel_clarification_needed === true
+          ? true
+          : (next.sentinelClarificationNeeded ?? false)
+      next.sentinelClarificationStatus =
+        payload.sentinel_clarification_status || next.sentinelClarificationStatus || null
+      next.sentinelCompressionAggressiveness =
+        payload.sentinel_compression_aggressiveness
+        || next.sentinelCompressionAggressiveness
+        || null
+      contextUsage.value = next
+    })
+    unlisteners.push(unlistenContextSnapshot)
 
     const unlistenSubagentStart = await listen<SubagentStartEvent>('subagent:start', (event) => {
       const payload = event.payload
@@ -786,6 +923,9 @@ export function useAgentEvents(
             existingMsg.metadata.status = success ? 'completed' : 'failed'
             existingMsg.metadata.tool_result = resultContent
             existingMsg.metadata.success = success
+            existingMsg.metadata.tracked_artifacts = normalizeTrackedArtifacts(
+              newPayload.tracked_artifacts,
+            )
             existingMsg.content = `工具调用完成: ${callInfo.tool_name}`
             pushShellFallbackNotice(
               callInfo.tool_name,
@@ -841,7 +981,11 @@ export function useAgentEvents(
               try {
                 const parsed = deepParse(resultContent)
                 if (parsed.session_id) {
-                  terminal.openTerminal(parsed.session_id)
+                  terminal.syncActiveSession(
+                    parsed.session_id,
+                    deriveInteractiveShellFingerprint(parsed, callInfo.arguments),
+                  )
+                  terminal.openTerminal()
                 } else {
                   terminal.openTerminal()
                 }
@@ -867,6 +1011,9 @@ export function useAgentEvents(
           matchingToolCall.metadata.status = success ? 'completed' : 'failed'
           matchingToolCall.metadata.tool_result = payload.tool_result
           matchingToolCall.metadata.success = success
+          matchingToolCall.metadata.tracked_artifacts = normalizeTrackedArtifacts(
+            (payload as any).tracked_artifacts,
+          )
           matchingToolCall.content = `工具调用完成: ${payload.tool_name}`
           pushShellFallbackNotice(
             payload.tool_name,
@@ -907,7 +1054,11 @@ export function useAgentEvents(
             try {
               const parsed = deepParse(payload.tool_result)
               if (parsed.session_id) {
-                terminal.openTerminal(parsed.session_id)
+                terminal.syncActiveSession(
+                  parsed.session_id,
+                  deriveInteractiveShellFingerprint(parsed, matchingToolCall.metadata?.tool_args),
+                )
+                terminal.openTerminal()
               } else {
                 terminal.openTerminal()
               }
@@ -926,10 +1077,13 @@ export function useAgentEvents(
               tool_name: payload.tool_name,
               tool_args: payload.tool_input,
               success: !payload.tool_result.startsWith('Error:'),
+              tracked_artifacts: normalizeTrackedArtifacts((payload as any).tracked_artifacts),
             }
           })
         }
       }
+
+      applyFileVerificationStatuses(messages.value)
     })
     unlisteners.push(unlistenToolResult)
 
@@ -942,6 +1096,27 @@ export function useAgentEvents(
       console.log(`[Agent] Selected ${payload.tools.length} tools:`, payload.tools)
     })
     unlisteners.push(unlistenToolsSelected)
+
+    const unlistenToolsActivated = await listen<AgentToolsActivatedEvent>('agent:tools_activated', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      messages.value.push({
+        id: crypto.randomUUID(),
+        type: 'system',
+        content: buildToolsActivatedMessage(payload),
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'tools_activated',
+          tool_ids: payload.tool_ids,
+          tools: payload.tools,
+          tools_preview: buildToolsPreview(payload.tools),
+          query: payload.query || undefined,
+          runtime_hint: payload.runtime_hint || undefined,
+        }
+      })
+    })
+    unlisteners.push(unlistenToolsActivated)
 
     // 监听 agent:skill_loaded 事件（显示技能加载提示）
     const unlistenSkillLoaded = await listen<{

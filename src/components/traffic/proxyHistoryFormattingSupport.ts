@@ -2,6 +2,10 @@ import { detectHttpBodyLanguage } from '@/components/http-editor/httpDocument'
 import { parseStoredHeaderEntries } from './http/headers'
 import { normalizeProxyHistoryHttpVersion } from './proxyHistoryHttpSupport'
 import { getProxyHistoryDerived } from './proxyHistoryDerivedSupport'
+import {
+  getDisplayResponseBody,
+  isImageResponseContentType,
+} from './trafficResponsePreviewSupport'
 import type {
   ProxyHistoryRequestTab,
   ProxyHistoryResponseTab,
@@ -287,17 +291,20 @@ export const formatResponse = (
   const useEdited = viewMode === 'edited' && request.was_edited
   const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code
   const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
-  const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
+  const storedBody = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
 
   let result = `${getStartLineHttpVersion(request)} ${statusCode} ${getHarStatusText(statusCode)}\n`
   result += formatHeaderBlock(headers)
 
-  if (body) {
+  if (storedBody) {
     result += '\n'
     const contentType = getResponseContentType(request, viewMode)
+    const body = getDisplayResponseBody(storedBody, contentType)
     const bodyFormat = detectHttpBodyLanguage(body, contentType)
 
-    if (bodyFormat === 'json') {
+    if (isImageResponseContentType(contentType)) {
+      result += body
+    } else if (bodyFormat === 'json') {
       try {
         result += JSON.stringify(JSON.parse(body), null, 2)
       } catch {
@@ -336,7 +343,9 @@ export const formatResponseRaw = (
   const useEdited = viewMode === 'edited' && request.was_edited
   const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code
   const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
-  const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
+  const storedBody = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
+  const contentType = getResponseContentType(request, viewMode)
+  const body = storedBody ? getDisplayResponseBody(storedBody, contentType) : storedBody
 
   let result = `${getStartLineHttpVersion(request)} ${statusCode} ${getHarStatusText(statusCode)}\n`
   result += formatHeaderBlock(headers)

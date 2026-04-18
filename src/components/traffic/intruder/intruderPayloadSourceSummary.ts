@@ -1,4 +1,5 @@
 import { parseIntruderPluginConfig } from './plugins'
+import { normalizeIntruderDictionaryPayloadConfig } from './intruderAppDictionaryPayloads'
 import type { IntruderPayloadSet } from './types'
 
 export interface IntruderPayloadSourceDescriptor {
@@ -70,6 +71,19 @@ export function extractIntruderPayloadSourceSummaryEntries(
   payloadSets: IntruderPayloadSet[],
 ): IntruderPayloadSourceSummaryEntry[] {
   return payloadSets.flatMap((payloadSet) => {
+    if (payloadSet.payloadType === 'appDictionary') {
+      const sources = normalizeIntruderDictionaryPayloadConfig(payloadSet.dictionaryConfig).sources
+      if (!sources.length) {
+        return []
+      }
+
+      return [{
+        payloadSetName: payloadSet.name,
+        pluginId: 'intruder.appDictionary',
+        sources,
+      }]
+    }
+
     if (payloadSet.payloadType !== 'extensionGenerated' || !payloadSet.pluginId.trim()) {
       return []
     }

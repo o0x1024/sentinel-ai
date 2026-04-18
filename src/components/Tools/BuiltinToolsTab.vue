@@ -14,6 +14,164 @@
         </button>
       </div>
     </div>
+
+    <div v-if="sourceFilter === 'builtin'" class="card bg-base-100 border border-base-300 shadow-sm">
+      <div class="card-body gap-3">
+        <div
+          v-if="focusedMemoryId"
+          class="rounded-lg border border-info/30 bg-info/10 px-3 py-2"
+        >
+          <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <div class="text-sm text-base-content/75 break-all">
+              当前已定位到 memory:
+              <code class="ml-1 text-info">{{ focusedMemoryId }}</code>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button class="btn btn-xs btn-outline" @click="copyMemoryId(focusedMemoryId)">
+                <i class="fas fa-copy mr-1"></i>
+                复制 ID
+              </button>
+              <button
+                v-if="focusedMemoryDiagnostics && canOpenOriginConversation(focusedMemoryDiagnostics.record)"
+                class="btn btn-xs btn-outline btn-secondary"
+                @click="openOriginConversation(focusedMemoryDiagnostics.record)"
+              >
+                <i class="fas fa-crosshairs mr-1"></i>
+                定位到对话消息
+              </button>
+              <button class="btn btn-xs btn-outline btn-info" @click="clearFocusedMemory">
+                清除定位
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 class="card-title text-base">
+              <i class="fas fa-memory text-info mr-2"></i>
+              Memory Diagnostics
+            </h3>
+            <p class="text-sm text-base-content/70">
+              查看 durable memory 的 canonical 记录和 projection health。
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="label cursor-pointer gap-2 py-0">
+              <span class="label-text text-sm">仅问题</span>
+              <input v-model="memoryDiagnosticsOnlyIssues" type="checkbox" class="toggle toggle-warning toggle-sm" />
+            </label>
+            <button
+              class="btn btn-sm btn-outline"
+              :class="{ 'btn-disabled': memoryDiagnosticsLoading }"
+              @click="refreshMemoryDiagnostics"
+            >
+              <i :class="['fas', memoryDiagnosticsLoading ? 'fa-spinner fa-spin' : 'fa-sync-alt']"></i>
+              刷新
+            </button>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2 text-xs">
+          <span class="badge badge-ghost">记录 {{ memoryDiagnostics.length }}</span>
+          <span class="badge badge-success">可检索 {{ memoryDiagnosticsReadyCount }}</span>
+          <span class="badge badge-warning">异常 {{ memoryDiagnosticsIssueCount }}</span>
+        </div>
+
+        <div v-if="memoryDiagnosticsLoading" class="flex items-center gap-2 text-sm text-base-content/70">
+          <span class="loading loading-spinner loading-sm"></span>
+          <span>正在加载 memory diagnostics...</span>
+        </div>
+        <div v-else-if="memoryDiagnostics.length === 0" class="text-sm text-base-content/60">
+          当前没有可显示的 durable memory diagnostics。
+        </div>
+        <div v-else class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th>Memory</th>
+                <th>类型</th>
+                <th>来源</th>
+                <th>Projection</th>
+                <th>状态</th>
+                <th class="w-24">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="item in memoryDiagnostics"
+                :id="`memory-diagnostic-${item.record.id}`"
+                :key="item.record.id"
+                :class="item.record.id === focusedMemoryId ? 'bg-info/10' : ''"
+              >
+                <td class="max-w-md">
+                  <div class="font-medium truncate">{{ item.record.title || item.record.id }}</div>
+                  <div class="text-xs text-base-content/60 line-clamp-2 break-all">
+                    {{ item.record.text }}
+                  </div>
+                </td>
+                <td>
+                  <div class="flex flex-wrap gap-1">
+                    <span class="badge badge-ghost badge-sm">{{ item.record.kind }}</span>
+                    <span class="badge badge-ghost badge-sm">{{ item.record.scope }}</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="text-xs">{{ item.record.source }}</div>
+                  <div class="text-[11px] text-base-content/50">
+                    {{ formatTimestamp(item.record.updated_at_ms) }}
+                  </div>
+                  <div
+                    v-if="item.record.origin_execution_id"
+                    class="mt-1 text-[11px] text-base-content/50 break-all"
+                  >
+                    execution:
+                    <code>{{ item.record.origin_execution_id }}</code>
+                  </div>
+                </td>
+                <td>
+                  <div class="flex flex-wrap gap-1">
+                    <span :class="projectionBadgeClass(item.projection?.lexical_indexed)">lexical</span>
+                    <span :class="projectionBadgeClass(item.projection?.vector_indexed)">vector</span>
+                    <span :class="projectionBadgeClass(item.projection?.skill_projected)">skill</span>
+                  </div>
+                </td>
+                <td class="max-w-xs">
+                  <div class="flex flex-wrap gap-1 mb-1">
+                    <span :class="item.retrievable_projection_ready ? 'badge badge-success badge-sm' : 'badge badge-warning badge-sm'">
+                      {{ item.retrievable_projection_ready ? 'retrievable' : 'degraded' }}
+                    </span>
+                    <span v-if="item.projection_issue" class="badge badge-warning badge-sm">issue</span>
+                  </div>
+                  <div v-if="item.projection?.last_error" class="text-[11px] text-warning break-all">
+                    {{ item.projection.last_error }}
+                  </div>
+                </td>
+                <td>
+                  <div class="flex items-center gap-1">
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      :title="`复制 ${item.record.id}`"
+                      @click="copyMemoryId(item.record.id)"
+                    >
+                      <i class="fas fa-copy"></i>
+                    </button>
+                    <button
+                      v-if="canOpenOriginConversation(item.record)"
+                      class="btn btn-ghost btn-xs"
+                      title="定位到来源会话中的消息"
+                      @click="openOriginConversation(item.record)"
+                    >
+                      <i class="fas fa-crosshairs"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
     
     <!-- 分类筛选 -->
     <div class="flex flex-wrap gap-2 mb-4">
@@ -117,6 +275,15 @@
                   >
                     <i class="fas fa-shield-alt"></i>
                   </button>
+                  <button
+                    v-if="tool.name === 'search_exploit'"
+                    @click="showExploitDbModal = true"
+                    class="btn btn-secondary btn-sm"
+                    :title="$t('Tools.exploitdb.openManager')"
+                  >
+                    <i class="fas fa-database mr-1"></i>
+                    {{ $t('Tools.exploitdb.openManager') }}
+                  </button>
                   <!-- Regular Tools -->
                   <button 
                     v-if="tool.name !== 'shell'"
@@ -194,6 +361,14 @@
                     >
                       <i class="fas fa-shield-alt"></i>
                     </button>
+                    <button
+                      v-if="tool.name === 'search_exploit'"
+                      @click="showExploitDbModal = true"
+                      class="btn btn-secondary btn-xs"
+                      :title="$t('Tools.exploitdb.openManager')"
+                    >
+                      <i class="fas fa-database"></i>
+                    </button>
                     <!-- Regular Tools -->
                     <button 
                       v-if="tool.name !== 'shell'"
@@ -231,6 +406,7 @@
       :tool-version="testingTool?.version"
       :tool-category="testingTool?.category"
       :input-schema="testingTool?.input_schema"
+      :initial-params="testingToolInitialParams"
       :execution-info="{
         type: 'unified', // or 'builtin', handled as direct toolName call
         name: testingTool?.name
@@ -240,6 +416,8 @@
     <!-- Shell 配置模态框 -->
     <ShellConfigModal v-model="showShellConfigModal" />
 
+    <ExploitDbManagerModal v-model="showExploitDbModal" @open-tool-test="openExploitDbToolTest" />
+
     <!-- Shell 终端模态框 -->
     <ShellTerminal v-model="showShellTerminal" />
 
@@ -247,12 +425,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import ShellConfigModal from './ShellConfigModal.vue'
 import ShellTerminal from './ShellTerminal.vue'
 import UnifiedToolTest from './UnifiedToolTest.vue'
+import ExploitDbManagerModal from './ExploitDbManagerModal.vue'
 
 type BuiltinSourceFilter = 'builtin' | 'workflow' | 'plugin'
 
@@ -261,16 +441,20 @@ const props = withDefaults(defineProps<{
   showContent?: boolean
   workflowCount?: number
   pluginCount?: number
+  focusedMemoryId?: string | null
 }>(), {
   sourceFilter: 'builtin',
   showContent: true,
   workflowCount: 0,
   pluginCount: 0,
+  focusedMemoryId: null,
 })
 
 const emit = defineEmits<{
   (e: 'source-filter-change', filter: BuiltinSourceFilter): void
 }>()
+const route = useRoute()
+const router = useRouter()
 
 // 分类配置
 interface CategoryConfig {
@@ -281,6 +465,37 @@ interface CategoryConfig {
   badgeClass: string
   bgClass: string
   textClass: string
+}
+
+interface DurableMemoryProjectionState {
+  memory_id: string
+  lexical_indexed: boolean
+  vector_indexed: boolean
+  skill_projected: boolean
+  last_error?: string | null
+  updated_at_ms: number
+}
+
+interface DurableMemoryRecord {
+  id: string
+  title?: string | null
+  text: string
+  kind: string
+  tier: string
+  scope: string
+  stability: string
+  source: string
+  confidence: number
+  importance: number
+  origin_execution_id?: string | null
+  updated_at_ms: number
+}
+
+interface DurableMemoryDiagnosticsItem {
+  record: DurableMemoryRecord
+  projection?: DurableMemoryProjectionState | null
+  retrievable_projection_ready: boolean
+  projection_issue: boolean
 }
 
 const categoryConfigs: CategoryConfig[] = [
@@ -311,12 +526,21 @@ const viewMode = ref('list')
 const showTestModal = ref(false)
 const showShellConfigModal = ref(false)
 const showShellTerminal = ref(false)
+const showExploitDbModal = ref(false)
 const testingTool = ref<any>(null)
+const testingToolInitialParams = ref<Record<string, unknown> | null>(null)
 const selectedCategory = ref('')
+const memoryDiagnostics = ref<DurableMemoryDiagnosticsItem[]>([])
+const memoryDiagnosticsLoading = ref(false)
+const memoryDiagnosticsOnlyIssues = ref(true)
 const sourceFilter = computed(() => props.sourceFilter)
 const showContent = computed(() => props.showContent)
 const workflowCount = computed(() => props.workflowCount ?? 0)
 const pluginCount = computed(() => props.pluginCount ?? 0)
+const focusedMemoryId = computed(() => {
+  const value = String(props.focusedMemoryId || '').trim()
+  return value || ''
+})
 const infoText = computed(() => {
   if (sourceFilter.value === 'workflow') {
     return '这些是在工作流工作室中标记为工具的工作流，可供AI助手调用执行。'
@@ -326,6 +550,18 @@ const infoText = computed(() => {
   }
   return '这些是系统内置的工具，已自动注册并可供AI助手调用。'
 })
+
+const memoryDiagnosticsReadyCount = computed(() =>
+  memoryDiagnostics.value.filter(item => item.retrievable_projection_ready).length,
+)
+
+const memoryDiagnosticsIssueCount = computed(() =>
+  memoryDiagnostics.value.filter(item => item.projection_issue).length,
+)
+
+const focusedMemoryDiagnostics = computed(() =>
+  memoryDiagnostics.value.find(item => item.record.id === focusedMemoryId.value) ?? null,
+)
 
 // 计算属性：可用的分类
 const categories = computed(() => {
@@ -448,8 +684,43 @@ async function fetchTools() {
   }
 }
 
+async function fetchMemoryDiagnostics() {
+  if (sourceFilter.value !== 'builtin') return
+  memoryDiagnosticsLoading.value = true
+  try {
+    const diagnostics = await invoke<DurableMemoryDiagnosticsItem[]>('list_durable_memory_diagnostics', {
+      limit: 20,
+      onlyIssues: focusedMemoryId.value ? false : memoryDiagnosticsOnlyIssues.value,
+    })
+    const result = Array.isArray(diagnostics) ? diagnostics : []
+    if (focusedMemoryId.value) {
+      const exact = await invoke<DurableMemoryDiagnosticsItem[]>('get_durable_memory_diagnostics_by_ids', {
+        memoryIds: [focusedMemoryId.value],
+      })
+      const merged = new Map<string, DurableMemoryDiagnosticsItem>()
+      for (const item of result) merged.set(item.record.id, item)
+      for (const item of Array.isArray(exact) ? exact : []) merged.set(item.record.id, item)
+      memoryDiagnostics.value = Array.from(merged.values())
+      await scrollToFocusedMemory()
+      return
+    }
+    memoryDiagnostics.value = result
+  } catch (error) {
+    console.error('Failed to fetch memory diagnostics:', error)
+    memoryDiagnostics.value = []
+    dialog.toast.error(`加载 memory diagnostics 失败：${String(error)}`)
+  } finally {
+    memoryDiagnosticsLoading.value = false
+  }
+}
+
+async function refreshMemoryDiagnostics() {
+  await fetchMemoryDiagnostics()
+}
+
 async function refresh() {
   await fetchTools()
+  await fetchMemoryDiagnostics()
 }
 
 async function toggleTool(tool: any) {
@@ -469,15 +740,107 @@ async function toggleTool(tool: any) {
 
 
 
-function openTestModal(tool: any) {
+function openTestModal(tool: any, initialParams: Record<string, unknown> | null = null) {
   testingTool.value = { ...tool }
+  testingToolInitialParams.value = initialParams
   showTestModal.value = true
+}
+
+function openExploitDbToolTest(payload: { action: 'get'; edb_id: number }) {
+  const exploitTool = tools.value.find(tool => tool.name === 'search_exploit')
+  if (!exploitTool) {
+    dialog.toast.error('未找到 search_exploit 工具')
+    return
+  }
+
+  openTestModal(exploitTool, payload)
+}
+
+function projectionBadgeClass(ok: boolean | undefined) {
+  return ok === true
+    ? 'badge badge-success badge-sm'
+    : 'badge badge-warning badge-sm'
+}
+
+function formatTimestamp(timestamp: number) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '-'
+  return new Date(timestamp).toLocaleString()
+}
+
+async function copyMemoryId(memoryId: string) {
+  const normalized = String(memoryId || '').trim()
+  if (!normalized) return
+  try {
+    await navigator.clipboard.writeText(normalized)
+    dialog.toast.success(`已复制 memory_id: ${normalized}`)
+  } catch (error) {
+    console.error('Failed to copy memory id:', error)
+    dialog.toast.error('复制 memory_id 失败')
+  }
+}
+
+function normalizeOriginExecutionId(record: DurableMemoryRecord): string {
+  return String(record.origin_execution_id || '').trim()
+}
+
+function canOpenOriginConversation(record: DurableMemoryRecord): boolean {
+  const executionId = normalizeOriginExecutionId(record)
+  return !!executionId && executionId !== 'memory_tool'
+}
+
+function openOriginConversation(record: DurableMemoryRecord) {
+  const executionId = normalizeOriginExecutionId(record)
+  if (!executionId || executionId === 'memory_tool') {
+    dialog.toast.error('该 memory 没有可跳转的来源会话')
+    return
+  }
+  void router.push({
+    name: 'AIAssistant',
+    query: {
+      conversationId: executionId,
+      memoryId: record.id,
+    },
+  })
+}
+
+async function scrollToFocusedMemory() {
+  if (!focusedMemoryId.value) return
+  await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)))
+  const target = document.getElementById(`memory-diagnostic-${focusedMemoryId.value}`)
+  target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+function clearFocusedMemory() {
+  const nextQuery = { ...route.query }
+  delete nextQuery.memoryId
+  void router.replace({ query: nextQuery })
 }
 
 // 暴露刷新方法供父组件调用
 defineExpose({ refresh })
 
 onMounted(() => {
-  fetchTools()
+  void fetchTools()
+  void fetchMemoryDiagnostics()
+})
+
+watch(memoryDiagnosticsOnlyIssues, () => {
+  void fetchMemoryDiagnostics()
+})
+
+watch(sourceFilter, (next) => {
+  if (next === 'builtin') {
+    void fetchMemoryDiagnostics()
+  }
+})
+
+watch(focusedMemoryId, (next) => {
+  if (next && memoryDiagnosticsOnlyIssues.value) {
+    memoryDiagnosticsOnlyIssues.value = false
+    return
+  }
+  if (sourceFilter.value === 'builtin') {
+    void fetchMemoryDiagnostics()
+  }
 })
 </script>

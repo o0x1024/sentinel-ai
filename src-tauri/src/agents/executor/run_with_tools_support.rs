@@ -1,19 +1,31 @@
 use anyhow::Result;
 use serde_json::json;
+use std::collections::HashSet;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sentinel_db::Database;
 use sentinel_db::DatabaseService;
-use sentinel_llm::ChatMessage;
+use sentinel_llm::{normalize_tool_call_arguments_str, ChatMessage};
 use sentinel_tools::buildin_tools::{
-    AskUserQuestionTool, HttpRequestTool, ShellTool, SkillsTool, TodosTool,
+    AskUserQuestionTool, FileEditTool, FileReadTool, FileWriteTool, HttpRequestTool, ShellTool,
+    SkillsTool, TodosTool, ToolSearchTool,
 };
 use sentinel_tools::dynamic_tool::{
     DynamicTool, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
 };
+use sentinel_tools::terminal::server::TerminalServer;
 use sentinel_tools::ToolServer;
 
+use crate::agents::executor::file_tool_state::{
+    ensure_file_snapshot_is_editable, invalidate_file_snapshot, normalize_file_path,
+    record_file_read_snapshot,
+};
+use crate::agents::executor::terminal_session_store::{
+    get_active_terminal_session, set_active_terminal_session,
+};
+use crate::agents::executor::tool_search_override::build_tool_search_override_def;
 use crate::agents::executor::types::ToolCallRecord;
 
 type PendingToolCalls = std::collections::HashMap<String, (String, String, i64, u32)>;
@@ -107,6 +119,9 @@ pub(super) async fn register_skills_tool_guard(
         output_schema: None,
         source: ToolSource::Builtin,
         category: "system".to_string(),
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
         execution_policy: ToolExecutionPolicy::default(),
         executor,
     };
@@ -244,6 +259,447 @@ pub(super) fn tool_loop_fingerprint(tool_name: &str, arguments: &str, result: &s
     shorten_for_fingerprint(arguments, 320).hash(&mut hasher);
     shorten_for_fingerprint(result, 320).hash(&mut hasher);
     hasher.finish()
+}
+
+fn lower_tool_argument(arguments: &str, keys: &[&str]) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(arguments).ok()?;
+    for key in keys {
+        if let Some(text) = value.get(*key).and_then(|v| v.as_str()) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_lowercase());
+            }
+        }
+    }
+    None
+}
+
+fn is_shell_like_side_effect_command(command: &str) -> bool {
+    let write_markers = [
+        "rm ",
+        "mv ",
+        "cp ",
+        "chmod ",
+        "chown ",
+        "touch ",
+        "mkdir ",
+        "sed -i",
+        "tee ",
+        "git apply",
+        "git add",
+        "git commit",
+        "git push",
+        "cargo fmt",
+        "cargo fix",
+        "npm install",
+        "pnpm install",
+        "yarn install",
+        "pip install",
+        "terraform apply",
+        "kubectl apply",
+        "kubectl delete",
+        "docker run",
+        "docker exec",
+        "docker compose up",
+    ];
+
+    write_markers.iter().any(|marker| command.contains(marker))
+        || command.contains(" >")
+        || command.contains(">>")
+}
+
+fn is_shell_like_high_risk_command(command: &str) -> bool {
+    let high_risk_markers = [
+        "rm -rf",
+        "mkfs",
+        "dd ",
+        "chmod ",
+        "chown ",
+        "git push",
+        "git commit",
+        "terraform apply",
+        "terraform destroy",
+        "kubectl apply",
+        "kubectl delete",
+        "docker run",
+        "docker exec",
+        "docker compose up",
+        "npm publish",
+        "cargo publish",
+        "psql ",
+        "mysql ",
+        "sqlite3 ",
+        "sed -i",
+        "tee ",
+    ];
+
+    high_risk_markers
+        .iter()
+        .any(|marker| command.contains(marker))
+        || command.contains(" >")
+        || command.contains(">>")
+}
+
+fn http_method(arguments: &str) -> Option<String> {
+    lower_tool_argument(arguments, &["method"]).map(|m| m.to_ascii_uppercase())
+}
+
+pub(super) fn is_high_risk_tool_call(tool_name: &str, arguments: &str) -> bool {
+    match tool_name {
+        "shell" | "interactive_shell" => {
+            lower_tool_argument(arguments, &["command", "initial_command"])
+                .map(|cmd| is_shell_like_high_risk_command(&cmd))
+                .unwrap_or(false)
+        }
+        "http_request" => matches!(
+            http_method(arguments).as_deref(),
+            Some("POST" | "PUT" | "PATCH" | "DELETE")
+        ),
+        "file_edit" | "file_write" => true,
+        "sops" => true,
+        _ => false,
+    }
+}
+
+pub(super) fn is_side_effectful_tool_call(tool_name: &str, arguments: &str) -> bool {
+    match tool_name {
+        "shell" | "interactive_shell" => {
+            lower_tool_argument(arguments, &["command", "initial_command"])
+                .map(|cmd| is_shell_like_side_effect_command(&cmd))
+                .unwrap_or(false)
+        }
+        "http_request" => matches!(
+            http_method(arguments).as_deref(),
+            Some("POST" | "PUT" | "PATCH" | "DELETE")
+        ),
+        "file_edit" | "file_write" => true,
+        "sops" => true,
+        _ => false,
+    }
+}
+
+pub(super) fn trailing_failed_tool_calls(records: &[ToolCallRecord]) -> usize {
+    records
+        .iter()
+        .rev()
+        .take_while(|record| !record.success)
+        .count()
+}
+
+pub(super) fn looks_like_verification_tool_call(
+    tool_name: &str,
+    arguments: &str,
+    success: bool,
+) -> bool {
+    if !success {
+        return false;
+    }
+
+    match tool_name {
+        "shell" | "interactive_shell" => {
+            lower_tool_argument(arguments, &["command", "initial_command"])
+                .map(|command| {
+                    let markers = [
+                        "cargo test",
+                        "cargo check",
+                        "cargo clippy",
+                        "go test",
+                        "pytest",
+                        "npm test",
+                        "pnpm test",
+                        "yarn test",
+                        "vitest",
+                        "jest",
+                        "ruff",
+                        "mypy",
+                        "eslint",
+                        "npm run lint",
+                        "pnpm lint",
+                        "git diff",
+                        "git status",
+                        "rg ",
+                        "grep ",
+                        "cat ",
+                        "sed -n",
+                        "head ",
+                        "tail ",
+                        "ls ",
+                        "find ",
+                        "wc ",
+                    ];
+                    markers.iter().any(|marker| command.contains(marker))
+                })
+                .unwrap_or(false)
+        }
+        "http_request" => matches!(http_method(arguments).as_deref(), Some("GET" | "HEAD")),
+        "file_read" | "grep" | "glob" => true,
+        "browser" => true,
+        _ => false,
+    }
+}
+
+fn final_response_makes_completion_claim(final_response: &str) -> bool {
+    let lower = final_response.trim().to_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+
+    let markers = [
+        "已修复",
+        "已经修复",
+        "已完成",
+        "完成了",
+        "已经完成",
+        "修好了",
+        "fixed",
+        "resolved",
+        "completed",
+        "done",
+        "implemented",
+    ];
+
+    markers.iter().any(|marker| lower.contains(marker))
+}
+
+fn final_response_has_high_confidence_claim(final_response: &str) -> bool {
+    let lower = final_response.trim().to_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+
+    let markers = [
+        "可以确定",
+        "明确",
+        "根因就是",
+        "一定是",
+        "显然",
+        "最佳方案",
+        "唯一方案",
+        "一定",
+        "must",
+        "definitely",
+        "clearly",
+        "root cause is",
+        "best approach",
+        "the answer is",
+    ];
+
+    markers.iter().any(|marker| lower.contains(marker))
+        || final_response_makes_completion_claim(final_response)
+}
+
+fn shell_evidence_score(command: &str) -> u32 {
+    let direct_content_markers = [
+        "cat ", "sed -n", "head ", "tail ", "git show", "jq ", "read ",
+    ];
+    let broad_scan_markers = ["rg ", "grep ", "find ", "ls ", "tree ", "git log", "wc "];
+
+    if direct_content_markers
+        .iter()
+        .any(|marker| command.contains(marker))
+    {
+        2
+    } else if broad_scan_markers
+        .iter()
+        .any(|marker| command.contains(marker))
+    {
+        1
+    } else {
+        0
+    }
+}
+
+fn is_focus_token_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ':')
+}
+
+fn extract_focus_tokens(text: &str) -> HashSet<String> {
+    const STOPWORDS: &[&str] = &[
+        "therefore",
+        "because",
+        "should",
+        "must",
+        "clearly",
+        "definitely",
+        "best",
+        "approach",
+        "answer",
+        "issue",
+        "problem",
+        "solution",
+        "resolved",
+        "completed",
+        "implemented",
+        "fixed",
+        "done",
+    ];
+
+    let lowered = text.to_lowercase();
+    let mut tokens = HashSet::new();
+    let mut current = String::new();
+
+    for ch in lowered.chars() {
+        if is_focus_token_char(ch) {
+            current.push(ch);
+        } else if !current.is_empty() {
+            if current.len() >= 3 && !STOPWORDS.contains(&current.as_str()) {
+                tokens.insert(current.clone());
+            }
+            current.clear();
+        }
+    }
+
+    if current.len() >= 3 && !STOPWORDS.contains(&current.as_str()) {
+        tokens.insert(current);
+    }
+
+    tokens
+}
+
+fn tool_call_relevance_text(record: &ToolCallRecord) -> String {
+    let mut text = format!("{} {}", record.name, record.arguments).to_lowercase();
+    if let Some(result) = &record.result {
+        let preview = result.chars().take(400).collect::<String>().to_lowercase();
+        if !preview.is_empty() {
+            text.push(' ');
+            text.push_str(&preview);
+        }
+    }
+    text
+}
+
+pub(super) fn evidence_score_for_tool_call(tool_name: &str, arguments: &str, success: bool) -> u32 {
+    if !success {
+        return 0;
+    }
+
+    if looks_like_verification_tool_call(tool_name, arguments, success) {
+        return 3;
+    }
+
+    match tool_name {
+        "shell" | "interactive_shell" => {
+            lower_tool_argument(arguments, &["command", "initial_command"])
+                .map(|command| {
+                    if is_side_effectful_tool_call(tool_name, arguments) {
+                        0
+                    } else {
+                        shell_evidence_score(&command)
+                    }
+                })
+                .unwrap_or(0)
+        }
+        "http_request" => match http_method(arguments).as_deref() {
+            Some("GET" | "HEAD") => 2,
+            _ => 0,
+        },
+        "file_read" | "grep" => 2,
+        "glob" => 1,
+        "browser" | "web_search" | "ocr" => 2,
+        "memory" | "tool_search" => 1,
+        _ => 0,
+    }
+}
+
+fn evidence_score_for_record_against_focus(
+    record: &ToolCallRecord,
+    focus_tokens: &HashSet<String>,
+) -> u32 {
+    let base = evidence_score_for_tool_call(&record.name, &record.arguments, record.success);
+    if base == 0 {
+        return 0;
+    }
+    if focus_tokens.is_empty()
+        || looks_like_verification_tool_call(&record.name, &record.arguments, record.success)
+    {
+        return base;
+    }
+
+    let relevance_text = tool_call_relevance_text(record);
+    if focus_tokens
+        .iter()
+        .any(|token| relevance_text.contains(token.as_str()))
+    {
+        base
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+pub(super) fn total_evidence_score(records: &[ToolCallRecord]) -> u32 {
+    records
+        .iter()
+        .map(|record| evidence_score_for_tool_call(&record.name, &record.arguments, record.success))
+        .sum()
+}
+
+fn relevant_evidence_score(claim_text: &str, records: &[ToolCallRecord]) -> u32 {
+    let focus_tokens = extract_focus_tokens(claim_text);
+    records
+        .iter()
+        .map(|record| evidence_score_for_record_against_focus(record, &focus_tokens))
+        .sum()
+}
+
+pub(super) fn final_response_needs_verification_review(
+    final_response: &str,
+    records: &[ToolCallRecord],
+) -> bool {
+    if !final_response_makes_completion_claim(final_response) {
+        return false;
+    }
+
+    let Some(last_side_effect_seq) = records
+        .iter()
+        .rev()
+        .find(|record| is_side_effectful_tool_call(&record.name, &record.arguments))
+        .map(|record| record.sequence)
+    else {
+        return false;
+    };
+
+    !records.iter().any(|record| {
+        record.sequence > last_side_effect_seq
+            && looks_like_verification_tool_call(&record.name, &record.arguments, record.success)
+    })
+}
+
+pub(super) fn final_response_needs_evidence_review(
+    final_response: &str,
+    focus_hint: Option<&str>,
+    records: &[ToolCallRecord],
+    minimum_evidence_score: u32,
+) -> bool {
+    if !final_response_has_high_confidence_claim(final_response) {
+        return false;
+    }
+
+    let claim_text = focus_hint.unwrap_or(final_response);
+    relevant_evidence_score(claim_text, records) < minimum_evidence_score.max(1)
+}
+
+pub(super) fn streaming_content_needs_evidence_review(
+    content: &str,
+    focus_hint: Option<&str>,
+    records: &[ToolCallRecord],
+    minimum_evidence_score: u32,
+) -> bool {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let has_high_confidence_claim = final_response_has_high_confidence_claim(trimmed);
+    let has_conclusion_markers =
+        crate::agents::tenth_man::TenthMan::contains_conclusion_markers(trimmed);
+
+    if !has_high_confidence_claim && !(has_conclusion_markers && trimmed.chars().count() >= 80) {
+        return false;
+    }
+
+    let claim_text = focus_hint.unwrap_or(trimmed);
+    relevant_evidence_score(claim_text, records) < minimum_evidence_score.max(1)
 }
 
 #[derive(Debug, Clone)]
@@ -397,12 +853,14 @@ pub(super) fn build_retry_history(
             &ordered_calls
                 .iter()
                 .map(|c| {
+                    let normalized_arguments =
+                        normalize_tool_call_arguments_str(&c.name, &c.arguments);
                     json!({
                         "id": c.id,
                         "type": "function",
                         "function": {
                             "name": c.name,
-                            "arguments": c.arguments,
+                            "arguments": normalized_arguments,
                         }
                     })
                 })
@@ -594,6 +1052,9 @@ async fn build_shell_override_def(
         output_schema: None,
         source: ToolSource::Builtin,
         category: "system".to_string(),
+        tags: shell_info.tags.clone(),
+        search_hint: shell_info.search_hint.clone(),
+        exposure: shell_info.exposure.clone(),
         execution_policy: shell_info.execution_policy.clone(),
         executor: shell_executor,
     })
@@ -637,8 +1098,170 @@ async fn build_http_override_def(tool_server: &ToolServer) -> Option<DynamicTool
         output_schema: None,
         source: ToolSource::Builtin,
         category: "network".to_string(),
+        tags: http_info.tags.clone(),
+        search_hint: http_info.search_hint.clone(),
+        exposure: http_info.exposure.clone(),
         execution_policy: http_info.execution_policy.clone(),
         executor: http_executor,
+    })
+}
+
+async fn build_file_read_override_def(
+    tool_server: &ToolServer,
+    execution_id: &str,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(FileReadTool::NAME).await?;
+    let execution_id_for_file_read = execution_id.to_string();
+    let input_schema = info.input_schema.clone();
+    let description = info.description.clone();
+    let execution_policy = info.execution_policy.clone();
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id_for_file_read = execution_id_for_file_read.clone();
+        Box::pin(async move {
+            use rig::tool::Tool;
+            use sentinel_tools::buildin_tools::file_read::{FileReadArgs, FileReadTool};
+
+            let tool_args: FileReadArgs =
+                serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
+            let result = FileReadTool
+                .call(tool_args.clone())
+                .await
+                .map_err(|e| format!("File read failed: {}", e))?;
+
+            record_file_read_snapshot(
+                &execution_id_for_file_read,
+                &tool_args.file_path,
+                result.start_line,
+                result.end_line,
+                result.total_lines,
+                result.truncated,
+            )
+            .await
+            .map_err(|e| format!("Failed to record file read state: {}", e))?;
+
+            serde_json::to_value(result)
+                .map_err(|e| format!("Failed to serialize file_read result: {}", e))
+        })
+    });
+
+    Some(DynamicToolDef {
+        name: FileReadTool::NAME.to_string(),
+        description,
+        input_schema,
+        output_schema: info.output_schema.clone(),
+        source: ToolSource::Builtin,
+        category: "utility".to_string(),
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
+        execution_policy,
+        executor,
+    })
+}
+
+async fn build_file_edit_override_def(
+    tool_server: &ToolServer,
+    execution_id: &str,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(FileEditTool::NAME).await?;
+    let execution_id_for_file_edit = execution_id.to_string();
+    let input_schema = info.input_schema.clone();
+    let description = info.description.clone();
+    let execution_policy = info.execution_policy.clone();
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id_for_file_edit = execution_id_for_file_edit.clone();
+        Box::pin(async move {
+            use rig::tool::Tool;
+            use sentinel_tools::buildin_tools::file_edit::{FileEditArgs, FileEditTool};
+
+            let tool_args: FileEditArgs =
+                serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
+            ensure_file_snapshot_is_editable(&execution_id_for_file_edit, &tool_args.file_path)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let result = FileEditTool
+                .call(tool_args.clone())
+                .await
+                .map_err(|e| format!("File edit failed: {}", e))?;
+            invalidate_file_snapshot(&execution_id_for_file_edit, &tool_args.file_path).await;
+
+            serde_json::to_value(result)
+                .map_err(|e| format!("Failed to serialize file_edit result: {}", e))
+        })
+    });
+
+    Some(DynamicToolDef {
+        name: FileEditTool::NAME.to_string(),
+        description,
+        input_schema,
+        output_schema: info.output_schema.clone(),
+        source: ToolSource::Builtin,
+        category: "utility".to_string(),
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
+        execution_policy,
+        executor,
+    })
+}
+
+async fn build_file_write_override_def(
+    tool_server: &ToolServer,
+    execution_id: &str,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(FileWriteTool::NAME).await?;
+    let execution_id_for_file_write = execution_id.to_string();
+    let input_schema = info.input_schema.clone();
+    let description = info.description.clone();
+    let execution_policy = info.execution_policy.clone();
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id_for_file_write = execution_id_for_file_write.clone();
+        Box::pin(async move {
+            use rig::tool::Tool;
+            use sentinel_tools::buildin_tools::file_write::{FileWriteArgs, FileWriteTool};
+
+            let tool_args: FileWriteArgs =
+                serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
+            let normalized_path = normalize_file_path(&tool_args.file_path)
+                .await
+                .map_err(|e| e.to_string())?;
+            let exists = tokio::fs::metadata(Path::new(&normalized_path))
+                .await
+                .is_ok();
+
+            if exists && tool_args.overwrite {
+                ensure_file_snapshot_is_editable(
+                    &execution_id_for_file_write,
+                    &tool_args.file_path,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            }
+
+            let result = FileWriteTool
+                .call(tool_args.clone())
+                .await
+                .map_err(|e| format!("File write failed: {}", e))?;
+            invalidate_file_snapshot(&execution_id_for_file_write, &tool_args.file_path).await;
+
+            serde_json::to_value(result)
+                .map_err(|e| format!("Failed to serialize file_write result: {}", e))
+        })
+    });
+
+    Some(DynamicToolDef {
+        name: FileWriteTool::NAME.to_string(),
+        description,
+        input_schema,
+        output_schema: info.output_schema.clone(),
+        source: ToolSource::Builtin,
+        category: "utility".to_string(),
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
+        execution_policy,
+        executor,
     })
 }
 
@@ -685,6 +1308,9 @@ async fn build_todos_override_def(
         output_schema: None,
         source: ToolSource::Builtin,
         category: "system".to_string(),
+        tags: todos_info.tags.clone(),
+        search_hint: todos_info.search_hint.clone(),
+        exposure: todos_info.exposure.clone(),
         execution_policy: todos_info.execution_policy.clone(),
         executor: todos_executor,
     })
@@ -735,8 +1361,87 @@ async fn build_ask_user_question_override_def(
         output_schema: None,
         source: ToolSource::Builtin,
         category: "system".to_string(),
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
         execution_policy: info.execution_policy.clone(),
         executor,
+    })
+}
+
+async fn build_interactive_shell_override_def(
+    tool_server: &ToolServer,
+    execution_id: &str,
+    fallback_active_session_id: Option<&str>,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(TerminalServer::NAME).await?;
+    let execution_id_for_terminal = execution_id.to_string();
+    let fallback_active_session_id = fallback_active_session_id.map(str::to_string);
+    let input_schema = info.input_schema.clone();
+    let description = info.description.clone();
+    let execution_policy = info.execution_policy.clone();
+    let terminal_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id_for_terminal = execution_id_for_terminal.clone();
+        let fallback_active_session_id = fallback_active_session_id.clone();
+        Box::pin(async move {
+            let tool_server = sentinel_tools::get_tool_server();
+            let mut patched_args = args;
+
+            if let Some(obj) = patched_args.as_object_mut() {
+                obj.insert(
+                    "execution_id".to_string(),
+                    serde_json::Value::String(execution_id_for_terminal.clone()),
+                );
+                if !obj.contains_key("session_policy") {
+                    obj.insert(
+                        "session_policy".to_string(),
+                        serde_json::Value::String("reuse".to_string()),
+                    );
+                }
+                if let Some(active_session_id) =
+                    get_active_terminal_session(&execution_id_for_terminal)
+                        .or_else(|| fallback_active_session_id.clone())
+                {
+                    obj.insert(
+                        "active_session_id".to_string(),
+                        serde_json::Value::String(active_session_id),
+                    );
+                }
+            }
+
+            let result = tool_server
+                .execute(TerminalServer::NAME, patched_args)
+                .await;
+            if !result.success {
+                return Err(result
+                    .error
+                    .unwrap_or_else(|| "Interactive shell execution failed".to_string()));
+            }
+
+            let output = result
+                .output
+                .ok_or_else(|| "Interactive shell returned no output".to_string())?;
+
+            if let Some(session_id) = output.get("session_id").and_then(|value| value.as_str()) {
+                set_active_terminal_session(&execution_id_for_terminal, Some(session_id));
+            }
+
+            Ok(output)
+        })
+    });
+
+    Some(DynamicToolDef {
+        name: TerminalServer::NAME.to_string(),
+        description,
+        input_schema,
+        output_schema: None,
+        source: ToolSource::Builtin,
+        category: "system".to_string(),
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
+        execution_policy,
+        executor: terminal_executor,
     })
 }
 
@@ -745,6 +1450,7 @@ pub(super) async fn patch_builtin_dynamic_tools(
     current_tool_ids: &[String],
     tool_server: &ToolServer,
     execution_id: &str,
+    active_terminal_session_id: Option<&str>,
 ) -> Vec<DynamicTool> {
     if current_tool_ids.iter().any(|id| id == ShellTool::NAME) {
         if let Some(def) = build_shell_override_def(tool_server, execution_id).await {
@@ -761,6 +1467,24 @@ pub(super) async fn patch_builtin_dynamic_tools(
         }
     }
 
+    if current_tool_ids.iter().any(|id| id == FileReadTool::NAME) {
+        if let Some(def) = build_file_read_override_def(tool_server, execution_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
+    if current_tool_ids.iter().any(|id| id == FileEditTool::NAME) {
+        if let Some(def) = build_file_edit_override_def(tool_server, execution_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
+    if current_tool_ids.iter().any(|id| id == FileWriteTool::NAME) {
+        if let Some(def) = build_file_write_override_def(tool_server, execution_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
     if current_tool_ids.iter().any(|id| id == TodosTool::NAME) {
         if let Some(def) = build_todos_override_def(tool_server, execution_id).await {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
@@ -772,6 +1496,24 @@ pub(super) async fn patch_builtin_dynamic_tools(
         .any(|id| id == AskUserQuestionTool::NAME)
     {
         if let Some(def) = build_ask_user_question_override_def(tool_server, execution_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
+    if current_tool_ids.iter().any(|id| id == ToolSearchTool::NAME) {
+        if let Some(def) = build_tool_search_override_def(tool_server, execution_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
+    if current_tool_ids.iter().any(|id| id == TerminalServer::NAME) {
+        if let Some(def) = build_interactive_shell_override_def(
+            tool_server,
+            execution_id,
+            active_terminal_session_id,
+        )
+        .await
+        {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
@@ -807,6 +1549,7 @@ pub(super) fn is_empty_response_error(err_msg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn infer_tool_result_success_detects_timeout_failure() {
@@ -844,5 +1587,373 @@ mod tests {
         assert!(infer_tool_result_success(
             r#"{"url":"http://example.com","status_code":500,"status_text":"500 Internal Server Error","headers":{"content-type":"application/json"},"error":"upstream application error","body":"{\"message\":\"boom\"}","body_length":18}"#
         ));
+    }
+
+    #[test]
+    fn detects_high_risk_mutating_tool_calls() {
+        assert!(is_high_risk_tool_call(
+            "shell",
+            r#"{"command":"sed -i 's/a/b/' src/app.rs"}"#
+        ));
+        assert!(is_high_risk_tool_call(
+            "http_request",
+            r#"{"method":"POST","url":"https://example.com/api"}"#
+        ));
+        assert!(!is_high_risk_tool_call(
+            "shell",
+            r#"{"command":"rg tenth_man src-tauri/src"}"#
+        ));
+    }
+
+    #[test]
+    fn counts_trailing_failed_tool_calls() {
+        let records = vec![
+            ToolCallRecord {
+                id: "1".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"rg foo ."}"#.to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 0,
+                started_at_ms: 0,
+                completed_at_ms: 1,
+                duration_ms: 1,
+            },
+            ToolCallRecord {
+                id: "2".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"cargo test"}"#.to_string(),
+                result: Some("failed".to_string()),
+                success: false,
+                sequence: 1,
+                started_at_ms: 2,
+                completed_at_ms: 3,
+                duration_ms: 1,
+            },
+            ToolCallRecord {
+                id: "3".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"cargo test"}"#.to_string(),
+                result: Some("failed".to_string()),
+                success: false,
+                sequence: 2,
+                started_at_ms: 4,
+                completed_at_ms: 5,
+                duration_ms: 1,
+            },
+        ];
+
+        assert_eq!(trailing_failed_tool_calls(&records), 2);
+    }
+
+    #[test]
+    fn final_response_review_required_when_changes_lack_verification() {
+        let records = vec![ToolCallRecord {
+            id: "1".to_string(),
+            name: "shell".to_string(),
+            arguments: r#"{"command":"sed -i 's/a/b/' src/app.rs"}"#.to_string(),
+            result: Some("ok".to_string()),
+            success: true,
+            sequence: 0,
+            started_at_ms: 0,
+            completed_at_ms: 1,
+            duration_ms: 1,
+        }];
+
+        assert!(final_response_needs_verification_review(
+            "问题已修复，已经完成。",
+            &records
+        ));
+    }
+
+    #[test]
+    fn final_response_review_skipped_when_verification_exists() {
+        let records = vec![
+            ToolCallRecord {
+                id: "1".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"sed -i 's/a/b/' src/app.rs"}"#.to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 0,
+                started_at_ms: 0,
+                completed_at_ms: 1,
+                duration_ms: 1,
+            },
+            ToolCallRecord {
+                id: "2".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"cargo check"}"#.to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 1,
+                started_at_ms: 2,
+                completed_at_ms: 3,
+                duration_ms: 1,
+            },
+        ];
+
+        assert!(!final_response_needs_verification_review(
+            "问题已修复，已经完成。",
+            &records
+        ));
+    }
+
+    #[test]
+    fn final_response_review_required_for_low_evidence_high_confidence() {
+        let records = vec![ToolCallRecord {
+            id: "1".to_string(),
+            name: "shell".to_string(),
+            arguments: r#"{"command":"ls src"}"#.to_string(),
+            result: Some("ok".to_string()),
+            success: true,
+            sequence: 0,
+            started_at_ms: 0,
+            completed_at_ms: 1,
+            duration_ms: 1,
+        }];
+
+        assert!(final_response_needs_evidence_review(
+            "可以确定根因就是这里，最佳方案已经明确。",
+            None,
+            &records,
+            3,
+        ));
+    }
+
+    #[test]
+    fn final_response_review_skipped_when_evidence_is_sufficient() {
+        let records = vec![
+            ToolCallRecord {
+                id: "1".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"rg tenth_man src-tauri/src"}"#.to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 0,
+                started_at_ms: 0,
+                completed_at_ms: 1,
+                duration_ms: 1,
+            },
+            ToolCallRecord {
+                id: "2".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"sed -n '1,120p' src-tauri/src/agents/tenth_man.rs"}"#
+                    .to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 1,
+                started_at_ms: 2,
+                completed_at_ms: 3,
+                duration_ms: 1,
+            },
+        ];
+
+        assert!(!final_response_needs_evidence_review(
+            "可以确定根因就是这里，最佳方案已经明确。",
+            None,
+            &records,
+            3,
+        ));
+    }
+
+    #[test]
+    fn streaming_review_required_for_low_evidence_conclusion() {
+        let records = vec![ToolCallRecord {
+            id: "1".to_string(),
+            name: "shell".to_string(),
+            arguments: r#"{"command":"ls src"}"#.to_string(),
+            result: Some("ok".to_string()),
+            success: true,
+            sequence: 0,
+            started_at_ms: 0,
+            completed_at_ms: 1,
+            duration_ms: 1,
+        }];
+
+        assert!(streaming_content_needs_evidence_review(
+            "基于当前情况，可以确定根因就是这里，因此应该直接按这个方向修改。",
+            None,
+            &records,
+            3,
+        ));
+    }
+
+    #[test]
+    fn streaming_review_skipped_for_short_conclusion_fragment() {
+        let records = vec![ToolCallRecord {
+            id: "1".to_string(),
+            name: "shell".to_string(),
+            arguments: r#"{"command":"ls src"}"#.to_string(),
+            result: Some("ok".to_string()),
+            success: true,
+            sequence: 0,
+            started_at_ms: 0,
+            completed_at_ms: 1,
+            duration_ms: 1,
+        }];
+
+        assert!(!streaming_content_needs_evidence_review(
+            "因此可以先看这里。",
+            None,
+            &records,
+            3,
+        ));
+    }
+
+    #[test]
+    fn evidence_score_distinguishes_broad_scan_from_direct_inspection() {
+        let broad_scan = evidence_score_for_tool_call("shell", r#"{"command":"ls src"}"#, true);
+        let direct_read = evidence_score_for_tool_call(
+            "shell",
+            r#"{"command":"sed -n '1,120p' src/main.rs"}"#,
+            true,
+        );
+        let verification =
+            evidence_score_for_tool_call("shell", r#"{"command":"cargo check"}"#, true);
+
+        assert_eq!(broad_scan, 1);
+        assert_eq!(direct_read, 2);
+        assert_eq!(verification, 3);
+    }
+
+    #[test]
+    fn total_evidence_score_adds_weighted_evidence() {
+        let records = vec![
+            ToolCallRecord {
+                id: "1".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"ls src"}"#.to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 0,
+                started_at_ms: 0,
+                completed_at_ms: 1,
+                duration_ms: 1,
+            },
+            ToolCallRecord {
+                id: "2".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"sed -n '1,120p' src/main.rs"}"#.to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 1,
+                started_at_ms: 2,
+                completed_at_ms: 3,
+                duration_ms: 1,
+            },
+        ];
+
+        assert_eq!(total_evidence_score(&records), 3);
+    }
+
+    #[test]
+    fn relevant_evidence_score_ignores_unrelated_evidence() {
+        let records = vec![
+            ToolCallRecord {
+                id: "1".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"rg metrics src-tauri/src"}"#.to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 0,
+                started_at_ms: 0,
+                completed_at_ms: 1,
+                duration_ms: 1,
+            },
+            ToolCallRecord {
+                id: "2".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"sed -n '1,120p' src-tauri/src/agents/metrics.rs"}"#
+                    .to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 1,
+                started_at_ms: 2,
+                completed_at_ms: 3,
+                duration_ms: 1,
+            },
+        ];
+
+        assert!(final_response_needs_evidence_review(
+            "可以确定问题就在 src-tauri/src/agents/tenth_man.rs 这里。",
+            None,
+            &records,
+            3,
+        ));
+    }
+
+    #[test]
+    fn relevant_evidence_score_counts_matching_evidence() {
+        let records = vec![
+            ToolCallRecord {
+                id: "1".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"rg tenth_man src-tauri/src"}"#.to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 0,
+                started_at_ms: 0,
+                completed_at_ms: 1,
+                duration_ms: 1,
+            },
+            ToolCallRecord {
+                id: "2".to_string(),
+                name: "shell".to_string(),
+                arguments: r#"{"command":"sed -n '1,120p' src-tauri/src/agents/tenth_man.rs"}"#
+                    .to_string(),
+                result: Some("ok".to_string()),
+                success: true,
+                sequence: 1,
+                started_at_ms: 2,
+                completed_at_ms: 3,
+                duration_ms: 1,
+            },
+        ];
+
+        assert!(!final_response_needs_evidence_review(
+            "可以确定问题就在 src-tauri/src/agents/tenth_man.rs 这里。",
+            None,
+            &records,
+            3,
+        ));
+    }
+
+    #[tokio::test]
+    async fn file_snapshot_requires_full_read_and_fresh_mtime() {
+        let execution_id = format!("exec-{}", uuid::Uuid::new_v4());
+        let temp_dir = std::env::temp_dir().join(format!("file-state-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let file_path: PathBuf = temp_dir.join("sample.txt");
+        tokio::fs::write(&file_path, "a\nb\nc\n").await.unwrap();
+
+        record_file_read_snapshot(&execution_id, &file_path.to_string_lossy(), 1, 2, 3, true)
+            .await
+            .unwrap();
+        let partial_err =
+            ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
+                .await
+                .unwrap_err()
+                .to_string();
+        assert!(partial_err.contains("partially read"));
+
+        record_file_read_snapshot(&execution_id, &file_path.to_string_lossy(), 1, 3, 3, false)
+            .await
+            .unwrap();
+        ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        tokio::fs::write(&file_path, "changed\n").await.unwrap();
+        let stale_err =
+            ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
+                .await
+                .unwrap_err()
+                .to_string();
+        assert!(stale_err.contains("changed since it was read"));
+
+        crate::agents::executor::file_tool_state::clear_file_tool_state(&execution_id).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 }

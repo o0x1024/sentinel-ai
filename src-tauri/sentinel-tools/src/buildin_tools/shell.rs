@@ -17,6 +17,8 @@ use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+use crate::output_storage::StoredOutputArtifact;
+
 /// Shell execution mode
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub enum ShellExecutionMode {
@@ -92,6 +94,8 @@ pub struct ShellOutput {
     /// Human-readable note for background execution.
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stored_artifacts: Vec<StoredOutputArtifact>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -444,6 +448,7 @@ impl ShellTool {
         "Execute a one-shot shell command and return stdout/stderr when the command finishes. ",
         "Use for filesystem inspection, CLI utilities, scripting, build/test commands, and quick network tools ",
         "that exit on their own. Prefer this over other tools when direct command execution is the simplest path. ",
+        "Arguments must be a JSON object like {\"command\":\"pwd\"}; never pass a bare string. ",
         "Do not use for interactive REPLs or TUIs. For long-lived services or watchers, either set run_in_background=true ",
         "to launch a dedicated terminal session, or use interactive_shell directly."
     );
@@ -943,6 +948,7 @@ impl Tool for ShellTool {
                     "Command is running in a dedicated interactive shell session. Open the terminal panel to inspect or stop it."
                         .to_string(),
                 ),
+                stored_artifacts: Vec::new(),
             });
         }
 
@@ -953,6 +959,7 @@ impl Tool for ShellTool {
                 String,
                 i32,
                 bool,
+                Vec<StoredOutputArtifact>,
                 ShellExecutionMode,
                 Option<String>,
             ),
@@ -977,6 +984,7 @@ impl Tool for ShellTool {
                         let mut stored = false;
                         let mut final_stdout = stdout.clone();
                         let mut final_stderr = stderr.clone();
+                        let mut stored_artifacts = Vec::new();
 
                         // Store stdout if large (unless reading context files to avoid recursion)
                         if enable_large_output_storage && stdout.len() > storage_threshold && !is_reading_context {
@@ -987,6 +995,9 @@ impl Tool for ShellTool {
                                 None,
                             ).await {
                                 Ok(storage_result) => {
+                                    if let Some(artifact) = storage_result.to_stored_artifact("stdout") {
+                                        stored_artifacts.push(artifact);
+                                    }
                                     final_stdout = storage_result.get_agent_content();
                                     stored = true;
                                 }
@@ -1013,6 +1024,9 @@ impl Tool for ShellTool {
                                 None,
                             ).await {
                                 Ok(storage_result) => {
+                                    if let Some(artifact) = storage_result.to_stored_artifact("stderr") {
+                                        stored_artifacts.push(artifact);
+                                    }
                                     final_stderr = storage_result.get_agent_content();
                                     stored = true;
                                 }
@@ -1030,6 +1044,7 @@ impl Tool for ShellTool {
                             final_stderr,
                             exit_code,
                             stored,
+                            stored_artifacts,
                             ShellExecutionMode::Docker,
                             None,
                         ))
@@ -1054,6 +1069,7 @@ impl Tool for ShellTool {
                             let mut stored = false;
                             let mut final_stdout = stdout.clone();
                             let mut final_stderr = stderr.clone();
+                            let mut stored_artifacts = Vec::new();
 
                             // Store stdout if large
                             if enable_large_output_storage && stdout.len() > storage_threshold {
@@ -1063,6 +1079,9 @@ impl Tool for ShellTool {
                                     None,
                                 ).await {
                                     Ok(storage_result) => {
+                                        if let Some(artifact) = storage_result.to_stored_artifact("stdout") {
+                                            stored_artifacts.push(artifact);
+                                        }
                                         final_stdout = storage_result.get_agent_content();
                                         stored = true;
                                     }
@@ -1082,6 +1101,9 @@ impl Tool for ShellTool {
                                     None,
                                 ).await {
                                     Ok(storage_result) => {
+                                        if let Some(artifact) = storage_result.to_stored_artifact("stderr") {
+                                            stored_artifacts.push(artifact);
+                                        }
                                         final_stderr = storage_result.get_agent_content();
                                         stored = true;
                                     }
@@ -1098,6 +1120,7 @@ impl Tool for ShellTool {
                                 final_stderr,
                                 exit_code,
                                 stored,
+                                stored_artifacts,
                                 ShellExecutionMode::Host,
                                 Some(e.to_string()),
                             ))
@@ -1120,6 +1143,7 @@ impl Tool for ShellTool {
                 let mut stored = false;
                 let mut final_stdout = stdout.clone();
                 let mut final_stderr = stderr.clone();
+                let mut stored_artifacts = Vec::new();
 
                 // Store stdout if large
                 if enable_large_output_storage && stdout.len() > storage_threshold {
@@ -1129,6 +1153,9 @@ impl Tool for ShellTool {
                         None,
                     ).await {
                         Ok(storage_result) => {
+                            if let Some(artifact) = storage_result.to_stored_artifact("stdout") {
+                                stored_artifacts.push(artifact);
+                            }
                             final_stdout = storage_result.get_agent_content();
                             stored = true;
                         }
@@ -1149,6 +1176,9 @@ impl Tool for ShellTool {
                         None,
                     ).await {
                         Ok(storage_result) => {
+                            if let Some(artifact) = storage_result.to_stored_artifact("stderr") {
+                                stored_artifacts.push(artifact);
+                            }
                             final_stderr = storage_result.get_agent_content();
                             stored = true;
                         }
@@ -1166,6 +1196,7 @@ impl Tool for ShellTool {
                     final_stderr,
                     exit_code,
                     stored,
+                    stored_artifacts,
                     ShellExecutionMode::Host,
                     None,
                 ))
@@ -1175,8 +1206,15 @@ impl Tool for ShellTool {
         if let Some(exec_id) = execution_id.as_deref() {
             clear_shell_execution_cancellation(exec_id).await;
         }
-        let (stdout, stderr, exit_code, output_stored, actual_mode, fallback_reason) =
-            execution_result?;
+        let (
+            stdout,
+            stderr,
+            exit_code,
+            output_stored,
+            stored_artifacts,
+            actual_mode,
+            fallback_reason,
+        ) = execution_result?;
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
         let execution_mode = match actual_mode {
@@ -1205,6 +1243,7 @@ impl Tool for ShellTool {
             background_session_id: None,
             background_status: None,
             note: None,
+            stored_artifacts,
         })
     }
 }
@@ -1301,9 +1340,11 @@ mod tests {
             ..ShellConfig::default()
         };
 
-        assert!(check_shell_permission_with_config("git status && rg TODO src", &config, None)
-            .await
-            .is_ok());
+        assert!(
+            check_shell_permission_with_config("git status && rg TODO src", &config, None)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

@@ -14,6 +14,7 @@ pub fn assess_verification_result(
     plan: Option<&VerificationPlan>,
     strategy_used: &str,
     response_status: u16,
+    response_headers_json: &str,
     response_body: &str,
     response_body_matches: bool,
     attempt_status_codes: &[u16],
@@ -61,6 +62,22 @@ pub fn assess_verification_result(
             response_status,
             response_body,
             response_body_matches,
+            &mut reasons,
+        ),
+        "input_probe" => assess_input_probe(response_status, response_body, &mut reasons),
+        "path_traversal_probe" => {
+            assess_path_traversal_probe(response_status, response_body, &mut reasons)
+        }
+        "cors_origin_probe" => {
+            assess_cors_origin_probe(response_status, response_headers_json, &mut reasons)
+        }
+        "header_policy_probe" => {
+            assess_header_policy_probe(response_status, response_headers_json, &mut reasons)
+        }
+        "oast_probe" => assess_oast_probe(
+            response_status,
+            response_headers_json,
+            response_body,
             &mut reasons,
         ),
         "skip_prerequisite" => assess_sequence_bypass(
@@ -302,6 +319,148 @@ fn assess_sequence_bypass(
     false
 }
 
+fn assess_input_probe(
+    response_status: u16,
+    response_body: &str,
+    reasons: &mut Vec<String>,
+) -> bool {
+    let normalized = response_body.to_ascii_lowercase();
+    let matched = is_success_status(response_status)
+        && [
+            "sql syntax",
+            "syntax error",
+            "unterminated",
+            "database error",
+            "odbc",
+            "mysql",
+            "postgres",
+            "sqlite",
+            "oracle",
+            "template error",
+            "sentinel-probe",
+        ]
+        .iter()
+        .any(|marker| normalized.contains(marker));
+    if matched {
+        reasons.push(format!(
+            "Input probe triggered a parser-like error or direct reflection in the replay response (status={}).",
+            response_status
+        ));
+        return true;
+    }
+    reasons.push(format!(
+        "Input probe did not trigger a stable parser, database, or reflection signal (status={}).",
+        response_status
+    ));
+    false
+}
+
+fn assess_path_traversal_probe(
+    response_status: u16,
+    response_body: &str,
+    reasons: &mut Vec<String>,
+) -> bool {
+    let normalized = response_body.to_ascii_lowercase();
+    let matched = is_success_status(response_status)
+        && [
+            "root:x:",
+            "[extensions]",
+            "[fonts]",
+            "/bin/bash",
+            "drivers/etc/hosts",
+        ]
+        .iter()
+        .any(|marker| normalized.contains(marker));
+    if matched {
+        reasons.push(format!(
+            "Traversal probe returned content resembling a sensitive local file (status={}).",
+            response_status
+        ));
+        return true;
+    }
+    reasons.push(format!(
+        "Traversal probe did not return a recognizable sensitive-file signature (status={}).",
+        response_status
+    ));
+    false
+}
+
+fn assess_cors_origin_probe(
+    response_status: u16,
+    response_headers_json: &str,
+    reasons: &mut Vec<String>,
+) -> bool {
+    let headers = parse_headers(response_headers_json);
+    let allow_origin = header_value(&headers, "access-control-allow-origin").unwrap_or_default();
+    let allow_credentials = header_value(&headers, "access-control-allow-credentials")
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let matched = is_success_status(response_status)
+        && (allow_origin == "https://sentinel.invalid"
+            || (allow_origin == "*" && allow_credentials));
+    if matched {
+        reasons.push(format!(
+            "CORS probe observed a permissive ACAO response for the synthetic Origin header (acao={}, credentials={}).",
+            allow_origin, allow_credentials
+        ));
+        return true;
+    }
+    reasons.push(format!(
+        "CORS probe did not observe an overly permissive ACAO policy (acao={}, credentials={}).",
+        allow_origin, allow_credentials
+    ));
+    false
+}
+
+fn assess_header_policy_probe(
+    response_status: u16,
+    response_headers_json: &str,
+    reasons: &mut Vec<String>,
+) -> bool {
+    let headers = parse_headers(response_headers_json);
+    let has_xfo = header_value(&headers, "x-frame-options").is_some();
+    let has_frame_ancestors = header_value(&headers, "content-security-policy")
+        .map(|value| value.to_ascii_lowercase().contains("frame-ancestors"))
+        .unwrap_or(false);
+    let matched = is_success_status(response_status) && !has_xfo && !has_frame_ancestors;
+    if matched {
+        reasons.push(
+            "Header policy probe found neither X-Frame-Options nor CSP frame-ancestors."
+                .to_string(),
+        );
+        return true;
+    }
+    reasons.push(format!(
+        "Header policy probe found framing protections or the response was not replay-successful (xfo={}, frameAncestors={}, status={}).",
+        has_xfo, has_frame_ancestors, response_status
+    ));
+    false
+}
+
+fn assess_oast_probe(
+    response_status: u16,
+    response_headers_json: &str,
+    response_body: &str,
+    reasons: &mut Vec<String>,
+) -> bool {
+    let headers = parse_headers(response_headers_json);
+    let normalized_body = response_body.to_ascii_lowercase();
+    let reflected = normalized_body.contains("oast.invalid")
+        || headers
+            .values()
+            .any(|value| value.to_ascii_lowercase().contains("oast.invalid"));
+    if is_success_status(response_status) && reflected {
+        reasons.push(
+            "Outbound-style probe was reflected back in the response, which is enough to keep the hypothesis active.".to_string(),
+        );
+        return true;
+    }
+    reasons.push(
+        "Outbound-style probe did not leave a response-side signal; network-side correlation is still required.".to_string(),
+    );
+    false
+}
+
 fn is_success_status(status: u16) -> bool {
     (200..400).contains(&status)
 }
@@ -331,6 +490,36 @@ fn contains_denial_marker(text: Option<&str>) -> bool {
     .any(|marker| normalized.contains(marker))
 }
 
+fn parse_headers(raw: &str) -> std::collections::BTreeMap<String, String> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .map(|map| {
+            map.into_iter()
+                .map(|(key, value)| {
+                    let rendered = match value {
+                        serde_json::Value::String(text) => text,
+                        serde_json::Value::Array(items) => items
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        other => other.to_string(),
+                    };
+                    (key.to_ascii_lowercase(), rendered)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn header_value<'a>(
+    headers: &'a std::collections::BTreeMap<String, String>,
+    name: &str,
+) -> Option<&'a str> {
+    headers.get(&name.to_ascii_lowercase()).map(String::as_str)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,6 +542,7 @@ mod tests {
             None,
             "mutate_business_parameter",
             200,
+            "{}",
             r#"{"success":true}"#,
             false,
             &[],
@@ -382,6 +572,7 @@ mod tests {
             None,
             "mutate_business_parameter",
             302,
+            "{}",
             "",
             false,
             &[],
@@ -411,6 +602,7 @@ mod tests {
             None,
             "mutate_business_parameter",
             500,
+            "{}",
             "internal error",
             false,
             &[],
@@ -420,5 +612,65 @@ mod tests {
         );
 
         assert!(!result.verified);
+    }
+
+    #[test]
+    fn confirms_cors_probe_when_origin_is_reflected() {
+        let baseline = VerificationBaseline {
+            source_request_id: Some(4),
+            url: "https://api.test/data".to_string(),
+            method: "GET".to_string(),
+            request_headers: None,
+            request_body: None,
+            response_status: Some(200),
+            response_headers: None,
+            response_body: Some(String::new()),
+        };
+
+        let result = assess_verification_result(
+            &baseline,
+            None,
+            "cors_origin_probe",
+            200,
+            r#"{"access-control-allow-origin":"https://sentinel.invalid","access-control-allow-credentials":"true"}"#,
+            "",
+            false,
+            &[],
+            &[],
+            &[],
+            VerificationExecutionMode::Single,
+        );
+
+        assert!(result.verified);
+    }
+
+    #[test]
+    fn confirms_header_policy_probe_when_framing_headers_are_missing() {
+        let baseline = VerificationBaseline {
+            source_request_id: Some(5),
+            url: "https://app.test/page".to_string(),
+            method: "GET".to_string(),
+            request_headers: None,
+            request_body: None,
+            response_status: Some(200),
+            response_headers: None,
+            response_body: Some(String::new()),
+        };
+
+        let result = assess_verification_result(
+            &baseline,
+            None,
+            "header_policy_probe",
+            200,
+            r#"{"content-type":"text/html"}"#,
+            "<html></html>",
+            false,
+            &[],
+            &[],
+            &[],
+            VerificationExecutionMode::Single,
+        );
+
+        assert!(result.verified);
     }
 }

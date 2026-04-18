@@ -8,7 +8,10 @@
       <span>{{ $t('trafficAnalysis.history.detailsPanel.loading') }}</span>
     </div>
     <div class="flex flex-col overflow-hidden border-r border-base-300" :style="{ width: leftPanelWidth + 'px' }">
-      <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
+      <div
+        class="border-b border-base-300 flex items-center justify-between flex-shrink-0"
+        :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS : 'bg-base-200 px-4 py-2'"
+      >
         <div class="flex items-center gap-2">
           <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.request') }}</h4>
           <div v-if="selectedRequest.was_edited" class="dropdown dropdown-bottom">
@@ -21,8 +24,8 @@
               <li><a :class="{ active: requestViewMode === 'edited' }" @click="$emit('update:requestViewMode', 'edited')"><span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedRequest') }}</span></a></li>
             </ul>
           </div>
-          <span class="badge badge-xs badge-ghost" :title="$t('trafficAnalysis.history.detailsPanel.scheme')">{{ requestSchemeLabel }}</span>
-          <span class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ requestHttpVersion }}</span>
+          <span v-if="!immersiveDrillModeEnabled" class="badge badge-xs badge-ghost" :title="$t('trafficAnalysis.history.detailsPanel.scheme')">{{ requestSchemeLabel }}</span>
+          <span v-if="!immersiveDrillModeEnabled" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ requestHttpVersion }}</span>
         </div>
         <div class="btn-group btn-group-xs">
           <button :class="['btn btn-xs', requestTab === 'pretty' ? 'btn-active' : '']" @click="$emit('update:requestTab', 'pretty')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.pretty') }}</button>
@@ -32,11 +35,12 @@
       </div>
       <div
         v-if="contextEvidenceHighlights.length || contextEvidenceSearchTerms.length"
-        class="border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-base-content"
+        class="border-b border-warning/30 text-xs text-base-content"
+        :class="immersiveDrillModeEnabled ? 'bg-warning/8 px-2.5 py-1.5' : 'bg-warning/10 px-4 py-2'"
       >
         <div class="mb-2 flex items-center gap-2">
           <span class="badge badge-warning badge-xs">证据命中</span>
-          <span class="text-base-content/70">
+          <span v-if="!immersiveDrillModeEnabled" class="text-base-content/70">
             {{ contextEvidencePane === 'response' ? '已定位到响应证据' : '已根据候选证据高亮当前请求中的匹配位置' }}
           </span>
         </div>
@@ -103,7 +107,7 @@
         <HttpMessageSurface
           v-else
           ref="requestSurface"
-          :model-value="stringToHex(formatRequestRaw(selectedRequest, requestViewMode))"
+          :model-value="stringToHex(requestRawContent)"
           readonly
           custom-context-menu
           show-search-bar
@@ -124,7 +128,10 @@
     </div>
     <div class="w-1 bg-base-300 cursor-col-resize hover:bg-primary/50 transition-colors flex-shrink-0" @mousedown="startVerticalResize"></div>
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
-      <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
+      <div
+        class="border-b border-base-300 flex items-center justify-between flex-shrink-0"
+        :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS : 'bg-base-200 px-4 py-2'"
+      >
         <div class="flex items-center gap-2">
           <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.response') }}</h4>
           <span v-if="isResponseCompressed(selectedRequest)" class="badge badge-xs badge-info" title="响应已自动解压"><i class="fas fa-file-archive mr-1"></i>{{ $t('trafficAnalysis.history.detailsPanel.decompressed') }}</span>
@@ -138,7 +145,7 @@
               <li><a :class="{ active: responseViewMode === 'edited' }" @click="$emit('update:responseViewMode', 'edited')"><span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedResponse') }}</span></a></li>
             </ul>
           </div>
-          <span class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ responseHttpVersion }}</span>
+          <span v-if="!immersiveDrillModeEnabled" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ responseHttpVersion }}</span>
         </div>
         <div class="btn-group btn-group-xs">
           <button :class="['btn btn-xs', responseTab === 'pretty' ? 'btn-active' : '']" @click="$emit('update:responseTab', 'pretty')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.pretty') }}</button>
@@ -148,11 +155,15 @@
         </div>
       </div>
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'response')">
-        <iframe v-if="responseTab === 'render'" :srcdoc="getResponseBody(selectedRequest, responseViewMode)" class="w-full h-full border-0 bg-white" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"></iframe>
+        <TrafficResponseRenderPane
+          v-if="responseTab === 'render'"
+          :body="getResponseBody(selectedRequest, responseViewMode)"
+          :content-type="responseContentType"
+        />
         <HttpMessageSurface
           v-else-if="responseTab === 'hex'"
           ref="responseSurface"
-          :model-value="stringToHex(formatResponseRaw(selectedRequest, responseViewMode))"
+          :model-value="stringToHex(responseRawContent)"
           readonly
           custom-context-menu
           show-search-bar
@@ -206,7 +217,17 @@ import {
   formatProxyHistorySchemeLabel,
   normalizeProxyHistoryHttpVersion,
 } from './proxyHistoryHttpSupport'
-import { formatRequest, formatRequestRaw, formatResponse, formatResponseRaw, getResponseBody, hasEditedResponse, isResponseCompressed, stringToHex } from './proxyHistoryFormattingSupport'
+import {
+  formatRequest,
+  formatRequestRaw,
+  formatResponse,
+  formatResponseRaw,
+  getResponseBody,
+  getResponseContentType,
+  hasEditedResponse,
+  isResponseCompressed,
+  stringToHex,
+} from './proxyHistoryFormattingSupport'
 import {
   findTrafficContextEvidenceSelectionRange,
   findTrafficContextEvidenceSelectionRangeBySearchTerms,
@@ -215,6 +236,9 @@ import {
   type TrafficContextEvidenceSource,
 } from './trafficContextEvidenceHighlightSupport'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
+import TrafficResponseRenderPane from './TrafficResponseRenderPane.vue'
+import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
+import { IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS } from './immersiveTrafficUi'
 import type { ProxyHistoryRequestTab, ProxyHistoryResponseTab, ProxyHistoryViewMode, ProxyRequest } from './proxyHistoryTypes'
 const props = defineProps<{ selectedRequest: ProxyRequest | null; isLoadingSelectedRequest: boolean; leftPanelWidth: number; requestTab: ProxyHistoryRequestTab; responseTab: ProxyHistoryResponseTab; requestViewMode: ProxyHistoryViewMode; responseViewMode: ProxyHistoryViewMode; contextEvidencePane?: 'request' | 'response'; contextEvidenceMatchedLocations?: string[]; contextEvidenceSearchTerms?: string[]; showDetailContextMenu: (event: MouseEvent, pane: 'request' | 'response') => void; startVerticalResize: (event: MouseEvent) => void }>()
 const emit = defineEmits<{ 'update:requestTab': [value: ProxyHistoryRequestTab]; 'update:responseTab': [value: ProxyHistoryResponseTab]; 'update:requestViewMode': [value: ProxyHistoryViewMode]; 'update:responseViewMode': [value: ProxyHistoryViewMode] }>()
@@ -230,12 +254,20 @@ const pendingEvidenceLocation = ref<string | null>(null)
 const pendingEvidenceSearchTerm = ref<string | null>(null)
 const lastAutoFocusedEvidenceKey = ref('')
 
+const requestRawContent = computed(() =>
+  props.selectedRequest ? formatRequestRaw(props.selectedRequest, props.requestViewMode) : '',
+)
 const requestContent = computed(() =>
   props.selectedRequest ? formatRequest(props.selectedRequest, props.requestTab, props.requestViewMode) : '',
 )
-
+const responseRawContent = computed(() =>
+  props.selectedRequest ? formatResponseRaw(props.selectedRequest, props.responseViewMode) : '',
+)
 const responseContent = computed(() =>
   props.selectedRequest ? formatResponse(props.selectedRequest, props.responseTab, props.responseViewMode) : '',
+)
+const responseContentType = computed(() =>
+  props.selectedRequest ? getResponseContentType(props.selectedRequest, props.responseViewMode) : '',
 )
 
 const requestSchemeLabel = computed(() =>

@@ -164,6 +164,12 @@
           </div>
         </div>
       </div>
+
+      <StoredArtifactPanel
+        v-if="storedArtifactViews.length > 0"
+        :artifacts="storedArtifactViews"
+        variant="terminal"
+      />
       
       <!-- Error message -->
       <div v-if="error && !stderr" class="error text-[#f14c4c] whitespace-pre-wrap break-all">{{ error }}</div>
@@ -233,9 +239,12 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
+import type { AgentTrackedArtifact } from '@/types/agent'
 import { highlightShellCommand } from '@/utils/shellHighlight'
 import { useTerminal } from '@/composables/useTerminal'
 import { useTodos } from '@/composables/useTodos'
+import StoredArtifactPanel from './StoredArtifactPanel.vue'
+import { buildStoredArtifactViews } from './storedArtifactSupport'
 
 const props = defineProps<{
   args?: Record<string, any>
@@ -244,6 +253,7 @@ const props = defineProps<{
   status?: string
   toolCallId?: string
   executionId?: string
+  trackedArtifacts?: AgentTrackedArtifact[]
 }>()
 
 const emit = defineEmits<{
@@ -281,9 +291,22 @@ const terminal = useTerminal()
 const todos = useTodos()
 const { t } = useI18n()
 
+function decodeHtmlEntities(text: string): string {
+  if (!text || !text.includes('&')) return text
+
+  const textarea = document.createElement('textarea')
+  textarea.innerHTML = text
+  return textarea.value
+}
+
 // Extract command from args
 const command = computed(() => {
-  return props.args?.command || ''
+  const resultCommand = parsedResult.value?.output?.command || parsedResult.value?.command
+  const rawCommand = typeof resultCommand === 'string' && resultCommand
+    ? resultCommand
+    : props.args?.command || ''
+
+  return decodeHtmlEntities(rawCommand)
 })
 
 // Highlighted command
@@ -291,10 +314,7 @@ const highlightedCommand = computed(() => {
   return highlightShellCommand(command.value)
 })
 
-// Debug: log props changes
-// watch(() => props.status, (newStatus) => {
-//   console.log('ShellToolResult status changed:', newStatus, 'command:', command.value)
-// })
+
 
 // Extract cwd from args
 const cwd = computed(() => {
@@ -379,9 +399,9 @@ function openInteractiveTerminal() {
 function openBackgroundTerminal() {
   todos.close()
   if (backgroundSessionId.value) {
-    terminal.setSessionId(backgroundSessionId.value)
+    terminal.syncActiveSession(backgroundSessionId.value)
   }
-  terminal.openTerminal(backgroundSessionId.value || undefined)
+  terminal.openTerminal()
 }
 
 // Check if needs confirmation - show when status is running and we have a pending permission request
@@ -539,7 +559,6 @@ const parsedResult = computed(() => {
     if (textItem) {
       try {
         const parsed = JSON.parse(textItem.text)
-        console.log('ShellToolResult - parsed from rig-core format:', parsed)
         return parsed
       } catch {
         return { stdout: textItem.text }
@@ -610,6 +629,10 @@ const stderr = computed(() => {
   
   return ''
 })
+
+const storedArtifactViews = computed(() =>
+  buildStoredArtifactViews(parsedResult.value, props.trackedArtifacts)
+)
 
 // Extract exit code
 const exitCode = computed((): number | null => {
@@ -805,7 +828,6 @@ async function loadBackgroundTaskState() {
 
 // Listen for permission requests matching this command
 onMounted(async () => {
-  console.log('ShellToolResult mounted, listening for permission requests, command:', command.value)
   
   // Start polling for pending permissions
   await checkPendingPermissions()

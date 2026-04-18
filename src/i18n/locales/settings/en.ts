@@ -472,8 +472,14 @@ export default {
       loading: 'Loading shell permission history...',
       empty: 'No shell permission decisions recorded yet.',
       emptyFiltered: 'No records match the current filters.',
+      loadMore: 'Load More',
+      showingCount: 'Showing {visible} matching records from {loaded} loaded',
+      showDetails: 'Details',
+      hideDetails: 'Hide',
       executionId: 'Execution ID',
       executionIdPlaceholder: 'Filter by execution id',
+      commandSearch: 'Command Search',
+      commandSearchPlaceholder: 'Search command text',
       exactDate: 'Exact Date',
       recentDays: 'Recent Days',
       decision: 'Decision',
@@ -483,6 +489,11 @@ export default {
       semanticCode: 'Semantic Code',
       suggestedRules: 'Suggested Allow Rules',
       persistedRules: 'Persisted Allow Rules',
+      summary: {
+        persistedRules: '{count} persisted rules',
+        suggestedRules: '{count} suggested rules',
+        noExtraDetails: 'No persisted or suggested rules'
+      },
       decisions: {
         allow: 'Allowed',
         deny: 'Denied',

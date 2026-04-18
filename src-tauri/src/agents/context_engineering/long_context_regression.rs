@@ -87,6 +87,7 @@ fn long_conversation_retrieval_keeps_core_goal_after_50_turns() {
         execution_id: "regression-long-50".to_string(),
         query: "what is the binding and exposure constraint for the service".to_string(),
         top_k: 5,
+        include_reflection: false,
     };
 
     let items = retrieve_memory_items(&mut state, &query);

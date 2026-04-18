@@ -84,7 +84,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import TerminalAPI from '@/api/terminal'
-import { useTerminal } from '@/composables/useTerminal'
+import { buildTerminalSessionFingerprint, useTerminal } from '@/composables/useTerminal'
 import { invoke } from '@tauri-apps/api/core'
 
 // Props
@@ -145,14 +145,6 @@ const statusText = computed(() => {
   if (error.value) return 'Error'
   return 'Disconnected'
 })
-
-const buildSessionFingerprint = (
-  executionMode: ExecutionMode,
-  dockerImage: string,
-  shell: string,
-): string => {
-  return `${executionMode}|${dockerImage.trim().toLowerCase()}|${shell.trim().toLowerCase()}`
-}
 
 // Methods
 const initTerminal = () => {
@@ -292,12 +284,13 @@ const connect = async () => {
     }
 
     // Create WebSocket connection
+    terminalDecoder = new TextDecoder()
     ws.value = new WebSocket(wsUrl)
 
     ws.value.onopen = () => {
       console.log('WebSocket connected')
       startKeepAlive()
-      const currentFingerprint = buildSessionFingerprint(
+      const currentFingerprint = buildTerminalSessionFingerprint(
         actualExecutionMode.value,
         actualDockerImage.value,
         props.shell,
@@ -316,7 +309,7 @@ const connect = async () => {
           '[Terminal] Existing session config mismatch, creating new session',
           { existingSessionId, existingFingerprint, currentFingerprint }
         )
-        terminalComposable.setSessionId(null)
+        terminalComposable.syncActiveSession(null, null)
       }
 
       // No session ID yet - send default config to create a new session
@@ -340,15 +333,14 @@ const connect = async () => {
           sessionId.value = newSessionId
           isConnected.value = true
           isConnecting.value = false
-          const currentFingerprint = buildSessionFingerprint(
+          const currentFingerprint = buildTerminalSessionFingerprint(
             actualExecutionMode.value,
             actualDockerImage.value,
             props.shell,
           )
           
           // Sync to global state so backend tools can find this session
-          terminalComposable.setSessionId(newSessionId)
-          terminalComposable.setSessionFingerprint(currentFingerprint)
+          terminalComposable.syncActiveSession(newSessionId, currentFingerprint)
           console.log('[Terminal] ✓ Session established and synced to global state:', newSessionId)
           
           terminal.value?.writeln('\x1b[1;32m✓ Connected!\x1b[0m')
@@ -362,11 +354,11 @@ const connect = async () => {
       } else if (event.data instanceof Blob) {
         // Binary data
         event.data.arrayBuffer().then((buffer) => {
-          const text = new TextDecoder().decode(buffer)
+          const text = terminalDecoder.decode(buffer, { stream: true })
           terminal.value?.write(text)
         })
       } else if (event.data instanceof ArrayBuffer) {
-        const text = new TextDecoder().decode(event.data)
+        const text = terminalDecoder.decode(event.data, { stream: true })
         terminal.value?.write(text)
       }
     }
@@ -444,8 +436,7 @@ const reconnect = async () => {
 const createNewSession = async () => {
   await disconnect()
   // Clear old session ID to force creating a new session
-  terminalComposable.setSessionId(null)
-  terminalComposable.setSessionFingerprint(null)
+  terminalComposable.syncActiveSession(null, null)
   sessionId.value = ''
   terminal.value?.writeln('\r\n\x1b[1;36mCreating new session...\x1b[0m')
   await connect()
@@ -455,6 +446,16 @@ const clearTerminal = () => {
   terminal.value?.clear()
 }
 
+const switchToSession = async (targetSessionId: string) => {
+  if (!targetSessionId) return
+  console.log('[Terminal] Switching active session:', {
+    from: sessionId.value,
+    to: targetSessionId,
+  })
+  await disconnect()
+  await connect()
+}
+
 // Terminal composable
 const terminalComposable = useTerminal()
 let unregisterWriteCallback: (() => void) | null = null
@@ -462,6 +463,7 @@ let stopWatch: (() => void) | null = null
 let fontSizeInterval: ReturnType<typeof setInterval> | null = null
 let keepAliveInterval: ReturnType<typeof setInterval> | null = null
 let terminalDataDisposable: { dispose: () => void } | null = null
+let terminalDecoder = new TextDecoder()
 
 const startKeepAlive = () => {
   if (keepAliveInterval) {
@@ -491,9 +493,16 @@ onMounted(() => {
   stopWatch = watch(
     () => terminalComposable.currentSessionId.value,
     async (newSessionId, oldSessionId) => {
-      if (newSessionId && newSessionId !== oldSessionId && !isConnected.value) {
-        console.log('[Terminal] Session ID changed, reconnecting:', newSessionId)
-        await connect()
+      if (newSessionId && newSessionId !== oldSessionId) {
+        if (isConnected.value && sessionId.value === newSessionId) {
+          return
+        }
+        console.log('[Terminal] Session ID changed, reconnecting:', {
+          from: sessionId.value || oldSessionId || '',
+          to: newSessionId,
+          connected: isConnected.value,
+        })
+        await switchToSession(newSessionId)
       } else if (!newSessionId && oldSessionId && isConnected.value) {
         // Session ID was cleared (e.g., new conversation created), disconnect current session
         console.log('[Terminal] Session ID cleared, disconnecting current session')

@@ -4,10 +4,7 @@
     {
       "identifier": "default",
       "description": "Capability for primary application windows",
-      "windows": [
-        "main",
-        "ai-chat"
-      ],
+      "windows": ["main", "ai-chat"],
       "permissions": [
         "core:default",
         "core:webview:allow-create-webview-window",
@@ -27,13 +24,14 @@
     {
       "identifier": "intruder-results-window",
       "description": "Capability for standalone intruder results windows",
-      "windows": [
-        "intruder-results-*"
-      ],
-      "permissions": [
-        "core:default",
-        "core:window:allow-close"
-      ]
+      "windows": ["intruder-results-*"],
+      "permissions": ["core:default", "core:window:allow-close"]
+    },
+    {
+      "identifier": "help-center-window",
+      "description": "Capability for standalone help center window",
+      "windows": ["help-center"],
+      "permissions": ["core:default", "core:window:allow-close"]
     }
   ]
 }

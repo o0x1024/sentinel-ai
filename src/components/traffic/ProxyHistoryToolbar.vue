@@ -1,6 +1,6 @@
 <template>
-  <div class="bg-base-100 border-b border-base-300 p-2 flex-shrink-0">
-    <div class="mb-2 flex items-center gap-3">
+  <div class="bg-base-100 border-b border-base-300 px-2 py-1.5 flex-shrink-0">
+    <div v-if="!immersiveDrillModeEnabled" class="mb-1 flex items-center gap-2">
       <button
         type="button"
         class="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-base-300 bg-base-200/60 px-3 py-1.5 text-left transition-colors hover:border-primary/40 hover:bg-base-200"
@@ -25,7 +25,7 @@
       </label>
     </div>
 
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-1.5">
       <div class="tabs tabs-boxed tabs-xs bg-base-200 p-0.5">
         <a class="tab tab-xs" :class="{ 'tab-active': protocolFilter === 'all' }" @click="$emit('update:protocolFilter', 'all')">{{ $t('trafficAnalysis.history.protocol.all') }}</a>
         <a class="tab tab-xs" :class="{ 'tab-active': protocolFilter === 'http' }" @click="$emit('update:protocolFilter', 'http')">HTTP/S</a>
@@ -34,8 +34,8 @@
       <button class="btn btn-xs" :class="hasActiveFilters ? 'btn-primary' : 'btn-ghost'" @click="openFilterDialog">
         <i class="fas fa-filter mr-1"></i>{{ $t('trafficAnalysis.history.filters') }}
       </button>
-      <div class="flex-1"></div>
-      <div class="dropdown dropdown-end">
+      <div class="flex-1 min-w-0"></div>
+      <div v-if="!immersiveDrillModeEnabled" class="dropdown dropdown-end">
         <label tabindex="0" class="btn btn-xs btn-ghost">
           <i class="fas fa-wand-magic-sparkles mr-1"></i>词典候选
         </label>
@@ -67,8 +67,8 @@
             <li><a @click="sendSelectedResponseVersionsToComparer">{{ $t('trafficAnalysis.history.batchCompare.responseVersions') }}</a></li>
           </ul>
         </div>
-        <button class="btn btn-xs btn-primary" @click="sendSelectedToAssistant('request')"><i class="fas fa-robot mr-1"></i>{{ $t('trafficAnalysis.history.sendToAssistant') }}</button>
-        <div class="dropdown dropdown-end">
+        <button v-if="!immersiveDrillModeEnabled" class="btn btn-xs btn-primary" @click="sendSelectedToAssistant('request')"><i class="fas fa-robot mr-1"></i>{{ $t('trafficAnalysis.history.sendToAssistant') }}</button>
+        <div v-if="!immersiveDrillModeEnabled" class="dropdown dropdown-end">
           <label tabindex="0" class="btn btn-xs btn-ghost"><i class="fas fa-download mr-1"></i>{{ $t('trafficAnalysis.history.export.export') }}</label>
           <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 mt-1">
             <li><a @click="exportSelectedToFile('request')">{{ $t('trafficAnalysis.history.export.requests') }}</a></li>
@@ -84,6 +84,7 @@
 </template>
 
 <script setup lang="ts">
+import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import type { ProxyHistoryProtocolFilter } from './proxyHistoryTypes'
 defineProps<{ protocolFilter: ProxyHistoryProtocolFilter; hasActiveFilters: boolean; filtersEnabled: boolean; filterSummary: string; isMultiSelectMode: boolean; selectedCount: number; filteredCount: number; openFilterDialog: () => void; toggleFiltersEnabled: () => void; toggleMultiSelectMode: () => void; selectAllVisible: () => void; clearSelection: () => void; generateCandidatesFromFiltered: () => void; generateCandidatesFromSelection: () => void; sendSelectedToAssistant: (type?: 'request') => void; sendSelectedRequestVersionsToComparer: () => void; sendSelectedResponseVersionsToComparer: () => void; exportSelectedToFile: (type: 'request' | 'response') => void; exportAsHAR: () => void; refreshRequests: () => void; clearHistory: () => void }>()
 defineEmits<{ 'update:protocolFilter': [value: ProxyHistoryProtocolFilter] }>()

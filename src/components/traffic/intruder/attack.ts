@@ -102,7 +102,9 @@ export function estimateAttackCount(
   positionCount: number,
   payloadSets: IntruderPayloadSet[],
 ): number {
-  if (!positionCount) return 0
+  if (!positionCount) {
+    return payloadSets[0] ? expandPayloadSet(payloadSets[0]).length : 0
+  }
 
   const payloadLists = payloadSets.map((payloadSet) => expandPayloadSet(payloadSet))
 
@@ -211,15 +213,13 @@ export async function buildIntruderAttackPlan(options: {
     payloadPluginProcessor,
   } = options
   const positions = extractIntruderPositions(template)
-
-  if (!positions.length) {
-    return { requests: [], totalGenerated: 0, truncated: false }
-  }
-
   const payloadContext = { template, positions }
   const payloadLists = await Promise.all(
     payloadSets.map(async (payloadSet) => {
-      if (payloadSet.payloadType === 'extensionGenerated' && payloadResolver) {
+      if (
+        payloadResolver
+        && (payloadSet.payloadType === 'extensionGenerated' || payloadSet.payloadType === 'appDictionary')
+      ) {
         return payloadResolver(payloadSet, payloadContext)
       }
       return expandPayloadSet(payloadSet)
@@ -241,6 +241,26 @@ export async function buildIntruderAttackPlan(options: {
       payloadValues,
       payloadSummary: payloadValues.map((value, index) => `P${index + 1}=${value}`).join(' | '),
     })
+  }
+
+  if (!positions.length) {
+    const payloads = payloadLists[0] ?? []
+    const requestText = clearIntruderMarkers(template)
+
+    for (const payload of payloads) {
+      if (requests.length >= maxRequests) {
+        truncated = true
+        break
+      }
+
+      requests.push({
+        requestText,
+        payloadValues: [payload],
+        payloadSummary: `P1=${payload}`,
+      })
+    }
+
+    return { requests, totalGenerated, truncated }
   }
 
   if (attackType === 'sniper') {
@@ -346,7 +366,9 @@ function estimateAttackCountFromPayloadLists(
   positionCount: number,
   payloadLists: string[][],
 ): number {
-  if (!positionCount) return 0
+  if (!positionCount) {
+    return payloadLists[0]?.length ?? 0
+  }
 
   if (attackType === 'sniper') {
     return positionCount * (payloadLists[0]?.length ?? 0)

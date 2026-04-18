@@ -6,6 +6,13 @@ import { html as legacyHtml, xml as legacyXml } from '@codemirror/legacy-modes/m
 import { tags as t } from '@lezer/highlight'
 import type { Extension } from '@codemirror/state'
 import type { HttpBodyLanguage } from './httpDocument'
+import {
+  createUrlEncodedStreamMode,
+} from './httpEditorUrlEncodedTokenizer'
+import {
+  httpEditorParameterKeyTag,
+  httpEditorParameterValueTag,
+} from './httpEditorHighlightTags'
 
 const LEGACY_BODY_TOKEN_TABLE = {
   variable: t.variableName,
@@ -22,6 +29,8 @@ const LEGACY_BODY_TOKEN_TABLE = {
   builtin: t.standard(t.variableName),
   qualifier: t.modifier,
   property: t.propertyName,
+  'http-parameter-key': httpEditorParameterKeyTag,
+  'http-parameter-value': httpEditorParameterValueTag,
   word: t.name,
   atom: t.atom,
   error: t.invalid,
@@ -43,8 +52,15 @@ const cssBodyLanguage = StreamLanguage.define({
   tokenTable: LEGACY_BODY_TOKEN_TABLE,
 })
 
+const formBodyLanguage = StreamLanguage.define(createUrlEncodedStreamMode({
+  name: 'http-form-urlencoded',
+  tokenTable: LEGACY_BODY_TOKEN_TABLE,
+}))
+
 export const getHttpBodyLanguageExtensions = (language: HttpBodyLanguage): Extension[] => {
   switch (language) {
+    case 'form':
+      return [formBodyLanguage]
     case 'json':
       return [json()]
     case 'javascript':

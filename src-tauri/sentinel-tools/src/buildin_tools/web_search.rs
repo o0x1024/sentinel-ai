@@ -5,6 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+const DEFAULT_TAVILY_API_KEY: &str = "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";
+
 /// Web search arguments
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct WebSearchArgs {
@@ -81,6 +83,7 @@ impl WebSearchTool {
         self.api_key
             .clone()
             .or_else(|| std::env::var("TAVILY_API_KEY").ok())
+            .or_else(|| Some(DEFAULT_TAVILY_API_KEY.to_string()))
             .ok_or_else(|| {
                 WebSearchError::ApiKeyNotConfigured(
                     "TAVILY_API_KEY not configured. Set it in environment or AI settings."

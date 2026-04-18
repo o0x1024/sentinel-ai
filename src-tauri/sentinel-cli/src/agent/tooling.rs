@@ -4,14 +4,17 @@ use chrono::Utc;
 use rig::tool::Tool;
 use sentinel_tools::buildin_tools::browser::{BrowserTool, BrowserToolArgs};
 use sentinel_tools::buildin_tools::http_request::{HttpRequestArgs, HttpRequestTool};
+use sentinel_tools::buildin_tools::route_discovery::{RouteDiscoveryArgs, RouteDiscoveryTool};
 use sentinel_tools::buildin_tools::search_exploit::{SearchExploitArgs, SearchExploitTool};
 use sentinel_tools::buildin_tools::shell::{ShellArgs, ShellTool};
 use sentinel_tools::buildin_tools::tenth_man_tool::{TenthManTool, TenthManToolArgs};
+use sentinel_tools::buildin_tools::web_search::{WebSearchArgs, WebSearchTool};
 use sentinel_tools::dynamic_tool::{
     DynamicTool, DynamicToolBuilder, ToolExecutionPolicy, ToolSource,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,6 +38,26 @@ pub struct ContestLatestCallSummary {
     pub tool_signature: String,
     pub result_signature: Option<String>,
     pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContestToolDigest {
+    pub status: String,
+    pub tool_name: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContestToolWindowStats {
+    pub total: usize,
+    pub shell: usize,
+    pub browser: usize,
+    pub http_request: usize,
+    pub route_discovery: usize,
+    pub search_exploit: usize,
+    pub tenth_man_review: usize,
+    pub web_search: usize,
+    pub trailing_shell: usize,
 }
 
 #[derive(Clone)]
@@ -76,6 +99,43 @@ impl ContestTraceRecorder {
         })
     }
 
+    pub async fn recent_tool_digests(&self, limit: usize) -> Vec<ContestToolDigest> {
+        let records = self.records.lock().await;
+        records
+            .iter()
+            .rev()
+            .take(limit)
+            .map(build_tool_digest)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    }
+
+    pub async fn recent_tool_window_stats(&self, limit: usize) -> ContestToolWindowStats {
+        let records = self.records.lock().await;
+        let slice = records.iter().rev().take(limit).collect::<Vec<_>>();
+        let mut counts = BTreeMap::<&str, usize>::new();
+        let mut trailing_shell = 0_usize;
+        for (idx, record) in slice.iter().enumerate() {
+            *counts.entry(record.name.as_str()).or_default() += 1;
+            if idx == trailing_shell && record.name == "shell" {
+                trailing_shell += 1;
+            }
+        }
+        ContestToolWindowStats {
+            total: slice.len(),
+            shell: counts.get("shell").copied().unwrap_or(0),
+            browser: counts.get("browser").copied().unwrap_or(0),
+            http_request: counts.get("http_request").copied().unwrap_or(0),
+            route_discovery: counts.get("route_discovery").copied().unwrap_or(0),
+            search_exploit: counts.get("search_exploit").copied().unwrap_or(0),
+            tenth_man_review: counts.get("tenth_man_review").copied().unwrap_or(0),
+            web_search: counts.get("web_search").copied().unwrap_or(0),
+            trailing_shell,
+        }
+    }
+
     pub fn default_browser_session_id(&self) -> String {
         format!("browser-{}-{}", self.code, self.attempt_id)
     }
@@ -88,7 +148,9 @@ pub async fn build_contest_dynamic_tools(
     Ok(vec![
         build_browser_tool(recorder.clone(), sequence.clone()).await?,
         build_http_tool(recorder.clone(), sequence.clone()).await?,
+        build_route_discovery_tool(recorder.clone(), sequence.clone()).await?,
         build_shell_tool(recorder.clone(), sequence.clone()).await?,
+        build_web_search_tool(recorder.clone(), sequence.clone()).await?,
         build_search_exploit_tool(recorder.clone(), sequence.clone()).await?,
         build_tenth_man_tool(recorder, sequence).await?,
     ])
@@ -131,6 +193,28 @@ fn build_signature(record: &ContestToolCallRecord) -> String {
                 .and_then(|value| value.as_str())
                 .unwrap_or_default();
             format!("http:{}:{}", method.to_ascii_uppercase(), url)
+        }
+        "route_discovery" => {
+            let base_url = record
+                .arguments
+                .get("base_url")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let path_count = record
+                .arguments
+                .get("paths")
+                .and_then(|value| value.as_array())
+                .map(|values| values.len())
+                .unwrap_or_default();
+            format!("route_discovery:{}:{}", base_url, path_count)
+        }
+        "web_search" => {
+            let query = record
+                .arguments
+                .get("query")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            format!("web_search:{}", query)
         }
         "shell" => {
             let command = record
@@ -227,6 +311,29 @@ fn build_result_signature(record: &ContestToolCallRecord) -> Option<String> {
                 normalize_preview(&body_preview)
             ))
         }
+        "route_discovery" => {
+            let findings = result
+                .get("findings")
+                .and_then(|value| value.as_array())
+                .map(|values| values.len())
+                .unwrap_or_default();
+            let filtered = result
+                .get("filtered_as_wildcard")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+            Some(format!("route_discovery:{}:{}", findings, filtered))
+        }
+        "web_search" => {
+            let total = result
+                .get("total_results")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+            let source = result
+                .get("source")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            Some(format!("web_search:{}:{}", source, total))
+        }
         "shell" => {
             let exit_code = result
                 .get("exit_code")
@@ -293,6 +400,16 @@ fn build_result_signature(record: &ContestToolCallRecord) -> Option<String> {
                 &raw.chars().take(200).collect::<String>(),
             ))
         }
+    }
+}
+
+fn build_tool_digest(record: &ContestToolCallRecord) -> ContestToolDigest {
+    let status = if record.success { "ok" } else { "error" }.to_string();
+    let summary = build_result_signature(record).unwrap_or_else(|| build_signature(record));
+    ContestToolDigest {
+        status,
+        tool_name: record.name.clone(),
+        summary: normalize_preview(&summary.chars().take(200).collect::<String>()),
     }
 }
 
@@ -449,6 +566,77 @@ async fn build_http_tool(
     Ok(DynamicTool::new(def))
 }
 
+async fn build_route_discovery_tool(
+    recorder: ContestTraceRecorder,
+    sequence: Arc<AtomicU32>,
+) -> Result<DynamicTool> {
+    let tool = RouteDiscoveryTool;
+    let definition = tool.definition(String::new()).await;
+
+    let def = DynamicToolBuilder::new(RouteDiscoveryTool::NAME.to_string())
+        .description(definition.description)
+        .input_schema(definition.parameters)
+        .source(ToolSource::Builtin)
+        .category("network")
+        .execution_policy(ToolExecutionPolicy {
+            read_only: true,
+            mutating: false,
+            concurrency_safe: true,
+            requires_permission: false,
+            supports_background: false,
+        })
+        .executor(move |args| {
+            let tool = RouteDiscoveryTool;
+            let recorder = recorder.clone();
+            let sequence = sequence.clone();
+            async move {
+                let started_at = Utc::now().timestamp_millis();
+                let started = Instant::now();
+                let current_sequence = sequence.fetch_add(1, Ordering::Relaxed);
+                let call_id = format!("route-discovery-{}-{}", started_at, current_sequence);
+                let parsed_args: RouteDiscoveryArgs = serde_json::from_value(args.clone())
+                    .map_err(|error| format!("invalid route_discovery args: {}", error))?;
+
+                let call_result = tool.call(parsed_args).await;
+                let completed_at = Utc::now().timestamp_millis();
+                let duration_ms = started.elapsed().as_millis() as i64;
+                let (success, result_value, response) = match call_result {
+                    Ok(output) => {
+                        let value = serde_json::to_value(&output).map_err(|error| {
+                            format!("failed to serialize route_discovery output: {}", error)
+                        })?;
+                        (true, Some(value.clone()), Ok(value))
+                    }
+                    Err(error) => (
+                        false,
+                        None,
+                        Err(format!("route_discovery failed: {}", error)),
+                    ),
+                };
+
+                recorder
+                    .append(&ContestToolCallRecord {
+                        id: call_id,
+                        name: RouteDiscoveryTool::NAME.to_string(),
+                        arguments: args,
+                        result: result_value,
+                        success,
+                        sequence: current_sequence,
+                        started_at_ms: started_at,
+                        completed_at_ms: completed_at,
+                        duration_ms,
+                    })
+                    .await;
+
+                response
+            }
+        })
+        .build()
+        .map_err(anyhow::Error::msg)?;
+
+    Ok(DynamicTool::new(def))
+}
+
 async fn build_shell_tool(
     recorder: ContestTraceRecorder,
     sequence: Arc<AtomicU32>,
@@ -497,6 +685,73 @@ async fn build_shell_tool(
                     .append(&ContestToolCallRecord {
                         id: call_id,
                         name: ShellTool::NAME.to_string(),
+                        arguments: args,
+                        result: result_value,
+                        success,
+                        sequence: current_sequence,
+                        started_at_ms: started_at,
+                        completed_at_ms: completed_at,
+                        duration_ms,
+                    })
+                    .await;
+
+                response
+            }
+        })
+        .build()
+        .map_err(anyhow::Error::msg)?;
+
+    Ok(DynamicTool::new(def))
+}
+
+async fn build_web_search_tool(
+    recorder: ContestTraceRecorder,
+    sequence: Arc<AtomicU32>,
+) -> Result<DynamicTool> {
+    let tool = WebSearchTool::default();
+    let definition = tool.definition(String::new()).await;
+
+    let def = DynamicToolBuilder::new(WebSearchTool::NAME.to_string())
+        .description(definition.description)
+        .input_schema(definition.parameters)
+        .source(ToolSource::Builtin)
+        .category("research")
+        .execution_policy(ToolExecutionPolicy {
+            read_only: true,
+            mutating: false,
+            concurrency_safe: true,
+            requires_permission: false,
+            supports_background: false,
+        })
+        .executor(move |args| {
+            let tool = WebSearchTool::default();
+            let recorder = recorder.clone();
+            let sequence = sequence.clone();
+            async move {
+                let started_at = Utc::now().timestamp_millis();
+                let started = Instant::now();
+                let current_sequence = sequence.fetch_add(1, Ordering::Relaxed);
+                let call_id = format!("web-search-{}-{}", started_at, current_sequence);
+                let parsed_args: WebSearchArgs = serde_json::from_value(args.clone())
+                    .map_err(|error| format!("invalid web_search args: {}", error))?;
+
+                let call_result = tool.call(parsed_args).await;
+                let completed_at = Utc::now().timestamp_millis();
+                let duration_ms = started.elapsed().as_millis() as i64;
+                let (success, result_value, response) = match call_result {
+                    Ok(output) => {
+                        let value = serde_json::to_value(&output).map_err(|error| {
+                            format!("failed to serialize web_search output: {}", error)
+                        })?;
+                        (true, Some(value.clone()), Ok(value))
+                    }
+                    Err(error) => (false, None, Err(format!("web_search failed: {}", error))),
+                };
+
+                recorder
+                    .append(&ContestToolCallRecord {
+                        id: call_id,
+                        name: WebSearchTool::NAME.to_string(),
                         arguments: args,
                         result: result_value,
                         success,

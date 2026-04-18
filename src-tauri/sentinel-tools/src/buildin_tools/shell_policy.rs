@@ -37,43 +37,16 @@ const REASON_NARROW_FIND: &str = "tools.shell.allowRuleReasons.narrowFind";
 const REASON_NARROW_GIT_INSPECTION: &str = "tools.shell.allowRuleReasons.narrowGitInspection";
 const REASON_NARROW_GIT_SUBCOMMAND: &str = "tools.shell.allowRuleReasons.narrowGitSubcommand";
 const REASON_NARROW_GIT_REMOTE_SHOW: &str = "tools.shell.allowRuleReasons.narrowGitRemoteShow";
-const REASON_NARROW_GIT_REMOTE_GET_URL: &str =
-    "tools.shell.allowRuleReasons.narrowGitRemoteGetUrl";
+const REASON_NARROW_GIT_REMOTE_GET_URL: &str = "tools.shell.allowRuleReasons.narrowGitRemoteGetUrl";
 const REASON_NARROW_GIT_STASH_LIST: &str = "tools.shell.allowRuleReasons.narrowGitStashList";
 const REASON_NARROW_GIT_STASH_SHOW: &str = "tools.shell.allowRuleReasons.narrowGitStashShow";
 const REASON_EXACT_MUTATING_SUBCOMMAND: &str =
     "tools.shell.allowRuleReasons.exactMutatingSubcommand";
 
 const SIMPLE_READ_ONLY_COMMANDS: &[&str] = &[
-    "ag",
-    "ack",
-    "cat",
-    "date",
-    "du",
-    "echo",
-    "env",
-    "file",
-    "grep",
-    "head",
-    "id",
-    "less",
-    "ls",
-    "more",
-    "printenv",
-    "ps",
-    "pwd",
-    "printf",
-    "realpath",
-    "readlink",
-    "rg",
-    "stat",
-    "tail",
-    "tree",
-    "uname",
-    "wc",
-    "whereis",
-    "which",
-    "whoami",
+    "ag", "ack", "cat", "date", "du", "echo", "env", "file", "grep", "head", "id", "less", "ls",
+    "more", "printenv", "ps", "pwd", "printf", "realpath", "readlink", "rg", "stat", "tail",
+    "tree", "uname", "wc", "whereis", "which", "whoami",
 ];
 
 struct DangerousBaseCommand {
@@ -106,15 +79,7 @@ const DANGEROUS_BASE_COMMANDS: &[DangerousBaseCommand] = &[
 ];
 
 const FIND_MUTATING_TOKENS: &[&str] = &[
-    "-delete",
-    "-exec",
-    "-execdir",
-    "-ok",
-    "-okdir",
-    "-fprint",
-    "-fprint0",
-    "-fprintf",
-    "-fls",
+    "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls",
     "-ls",
 ];
 
@@ -341,7 +306,10 @@ fn analyze_subcommand(command: &str) -> ShellCommandAnalysis {
     let tokens = &tokens[start_index..];
     let base = tokens[0].as_str();
 
-    if let Some(dangerous) = DANGEROUS_BASE_COMMANDS.iter().find(|entry| base == entry.base) {
+    if let Some(dangerous) = DANGEROUS_BASE_COMMANDS
+        .iter()
+        .find(|entry| base == entry.base)
+    {
         return ShellCommandAnalysis {
             semantic: ShellCommandSemantic::Dangerous(dangerous.reason_key),
             classification_code: dangerous.classification_code,
@@ -606,13 +574,14 @@ fn is_read_only_git(tokens: &[String]) -> bool {
             tokens.get(2).map(String::as_str),
             None | Some("-v") | Some("show") | Some("get-url")
         ),
-        "stash" => matches!(tokens.get(2).map(String::as_str), Some("list") | Some("show")),
-        "tag" => {
-            !tokens
-                .iter()
-                .skip(2)
-                .any(|token| GIT_TAG_MUTATING_FLAGS.contains(&token.as_str()))
-        }
+        "stash" => matches!(
+            tokens.get(2).map(String::as_str),
+            Some("list") | Some("show")
+        ),
+        "tag" => !tokens
+            .iter()
+            .skip(2)
+            .any(|token| GIT_TAG_MUTATING_FLAGS.contains(&token.as_str())),
         _ => false,
     }
 }
@@ -620,7 +589,10 @@ fn is_read_only_git(tokens: &[String]) -> bool {
 fn dedupe_rules(rules: Vec<SuggestedAllowRule>) -> Vec<SuggestedAllowRule> {
     let mut deduped = Vec::new();
     for rule in rules {
-        if !deduped.iter().any(|existing: &SuggestedAllowRule| existing.rule == rule.rule) {
+        if !deduped
+            .iter()
+            .any(|existing: &SuggestedAllowRule| existing.rule == rule.rule)
+        {
             deduped.push(rule);
         }
     }

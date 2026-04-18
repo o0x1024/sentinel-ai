@@ -76,6 +76,7 @@ export default {
   confirmDelete: 'Are you sure you want to delete this?',
   yes: 'Yes',
   no: 'No',
+  immersiveDrillMode: 'Immersive Drill Mode',
   ok: 'OK',
   view: 'View',
   reset: 'Reset',

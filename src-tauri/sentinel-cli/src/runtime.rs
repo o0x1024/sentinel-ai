@@ -13,6 +13,7 @@ pub struct ChallengeRunState {
     pub code: String,
     pub title: Option<String>,
     pub last_started_at: Option<String>,
+    pub attempt_deadline_at: Option<String>,
     pub last_finished_at: Option<String>,
     pub last_status: Option<String>,
     pub current_attempt_id: Option<String>,
@@ -36,6 +37,7 @@ pub struct ChallengeRunState {
     pub total_attempts: usize,
     pub consecutive_failures: usize,
     pub next_eligible_at: Option<String>,
+    pub last_progress_at: Option<String>,
 }
 
 #[derive(Clone)]
@@ -80,9 +82,14 @@ impl RuntimeStateStore {
         let path = self.challenge_path(&state.code);
         let content =
             serde_json::to_string_pretty(state).context("failed to serialize challenge state")?;
-        atomic_write(&path, content.as_bytes()).await.with_context(|| {
-            format!("failed to write challenge state atomically: {}", path.display())
-        })?;
+        atomic_write(&path, content.as_bytes())
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to write challenge state atomically: {}",
+                    path.display()
+                )
+            })?;
         Ok(())
     }
 
@@ -97,7 +104,9 @@ impl RuntimeStateStore {
         state.last_status = Some(status.to_string());
         state.current_attempt_id = None;
         state.current_step = None;
+        state.attempt_deadline_at = None;
         state.last_reason = reason;
+        state.last_progress_at = Some(Utc::now().to_rfc3339());
         state.last_hint_content = None;
         state.recent_history.clear();
         state.watchdog_stall_count = 0;
@@ -238,15 +247,64 @@ impl RuntimeStateStore {
                 continue;
             }
 
-            let content = fs::read_to_string(&path)
-                .await
-                .with_context(|| format!("failed to read run state: {}", path.display()))?;
-            let state = serde_json::from_str::<ChallengeRunState>(&content)
-                .with_context(|| format!("failed to parse run state: {}", path.display()))?;
+            let content = match fs::read_to_string(&path).await {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
+            let state = match serde_json::from_str::<ChallengeRunState>(&content) {
+                Ok(state) => state,
+                Err(_) => continue,
+            };
 
             if state.last_status.as_deref() == Some("running") && state.current_attempt_id.is_some()
             {
                 active.push(state.code);
+            }
+        }
+
+        Ok(active)
+    }
+
+    pub async fn list_running_challenges(&self) -> Result<Vec<ChallengeRunState>> {
+        let runs_dir = self.root_dir.join("runs");
+        let mut active = Vec::new();
+
+        let mut entries = match fs::read_dir(&runs_dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(active),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to read runs dir: {}", runs_dir.display()))
+            }
+        };
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .with_context(|| format!("failed to iterate runs dir: {}", runs_dir.display()))?
+        {
+            let path = entry.path();
+            if !path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| value.eq_ignore_ascii_case("json"))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let content = match fs::read_to_string(&path).await {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
+            let state = match serde_json::from_str::<ChallengeRunState>(&content) {
+                Ok(state) => state,
+                Err(_) => continue,
+            };
+
+            if state.last_status.as_deref() == Some("running") && state.current_attempt_id.is_some()
+            {
+                active.push(state);
             }
         }
 

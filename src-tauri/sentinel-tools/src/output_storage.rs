@@ -5,9 +5,11 @@
 
 use crate::docker_sandbox::DockerSandbox;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Default storage threshold (16KB)
 const DEFAULT_STORAGE_THRESHOLD: usize = 16_000;
+const DEFAULT_READBACK_CHUNK_LINES: usize = 200;
 
 use once_cell::sync::Lazy;
 use std::sync::RwLock;
@@ -33,6 +35,15 @@ pub fn get_storage_threshold() -> usize {
 
 /// Container context directory (unified for all tools)
 pub const CONTAINER_CONTEXT_DIR: &str = "/workspace/context";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoredOutputArtifact {
+    pub slot: String,
+    pub path: String,
+    pub storage_backend: String,
+    pub size: usize,
+    pub lines: usize,
+}
 
 /// Host context directory (for non-Docker execution)
 /// Uses system-specific user data directory
@@ -89,6 +100,149 @@ CMD:
     }
 }
 
+fn build_container_readback_protocol(file_path: &str, total_lines: usize) -> String {
+    let chunk_lines = recommended_chunk_lines(total_lines);
+    let second_chunk_end = chunk_lines * 2;
+
+    format!(
+        r#"Readback protocol for full-file analysis:
+1. Treat the preview as a hint only. Do not summarize or make whole-file claims from the preview.
+2. Read the file sequentially in bounded chunks until you have covered all {} lines.
+3. Use shell line-range reads, for example:
+   • sed -n '1,{}p' {}                (first chunk)
+   • sed -n '{},{}p' {}            (next chunk)
+4. Continue increasing the line range until the final line is reached.
+5. If you only inspected part of the file, state clearly that the analysis is partial and name the line ranges you read.
+
+Quick access commands:
+   • grep -i "pattern" "{}"     (search for pattern)
+   • tail -n 50 "{}"             (view last 50 lines)
+   • head -n 50 "{}"             (view first 50 lines)
+   • cat "{}"                    (view full content, avoid on very large files)
+   • wc -l "{}"                  (count lines)"#,
+        total_lines,
+        chunk_lines,
+        file_path,
+        chunk_lines + 1,
+        second_chunk_end,
+        file_path,
+        file_path,
+        file_path,
+        file_path,
+        file_path,
+        file_path
+    )
+}
+
+fn build_container_single_line_json_readback_protocol(
+    file_path: &str,
+    formatted_lines: usize,
+) -> String {
+    let chunk_lines = recommended_chunk_lines(formatted_lines);
+    let second_chunk_start = chunk_lines + 1;
+    let second_chunk_end = chunk_lines * 2;
+
+    format!(
+        r#"Readback protocol for full-file analysis:
+1. Treat the preview as a hint only. Do not summarize or make whole-file claims from the preview.
+2. This artifact is minified single-line JSON. Raw line counts are not useful for chunking.
+3. Format the JSON and read the formatted output sequentially in bounded chunks, for example:
+   • python3 -m json.tool {} | sed -n '1,{}p'
+   • python3 -m json.tool {} | sed -n '{},{}p'
+4. Continue increasing the formatted line range until no more output is returned.
+5. If you only inspected part of the formatted output, state clearly that the analysis is partial and name the formatted line ranges you read.
+
+Quick access commands:
+   • python3 -m json.tool {} | head -n {}   (view first formatted chunk)
+   • python3 -m json.tool {} | tail -n 50   (view last formatted lines)
+   • grep -i "pattern" "{}"                 (search raw file)
+   • wc -l "{}"                             (raw line count; expected to stay 1)"#,
+        file_path,
+        chunk_lines,
+        file_path,
+        second_chunk_start,
+        second_chunk_end,
+        file_path,
+        chunk_lines,
+        file_path,
+        file_path,
+        file_path
+    )
+}
+
+fn build_host_readback_protocol(file_path: &str, total_lines: usize) -> String {
+    let chunk_lines = recommended_chunk_lines(total_lines);
+    let next_offset = chunk_lines + 1;
+
+    format!(
+        r#"Readback protocol for full-file analysis:
+1. Treat the preview as a hint only. Do not summarize or make whole-file claims from the preview.
+2. Prefer `file_read` for exact sequential reads on host files.
+3. Read the file in bounded chunks until you have covered all {} lines, for example:
+   • file_read {{ "file_path": "{}", "offset": 1, "limit": {} }}
+   • file_read {{ "file_path": "{}", "offset": {}, "limit": {} }}
+4. Continue increasing `offset` until `end_line == total_lines`.
+5. If you only inspected part of the file, state clearly that the analysis is partial and name the line ranges you read.
+
+Shell fallback commands:
+{}"#,
+        total_lines,
+        file_path,
+        chunk_lines,
+        file_path,
+        next_offset,
+        chunk_lines,
+        generate_file_access_commands(file_path)
+    )
+}
+
+fn recommended_chunk_lines(total_lines: usize) -> usize {
+    total_lines.max(1).min(DEFAULT_READBACK_CHUNK_LINES)
+}
+
+#[derive(Debug, Clone)]
+struct ContainerReadbackPlan {
+    reported_lines: usize,
+    lines_summary: String,
+    protocol: String,
+}
+
+fn build_container_readback_plan(file_path: &str, output: &str) -> ContainerReadbackPlan {
+    if let Some(formatted_lines) = detect_single_line_json_formatted_lines(output) {
+        return ContainerReadbackPlan {
+            reported_lines: formatted_lines,
+            lines_summary: format!(
+                "{} formatted JSON lines (raw file: 1 line)",
+                formatted_lines
+            ),
+            protocol: build_container_single_line_json_readback_protocol(
+                file_path,
+                formatted_lines,
+            ),
+        };
+    }
+
+    let raw_lines = output.lines().count();
+    ContainerReadbackPlan {
+        reported_lines: raw_lines,
+        lines_summary: raw_lines.to_string(),
+        protocol: build_container_readback_protocol(file_path, raw_lines),
+    }
+}
+
+fn detect_single_line_json_formatted_lines(output: &str) -> Option<usize> {
+    if output.lines().count() != 1 {
+        return None;
+    }
+    let trimmed = output.trim();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+        return None;
+    }
+    let value: Value = serde_json::from_str(trimmed).ok()?;
+    let pretty = serde_json::to_string_pretty(&value).ok()?;
+    Some(pretty.lines().count().max(1))
+}
+
 /// Storage result enum
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageResult {
@@ -117,6 +271,37 @@ impl StorageResult {
             StorageResult::Direct(content) => content.clone(),
             StorageResult::Stored { summary, .. } => summary.clone(),
             StorageResult::StoredHost { summary, .. } => summary.clone(),
+        }
+    }
+
+    pub fn to_stored_artifact(&self, slot: impl Into<String>) -> Option<StoredOutputArtifact> {
+        let slot = slot.into();
+        match self {
+            StorageResult::Direct(_) => None,
+            StorageResult::Stored {
+                container_path,
+                size,
+                lines,
+                ..
+            } => Some(StoredOutputArtifact {
+                slot,
+                path: container_path.clone(),
+                storage_backend: "container".to_string(),
+                size: *size,
+                lines: *lines,
+            }),
+            StorageResult::StoredHost {
+                host_path,
+                size,
+                lines,
+                ..
+            } => Some(StoredOutputArtifact {
+                slot,
+                path: host_path.clone(),
+                storage_backend: "host".to_string(),
+                size: *size,
+                lines: *lines,
+            }),
         }
     }
 }
@@ -157,7 +342,8 @@ pub async fn store_output_in_container(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to write output to container: {}", e))?;
 
-    let lines = output.lines().count();
+    let readback_plan = build_container_readback_plan(&container_path, output);
+    let lines = readback_plan.reported_lines;
     let size = output.len();
 
     // Generate preview (first 500 chars)
@@ -176,26 +362,17 @@ pub async fn store_output_in_container(
 Preview (first 500 chars):
 {}{}
 
-To access the full content in container, use shell tool with:
-   • grep -i "pattern" {}     (search for pattern)
-   • tail -n 50 {}             (view last 50 lines)  
-   • head -n 50 {}             (view first 50 lines)
-   • cat {}                    (view full content)
-   • wc -l {}                  (count lines)
+{}
 
 All context files are in: {}
 "#,
         container_path,
         size,
         size as f64 / 1024.0,
-        lines,
+        readback_plan.lines_summary,
         preview,
         preview_end,
-        container_path,
-        container_path,
-        container_path,
-        container_path,
-        container_path,
+        readback_plan.protocol,
         CONTAINER_CONTEXT_DIR
     );
 
@@ -453,8 +630,7 @@ pub async fn store_output_on_host(
 
     let host_path_str = host_path.display().to_string();
 
-    // Generate platform-specific command suggestions
-    let access_commands = generate_file_access_commands(&host_path_str);
+    let readback_protocol = build_host_readback_protocol(&host_path_str, lines);
 
     // Create summary with instructions for host-based file access
     let summary = format!(
@@ -468,7 +644,6 @@ pub async fn store_output_on_host(
 Preview (first 500 chars):
 {}{}
 
-To access the full content on host, use shell tool with:
 {}
 
 All context files are in: {}
@@ -479,7 +654,7 @@ All context files are in: {}
         lines,
         preview,
         preview_end,
-        access_commands,
+        readback_protocol,
         context_dir.display()
     );
 
@@ -527,5 +702,61 @@ pub async fn store_output_unified(
             );
             store_output_on_host(tool_name, output, call_id).await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn container_protocol_requires_sequential_readback() {
+        let protocol = build_container_readback_protocol("/workspace/context/output.txt", 480);
+
+        assert!(protocol.contains("Read the file sequentially in bounded chunks"));
+        assert!(protocol.contains("sed -n '1,200p' /workspace/context/output.txt"));
+        assert!(protocol.contains("only inspected part of the file"));
+    }
+
+    #[test]
+    fn host_protocol_prefers_file_read() {
+        let protocol = build_host_readback_protocol("/tmp/output.txt", 380);
+
+        assert!(protocol.contains("Prefer `file_read`"));
+        assert!(protocol.contains("\"offset\": 1, \"limit\": 200"));
+        assert!(protocol.contains("end_line == total_lines"));
+    }
+
+    #[test]
+    fn container_protocol_formats_single_line_json_before_chunking() {
+        let plan = build_container_readback_plan(
+            "/workspace/context/output.txt",
+            r#"{"openapi":"3.1.0","info":{"title":"demo"},"paths":{"/health":{"get":{"responses":{"200":{"description":"ok"}}}}}}"#,
+        );
+
+        assert!(plan.reported_lines > 1);
+        assert!(plan.lines_summary.contains("formatted JSON lines"));
+        assert!(plan.protocol.contains("minified single-line JSON"));
+        assert!(plan
+            .protocol
+            .contains("python3 -m json.tool /workspace/context/output.txt | sed -n '1,"));
+    }
+
+    #[test]
+    fn stored_result_exposes_structured_artifact_metadata() {
+        let artifact = StorageResult::Stored {
+            container_path: "/workspace/context/output.txt".to_string(),
+            summary: "stored".to_string(),
+            size: 4096,
+            lines: 320,
+        }
+        .to_stored_artifact("stdout")
+        .expect("artifact metadata");
+
+        assert_eq!(artifact.slot, "stdout");
+        assert_eq!(artifact.path, "/workspace/context/output.txt");
+        assert_eq!(artifact.storage_backend, "container");
+        assert_eq!(artifact.size, 4096);
+        assert_eq!(artifact.lines, 320);
     }
 }

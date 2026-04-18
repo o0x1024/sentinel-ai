@@ -462,8 +462,14 @@ export default {
       loading: '正在加载 shell 权限历史...',
       empty: '暂时还没有 shell 权限审批记录。',
       emptyFiltered: '当前筛选条件下没有匹配记录。',
+      loadMore: '加载更多',
+      showingCount: '当前显示 {visible} 条匹配记录，已加载 {loaded} 条',
+      showDetails: '详情',
+      hideDetails: '收起',
       executionId: '执行 ID',
       executionIdPlaceholder: '按执行 ID 筛选',
+      commandSearch: '命令搜索',
+      commandSearchPlaceholder: '搜索命令文本',
       exactDate: '指定日期',
       recentDays: '最近天数',
       decision: '审批结果',
@@ -473,6 +479,11 @@ export default {
       semanticCode: '语义代码',
       suggestedRules: '建议持久化规则',
       persistedRules: '已持久化规则',
+      summary: {
+        persistedRules: '已持久化规则 {count} 条',
+        suggestedRules: '建议规则 {count} 条',
+        noExtraDetails: '没有附加规则明细'
+      },
       decisions: {
         allow: '已允许',
         deny: '已拒绝',

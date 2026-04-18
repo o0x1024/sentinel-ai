@@ -1,3 +1,4 @@
+mod codex_context;
 mod compaction;
 mod config;
 mod llm;

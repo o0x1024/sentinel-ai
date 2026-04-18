@@ -74,6 +74,14 @@
         label-prefix="trafficAnalysis.history.contextMenu"
       />
       <div class="divider my-1 h-0"></div>
+      <button
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="addContextRequestToBasket"
+      >
+        <i class="fas fa-basket-shopping text-primary"></i>
+        加入请求篮子
+      </button>
+      <div class="divider my-1 h-0"></div>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2 text-error"
         @click="clearHistoryFromMenu"
@@ -94,6 +102,15 @@
         :sections="historyDetailContextMenuSections"
         label-prefix="trafficAnalysis.history.contextMenu"
       />
+      <div v-if="detailContextMenu.pane === 'request'" class="divider my-1 h-0"></div>
+      <button
+        v-if="detailContextMenu.pane === 'request'"
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="addDetailRequestToBasket"
+      >
+        <i class="fas fa-basket-shopping text-primary"></i>
+        加入请求篮子
+      </button>
     </div>
 
     <!-- 筛选器配置弹窗 -->
@@ -488,11 +505,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch, inject } from 'vue';
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, watch, inject } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
+import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import {
   getTrafficContextExtractionSettings,
   mergeCandidatesIntoTrafficContextExtractionSettings,
@@ -608,6 +626,7 @@ const emit = defineEmits<{
   (e: 'sendToComparer', payload: TrafficComparePayload): void
   (e: 'sendToAssistant', requests: ProxyRequest[]): void
   (e: 'addFilterRule', rule: { matchType: string; condition: string; relationship?: string }): void
+  (e: 'addToBasket', payload: { request: HttpExchangeRequest; requestId?: number; title: string; host: string }): void
 }>();
 
 // 多选状态
@@ -759,6 +778,7 @@ let pendingScrollTop = 0;
 let prefetchTimer: number | null = null;
 let isPrefetching = false;
 const AUTO_FOLLOW_TOP_THRESHOLD = itemHeight;
+const savedScrollTop = ref(0)
 
 const effectiveFilterConfig = computed(() =>
   filtersEnabled.value ? appliedFilterConfig.value : showAllProxyHistoryFilters(appliedFilterConfig.value),
@@ -1203,6 +1223,37 @@ async function openContextCandidateEvidenceRequest(payload: TrafficContextCandid
   )
 }
 
+async function addContextRequestToBasket() {
+  hideContextMenu()
+  const request = contextMenu.value.request
+  if (!request) {
+    return
+  }
+
+  const detailed = await fetchRequestDetails(request.id) || request
+  emit('addToBasket', {
+    request: buildHttpExchangeRequestFromHistory(detailed),
+    requestId: detailed.id,
+    title: detailed.url,
+    host: detailed.host || '',
+  })
+}
+
+async function addDetailRequestToBasket() {
+  hideDetailContextMenu()
+  if (!selectedRequest.value) {
+    return
+  }
+
+  const detailed = await fetchRequestDetails(selectedRequest.value.id) || selectedRequest.value
+  emit('addToBasket', {
+    request: buildHttpExchangeRequestFromHistory(detailed),
+    requestId: detailed.id,
+    title: detailed.url,
+    host: detailed.host || '',
+  })
+}
+
 function updateSelectedCandidateIds(nextValue: string[]) {
   selectedCandidateIds.value = nextValue
   contextCandidatePreviewResult.value = null
@@ -1419,6 +1470,70 @@ function updateContainerHeight() {
     containerHeight.value = scrollContainer.value.clientHeight;
     schedulePrefetchCheck();
   }
+}
+
+function syncVirtualViewport() {
+  if (!scrollContainer.value) {
+    return
+  }
+
+  containerHeight.value = scrollContainer.value.clientHeight
+  scrollTop.value = scrollContainer.value.scrollTop
+  schedulePrefetchCheck()
+}
+
+async function refreshVirtualLayout() {
+  await nextTick()
+
+  window.requestAnimationFrame(() => {
+    syncVirtualViewport()
+  })
+}
+
+function captureScrollPosition() {
+  if (!scrollContainer.value) {
+    return
+  }
+
+  savedScrollTop.value = scrollContainer.value.scrollTop
+}
+
+async function ensureRowsForScrollPosition(targetScrollTop: number) {
+  if (protocolFilter.value === 'websocket' || targetScrollTop <= 0) {
+    return
+  }
+
+  const viewportHeight = Math.max(containerHeight.value, scrollContainer.value?.clientHeight || 0, 1)
+  const requiredRowCount = Math.ceil((targetScrollTop + viewportHeight) / itemHeight) + bufferSize
+  let attempts = 0
+
+  while (sortedRequests.value.length < requiredRowCount && hasMore.value && attempts < 20) {
+    const loadedCount = await loadMoreRequests()
+    if (loadedCount <= 0) {
+      break
+    }
+    attempts += 1
+    await nextTick()
+  }
+}
+
+async function restoreSavedScrollPosition() {
+  if (!scrollContainer.value) {
+    return
+  }
+
+  await nextTick()
+  syncVirtualViewport()
+  await ensureRowsForScrollPosition(savedScrollTop.value)
+
+  if (!scrollContainer.value) {
+    return
+  }
+
+  const maxScrollTop = Math.max(0, scrollContainer.value.scrollHeight - scrollContainer.value.clientHeight)
+  const nextScrollTop = Math.min(savedScrollTop.value, maxScrollTop)
+  scrollContainer.value.scrollTop = nextScrollTop
+  syncVirtualViewport()
 }
 
 // 使用 ResizeObserver 监听容器大小变化
@@ -1671,12 +1786,19 @@ function loadFilterConfig() {
 function initPanelHeights() {
   const containerHeight = mainContainer.value?.clientHeight || 600;
   const savedTopHeight = localStorage.getItem(STORAGE_KEY_TOP_HEIGHT);
+  const immersiveTargetHeight = Math.floor(containerHeight * 0.32)
   
   if (savedTopHeight) {
     // 确保保存的值不超过容器高度
     topPanelHeight.value = Math.min(parseInt(savedTopHeight), containerHeight - 200);
   } else {
-    topPanelHeight.value = Math.floor(containerHeight * 0.4);
+    topPanelHeight.value = immersiveDrillModeEnabled.value
+      ? immersiveTargetHeight
+      : Math.floor(containerHeight * 0.4);
+  }
+
+  if (immersiveDrillModeEnabled.value) {
+    topPanelHeight.value = Math.min(topPanelHeight.value, immersiveTargetHeight)
   }
   
   // 初始化左面板宽度
@@ -1836,8 +1958,7 @@ watch(
 watch(refreshTrigger, async () => {
   console.log('[ProxyHistory] Refresh triggered by parent');
   await refreshRequests();
-  await nextTick();
-  schedulePrefetchCheck();
+  await restoreSavedScrollPosition();
 });
 
 // 监听协议类型切换
@@ -1859,6 +1980,18 @@ watch(protocolFilter, async (newFilter) => {
     schedulePrefetchCheck();
   }
 });
+
+watch(
+  () => immersiveDrillModeEnabled.value,
+  enabled => {
+    if (!enabled || !mainContainer.value) {
+      return
+    }
+
+    const containerHeight = mainContainer.value.clientHeight || 600
+    topPanelHeight.value = Math.min(topPanelHeight.value, Math.floor(containerHeight * 0.32))
+  },
+)
 
 // 设置 WebSocket 事件监听
 let unlistenWsConnection: (() => void) | null = null;
@@ -1897,6 +2030,14 @@ async function setupWsEventListeners() {
 onMounted(async () => {
   await setupWsEventListeners();
 });
+
+onActivated(() => {
+  void refreshVirtualLayout()
+})
+
+onDeactivated(() => {
+  captureScrollPosition()
+})
 
 // 在 onUnmounted 时清理 WebSocket 事件
 onUnmounted(() => {
@@ -1991,8 +2132,11 @@ function removeMatchingRecords(rule: { matchType: string; condition: string; rel
 
 // Expose methods for parent component
 defineExpose({
+  captureScrollPosition,
   removeMatchingRecords,
   openRequestById,
+  refreshVirtualLayout,
+  restoreSavedScrollPosition,
 });
 </script>
 

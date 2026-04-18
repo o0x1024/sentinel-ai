@@ -1,12 +1,14 @@
+use super::codex_context::build_codex_like_history;
 use super::compaction::compact_history_if_needed;
 use super::config::ContestLlmConfig;
 use super::prompt::{challenge_turn_prompt, contest_system_prompt};
 use super::rate_limit::SharedLlmThrottle;
 use super::signal::{extract_candidate_flags, parse_agent_signal, AgentSignalStatus};
 use super::tenth_man::{
-    clear_review_context, init_tenth_man_executor, set_review_context, ContestReviewContext,
+    clear_review_context, init_tenth_man_executor, run_runner_review, set_review_context,
+    ContestReviewContext,
 };
-use super::tooling::{build_contest_dynamic_tools, ContestTraceRecorder};
+use super::tooling::{build_contest_dynamic_tools, ContestToolWindowStats, ContestTraceRecorder};
 use super::watchdog::{evaluate_watchdog, WatchdogAction, WatchdogInput};
 use crate::arena::{ArenaClient, ChallengeInfo, HintResponse, SubmitFlagResponse};
 use crate::runtime::{ChallengeRunState, RuntimeStateStore};
@@ -20,7 +22,7 @@ use sentinel_tools::buildin_tools::shell::{
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const STARTUP_WAIT_ATTEMPTS: usize = 12;
 const STARTUP_WAIT_DELAY_MS: u64 = 1_000;
@@ -71,9 +73,13 @@ pub async fn solve_challenge_with_llm(
         .filter(|_| resumed)
         .unwrap_or_else(|| build_attempt_id(&code));
     let browser_session_id = format!("browser-{}-{}", code, attempt_id);
-    let attempt_started_at = Instant::now();
+    let attempt_deadline_at =
+        ensure_attempt_deadline(&store, &mut run_state, resumed, max_challenge_duration_secs)
+            .await?;
+    let timeout_budget = remaining_timeout_budget(&attempt_deadline_at);
+    let timeout_challenge = challenge.clone();
 
-    let solve_result: Result<AgentSolveReport> = async {
+    let solve_result = tokio::time::timeout(timeout_budget, async {
         if resumed {
             let _ = store
                 .append_attempt_event(
@@ -88,7 +94,14 @@ pub async fn solve_challenge_with_llm(
                 )
                 .await;
         } else {
-            prepare_challenge_attempt(&store, &challenge, &attempt_id, &mut run_state).await?;
+            prepare_challenge_attempt(
+                &store,
+                &challenge,
+                &attempt_id,
+                &mut run_state,
+                &attempt_deadline_at,
+            )
+            .await?;
         }
 
         let entrypoints = if resumed && !run_state.entrypoints.is_empty() {
@@ -103,6 +116,7 @@ pub async fn solve_challenge_with_llm(
                 &attempt_id,
                 &started.entrypoints,
                 &mut run_state,
+                &attempt_deadline_at,
             )
             .await?;
             started.entrypoints
@@ -134,27 +148,6 @@ pub async fn solve_challenge_with_llm(
         let start_step = run_state.current_step.unwrap_or(1).max(1);
 
         for step in start_step..=max_steps {
-            if attempt_started_at.elapsed().as_secs() >= max_challenge_duration_secs {
-                final_status = "give_up".to_string();
-                final_reason = Some(format!(
-                    "challenge wall clock timeout reached after {} seconds",
-                    max_challenge_duration_secs
-                ));
-                run_state.last_reason = final_reason.clone();
-                let _ = store
-                    .append_attempt_event(
-                        &code,
-                        &attempt_id,
-                        "attempt_timed_out",
-                        &serde_json::json!({
-                            "step": step,
-                            "max_challenge_duration_secs": max_challenge_duration_secs,
-                        }),
-                    )
-                    .await;
-                break;
-            }
-
             let previous_tool_calls = run_state.tool_calls_count;
             let previous_flag_count = run_state.discovered_flags.len();
             run_state.current_step = Some(step);
@@ -181,8 +174,13 @@ pub async fn solve_challenge_with_llm(
                 hint_allowed && !hint_used,
                 step,
                 max_steps,
+            );
+            let codex_like_history = build_codex_like_history(
+                &history,
+                &run_state,
                 context_summary.as_deref(),
                 last_feedback.as_deref(),
+                &trace_recorder.recent_tool_digests(4).await,
             );
             set_review_context(
                 llm.execution_id.clone(),
@@ -224,7 +222,7 @@ pub async fn solve_challenge_with_llm(
                 .stream_chat_with_dynamic_tools(
                     Some(&system_prompt),
                     &user_prompt,
-                    &history,
+                    &codex_like_history,
                     None,
                     dynamic_tools.clone(),
                     |_| true,
@@ -235,7 +233,8 @@ pub async fn solve_challenge_with_llm(
                 Err(error) => {
                     if let Some(llm_throttle) = &llm_throttle {
                         if is_llm_rate_limit_error(&error.to_string()) {
-                            let snapshot = llm_throttle.register_rate_limit(error.to_string()).await;
+                            let snapshot =
+                                llm_throttle.register_rate_limit(error.to_string()).await;
                             let _ = store
                                 .append_attempt_event(
                                     &code,
@@ -250,10 +249,8 @@ pub async fn solve_challenge_with_llm(
                                 .await;
                         }
                     }
-                    let error_message = format!(
-                        "LLM execution failed for challenge {}: {}",
-                        code, error
-                    );
+                    let error_message =
+                        format!("LLM execution failed for challenge {}: {}", code, error);
                     run_state.tool_calls_count = read_tool_count(&store, &code, &attempt_id).await;
                     run_state.last_reason = Some(error_message.clone());
                     persist_runtime_snapshot(
@@ -490,11 +487,11 @@ pub async fn solve_challenge_with_llm(
                 )
                 .await;
 
-            match watchdog_action {
+            match &watchdog_action {
                 WatchdogAction::Continue => {}
                 WatchdogAction::InjectFeedback { reason } => {
                     history.push(ChatMessage::user(reason.clone()));
-                    last_feedback = Some(reason);
+                    last_feedback = Some(reason.clone());
                 }
                 WatchdogAction::RequestHint { reason } => {
                     if hint_allowed && !hint_used {
@@ -524,9 +521,50 @@ pub async fn solve_challenge_with_llm(
                 WatchdogAction::Abort { reason } => {
                     final_status = "give_up".to_string();
                     final_reason = Some(reason.clone());
-                    run_state.last_reason = Some(reason);
+                    run_state.last_reason = Some(reason.clone());
                     break;
                 }
+            }
+
+            let tool_window = trace_recorder.recent_tool_window_stats(24).await;
+            let runner_review_injected = if let Some(critique) = force_runner_review(
+                &store,
+                &code,
+                &attempt_id,
+                &llm.execution_id,
+                step,
+                &tool_window,
+                &watchdog_action,
+                last_feedback.as_deref(),
+            )
+            .await {
+                let feedback = format!(
+                    "Runner tenth man review: {}\nFollow this critique before retrying the same path.",
+                    critique
+                );
+                history.push(ChatMessage::user(feedback.clone()));
+                last_feedback = Some(feedback);
+                true
+            } else {
+                false
+            };
+            if !runner_review_injected {
+                if let Some(reason) = shell_heavy_review_feedback(&tool_window, hint_used) {
+                let _ = store
+                    .append_attempt_event(
+                        &code,
+                        &attempt_id,
+                        "runner_forced_review_feedback",
+                        &serde_json::json!({
+                            "step": step,
+                            "tool_window": tool_window,
+                            "reason": reason,
+                        }),
+                    )
+                    .await;
+                history.push(ChatMessage::user(reason.clone()));
+                last_feedback = Some(reason);
+            }
             }
 
             persist_runtime_snapshot(
@@ -559,13 +597,8 @@ pub async fn solve_challenge_with_llm(
                 }),
             )
             .await;
-        finish_challenge_run_state(
-            &store,
-            &mut run_state,
-            &final_status,
-            failure_cooldown_secs,
-        )
-        .await?;
+        finish_challenge_run_state(&store, &mut run_state, &final_status, failure_cooldown_secs)
+            .await?;
 
         Ok(AgentSolveReport {
             code: code.clone(),
@@ -578,8 +611,24 @@ pub async fn solve_challenge_with_llm(
             final_status,
             final_reason,
         })
-    }
+    })
     .await;
+
+    let solve_result: Result<AgentSolveReport> = match solve_result {
+        Ok(result) => result,
+        Err(_) => {
+            record_timeout_result(
+                arena,
+                &store,
+                &timeout_challenge,
+                &attempt_id,
+                &mut run_state,
+                failure_cooldown_secs,
+                max_challenge_duration_secs,
+            )
+            .await
+        }
+    };
 
     if let Err(error) = &solve_result {
         let _ = store
@@ -596,7 +645,7 @@ pub async fn solve_challenge_with_llm(
             .mark_challenge_terminal(&code, "error", Some(error.to_string()))
             .await;
         if let Ok(mut run_state) = store.load_challenge(&code).await {
-            apply_failure_cooldown(&mut run_state, failure_cooldown_secs);
+            apply_retry_cooldown(&mut run_state, failure_cooldown_secs, false);
             let _ = store.save_challenge(&run_state).await;
         }
     }
@@ -648,14 +697,239 @@ async fn configure_shell_for_unattended_mode() {
     set_shell_config(config).await;
 }
 
+async fn ensure_attempt_deadline(
+    store: &RuntimeStateStore,
+    run_state: &mut ChallengeRunState,
+    resumed: bool,
+    max_challenge_duration_secs: u64,
+) -> Result<String> {
+    let deadline = if resumed {
+        run_state
+            .attempt_deadline_at
+            .clone()
+            .or_else(|| deadline_from_started_at(run_state, max_challenge_duration_secs))
+            .unwrap_or_else(|| build_attempt_deadline(max_challenge_duration_secs))
+    } else {
+        build_attempt_deadline(max_challenge_duration_secs)
+    };
+    run_state.attempt_deadline_at = Some(deadline.clone());
+    store.save_challenge(run_state).await?;
+    Ok(deadline)
+}
+
+fn deadline_from_started_at(
+    run_state: &ChallengeRunState,
+    max_challenge_duration_secs: u64,
+) -> Option<String> {
+    let started_at = run_state.last_started_at.as_deref()?;
+    let started_at = chrono::DateTime::parse_from_rfc3339(started_at).ok()?;
+    Some(
+        (started_at.with_timezone(&chrono::Utc)
+            + chrono::Duration::seconds(max_challenge_duration_secs as i64))
+        .to_rfc3339(),
+    )
+}
+
+fn build_attempt_deadline(max_challenge_duration_secs: u64) -> String {
+    (chrono::Utc::now() + chrono::Duration::seconds(max_challenge_duration_secs as i64))
+        .to_rfc3339()
+}
+
+fn remaining_timeout_budget(attempt_deadline_at: &str) -> Duration {
+    let now = chrono::Utc::now();
+    let remaining = chrono::DateTime::parse_from_rfc3339(attempt_deadline_at)
+        .map(|deadline| (deadline.with_timezone(&chrono::Utc) - now).num_milliseconds())
+        .unwrap_or(0);
+    if remaining <= 0 {
+        Duration::from_millis(0)
+    } else {
+        Duration::from_millis(remaining as u64)
+    }
+}
+
+fn shell_heavy_review_feedback(
+    tool_window: &ContestToolWindowStats,
+    hint_used: bool,
+) -> Option<String> {
+    if tool_window.total < 8 {
+        return None;
+    }
+
+    let shell_heavy = tool_window.trailing_shell >= 6
+        || (tool_window.shell >= 12
+            && tool_window.browser
+                + tool_window.http_request
+                + tool_window.route_discovery
+                + tool_window.search_exploit
+                <= 4);
+
+    if !shell_heavy {
+        return None;
+    }
+
+    if tool_window.tenth_man_review > 0 {
+        return None;
+    }
+
+    Some(format!(
+        "Runner intervention: the last {} tool calls are shell-heavy (shell={}, trailing_shell={}) with no tenth_man_review. Before any more shell probing, call tenth_man_review to challenge the current path. After that, switch to a higher-leverage action: use browser/http_request for precise verification, use route_discovery for authenticated route enumeration, use search_exploit for product/CVE hypotheses, or install and run a specialized scanner through shell. Do not continue handcrafting repetitive curl/find/grep loops. Hint already used: {}.",
+        tool_window.total,
+        tool_window.shell,
+        tool_window.trailing_shell,
+        hint_used
+    ))
+}
+
+async fn force_runner_review(
+    store: &RuntimeStateStore,
+    code: &str,
+    attempt_id: &str,
+    execution_id: &str,
+    step: usize,
+    tool_window: &ContestToolWindowStats,
+    watchdog_action: &WatchdogAction,
+    last_feedback: Option<&str>,
+) -> Option<String> {
+    if tool_window.tenth_man_review > 0 {
+        return None;
+    }
+
+    if last_feedback
+        .map(|feedback| feedback.contains("Runner tenth man review:"))
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    let focus_area = match watchdog_action {
+        WatchdogAction::InjectFeedback { reason } => Some(reason.clone()),
+        WatchdogAction::RequestHint { reason } => Some(reason.clone()),
+        WatchdogAction::Abort { reason } => Some(reason.clone()),
+        WatchdogAction::Continue => shell_heavy_review_feedback(tool_window, false),
+    }?;
+
+    let quick = tool_window.shell < 20;
+    match run_runner_review(execution_id, Some(focus_area.clone()), quick).await {
+        Ok(critique) => {
+            let _ = store
+                .append_attempt_event(
+                    code,
+                    attempt_id,
+                    "runner_tenth_man_review",
+                    &serde_json::json!({
+                        "step": step,
+                        "tool_window": tool_window,
+                        "focus_area": focus_area,
+                        "quick": quick,
+                        "critique": critique,
+                    }),
+                )
+                .await;
+            Some(critique)
+        }
+        Err(error) => {
+            let _ = store
+                .append_attempt_event(
+                    code,
+                    attempt_id,
+                    "runner_tenth_man_review_failed",
+                    &serde_json::json!({
+                        "step": step,
+                        "tool_window": tool_window,
+                        "focus_area": focus_area,
+                        "quick": quick,
+                        "error": error.to_string(),
+                    }),
+                )
+                .await;
+            None
+        }
+    }
+}
+
+async fn record_timeout_result(
+    arena: &ArenaClient,
+    store: &RuntimeStateStore,
+    challenge: &ChallengeInfo,
+    attempt_id: &str,
+    run_state: &mut ChallengeRunState,
+    failure_cooldown_secs: u64,
+    max_challenge_duration_secs: u64,
+) -> Result<AgentSolveReport> {
+    let final_status = "give_up".to_string();
+    let final_reason = Some(format!(
+        "challenge wall clock timeout reached after {} seconds",
+        max_challenge_duration_secs
+    ));
+    let steps_taken = run_state.current_step.unwrap_or(0);
+    let hint_used = run_state.hint_used;
+    let entrypoints = run_state.entrypoints.clone();
+    let discovered_flags: Vec<String> = run_state.discovered_flags.iter().cloned().collect();
+    run_state.tool_calls_count = read_tool_count(store, &challenge.code, attempt_id).await;
+    run_state.last_reason = final_reason.clone();
+    let _ = store
+        .append_attempt_event(
+            &challenge.code,
+            attempt_id,
+            "attempt_timed_out",
+            &serde_json::json!({
+                "max_challenge_duration_secs": max_challenge_duration_secs,
+                "tool_calls_count": run_state.tool_calls_count,
+                "current_step": run_state.current_step,
+            }),
+        )
+        .await;
+    let stop_result = arena.stop_challenge(&challenge.code).await;
+    let _ = store
+        .append_attempt_event(
+            &challenge.code,
+            attempt_id,
+            "attempt_timeout_cleanup",
+            &serde_json::json!({
+                "stop_ok": stop_result.is_ok(),
+                "stop_error": stop_result.err().map(|error| error.to_string()),
+            }),
+        )
+        .await;
+    let _ = store
+        .append_attempt_event(
+            &challenge.code,
+            attempt_id,
+            "attempt_finished",
+            &serde_json::json!({
+                "status": final_status,
+                "reason": final_reason,
+                "hint_used": run_state.hint_used,
+                "tool_calls_count": run_state.tool_calls_count,
+                "discovered_flags": run_state.discovered_flags.iter().cloned().collect::<Vec<_>>(),
+            }),
+        )
+        .await;
+    finish_challenge_run_state(store, run_state, &final_status, failure_cooldown_secs).await?;
+
+    Ok(AgentSolveReport {
+        code: challenge.code.clone(),
+        title: challenge.title.clone(),
+        entrypoints,
+        steps_taken,
+        hint_used,
+        discovered_flags,
+        submissions: Vec::new(),
+        final_status,
+        final_reason,
+    })
+}
+
 async fn prepare_challenge_attempt(
     store: &RuntimeStateStore,
     challenge: &ChallengeInfo,
     attempt_id: &str,
     run_state: &mut ChallengeRunState,
+    attempt_deadline_at: &str,
 ) -> Result<()> {
     run_state.title = Some(challenge.title.clone());
     run_state.last_started_at = Some(chrono::Utc::now().to_rfc3339());
+    run_state.attempt_deadline_at = Some(attempt_deadline_at.to_string());
     run_state.last_status = Some("starting".to_string());
     run_state.current_attempt_id = Some(attempt_id.to_string());
     run_state.current_step = None;
@@ -673,6 +947,7 @@ async fn prepare_challenge_attempt(
     run_state.watchdog_interventions = 0;
     run_state.total_attempts = run_state.total_attempts.saturating_add(1);
     run_state.next_eligible_at = None;
+    run_state.last_progress_at = Some(chrono::Utc::now().to_rfc3339());
     store.save_challenge(run_state).await?;
     let _ = store
         .append_attempt_event(
@@ -695,10 +970,13 @@ async fn activate_challenge_attempt(
     attempt_id: &str,
     entrypoints: &[String],
     run_state: &mut ChallengeRunState,
+    attempt_deadline_at: &str,
 ) -> Result<()> {
     run_state.last_status = Some("running".to_string());
     run_state.current_step = Some(0);
     run_state.entrypoints = entrypoints.to_vec();
+    run_state.attempt_deadline_at = Some(attempt_deadline_at.to_string());
+    run_state.last_progress_at = Some(chrono::Utc::now().to_rfc3339());
     store.save_challenge(run_state).await?;
     let _ = store
         .append_event(
@@ -739,18 +1017,25 @@ async fn finish_challenge_run_state(
     if matches!(final_status, "solved" | "done") {
         run_state.consecutive_failures = 0;
         run_state.next_eligible_at = None;
-    } else if matches!(final_status, "give_up" | "error") {
-        apply_failure_cooldown(run_state, failure_cooldown_secs);
+    } else if final_status == "give_up" {
+        apply_retry_cooldown(run_state, failure_cooldown_secs, true);
+    } else if final_status == "error" {
+        apply_retry_cooldown(run_state, failure_cooldown_secs, false);
     }
     store.save_challenge(run_state).await?;
     Ok(())
 }
 
-fn apply_failure_cooldown(run_state: &mut ChallengeRunState, failure_cooldown_secs: u64) {
-    run_state.consecutive_failures = run_state.consecutive_failures.saturating_add(1);
+fn apply_retry_cooldown(
+    run_state: &mut ChallengeRunState,
+    failure_cooldown_secs: u64,
+    count_as_failure: bool,
+) {
+    if count_as_failure {
+        run_state.consecutive_failures = run_state.consecutive_failures.saturating_add(1);
+    }
     run_state.next_eligible_at = Some(
-        (chrono::Utc::now() + chrono::Duration::seconds(failure_cooldown_secs as i64))
-            .to_rfc3339(),
+        (chrono::Utc::now() + chrono::Duration::seconds(failure_cooldown_secs as i64)).to_rfc3339(),
     );
 }
 
@@ -840,6 +1125,7 @@ async fn persist_runtime_snapshot(
     run_state.context_summary = context_summary;
     run_state.last_hint_content = hint_response.and_then(|value| value.hint_content.clone());
     run_state.recent_history = history.to_vec();
+    run_state.last_progress_at = Some(chrono::Utc::now().to_rfc3339());
     store.save_challenge(run_state).await
 }
 
@@ -927,4 +1213,32 @@ async fn recover_instance_capacity(
 
 fn is_instance_limit_error(message: &str) -> bool {
     message.contains("最多同时运行3个实例")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_attempt_deadline, deadline_from_started_at};
+    use crate::runtime::ChallengeRunState;
+
+    #[test]
+    fn derives_deadline_from_last_started_at() {
+        let run_state = ChallengeRunState {
+            last_started_at: Some("2026-04-16T01:00:00+00:00".to_string()),
+            ..ChallengeRunState::default()
+        };
+        let deadline = deadline_from_started_at(&run_state, 900).unwrap();
+        assert_eq!(deadline, "2026-04-16T01:15:00+00:00");
+    }
+
+    #[test]
+    fn fresh_attempt_uses_fresh_deadline_not_old_started_at() {
+        let run_state = ChallengeRunState {
+            last_started_at: Some("2026-04-16T01:00:00+00:00".to_string()),
+            last_status: Some("give_up".to_string()),
+            ..ChallengeRunState::default()
+        };
+        let derived = deadline_from_started_at(&run_state, 900).unwrap();
+        let fresh = build_attempt_deadline(900);
+        assert_ne!(derived, fresh);
+    }
 }

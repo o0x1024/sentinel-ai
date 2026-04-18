@@ -1,6 +1,6 @@
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use sentinel_llm::ChatMessage;
+use serde::{Deserialize, Serialize};
 
 use crate::agents::context_engineering::token_utils::estimate_message_tokens;
 use crate::agents::context_engineering::tool_digest::{condense_text, ToolDigest};
@@ -21,6 +21,18 @@ pub enum SentinelIntentStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+pub enum SentinelIntentTransition {
+    #[default]
+    Created,
+    Continued,
+    Resumed,
+    Branched,
+    Suspended,
+    Resolved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum SentinelIntentRelation {
     #[default]
     NewIntent,
@@ -36,6 +48,8 @@ pub struct SentinelIntentState {
     pub goal: String,
     pub task_type: String,
     #[serde(default)]
+    pub parent_intent_id: Option<String>,
+    #[serde(default)]
     pub focus_objects: Vec<String>,
     #[serde(default)]
     pub constraints: Vec<String>,
@@ -43,9 +57,13 @@ pub struct SentinelIntentState {
     pub expected_output: Option<String>,
     #[serde(default)]
     pub continuation_of: Option<String>,
+    #[serde(default)]
+    pub resumed_from_intent_id: Option<String>,
     pub confidence: f32,
     pub relation: SentinelIntentRelation,
     pub status: SentinelIntentStatus,
+    #[serde(default)]
+    pub last_transition: SentinelIntentTransition,
     #[serde(default)]
     pub clarification_needed: bool,
     pub created_at_ms: i64,
@@ -150,10 +168,7 @@ struct GroupedHistoryChunk {
     risk_level: String,
 }
 
-pub fn analyze_intent(
-    task: &str,
-    existing_intents: &[SentinelIntentState],
-) -> SentinelIntentState {
+pub fn analyze_intent(task: &str, existing_intents: &[SentinelIntentState]) -> SentinelIntentState {
     let now_ms = Utc::now().timestamp_millis();
     let goal = condense_text(task.trim(), 220);
     let focus_objects = extract_focus_objects(task);
@@ -173,19 +188,35 @@ pub fn analyze_intent(
     }
 
     let continuation_hint = has_continuation_hint(task);
-    let relation = if continuation_hint && best_match.is_some() {
+    let branch_hint = has_branch_hint(task);
+    let relation = if branch_hint && best_match.is_some() {
+        SentinelIntentRelation::Branch
+    } else if continuation_hint && best_match.is_some() {
         SentinelIntentRelation::Continuation
     } else if best_overlap >= 0.7 {
         SentinelIntentRelation::ResumeOldIntent
     } else if best_overlap >= 0.35 {
         SentinelIntentRelation::Continuation
-    } else if has_branch_hint(task) && best_match.is_some() {
-        SentinelIntentRelation::Branch
     } else {
         SentinelIntentRelation::NewIntent
     };
 
-    let continuation_of = best_match.map(|intent| intent.intent_id.clone());
+    let matched_intent_id = best_match.map(|intent| intent.intent_id.clone());
+    let parent_intent_id = if relation == SentinelIntentRelation::Branch {
+        matched_intent_id.clone()
+    } else {
+        None
+    };
+    let continuation_of = match relation {
+        SentinelIntentRelation::Continuation => matched_intent_id.clone(),
+        SentinelIntentRelation::Branch => matched_intent_id.clone(),
+        _ => None,
+    };
+    let resumed_from_intent_id = if relation == SentinelIntentRelation::ResumeOldIntent {
+        matched_intent_id.clone()
+    } else {
+        None
+    };
     let base_confidence: f32 = if continuation_hint {
         0.92
     } else if best_overlap >= 0.7 {
@@ -199,22 +230,36 @@ pub fn analyze_intent(
     };
 
     let confidence = (base_confidence
-        + if !constraints.is_empty() { 0.05_f32 } else { 0.0_f32 }
-        + if !focus_objects.is_empty() { 0.04_f32 } else { 0.0_f32 })
-        .min(0.99_f32);
+        + if !constraints.is_empty() {
+            0.05_f32
+        } else {
+            0.0_f32
+        }
+        + if !focus_objects.is_empty() {
+            0.04_f32
+        } else {
+            0.0_f32
+        })
+    .min(0.99_f32);
     let clarification_needed = confidence < 0.72;
 
-    let intent_id = continuation_of.clone().unwrap_or_else(|| {
-        let brief = goal
-            .chars()
-            .take(24)
-            .collect::<String>()
-            .replace(char::is_whitespace, "-")
-            .to_lowercase();
-        format!("intent-{}-{}", now_ms, brief)
-    });
+    let intent_id = match relation {
+        SentinelIntentRelation::Continuation | SentinelIntentRelation::ResumeOldIntent => {
+            matched_intent_id
+                .clone()
+                .unwrap_or_else(|| build_intent_id(now_ms, &goal))
+        }
+        SentinelIntentRelation::Branch | SentinelIntentRelation::NewIntent => {
+            build_intent_id(now_ms, &goal)
+        }
+    };
     let created_at_ms = best_match
-        .filter(|_| relation != SentinelIntentRelation::NewIntent)
+        .filter(|_| {
+            matches!(
+                relation,
+                SentinelIntentRelation::Continuation | SentinelIntentRelation::ResumeOldIntent
+            )
+        })
         .map(|intent| intent.created_at_ms)
         .unwrap_or(now_ms);
 
@@ -222,13 +267,16 @@ pub fn analyze_intent(
         intent_id,
         goal,
         task_type,
+        parent_intent_id,
         focus_objects,
         constraints,
         expected_output,
         continuation_of,
+        resumed_from_intent_id,
         confidence,
         relation,
         status: SentinelIntentStatus::Active,
+        last_transition: transition_for_relation(relation),
         clarification_needed,
         created_at_ms,
         updated_at_ms: now_ms,
@@ -239,19 +287,22 @@ pub fn update_intent_registry(
     intents: &mut Vec<SentinelIntentState>,
     current: &SentinelIntentState,
 ) {
+    let mut replaced = false;
     for intent in intents.iter_mut() {
         if intent.intent_id == current.intent_id {
             *intent = current.clone();
-            return;
+            replaced = true;
+            continue;
         }
-        if intent.status == SentinelIntentStatus::Active
-            && intent.intent_id != current.intent_id
-            && current.relation == SentinelIntentRelation::NewIntent
-        {
+        if intent.status == SentinelIntentStatus::Active && intent.intent_id != current.intent_id {
             intent.status = SentinelIntentStatus::Suspended;
+            intent.last_transition = SentinelIntentTransition::Suspended;
+            intent.updated_at_ms = current.updated_at_ms;
         }
     }
-    intents.push(current.clone());
+    if !replaced {
+        intents.push(current.clone());
+    }
     intents.sort_by_key(|item| item.updated_at_ms);
     if intents.len() > MAX_ACTIVE_INTENTS {
         let keep_from = intents.len() - MAX_ACTIVE_INTENTS;
@@ -283,7 +334,12 @@ pub fn update_pinned_context(
     );
     merge_unique_limited(
         &mut pinned.must_not_repeat_failures,
-        compression.failed_attempts.iter().take(3).cloned().collect(),
+        compression
+            .failed_attempts
+            .iter()
+            .take(3)
+            .cloned()
+            .collect(),
         MAX_PINNED_ITEMS,
     );
     merge_unique_limited(
@@ -298,21 +354,197 @@ pub fn update_pinned_context(
     );
 }
 
+pub fn focus_compression_state_for_intent(
+    compression: &SentinelCompressionState,
+    intent: &SentinelIntentState,
+) -> SentinelCompressionState {
+    if compression.slices.is_empty() {
+        return compression.clone();
+    }
+
+    let intent_ids = related_intent_ids(intent);
+    let intent_tokens = tokenize(&format!(
+        "{}\n{}\n{}",
+        intent.goal,
+        intent.constraints.join(" "),
+        intent.focus_objects.join(" ")
+    ));
+
+    let exact_slices = compression
+        .slices
+        .iter()
+        .filter(|slice| {
+            intent_ids
+                .iter()
+                .any(|intent_id| intent_id == &slice.intent_id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut matching_slices = if !exact_slices.is_empty() {
+        exact_slices
+    } else {
+        compression
+            .slices
+            .iter()
+            .filter(|slice| token_overlap(&intent_tokens, &tokenize(&slice.content)) >= 0.18)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    if matching_slices.is_empty() {
+        matching_slices = compression
+            .slices
+            .iter()
+            .rev()
+            .take(2)
+            .cloned()
+            .collect::<Vec<_>>();
+        matching_slices.reverse();
+    }
+
+    matching_slices.sort_by(|left, right| {
+        right
+            .relevance_score
+            .partial_cmp(&left.relevance_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    matching_slices.truncate(6);
+
+    let slice_contents = matching_slices
+        .iter()
+        .map(|slice| slice.content.clone())
+        .collect::<Vec<_>>();
+    let facts = slice_contents.iter().take(6).cloned().collect::<Vec<_>>();
+    let failed_attempts = matching_slices
+        .iter()
+        .filter(|slice| slice.risk_level == "high")
+        .map(|slice| slice.content.clone())
+        .take(4)
+        .collect::<Vec<_>>();
+    let artifacts = matching_slices
+        .iter()
+        .filter(|slice| contains_artifact_like_content(&slice.content))
+        .map(|slice| slice.content.clone())
+        .take(4)
+        .collect::<Vec<_>>();
+    let constraints = compression
+        .constraints
+        .iter()
+        .filter(|item| token_overlap(&intent_tokens, &tokenize(item)) >= 0.12)
+        .take(6)
+        .cloned()
+        .collect::<Vec<_>>();
+    let open_loops = compression
+        .open_loops
+        .iter()
+        .filter(|item| {
+            item.contains(&intent.intent_id)
+                || intent
+                    .continuation_of
+                    .as_ref()
+                    .is_some_and(|previous| item.contains(previous))
+                || token_overlap(&intent_tokens, &tokenize(item)) >= 0.12
+        })
+        .take(6)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    SentinelCompressionState {
+        version: compression.version,
+        active_intent_ids: compression
+            .active_intent_ids
+            .iter()
+            .filter(|item| intent_ids.iter().any(|intent_id| intent_id == *item))
+            .cloned()
+            .collect(),
+        resolved_intent_ids: compression
+            .resolved_intent_ids
+            .iter()
+            .filter(|item| intent_ids.iter().any(|intent_id| intent_id == *item))
+            .cloned()
+            .collect(),
+        facts,
+        constraints,
+        decisions: compression
+            .decisions
+            .iter()
+            .filter(|item| token_overlap(&intent_tokens, &tokenize(item)) >= 0.12)
+            .take(4)
+            .cloned()
+            .collect(),
+        failed_attempts,
+        open_loops,
+        artifacts,
+        tool_findings: compression
+            .tool_findings
+            .iter()
+            .filter(|item| token_overlap(&intent_tokens, &tokenize(item)) >= 0.12)
+            .take(4)
+            .cloned()
+            .collect(),
+        slices: matching_slices.clone(),
+        summary_text: condense_text(&slice_contents.join(" | "), 420),
+    }
+}
+
+pub fn restore_pinned_context_for_intent(
+    pinned: &mut SentinelPinnedContext,
+    compression: &SentinelCompressionState,
+    intent: &SentinelIntentState,
+) {
+    let focused = focus_compression_state_for_intent(compression, intent);
+    merge_unique_limited(
+        &mut pinned.must_keep_facts,
+        focused.facts.iter().take(4).cloned().collect(),
+        MAX_PINNED_ITEMS,
+    );
+    merge_unique_limited(
+        &mut pinned.must_keep_artifacts,
+        focused.artifacts.iter().take(4).cloned().collect(),
+        MAX_PINNED_ITEMS,
+    );
+    merge_unique_limited(
+        &mut pinned.must_not_repeat_failures,
+        focused.failed_attempts.iter().take(4).cloned().collect(),
+        MAX_PINNED_ITEMS,
+    );
+    merge_unique_limited(
+        &mut pinned.hard_constraints,
+        focused.constraints.iter().take(4).cloned().collect(),
+        MAX_PINNED_ITEMS,
+    );
+}
+
 pub fn render_sentinel_context(
     intent: &SentinelIntentState,
     pinned: &SentinelPinnedContext,
     compression: &SentinelCompressionState,
     clarification: &SentinelClarificationState,
+    intent_registry: &[SentinelIntentState],
 ) -> String {
     let mut sections = Vec::new();
     sections.push(format!(
-        "[Sentinel Intent]\n- intent_id: {}\n- relation: {:?}\n- confidence: {:.2}\n- task_type: {}\n- goal: {}",
+        "[Sentinel Intent]\n- intent_id: {}\n- relation: {:?}\n- transition: {:?}\n- confidence: {:.2}\n- task_type: {}\n- goal: {}",
         intent.intent_id,
         intent.relation,
+        intent.last_transition,
         intent.confidence,
         intent.task_type,
         intent.goal
     ));
+
+    if let Some(parent_intent_id) = intent.parent_intent_id.as_ref() {
+        sections.push(format!(
+            "[Sentinel Parent]\n- parent_intent_id: {}",
+            parent_intent_id
+        ));
+    }
+    if let Some(resumed_from) = intent.resumed_from_intent_id.as_ref() {
+        sections.push(format!(
+            "[Sentinel Resume]\n- resumed_from_intent_id: {}",
+            resumed_from
+        ));
+    }
 
     if !intent.focus_objects.is_empty() {
         sections.push(format!(
@@ -351,10 +583,17 @@ pub fn render_sentinel_context(
         sections.push(compressed_lines);
     }
 
+    let registry_lines = render_intent_registry(intent_registry, intent);
+    if !registry_lines.is_empty() {
+        sections.push(registry_lines);
+    }
+
     sections.join("\n\n")
 }
 
-pub fn build_sentinel_clarification_state(intent: &SentinelIntentState) -> SentinelClarificationState {
+pub fn build_sentinel_clarification_state(
+    intent: &SentinelIntentState,
+) -> SentinelClarificationState {
     SentinelClarificationState {
         needed: intent.clarification_needed,
         reason: if intent.clarification_needed {
@@ -494,7 +733,11 @@ pub fn apply_sentinel_history_selection(
         if kept_tokens <= target_history_budget {
             break;
         }
-        if groups.len().saturating_sub(keep.iter().filter(|flag| **flag).count()) >= groups.len() {
+        if groups
+            .len()
+            .saturating_sub(keep.iter().filter(|flag| **flag).count())
+            >= groups.len()
+        {
             break;
         }
         if index + 1 == groups.len() {
@@ -545,19 +788,67 @@ fn adjusted_history_budget(
     relaxed.min(total_tokens)
 }
 
-fn score_guard_threshold(
-    clarification: &SentinelClarificationState,
-    confidence: f32,
-) -> f32 {
+fn related_intent_ids(intent: &SentinelIntentState) -> Vec<String> {
+    let mut ids = vec![intent.intent_id.clone()];
+    if let Some(previous) = intent.continuation_of.as_ref() {
+        if !ids.iter().any(|item| item == previous) {
+            ids.push(previous.clone());
+        }
+    }
+    if let Some(parent) = intent.parent_intent_id.as_ref() {
+        if !ids.iter().any(|item| item == parent) {
+            ids.push(parent.clone());
+        }
+    }
+    if let Some(resumed_from) = intent.resumed_from_intent_id.as_ref() {
+        if !ids.iter().any(|item| item == resumed_from) {
+            ids.push(resumed_from.clone());
+        }
+    }
+    ids
+}
+
+fn build_intent_id(now_ms: i64, goal: &str) -> String {
+    let brief = goal
+        .chars()
+        .take(24)
+        .collect::<String>()
+        .replace(char::is_whitespace, "-")
+        .to_lowercase();
+    format!("intent-{}-{}", now_ms, brief)
+}
+
+fn transition_for_relation(relation: SentinelIntentRelation) -> SentinelIntentTransition {
+    match relation {
+        SentinelIntentRelation::NewIntent => SentinelIntentTransition::Created,
+        SentinelIntentRelation::Continuation => SentinelIntentTransition::Continued,
+        SentinelIntentRelation::ResumeOldIntent => SentinelIntentTransition::Resumed,
+        SentinelIntentRelation::Branch => SentinelIntentTransition::Branched,
+    }
+}
+
+fn score_guard_threshold(clarification: &SentinelClarificationState, confidence: f32) -> f32 {
     match clarification.compression_aggressiveness {
         SentinelCompressionAggressiveness::High => {
-            if confidence < 0.72 { 2.4 } else { 2.1 }
+            if confidence < 0.72 {
+                2.4
+            } else {
+                2.1
+            }
         }
         SentinelCompressionAggressiveness::Medium => {
-            if confidence < 0.72 { 2.2 } else { 1.95 }
+            if confidence < 0.72 {
+                2.2
+            } else {
+                1.95
+            }
         }
         SentinelCompressionAggressiveness::Low => {
-            if confidence < 0.72 { 1.8 } else { 1.65 }
+            if confidence < 0.72 {
+                1.8
+            } else {
+                1.65
+            }
         }
         SentinelCompressionAggressiveness::Disabled => f32::MAX,
     }
@@ -643,7 +934,12 @@ fn render_compression_state(compression: &SentinelCompressionState) -> String {
             .slices
             .iter()
             .take(5)
-            .map(|slice| format!("- [{}:{}] {}", slice.source_type, slice.keep_mode, slice.content))
+            .map(|slice| {
+                format!(
+                    "- [{}:{}] {}",
+                    slice.source_type, slice.keep_mode, slice.content
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         lines.push(format!("- slices:\n{}", rendered));
@@ -653,6 +949,32 @@ fn render_compression_state(compression: &SentinelCompressionState) -> String {
     }
 
     format!("[Sentinel Compressed Context]\n{}", lines.join("\n"))
+}
+
+fn render_intent_registry(
+    intents: &[SentinelIntentState],
+    current_intent: &SentinelIntentState,
+) -> String {
+    if intents.is_empty() {
+        return String::new();
+    }
+    let mut lines = Vec::new();
+    for intent in intents.iter().rev().take(4) {
+        let marker = if intent.intent_id == current_intent.intent_id {
+            "*"
+        } else {
+            "-"
+        };
+        lines.push(format!(
+            "{} {} [{:?}/{:?}] {}",
+            marker,
+            intent.intent_id,
+            intent.status,
+            intent.last_transition,
+            condense_text(&intent.goal, 72)
+        ));
+    }
+    format!("[Sentinel Intent Registry]\n{}", lines.join("\n"))
 }
 
 fn merge_compression_state(
@@ -673,7 +995,10 @@ fn merge_compression_state(
     );
     merge_unique_limited(
         &mut compression.open_loops,
-        vec![format!("Continue intent {}: {}", intent.intent_id, intent.goal)],
+        vec![format!(
+            "Continue intent {}: {}",
+            intent.intent_id, intent.goal
+        )],
         MAX_COMPRESSION_ITEMS,
     );
     for slice in slices {
@@ -770,11 +1095,7 @@ fn group_history(history: &[ChatMessage]) -> Vec<GroupedHistoryChunk> {
     groups
 }
 
-fn score_group(
-    group: &GroupedHistoryChunk,
-    intent_tokens: &[String],
-    confidence: f32,
-) -> f32 {
+fn score_group(group: &GroupedHistoryChunk, intent_tokens: &[String], confidence: f32) -> f32 {
     let summary_tokens = tokenize(&group.summary);
     let overlap = token_overlap(intent_tokens, &summary_tokens);
     let recency_score = 1.0 + (group.index as f32 * 0.08);
@@ -800,10 +1121,7 @@ fn summarize_chunk(messages: &[ChatMessage]) -> String {
     condense_text(&parts.join(" | "), 240)
 }
 
-fn build_context_slice(
-    chunk: &GroupedHistoryChunk,
-    intent_id: &str,
-) -> SentinelContextSlice {
+fn build_context_slice(chunk: &GroupedHistoryChunk, intent_id: &str) -> SentinelContextSlice {
     SentinelContextSlice {
         slice_id: format!("slice-{}-{}", intent_id, chunk.index),
         intent_id: intent_id.to_string(),
@@ -874,7 +1192,16 @@ fn extract_constraints(task: &str) -> Vec<String> {
         let lower = sentence.to_lowercase();
         if contains_any(
             &lower,
-            &["must", "must not", "do not", "不要", "必须", "不能", "only", "只保留"],
+            &[
+                "must",
+                "must not",
+                "do not",
+                "不要",
+                "必须",
+                "不能",
+                "only",
+                "只保留",
+            ],
         ) {
             items.push(condense_text(sentence.trim(), 160));
         }
@@ -889,7 +1216,15 @@ fn extract_output_requirements(task: &str) -> Vec<String> {
         let lower = sentence.to_lowercase();
         if contains_any(
             &lower,
-            &["output", "format", "格式", "只保留", "不要", "plain text", "markdown"],
+            &[
+                "output",
+                "format",
+                "格式",
+                "只保留",
+                "不要",
+                "plain text",
+                "markdown",
+            ],
         ) {
             items.push(condense_text(sentence.trim(), 160));
         }
@@ -927,25 +1262,52 @@ fn has_continuation_hint(task: &str) -> bool {
     let lower = task.to_lowercase();
     contains_any(
         &lower,
-        &["continue", "继续", "接着", "based on", "延续", "follow up", "next step"],
+        &[
+            "continue",
+            "继续",
+            "接着",
+            "based on",
+            "延续",
+            "follow up",
+            "next step",
+        ],
     )
 }
 
 fn has_branch_hint(task: &str) -> bool {
     let lower = task.to_lowercase();
-    contains_any(&lower, &["另外", "另一个", "instead", "branch", "改成", "换个"])
+    contains_any(
+        &lower,
+        &["另外", "另一个", "instead", "branch", "改成", "换个"],
+    )
 }
 
 fn infer_risk_level(text: &str) -> String {
     let lower = text.to_lowercase();
     if contains_any(
         &lower,
-        &["fail", "error", "timeout", "rejected", "forbidden", "失败", "错误", "超时"],
+        &[
+            "fail",
+            "error",
+            "timeout",
+            "rejected",
+            "forbidden",
+            "失败",
+            "错误",
+            "超时",
+        ],
     ) {
         "high".to_string()
     } else if contains_any(
         &lower,
-        &["must", "constraint", "requirement", "artifact", "路径", "约束"],
+        &[
+            "must",
+            "constraint",
+            "requirement",
+            "artifact",
+            "路径",
+            "约束",
+        ],
     ) {
         "medium".to_string()
     } else {
@@ -957,7 +1319,9 @@ fn contains_artifact_like_content(text: &str) -> bool {
     let lower = text.to_lowercase();
     contains_any(
         &lower,
-        &[".rs", ".ts", ".vue", "/", "artifact", "stdout", "stderr", "response", "request"],
+        &[
+            ".rs", ".ts", ".vue", "/", "artifact", "stdout", "stderr", "response", "request",
+        ],
     )
 }
 
@@ -1031,6 +1395,67 @@ mod tests {
     }
 
     #[test]
+    fn sentinel_branch_creates_new_intent_with_parent_link() {
+        let existing = vec![SentinelIntentState {
+            intent_id: "intent-1".to_string(),
+            goal: "fix login timeout in api gateway".to_string(),
+            confidence: 0.9,
+            status: SentinelIntentStatus::Active,
+            ..SentinelIntentState::default()
+        }];
+        let intent = analyze_intent("另外做一个 login timeout 的分支验证", &existing);
+        assert_eq!(intent.relation, SentinelIntentRelation::Branch);
+        assert_ne!(intent.intent_id, "intent-1");
+        assert_eq!(intent.parent_intent_id.as_deref(), Some("intent-1"));
+        assert_eq!(intent.last_transition, SentinelIntentTransition::Branched);
+    }
+
+    #[test]
+    fn update_intent_registry_suspends_previous_active_intent_on_resume() {
+        let now_ms = 1_700_000_000_000_i64;
+        let mut intents = vec![
+            SentinelIntentState {
+                intent_id: "intent-a".to_string(),
+                goal: "fix login timeout".to_string(),
+                status: SentinelIntentStatus::Suspended,
+                updated_at_ms: now_ms - 20,
+                ..SentinelIntentState::default()
+            },
+            SentinelIntentState {
+                intent_id: "intent-b".to_string(),
+                goal: "investigate weekly report export".to_string(),
+                status: SentinelIntentStatus::Active,
+                updated_at_ms: now_ms - 10,
+                ..SentinelIntentState::default()
+            },
+        ];
+        let resumed = SentinelIntentState {
+            intent_id: "intent-a".to_string(),
+            goal: "resume login timeout".to_string(),
+            resumed_from_intent_id: Some("intent-a".to_string()),
+            relation: SentinelIntentRelation::ResumeOldIntent,
+            status: SentinelIntentStatus::Active,
+            last_transition: SentinelIntentTransition::Resumed,
+            updated_at_ms: now_ms,
+            ..SentinelIntentState::default()
+        };
+
+        update_intent_registry(&mut intents, &resumed);
+        let current = intents
+            .iter()
+            .find(|intent| intent.intent_id == "intent-a")
+            .unwrap();
+        let other = intents
+            .iter()
+            .find(|intent| intent.intent_id == "intent-b")
+            .unwrap();
+        assert_eq!(current.status, SentinelIntentStatus::Active);
+        assert_eq!(current.last_transition, SentinelIntentTransition::Resumed);
+        assert_eq!(other.status, SentinelIntentStatus::Suspended);
+        assert_eq!(other.last_transition, SentinelIntentTransition::Suspended);
+    }
+
+    #[test]
     fn sentinel_history_selection_prefers_relevant_groups() {
         let intent = SentinelIntentState {
             intent_id: "intent-1".to_string(),
@@ -1092,5 +1517,101 @@ mod tests {
             clarified.compression_aggressiveness,
             SentinelCompressionAggressiveness::Disabled
         );
+    }
+
+    #[test]
+    fn focus_compression_state_prefers_matching_intent_slices() {
+        let compression = SentinelCompressionState {
+            version: 3,
+            constraints: vec![
+                "A intent constraint keep login path".to_string(),
+                "B intent constraint keep report path".to_string(),
+            ],
+            slices: vec![
+                SentinelContextSlice {
+                    slice_id: "slice-a".to_string(),
+                    intent_id: "intent-a".to_string(),
+                    source_type: "assistant".to_string(),
+                    source_ref: "group-1".to_string(),
+                    relevance_score: 2.8,
+                    risk_level: "medium".to_string(),
+                    keep_mode: "compress".to_string(),
+                    content: "login timeout still fails on api gateway".to_string(),
+                },
+                SentinelContextSlice {
+                    slice_id: "slice-b".to_string(),
+                    intent_id: "intent-b".to_string(),
+                    source_type: "assistant".to_string(),
+                    source_ref: "group-2".to_string(),
+                    relevance_score: 2.6,
+                    risk_level: "medium".to_string(),
+                    keep_mode: "compress".to_string(),
+                    content: "weekly report formatting issue in export panel".to_string(),
+                },
+            ],
+            ..SentinelCompressionState::default()
+        };
+        let intent = SentinelIntentState {
+            intent_id: "intent-a".to_string(),
+            goal: "continue fixing login timeout in api gateway".to_string(),
+            focus_objects: vec!["login".to_string(), "gateway".to_string()],
+            continuation_of: Some("intent-a".to_string()),
+            ..SentinelIntentState::default()
+        };
+
+        let focused = focus_compression_state_for_intent(&compression, &intent);
+        assert_eq!(focused.slices.len(), 1);
+        assert_eq!(focused.slices[0].intent_id, "intent-a");
+        assert!(focused.summary_text.contains("login timeout"));
+    }
+
+    #[test]
+    fn restore_pinned_context_for_intent_ignores_unrelated_slices() {
+        let mut pinned = SentinelPinnedContext::default();
+        let compression = SentinelCompressionState {
+            slices: vec![
+                SentinelContextSlice {
+                    slice_id: "slice-a".to_string(),
+                    intent_id: "intent-a".to_string(),
+                    source_type: "tool".to_string(),
+                    source_ref: "history-a".to_string(),
+                    relevance_score: 3.0,
+                    risk_level: "high".to_string(),
+                    keep_mode: "archive".to_string(),
+                    content: "/tmp/login.log showed timeout failure".to_string(),
+                },
+                SentinelContextSlice {
+                    slice_id: "slice-b".to_string(),
+                    intent_id: "intent-b".to_string(),
+                    source_type: "tool".to_string(),
+                    source_ref: "history-b".to_string(),
+                    relevance_score: 2.0,
+                    risk_level: "low".to_string(),
+                    keep_mode: "compress".to_string(),
+                    content: "/tmp/report.csv export looked fine".to_string(),
+                },
+            ],
+            constraints: vec![
+                "keep login path intact".to_string(),
+                "preserve report export".to_string(),
+            ],
+            ..SentinelCompressionState::default()
+        };
+        let intent = SentinelIntentState {
+            intent_id: "intent-a".to_string(),
+            goal: "resume login timeout investigation".to_string(),
+            focus_objects: vec!["login".to_string()],
+            ..SentinelIntentState::default()
+        };
+
+        restore_pinned_context_for_intent(&mut pinned, &compression, &intent);
+        assert!(pinned
+            .must_keep_facts
+            .iter()
+            .any(|item| item.contains("login.log")));
+        assert!(!pinned
+            .must_keep_facts
+            .iter()
+            .any(|item| item.contains("report.csv")));
     }
 }

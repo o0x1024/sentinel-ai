@@ -592,6 +592,71 @@ impl DatabaseService {
             .await?;
         }
 
+        let memory_records_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'memory_records')"
+        )
+        .fetch_one(pool)
+        .await?;
+        if !memory_records_exists {
+            info!("Creating memory_records table...");
+            sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS memory_records (
+                    id TEXT PRIMARY KEY,
+                    title TEXT,
+                    text TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    tier TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    stability TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    confidence DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+                    importance INTEGER NOT NULL DEFAULT 3,
+                    tags_json TEXT NOT NULL DEFAULT '[]',
+                    origin_execution_id TEXT,
+                    supersedes_memory_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at_ms BIGINT NOT NULL,
+                    updated_at_ms BIGINT NOT NULL
+                )"#,
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        let memory_projection_state_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'memory_projection_state')"
+        )
+        .fetch_one(pool)
+        .await?;
+        if !memory_projection_state_exists {
+            info!("Creating memory_projection_state table...");
+            sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS memory_projection_state (
+                    memory_id TEXT PRIMARY KEY,
+                    lexical_indexed BOOLEAN NOT NULL DEFAULT FALSE,
+                    vector_indexed BOOLEAN NOT NULL DEFAULT FALSE,
+                    skill_projected BOOLEAN NOT NULL DEFAULT FALSE,
+                    last_error TEXT,
+                    updated_at_ms BIGINT NOT NULL
+                )"#,
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_memory_records_status_updated
+               ON memory_records(status, updated_at_ms DESC)"#,
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_memory_records_kind_updated
+               ON memory_records(kind, updated_at_ms DESC)"#,
+        )
+        .execute(pool)
+        .await?;
+
         let agent_run_states_exists: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'agent_run_states')"
         ).fetch_one(pool).await?;
@@ -1114,6 +1179,32 @@ impl DatabaseService {
                 response_excerpt TEXT,
                 created_at DATETIME NOT NULL
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS memory_records (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                text TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                tier TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                stability TEXT NOT NULL,
+                source TEXT NOT NULL,
+                confidence DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+                importance INTEGER NOT NULL DEFAULT 3,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                origin_execution_id TEXT,
+                supersedes_memory_id TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at_ms BIGINT NOT NULL,
+                updated_at_ms BIGINT NOT NULL
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS memory_projection_state (
+                memory_id TEXT PRIMARY KEY,
+                lexical_indexed BOOLEAN NOT NULL DEFAULT FALSE,
+                vector_indexed BOOLEAN NOT NULL DEFAULT FALSE,
+                skill_projected BOOLEAN NOT NULL DEFAULT FALSE,
+                last_error TEXT,
+                updated_at_ms BIGINT NOT NULL
+            )"#,
             r#"CREATE TABLE IF NOT EXISTS llm_test_suites (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -1283,6 +1374,16 @@ impl DatabaseService {
         self.execute_runtime_ddl(
             runtime,
             "CREATE INDEX IF NOT EXISTS idx_memory_executions_created_at ON memory_executions(created_at)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_memory_records_status_updated ON memory_records(status, updated_at_ms DESC)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_memory_records_kind_updated ON memory_records(kind, updated_at_ms DESC)",
         )
         .await?;
         self.execute_runtime_ddl(

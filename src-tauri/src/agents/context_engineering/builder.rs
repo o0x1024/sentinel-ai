@@ -22,10 +22,11 @@ use crate::agents::context_engineering::memory_index::{
 };
 use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
 use crate::agents::context_engineering::policy::{ContextPolicy, ContextScope};
+use crate::agents::context_engineering::render_artifact_readback_summary;
 use crate::agents::context_engineering::sentinel::{
     analyze_intent, apply_sentinel_history_selection, build_sentinel_clarification_state,
-    reconcile_sentinel_clarification, render_sentinel_context, update_intent_registry,
-    update_pinned_context,
+    focus_compression_state_for_intent, reconcile_sentinel_clarification, render_sentinel_context,
+    restore_pinned_context_for_intent, update_intent_registry, update_pinned_context,
 };
 use crate::agents::context_engineering::token_utils::{
     estimate_message_tokens, estimate_tokens, SYSTEM_MESSAGE_OVERHEAD_TOKENS,
@@ -34,6 +35,7 @@ use crate::agents::context_engineering::tool_digest::condense_text;
 use crate::agents::context_engineering::types::{trim_history_preserve_tool_pairs, ContextPacket};
 use crate::agents::sliding_window::{SlidingWindowConfig, SlidingWindowManager};
 use crate::agents::types::DocumentAttachmentInfo;
+use crate::memory::build_memory_retrieval_trace;
 use sentinel_rag::canonicalize_memory_kind;
 
 const USER_FORCED_RULES_CONFIG_CATEGORY: &str = "agent";
@@ -156,6 +158,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let mut retrieved_memory_lines: Vec<String> = Vec::new();
     let mut retrieved_memory_sections = Vec::new();
     let mut retrieved_memory_ids: Vec<String> = Vec::new();
+    let mut memory_retrieval_trace = None;
     let mut run_state_digests = Vec::new();
     let mut sentinel_run_state: Option<ContextRunState> = None;
 
@@ -175,7 +178,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     if policy.include_stuck_resolution_rule {
         system_prompt.push_str(
             "\n\n[Stuck Resolution Rule]\n\
-            If you have tried multiple approaches and failed, or if you feel you are stuck in a loop, you MUST immediately call the `tenth_man_review` tool with `mode: 'full_history'` to break your cognitive bias and get an adversarial critique of your current approach. Do NOT continue guessing if you are stuck."
+            Do not rely on your subjective feeling of being stuck. You MUST immediately call the `tenth_man_review` tool with `review_mode: { mode: 'full_history' }` and `review_type: 'full'` before another retry when any of these are true: you have already spent 3-4 turns on the same path; you are repeating the same tool family, route family, command pattern, or parameter pattern without clear new evidence; your next step is only a small variation of a failed attempt; you cannot clearly state what new information the next attempt should produce; or your current plan still depends on an unverified assumption. Before repeating a path, explicitly ask yourself: \"What new evidence will this attempt produce?\" If the answer is weak, unclear, or mostly the same as before, call `tenth_man_review` first. Do NOT continue guessing."
         );
     }
 
@@ -195,6 +198,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             user_preferences: Vec::new(),
             current_plan: None,
             last_tool_digests: vec![],
+            tracked_artifacts: Vec::new(),
             memory_items: Vec::new(),
             sentinel_active_intent: None,
             sentinel_intent_registry: Vec::new(),
@@ -221,6 +225,11 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             let intent = analyze_intent(&input.task, &state.sentinel_intent_registry);
             let clarification = build_sentinel_clarification_state(&intent);
             update_intent_registry(&mut state.sentinel_intent_registry, &intent);
+            restore_pinned_context_for_intent(
+                &mut state.sentinel_pinned_context,
+                &state.sentinel_compression_state,
+                &intent,
+            );
             update_pinned_context(
                 &mut state.sentinel_pinned_context,
                 &input.task,
@@ -256,8 +265,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         run_state_digests = state.last_tool_digests.clone();
         if sentinel_mode {
             if let Some(clarification) = state.sentinel_last_clarification.take() {
-                state.sentinel_last_clarification =
-                    Some(reconcile_sentinel_clarification(clarification, &run_state_digests));
+                state.sentinel_last_clarification = Some(reconcile_sentinel_clarification(
+                    clarification,
+                    &run_state_digests,
+                ));
             }
         }
         if policy.feature_context_packet_v2 {
@@ -280,10 +291,18 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 execution_id: input.execution_id.clone(),
                 query: retrieval_query,
                 top_k: 8,
+                include_reflection: false,
             };
             let retrieved =
                 retrieve_memory_items_hybrid(&input.app_handle, &mut state, &query).await;
             retrieved_memory_ids = retrieved.iter().map(|item| item.id.clone()).collect();
+            memory_retrieval_trace = Some(build_memory_retrieval_trace(
+                &query.query,
+                query.top_k,
+                &retrieved,
+                false,
+                query.include_reflection,
+            ));
             let retrieved_text = retrieved
                 .iter()
                 .map(|item| {
@@ -311,11 +330,14 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 state.sentinel_active_intent.as_ref(),
                 state.sentinel_last_clarification.as_ref(),
             ) {
+                let focused_compression =
+                    focus_compression_state_for_intent(&state.sentinel_compression_state, intent);
                 let sentinel_context = render_sentinel_context(
                     intent,
                     &state.sentinel_pinned_context,
-                    &state.sentinel_compression_state,
+                    &focused_compression,
                     clarification,
+                    &state.sentinel_intent_registry,
                 );
                 if !sentinel_context.trim().is_empty() {
                     run_state_block.push_str("\n\n");
@@ -365,21 +387,20 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
-    if let Some(active_terminal_session_id) = input
+    if input
         .active_terminal_session_id
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty())
+        .is_some()
     {
-        system_prompt.push_str(&format!(
+        system_prompt.push_str(
             "\n\n[Interactive Terminal Session]\n\
             - An interactive terminal session is already active.\n\
-            - Reusable session_id: {}\n\
-            - If you call `interactive_shell` and want to target the existing terminal, use this exact session_id.\n\
-            - Do not invent, rename, summarize, or paraphrase session IDs.\n\
-            - If you are unsure whether reuse is necessary, omit `session_id` instead of guessing.",
-            active_terminal_session_id
-        ));
+            - `interactive_shell` reuses the current terminal session by default.\n\
+            - Use `session_policy: \"new\"` only when you intentionally need a fresh terminal session.\n\
+            - Do not invent, guess, or manage terminal session IDs yourself.",
+        );
 
         if let Some(fingerprint) = input
             .active_terminal_session_fingerprint
@@ -387,10 +408,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             .map(str::trim)
             .filter(|v| !v.is_empty())
         {
-            system_prompt.push_str(&format!(
-                "\n- Active terminal fingerprint: {}",
-                fingerprint
-            ));
+            system_prompt.push_str(&format!("\n- Active terminal fingerprint: {}", fingerprint));
         }
     }
 
@@ -423,7 +441,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         "\n\n[Tool Usage Priority]\n\
         - Use `ask_user_question` when requirements are ambiguous, when multiple implementation paths are viable, or when you need the user to choose between concrete options.\n\
         - Use one-shot `shell` only for commands that should finish on their own and return output promptly.\n\
-        - If a command starts a server, watcher, log follower, dev process, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive.\n\
+        - If a command starts a server, watcher, log follower, dev process, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive.\nexample: starting a dev server should be `shell {\"command\":\"npm run dev\",\"run_in_background\":true}` instead of a foreground `shell {\"command\":\"npm run dev\"}`.\nexample: following logs should be `shell {\"command\":\"docker logs -f api\",\"run_in_background\":true}`; if you need to interact with the live process, use `interactive_shell` instead.\n\
         - Use `interactive_shell` for iterative terminal work, REPLs, TUIs, debugger sessions, or when you need to inspect a live long-running process interactively.\n\
         - Never leave the conversation blocked on a long-lived foreground shell command.",
     );
@@ -456,6 +474,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             - Tool outputs exceeding threshold are saved as files (not truncated)\n\
             - Applies to: shell commands, HTTP responses, and other tools\n\
             - Your conversation history is at '{}' (isolated per execution)\n\
+            - Treat stored-output previews as hints only, not as complete evidence.\n\
+            - Before making claims about a stored artifact, read it sequentially in bounded chunks until the full file is covered.\n\
+            - Prefer `file_read` with increasing `offset` and bounded `limit` for host files; use shell line-range reads for container files.\n\
+            - If you have only read part of a stored artifact, say the result is partial and cite the ranges inspected.\n\
             - Use local runtime context (not prompt) for detailed file exploration commands.\n\
             - Keep model responses focused on task-critical facts and artifact references.",
             env_label(execution_context.env),
@@ -732,7 +754,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 .map(|intent| json!({
                     "intent_id": intent.intent_id,
                     "relation": format!("{:?}", intent.relation),
+                    "transition": format!("{:?}", intent.last_transition),
                     "confidence": intent.confidence,
+                    "parent_intent_id": intent.parent_intent_id,
+                    "resumed_from_intent_id": intent.resumed_from_intent_id,
                 })),
             "sentinel_clarification": sentinel_run_state
                 .as_ref()
@@ -783,6 +808,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             max_tokens,
             trim_trace,
             retrieval_ids: retrieved_memory_ids,
+            memory_retrieval: memory_retrieval_trace,
             sentinel_mode,
             sentinel_intent_id: sentinel_run_state
                 .as_ref()
@@ -796,6 +822,14 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 .as_ref()
                 .and_then(|state| state.sentinel_active_intent.as_ref())
                 .map(|intent| format!("{:?}", intent.relation)),
+            sentinel_intent_transition: sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_active_intent.as_ref())
+                .map(|intent| format!("{:?}", intent.last_transition)),
+            sentinel_parent_intent_id: sentinel_run_state
+                .as_ref()
+                .and_then(|state| state.sentinel_active_intent.as_ref())
+                .and_then(|intent| intent.parent_intent_id.clone()),
             sentinel_clarification_needed: sentinel_run_state
                 .as_ref()
                 .and_then(|state| state.sentinel_last_clarification.as_ref())
@@ -980,6 +1014,10 @@ fn render_run_state(
             "Selected Tools: {}\n",
             state.selected_tools.join(", ")
         ));
+    }
+    if let Some(summary) = render_artifact_readback_summary(&state.tracked_artifacts) {
+        out.push_str(&summary);
+        out.push('\n');
     }
     // Tool digests are rendered in ContextPacket::render_orchestrator_context
     // and injected as a user-context message to avoid dynamic data in system.

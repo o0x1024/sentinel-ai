@@ -68,6 +68,7 @@
         :show-content="builtinSourceFilter === 'builtin'"
         :workflow-count="workflowToolCount"
         :plugin-count="pluginToolCount"
+        :focused-memory-id="focusedMemoryId"
         @source-filter-change="handleBuiltinSourceFilterChange"
       />
       <template v-if="builtinSourceFilter === 'workflow'">
@@ -402,9 +403,18 @@ const builtinSourceFilter = ref<'builtin' | 'workflow' | 'plugin'>('builtin')
 const workflowToolCount = ref(0)
 const pluginToolCount = ref(0)
 const validTabs = new Set(['builtin_tools', 'my_servers', 'marketplace', 'skills'])
+const focusedMemoryId = computed(() => {
+  const raw = route.query.memoryId
+  return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null
+})
 
 const syncTabFromRoute = () => {
   const tabQuery = route.query.tab
+  if (focusedMemoryId.value) {
+    activeTab.value = 'builtin_tools'
+    builtinSourceFilter.value = 'builtin'
+    return
+  }
   if (tabQuery === 'workflow_tools') {
     activeTab.value = 'builtin_tools'
     builtinSourceFilter.value = 'workflow'
@@ -761,7 +771,7 @@ onMounted(async () => {
 })
 
 watch(
-  () => route.query.tab,
+  () => [route.query.tab, route.query.memoryId],
   () => {
     syncTabFromRoute()
   }

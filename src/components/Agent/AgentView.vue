@@ -137,6 +137,37 @@
             @toggle="isSubagentPanelOpen = !isSubagentPanelOpen"
             @view-details="handleViewSubagentDetails"
           />
+          <div
+            v-if="isFocusBannerVisible"
+            class="mx-4 mt-2 rounded-lg border border-info/25 bg-info/10 px-3 py-2"
+          >
+            <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-info">已定位到 memory 关联消息</div>
+                <div class="text-xs text-base-content/70 break-all">
+                  <span v-if="focusBannerMemoryId">memory: {{ focusBannerMemoryId }}</span>
+                  <span v-if="focusedMemoryMessageId" class="ml-2">message: {{ focusedMemoryMessageId }}</span>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  v-if="focusBannerMemoryId"
+                  class="btn btn-xs btn-outline btn-info"
+                  @click="openFocusedMemoryInTools"
+                >
+                  <i class="fas fa-external-link-alt mr-1"></i>
+                  返回 Tools
+                </button>
+                <button
+                  class="btn btn-xs btn-outline"
+                  @click="clearFocusedLocation"
+                >
+                  <i class="fas fa-times mr-1"></i>
+                  清除定位
+                </button>
+              </div>
+            </div>
+          </div>
           <!-- Message flow -->
           <div class="relative flex-1 min-h-0">
             <MessageFlow
@@ -145,9 +176,11 @@
               :is-executing="isExecuting"
               :is-streaming="isStreaming"
               :streaming-content="streamingContent"
+              :focused-message-id="focusedMemoryMessageId"
               class="h-full"
               @resend="handleResendMessage"
               @edit="handleEditMessage"
+              @message-focused="handleFocusedMessage"
               @render-html="handleRenderHtml"
             />
             <div
@@ -289,7 +322,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage } from '@/types/agent'
@@ -373,6 +406,9 @@ import {
   normalizeToolIdList,
   type UiToolConfigPayload,
 } from './toolConfigRuntime'
+import { clearFocusLocationQuery } from './focusLocationSupport'
+import { buildFocusedMemoryToolsRoute, deriveFocusBannerState } from './focusBannerSupport'
+import { resolveFocusedMemoryMessageId } from './memoryFocusSupport'
 
 interface AgentStartEvent {
   execution_id: string
@@ -399,18 +435,24 @@ const props = withDefaults(defineProps<{
   executionId?: string
   showTodos?: boolean
   selectedRole?: any
+  focusedMemoryId?: string | null
+  focusedMessageId?: string | null
 }>(), {
   showTodos: true,
+  focusedMemoryId: null,
+  focusedMessageId: null,
 })
 
 const emit = defineEmits<{
   (e: 'submit', task: string): void
   (e: 'complete', result: any): void
   (e: 'error', error: string): void
+  (e: 'memory-message-focused', payload: { memoryId: string; messageId: string }): void
 }>()
 
 // i18n & router
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 
 // Refs
@@ -428,6 +470,7 @@ const conversationExecutionState = ref<PersistedAgentExecutionState | null>(null
 const historyLoadToken = ref(0)
 const isHistoryLoading = ref(false)
 const autoTitleGeneratingConversationIds = new Set<string>()
+const focusedMemoryMessageId = ref<string | null>(null)
 
 const conversationExecutionStateBadgeText = computed(() => {
   const labelKey = getExecutionStateLabelKey(conversationExecutionState.value?.outcome)
@@ -686,6 +729,59 @@ const isExecuting = computed(() => agentEvents.isExecuting.value || isTeamRunAct
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 const contextUsage = computed(() => agentEvents.contextUsage.value)
+const normalizedFocusedMemoryId = computed(() => {
+  const value = String(props.focusedMemoryId || '').trim()
+  return value || ''
+})
+const normalizedFocusedMessageId = computed(() => {
+  const value = String(props.focusedMessageId || '').trim()
+  return value || ''
+})
+const lastFocusedMemoryId = ref<string | null>(normalizedFocusedMemoryId.value || null)
+const focusBannerState = computed(() => deriveFocusBannerState({
+  focusedMemoryId: normalizedFocusedMemoryId.value,
+  focusedMessageId: normalizedFocusedMessageId.value,
+  resolvedMessageId: focusedMemoryMessageId.value,
+  lastFocusedMemoryId: lastFocusedMemoryId.value,
+}))
+const focusBannerMemoryId = computed(() => focusBannerState.value.memoryId)
+const isFocusBannerVisible = computed(() => focusBannerState.value.visible)
+
+watch(
+  () => [normalizedFocusedMessageId.value, normalizedFocusedMemoryId.value, visibleMessages.value],
+  ([messageId, memoryId]) => {
+    if (messageId) {
+      focusedMemoryMessageId.value = messageId
+      return
+    }
+    focusedMemoryMessageId.value = memoryId
+      ? resolveFocusedMemoryMessageId(visibleMessages.value, memoryId)
+      : null
+  },
+  { immediate: true },
+)
+
+watch(focusBannerState, (state) => {
+  lastFocusedMemoryId.value = state.nextLastFocusedMemoryId
+}, { immediate: true })
+
+const handleFocusedMessage = (messageId: string) => {
+  const memoryId = normalizedFocusedMemoryId.value
+  if (!memoryId) return
+  emit('memory-message-focused', { memoryId, messageId })
+}
+
+const clearFocusedLocation = () => {
+  const nextQuery = clearFocusLocationQuery(route.query as Record<string, unknown>)
+  void router.replace({ query: nextQuery })
+}
+
+const openFocusedMemoryInTools = () => {
+  const target = buildFocusedMemoryToolsRoute(focusBannerMemoryId.value)
+  if (!target) return
+  void router.push(target)
+}
+
 const scrollMessageViewportToBottom = () => {
   messageFlowRef.value?.scrollToBottom()
 }

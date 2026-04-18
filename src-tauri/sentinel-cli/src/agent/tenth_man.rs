@@ -82,6 +82,29 @@ pub async fn clear_review_context(execution_id: &str) {
     review_contexts().write().await.remove(execution_id);
 }
 
+pub async fn run_runner_review(
+    execution_id: &str,
+    focus_area: Option<String>,
+    quick: bool,
+) -> Result<String, TenthManToolError> {
+    let output = execute_review(TenthManToolArgs {
+        execution_id: execution_id.to_string(),
+        review_mode: ReviewMode::FullHistory,
+        review_type: if quick {
+            "quick".to_string()
+        } else {
+            "full".to_string()
+        },
+        focus_area,
+    })
+    .await?;
+
+    output
+        .critique
+        .filter(|critique| !critique.trim().is_empty())
+        .ok_or_else(|| TenthManToolError::ReviewFailed("empty critique".to_string()))
+}
+
 async fn execute_review(args: TenthManToolArgs) -> Result<TenthManToolOutput, TenthManToolError> {
     let context = review_contexts()
         .read()

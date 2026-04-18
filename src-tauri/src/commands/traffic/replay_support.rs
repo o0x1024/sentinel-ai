@@ -700,7 +700,7 @@ async fn connect_http2_stream(
 async fn build_http2_raw_response(response: hyper::Response<Incoming>) -> Result<String, String> {
     let status = response.status();
     let reason = canonical_reason(status);
-    let mut raw_response = if reason.is_empty() {
+    let mut response_head = if reason.is_empty() {
         format!("HTTP/2 {}\r\n", status.as_u16())
     } else {
         format!("HTTP/2 {} {}\r\n", status.as_u16(), reason)
@@ -708,22 +708,24 @@ async fn build_http2_raw_response(response: hyper::Response<Incoming>) -> Result
 
     for (name, value) in response.headers().iter() {
         if let Ok(value_str) = value.to_str() {
-            raw_response.push_str(name.as_str());
-            raw_response.push_str(": ");
-            raw_response.push_str(value_str);
-            raw_response.push_str("\r\n");
+            response_head.push_str(name.as_str());
+            response_head.push_str(": ");
+            response_head.push_str(value_str);
+            response_head.push_str("\r\n");
         }
     }
 
-    raw_response.push_str("\r\n");
     let body = response
         .into_body()
         .collect()
         .await
         .map_err(|error| format!("Failed to read HTTP/2 response body: {error}"))?;
-    raw_response.push_str(&String::from_utf8_lossy(&body.to_bytes()));
 
-    Ok(raw_response)
+    Ok(build_display_response(
+        &response_head,
+        &body.to_bytes(),
+        false,
+    ))
 }
 
 fn canonical_reason(status: StatusCode) -> &'static str {
@@ -1198,6 +1200,82 @@ fn decode_chunked(data: &[u8]) -> Vec<u8> {
     }
 }
 
+fn parse_content_encodings(response_head: &str) -> Vec<String> {
+    response_head
+        .lines()
+        .find(|line| line.to_lowercase().starts_with("content-encoding:"))
+        .map(|line| {
+            line.split_once(':')
+                .map(|(_, value)| {
+                    value
+                        .split(',')
+                        .map(|encoding| encoding.trim().to_lowercase())
+                        .filter(|encoding| !encoding.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
+}
+
+fn decode_content_encoded_body(body_bytes: &[u8], encodings: &[String]) -> Vec<u8> {
+    let mut decoded_body = body_bytes.to_vec();
+
+    for encoding in encodings.iter().rev() {
+        let next_body = match encoding.as_str() {
+            "gzip" | "x-gzip" => {
+                let mut decoder = GzDecoder::new(decoded_body.as_slice());
+                let mut decoded = Vec::new();
+                match decoder.read_to_end(&mut decoded) {
+                    Ok(_) => decoded,
+                    Err(_) => return body_bytes.to_vec(),
+                }
+            }
+            "deflate" => {
+                let mut decoder = DeflateDecoder::new(decoded_body.as_slice());
+                let mut decoded = Vec::new();
+                match decoder.read_to_end(&mut decoded) {
+                    Ok(_) => decoded,
+                    Err(_) => return body_bytes.to_vec(),
+                }
+            }
+            "identity" => decoded_body,
+            _ => return body_bytes.to_vec(),
+        };
+        decoded_body = next_body;
+    }
+
+    decoded_body
+}
+
+fn build_display_response(
+    response_head: &str,
+    body_bytes: &[u8],
+    decode_chunked_body: bool,
+) -> String {
+    let header_lower = response_head.to_lowercase();
+    let body_bytes = if decode_chunked_body
+        && header_lower
+            .lines()
+            .any(|line| line.starts_with("transfer-encoding:") && line.contains("chunked"))
+    {
+        decode_chunked(body_bytes)
+    } else {
+        body_bytes.to_vec()
+    };
+
+    let decoded_body =
+        decode_content_encoded_body(&body_bytes, &parse_content_encodings(response_head));
+    let mut result = response_head.to_string();
+    if response_head.ends_with("\r\n") {
+        result.push_str("\r\n");
+    } else {
+        result.push_str("\r\n\r\n");
+    }
+    result.push_str(&String::from_utf8_lossy(&decoded_body));
+    result
+}
+
 fn decode_http_response(response_buf: &[u8]) -> String {
     let header_end = response_buf
         .windows(4)
@@ -1210,46 +1288,11 @@ fn decode_http_response(response_buf: &[u8]) -> String {
 
     let header_bytes = &response_buf[..header_end];
     let body_bytes = &response_buf[header_end..];
-    let header_str = String::from_utf8_lossy(header_bytes);
-    let header_lower = header_str.to_lowercase();
+    let response_head = String::from_utf8_lossy(header_bytes)
+        .trim_end_matches("\r\n\r\n")
+        .to_string();
 
-    let is_chunked = header_lower
-        .lines()
-        .any(|line| line.starts_with("transfer-encoding:") && line.contains("chunked"));
-    let content_encoding = header_str
-        .lines()
-        .find(|line| line.to_lowercase().starts_with("content-encoding:"))
-        .map(|line| line.split(':').nth(1).unwrap_or("").trim().to_lowercase());
-
-    let body_bytes = if is_chunked {
-        decode_chunked(body_bytes)
-    } else {
-        body_bytes.to_vec()
-    };
-
-    let decoded_body = match content_encoding.as_deref() {
-        Some("gzip") => {
-            let mut decoder = GzDecoder::new(body_bytes.as_slice());
-            let mut decoded = Vec::new();
-            decoder
-                .read_to_end(&mut decoded)
-                .map(|_| decoded)
-                .unwrap_or(body_bytes)
-        }
-        Some("deflate") => {
-            let mut decoder = DeflateDecoder::new(body_bytes.as_slice());
-            let mut decoded = Vec::new();
-            decoder
-                .read_to_end(&mut decoded)
-                .map(|_| decoded)
-                .unwrap_or(body_bytes)
-        }
-        _ => body_bytes,
-    };
-
-    let mut result = String::from_utf8_lossy(header_bytes).to_string();
-    result.push_str(&String::from_utf8_lossy(&decoded_body));
-    result
+    build_display_response(&response_head, body_bytes, true)
 }
 
 async fn read_http_response<S: AsyncRead + Unpin>(
@@ -1348,12 +1391,15 @@ async fn read_http_response<S: AsyncRead + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_effective_request_authority, build_http2_request_uri, build_initial_cookie_jar,
-        build_outbound_request, build_redirect_request, build_replay_transport_context,
-        build_request_url, cookie_matches, downgrade_request_to_http1, is_http2_protocol,
-        parse_raw_request, parse_raw_response, parse_set_cookie,
-        should_fallback_from_http2_to_http1, should_skip_http2_header, RedirectCookie,
+        build_display_response, build_effective_request_authority, build_http2_request_uri,
+        build_initial_cookie_jar, build_outbound_request, build_redirect_request,
+        build_replay_transport_context, build_request_url, cookie_matches,
+        downgrade_request_to_http1, is_http2_protocol, parse_raw_request, parse_raw_response,
+        parse_set_cookie, should_fallback_from_http2_to_http1, should_skip_http2_header,
+        RedirectCookie,
     };
+    use flate2::{write::GzEncoder, Compression};
+    use std::io::Write;
     use url::Url;
 
     #[test]
@@ -1543,5 +1589,42 @@ mod tests {
                 ("Content-Type".to_string(), "text/plain".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn display_response_decodes_gzip_body() {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(br#"{"ok":true}"#).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let raw_response = build_display_response(
+            "HTTP/2 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\n",
+            &compressed,
+            false,
+        );
+        let parsed = parse_raw_response(&raw_response).unwrap();
+
+        assert_eq!(parsed.body_text, r#"{"ok":true}"#);
+        assert!(raw_response.contains("\r\n\r\n{\"ok\":true}"));
+    }
+
+    #[test]
+    fn display_response_decodes_chunked_gzip_body() {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"hello gzip").unwrap();
+        let compressed = encoder.finish().unwrap();
+        let chunked = format!("{:X}\r\n", compressed.len()).into_bytes();
+        let mut body = chunked;
+        body.extend_from_slice(&compressed);
+        body.extend_from_slice(b"\r\n0\r\n\r\n");
+
+        let raw_response = build_display_response(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Encoding: gzip",
+            &body,
+            true,
+        );
+        let parsed = parse_raw_response(&raw_response).unwrap();
+
+        assert_eq!(parsed.body_text, "hello gzip");
     }
 }

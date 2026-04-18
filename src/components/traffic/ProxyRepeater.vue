@@ -13,7 +13,10 @@
       />
     </div>
     <!-- Tabs Header -->
-    <div class="bg-base-200 border-b border-base-300 px-2 py-1 flex items-center gap-2">
+    <div
+      class="border-b border-base-300 flex items-center gap-2"
+      :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_TOP_BAR_CLASS : 'bg-base-200 px-2 py-1'"
+    >
       <div class="flex items-center gap-1 overflow-x-auto flex-1">
         <div 
           v-for="(tab, index) in tabs" 
@@ -61,7 +64,10 @@
     <!-- Tab Content -->
     <div v-if="currentTab" class="flex-1 flex flex-col overflow-hidden">
       <!-- Toolbar -->
-      <div class="bg-base-200 px-3 py-2 border-b border-base-300 flex items-center gap-3">
+      <div
+        class="border-b border-base-300 flex items-center gap-3"
+        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2.5 py-1.5 backdrop-blur-sm' : 'bg-base-200 px-3 py-2'"
+      >
         <button 
           @click="sendRequest"
           class="btn btn-primary btn-sm"
@@ -76,13 +82,13 @@
           :disabled="!isSending"
         >
           <i class="fas fa-stop"></i>
-          {{ $t('trafficAnalysis.repeater.contextMenu.cancel') }}
+          <span v-if="!immersiveDrillModeEnabled">{{ $t('trafficAnalysis.repeater.contextMenu.cancel') }}</span>
         </button>
         
         <div class="flex-1"></div>
         
         <!-- Target 显示 -->
-        <div class="flex items-center gap-2 text-sm">
+        <div v-if="!immersiveDrillModeEnabled" class="flex items-center gap-2 text-sm">
           <span class="text-base-content/70">{{ $t('trafficAnalysis.repeater.contextMenu.target') }}:</span>
           <span class="font-mono font-semibold">
             {{ currentTab.useTls ? 'https' : 'http' }}://{{ currentTab.targetHost }}{{ showPort ? ':' + currentTab.targetPort : '' }}
@@ -95,8 +101,20 @@
             <i class="fas fa-pencil-alt text-xs"></i>
           </button>
         </div>
-          
-        <span class="badge badge-sm badge-outline">{{ currentRequestProtocol }}</span>
+        <div v-else class="flex items-center gap-2">
+          <span :class="[IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS, 'font-mono']">
+            {{ currentTab.useTls ? 'https' : 'http' }}://{{ currentTab.targetHost || 'target' }}
+          </span>
+          <button
+            @click="showTargetDialog = true"
+            class="btn btn-ghost btn-xs btn-circle"
+            :title="$t('trafficAnalysis.repeater.contextMenu.configureTargetDetails')"
+          >
+            <i class="fas fa-pencil-alt text-xs"></i>
+          </button>
+        </div>
+
+        <span v-if="!immersiveDrillModeEnabled" class="badge badge-sm badge-outline">{{ currentRequestProtocol }}</span>
       </div>
       
       <!-- Target 配置对话框 -->
@@ -182,10 +200,14 @@
             : { height: topPanelHeight + 'px' }"
         >
           <!-- Request Header -->
-          <div class="bg-base-200 px-3 py-1 flex items-center justify-between border-b border-base-300">
+          <div
+            class="flex items-center justify-between border-b border-base-300"
+            :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS : 'bg-base-200 px-3 py-1'"
+          >
             <div class="flex items-center gap-2">
               <span class="font-semibold text-sm">{{ $t('trafficAnalysis.repeater.contextMenu.request') }}</span>
               <button
+                v-if="!immersiveDrillModeEnabled"
                 class="btn btn-ghost btn-xs"
                 type="button"
                 :disabled="!canCompareCurrentRequestVersions"
@@ -261,7 +283,7 @@
             <template v-else>
               <HttpMessageSurface
                 ref="requestEditor"
-                :modelValue="toHex(currentTab.rawRequest)"
+                :model-value="toHex(currentTab.rawRequest)"
                 :readonly="true"
                 custom-context-menu
                 show-search-bar
@@ -294,10 +316,14 @@
         <!-- Response Panel -->
         <div class="response-panel flex-1 flex flex-col overflow-hidden min-h-0 min-w-0">
           <!-- Response Header -->
-          <div class="bg-base-200 px-3 py-1 flex items-center justify-between border-b border-base-300">
+          <div
+            class="flex items-center justify-between border-b border-base-300"
+            :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS : 'bg-base-200 px-3 py-1'"
+          >
             <div class="flex items-center gap-2">
               <span class="font-semibold text-sm">{{ $t('trafficAnalysis.repeater.contextMenu.response') }}</span>
               <button
+                v-if="!immersiveDrillModeEnabled"
                 class="btn btn-ghost btn-xs"
                 type="button"
                 :disabled="!canCompareCurrentResponseVersions"
@@ -366,7 +392,7 @@
               <template v-else-if="currentTab.responseTab === 'hex'">
                 <HttpMessageSurface
                   ref="responseEditor"
-                  :modelValue="toHex(currentTab.rawResponse)"
+                  :model-value="toHex(currentTab.rawResponse)"
                   :readonly="true"
                   custom-context-menu
                   show-search-bar
@@ -387,12 +413,11 @@
               </template>
               
               <!-- Render View -->
-              <iframe 
+              <TrafficResponseRenderPane
                 v-else-if="currentTab.responseTab === 'render'"
-                :srcdoc="currentTab.response?.bodyText || ''"
-                class="w-full h-full border-0 bg-white"
-                sandbox="allow-scripts allow-forms allow-popups allow-modals"
-              ></iframe>
+                :body="currentTab.response?.bodyText || ''"
+                :content-type="getCurrentResponseContentType()"
+              />
             </template>
             <div v-else class="flex items-center justify-center w-full h-full text-base-content/50">
               <div class="text-center">
@@ -419,12 +444,19 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import { useI18n } from 'vue-i18n';
+import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { dialog } from '@/composables/useDialog';
-import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue';
+import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
+import TrafficResponseRenderPane from './TrafficResponseRenderPane.vue'
+import {
+  IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS,
+  IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS,
+  IMMERSIVE_TRAFFIC_TOP_BAR_CLASS,
+} from './immersiveTrafficUi'
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
 import { buildSourceRequestFromRawRequest } from '@/components/traffic/intruder/http'
 import type { HttpExchangeRequest, HttpHeaderEntry, HttpReplayResponse } from './http/model'
-import { headerEntriesToRecord, serializeHeaderEntries } from './http/headers'
+import { findHeaderValue, headerEntriesToRecord, serializeHeaderEntries } from './http/headers'
 import {
   buildHttpReplayResponseFromCommandResult,
   type RawReplayCommandResult,
@@ -453,6 +485,7 @@ import {
   convertRepeaterPrettyRequestToRaw,
   formatRepeaterPrettyRequest,
 } from './trafficRepeaterPrettyRequestSupport'
+import { getDisplayResponseBody } from './trafficResponsePreviewSupport'
 
 const { t } = useI18n();
 const { enabledTargets } = useTrafficSendTargets()
@@ -906,7 +939,7 @@ function onPrettyRequestUpdate(value: string) {
 
 function formatPrettyResponse(): string {
   if (!currentTab.value?.response) return '';
-  
+
   const resp = currentTab.value.response;
   const responseHeaders = headerEntriesToRecord(resp.headers)
   let result = `${resp.versionObserved || 'HTTP/1.1'} ${resp.statusCode} ${resp.statusText || ''}`.trimEnd() + '\r\n';
@@ -917,15 +950,16 @@ function formatPrettyResponse(): string {
   result += '\r\n';
   
   const contentType = responseHeaders['content-type'] || responseHeaders['Content-Type'] || '';
+  const displayBody = getDisplayResponseBody(resp.bodyText, contentType)
   if (contentType.includes('json')) {
     try {
-      const json = JSON.parse(resp.bodyText);
+      const json = JSON.parse(displayBody);
       result += JSON.stringify(json, null, 2);
     } catch {
-      result += resp.bodyText;
+      result += displayBody;
     }
   } else {
-    result += resp.bodyText;
+    result += displayBody;
   }
   
   return result;
@@ -933,46 +967,35 @@ function formatPrettyResponse(): string {
 
 function toHex(str: string): string {
   if (!str) return '';
-  
-  // 限制最大显示长度（1MB）
-  const MAX_HEX_LENGTH = 1024 * 1024;
-  const limited = str.length > MAX_HEX_LENGTH;
-  const displayStr = limited ? str.substring(0, MAX_HEX_LENGTH) : str;
-  
+
   const lines: string[] = [];
   let hex = '';
   let ascii = '';
   let lineCount = 0;
-  
-  // 限制最大行数（避免渲染过多行导致卡顿）
-  const MAX_LINES = 10000;
-  let totalLines = 0;
-  
-  for (let i = 0; i < displayStr.length && totalLines < MAX_LINES; i++) {
-    const charCode = displayStr.charCodeAt(i);
-    hex += charCode.toString(16).padStart(2, '0') + ' ';
-    ascii += charCode >= 32 && charCode < 127 ? displayStr[i] : '.';
-    lineCount++;
-    
-    if (lineCount === 16) {
-      lines.push(hex + ' ' + ascii);
-      hex = '';
-      ascii = '';
-      lineCount = 0;
-      totalLines++;
+
+  for (let index = 0; index < str.length; index += 1) {
+    const char = str.charCodeAt(index) & 0xff
+    hex += `${char.toString(16).padStart(2, '0')} `
+    ascii += char >= 32 && char < 127 ? String.fromCharCode(char) : '.'
+    lineCount += 1
+
+    if (lineCount === 16 || index === str.length - 1) {
+      if (lineCount < 16) {
+        hex += '   '.repeat(16 - lineCount)
+      }
+      lines.push(`${hex} ${ascii}`)
+      hex = ''
+      ascii = ''
+      lineCount = 0
     }
   }
-  
-  if (lineCount > 0) {
-    lines.push(hex + '   '.repeat(16 - lineCount) + ' ' + ascii);
-  }
-  
-  if (limited || totalLines >= MAX_LINES) {
-    lines.push('');
-    lines.push(t('trafficAnalysis.repeater.messages.hexDisplayLimited', { size: formatBytes(MAX_HEX_LENGTH) }));
-  }
-  
-  return lines.join('\n');
+
+  return lines.join('\n')
+}
+
+function getCurrentResponseContentType(): string {
+  if (!currentTab.value?.response) return '';
+  return findHeaderValue(currentTab.value.response.headers, 'content-type') || '';
 }
 
 // 右键菜单

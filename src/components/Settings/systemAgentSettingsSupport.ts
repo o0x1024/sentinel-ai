@@ -95,6 +95,15 @@ export interface SystemAgentProfileVersionPayload {
   createdAt: string
 }
 
+export interface SystemAgentAutoVerificationStatus {
+  profileId: string
+  name: string
+  enabled: boolean
+  profileEnabled: boolean
+  allowActiveReplay: boolean
+  scopeHosts: string[]
+}
+
 export interface SystemAgentSafetyPolicyForm {
   allowActiveReplay: boolean
   autoMode: boolean

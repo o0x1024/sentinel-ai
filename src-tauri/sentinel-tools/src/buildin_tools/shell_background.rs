@@ -316,3 +316,25 @@ pub async fn stop_background_shell_task(task_id: &str) -> Result<(), String> {
 
     Ok(())
 }
+
+pub async fn stop_background_shell_tasks_for_execution(
+    execution_id: &str,
+) -> Result<usize, String> {
+    let task_ids = {
+        let tasks = SHELL_BACKGROUND_TASKS.read().await;
+        tasks
+            .values()
+            .filter(|item| item.execution_id.as_deref() == Some(execution_id))
+            .filter(|item| item.status == BackgroundShellTaskStatus::Running)
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>()
+    };
+
+    let mut stopped_count = 0usize;
+    for task_id in task_ids {
+        stop_background_shell_task(&task_id).await?;
+        stopped_count += 1;
+    }
+
+    Ok(stopped_count)
+}

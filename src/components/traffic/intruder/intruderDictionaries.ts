@@ -6,6 +6,25 @@ const DICTIONARY_TYPE_TRANSLATION_KEYS: Record<string, string> = {
   sql_injection_payload: 'sql_injection',
 }
 
+export const INTRUDER_DICTIONARY_TYPE_OPTIONS = [
+  'subdomain',
+  'username',
+  'password',
+  'path',
+  'filename',
+  'extension',
+  'port',
+  'api_endpoint',
+  'sensitive_file',
+  'service_probe_rule',
+  'fingerprint_rule',
+  'poc_rule',
+  'http_param',
+  'xss_payload',
+  'sql_injection_payload',
+  'custom',
+] as const
+
 export interface IntruderDictionarySummary {
   id: string
   name: string
@@ -13,6 +32,7 @@ export interface IntruderDictionarySummary {
   dict_type: string
   service_type?: string | null
   is_builtin?: boolean
+  is_active?: boolean
   word_count?: number
   updated_at?: string
 }
@@ -75,7 +95,7 @@ export async function listIntruderDictionariesPaged(options: {
     service_type: null,
     category: null,
     is_builtin: null,
-    is_active: true,
+    is_active: null,
     search_term: options.searchTerm || null,
     subtype: null,
     offset: options.offset ?? 0,

@@ -31,7 +31,8 @@ const ASSISTANT_PROFILE_DEFAULT_KEY: &str = "default_profile_id";
 const TEAM_ORCHESTRATION_PRESET_IDS: &[&str] =
     &["product_delivery_chain", "incident_response_flow"];
 const TEAM_RECOVERY_PRESET_IDS: &[&str] = &["conservative", "balanced", "aggressive"];
-const TOOL_SELECTION_STRATEGIES: &[&str] = &["Keyword", "LLM", "Hybrid", "Manual", "All"];
+const TOOL_SELECTION_STRATEGIES: &[&str] =
+    &["Keyword", "LLM", "Hybrid", "Manual", "All", "Deferred"];
 
 fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
     vec![
@@ -44,8 +45,8 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_web_search_enabled: false,
             default_tools_enabled: true,
             default_tenth_man_enabled: false,
-            default_tool_selection_strategy: "Keyword".to_string(),
-            default_max_tools: 5,
+            default_tool_selection_strategy: "Deferred".to_string(),
+            default_max_tools: 12,
             default_fixed_tools: vec![
                 "interactive_shell".to_string(),
                 "ask_user_question".to_string(),
@@ -89,8 +90,8 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_web_search_enabled: false,
             default_tools_enabled: true,
             default_tenth_man_enabled: true,
-            default_tool_selection_strategy: "Hybrid".to_string(),
-            default_max_tools: 6,
+            default_tool_selection_strategy: "Deferred".to_string(),
+            default_max_tools: 12,
             default_fixed_tools: vec![
                 "interactive_shell".to_string(),
                 "ask_user_question".to_string(),

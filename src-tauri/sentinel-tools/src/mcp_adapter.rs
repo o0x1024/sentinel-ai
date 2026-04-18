@@ -289,6 +289,9 @@ impl McpToolAdapter {
                 server_name: server_name.clone(),
             },
             category: "mcp".to_string(),
+            tags: Vec::new(),
+            search_hint: None,
+            exposure: "deferred".to_string(),
             execution_policy: ToolExecutionPolicy::default(),
             executor: create_mcp_tool_executor(server_name, tool_name),
         }

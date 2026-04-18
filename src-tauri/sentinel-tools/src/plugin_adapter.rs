@@ -286,6 +286,9 @@ impl PluginToolAdapter {
                 plugin_id: plugin_id.clone(),
             },
             category: meta.category.clone().unwrap_or_else(|| "other".to_string()),
+            tags: Vec::new(),
+            search_hint: None,
+            exposure: "deferred".to_string(),
             execution_policy: ToolExecutionPolicy::default(),
             executor: create_plugin_executor(plugin_id),
         }

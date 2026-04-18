@@ -77,12 +77,15 @@
           :ref="(el) => setAgentViewRef(session.id, el)"
           v-show="activeSessionId === session.id"
           :execution-id="session.id"
+          :focused-memory-id="focusedMemoryConversationId === session.id ? focusedMemoryId : null"
+          :focused-message-id="focusedMemoryConversationId === session.id ? focusedMessageId : null"
           :show-todos="true"
           :selected-role="selectedRole"
           class="absolute inset-0"
           @submit="handleAgentSubmit"
           @complete="handleAgentComplete"
           @error="handleAgentError"
+          @memory-message-focused="handleMemoryMessageFocused"
         />
         
         <div
@@ -122,11 +125,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue'
+import { computed, ref, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import RoleManagement from '@/components/RoleManagement.vue'
 import UserForcedRulesModal from '@/components/UserForcedRulesModal.vue'
 import TurnLogsModal from '@/components/Agent/TurnLogsModal.vue'
@@ -137,6 +140,7 @@ import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import { dialog } from '@/composables/useDialog'
 import type { AiConversationSummary } from '@/components/Agent/conversationTypes'
 import { pickLatestConversation } from '@/components/Agent/agentConversationSessionSupport'
+import { buildFocusedMessageQuery, readFocusLocationState } from '@/components/Agent/focusLocationSupport'
 
 // {{ t('aiAssistant.trafficReferenceType') }}
 interface ReferencedTraffic {
@@ -169,6 +173,7 @@ defineOptions({
 
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 
 // 角色管理
 const {
@@ -188,6 +193,10 @@ const isBootstrapping = ref(true)
 // --- 会话管理 ---
 const { sessions, activeSessionId, addSession, syncSessionsWithConversations } = useAgentSessionManager()
 const agentViewRefs = ref<Record<string, any>>({})
+const focusLocation = computed(() => readFocusLocationState(route.query as Record<string, unknown>))
+const focusedMemoryConversationId = computed(() => focusLocation.value.conversationId)
+const focusedMemoryId = computed(() => focusLocation.value.memoryId)
+const focusedMessageId = computed(() => focusLocation.value.focusedMessageId)
 
 const setAgentViewRef = (sessionId: string, el: any | null) => {
   if (el) {
@@ -301,6 +310,12 @@ const handleAgentComplete = async (result: any) => {
 
 const handleAgentError = (error: string) => {
   console.error('Agent task error:', error)
+}
+
+const handleMemoryMessageFocused = ({ memoryId, messageId }: { memoryId: string; messageId: string }) => {
+  const nextQuery = buildFocusedMessageQuery(route.query as Record<string, unknown>, { memoryId, messageId })
+  if (JSON.stringify(nextQuery) === JSON.stringify(route.query)) return
+  void router.replace({ query: nextQuery })
 }
 
 // 初始化

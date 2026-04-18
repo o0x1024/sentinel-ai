@@ -14,7 +14,8 @@ use anyhow::Result;
 use chrono::Utc;
 use sentinel_db::Database;
 use sentinel_llm::{
-    parse_image_from_json, ChatMessage as LlmChatMessage, StreamContent, StreamingLlmClient,
+    normalize_tool_call_arguments_value, parse_image_from_json, ChatMessage as LlmChatMessage,
+    StreamContent, StreamingLlmClient,
 };
 use sentinel_rag;
 use sentinel_workflow::WorkflowGraph;
@@ -266,7 +267,7 @@ pub(crate) async fn perform_rag_enhancement(
 pub(crate) fn reconstruct_chat_history(
     messages: &[sentinel_core::models::database::AiMessage],
 ) -> Vec<LlmChatMessage> {
-    use serde_json::{json, Value};
+    use serde_json::Value;
     use std::collections::HashSet;
 
     let mut result = Vec::new();
@@ -328,11 +329,10 @@ pub(crate) fn reconstruct_chat_history(
                                             .cloned()
                                             .unwrap_or(Value::Object(serde_json::Map::new()));
                                         // Normalize tool_args: some paths persist args as a JSON string.
-                                        let tool_args = match tool_args_raw {
-                                            Value::String(s) => serde_json::from_str::<Value>(&s)
-                                                .unwrap_or_else(|_| json!({ "raw": s })),
-                                            other => other,
-                                        };
+                                        let tool_args = normalize_tool_call_arguments_value(
+                                            &tool_name,
+                                            tool_args_raw,
+                                        );
 
                                         // 构建 tool_call JSON
                                         tool_calls_json.push(serde_json::json!({
@@ -875,6 +875,28 @@ pub async fn cancel_ai_stream(
     // Also cancel long-running tool executions (e.g. VisionExplorer) that use the global cancellation manager.
     // conversation_id is used as execution_id across the app.
     let _ = crate::managers::cancellation_manager::cancel_execution(&conversation_id).await;
+    let _ = sentinel_tools::buildin_tools::shell::cancel_shell_execution(&conversation_id).await;
+    if let Err(err) =
+        sentinel_tools::buildin_tools::shell_background::stop_background_shell_tasks_for_execution(
+            &conversation_id,
+        )
+        .await
+    {
+        tracing::warn!(
+            "Failed to stop background shell tasks for {}: {}",
+            conversation_id,
+            err
+        );
+    }
+    if let Err(err) =
+        crate::agents::suspend_sentinel_active_intent(&app_handle, &conversation_id).await
+    {
+        tracing::warn!(
+            "Failed to suspend sentinel active intent for {}: {}",
+            conversation_id,
+            err
+        );
+    }
 
     emit_agent_execution_finished(
         &app_handle,

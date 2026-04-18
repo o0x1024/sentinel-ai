@@ -19,6 +19,8 @@ use crate::log::{
     log_turn_summary,
 };
 use crate::message::{build_user_message, convert_chat_history, ChatMessage, ImageAttachment};
+use crate::tool_args::normalize_tool_call_arguments_json;
+use crate::tool_hooks::ToolArgumentGuardHook;
 use sentinel_tools::DynamicTool;
 
 const RETRYABLE_INCOMPLETE_STREAM_BEFORE_OUTPUT_MARKER: &str =
@@ -316,6 +318,11 @@ impl StreamingLlmClient {
             && !system_prompt_with_hack.contains("text response")
         {
             system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
+        }
+        if tool_count > 0 && !system_prompt_with_hack.contains("function.arguments") {
+            system_prompt_with_hack.push_str(
+                "\n\nIMPORTANT: Every tool call must use function.arguments as a JSON object that matches the tool schema. Never send bare strings. For example, call shell with {\"command\":\"pwd\"} and interactive_shell with {\"command\":\"top\",\"session_policy\":\"reuse\"}.",
+            );
         }
         let preamble = &system_prompt_with_hack;
 
@@ -704,12 +711,28 @@ impl StreamingLlmClient {
                         user_message,
                         chat_history,
                         timeout,
-                        dynamic_tools,
+                        dynamic_tools.clone(),
                         on_content,
                     )
                     .await
                 {
                     Ok(content) => Ok(content),
+                    Err(e) if tool_count > 0 && Self::is_invalid_function_arguments_error(&e) => {
+                        warn!(
+                            "Provider rejected tool call arguments as non-JSON. Retrying once with hardened tool-calling preamble."
+                        );
+                        let hardened_preamble = Self::harden_tool_calling_preamble(preamble);
+                        self.stream_with_openai(
+                            model,
+                            &hardened_preamble,
+                            retry_user_message,
+                            retry_chat_history,
+                            timeout,
+                            dynamic_tools,
+                            on_content,
+                        )
+                        .await
+                    }
                     Err(e) if is_bigmodel_compat && Self::is_bigmodel_1210_error(&e) => {
                         warn!(
                             "BigModel returned 1210 (parameter error). Retrying once in minimal compatibility mode: no tools, no generation overrides."
@@ -828,16 +851,40 @@ impl StreamingLlmClient {
                     "Unknown provider '{}', trying OpenAI compatible mode (via Generic Client)",
                     provider_for_agent
                 );
-                self.stream_with_generic_openai(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    on_content,
-                )
-                .await
+                let retry_user_message = user_message.clone();
+                let retry_chat_history = chat_history.clone();
+                let tool_count = dynamic_tools.len();
+                match self
+                    .stream_with_generic_openai(
+                        model,
+                        preamble,
+                        user_message,
+                        chat_history,
+                        timeout,
+                        dynamic_tools.clone(),
+                        on_content,
+                    )
+                    .await
+                {
+                    Ok(content) => Ok(content),
+                    Err(e) if tool_count > 0 && Self::is_invalid_function_arguments_error(&e) => {
+                        warn!(
+                            "Generic OpenAI-compatible provider rejected tool call arguments as non-JSON. Retrying once with hardened tool-calling preamble."
+                        );
+                        let hardened_preamble = Self::harden_tool_calling_preamble(preamble);
+                        self.stream_with_generic_openai(
+                            model,
+                            &hardened_preamble,
+                            retry_user_message,
+                            retry_chat_history,
+                            timeout,
+                            dynamic_tools,
+                            on_content,
+                        )
+                        .await
+                    }
+                    Err(e) => Err(e),
+                }
             }
         }
     }
@@ -1289,7 +1336,10 @@ impl StreamingLlmClient {
             info!("Using stream_prompt for empty chat history");
             tokio::time::timeout(
                 timeout,
-                agent.stream_prompt(user_message).multi_turn(max_turns),
+                agent
+                    .stream_prompt(user_message)
+                    .with_hook(ToolArgumentGuardHook)
+                    .multi_turn(max_turns),
             )
             .await
         } else {
@@ -1301,6 +1351,7 @@ impl StreamingLlmClient {
                 timeout,
                 agent
                     .stream_chat(user_message, chat_history)
+                    .with_hook(ToolArgumentGuardHook)
                     .multi_turn(max_turns),
             )
             .await
@@ -1369,7 +1420,10 @@ impl StreamingLlmClient {
                     if !on_content(StreamContent::ToolCallComplete {
                         id: tool_call.id.clone(),
                         name: tool_call.function.name.clone(),
-                        arguments: tool_call.function.arguments.to_string(),
+                        arguments: normalize_tool_call_arguments_json(
+                            &tool_call.function.name,
+                            &tool_call.function.arguments,
+                        ),
                     }) {
                         info!("Stream cancelled by callback");
                         break;
@@ -1516,6 +1570,21 @@ impl StreamingLlmClient {
             .contains(RETRYABLE_INCOMPLETE_STREAM_BEFORE_OUTPUT_MARKER)
     }
 
+    fn is_invalid_function_arguments_error(err: &anyhow::Error) -> bool {
+        let lower = err.to_string().to_lowercase();
+        lower.contains("function.arguments")
+            && (lower.contains("must be in json format")
+                || lower.contains("invalidparameter")
+                || lower.contains("invalid_parameter_error"))
+    }
+
+    fn harden_tool_calling_preamble(preamble: &str) -> String {
+        format!(
+            "{}\n\nCRITICAL TOOL-CALLING RULES: Never emit XML-like tags such as <tool_call>, <function>, or <parameter>. Use native tool calling only. Every tool call must use function.arguments as a strict JSON object matching the schema. Never emit raw strings, pseudo-XML, or malformed argument payloads. If calling shell, the arguments must look like {{\"command\":\"pwd\"}}. If you are not ready to produce a valid tool call, answer in plain text first and wait until you can emit valid JSON arguments.",
+            preamble
+        )
+    }
+
     fn tail_preview(content: &str, max_chars: usize) -> String {
         let collected: Vec<char> = content.chars().collect();
         let total = collected.len();
@@ -1553,5 +1622,16 @@ mod tests {
         let preview = StreamingLlmClient::tail_preview("abcdefghij", 4);
         assert_eq!(preview, "...ghij");
         assert_eq!(StreamingLlmClient::tail_preview("abc", 10), "abc");
+    }
+
+    #[test]
+    fn detects_invalid_function_arguments_error_message() {
+        let err = anyhow::anyhow!(
+            "{}",
+            r#"CompletionError: ProviderError: Invalid status code 400 Bad Request with message: {"error":{"message":"The \"function.arguments\" parameter of the code model must be in JSON format.","code":"invalid_parameter_error"}}"#
+        );
+        assert!(StreamingLlmClient::is_invalid_function_arguments_error(
+            &err
+        ));
     }
 }

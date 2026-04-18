@@ -20,6 +20,7 @@ use crate::commands::security_workbench_storage_support::{
 };
 use crate::commands::traffic::TrafficAnalysisState;
 use crate::services::system_agents::finding_lifecycle::TrafficFindingLifecycle;
+use crate::services::system_agents::pipeline::TRAFFIC_VERIFICATION_AGENT_PROFILE_ID;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1279,7 +1280,7 @@ async fn append_workbench_activity(
     Ok(next_activity)
 }
 
-async fn delete_workbench_cases_by_ids(
+pub(crate) async fn delete_workbench_cases_by_ids(
     state: &TrafficAnalysisState,
     case_ids: &[String],
 ) -> Result<DeleteSecurityWorkbenchCasesResultPayload, String> {
@@ -1329,13 +1330,6 @@ async fn delete_workbench_cases_by_ids(
 
     cases.retain(|item| !deleted_case_ids.iter().any(|case_id| case_id == &item.id));
 
-    let mut ignored_finding_ids = load_workbench_ignored_finding_ids(state).await?;
-    for finding_id in deleted_cases.iter().map(|item| item.finding_id.clone()) {
-        if !ignored_finding_ids.iter().any(|item| item == &finding_id) {
-            ignored_finding_ids.push(finding_id);
-        }
-    }
-
     let mut notes = load_workbench_notes(state).await?;
     let notes_before = notes.len();
     notes.retain(|item| {
@@ -1373,7 +1367,6 @@ async fn delete_workbench_cases_by_ids(
     save_workbench_activities(state, &activities).await?;
     save_workbench_execution_drafts(state, &drafts).await?;
     save_workbench_execution_runs(state, &runs).await?;
-    save_workbench_ignored_finding_ids(state, &ignored_finding_ids).await?;
 
     Ok(DeleteSecurityWorkbenchCasesResultPayload {
         deleted_case_count: deleted_case_ids.len(),
@@ -1655,7 +1648,7 @@ pub async fn security_workbench_get_case_detail(
         .collect::<Vec<_>>();
     let verifier_runs = state
         .get_db_service()
-        .list_system_agent_runs(Some("traffic_active_verifier"), Some(200))
+        .list_system_agent_runs(Some(TRAFFIC_VERIFICATION_AGENT_PROFILE_ID), Some(200))
         .await
         .map_err(|error| format!("Failed to load verifier runs for workbench case: {error}"))?
         .into_iter()

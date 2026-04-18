@@ -3,7 +3,9 @@ pub fn resolve_base_prompt(base_prompt_id: Option<&str>, profile_id: &str) -> &'
         "traffic_idor_triage"
         | "system:traffic_idor_triage"
         | "traffic_logic_triage"
-        | "system:traffic_logic_triage" => {
+        | "system:traffic_logic_triage"
+        | "traffic_hypothesis_agent"
+        | "system:traffic_hypothesis_agent" => {
             r#"You are a passive security triage agent focused on logic flaws, including IDOR/BOLA/BFLA, workflow abuse, skipped steps, repeated actions, invalid state transitions, and race conditions.
 Analyze the structured traffic payload and return strict JSON only.
 Use authContext, principalContext, resourceKeys, actionKind, requestFingerprint, responseFingerprint, recentSequence, clusterSummary,
@@ -23,6 +25,8 @@ parameterMutations are applied in array order. If you include more than one, eac
 Required JSON shape:
 {
   "summary": string,
+  "domain": "web_app" | "api" | "cloud" | "llm_agent" | "identity" | "data_plane",
+  "reasoningFamily": "business_logic" | "input_interpreter" | "policy_misconfig" | "trust_boundary" | "workflow_orchestration" | "runtime_agentic",
   "riskType": "idor" | "bola" | "bfla" | "logic" | "workflow" | "race" | "none",
   "confidence": "low" | "medium" | "high",
   "signals": string[],
@@ -35,10 +39,11 @@ Required JSON shape:
     "notes": string[]
   },
   "verificationPlan": {
-    "preferredStrategy": "replay_as_is" | "repeat_action" | "swap_identity" | "swap_resource_reference" | "skip_prerequisite" | "reorder_sequence" | "concurrent_submit" | "mutate_business_parameter" | "manual_review",
+    "executionKind": "replay_diff" | "input_probe" | "policy_check" | "oast_probe" | "graph_diff" | "control_plane_query" | "conversation_simulation" | "tool_call_simulation" | "manual_review",
+    "preferredStrategy": "replay_as_is" | "repeat_action" | "swap_identity" | "swap_resource_reference" | "skip_prerequisite" | "reorder_sequence" | "concurrent_submit" | "mutate_business_parameter" | "input_probe" | "path_traversal_probe" | "cors_origin_probe" | "header_policy_probe" | "oast_probe" | "manual_review",
     "targetRequestId": number | null,
     "candidateTargets": [{
-      "location": "query" | "jsonBody" | "formBody" | "pathSegment",
+      "location": "query" | "jsonBody" | "formBody" | "pathSegment" | "header",
       "selector": string
     }],
     "candidateParameters": string[],
@@ -46,6 +51,12 @@ Required JSON shape:
     "concurrentRequests": number | null,
     "sequenceRequestIds": number[],
     "notes": string[],
+    "probePayloads": [{
+      "location": "query" | "jsonBody" | "formBody" | "pathSegment" | "header",
+      "selector": string,
+      "payload": string,
+      "payloadKind": string
+    }],
     "parameterMutations": [{
       "parameter": string,
       "mutationKind": "set_negative_one" | "set_zero" | "set_one" | "increment_one" | "set_empty_string" | "remove_parameter"
@@ -53,7 +64,10 @@ Required JSON shape:
   } | null
 }"#
         }
-        "traffic_active_verifier" | "system:traffic_active_verifier" => {
+        "traffic_active_verifier"
+        | "system:traffic_active_verifier"
+        | "traffic_verification_agent"
+        | "system:traffic_verification_agent" => {
             r#"You are a deterministic traffic verification agent.
 This profile normally uses code-based replay instead of freeform LLM reasoning.
 Return strict JSON only if invoked through an LLM fallback.
@@ -112,10 +126,11 @@ Return strict JSON only:
     "notes": string[]
   },
   "nextPlan": {
-    "preferredStrategy": "replay_as_is" | "repeat_action" | "swap_identity" | "swap_resource_reference" | "skip_prerequisite" | "reorder_sequence" | "concurrent_submit" | "mutate_business_parameter" | "manual_review",
+    "executionKind": "replay_diff" | "input_probe" | "policy_check" | "oast_probe" | "graph_diff" | "control_plane_query" | "conversation_simulation" | "tool_call_simulation" | "manual_review",
+    "preferredStrategy": "replay_as_is" | "repeat_action" | "swap_identity" | "swap_resource_reference" | "skip_prerequisite" | "reorder_sequence" | "concurrent_submit" | "mutate_business_parameter" | "input_probe" | "path_traversal_probe" | "cors_origin_probe" | "header_policy_probe" | "oast_probe" | "manual_review",
     "targetRequestId": number | null,
     "candidateTargets": [{
-      "location": "query" | "jsonBody" | "formBody" | "pathSegment",
+      "location": "query" | "jsonBody" | "formBody" | "pathSegment" | "header",
       "selector": string
     }],
     "candidateParameters": string[],
@@ -123,6 +138,12 @@ Return strict JSON only:
     "concurrentRequests": number | null,
     "sequenceRequestIds": number[],
     "notes": string[],
+    "probePayloads": [{
+      "location": "query" | "jsonBody" | "formBody" | "pathSegment" | "header",
+      "selector": string,
+      "payload": string,
+      "payloadKind": string
+    }],
     "parameterMutations": [{
       "parameter": string,
       "mutationKind": "set_negative_one" | "set_zero" | "set_one" | "increment_one" | "set_empty_string" | "remove_parameter"
@@ -150,6 +171,8 @@ Return strict JSON only:
 {
   "summary": string,
   "shouldPromote": boolean,
+  "domain": "web_app" | "api" | "cloud" | "llm_agent" | "identity" | "data_plane" | null,
+  "reasoningFamily": "business_logic" | "input_interpreter" | "policy_misconfig" | "trust_boundary" | "workflow_orchestration" | "runtime_agentic" | null,
   "riskType": "idor" | "bola" | "bfla" | "logic" | "workflow" | "race" | "none" | null,
   "confidence": "low" | "medium" | "high" | null,
   "signals": string[],
@@ -161,10 +184,11 @@ Return strict JSON only:
     "notes": string[]
   },
   "verificationPlan": {
-    "preferredStrategy": "replay_as_is" | "repeat_action" | "swap_identity" | "swap_resource_reference" | "skip_prerequisite" | "reorder_sequence" | "concurrent_submit" | "mutate_business_parameter" | "manual_review",
+    "executionKind": "replay_diff" | "input_probe" | "policy_check" | "oast_probe" | "graph_diff" | "control_plane_query" | "conversation_simulation" | "tool_call_simulation" | "manual_review",
+    "preferredStrategy": "replay_as_is" | "repeat_action" | "swap_identity" | "swap_resource_reference" | "skip_prerequisite" | "reorder_sequence" | "concurrent_submit" | "mutate_business_parameter" | "input_probe" | "path_traversal_probe" | "cors_origin_probe" | "header_policy_probe" | "oast_probe" | "manual_review",
     "targetRequestId": number | null,
     "candidateTargets": [{
-      "location": "query" | "jsonBody" | "formBody" | "pathSegment",
+      "location": "query" | "jsonBody" | "formBody" | "pathSegment" | "header",
       "selector": string
     }],
     "candidateParameters": string[],
@@ -172,6 +196,12 @@ Return strict JSON only:
     "concurrentRequests": number | null,
     "sequenceRequestIds": number[],
     "notes": string[],
+    "probePayloads": [{
+      "location": "query" | "jsonBody" | "formBody" | "pathSegment" | "header",
+      "selector": string,
+      "payload": string,
+      "payloadKind": string
+    }],
     "parameterMutations": [{
       "parameter": string,
       "mutationKind": "set_negative_one" | "set_zero" | "set_one" | "increment_one" | "set_empty_string" | "remove_parameter"

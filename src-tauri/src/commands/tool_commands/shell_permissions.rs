@@ -16,7 +16,9 @@ use sentinel_tools::buildin_tools::shell::{
     describe_shell_command_for_review, get_shell_config, set_permission_handler, set_shell_config,
     ShellConfig, ShellPermissionHandler,
 };
-use sentinel_tools::buildin_tools::shell_policy::{suggest_allow_rule_details, suggest_allow_rules};
+use sentinel_tools::buildin_tools::shell_policy::{
+    suggest_allow_rule_details, suggest_allow_rules,
+};
 
 // Global storage for permission response channels
 static SHELL_PERMISSION_SENDERS: Lazy<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>> =
@@ -246,11 +248,8 @@ pub(crate) async fn allow_shell_permission_forever_with_db(
         }
     }
 
-    crate::commands::tool_commands::agent_config::save_shell_config_to_db(
-        &shell_config,
-        db,
-    )
-    .await?;
+    crate::commands::tool_commands::agent_config::save_shell_config_to_db(&shell_config, db)
+        .await?;
     set_shell_config(shell_config).await;
 
     finalize_shell_permission_response(
@@ -305,12 +304,7 @@ async fn finalize_shell_permission_response(
         let send_result = tx.send(allowed);
         tracing::info!("Sent permission response: {:?}", send_result);
         if let Some(request) = pending_request.as_ref() {
-            record_shell_permission_history(
-                request,
-                allowed,
-                decision_kind,
-                persisted_allow_rules,
-            );
+            record_shell_permission_history(request, allowed, decision_kind, persisted_allow_rules);
         }
         Ok(())
     } else {

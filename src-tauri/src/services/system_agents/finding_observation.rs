@@ -7,6 +7,8 @@ use serde_json::Value;
 pub struct TrafficFindingObservation {
     pub observed_at: DateTime<Utc>,
     pub profile_id: String,
+    pub domain: String,
+    pub reasoning_family: String,
     pub risk_type: String,
     pub confidence: String,
     pub summary: String,
@@ -82,6 +84,8 @@ mod tests {
         TrafficFindingObservation {
             observed_at: Utc::now(),
             profile_id: "traffic_logic_triage".to_string(),
+            domain: "web_app".to_string(),
+            reasoning_family: "business_logic".to_string(),
             risk_type: "bola".to_string(),
             confidence: "high".to_string(),
             summary: "test".to_string(),

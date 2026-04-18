@@ -249,7 +249,7 @@
 
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { AssistantProfileOption } from '@/components/Agent/assistantProfiles'
 import { useAssistantProfiles } from '@/components/Agent/assistantProfiles'
 import ToolConfigPanel from '@/components/Agent/ToolConfigPanel.vue'
@@ -279,6 +279,7 @@ import {
   teamRecoveryPresetOptions,
 } from '@/components/Settings/assistantProfileRegistrySupport'
 import { dialog } from '@/composables/useDialog'
+import { AI_CONFIG_UPDATED_EVENT, getAiConfigFromUpdateEvent } from '@/services/aiConfigEvents'
 
 const {
   defaultAssistantProfileId,
@@ -630,8 +631,17 @@ const reloadProfiles = async () => {
   }
 }
 
-const loadAiConfig = async () => {
-  aiConfig.value = await invoke('get_ai_config')
+const loadAiConfig = async (nextConfig?: any) => {
+  aiConfig.value = nextConfig || await invoke('get_ai_config')
+}
+
+const handleAiConfigUpdated = (event: Event) => {
+  const nextConfig = getAiConfigFromUpdateEvent(event)
+  if (nextConfig) {
+    aiConfig.value = nextConfig
+    return
+  }
+  void loadAiConfig()
 }
 
 const saveProfilesInternal = async (options?: { silent?: boolean }) => {
@@ -742,11 +752,17 @@ const markSelectedAsDefault = () => {
 }
 
 onMounted(() => {
+  window.addEventListener(AI_CONFIG_UPDATED_EVENT, handleAiConfigUpdated)
   void reloadProfiles()
+})
+
+onActivated(() => {
+  void loadAiConfig()
 })
 
 onUnmounted(() => {
   clearAutoSaveTimer()
+  window.removeEventListener(AI_CONFIG_UPDATED_EVENT, handleAiConfigUpdated)
 })
 
 watch(

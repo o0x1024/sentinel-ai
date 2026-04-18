@@ -55,12 +55,13 @@ pub fn initial_lifecycle_for_detection(
     profile_id: &str,
     vuln_type: &str,
 ) -> TrafficFindingLifecycle {
-    if profile_id == "traffic_logic_triage"
-        || matches!(
-            vuln_type,
-            "workflow" | "logic" | "bola" | "bfla" | "idor" | "race"
-        )
-    {
+    if matches!(
+        profile_id,
+        "traffic_logic_triage" | "traffic_hypothesis_agent" | "traffic_decision_agent"
+    ) || matches!(
+        vuln_type,
+        "workflow" | "logic" | "bola" | "bfla" | "idor" | "race"
+    ) {
         return TrafficFindingLifecycle::Hypothesis;
     }
 

@@ -19,6 +19,7 @@ export interface IntruderPosition {
 
 export type IntruderPayloadType =
   | 'simpleList'
+  | 'appDictionary'
   | 'extensionGenerated'
   | 'numbers'
   | 'dates'
@@ -28,6 +29,19 @@ export type IntruderPayloadType =
   | 'characterSubstitution'
   | 'usernameGenerator'
 
+export interface IntruderDictionarySource {
+  type: 'dictionary' | 'default_dictionary'
+  dictionaryId?: string
+  dictionaryName?: string
+  dictType?: string
+}
+
+export interface IntruderDictionaryPayloadConfig {
+  sources: IntruderDictionarySource[]
+  limit: number
+  deduplicate: boolean
+}
+
 export interface IntruderPayloadSet {
   id: string
   name: string
@@ -35,6 +49,7 @@ export interface IntruderPayloadSet {
   payloadsText: string
   urlEncode: boolean
   urlEncodeCharacters: string
+  dictionaryConfig: IntruderDictionaryPayloadConfig
   pluginId: string
   pluginPresetName: string
   pluginConfig: string

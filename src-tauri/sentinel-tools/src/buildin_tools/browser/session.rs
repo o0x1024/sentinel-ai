@@ -40,7 +40,10 @@ pub async fn execute_browser_action(args: &BrowserToolArgs) -> Result<(String, V
             return result.map(|value| (session_id, value));
         }
 
-        return Ok((session_id, serde_json::json!({ "closed": true, "existed": false })));
+        return Ok((
+            session_id,
+            serde_json::json!({ "closed": true, "existed": false }),
+        ));
     }
 
     let driver = get_or_create_driver(&session_id, headless).await?;
@@ -48,7 +51,10 @@ pub async fn execute_browser_action(args: &BrowserToolArgs) -> Result<(String, V
     driver.send(payload).await.map(|value| (session_id, value))
 }
 
-async fn get_or_create_driver(session_id: &str, headless: bool) -> Result<Arc<BrowserDriverHandle>> {
+async fn get_or_create_driver(
+    session_id: &str,
+    headless: bool,
+) -> Result<Arc<BrowserDriverHandle>> {
     let mut registry = SESSION_REGISTRY.lock().await;
     if let Some(existing) = registry.get(session_id) {
         return Ok(existing.clone());

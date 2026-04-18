@@ -115,6 +115,10 @@ pub struct InterventionContext {
     pub execution_id: String,
     pub task: String,
     pub tool_call_count: usize,
+    pub recent_failure_count: usize,
+    pub last_tool_name: Option<String>,
+    pub has_recent_verification: bool,
+    pub has_side_effects: bool,
     pub current_content: Option<String>,
     pub trigger_reason: TriggerReason,
 }
@@ -123,9 +127,14 @@ pub struct InterventionContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TriggerReason {
     ToolCallThreshold,
+    HighRiskTool(String),
+    RepeatedFailurePattern,
+    LoopDetected,
+    LowEvidenceHighConfidence,
     DangerousKeyword(String),
     ConclusionDetected,
     FinalResponse,
+    FinalResponseWithoutVerification,
     Manual,
 }
 
@@ -135,6 +144,8 @@ pub struct TenthManConfig {
     pub mode: InterventionMode,
     pub auto_inject_to_context: bool,
     pub require_user_confirmation: bool,
+    #[serde(default)]
+    pub trigger_policy: TenthManTriggerPolicy,
 }
 
 impl Default for TenthManConfig {
@@ -143,8 +154,98 @@ impl Default for TenthManConfig {
             mode: InterventionMode::default(),
             auto_inject_to_context: false,
             require_user_confirmation: false,
+            trigger_policy: TenthManTriggerPolicy::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TenthManTriggerPolicy {
+    #[serde(default = "default_true")]
+    pub review_high_risk_tools: bool,
+    #[serde(default = "default_true")]
+    pub review_repeated_failures: bool,
+    #[serde(default = "default_true")]
+    pub review_loops: bool,
+    #[serde(default = "default_true")]
+    pub review_final_response_without_verification: bool,
+    #[serde(default = "default_true")]
+    pub review_low_evidence_high_confidence: bool,
+    #[serde(default = "default_repeated_failure_streak")]
+    pub repeated_failure_streak: usize,
+    #[serde(default = "default_loop_repeat_threshold")]
+    pub loop_repeat_threshold: usize,
+    #[serde(default = "default_recent_verification_window")]
+    pub recent_verification_window: usize,
+    #[serde(default = "default_minimum_evidence_tool_calls")]
+    pub minimum_evidence_tool_calls: usize,
+    #[serde(default = "default_minimum_evidence_score")]
+    pub minimum_evidence_score: u32,
+}
+
+impl Default for TenthManTriggerPolicy {
+    fn default() -> Self {
+        Self {
+            review_high_risk_tools: true,
+            review_repeated_failures: true,
+            review_loops: true,
+            review_final_response_without_verification: true,
+            review_low_evidence_high_confidence: true,
+            repeated_failure_streak: default_repeated_failure_streak(),
+            loop_repeat_threshold: default_loop_repeat_threshold(),
+            recent_verification_window: default_recent_verification_window(),
+            minimum_evidence_tool_calls: default_minimum_evidence_tool_calls(),
+            minimum_evidence_score: default_minimum_evidence_score(),
+        }
+    }
+}
+
+impl TenthManTriggerPolicy {
+    pub fn repeated_failure_streak(&self) -> usize {
+        self.repeated_failure_streak.max(1)
+    }
+
+    pub fn loop_repeat_threshold(&self) -> usize {
+        self.loop_repeat_threshold.max(1)
+    }
+
+    pub fn recent_verification_window(&self) -> usize {
+        self.recent_verification_window.max(1)
+    }
+
+    pub fn minimum_evidence_tool_calls(&self) -> usize {
+        self.minimum_evidence_tool_calls.max(1)
+    }
+
+    pub fn minimum_evidence_score(&self) -> u32 {
+        self.minimum_evidence_score
+            .max(self.minimum_evidence_tool_calls() as u32)
+            .max(1)
+    }
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn default_repeated_failure_streak() -> usize {
+    2
+}
+
+const fn default_loop_repeat_threshold() -> usize {
+    2
+}
+
+const fn default_recent_verification_window() -> usize {
+    3
+}
+
+const fn default_minimum_evidence_tool_calls() -> usize {
+    2
+}
+
+const fn default_minimum_evidence_score() -> u32 {
+    3
 }
 
 pub struct TenthMan {
@@ -182,26 +283,19 @@ impl TenthMan {
     pub fn should_trigger(&self, context: &InterventionContext) -> bool {
         match &self.intervention_mode {
             InterventionMode::ToolOnly => false, // Never auto-trigger, only via tool calls
-            InterventionMode::SystemOnly => {
-                // Always trigger on final response
-                matches!(context.trigger_reason, TriggerReason::FinalResponse)
-            }
+            InterventionMode::SystemOnly => self.should_auto_trigger(context, true),
             InterventionMode::Hybrid {
                 force_final_review, ..
-            } => {
-                // Trigger on final response if forced
-                if *force_final_review
-                    && matches!(context.trigger_reason, TriggerReason::FinalResponse)
-                {
-                    return true;
-                }
-                false
-            }
+            } => self.should_auto_trigger(context, *force_final_review),
             InterventionMode::FinalOnly => false,
             InterventionMode::Proactive {
                 tool_call_interval,
                 dangerous_keywords,
             } => {
+                if self.should_auto_trigger(context, true) {
+                    return true;
+                }
+
                 // Check tool call count
                 if let Some(interval) = tool_call_interval {
                     if context.tool_call_count > 0 && context.tool_call_count % interval == 0 {
@@ -230,6 +324,19 @@ impl TenthMan {
                 false
             }
             InterventionMode::Realtime => true,
+        }
+    }
+
+    fn should_auto_trigger(&self, context: &InterventionContext, force_final_review: bool) -> bool {
+        match &context.trigger_reason {
+            TriggerReason::HighRiskTool(_)
+            | TriggerReason::RepeatedFailurePattern
+            | TriggerReason::LoopDetected
+            | TriggerReason::LowEvidenceHighConfidence
+            | TriggerReason::FinalResponseWithoutVerification
+            | TriggerReason::Manual => true,
+            TriggerReason::FinalResponse => force_final_review,
+            _ => false,
         }
     }
 
@@ -273,8 +380,19 @@ impl TenthMan {
         };
 
         let prompt = format!(
-            "Task: {}\n\nCurrent Content:\n{}\n\n---\n\nQuick risk assessment:",
-            context.task, content
+            "Task: {}\nExecution ID: {}\nTrigger Reason: {}\nTool Calls So Far: {}\nRecent Failure Count: {}\nLast Tool: {}\nHas Side Effects: {}\nHas Recent Verification: {}\n\nCurrent Content:\n{}\n\n---\n\nQuick risk assessment:",
+            context.task,
+            context.execution_id,
+            Self::describe_trigger_reason(&context.trigger_reason),
+            context.tool_call_count,
+            context.recent_failure_count,
+            context
+                .last_tool_name
+                .as_deref()
+                .unwrap_or("none"),
+            if context.has_side_effects { "yes" } else { "no" },
+            if context.has_recent_verification { "yes" } else { "no" },
+            content
         );
 
         let client = LlmClient::new(self.config.clone());
@@ -287,6 +405,25 @@ impl TenthMan {
             Ok(None)
         } else {
             Ok(Some(critique))
+        }
+    }
+
+    fn describe_trigger_reason(trigger_reason: &TriggerReason) -> String {
+        match trigger_reason {
+            TriggerReason::ToolCallThreshold => "tool_call_threshold".to_string(),
+            TriggerReason::HighRiskTool(tool) => format!("high_risk_tool:{}", tool),
+            TriggerReason::RepeatedFailurePattern => "repeated_failure_pattern".to_string(),
+            TriggerReason::LoopDetected => "loop_detected".to_string(),
+            TriggerReason::LowEvidenceHighConfidence => "low_evidence_high_confidence".to_string(),
+            TriggerReason::DangerousKeyword(keyword) => {
+                format!("dangerous_keyword:{}", keyword)
+            }
+            TriggerReason::ConclusionDetected => "conclusion_detected".to_string(),
+            TriggerReason::FinalResponse => "final_response".to_string(),
+            TriggerReason::FinalResponseWithoutVerification => {
+                "final_response_without_verification".to_string()
+            }
+            TriggerReason::Manual => "manual".to_string(),
         }
     }
 

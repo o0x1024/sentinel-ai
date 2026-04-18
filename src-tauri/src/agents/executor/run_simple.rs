@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
 
 use super::AgentExecuteParams;
+use crate::agents::apply_sentinel_execution_outcome;
 use crate::agents::executor::message_store::save_assistant_message;
 use crate::agents::executor::utils::cleanup_container_context_async;
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
@@ -103,6 +104,17 @@ pub async fn execute_agent_simple(
                 params.subagent_run_id.as_deref(),
             )
             .await;
+            if let Err(err) = apply_sentinel_execution_outcome(
+                app_handle,
+                &params.execution_id,
+                true,
+                Some(&response),
+                None,
+            )
+            .await
+            {
+                tracing::warn!("Failed to update sentinel execution outcome: {}", err);
+            }
 
             cleanup_container_context_async(app_handle, &params.execution_id).await;
             Ok(response)
@@ -113,6 +125,20 @@ pub async fn execute_agent_simple(
                 params.execution_id,
                 e
             );
+            if let Err(update_err) = apply_sentinel_execution_outcome(
+                app_handle,
+                &params.execution_id,
+                false,
+                None,
+                Some(&e.to_string()),
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to update sentinel execution outcome after error: {}",
+                    update_err
+                );
+            }
             cleanup_container_context_async(app_handle, &params.execution_id).await;
             Err(e)
         }

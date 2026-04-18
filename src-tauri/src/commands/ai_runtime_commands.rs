@@ -86,6 +86,25 @@ enum EffectiveImageAttachmentMode {
     ModelVision,
 }
 
+fn append_force_todos_contract(system_prompt: &str, force_todos: bool) -> String {
+    const TODO_COMPLETION_CONTRACT: &str = "[TodoCompletionContract]
+- For multi-step work, create and maintain todos.
+- Do not claim completion or end the task while any todo remains pending or in_progress.
+- Before the final answer, update every todo to completed or failed.
+- If unfinished todos remain, continue the task instead of ending the response.";
+
+    if !force_todos || system_prompt.contains("[TodoCompletionContract]") {
+        return system_prompt.to_string();
+    }
+
+    let trimmed = system_prompt.trim();
+    if trimmed.is_empty() {
+        TODO_COMPLETION_CONTRACT.to_string()
+    } else {
+        format!("{}\n\n{}", trimmed, TODO_COMPLETION_CONTRACT)
+    }
+}
+
 pub async fn get_subagent_runs(
     parent_execution_id: String,
     db_service: Arc<DatabaseService>,
@@ -970,6 +989,11 @@ pub async fn agent_execute(
                 }
             }
         }
+
+        base_system_prompt = Some(append_force_todos_contract(
+            base_system_prompt.as_deref().unwrap_or_default(),
+            config.force_todos.unwrap_or(false),
+        ));
 
         let mut augmented_task = task_clone.clone();
 

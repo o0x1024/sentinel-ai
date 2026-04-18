@@ -88,6 +88,38 @@ pub struct MemoryExecution {
     pub created_at: DateTime<Utc>,
 }
 
+/// Durable memory canonical record.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct DurableMemoryRecord {
+    pub id: String,
+    pub title: Option<String>,
+    pub text: String,
+    pub kind: String,
+    pub tier: String,
+    pub scope: String,
+    pub stability: String,
+    pub source: String,
+    pub confidence: f64,
+    pub importance: i32,
+    pub tags_json: String,
+    pub origin_execution_id: Option<String>,
+    pub supersedes_memory_id: Option<String>,
+    pub status: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Projection health for a durable memory record.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct DurableMemoryProjectionState {
+    pub memory_id: String,
+    pub lexical_indexed: bool,
+    pub vector_indexed: bool,
+    pub skill_projected: bool,
+    pub last_error: Option<String>,
+    pub updated_at_ms: i64,
+}
+
 /// 表统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableStats {

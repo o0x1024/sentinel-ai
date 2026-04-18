@@ -6,6 +6,8 @@
 import { ref, computed } from 'vue'
 import TerminalAPI from '@/api/terminal'
 
+export type TerminalExecutionMode = 'docker' | 'host'
+
 interface TerminalState {
   isActive: boolean
   sessionId: string | null
@@ -43,6 +45,14 @@ const preconnectionState = ref<{
 
 // Event bus for writing to terminal
 const terminalWriteCallbacks = new Set<(content: string) => void>()
+
+export function buildTerminalSessionFingerprint(
+  executionMode: TerminalExecutionMode,
+  dockerImage: string,
+  shell: string,
+): string {
+  return `${executionMode}|${dockerImage.trim().toLowerCase()}|${shell.trim().toLowerCase()}`
+}
 
 export function useTerminal() {
   const isTerminalActive = computed(() => terminalState.value.isActive)
@@ -92,6 +102,21 @@ export function useTerminal() {
    */
   function setSessionFingerprint(fingerprint: string | null) {
     terminalState.value.sessionFingerprint = fingerprint
+  }
+
+  /**
+   * Sync the currently active terminal session selected by runtime events or
+   * terminal reconnects. This is the single explicit entry point for updating
+   * the active terminal binding.
+   */
+  function syncActiveSession(sessionId: string | null, sessionFingerprint?: string | null) {
+    terminalState.value.sessionId = sessionId
+    if (typeof sessionFingerprint !== 'undefined') {
+      terminalState.value.sessionFingerprint = sessionFingerprint
+    } else if (!sessionId) {
+      terminalState.value.sessionFingerprint = null
+    }
+    terminalState.value.hasHistory = !!sessionId || terminalState.value.hasHistory
   }
 
   /**
@@ -196,6 +221,7 @@ export function useTerminal() {
     toggleTerminal,
     setSessionId,
     setSessionFingerprint,
+    syncActiveSession,
     clearTerminal,
     resetTerminal,
     writeToTerminal,

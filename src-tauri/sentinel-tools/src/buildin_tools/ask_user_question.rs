@@ -401,7 +401,10 @@ mod tests {
         let mut defaults = HashMap::new();
         defaults.insert("Which mode should we use?".to_string(), "Safe".to_string());
         assert!(validate_default_answers(&questions, &defaults).is_ok());
-        defaults.insert("Which mode should we use?".to_string(), "Broken".to_string());
+        defaults.insert(
+            "Which mode should we use?".to_string(),
+            "Broken".to_string(),
+        );
         assert!(validate_default_answers(&questions, &defaults).is_err());
     }
 }

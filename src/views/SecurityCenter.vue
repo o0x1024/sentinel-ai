@@ -1,7 +1,10 @@
 <template>
-  <div class="page-content-padded safe-top space-y-6">
+  <div
+    class="safe-top"
+    :class="immersiveDrillModeEnabled ? 'px-3 py-3 space-y-3' : 'page-content-padded space-y-6'"
+  >
     <!-- 页面标题 -->
-    <div class="flex items-center justify-between">
+    <div v-if="!immersiveDrillModeEnabled" class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">{{ $t('securityCenter.title') }}</h1>
       <!-- <div class="flex space-x-2">
         <button @click="refreshAll" class="btn btn-outline btn-sm">
@@ -15,8 +18,12 @@
 
 
     <!-- Tab 导航 -->
-    <div class="tabs tabs-boxed bg-base-100 shadow-sm">
+    <div
+      class="tabs tabs-boxed bg-base-100 shadow-sm"
+      :class="immersiveDrillModeEnabled ? 'tabs-sm rounded-2xl px-1 py-1' : ''"
+    >
       <a
+        v-if="isTabVisible('workbench')"
         class="tab"
         :class="{ 'tab-active': activeTab === 'workbench' }"
         @click="switchTab('workbench')"
@@ -33,6 +40,7 @@
       </a>
 
       <a 
+        v-if="isTabVisible('vulnerabilities')"
         class="tab" 
         :class="{ 'tab-active': activeTab === 'vulnerabilities' }"
         @click="switchTab('vulnerabilities')"
@@ -44,6 +52,7 @@
       </a>
 
       <a
+        v-if="isTabVisible('llmSecurity')"
         class="tab"
         :class="{ 'tab-active': activeTab === 'llmSecurity' }"
         @click="switchTab('llmSecurity')"
@@ -71,6 +80,11 @@ import { useRoute, useRouter } from 'vue-router';
 import VulnerabilitiesPanel from '../components/SecurityCenter/VulnerabilitiesPanel.vue';
 import LlmSecurityPanel from '../components/SecurityCenter/LlmSecurityPanel.vue';
 import SecurityWorkbenchPage from '../components/SecurityCenter/SecurityWorkbenchPage.vue';
+import { immersiveDrillModeEnabled } from '../services/immersiveDrillMode'
+import {
+  immersiveDrillSecurityTabs,
+  isImmersiveDrillSecurityTab,
+} from '../services/immersiveDrillPreset'
 
 
 defineOptions({
@@ -83,9 +97,33 @@ const router = useRouter();
 
 type SecurityCenterTab = 'scan' | 'vulnerabilities' | 'llmSecurity' | 'workbench' | 'assets'
 
+const allSecurityTabs: SecurityCenterTab[] = ['workbench', 'vulnerabilities', 'llmSecurity']
+
 // 当前激活的 Tab
 const activeTab = ref<SecurityCenterTab>('workbench');
 const lastWorkbenchLocation = ref('/security-center/workbench')
+
+const visibleSecurityTabs = computed<SecurityCenterTab[]>(() =>
+  immersiveDrillModeEnabled.value ? [...immersiveDrillSecurityTabs] : allSecurityTabs,
+)
+
+const isTabVisible = (tab: SecurityCenterTab) => visibleSecurityTabs.value.includes(tab)
+
+const normalizeRequestedTab = (tab: unknown, findingId: unknown): SecurityCenterTab => {
+  if (typeof findingId === 'string' && findingId.trim()) {
+    return 'vulnerabilities'
+  }
+
+  if (typeof tab === 'string' && ['scan', 'vulnerabilities', 'llmSecurity', 'workbench'].includes(tab)) {
+    if (immersiveDrillModeEnabled.value && !isImmersiveDrillSecurityTab(tab)) {
+      return 'workbench'
+    }
+
+    return tab as SecurityCenterTab
+  }
+
+  return 'workbench'
+}
 
 const tabComponents = {
   workbench: markRaw(SecurityWorkbenchPage),
@@ -136,15 +174,7 @@ onMounted(() => {
     activeTab.value = 'workbench'
     return
   }
-  if (findingId) {
-    activeTab.value = 'vulnerabilities'
-    return
-  }
-  if (tab && ['scan', 'vulnerabilities', 'llmSecurity', 'workbench'].includes(tab)) {
-    activeTab.value = tab as 'scan' | 'vulnerabilities' | 'llmSecurity' | 'workbench';
-    return
-  }
-  activeTab.value = 'workbench'
+  activeTab.value = normalizeRequestedTab(tab, findingId)
 });
 
 const isWorkbenchRoute = (routePath: unknown, routeName: unknown, routeCaseId: unknown, queryCaseId: unknown) => (
@@ -226,19 +256,16 @@ watch(
       return
     }
 
-    if (typeof findingId === 'string' && findingId.trim()) {
-      activeTab.value = 'vulnerabilities'
-      return
-    }
-
-    if (typeof tab === 'string' && ['scan', 'vulnerabilities', 'llmSecurity', 'workbench'].includes(tab)) {
-      activeTab.value = tab as 'scan' | 'vulnerabilities' | 'llmSecurity' | 'workbench'
-      return
-    }
-
-    activeTab.value = 'workbench'
+    activeTab.value = normalizeRequestedTab(tab, findingId)
   },
 )
+
+watch(visibleSecurityTabs, tabs => {
+  if (!tabs.includes(activeTab.value)) {
+    activeTab.value = tabs[0] ?? 'workbench'
+    updateUrlTab(activeTab.value)
+  }
+})
 
 // 更新 URL 参数
 const updateUrlTab = (tab: SecurityCenterTab) => {

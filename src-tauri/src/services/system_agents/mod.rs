@@ -3,11 +3,13 @@ pub mod behavior_session;
 pub mod behavior_signal;
 pub mod clusters;
 pub mod context;
+pub mod context_agent;
 pub mod context_candidate_miner;
 pub mod context_candidate_rules;
 pub mod context_candidate_types;
 pub mod context_preview;
 pub mod context_settings;
+pub mod decision_agent;
 pub mod filters;
 pub mod finding_lifecycle;
 pub mod finding_observation;
@@ -17,7 +19,9 @@ pub mod logic_hypotheses;
 pub mod logic_invariants;
 pub mod logic_skill_context;
 pub mod logic_sop_context;
+pub mod pipeline;
 pub mod process_graph;
+pub mod profile_localization;
 pub mod prompts;
 pub mod runtime;
 pub mod safety;
@@ -43,6 +47,7 @@ pub use behavior_signal::{
     BEHAVIOR_SOURCE_PROXY_INFERRED, TRAFFIC_BEHAVIOR_EXTENSION_BRIDGE_PORT,
     TRAFFIC_BEHAVIOR_SIGNAL_SETTINGS_KEY,
 };
+pub use context_agent::build_raw_context_request_payload;
 pub use context_candidate_miner::recommend_traffic_context_dictionary_candidates;
 pub use context_candidate_types::RecommendTrafficContextDictionaryCandidatesResponse;
 pub use context_preview::{

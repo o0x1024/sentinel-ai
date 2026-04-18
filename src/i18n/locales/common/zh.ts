@@ -54,6 +54,9 @@ export default {
   details: '详情',
   operations: '操作',
   url: 'URL',
+  yes: '是',
+  no: '否',
+  immersiveDrillMode: '沉浸式挖洞模式',
 
   // Navigation
   nav: {

@@ -11,6 +11,8 @@ export function parsePayloadLines(payloadsText: string): string[] {
 
 export function expandPayloadSet(payloadSet: IntruderPayloadSet): string[] {
   switch (payloadSet.payloadType) {
+    case 'appDictionary':
+      return parsePayloadLines(payloadSet.payloadsText)
     case 'extensionGenerated':
       return parsePayloadLines(payloadSet.payloadsText)
     case 'characterSubstitution':

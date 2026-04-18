@@ -38,6 +38,8 @@ pub mod log;
 mod message;
 pub mod service;
 mod streaming;
+mod tool_args;
+mod tool_hooks;
 pub mod types;
 pub mod usage;
 
@@ -49,6 +51,11 @@ pub use message::ImageAttachment;
 pub use message::{build_user_message, convert_chat_history, parse_image_from_json, ChatMessage};
 pub use service::{AiService, StreamChunk};
 pub use streaming::{StreamContent, StreamingLlmClient};
+pub use tool_args::{
+    normalize_tool_call_arguments_json, normalize_tool_call_arguments_str,
+    normalize_tool_call_arguments_value, tool_call_argument_repair_message,
+};
+pub use tool_hooks::ToolArgumentGuardHook;
 pub use types::{
     AiConfig, AiToolCall, SchedulerConfig, SchedulerStage, StreamError, StreamMessage,
     TaskProgressMessage, TaskStreamMessage, ToolCallResultMessage,

@@ -458,10 +458,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch, onMounted } from 'vue'
+import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import i18n, { setLanguage } from '@/i18n' // Import i18n instance and setLanguage for direct access
+import { resolveThemePreference } from '@/views/settingsUiSupport'
 
 const { t, locale } = useI18n({ useScope: 'global' })
 
@@ -565,6 +566,15 @@ const saveGeneralConfig = () => {
   emit('saveGeneralConfig')
 }
 
+const themePreviewMediaQuery = typeof window !== 'undefined'
+  ? window.matchMedia('(prefers-color-scheme: dark)')
+  : null
+const handleSystemThemePreview = () => {
+  if (props.settings?.general?.theme === 'auto') {
+    applyThemePreview('auto')
+  }
+}
+
 // 实时预览设置变化
 watch(() => props.settings?.general?.theme, (newTheme) => {
   if (newTheme) {
@@ -585,11 +595,7 @@ watch(() => props.settings?.general?.language, (newLang) => {
 })
 
 const applyThemePreview = (theme: string) => {
-  let finalTheme = theme
-  if (theme === 'auto') {
-    finalTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  }
-  document.documentElement.setAttribute('data-theme', finalTheme)
+  document.documentElement.setAttribute('data-theme', resolveThemePreference(theme))
 }
 
 const applyFontSizePreview = (fontSize: number) => {
@@ -699,6 +705,28 @@ onMounted(async () => {
     if (props.settings.general.windowOpacity) {
       document.documentElement.style.opacity = `${props.settings.general.windowOpacity}`
     }
+  }
+
+  if (!themePreviewMediaQuery) {
+    return
+  }
+
+  if (typeof themePreviewMediaQuery.addEventListener === 'function') {
+    themePreviewMediaQuery.addEventListener('change', handleSystemThemePreview)
+  } else {
+    themePreviewMediaQuery.addListener(handleSystemThemePreview)
+  }
+})
+
+onUnmounted(() => {
+  if (!themePreviewMediaQuery) {
+    return
+  }
+
+  if (typeof themePreviewMediaQuery.removeEventListener === 'function') {
+    themePreviewMediaQuery.removeEventListener('change', handleSystemThemePreview)
+  } else {
+    themePreviewMediaQuery.removeListener(handleSystemThemePreview)
   }
 })
 </script>

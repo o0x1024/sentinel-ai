@@ -16,9 +16,24 @@ pub struct VerificationTarget {
     pub selector: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VerificationProbePayload {
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub selector: String,
+    #[serde(default)]
+    pub payload: String,
+    #[serde(default)]
+    pub payload_kind: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationPlan {
+    #[serde(default = "default_execution_kind")]
+    pub execution_kind: String,
     #[serde(default = "default_strategy")]
     pub preferred_strategy: String,
     #[serde(default)]
@@ -37,6 +52,8 @@ pub struct VerificationPlan {
     #[serde(default)]
     pub notes: Vec<String>,
     #[serde(default)]
+    pub probe_payloads: Vec<VerificationProbePayload>,
+    #[serde(default)]
     pub parameter_mutations: Vec<VerificationParameterMutation>,
 }
 
@@ -50,6 +67,10 @@ pub struct VerificationBaseline {
     pub response_status: Option<i32>,
     pub response_headers: Option<String>,
     pub response_body: Option<String>,
+}
+
+fn default_execution_kind() -> String {
+    "replay_diff".to_string()
 }
 
 fn default_strategy() -> String {
@@ -72,12 +93,43 @@ pub fn extract_verification_plan(output: &Value) -> Option<VerificationPlan> {
 }
 
 pub fn normalize_verification_plan(plan: &mut VerificationPlan) {
+    if plan.execution_kind.trim().is_empty() {
+        plan.execution_kind = infer_execution_kind_from_strategy(&plan.preferred_strategy);
+    }
     if plan.preferred_strategy.trim().is_empty() {
         plan.preferred_strategy = default_strategy();
     }
+    if plan.execution_kind.trim().is_empty() {
+        plan.execution_kind = infer_execution_kind_from_strategy(&plan.preferred_strategy);
+    }
     plan.candidate_targets
         .retain(|target| !target.location.trim().is_empty() && !target.selector.trim().is_empty());
+    plan.probe_payloads.retain(|probe| {
+        !probe.location.trim().is_empty()
+            && !probe.selector.trim().is_empty()
+            && !probe.payload.trim().is_empty()
+    });
     dedupe_candidate_targets(&mut plan.candidate_targets);
+    dedupe_probe_payloads(&mut plan.probe_payloads);
+}
+
+pub fn infer_execution_kind_from_strategy(strategy: &str) -> String {
+    match strategy {
+        "manual_review" => "manual_review".to_string(),
+        "swap_identity"
+        | "swap_resource_reference"
+        | "repeat_action"
+        | "skip_prerequisite"
+        | "reorder_sequence"
+        | "concurrent_submit"
+        | "replay_as_is" => "replay_diff".to_string(),
+        "mutate_business_parameter" | "input_probe" | "path_traversal_probe" => {
+            "input_probe".to_string()
+        }
+        "cors_origin_probe" | "header_policy_probe" => "policy_check".to_string(),
+        "oast_probe" => "oast_probe".to_string(),
+        _ => default_execution_kind(),
+    }
 }
 
 pub fn extract_context_output(evidence: &[TrafficEvidenceRecord]) -> Option<Value> {
@@ -305,6 +357,34 @@ fn dedupe_candidate_targets(targets: &mut Vec<VerificationTarget>) {
         push_candidate_target(&mut deduped, target);
     }
     *targets = deduped;
+}
+
+fn push_probe_payload(
+    payloads: &mut Vec<VerificationProbePayload>,
+    payload: VerificationProbePayload,
+) {
+    if payload.location.trim().is_empty()
+        || payload.selector.trim().is_empty()
+        || payload.payload.trim().is_empty()
+    {
+        return;
+    }
+    if payloads.iter().any(|existing| {
+        existing.location.eq_ignore_ascii_case(&payload.location)
+            && existing.selector.eq_ignore_ascii_case(&payload.selector)
+            && existing.payload == payload.payload
+    }) {
+        return;
+    }
+    payloads.push(payload);
+}
+
+fn dedupe_probe_payloads(payloads: &mut Vec<VerificationProbePayload>) {
+    let mut deduped = Vec::with_capacity(payloads.len());
+    for payload in payloads.drain(..) {
+        push_probe_payload(&mut deduped, payload);
+    }
+    *payloads = deduped;
 }
 
 #[cfg(test)]

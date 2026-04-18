@@ -74,6 +74,12 @@ pub struct DynamicToolDef {
     pub source: ToolSource,
     /// Tool category
     pub category: String,
+    /// Search tags for tool discovery
+    pub tags: Vec<String>,
+    /// Optional short capability hint for tool search
+    pub search_hint: Option<String>,
+    /// Exposure level for deferred-tool mode
+    pub exposure: String,
     /// Runtime execution policy
     pub execution_policy: ToolExecutionPolicy,
     /// Tool executor function
@@ -86,6 +92,7 @@ impl std::fmt::Debug for DynamicToolDef {
             .field("name", &self.name)
             .field("description", &self.description)
             .field("source", &self.source)
+            .field("category", &self.category)
             .finish()
     }
 }
@@ -342,6 +349,9 @@ pub struct DynamicToolBuilder {
     output_schema: Option<Value>,
     source: ToolSource,
     category: String,
+    tags: Vec<String>,
+    search_hint: Option<String>,
+    exposure: String,
     execution_policy: ToolExecutionPolicy,
     executor: Option<ToolExecutor>,
 }
@@ -358,6 +368,9 @@ impl DynamicToolBuilder {
             output_schema: None,
             source: ToolSource::Builtin,
             category: "other".to_string(),
+            tags: Vec::new(),
+            search_hint: None,
+            exposure: "standard".to_string(),
             execution_policy: ToolExecutionPolicy::default(),
             executor: None,
         }
@@ -385,6 +398,21 @@ impl DynamicToolBuilder {
 
     pub fn category(mut self, category: impl Into<String>) -> Self {
         self.category = category.into();
+        self
+    }
+
+    pub fn tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
+        self
+    }
+
+    pub fn search_hint(mut self, search_hint: impl Into<String>) -> Self {
+        self.search_hint = Some(search_hint.into());
+        self
+    }
+
+    pub fn exposure(mut self, exposure: impl Into<String>) -> Self {
+        self.exposure = exposure.into();
         self
     }
 
@@ -417,6 +445,9 @@ impl DynamicToolBuilder {
             output_schema: self.output_schema,
             source: self.source,
             category: self.category,
+            tags: self.tags,
+            search_hint: self.search_hint,
+            exposure: self.exposure,
             execution_policy: self.execution_policy,
             executor,
         })

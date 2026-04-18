@@ -6,6 +6,8 @@ import type {
 import type {
   WorkbenchCase,
   WorkbenchCaseDetailResult,
+  WorkbenchIgnoredFindingListResult,
+  WorkbenchIgnoreCasesResult,
   WorkbenchExecutionDraft,
   WorkbenchExecutionDraftStatus,
   WorkbenchExecutionRun,
@@ -17,6 +19,7 @@ import type {
   WorkbenchNote,
   WorkbenchNoteKind,
   WorkbenchReplayPlan,
+  WorkbenchRestoreIgnoredFindingsResult,
   WorkbenchSystemAgentStatus,
 } from './securityWorkbenchTypes'
 
@@ -135,6 +138,57 @@ export const deleteWorkbenchCases = async (
   )
 
   return unwrapResponse(response, '删除案件失败')
+}
+
+export const ignoreWorkbenchCases = async (
+  caseIds: string[],
+): Promise<WorkbenchIgnoreCasesResult> => {
+  const response = await invoke<CommandResponse<WorkbenchIgnoreCasesResult>>(
+    'security_workbench_ignore_cases',
+    {
+      request: {
+        caseIds,
+      },
+    },
+  )
+
+  return unwrapResponse(response, '忽略案件失败')
+}
+
+export const listIgnoredWorkbenchFindings = async (
+  query: {
+    search?: string
+    page?: number
+    pageSize?: number
+  } = {},
+): Promise<WorkbenchIgnoredFindingListResult> => {
+  const response = await invoke<CommandResponse<WorkbenchIgnoredFindingListResult>>(
+    'security_workbench_list_ignored_findings',
+    {
+      request: {
+        search: query.search || null,
+        page: query.page ?? 1,
+        pageSize: query.pageSize ?? 20,
+      },
+    },
+  )
+
+  return unwrapResponse(response, '加载已忽略 finding 失败')
+}
+
+export const restoreIgnoredWorkbenchFindings = async (
+  findingIds: string[],
+): Promise<WorkbenchRestoreIgnoredFindingsResult> => {
+  const response = await invoke<CommandResponse<WorkbenchRestoreIgnoredFindingsResult>>(
+    'security_workbench_restore_ignored_findings',
+    {
+      request: {
+        findingIds,
+      },
+    },
+  )
+
+  return unwrapResponse(response, '恢复已忽略 finding 失败')
 }
 
 export const addWorkbenchNote = async (

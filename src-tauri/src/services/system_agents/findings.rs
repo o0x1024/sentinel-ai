@@ -136,6 +136,8 @@ async fn insert_system_agent_observation_evidence(
         response_headers: Some(
             serde_json::json!({
                 "analysisStage": "observation",
+                "domain": observation.domain,
+                "reasoningFamily": observation.reasoning_family,
                 "riskType": observation.risk_type,
                 "actionKind": observation.action_kind,
                 "totalRequests": observation.total_requests,
@@ -299,6 +301,22 @@ async fn build_observation_from_output(
         return Ok(None);
     }
 
+    let domain = output
+        .get("domain")
+        .and_then(Value::as_str)
+        .unwrap_or("web_app")
+        .to_string();
+    let reasoning_family = output
+        .get("reasoningFamily")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| {
+            if crate::services::system_agents::finding_observation::is_logic_family(&risk_type) {
+                "business_logic"
+            } else {
+                "input_interpreter"
+            }
+        })
+        .to_string();
     let confidence = output
         .get("confidence")
         .and_then(Value::as_str)
@@ -412,6 +430,8 @@ async fn build_observation_from_output(
     Ok(Some(TrafficFindingObservation {
         observed_at: event.timestamp,
         profile_id: profile_id.to_string(),
+        domain,
+        reasoning_family,
         risk_type,
         confidence,
         summary,

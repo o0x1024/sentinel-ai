@@ -25,6 +25,8 @@ pub mod output_storage;
 #[cfg(feature = "plugins")]
 pub mod plugin_adapter;
 pub mod terminal;
+mod terminal_output;
+mod tool_search_runtime;
 pub mod tool_server;
 pub mod workflow_adapter;
 

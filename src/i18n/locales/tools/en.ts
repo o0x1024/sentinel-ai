@@ -142,6 +142,58 @@ export default {
     noReviewPlugins: 'No plugins require review'
   },
 
+  exploitdb: {
+    title: 'ExploitDB',
+    description: 'Manage the data source behind search_exploit and inspect locally synced exploit entries.',
+    openManager: 'Data',
+    configTitle: 'Data Source',
+    configDescription: 'Configure the local ExploitDB repository path and trigger sync and index refresh manually.',
+    saveSettings: 'Save Settings',
+    syncNow: 'Sync Now',
+    refreshStatus: 'Refresh Status',
+    statusTitle: 'Sync Status',
+    repoUrl: 'Repository URL',
+    repoPath: 'Local Path',
+    selectPath: 'Select Path',
+    repoReady: 'Repository Ready',
+    indexReady: 'Index Ready',
+    indexedEntries: 'Indexed Entries',
+    lastCommit: 'Last Commit',
+    lastSync: 'Last Sync',
+    indexedAt: 'Indexed At',
+    syncSuccess: 'ExploitDB synced successfully',
+    browserTitle: 'Dataset Browser',
+    browserDescription: 'Search the local ExploitDB index by keyword, CVE, platform, or exploit type.',
+    totalResults: '{count} results',
+    repoNotReady: 'The local ExploitDB repository or index is not ready yet. Save the configuration and run sync first.',
+    emptySearch: 'No ExploitDB entries matched the current filters.',
+    pageInfo: 'Page {page} / {total}',
+    detailTitle: 'Entry Detail',
+    detailEmpty: 'Select an entry from the left to inspect its details.',
+    openInToolTest: 'Open In Tool Test',
+    filters: {
+      query: 'Keyword',
+      queryPlaceholder: 'Product, component, exploit title',
+      cve: 'CVE',
+      platform: 'Platform',
+      platformPlaceholder: 'windows / linux / php',
+      type: 'Type',
+      typePlaceholder: 'remote / webapps / dos'
+    },
+    detail: {
+      author: 'Author',
+      publishedAt: 'Published At',
+      platform: 'Platform',
+      type: 'Type',
+      cves: 'Related CVEs',
+      pocCode: 'PoC / Exploit Code',
+      truncated: 'Content truncated',
+      copyPoc: 'Copy',
+      copySuccess: 'PoC copied to clipboard',
+      copyFailed: 'Failed to copy PoC'
+    }
+  },
+
   // Shell terminal
   shell: {
     title: 'Shell Terminal',

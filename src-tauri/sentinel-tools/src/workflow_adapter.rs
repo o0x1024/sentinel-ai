@@ -175,6 +175,9 @@ impl WorkflowToolAdapter {
                 workflow_id: workflow_id.clone(),
             },
             category: "workflow".to_string(),
+            tags: Vec::new(),
+            search_hint: None,
+            exposure: "deferred".to_string(),
             execution_policy: ToolExecutionPolicy::default(),
             executor: create_workflow_executor(workflow_id),
         }

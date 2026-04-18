@@ -35,8 +35,11 @@ impl WaitStrategy {
 /// Shell prompt patterns for completion detection
 static PROMPT_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        // Basic prompts: $, #, >, %
-        Regex::new(r"[$#>%]\s*$").unwrap(),
+        // Basic prompts: $, #, %
+        // Intentionally exclude `>` because shells use it as the PS2 continuation
+        // prompt for heredocs / unterminated quotes; treating it as completion
+        // truncates multiline commands.
+        Regex::new(r"[$#%]\s*$").unwrap(),
         // user@host:path$ format
         Regex::new(r"\w+@[\w\-\.]+:[^\n]*[$#>%]\s*$").unwrap(),
         // (venv) $ format
@@ -47,6 +50,12 @@ static PROMPT_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         Regex::new(r"root@[a-f0-9]+:[^\n]*#\s*$").unwrap(),
     ]
 });
+
+/// Check if a single line looks like a shell prompt.
+pub fn is_shell_prompt_line(line: &str) -> bool {
+    let trimmed = line.trim_end();
+    PROMPT_PATTERNS.iter().any(|p| p.is_match(trimmed))
+}
 
 /// Check if output ends with a shell prompt (command completed)
 pub fn detect_shell_prompt(output: &str) -> bool {
@@ -61,7 +70,7 @@ pub fn detect_shell_prompt(output: &str) -> bool {
         .collect::<Vec<_>>()
         .join("\n");
 
-    PROMPT_PATTERNS.iter().any(|p| p.is_match(&last_part))
+    last_part.lines().last().is_some_and(is_shell_prompt_line)
 }
 
 /// Known long-running commands that need normalization
@@ -285,5 +294,7 @@ mod tests {
         assert!(detect_shell_prompt("output\nroot@abc123:/workspace# "));
         assert!(detect_shell_prompt("(sandbox) user@host:~$ "));
         assert!(!detect_shell_prompt("still running..."));
+        assert!(!detect_shell_prompt("cat <<'EOF'\n> "));
+        assert!(!is_shell_prompt_line("> "));
     }
 }

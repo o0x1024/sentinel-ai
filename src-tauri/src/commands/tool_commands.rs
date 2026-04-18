@@ -1627,3 +1627,33 @@ pub async fn sync_exploitdb(
 ) -> Result<exploitdb::ExploitDbSyncResponse, String> {
     exploitdb::sync_exploitdb(force_reindex, db_service).await
 }
+
+#[tauri::command]
+pub async fn browse_exploitdb_entries(
+    query: Option<String>,
+    cve: Option<String>,
+    platform: Option<String>,
+    exploit_type: Option<String>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<exploitdb::ExploitDbBrowseResponse, String> {
+    exploitdb::browse_exploitdb_entries(
+        query,
+        cve,
+        platform,
+        exploit_type,
+        page,
+        page_size,
+        db_service,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn get_exploitdb_entry_detail(
+    edb_id: u32,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<exploitdb::ExploitDbDetailResponse, String> {
+    exploitdb::get_exploitdb_entry_detail(edb_id, db_service).await
+}

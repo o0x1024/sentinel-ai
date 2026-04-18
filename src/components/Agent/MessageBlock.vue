@@ -108,6 +108,38 @@
     </div>
   </div>
 
+  <!-- Deferred Tools Activated Message -->
+  <div v-else-if="isToolsActivated" class="rounded-lg overflow-hidden bg-info/10 border-l-4 border-info mb-2">
+    <div class="flex items-center gap-3 px-4 py-3 bg-info/20 border-b border-info/20">
+      <div class="w-8 h-8 rounded-full bg-info flex items-center justify-center flex-shrink-0 shadow-sm">
+        <i class="fas fa-toolbox text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-info">
+          {{ t('agent.toolsActivatedTitle') }}
+        </div>
+        <div class="text-xs text-base-content/70 mt-0.5">
+          {{ toolsActivatedPreview }}
+        </div>
+      </div>
+      <span class="badge badge-sm badge-ghost">{{ toolsActivatedCount }}</span>
+    </div>
+    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/75 space-y-2">
+      <div v-if="message.metadata?.query">
+        <span class="font-medium">{{ t('agent.toolsActivatedQueryLabel') }}:</span>
+        {{ message.metadata?.query }}
+      </div>
+      <div>
+        <span class="font-medium">{{ t('agent.toolsActivatedActiveSetLabel') }}:</span>
+        {{ message.metadata?.tools_preview || toolsActivatedActiveSetPreview }}
+      </div>
+      <div v-if="message.metadata?.runtime_hint">
+        <span class="font-medium">{{ t('agent.toolsActivatedReasonLabel') }}:</span>
+        {{ message.metadata?.runtime_hint }}
+      </div>
+    </div>
+  </div>
+
   <!-- Shell Tool - Render as independent message block -->
   <div v-else-if="isSkillsToolCard" :class="['rounded-lg overflow-hidden border-l-4 mb-2', skillsCardContainerClass]">
     <div :class="['flex items-center gap-3 px-4 py-3 border-b', skillsCardHeaderClass]">
@@ -136,6 +168,7 @@
     :error="message.metadata?.error"
     :status="message.metadata?.status"
     :execution-id="message.metadata?.execution_id"
+    :tracked-artifacts="message.metadata?.tracked_artifacts"
   />
 
   <AskUserQuestionToolResult
@@ -148,6 +181,14 @@
 
   <WebSearchToolResult
     v-else-if="isWebSearchTool"
+    :args="message.metadata?.tool_args"
+    :result="message.metadata?.tool_result"
+    :error="message.metadata?.error"
+    :status="message.metadata?.status"
+  />
+
+  <MemoryToolResult
+    v-else-if="isMemoryTool"
     :args="message.metadata?.tool_args"
     :result="message.metadata?.tool_result"
     :error="message.metadata?.error"
@@ -166,6 +207,13 @@
       
       <!-- Tool Name -->
       <span class="font-mono text-sm font-semibold">{{ toolName || 'Tool' }}</span>
+
+      <span
+        v-if="fileVerificationStatus"
+        :class="['px-2 py-0.5 rounded-full text-xs font-medium', fileVerificationClass]"
+      >
+        {{ fileVerificationText }}
+      </span>
       
       <!-- Status Badge -->
       <span v-if="toolStatus" :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium ml-auto', toolStatusClass]">
@@ -212,6 +260,10 @@
             <span class="text-base-content/50 text-xs">点击展开</span>
           </div>
         </div>
+        <StoredArtifactPanel
+          v-if="toolResultStoredArtifactViews.length > 0"
+          :artifacts="toolResultStoredArtifactViews"
+        />
       </div>
       
       <!-- Tool Call ID -->
@@ -294,6 +346,12 @@
       <div class="message-header flex items-center gap-2 mb-2 text-sm" v-if="showHeader">
         <span class="message-type font-semibold text-base-content/70">{{ typeName }}</span>
         <span v-if="toolName" class="tool-name font-mono text-xs text-primary">`{{ toolName }}`</span>
+        <span
+          v-if="fileVerificationStatus"
+          :class="['px-2 py-0.5 rounded text-xs font-medium', fileVerificationClass]"
+        >
+          {{ fileVerificationText }}
+        </span>
         <!-- Tool Status Indicator -->
         <span v-if="toolStatus" :class="['status-badge px-2 py-0.5 rounded text-xs font-medium', toolStatusClass]">
           {{ toolStatusText }}
@@ -505,8 +563,12 @@
           <!-- Tool Result -->
           <div v-if="message.content" class="tool-result-section">
             <div class="text-xs text-base-content/60 mb-1 font-medium">📤 {{ t('agent.executionResult') }}:</div>
-            <pre class="tool-result p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-64 overflow-y-auto whitespace-pre-wrap">{{ message.content }}</pre>
+            <pre class="tool-result p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-64 overflow-y-auto whitespace-pre-wrap">{{ formattedStandaloneToolResult }}</pre>
           </div>
+          <StoredArtifactPanel
+            v-if="standaloneStoredArtifactViews.length > 0"
+            :artifacts="standaloneStoredArtifactViews"
+          />
           <!-- Tool Call ID -->
           <div v-if="message.metadata?.tool_call_id" class="text-xs text-base-content/50">
             {{ t('agent.toolCallId') }}: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
@@ -530,10 +592,14 @@ import type {
   ReferencedTraffic,
 } from '@/types/agentReferences'
 import { getMessageTypeName } from '@/types/agent'
+import { formatJsonStringIfPossible, formatJsonValueIfPossible } from '@/utils/jsonFormatting'
 import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
+import MemoryToolResult from './MemoryToolResult.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ShellToolResult from './ShellToolResult.vue'
+import StoredArtifactPanel from './StoredArtifactPanel.vue'
 import WebSearchToolResult from './WebSearchToolResult.vue'
+import { buildStoredArtifactViews } from './storedArtifactSupport'
 
 const { t } = useI18n()
 
@@ -787,6 +853,43 @@ const isWebSearchTool = computed(() => {
   return (props.message.type === 'tool_call' || props.message.type === 'tool_result') && name === 'web_search'
 })
 
+const isMemoryTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return (props.message.type === 'tool_call' || props.message.type === 'tool_result') && name === 'memory'
+})
+
+const isFileMutationTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return name === 'file_edit' || name === 'file_write'
+})
+
+const fileVerificationStatus = computed(() => {
+  if (!isFileMutationTool.value) return ''
+  return props.message.metadata?.file_verification_status || ''
+})
+
+const fileVerificationText = computed(() => {
+  switch (fileVerificationStatus.value) {
+    case 'verified':
+      return 'Readback verified'
+    case 'pending':
+      return 'Readback pending'
+    default:
+      return ''
+  }
+})
+
+const fileVerificationClass = computed(() => {
+  switch (fileVerificationStatus.value) {
+    case 'verified':
+      return 'bg-success/10 text-success'
+    case 'pending':
+      return 'bg-warning/10 text-warning'
+    default:
+      return 'bg-base-300/20 text-base-content/60'
+  }
+})
+
 // Check if this is a segment summary message (sliding window)
 const isSegmentSummary = computed(() => {
   return props.message.type === 'system' && 
@@ -803,6 +906,40 @@ const isGlobalSummary = computed(() => {
 const isSkillLoaded = computed(() => {
   return props.message.type === 'system' &&
          props.message.metadata?.kind === 'skill_loaded'
+})
+
+const isToolsActivated = computed(() => {
+  return props.message.type === 'system' &&
+         props.message.metadata?.kind === 'tools_activated'
+})
+
+const toolsActivatedIds = computed<string[]>(() => {
+  return Array.isArray(props.message.metadata?.tool_ids)
+    ? props.message.metadata.tool_ids
+        .map((item: unknown) => (typeof item === 'string' ? item.trim() : ''))
+        .filter((item: string) => item.length > 0)
+    : []
+})
+
+const toolsActivatedCount = computed(() => {
+  return toolsActivatedIds.value.length || (Array.isArray(props.message.metadata?.tools) ? props.message.metadata.tools.length : 0)
+})
+
+const toolsActivatedPreview = computed(() => {
+  if (toolsActivatedIds.value.length > 0) {
+    return toolsActivatedIds.value.join(', ')
+  }
+  return String(props.message.metadata?.tools_preview || props.message.content || '').trim()
+})
+
+const toolsActivatedActiveSetPreview = computed(() => {
+  if (Array.isArray(props.message.metadata?.tools)) {
+    return props.message.metadata.tools
+      .map((item: unknown) => (typeof item === 'string' ? item.trim() : ''))
+      .filter((item: string) => item.length > 0)
+      .join(', ')
+  }
+  return ''
 })
 
 // Check if this is a Tenth Man Critique message
@@ -886,6 +1023,11 @@ const PREVIEW_MAX_STRING = 4000
 const PREVIEW_MAX_CHARS_COLLAPSED = 8000
 const PREVIEW_MAX_CHARS_EXPANDED = 120000
 
+const truncatePreviewText = (text: string, maxChars: number) => {
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, maxChars)}... [truncated ${text.length - maxChars} chars]`
+}
+
 const normalizeForPreview = (value: any, depth = 0, budget = { nodes: 0 }): any => {
   if (value === null || value === undefined) return value
   if (budget.nodes >= PREVIEW_MAX_ITEMS) return '[Truncated: too many nodes]'
@@ -915,19 +1057,26 @@ const normalizeForPreview = (value: any, depth = 0, budget = { nodes: 0 }): any 
 const stringifyPreview = (value: any, maxChars: number) => {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') {
-    if (value.length <= maxChars) return value
-    return `${value.slice(0, maxChars)}... [truncated ${value.length - maxChars} chars]`
+    return truncatePreviewText(value, maxChars)
   }
 
   try {
     const normalized = normalizeForPreview(value)
     const text = JSON.stringify(normalized, null, 2)
     if (!text) return ''
-    if (text.length <= maxChars) return text
-    return `${text.slice(0, maxChars)}... [truncated ${text.length - maxChars} chars]`
+    return truncatePreviewText(text, maxChars)
   } catch {
     return String(value)
   }
+}
+
+const stringifyToolResultPreview = (value: any, maxChars: number) => {
+  const formattedJson = formatJsonValueIfPossible(value)
+  if (formattedJson) {
+    return truncatePreviewText(formattedJson, maxChars)
+  }
+
+  return stringifyPreview(value, maxChars)
 }
 
 const contentMayContainTable = (content: string) => {
@@ -1091,8 +1240,27 @@ const formattedArgs = computed(() => {
 // Formatted tool result
 const formattedToolResult = computed(() => {
   const maxChars = isResultExpanded.value ? PREVIEW_MAX_CHARS_EXPANDED : PREVIEW_MAX_CHARS_COLLAPSED
-  return stringifyPreview(props.message.metadata?.tool_result, maxChars)
+  return stringifyToolResultPreview(props.message.metadata?.tool_result, maxChars)
 })
+
+const formattedStandaloneToolResult = computed(() => {
+  const content = props.message.content || ''
+  return formatJsonValueIfPossible(content) || content
+})
+
+const toolResultStoredArtifactViews = computed(() =>
+  buildStoredArtifactViews(
+    props.message.metadata?.tool_result,
+    props.message.metadata?.tracked_artifacts,
+  )
+)
+
+const standaloneStoredArtifactViews = computed(() =>
+  buildStoredArtifactViews(
+    props.message.content,
+    props.message.metadata?.tracked_artifacts,
+  )
+)
 
 // Type-specific class
 const typeClass = computed(() => {
@@ -1274,8 +1442,9 @@ const formattedContent = computed(() => {
     
     case 'tool_result': {
       // Wrap result in code block if not already markdown
-      let result = content
-      if (!content.includes('```') && !content.includes('#')) {
+      const formattedJson = formatJsonStringIfPossible(content)
+      let result = formattedJson ? `\`\`\`json\n${formattedJson}\n\`\`\`` : content
+      if (!formattedJson && !content.includes('```') && !content.includes('#')) {
         result = `\`\`\`\n${content}\n\`\`\``
       }
       return result + cursor

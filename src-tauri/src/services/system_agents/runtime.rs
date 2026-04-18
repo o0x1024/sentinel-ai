@@ -14,21 +14,21 @@ use sentinel_traffic::HttpRequestRecord;
 use crate::agents::executor::{
     execute_agent, take_execution_tool_trace, AgentExecuteParams, ToolCallRecord,
 };
-use crate::services::system_agents::behavior_session::build_behavior_session;
 use crate::services::system_agents::behavior_signal::TrafficBehaviorSignalSettings;
 use crate::services::system_agents::clusters::TrafficClusterStore;
-use crate::services::system_agents::context::build_traffic_context_snapshot;
+use crate::services::system_agents::context_agent::build_raw_context_request_payload;
 use crate::services::system_agents::context_settings::TrafficContextExtractionSettings;
 use crate::services::system_agents::filters::matches_event_filter;
-use crate::services::system_agents::findings::persist_passive_agent_finding;
 use crate::services::system_agents::language::{output_language_instruction, resolve_ui_language};
-use crate::services::system_agents::logic_hypotheses::build_logic_hypotheses;
-use crate::services::system_agents::logic_invariants::evaluate_logic_invariants;
-use crate::services::system_agents::logic_skill_context::build_logic_skill_context;
 use crate::services::system_agents::logic_sop_context::{
     build_logic_sop_context, render_logic_sop_prompt,
 };
-use crate::services::system_agents::process_graph::build_process_graph;
+use crate::services::system_agents::pipeline::{
+    build_hypothesis_ready_payload, extract_scope_host, extract_scope_url,
+    EVENT_TRAFFIC_CONTEXT_READY, EVENT_TRAFFIC_HYPOTHESIS_READY, EVENT_TRAFFIC_RAW_READY,
+    EVENT_TRAFFIC_VERIFICATION_COMPLETED, TRAFFIC_CONTEXT_AGENT_PROFILE_ID,
+    TRAFFIC_DECISION_AGENT_PROFILE_ID, TRAFFIC_VERIFICATION_AGENT_PROFILE_ID,
+};
 use crate::services::system_agents::prompts::{
     resolve_base_prompt, triage_verification_bootstrap_prompt,
 };
@@ -38,7 +38,6 @@ use crate::services::system_agents::semantic_mapper::{
     normalize_semantic_abstraction_output, semantic_mapper_prompt,
     should_attempt_ai_semantic_mapping,
 };
-use crate::services::system_agents::skill_recommendation::recommend_logic_skills;
 use crate::services::system_agents::tool_policy::SystemAgentToolPolicy;
 use crate::services::system_agents::triage_enrichment::{
     merge_triage_bootstrap_decision, should_attempt_triage_bootstrap, TriageBootstrapDecision,
@@ -118,6 +117,10 @@ impl SystemAgentRuntime {
 
     pub fn app_handle(&self) -> AppHandle {
         self.app_handle.clone()
+    }
+
+    pub(crate) fn db(&self) -> Arc<DatabaseService> {
+        self.db.clone()
     }
 
     pub async fn recover_pending_runs(&self) -> Result<usize> {
@@ -325,12 +328,15 @@ impl SystemAgentRuntime {
                 continue;
             }
             let safety_policy = SystemAgentSafetyPolicy::from_profile(&profile);
-            if profile.capability == "verifier" && !safety_policy.allows_auto_mode() {
+            if profile.capability == "verification" && !safety_policy.allows_auto_mode() {
                 continue;
             }
-            if profile.capability == "triage" {
-                let payload_url = event.payload.get("url").and_then(Value::as_str);
-                let payload_host = event.payload.get("host").and_then(Value::as_str);
+            if matches!(
+                profile.capability.as_str(),
+                "context" | "hypothesis" | "decision"
+            ) {
+                let payload_url = extract_scope_url(&event.payload);
+                let payload_host = extract_scope_host(&event.payload);
                 if let Err(error) =
                     safety_policy.ensure_url_or_host_in_scope(payload_url, payload_host)
                 {
@@ -444,67 +450,24 @@ impl SystemAgentRuntime {
         browser_extension_behavior: Option<Value>,
         context_extraction_settings: TrafficContextExtractionSettings,
     ) -> Result<()> {
-        let initial_snapshot =
-            build_traffic_context_snapshot(&record, &[], &context_extraction_settings);
-        let recent_sequence = self
-            .get_recent_sequence(&initial_snapshot.sequence_key)
-            .await;
-        let mut snapshot =
-            build_traffic_context_snapshot(&record, &recent_sequence, &context_extraction_settings);
-        if let Some(payload) = snapshot.payload.as_object_mut() {
-            payload.insert("behaviorSignal".to_string(), behavior_signal.to_payload());
-            if let Some(browser_extension_behavior) = browser_extension_behavior {
-                payload.insert(
-                    "browserExtensionBehavior".to_string(),
-                    browser_extension_behavior,
-                );
-            }
-        }
-        self.push_recent_sequence(&snapshot.sequence_key, snapshot.action_kind.clone())
-            .await;
-        if let Some(summary) = self.update_cluster_summary(&snapshot.payload).await {
-            if let Some(payload) = snapshot.payload.as_object_mut() {
-                payload.insert("clusterSummary".to_string(), summary);
-            }
-        }
-        if let Some(behavior_session) = build_behavior_session(&snapshot.payload) {
-            if let Some(payload) = snapshot.payload.as_object_mut() {
-                payload.insert("behaviorSession".to_string(), behavior_session);
-            }
-        }
-        if let Some(process_graph) = build_process_graph(&snapshot.payload) {
-            if let Some(payload) = snapshot.payload.as_object_mut() {
-                payload.insert("processGraph".to_string(), process_graph);
-            }
-        }
-        let semantic_abstraction = self.build_semantic_abstraction(&snapshot.payload).await;
-        if let Some(payload) = snapshot.payload.as_object_mut() {
-            payload.insert("semanticAbstraction".to_string(), semantic_abstraction);
-        }
-        let logic_invariants = evaluate_logic_invariants(&snapshot.payload);
-        if let Some(payload) = snapshot.payload.as_object_mut() {
-            payload.insert("logicInvariants".to_string(), logic_invariants);
-        }
-        let logic_hypotheses = build_logic_hypotheses(&snapshot.payload);
-        if let Some(payload) = snapshot.payload.as_object_mut() {
-            payload.insert("logicHypotheses".to_string(), logic_hypotheses);
-        }
-        let skill_recommendations = recommend_logic_skills(&snapshot.payload);
-        if let Some(payload) = snapshot.payload.as_object_mut() {
-            payload.insert("skillRecommendations".to_string(), skill_recommendations);
-        }
-        let logic_skill_context = build_logic_skill_context(self.db.as_ref(), &snapshot.payload);
-        if let Some(payload) = snapshot.payload.as_object_mut() {
-            payload.insert("logicSkillContext".to_string(), logic_skill_context);
-        }
-
+        let payload = build_raw_context_request_payload(
+            record,
+            behavior_signal,
+            browser_extension_behavior,
+            context_extraction_settings,
+        );
         let _ = self
-            .dispatch_event("traffic.cluster.ready", snapshot.payload, "traffic_history")
+            .dispatch_event(EVENT_TRAFFIC_RAW_READY, payload, "traffic_history")
             .await?;
         Ok(())
     }
 
-    fn schedule_event_dispatch(&self, event_name: String, payload: Value, source: String) {
+    pub(crate) fn schedule_event_dispatch(
+        &self,
+        event_name: String,
+        payload: Value,
+        source: String,
+    ) {
         let runtime = self.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(error) = runtime.dispatch_event(&event_name, payload, &source).await {
@@ -585,8 +548,16 @@ impl SystemAgentRuntime {
         priority: i64,
     ) -> Result<()> {
         let finished_at = Utc::now();
-        let run_result = if profile.id == "traffic_active_verifier" {
+        let run_result = if profile.id == TRAFFIC_VERIFICATION_AGENT_PROFILE_ID {
             verify_finding_for_runtime(&self, self.db.as_ref(), &self.app_handle, &payload, &run_id)
+                .await
+                .and_then(|value| serde_json::to_string(&value).map_err(Into::into))
+        } else if profile.id == TRAFFIC_CONTEXT_AGENT_PROFILE_ID {
+            self.run_context_agent_for_runtime(&payload)
+                .await
+                .and_then(|value| serde_json::to_string(&value).map_err(Into::into))
+        } else if profile.id == TRAFFIC_DECISION_AGENT_PROFILE_ID {
+            self.run_decision_agent_for_runtime(&profile, &payload, &event)
                 .await
                 .and_then(|value| serde_json::to_string(&value).map_err(Into::into))
         } else {
@@ -597,9 +568,29 @@ impl SystemAgentRuntime {
 
         match run_result {
             Ok(output_json) => {
-                let mut persistence_warning: Option<String> = None;
+                let persistence_warning: Option<String> = None;
                 let mut output_json = output_json;
-                if profile.mode == "passive" && profile.capability == "triage" {
+                if profile.mode == "passive" && profile.capability == "context" {
+                    match serde_json::from_str::<Value>(&output_json) {
+                        Ok(output_value) => {
+                            self.schedule_event_dispatch(
+                                EVENT_TRAFFIC_CONTEXT_READY.to_string(),
+                                output_value.clone(),
+                                "system_agent_context".to_string(),
+                            );
+                            let _ = self
+                                .app_handle
+                                .emit(EVENT_TRAFFIC_CONTEXT_READY, output_value);
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                "Failed to parse system-agent output as JSON for {}: {}",
+                                profile.id,
+                                error
+                            );
+                        }
+                    }
+                } else if profile.mode == "passive" && profile.capability == "hypothesis" {
                     match serde_json::from_str::<Value>(&output_json) {
                         Ok(output_value) => {
                             let output_value = self
@@ -609,60 +600,19 @@ impl SystemAgentRuntime {
                                 ensure_triage_output_hypothesis_state(output_value, &payload);
                             output_json =
                                 serde_json::to_string(&output_value).unwrap_or(output_json);
-                            match persist_passive_agent_finding(
-                                self.db.as_ref(),
-                                &self.app_handle,
+                            let event_payload = build_hypothesis_ready_payload(
+                                payload.clone(),
+                                output_value.clone(),
                                 &profile.id,
-                                &profile.safety_policy_json,
-                                &event,
-                                &output_value,
-                            )
-                            .await
-                            {
-                                Ok(Some(finding_id)) => {
-                                    let safety_policy =
-                                        SystemAgentSafetyPolicy::from_profile(&profile);
-                                    if safety_policy.allows_auto_mode() {
-                                        self.schedule_event_dispatch(
-                                        "traffic.hypothesis.ready".to_string(),
-                                        json!({
-                                            "findingId": finding_id,
-                                            "sourceProfileId": profile.id,
-                                            "riskType": output_value.get("riskType").cloned().unwrap_or(Value::Null),
-                                            "confidence": output_value.get("confidence").cloned().unwrap_or(Value::Null),
-                                            "hypothesisState": output_value.get("hypothesisState").cloned().unwrap_or(Value::Null),
-                                            "verificationPlan": output_value.get("verificationPlan").cloned().unwrap_or(Value::Null),
-                                            "logicSkillContext": payload.get("logicSkillContext").cloned().unwrap_or(Value::Array(vec![])),
-                                            "logicSopContext": payload.get("logicSopContext").cloned().unwrap_or(Value::Array(vec![])),
-                                        }),
-                                        "system_agent_triage".to_string(),
-                                    );
-                                    }
-                                    let _ = self.app_handle.emit(
-                                        "traffic.hypothesis.ready",
-                                        json!({
-                                            "findingId": finding_id,
-                                            "sourceProfileId": profile.id,
-                                            "riskType": output_value.get("riskType").cloned().unwrap_or(Value::Null),
-                                            "confidence": output_value.get("confidence").cloned().unwrap_or(Value::Null),
-                                            "hypothesisState": output_value.get("hypothesisState").cloned().unwrap_or(Value::Null),
-                                            "verificationPlan": output_value.get("verificationPlan").cloned().unwrap_or(Value::Null),
-                                            "logicSkillContext": payload.get("logicSkillContext").cloned().unwrap_or(Value::Array(vec![])),
-                                            "logicSopContext": payload.get("logicSopContext").cloned().unwrap_or(Value::Array(vec![])),
-                                        }),
-                                    );
-                                }
-                                Ok(None) => {}
-                                Err(error) => {
-                                    tracing::warn!(
-                                        "Failed to persist passive system-agent finding for {}: {}",
-                                        profile.id,
-                                        error
-                                    );
-                                    persistence_warning =
-                                        Some(format!("finding persistence failed: {}", error));
-                                }
-                            }
+                            );
+                            self.schedule_event_dispatch(
+                                EVENT_TRAFFIC_HYPOTHESIS_READY.to_string(),
+                                event_payload.clone(),
+                                "system_agent_hypothesis".to_string(),
+                            );
+                            let _ = self
+                                .app_handle
+                                .emit(EVENT_TRAFFIC_HYPOTHESIS_READY, event_payload);
                         }
                         Err(error) => {
                             tracing::warn!(
@@ -671,6 +621,14 @@ impl SystemAgentRuntime {
                                 error
                             );
                         }
+                    }
+                } else if profile.id == TRAFFIC_VERIFICATION_AGENT_PROFILE_ID {
+                    if let Ok(output_value) = serde_json::from_str::<Value>(&output_json) {
+                        self.schedule_event_dispatch(
+                            EVENT_TRAFFIC_VERIFICATION_COMPLETED.to_string(),
+                            output_value,
+                            "system_agent_verification".to_string(),
+                        );
                     }
                 }
 
@@ -997,7 +955,7 @@ impl SystemAgentRuntime {
         merge_triage_bootstrap_decision(&output, decision)
     }
 
-    async fn build_semantic_abstraction(&self, payload: &Value) -> Value {
+    pub(crate) async fn build_semantic_abstraction(&self, payload: &Value) -> Value {
         let signature = build_semantic_signature(payload);
         if let Some(cached) = self.semantic_cache.read().await.get(&signature).cloned() {
             return cached;
@@ -1223,12 +1181,12 @@ impl SystemAgentRuntime {
         let _ = self.app_handle.emit("system-agent:run-updated", payload);
     }
 
-    async fn get_recent_sequence(&self, sequence_key: &str) -> Vec<String> {
+    pub(crate) async fn get_recent_sequence(&self, sequence_key: &str) -> Vec<String> {
         let sequences = self.recent_sequences.read().await;
         sequences.get(sequence_key).cloned().unwrap_or_default()
     }
 
-    async fn push_recent_sequence(&self, sequence_key: &str, action_kind: String) {
+    pub(crate) async fn push_recent_sequence(&self, sequence_key: &str, action_kind: String) {
         let mut sequences = self.recent_sequences.write().await;
         let entry = sequences.entry(sequence_key.to_string()).or_default();
         entry.push(action_kind);
@@ -1238,7 +1196,7 @@ impl SystemAgentRuntime {
         }
     }
 
-    async fn update_cluster_summary(&self, payload: &Value) -> Option<Value> {
+    pub(crate) async fn update_cluster_summary(&self, payload: &Value) -> Option<Value> {
         let mut store = self.cluster_store.write().await;
         store.update_with_payload(payload)
     }
@@ -1405,7 +1363,16 @@ impl SystemAgentRuntime {
         }
 
         match trigger_event {
-            Some("traffic.cluster.ready") => {
+            Some(EVENT_TRAFFIC_RAW_READY) => {
+                if let Some(url) = payload
+                    .get("record")
+                    .and_then(|value| value.get("url"))
+                    .and_then(Value::as_str)
+                {
+                    return format!("{}::raw::{url}", profile.id);
+                }
+            }
+            Some(EVENT_TRAFFIC_CONTEXT_READY) => {
                 if let Some(cluster_key) = payload.get("clusterKey").and_then(Value::as_str) {
                     return format!("{}::cluster::{cluster_key}", profile.id);
                 }
@@ -1413,7 +1380,16 @@ impl SystemAgentRuntime {
                     return format!("{}::path::{path_template}", profile.id);
                 }
             }
-            Some("traffic.hypothesis.ready") => {
+            Some(EVENT_TRAFFIC_HYPOTHESIS_READY) => {
+                if let Some(cluster_key) = payload
+                    .get("contextPayload")
+                    .and_then(|value| value.get("clusterKey"))
+                    .and_then(Value::as_str)
+                {
+                    return format!("{}::hypothesis::{cluster_key}", profile.id);
+                }
+            }
+            Some("traffic.verification.requested") | Some("traffic.verification.completed") => {
                 if let Some(finding_id) = payload.get("findingId").and_then(Value::as_str) {
                     return format!("{}::finding::{finding_id}", profile.id);
                 }
@@ -1594,7 +1570,7 @@ fn normalize_llm_json_output(raw: &str) -> Value {
 }
 
 fn should_bypass_cooldown(profile: &SystemAgentProfileRecord, payload: &Value) -> bool {
-    if profile.capability != "triage" {
+    if profile.capability != "hypothesis" {
         return false;
     }
 

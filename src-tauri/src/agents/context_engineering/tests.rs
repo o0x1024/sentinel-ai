@@ -1,9 +1,9 @@
 use sentinel_llm::ChatMessage;
 
+use crate::agents::context_engineering::engine::ContextEngineMode;
 use crate::agents::context_engineering::memory_index::{
     ingest_memory_items, retrieve_memory_items, MemoryQuery,
 };
-use crate::agents::context_engineering::engine::ContextEngineMode;
 use crate::agents::context_engineering::tool_digest::build_tool_digest;
 use crate::agents::context_engineering::types::{
     trim_history_preserve_tool_pairs, ContextPacket, RetrievedMemorySection, ToolDigestEntry,
@@ -43,6 +43,7 @@ fn memory_retrieval_prefers_relevant_items() {
         execution_id: "test-exec".to_string(),
         query: "which port does service run".to_string(),
         top_k: 3,
+        include_reflection: false,
     };
     let items = retrieve_memory_items(&mut state, &query);
     assert!(!items.is_empty());
@@ -73,6 +74,41 @@ fn memory_ingestion_promotes_fact_signals_into_richer_kinds() {
 }
 
 #[test]
+fn memory_retrieval_excludes_reflection_by_default() {
+    let mut state = ContextRunState::default();
+    state.memory_items.push(
+        crate::agents::context_engineering::checkpoint::ContextMemoryItem {
+            id: "reflection-1".to_string(),
+            text: "REFLECTION(failure): task failed because timeout was too short".to_string(),
+            kind: "reflection".to_string(),
+            importance: 5,
+            created_at_ms: 1,
+            last_used_at_ms: 1,
+        },
+    );
+    state.memory_items.push(
+        crate::agents::context_engineering::checkpoint::ContextMemoryItem {
+            id: "fact-1".to_string(),
+            text: "Service runs on port 8080".to_string(),
+            kind: "fact".to_string(),
+            importance: 3,
+            created_at_ms: 2,
+            last_used_at_ms: 2,
+        },
+    );
+
+    let query = MemoryQuery {
+        execution_id: "reflection-filter".to_string(),
+        query: "why did task fail timeout".to_string(),
+        top_k: 5,
+        include_reflection: false,
+    };
+
+    let items = retrieve_memory_items(&mut state, &query);
+    assert!(items.iter().all(|item| item.kind != "reflection"));
+}
+
+#[test]
 fn digest_extracts_artifact_reference() {
     let digest = build_tool_digest(
         "shell",
@@ -96,6 +132,8 @@ fn system_prompt_stays_static_without_runtime_sections() {
         tool_name: "shell".to_string(),
         summary: "listed files".to_string(),
         artifact_id: None,
+        review_hint: None,
+        verification_status: None,
     }];
 
     let rendered = packet.render_system_prompt();
@@ -115,6 +153,8 @@ fn orchestrator_context_contains_runtime_sections() {
         tool_name: "shell".to_string(),
         summary: "listed files".to_string(),
         artifact_id: Some("/tmp/out.txt".to_string()),
+        review_hint: None,
+        verification_status: None,
     }];
 
     let rendered = packet.render_orchestrator_context();
@@ -134,6 +174,8 @@ fn codex_layout_splits_runtime_sections_into_multiple_messages() {
         tool_name: "shell".to_string(),
         summary: "listed files".to_string(),
         artifact_id: None,
+        review_hint: None,
+        verification_status: None,
     }];
 
     let messages = packet.render_context_messages(ContextMessageLayout::SplitUserMessages);
@@ -252,4 +294,89 @@ fn background_shell_digest_is_not_treated_as_failed_exit() {
     assert!(digest.summary.contains("background running"));
     assert!(digest.summary.contains("task task-1"));
     assert!(digest.summary.contains("session session-1"));
+}
+
+#[test]
+fn tool_digest_entry_includes_review_hint_for_file_changes() {
+    let digest = build_tool_digest(
+        "file_edit",
+        &serde_json::json!({}),
+        r#"{
+            "file_path":"src/main.rs",
+            "replacements":1,
+            "change_summary":{
+                "first_changed_line":12,
+                "changed_line_count":2,
+                "added_line_count":2,
+                "removed_line_count":2,
+                "after_preview":"fn updated() {\n  true\n}"
+            }
+        }"#,
+    );
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.set_tool_digests(&[digest]);
+
+    let rendered = packet.render_orchestrator_context();
+    assert!(rendered.contains("Self-check: recent file modifications exist."));
+    assert!(rendered.contains("use `file_read` to re-read the changed lines"));
+    assert!(rendered.contains("review: inspect around line 12 (2 changed lines)"));
+    assert!(rendered.contains("line delta +2 / -2"));
+    assert!(rendered.contains("verify snippet `fn updated()"));
+}
+
+#[test]
+fn split_layout_includes_file_change_self_check_guidance() {
+    let digest = build_tool_digest(
+        "file_write",
+        &serde_json::json!({}),
+        r#"{
+            "file_path":"src/new.rs",
+            "operation":"create",
+            "change_summary":{
+                "first_changed_line":1,
+                "changed_line_count":3,
+                "added_line_count":3,
+                "removed_line_count":0,
+                "after_preview":"mod sample;\nfn run() {}\n"
+            }
+        }"#,
+    );
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.set_tool_digests(&[digest]);
+
+    let messages = packet.render_context_messages(ContextMessageLayout::SplitUserMessages);
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0]
+        .content
+        .contains("Self-check: recent file modifications exist."));
+    assert!(messages[0]
+        .content
+        .contains("use `file_read` to re-read the changed lines"));
+    assert!(messages[0]
+        .content
+        .contains("inspect around line 1 (3 changed lines)"));
+}
+
+#[test]
+fn tool_search_digest_runtime_hint_is_rendered_in_orchestrator_context() {
+    let digest = build_tool_digest(
+        "tool_search",
+        &serde_json::json!({}),
+        r#"{
+            "action":"search",
+            "matches":[{"tool_id":"file_read"}],
+            "activated_tool_ids":[],
+            "recommended_tool_ids":["file_read"],
+            "recommendation_reason":"recommended bundle prioritizes reading back the result",
+            "runtime_hint":"recent file changes triggered readback bias",
+            "requires_reload":false,
+            "message":"Found matching tools"
+        }"#,
+    );
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.set_tool_digests(&[digest]);
+
+    let rendered = packet.render_orchestrator_context();
+    assert!(rendered.contains("Tool search search -> 1 matches, 0 activated"));
+    assert!(rendered.contains("recent file changes triggered readback bias"));
 }

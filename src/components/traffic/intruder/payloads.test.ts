@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createDefaultIntruderDictionaryPayloadConfig } from './intruderAppDictionaryPayloads'
 import { expandPayloadSet } from './payloads'
 import type { IntruderPayloadSet } from './types'
 
@@ -10,6 +11,7 @@ function createPayloadSet(overrides: Partial<IntruderPayloadSet> = {}): Intruder
     payloadsText: '',
     urlEncode: false,
     urlEncodeCharacters: String.raw`./\=<>?+&*;:"' {}|^#`,
+    dictionaryConfig: createDefaultIntruderDictionaryPayloadConfig(),
     pluginId: '',
     pluginPresetName: '',
     pluginConfig: '{}',

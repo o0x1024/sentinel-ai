@@ -33,6 +33,7 @@ export interface AgentToolResultEvent {
   tool_name: string
   tool_input: any
   tool_result: string
+  tracked_artifacts?: any[]
 }
 
 export interface AgentToolResultNewEvent {
@@ -40,10 +41,19 @@ export interface AgentToolResultNewEvent {
   tool_call_id: string
   result: string
   success?: boolean
+  tracked_artifacts?: any[]
 }
 
 export interface AgentToolsSelectedEvent {
   execution_id: string
+  tools: string[]
+}
+
+export interface AgentToolsActivatedEvent {
+  execution_id: string
+  tool_ids: string[]
+  query?: string | null
+  runtime_hint?: string | null
   tools: string[]
 }
 
@@ -165,6 +175,21 @@ export interface RagMetaInfo {
   citations?: any[]
 }
 
+export interface MemoryTraceCount {
+  label: string
+  count: number
+}
+
+export interface MemoryRetrievalInfo {
+  queryPreview: string
+  requestedTopK: number
+  hitCount: number
+  usedCanonicalFallback: boolean
+  includeReflection: boolean
+  sourceBreakdown: MemoryTraceCount[]
+  kindBreakdown: MemoryTraceCount[]
+}
+
 export interface ContextUsageInfo {
   usedTokens: number
   maxTokens: number
@@ -179,9 +204,12 @@ export interface ContextUsageInfo {
   sentinelMode?: boolean
   sentinelIntentId?: string | null
   sentinelIntentConfidence?: number | null
+  sentinelIntentTransition?: string | null
+  sentinelParentIntentId?: string | null
   sentinelClarificationNeeded?: boolean
   sentinelClarificationStatus?: string | null
   sentinelCompressionAggressiveness?: string | null
+  memoryRetrieval?: MemoryRetrievalInfo | null
 }
 
 export interface UseAgentEventsReturn {

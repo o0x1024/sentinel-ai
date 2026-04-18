@@ -11,8 +11,18 @@ import {
   type CookieHeaderTokenizerState,
 } from './httpEditorCookieHighlight'
 import { detectHttpBodyLanguage, parseHttpMessageDocument } from './httpDocument'
+import {
+  createUrlEncodedStreamMode,
+  createUrlEncodedTokenizerState,
+  readUrlEncodedToken,
+  type UrlEncodedTokenizerState,
+} from './httpEditorUrlEncodedTokenizer'
+import {
+  httpEditorParameterKeyTag,
+  httpEditorParameterValueTag,
+} from './httpEditorHighlightTags'
 
-type BodyModeKey = 'none' | 'html' | 'xml' | 'json' | 'css' | 'javascript'
+type BodyModeKey = 'none' | 'html' | 'xml' | 'json' | 'css' | 'javascript' | 'form'
 type LegacyMode = any
 
 type BurpHttpState = {
@@ -22,6 +32,7 @@ type BurpHttpState = {
   headerNameToken: string
   headerValueToken: string
   cookieTokenizer: CookieHeaderTokenizerState
+  requestQueryTokenizer: UrlEncodedTokenizerState
 }
 
 const BURP_HTTP_TOKEN_TABLE = {
@@ -45,6 +56,8 @@ const BURP_HTTP_TOKEN_TABLE = {
   'http-protocol': t.meta,
   'http-path': t.url,
   'http-query': [t.url, t.meta],
+  'http-parameter-key': httpEditorParameterKeyTag,
+  'http-parameter-value': httpEditorParameterValueTag,
   'http-status': [t.number, t.strong],
   'http-status-success': [t.number, t.bool, t.strong],
   'http-status-redirect': [t.number, t.special(t.atom), t.strong],
@@ -145,10 +158,20 @@ const detectBodyMode = (content: string): { key: BodyModeKey; mode: LegacyMode |
       return { key: 'css', mode: withBurpTokenTable(css as LegacyMode) }
     case 'javascript':
       return { key: 'javascript', mode: withBurpTokenTable(javascript as LegacyMode) }
+    case 'form':
+      return {
+        key: 'form',
+        mode: createUrlEncodedBodyMode(),
+      }
     default:
       return { key: 'none', mode: null }
   }
 }
+
+const createUrlEncodedBodyMode = (): LegacyMode => createUrlEncodedStreamMode({
+  name: 'burp-form-urlencoded',
+  tokenTable: BURP_HTTP_TOKEN_TABLE,
+})
 
 const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
   name: 'burp-http',
@@ -161,6 +184,7 @@ const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
       headerNameToken: 'http-header-name',
       headerValueToken: 'http-header-value',
       cookieTokenizer: createCookieHeaderTokenizerState('none'),
+      requestQueryTokenizer: createUrlEncodedTokenizerState(),
     }
   },
   copyState(state: unknown): BurpHttpState {
@@ -172,6 +196,7 @@ const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
       headerNameToken: current.headerNameToken,
       headerValueToken: current.headerValueToken,
       cookieTokenizer: { ...current.cookieTokenizer },
+      requestQueryTokenizer: { ...current.requestQueryTokenizer },
     }
   },
   blankLine(state: unknown) {
@@ -203,6 +228,7 @@ const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
         }
         if (stream.match(/^[A-Z]+/)) {
           current.phase = 'requestPath'
+          current.requestQueryTokenizer = createUrlEncodedTokenizerState()
           return 'http-method'
         }
         stream.skipToEnd()
@@ -213,15 +239,31 @@ const createBurpLikeHttpMode = (bodyMode: LegacyMode | null): LegacyMode => ({
         stream.eatWhile(/[^\s?#]/)
         if (stream.peek() === '?' || stream.peek() === '#') {
           current.phase = 'requestQuery'
+          current.requestQueryTokenizer = createUrlEncodedTokenizerState()
         } else {
           current.phase = 'requestProtocol'
         }
         return 'http-path'
       case 'requestQuery':
-        if (stream.eatSpace()) return null
-        stream.eatWhile(/[^\s]/)
-        current.phase = 'requestProtocol'
-        return 'http-query'
+        if (stream.eatSpace()) {
+          current.phase = 'requestProtocol'
+          return null
+        }
+        {
+          const result = readUrlEncodedToken(
+            stream.string,
+            stream.pos,
+            current.requestQueryTokenizer,
+            { stopAtWhitespace: true },
+          )
+          if (result.to <= stream.pos) {
+            current.phase = 'requestProtocol'
+            stream.skipToEnd()
+            return null
+          }
+          stream.pos = result.to
+          return result.token
+        }
       case 'requestProtocol':
         if (stream.eatSpace()) return null
         if (stream.match(/^HTTP\/\d(?:\.\d+)?/)) {

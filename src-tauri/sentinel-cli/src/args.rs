@@ -185,7 +185,7 @@ pub struct AgentRuntimeArgs {
     pub limit: Option<usize>,
     #[arg(long, default_value_t = 1)]
     pub max_concurrent_challenges: usize,
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, default_value_t = 1)]
     pub max_attempts_per_challenge: usize,
     #[arg(long, default_value_t = 300)]
     pub failure_cooldown_secs: u64,
@@ -201,6 +201,6 @@ pub struct AgentRuntimeArgs {
     pub max_steps_per_challenge: usize,
     #[arg(long, default_value_t = 120)]
     pub llm_timeout_secs: u64,
-    #[arg(long, default_value_t = 900)]
+    #[arg(long, default_value_t = 1200)]
     pub max_challenge_duration_secs: u64,
 }

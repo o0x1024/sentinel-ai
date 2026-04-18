@@ -395,6 +395,56 @@ impl DatabaseService {
         .execute(pool)
         .await?;
 
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS memory_records (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                text TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                tier TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                stability TEXT NOT NULL,
+                source TEXT NOT NULL,
+                confidence DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+                importance INTEGER NOT NULL DEFAULT 3,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                origin_execution_id TEXT,
+                supersedes_memory_id TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at_ms BIGINT NOT NULL,
+                updated_at_ms BIGINT NOT NULL
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS memory_projection_state (
+                memory_id TEXT PRIMARY KEY,
+                lexical_indexed BOOLEAN NOT NULL DEFAULT FALSE,
+                vector_indexed BOOLEAN NOT NULL DEFAULT FALSE,
+                skill_projected BOOLEAN NOT NULL DEFAULT FALSE,
+                last_error TEXT,
+                updated_at_ms BIGINT NOT NULL
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_memory_records_status_updated
+               ON memory_records(status, updated_at_ms DESC)"#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_memory_records_kind_updated
+               ON memory_records(kind, updated_at_ms DESC)"#,
+        )
+        .execute(pool)
+        .await?;
+
         // 插件和收藏表
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS plugin_registry (

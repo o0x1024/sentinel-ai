@@ -12,10 +12,111 @@
 
     <!-- 筛选器 -->
     <div class="bg-base-100 rounded-lg p-4 shadow-sm border border-base-300">
-      <div class="flex flex-wrap gap-3 items-center">
+      <div class="space-y-3">
+        <div class="flex flex-wrap gap-3 items-center">
+          <div class="form-control">
+            <select
+              v-model="filters.severity"
+              class="select select-bordered select-sm"
+              @change="applyFilters"
+            >
+              <option value="">{{ $t('vulnerabilities.allSeverities') }}</option>
+              <option value="critical">{{ $t('vulnerabilities.severity.critical') }}</option>
+              <option value="high">{{ $t('vulnerabilities.severity.high') }}</option>
+              <option value="medium">{{ $t('vulnerabilities.severity.medium') }}</option>
+              <option value="low">{{ $t('vulnerabilities.severity.low') }}</option>
+            </select>
+          </div>
+          <div class="form-control">
+            <select
+              v-model="filters.status"
+              class="select select-bordered select-sm"
+              @change="applyStatusFilter"
+            >
+              <option value="">全部状态</option>
+              <option value="candidate">候选待验证</option>
+              <option value="open">开放</option>
+              <option value="reviewed">已验证</option>
+              <option value="false_positive">误报</option>
+              <option value="fixed">已修复</option>
+            </select>
+          </div>
+          <div class="form-control">
+            <select
+              v-model="filters.readStatus"
+              class="select select-bordered select-sm"
+              @change="applyFilters"
+            >
+              <option value="">全部阅读状态</option>
+              <option value="unread">仅未读</option>
+              <option value="read">仅已读</option>
+            </select>
+          </div>
+          <div class="form-control flex-1">
+            <input
+              v-model="filters.search"
+              type="text"
+              :placeholder="$t('common.search') + '...'"
+              class="input input-bordered input-sm"
+              @input="applyFilters"
+            />
+          </div>
+          <button @click="refreshFindings" class="btn btn-outline btn-sm">
+            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              ></path>
+            </svg>
+            {{ $t('common.refresh') }}
+          </button>
+          <button
+            @click="exportCurrentSnapshot"
+            class="btn btn-outline btn-sm"
+            :disabled="exportingSnapshot"
+          >
+            <span v-if="exportingSnapshot" class="loading loading-spinner loading-xs mr-1"></span>
+            <svg v-else class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 16V4m0 12l-4-4m4 4l4-4M4 20h16"
+              ></path>
+            </svg>
+            导出评测快照
+          </button>
+          <button @click="loadEvaluationComparison" class="btn btn-outline btn-sm">
+            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 4v16m8-8H4"
+              ></path>
+            </svg>
+            导入评测对照
+          </button>
+        </div>
+
         <!-- 批量操作 -->
-        <div v-if="selectedIds.size > 0" class="flex items-center gap-2 mr-auto">
+        <div v-if="selectedIds.size > 0" class="flex flex-wrap items-center gap-2">
           <span class="text-sm text-base-content/70">已选择 {{ selectedIds.size }} 项</span>
+          <button @click="markSelectedAsRead" class="btn btn-success btn-sm btn-outline">
+            标记选中为已读
+          </button>
+          <button @click="markCurrentPageAsRead" class="btn btn-success btn-sm btn-outline">
+            标记本页已读
+          </button>
+          <button
+            @click="markAllFilteredAsRead"
+            class="btn btn-success btn-sm btn-outline"
+            :disabled="!canMarkAllFilteredAsRead"
+          >
+            全部标记已读
+          </button>
           <button @click="deleteSelected" class="btn btn-error btn-sm">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -44,79 +145,6 @@
           </button>
           <button @click="selectedIds.clear()" class="btn btn-ghost btn-sm">取消选择</button>
         </div>
-
-        <div class="form-control">
-          <select
-            v-model="filters.severity"
-            class="select select-bordered select-sm"
-            @change="applyFilters"
-          >
-            <option value="">{{ $t('vulnerabilities.allSeverities') }}</option>
-            <option value="critical">{{ $t('vulnerabilities.severity.critical') }}</option>
-            <option value="high">{{ $t('vulnerabilities.severity.high') }}</option>
-            <option value="medium">{{ $t('vulnerabilities.severity.medium') }}</option>
-            <option value="low">{{ $t('vulnerabilities.severity.low') }}</option>
-          </select>
-        </div>
-        <div class="form-control">
-          <select
-            v-model="filters.status"
-            class="select select-bordered select-sm"
-            @change="applyStatusFilter"
-          >
-            <option value="">全部正式状态</option>
-            <option value="open">开放</option>
-            <option value="reviewed">已验证</option>
-            <option value="fixed">已修复</option>
-          </select>
-        </div>
-        <div class="form-control flex-1">
-          <input
-            v-model="filters.search"
-            type="text"
-            :placeholder="$t('common.search') + '...'"
-            class="input input-bordered input-sm"
-            @input="applyFilters"
-          />
-        </div>
-        <button @click="refreshFindings" class="btn btn-outline btn-sm">
-          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            ></path>
-          </svg>
-          {{ $t('common.refresh') }}
-        </button>
-        <button
-          @click="exportCurrentSnapshot"
-          class="btn btn-outline btn-sm"
-          :disabled="exportingSnapshot"
-        >
-          <span v-if="exportingSnapshot" class="loading loading-spinner loading-xs mr-1"></span>
-          <svg v-else class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M12 16V4m0 12l-4-4m4 4l4-4M4 20h16"
-            ></path>
-          </svg>
-          导出评测快照
-        </button>
-        <button @click="loadEvaluationComparison" class="btn btn-outline btn-sm">
-          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M12 4v16m8-8H4"
-            ></path>
-          </svg>
-          导入评测对照
-        </button>
       </div>
     </div>
 
@@ -157,9 +185,11 @@
               :key="finding.id"
               :finding="finding"
               :selected="selectedIds.has(finding.id)"
+              :read="isFindingRead(finding.id)"
               @toggle-select="toggleSelect"
               @open-details="openDetails"
               @open-workbench="openWorkbenchForFinding"
+              @mark-read="markSingleAsRead"
               @delete="deleteSingle"
             />
           </tbody>
@@ -409,12 +439,15 @@ import {
   findFirstTransferableSecurityEvidence,
   type SecurityEvidenceTransferMessages,
 } from './securityEvidenceTransferSupport'
+import { useSecurityCenterActivity } from '@/composables/useSecurityCenterActivity'
 import type { Finding } from './vulnerabilityFindingTypes'
 import { isSystemAgentFinding } from './vulnerabilityFindingPresentation'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const securityCenterActivity = useSecurityCenterActivity()
+const { isFindingRead } = securityCenterActivity
 const emit = defineEmits<{
   'stats-updated': [stats: { total: number; critical: number }]
 }>()
@@ -438,10 +471,13 @@ const stats = ref({ critical: 0, high: 0, medium: 0, low: 0 })
 const filters = ref({
   severity: '',
   status: '',
+  readStatus: '',
   search: '',
 })
 
 const VALID_SEVERITY_FILTERS = new Set(['', 'critical', 'high', 'medium', 'low', 'info'])
+const VALID_STATUS_FILTERS = new Set(['', 'candidate', 'open', 'reviewed', 'false_positive', 'fixed'])
+const SEVERITY_BREAKDOWN_KEYS = ['critical', 'high', 'medium', 'low'] as const
 const currentPage = ref(1)
 const pageSize = ref(10)
 const pageInput = ref('1')
@@ -450,6 +486,9 @@ const totalCount = ref(0) // 总条数
 const totalPages = computed(() => Math.max(1, Math.ceil(totalCount.value / pageSize.value)))
 const isAllSelected = computed(
   () => findings.value.length > 0 && findings.value.every(f => selectedIds.value.has(f.id))
+)
+const canMarkAllFilteredAsRead = computed(() =>
+  totalCount.value > 0 && filters.value.readStatus !== 'read',
 )
 const primaryTransferableEvidence = computed(() =>
   findFirstTransferableSecurityEvidence(selectedFinding.value?.evidence)
@@ -476,19 +515,18 @@ const detailTabs = computed<Array<{ id: DetailTabId; label: string }>>(() => {
 })
 
 const resolveStatusFilters = () => {
-  const allowedFormalStatuses = new Set(['open', 'reviewed', 'fixed'])
-  if (filters.value.status && allowedFormalStatuses.has(filters.value.status)) {
+  if (filters.value.status && VALID_STATUS_FILTERS.has(filters.value.status)) {
     return {
       statusFilter: filters.value.status,
       statusFilters: null as string[] | null,
-      analysisStageFilters: ['formal_open', 'verified', 'fixed'],
+      analysisStageFilters: null as string[] | null,
     }
   }
 
   return {
     statusFilter: null,
     statusFilters: null,
-    analysisStageFilters: ['formal_open', 'verified', 'fixed'],
+    analysisStageFilters: null,
   }
 }
 
@@ -529,40 +567,184 @@ const updateStats = (nextStats: {
   })
 }
 
+const normalizeFindingsResponse = (response: any): Finding[] => {
+  if (!response?.success || !response.data) {
+    return []
+  }
+
+  return response.data
+    .map((item: any) => {
+      if (!item.id || !item.severity) {
+        console.error('Missing required fields in item:', item)
+        return null
+      }
+
+      return {
+        ...item,
+        evidence: item.evidence || [],
+      }
+    })
+    .filter((f: Finding | null): f is Finding => f !== null)
+}
+
+const summarizeFindingsBySeverity = (items: Finding[]) => {
+  const summary = {
+    total: items.length,
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+  }
+
+  for (const item of items) {
+    const severity = item.severity?.toLowerCase()
+    if (severity === 'critical') summary.critical += 1
+    if (severity === 'high') summary.high += 1
+    if (severity === 'medium') summary.medium += 1
+    if (severity === 'low') summary.low += 1
+  }
+
+  return summary
+}
+
+const countVisibleStats = async (
+  filteredTotal: number,
+  severityFilter: string | null,
+  statusFilter: string | null,
+  statusFilters: string[] | null,
+  analysisStageFilters: string[] | null,
+  search: string | null,
+) => {
+  if (severityFilter) {
+    return {
+      total: filteredTotal,
+      critical: severityFilter === 'critical' ? filteredTotal : 0,
+      high: severityFilter === 'high' ? filteredTotal : 0,
+      medium: severityFilter === 'medium' ? filteredTotal : 0,
+      low: severityFilter === 'low' ? filteredTotal : 0,
+    }
+  }
+
+  const [critical, high, medium, low] = await Promise.all(
+    SEVERITY_BREAKDOWN_KEYS.map(level =>
+      countFindings(level, statusFilter, statusFilters, analysisStageFilters, search),
+    ),
+  )
+
+  return {
+    total: filteredTotal,
+    critical,
+    high,
+    medium,
+    low,
+  }
+}
+
+const filterFindingsByReadStatus = (items: Finding[]) => {
+  if (filters.value.readStatus === 'unread') {
+    return items.filter(item => !isFindingRead(item.id))
+  }
+
+  if (filters.value.readStatus === 'read') {
+    return items.filter(item => isFindingRead(item.id))
+  }
+
+  return items
+}
+
+const loadAllFilteredFindings = async () => {
+  const severityFilter = filters.value.severity || null
+  const { statusFilter, statusFilters, analysisStageFilters } = resolveStatusFilters()
+  const search = filters.value.search.trim() || null
+  const filteredTotal = await countFindings(
+    severityFilter,
+    statusFilter,
+    statusFilters,
+    analysisStageFilters,
+    search,
+  )
+
+  if (filteredTotal <= 0) {
+    return [] as Finding[]
+  }
+
+  const response = await invoke<any>('list_findings', {
+    limit: Math.max(filteredTotal, 1),
+    offset: 0,
+    severityFilter,
+    statusFilter,
+    statusFilters,
+    analysisStageFilters,
+    search,
+  })
+
+  return filterFindingsByReadStatus(normalizeFindingsResponse(response))
+}
+
 const refreshFindings = async () => {
   isLoading.value = true
   try {
     const severityFilter = filters.value.severity || null
     const { statusFilter, statusFilters, analysisStageFilters } = resolveStatusFilters()
     const search = filters.value.search.trim() || null
-    const offset = (currentPage.value - 1) * pageSize.value
-    const [filteredTotal, lifecycleStatsResponse, response] = await Promise.all([
-      countFindings(severityFilter, statusFilter, statusFilters, analysisStageFilters, search),
-      invoke<any>('get_finding_lifecycle_stats'),
-      invoke<any>('list_findings', {
-        limit: pageSize.value,
-        offset,
+    const filteredTotal = await countFindings(
+      severityFilter,
+      statusFilter,
+      statusFilters,
+      analysisStageFilters,
+      search,
+    )
+
+    if (filters.value.readStatus) {
+      const response = await invoke<any>('list_findings', {
+        limit: Math.max(filteredTotal, 1),
+        offset: 0,
         severityFilter,
         statusFilter,
         statusFilters,
         analysisStageFilters,
         search,
-      }),
-    ])
+      })
+
+      const filteredFindings = filterFindingsByReadStatus(normalizeFindingsResponse(response))
+      totalCount.value = filteredFindings.length
+      updateStats(summarizeFindingsBySeverity(filteredFindings))
+
+      const nextTotalPages = Math.max(1, Math.ceil(totalCount.value / pageSize.value))
+      if (currentPage.value > nextTotalPages) {
+        currentPage.value = nextTotalPages
+        return
+      }
+
+      const offset = (currentPage.value - 1) * pageSize.value
+      findings.value = filteredFindings.slice(offset, offset + pageSize.value)
+      syncSelectedFinding()
+      await openFindingFromRoute()
+      return
+    }
+
+    const offset = (currentPage.value - 1) * pageSize.value
+    const response = await invoke<any>('list_findings', {
+      limit: pageSize.value,
+      offset,
+      severityFilter,
+      statusFilter,
+      statusFilters,
+      analysisStageFilters,
+      search,
+    })
 
     totalCount.value = filteredTotal
-    if (lifecycleStatsResponse.success && lifecycleStatsResponse.data) {
-      const metrics = lifecycleStatsResponse.data
-      updateStats({
-        total: Number(metrics.formalTotal || 0),
-        critical: Number(metrics.critical || 0),
-        high: Number(metrics.high || 0),
-        medium: Number(metrics.medium || 0),
-        low: Number(metrics.low || 0),
-      })
-    } else {
-      updateStats({ total: 0, critical: 0, high: 0, medium: 0, low: 0 })
-    }
+    updateStats(
+      await countVisibleStats(
+        filteredTotal,
+        severityFilter,
+        statusFilter,
+        statusFilters,
+        analysisStageFilters,
+        search,
+      ),
+    )
 
     const nextTotalPages = Math.max(1, Math.ceil(filteredTotal / pageSize.value))
     if (currentPage.value > nextTotalPages) {
@@ -570,27 +752,10 @@ const refreshFindings = async () => {
       return
     }
 
-    if (response.success && response.data) {
-      findings.value = response.data
-        .map((item: any) => {
-          if (!item.id || !item.severity) {
-            console.error('Missing required fields in item:', item)
-            return null
-          }
-
-          return {
-            ...item,
-            evidence: item.evidence || [],
-          }
-        })
-        .filter((f: any) => f !== null)
-
-      syncSelectedFinding()
-      await openFindingFromRoute()
-      return
-    }
-
-    findings.value = []
+    findings.value = normalizeFindingsResponse(response)
+    syncSelectedFinding()
+    await openFindingFromRoute()
+    return
   } catch (error) {
     console.error('Failed to refresh findings:', error)
     findings.value = []
@@ -683,7 +848,7 @@ const exportCurrentSnapshot = async () => {
       statusFilter,
       statusFilters,
       analysisStageFilters,
-      lifecycleView: 'formal',
+      lifecycleView: 'all',
       search: filters.value.search,
       semanticSourceFilter: null,
       hypothesisRiskTypeFilter: null,
@@ -736,9 +901,14 @@ const applyPageJump = () => {
 }
 
 const openDetails = (finding: Finding) => {
+  securityCenterActivity.markFindingAsRead(finding.id)
   selectedFinding.value = finding
   detailTab.value = 'overview'
   showDetailsModal.value = true
+
+  if (filters.value.readStatus === 'unread') {
+    void refreshFindings()
+  }
 }
 
 const closeDetails = () => {
@@ -755,6 +925,7 @@ const closeDetails = () => {
 
 const openWorkbenchForFinding = async (finding: Finding) => {
   try {
+    securityCenterActivity.markFindingAsRead(finding.id)
     const caseItem = await getOrCreateWorkbenchCaseForFinding(finding.id)
     showDetailsModal.value = false
     selectedFinding.value = null
@@ -784,12 +955,68 @@ const toggleSelectAll = () => {
   }
 }
 
+const markSingleAsRead = (id: string) => {
+  securityCenterActivity.markFindingAsRead(id)
+  selectedIds.value.delete(id)
+  if (filters.value.readStatus) {
+    void refreshFindings()
+  }
+}
+
+const markSelectedAsRead = () => {
+  if (selectedIds.value.size === 0) return
+  const targetIds = Array.from(selectedIds.value)
+  securityCenterActivity.markFindingsAsRead(targetIds)
+  targetIds.forEach(id => selectedIds.value.delete(id))
+  if (filters.value.readStatus) {
+    void refreshFindings()
+  }
+}
+
+const markCurrentPageAsRead = () => {
+  if (findings.value.length === 0) return
+  const targetIds = findings.value.map(item => item.id)
+  securityCenterActivity.markFindingsAsRead(targetIds)
+  targetIds.forEach(id => selectedIds.value.delete(id))
+  if (filters.value.readStatus) {
+    void refreshFindings()
+  }
+}
+
+const markAllFilteredAsRead = async () => {
+  if (!canMarkAllFilteredAsRead.value) return
+
+  const confirmed = await dialog.confirm({
+    title: '全部标记已读',
+    message: `确认将当前筛选结果中的 ${totalCount.value} 条漏洞记录全部标记为已读吗？`,
+    confirmText: '全部标记已读',
+    cancelText: '取消',
+    variant: 'warning',
+  })
+  if (!confirmed) return
+
+  try {
+    const targetIds = (await loadAllFilteredFindings()).map(item => item.id)
+    if (!targetIds.length) return
+
+    securityCenterActivity.markFindingsAsRead(targetIds)
+    targetIds.forEach(id => selectedIds.value.delete(id))
+    if (filters.value.readStatus) {
+      await refreshFindings()
+    }
+  } catch (error) {
+    console.error('Failed to mark all filtered findings as read:', error)
+    dialog.toast.error('全部标记已读失败')
+  }
+}
+
 const deleteSingle = async (id: string) => {
   try {
     const response = await invoke<any>('delete_traffic_vulnerability', { vulnId: id })
     if (response.success) {
       console.log('Vulnerability deleted:', id)
       await refreshFindings()
+      await securityCenterActivity.refreshSecurityCenterActivity()
       selectedIds.value.delete(id)
     } else {
       alert('删除失败: ' + (response.error || '未知错误'))
@@ -833,6 +1060,7 @@ const openFindingFromRoute = async () => {
     }
 
     consumedRouteFindingId.value = findingId
+    securityCenterActivity.markFindingAsRead(findingId)
     selectedFinding.value = {
       ...response.data.vulnerability,
       evidence: response.data.evidence || [],
@@ -879,6 +1107,7 @@ const deleteSelected = async () => {
     if (response.success) {
       console.log(`Deleted ${ids.length} vulnerabilities`)
       await refreshFindings()
+      await securityCenterActivity.refreshSecurityCenterActivity()
       selectedIds.value.clear()
     } else {
       alert('批量删除失败: ' + (response.error || '未知错误'))
@@ -903,6 +1132,7 @@ const confirmDeleteAll = async () => {
     if (response.success) {
       console.log('All vulnerabilities deleted')
       await refreshFindings()
+      await securityCenterActivity.refreshSecurityCenterActivity()
       selectedIds.value.clear()
     } else {
       alert('清空失败: ' + (response.error || '未知错误'))
@@ -988,6 +1218,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
 onMounted(async () => {
   pageInput.value = String(currentPage.value)
   syncFiltersFromRouteQuery()
+  await securityCenterActivity.initializeSecurityCenterActivity()
   try {
     evaluationComparison.value = await loadPersistedEvaluationComparison()
   } catch (error) {

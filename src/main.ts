@@ -13,6 +13,7 @@ import DialogPlugin from './composables/useDialog' // 导入对话框插件
 import ToastPlugin from './composables/useToast' // 导入Toast插件
 import { open as openExternal } from '@tauri-apps/plugin-shell'
 import { resolveStandaloneBootstrapRoute } from './router/standalone'
+import { applyTheme } from './views/settingsUiSupport'
 
 // 启动时应用已保存的通用设置（主题/字体/语言）
 const applyStartupSettings = () => {
@@ -24,12 +25,7 @@ const applyStartupSettings = () => {
 
     // 主题
     if (general.theme) {
-      let finalTheme = general.theme
-      if (finalTheme === 'auto') {
-        finalTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-      }
-      document.documentElement.setAttribute('data-theme', finalTheme)
-      localStorage.setItem('theme', finalTheme)
+      applyTheme(general.theme, parsed)
     }
 
     // 字体大小
@@ -75,6 +71,7 @@ const AIAssistant = () => import('./views/AIAssistant.vue')
 const RAGManagement = () => import('./views/RAGManagement.vue')
 const TrafficAnalysis = () => import('./views/TrafficAnalysis.vue')
 const IntruderResultsWindow = () => import('./views/IntruderResultsWindow.vue')
+const HelpCenterWindow = () => import('./views/HelpCenterWindow.vue')
 const PluginManagement = () => import('./views/PluginManagement.vue')
 const BugBounty = () => import('./views/BugBounty.vue')
 const CyberChef = () => import('./views/CyberChef.vue')
@@ -152,6 +149,12 @@ const routes = [
     name: 'IntruderResultsWindow',
     component: IntruderResultsWindow,
     meta: { title: '爆破器结果', standalone: true },
+  },
+  {
+    path: '/help-center',
+    name: 'HelpCenterWindow',
+    component: HelpCenterWindow,
+    meta: { title: '帮助中心', standalone: true },
   },
   {
     path: '/scan-tasks',

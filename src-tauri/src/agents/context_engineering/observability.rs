@@ -1,5 +1,6 @@
 //! Context observability helpers.
 
+use crate::memory::MemoryRetrievalTrace;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
@@ -16,10 +17,13 @@ pub struct ContextSnapshot {
     pub max_tokens: usize,
     pub trim_trace: Vec<String>,
     pub retrieval_ids: Vec<String>,
+    pub memory_retrieval: Option<MemoryRetrievalTrace>,
     pub sentinel_mode: bool,
     pub sentinel_intent_id: Option<String>,
     pub sentinel_intent_confidence: Option<f32>,
     pub sentinel_intent_relation: Option<String>,
+    pub sentinel_intent_transition: Option<String>,
+    pub sentinel_parent_intent_id: Option<String>,
     pub sentinel_clarification_needed: bool,
     pub sentinel_compression_aggressiveness: Option<String>,
     pub sentinel_clarification_status: Option<String>,
@@ -27,7 +31,7 @@ pub struct ContextSnapshot {
 
 pub fn record_context_snapshot(app_handle: &AppHandle, snapshot: &ContextSnapshot) {
     tracing::info!(
-        "Context snapshot execution_id={} total={} max={} sections(system={},state={},window={},retrieval={},tool={}) trim={:?} sentinel_mode={} intent={:?} clarification_needed={} aggressiveness={:?}",
+        "Context snapshot execution_id={} total={} max={} sections(system={},state={},window={},retrieval={},tool={}) trim={:?} retrieval_trace={:?} sentinel_mode={} intent={:?} clarification_needed={} aggressiveness={:?}",
         snapshot.execution_id,
         snapshot.total_tokens,
         snapshot.max_tokens,
@@ -37,6 +41,7 @@ pub fn record_context_snapshot(app_handle: &AppHandle, snapshot: &ContextSnapsho
         snapshot.retrieval_tokens,
         snapshot.tool_digest_tokens,
         snapshot.trim_trace,
+        snapshot.memory_retrieval,
         snapshot.sentinel_mode,
         snapshot.sentinel_intent_id,
         snapshot.sentinel_clarification_needed,
@@ -56,10 +61,13 @@ pub fn record_context_snapshot(app_handle: &AppHandle, snapshot: &ContextSnapsho
             "max_tokens": snapshot.max_tokens,
             "trim_trace": snapshot.trim_trace,
             "retrieval_ids": snapshot.retrieval_ids,
+            "memory_retrieval": snapshot.memory_retrieval,
             "sentinel_mode": snapshot.sentinel_mode,
             "sentinel_intent_id": snapshot.sentinel_intent_id,
             "sentinel_intent_confidence": snapshot.sentinel_intent_confidence,
             "sentinel_intent_relation": snapshot.sentinel_intent_relation,
+            "sentinel_intent_transition": snapshot.sentinel_intent_transition,
+            "sentinel_parent_intent_id": snapshot.sentinel_parent_intent_id,
             "sentinel_clarification_needed": snapshot.sentinel_clarification_needed,
             "sentinel_compression_aggressiveness": snapshot.sentinel_compression_aggressiveness,
             "sentinel_clarification_status": snapshot.sentinel_clarification_status,

@@ -1,4 +1,4 @@
-export type HttpBodyLanguage = 'json' | 'javascript' | 'html' | 'xml' | 'css' | 'text' | 'binary'
+export type HttpBodyLanguage = 'json' | 'javascript' | 'html' | 'xml' | 'css' | 'form' | 'text' | 'binary'
 
 export interface ParsedHttpHeader {
   name: string
@@ -71,6 +71,7 @@ export const detectHttpBodyLanguage = (body: string, contentType: string): HttpB
 
   if (!trimmed) return 'text'
 
+  if (normalizedContentType.includes('application/x-www-form-urlencoded')) return 'form'
   if (normalizedContentType.includes('json')) return 'json'
   if (normalizedContentType.includes('javascript') || normalizedContentType.includes('ecmascript')) return 'javascript'
   if (normalizedContentType.includes('html')) return 'html'

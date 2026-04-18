@@ -28,13 +28,29 @@ impl BrowserTool {
                 }
             }
             BrowserAction::Click => {
-                if args.selector.as_deref().unwrap_or_default().trim().is_empty() {
-                    return Err(BrowserToolError::Failed("click requires selector".to_string()));
+                if args
+                    .selector
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+                {
+                    return Err(BrowserToolError::Failed(
+                        "click requires selector".to_string(),
+                    ));
                 }
             }
             BrowserAction::Fill => {
-                if args.selector.as_deref().unwrap_or_default().trim().is_empty() {
-                    return Err(BrowserToolError::Failed("fill requires selector".to_string()));
+                if args
+                    .selector
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+                {
+                    return Err(BrowserToolError::Failed(
+                        "fill requires selector".to_string(),
+                    ));
                 }
             }
             BrowserAction::Eval => {

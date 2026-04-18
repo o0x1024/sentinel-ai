@@ -1,6 +1,9 @@
 <template>
   <div class="flex h-full min-h-0 flex-col bg-base-100">
-    <div class="flex items-center gap-2 border-b border-base-300 bg-base-200 px-2 py-1">
+    <div
+      class="flex items-center gap-2 border-b border-base-300"
+      :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_TOP_BAR_CLASS : 'bg-base-200 px-2 py-1'"
+    >
       <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         <div
           v-for="(workspace, index) in workspaces"
@@ -23,7 +26,10 @@
     </div>
 
     <div v-if="currentWorkspace" class="flex min-h-0 flex-1 flex-col">
-      <div class="flex flex-wrap items-start gap-3 border-b border-base-300 px-4 py-3">
+      <div
+        class="flex flex-wrap items-start gap-3 border-b border-base-300"
+        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2.5 py-2 backdrop-blur-sm' : 'px-4 py-3'"
+      >
         <div class="min-w-[28rem]">
           <IntruderAttackTypeSelect
             :model-value="currentWorkspace.attackType"
@@ -44,15 +50,16 @@
           <i class="fas fa-table"></i>
           {{ $t('trafficAnalysis.intruder.actions.showResults') }}
         </button>
-        <button class="btn btn-sm btn-ghost" type="button" @click="duplicateWorkspace">
+        <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost" type="button" @click="duplicateWorkspace">
           <i class="fas fa-clone"></i>
           {{ $t('trafficAnalysis.intruder.actions.cloneTab') }}
         </button>
-        <button class="btn btn-sm btn-ghost" type="button" :disabled="!currentWorkspace.results.length" @click="clearResults">
+        <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost" type="button" :disabled="!currentWorkspace.results.length" @click="clearResults">
           <i class="fas fa-trash-alt"></i>
           {{ $t('trafficAnalysis.intruder.actions.clearResults') }}
         </button>
         <IntruderAttackTemplateManager
+          v-if="!immersiveDrillModeEnabled"
           :templates="attackTemplates"
           :selected-template-id="selectedAttackTemplateId"
           :default-name="currentWorkspace.name"
@@ -63,17 +70,17 @@
           @load="loadAttackTemplate"
           @delete="deleteAttackTemplate"
         />
-        <button class="btn btn-sm btn-ghost" type="button" :disabled="!currentWorkspace.results.length" @click="exportResults">
+        <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost" type="button" :disabled="!currentWorkspace.results.length" @click="exportResults">
           <i class="fas fa-file-export"></i>
           {{ $t('trafficAnalysis.intruder.actions.exportResults') }}
         </button>
 
         <div class="ml-auto flex flex-wrap items-center gap-2 text-sm">
-          <div class="badge badge-outline">{{ $t('trafficAnalysis.intruder.labels.requestCount') }}: {{ estimatedRequests }}</div>
-          <div v-if="currentWorkspace.progress.completed > 0 || currentWorkspace.isRunning" class="badge badge-outline">
+          <div v-if="!immersiveDrillModeEnabled" :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ $t('trafficAnalysis.intruder.labels.requestCount') }}: {{ estimatedRequests }}</div>
+          <div v-if="currentWorkspace.progress.completed > 0 || currentWorkspace.isRunning" :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">
             {{ currentWorkspace.progress.completed }}/{{ currentWorkspace.progress.total }}
           </div>
-          <div v-if="planWillTruncate" class="badge badge-warning badge-outline">
+          <div v-if="planWillTruncate" :class="[IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS, 'badge-warning']">
             {{ $t('trafficAnalysis.intruder.messages.attackPlanTrimmed') }}
           </div>
         </div>
@@ -142,7 +149,7 @@
         </div>
       </div>
 
-      <div class="flex items-center gap-3 border-t border-base-300 bg-base-200 px-4 py-2 text-xs text-base-content/70">
+      <div v-if="!immersiveDrillModeEnabled" class="flex items-center gap-3 border-t border-base-300 bg-base-200 px-4 py-2 text-xs text-base-content/70">
         <span>{{ currentWorkspace.target.useTls ? 'https' : 'http' }}://{{ currentWorkspace.target.host || 'example.com' }}:{{ currentWorkspace.target.port }}</span>
         <span>{{ currentWorkspace.positions.length }} {{ $t('trafficAnalysis.intruder.labels.detectedPositions') }}</span>
         <span v-if="currentWorkspace.isRunning">{{ $t('trafficAnalysis.intruder.labels.running') }}</span>
@@ -190,7 +197,12 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useI18n } from 'vue-i18n'
+import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { dialog } from '@/composables/useDialog'
+import {
+  IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS,
+  IMMERSIVE_TRAFFIC_TOP_BAR_CLASS,
+} from './immersiveTrafficUi'
 import IntruderAttackResults from './intruder/IntruderAttackResults.vue'
 import IntruderAttackTypeSelect from './intruder/IntruderAttackTypeSelect.vue'
 import IntruderAttackTemplateManager from './intruder/IntruderAttackTemplateManager.vue'
@@ -204,6 +216,7 @@ import {
   getRequiredPayloadSetCount,
   estimateAttackCount,
 } from './intruder/attack'
+import { expandPayloadSet } from './intruder/payloads'
 import {
   applyIntruderRequestSettings,
   buildSourceRequestFromRawRequest,
@@ -253,6 +266,11 @@ import {
   transformIntruderRequestWithPlugin,
   type IntruderRequestProcessorTrace,
 } from './intruder/plugins'
+import {
+  createDefaultIntruderDictionaryPayloadConfig,
+  normalizeIntruderDictionaryPayloadConfig,
+  resolveIntruderDictionaryPayloads,
+} from './intruder/intruderAppDictionaryPayloads'
 import { buildIntruderResultsWindowUrl } from '@/router/standalone'
 import type {
   IntruderAttackOptions,
@@ -511,6 +529,7 @@ function createDefaultPayloadSet(index: number): IntruderPayloadSet {
     payloadsText: '',
     urlEncode: false,
     urlEncodeCharacters: String.raw`./\=<>?+&*;:"' {}|^#`,
+    dictionaryConfig: createDefaultIntruderDictionaryPayloadConfig(),
     pluginId: '',
     pluginPresetName: '',
     pluginConfig: '{}',
@@ -531,6 +550,20 @@ function createDefaultPayloadSet(index: number): IntruderPayloadSet {
     usernameFirstNames: '',
     usernameLastNames: '',
     usernameFormats: '{first}.{last}\n{f}{last}\n{first}{l}',
+  }
+}
+
+function normalizePayloadSet(
+  index: number,
+  value?: Partial<IntruderPayloadSet> | null,
+): IntruderPayloadSet {
+  const defaults = createDefaultPayloadSet(index)
+  return {
+    ...defaults,
+    ...(value || {}),
+    dictionaryConfig: normalizeIntruderDictionaryPayloadConfig(
+      value?.dictionaryConfig || defaults.dictionaryConfig,
+    ),
   }
 }
 
@@ -623,10 +656,9 @@ function restorePersistedWorkspaces() {
       target: workspace.target || extractTargetFromRequest(workspace.requestText || ''),
       positions: workspace.positions || extractIntruderPositions(workspace.requestText || ''),
       attackType: workspace.attackType || 'sniper',
-      payloadSets: (workspace.payloadSets?.length ? workspace.payloadSets : [createDefaultPayloadSet(0)]).map((item, payloadIndex) => ({
-        ...createDefaultPayloadSet(payloadIndex),
-        ...item,
-      })),
+      payloadSets: (workspace.payloadSets?.length ? workspace.payloadSets : [createDefaultPayloadSet(0)]).map((item, payloadIndex) =>
+        normalizePayloadSet(payloadIndex, item),
+      ),
       payloadProcessingRules: workspace.payloadProcessingRules || [],
       payloadProcessorPlugins: (workspace.payloadProcessorPlugins || []).map((item) => ({
         ...createDefaultPluginProcessorBinding(),
@@ -789,7 +821,10 @@ function duplicateWorkspace() {
     ...workspace,
     id: createIntruderId('intruder-workspace'),
     name: `${workspace.name} Copy`,
-    payloadSets: workspace.payloadSets.map((payloadSet) => ({ ...payloadSet, id: createIntruderId('payload-set') })),
+    payloadSets: workspace.payloadSets.map((payloadSet, index) => ({
+      ...normalizePayloadSet(index, payloadSet),
+      id: createIntruderId('payload-set'),
+    })),
     payloadProcessingRules: workspace.payloadProcessingRules.map((rule) => ({ ...rule, id: createIntruderId('payload-rule') })),
     payloadProcessorPlugins: workspace.payloadProcessorPlugins.map((binding) => ({ ...binding, id: createIntruderId('plugin-processor') })),
     requestProcessorPlugins: workspace.requestProcessorPlugins.map((binding) => ({ ...binding, id: createIntruderId('plugin-processor') })),
@@ -888,14 +923,22 @@ function updatePayloadSet(workspaceId: string, payloadSetId: string, patch: Part
   const workspace = findWorkspace(workspaceId)
   if (!workspace) return
 
-  workspace.payloadSets = workspace.payloadSets.map((payloadSet) =>
-    payloadSet.id === payloadSetId ? { ...payloadSet, ...patch } : payloadSet,
+  workspace.payloadSets = workspace.payloadSets.map((payloadSet, index) =>
+    payloadSet.id === payloadSetId ? normalizePayloadSet(index, { ...payloadSet, ...patch }) : payloadSet,
   )
 }
 
 async function resolvePayloadSetValues(workspace: IntruderWorkspace, payloadSet: IntruderPayloadSet): Promise<string[]> {
+  if (payloadSet.payloadType === 'appDictionary') {
+    const payloads = await resolveIntruderDictionaryPayloads(payloadSet.dictionaryConfig)
+    updatePayloadSet(workspace.id, payloadSet.id, {
+      payloadsText: payloads.join('\n'),
+    })
+    return payloads
+  }
+
   if (payloadSet.payloadType !== 'extensionGenerated') {
-    return []
+    return expandPayloadSet(payloadSet)
   }
 
   const payloads = await generateIntruderPluginPayloads({
@@ -1376,7 +1419,7 @@ function loadAttackTemplate(templateId = selectedAttackTemplateId.value) {
   workspace.requestText = template.requestText
   workspace.target = template.target
   workspace.attackType = template.attackType
-  workspace.payloadSets = template.payloadSets.map((item, index) => ({ ...createDefaultPayloadSet(index), ...item }))
+  workspace.payloadSets = template.payloadSets.map((item, index) => normalizePayloadSet(index, item))
   workspace.payloadProcessingRules = template.payloadProcessingRules.map((item) => ({ ...item }))
   workspace.payloadProcessorPlugins = (template.payloadProcessorPlugins || []).map((item) => ({ ...createDefaultPluginProcessorBinding(), ...item }))
   workspace.requestProcessorPlugins = (template.requestProcessorPlugins || []).map((item) => ({ ...createDefaultPluginProcessorBinding(), ...item }))
@@ -1668,11 +1711,6 @@ async function startAttack() {
     return
   }
 
-  if (!workspace.positions.length) {
-    dialog.toast.warning(t('trafficAnalysis.intruder.messages.noPositions'))
-    return
-  }
-
   syncPayloadSets(workspace.id, false)
 
   let plan: Awaited<ReturnType<typeof buildIntruderAttackPlan>>
@@ -1698,7 +1736,7 @@ async function startAttack() {
   }
 
   let requests = [...plan.requests]
-  if (workspace.attackOptions.makeUnmodifiedBaseline) {
+  if (workspace.attackOptions.makeUnmodifiedBaseline && workspace.positions.length > 0) {
     requests = [
       {
         requestText: clearIntruderMarkers(workspace.requestText),

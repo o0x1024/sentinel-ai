@@ -1,5 +1,6 @@
 //! 消息类型模块
 
+use crate::tool_args::normalize_tool_call_arguments_value;
 use rig::completion::{message::Image, AssistantContent, Message};
 use rig::message::{DocumentSourceKind, ImageDetail, ImageMediaType, ToolCall, UserContent};
 use rig::one_or_many::OneOrMany;
@@ -134,12 +135,10 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                     if has_tool_calls {
                         if let Some(tool_calls) = parsed_tool_calls {
                             for tc in tool_calls {
-                                // Normalize tool call arguments: some persisted payloads store JSON as a string.
-                                let args = match &tc.function.arguments {
-                                    Value::String(s) => serde_json::from_str::<Value>(s)
-                                        .unwrap_or_else(|_| serde_json::json!({ "raw": s })),
-                                    _ => tc.function.arguments.clone(),
-                                };
+                                let args = normalize_tool_call_arguments_value(
+                                    &tc.function.name,
+                                    tc.function.arguments.clone(),
+                                );
                                 // Track this tool_call_id as valid
                                 valid_tool_call_ids.insert(tc.id.clone());
 

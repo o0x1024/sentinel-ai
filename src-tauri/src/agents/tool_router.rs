@@ -2,206 +2,31 @@
 //!
 //! 根据任务内容选择相关工具，避免将所有工具传给 LLM 造成 token 浪费。
 
+mod catalog;
+mod types;
+
 use anyhow::Result;
 use once_cell::sync::Lazy;
 #[allow(unused_imports)]
 use sentinel_db::Database;
-use serde::{Deserialize, Serialize};
 use serde_json;
-#[allow(unused_imports)]
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
-    AskUserQuestionTool, CloseAgentTool, HttpRequestTool, ListAgentsTool, MemoryManagerTool,
-    OcrTool, SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TenthManTool, TodosTool,
-    WaitAgentsTool, WebSearchTool,
+    CloseAgentTool, HttpRequestTool, ListAgentsTool, MemoryManagerTool, ShellTool, SkillsTool,
+    SpawnAgentTool, TenthManTool, TodosTool, WaitAgentsTool,
+};
+pub use types::{
+    SelectedSkill, ToolCategory, ToolConfig, ToolCost, ToolExposure, ToolMetadata,
+    ToolSelectionPlan, ToolSelectionStrategy, ToolStatistics, ToolUsageRecord, ToolUsageStatistics,
+    ToolUsageStats,
 };
 
-use sentinel_tools::terminal::server::TerminalServer;
-
-/// 工具元数据
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolMetadata {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub category: ToolCategory,
-    pub tags: Vec<String>,
-    pub cost_estimate: ToolCost,
-    pub always_available: bool,
-}
-
-/// 工具分类
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ToolCategory {
-    Network,
-    Security,
-    Data,
-    AI,
-    System,
-    MCP,
-    Plugin,
-    Workflow,
-    Browser,
-    Utility,
-    Recon,        // Discovery/Reconnaissance
-    Scanning,     // Vulnerability scanning
-    Exploitation, // Exploitation tools
-    Monitoring,   // Monitoring tools
-    Other,        // Other/Uncategorized
-}
-
-impl std::fmt::Display for ToolCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ToolCategory::Network => write!(f, "network"),
-            ToolCategory::Security => write!(f, "security"),
-            ToolCategory::Data => write!(f, "data"),
-            ToolCategory::AI => write!(f, "ai"),
-            ToolCategory::System => write!(f, "system"),
-            ToolCategory::MCP => write!(f, "mcp"),
-            ToolCategory::Plugin => write!(f, "plugin"),
-            ToolCategory::Workflow => write!(f, "workflow"),
-            ToolCategory::Browser => write!(f, "browser"),
-            ToolCategory::Utility => write!(f, "utility"),
-            ToolCategory::Recon => write!(f, "recon"),
-            ToolCategory::Scanning => write!(f, "scanning"),
-            ToolCategory::Exploitation => write!(f, "exploitation"),
-            ToolCategory::Monitoring => write!(f, "monitoring"),
-            ToolCategory::Other => write!(f, "other"),
-        }
-    }
-}
-
-/// 工具成本估算（token 数量）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ToolCost {
-    Low,    // < 100 tokens
-    Medium, // 100-500 tokens
-    High,   // > 500 tokens
-}
-
-/// 工具选择策略
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub enum ToolSelectionStrategy {
-    /// 全部工具（不推荐，仅用于测试）
-    All,
-    /// 关键词匹配（快速，免费）
-    #[default]
-    Keyword,
-    /// LLM 智能分析（准确，有成本）
-    LLM,
-    /// 混合策略（关键词 + LLM）
-    Hybrid,
-    /// 用户手动指定
-    Manual(Vec<String>),
-    /// Skills 模式（渐进式披露）
-    /// Vec<String> 为允许参与选择的 skill_id 列表；空表示全部
-    Skills(Vec<String>),
-    /// 不使用工具
-    None,
-}
-
-/// 选中的 Skill 摘要
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SelectedSkill {
-    pub id: String,
-    pub name: String,
-}
-
-/// 工具选择计划（扩展返回类型，支持注入上下文）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolSelectionPlan {
-    /// 最终选中的工具 ID 列表
-    pub tool_ids: Vec<String>,
-    /// 需要注入到 system_prompt 的额外内容（来自 Skill content）
-    pub injected_system_prompt: Option<String>,
-    /// 选中的 Skill 信息
-    pub selected_skill: Option<SelectedSkill>,
-}
-
-/// 工具配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolConfig {
-    /// 工具选择策略
-    pub selection_strategy: ToolSelectionStrategy,
-    /// 最大工具数量
-    pub max_tools: usize,
-    /// 固定启用的工具
-    pub fixed_tools: Vec<String>,
-    /// 禁用的工具
-    pub disabled_tools: Vec<String>,
-    /// 允许的工具白名单（空表示不限制）
-    #[serde(default)]
-    pub allowed_tools: Vec<String>,
-    /// 是否启用工具调用
-    pub enabled: bool,
-}
-
-/// 工具统计信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolStatistics {
-    pub total_tools: usize,
-    pub builtin_tools: usize,
-    pub workflow_tools: usize,
-    pub mcp_tools: usize,
-    pub plugin_tools: usize,
-    pub always_available: usize,
-    pub by_category: HashMap<String, usize>,
-    pub by_cost: HashMap<String, usize>,
-}
-
-/// 工具使用记录
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolUsageRecord {
-    pub tool_id: String,
-    pub tool_name: String,
-    pub execution_id: String,
-    pub timestamp: i64,
-    pub success: bool,
-    pub execution_time_ms: u64,
-    pub error_message: Option<String>,
-}
-
-/// 工具使用统计
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolUsageStatistics {
-    pub total_executions: usize,
-    pub successful_executions: usize,
-    pub failed_executions: usize,
-    pub by_tool: HashMap<String, ToolUsageStats>,
-    pub recent_executions: Vec<ToolUsageRecord>,
-}
-
-/// 单个工具的使用统计
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolUsageStats {
-    pub tool_id: String,
-    pub tool_name: String,
-    pub execution_count: usize,
-    pub success_count: usize,
-    pub failure_count: usize,
-    pub avg_execution_time_ms: f64,
-    pub last_used: i64,
-}
-
-impl Default for ToolConfig {
-    fn default() -> Self {
-        Self {
-            selection_strategy: ToolSelectionStrategy::Keyword,
-            max_tools: 5,
-            fixed_tools: vec![], // No default tools, fully user-controlled
-            disabled_tools: vec![],
-            allowed_tools: vec![],
-            enabled: true,
-        }
-    }
-}
+use self::catalog::{
+    build_default_tools, extract_mcp_tool_tags, extract_workflow_tags, score_skill_match,
+};
 
 /// 全局工具使用记录
 static TOOL_USAGE_RECORDS: Lazy<Arc<RwLock<Vec<ToolUsageRecord>>>> =
@@ -220,7 +45,7 @@ impl ToolRouter {
     /// 创建新的工具路由器
     pub fn new() -> Self {
         Self {
-            all_tools: Self::build_default_tools(),
+            all_tools: build_default_tools(),
             workflow_tools: Vec::new(),
             mcp_tools: Vec::new(),
             plugin_tools: Vec::new(),
@@ -245,251 +70,39 @@ impl ToolRouter {
         router
     }
 
-    /// 构建默认工具列表
-    fn build_default_tools() -> Vec<ToolMetadata> {
-        use sentinel_tools::buildin_tools::*;
+    fn select_deferred_core_tools(&self, config: &ToolConfig) -> Vec<String> {
+        let mut selected = Vec::new();
+        for tool in self.get_all_available_tools() {
+            if config.disabled_tools.contains(&tool.id) {
+                continue;
+            }
+            if matches!(tool.exposure, ToolExposure::Always | ToolExposure::Core) {
+                selected.push(tool.id);
+            }
+        }
+        selected.extend(config.fixed_tools.clone());
 
-        vec![
-            // 网络工具
-            ToolMetadata {
-                id: HttpRequestTool::NAME.to_string(),
-                name: HttpRequestTool::NAME.to_string(),
-                description: HttpRequestTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Network,
-                tags: vec![
-                    "http".to_string(),
-                    "request".to_string(),
-                    "api".to_string(),
-                    "web".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: WebSearchTool::NAME.to_string(),
-                name: WebSearchTool::NAME.to_string(),
-                description: WebSearchTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Network,
-                tags: vec![
-                    "search".to_string(),
-                    "web".to_string(),
-                    "internet".to_string(),
-                    "information".to_string(),
-                    "research".to_string(),
-                    "tavily".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: SearchExploitTool::NAME.to_string(),
-                name: SearchExploitTool::NAME.to_string(),
-                description: SearchExploitTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Exploitation,
-                tags: vec![
-                    "exploit".to_string(),
-                    "poc".to_string(),
-                    "cve".to_string(),
-                    "exploitdb".to_string(),
-                    "vulnerability".to_string(),
-                    "security".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            // 系统工具
-            ToolMetadata {
-                id: AskUserQuestionTool::NAME.to_string(),
-                name: AskUserQuestionTool::NAME.to_string(),
-                description: AskUserQuestionTool::DESCRIPTION.to_string(),
-                category: ToolCategory::System,
-                tags: vec![
-                    "question".to_string(),
-                    "clarification".to_string(),
-                    "user".to_string(),
-                    "decision".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: true,
-            },
-            ToolMetadata {
-                id: ShellTool::NAME.to_string(),
-                name: ShellTool::NAME.to_string(),
-                description: ShellTool::DESCRIPTION.to_string(),
-                category: ToolCategory::System,
-                tags: vec![
-                    "shell".to_string(),
-                    "command".to_string(),
-                    "execute".to_string(),
-                    "bash".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: true,
-            },
-            ToolMetadata {
-                id: TerminalServer::NAME.to_string(),
-                name: TerminalServer::NAME.to_string(),
-                description: TerminalServer::DESCRIPTION.to_string(),
-                category: ToolCategory::System,
-                tags: vec![
-                    "terminal".to_string(),
-                    "interactive".to_string(),
-                    "session".to_string(),
-                    "persistent".to_string(),
-                    "msfconsole".to_string(),
-                    "sqlmap".to_string(),
-                    "shell".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: true,
-            },
-            ToolMetadata {
-                id: SkillsTool::NAME.to_string(),
-                name: SkillsTool::NAME.to_string(),
-                description: SkillsTool::DESCRIPTION.to_string(),
-                category: ToolCategory::System,
-                tags: vec![
-                    "skills".to_string(),
-                    "list".to_string(),
-                    "load".to_string(),
-                    "read".to_string(),
-                    "progressive".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: true,
-            },
-            // Todos tool
-            ToolMetadata {
-                id: TodosTool::NAME.to_string(),
-                name: TodosTool::NAME.to_string(),
-                description: TodosTool::DESCRIPTION.to_string(),
-                category: ToolCategory::System,
-                tags: vec![
-                    "plan".to_string(),
-                    "task".to_string(),
-                    "autonomous".to_string(),
-                    "workflow".to_string(),
-                    "todos".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: true,
-            },
-            // AI工具
-            ToolMetadata {
-                id: OcrTool::NAME.to_string(),
-                name: OcrTool::NAME.to_string(),
-                description: OcrTool::DESCRIPTION.to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "ocr".to_string(),
-                    "text".to_string(),
-                    "image".to_string(),
-                    "extract".to_string(),
-                    "recognition".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            // Memory Manager
-            ToolMetadata {
-                id: MemoryManagerTool::NAME.to_string(),
-                name: MemoryManagerTool::NAME.to_string(),
-                description: MemoryManagerTool::DESCRIPTION.to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "memory".to_string(),
-                    "store".to_string(),
-                    "retrieve".to_string(),
-                    "remember".to_string(),
-                    "recall".to_string(),
-                    "vector".to_string(),
-                    "knowledge".to_string(),
-                    "naming".to_string(),
-                    "title".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            // Tenth Man Review
-            ToolMetadata {
-                id: TenthManTool::NAME.to_string(),
-                name: TenthManTool::NAME.to_string(),
-                description: TenthManTool::DESCRIPTION.to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "review".to_string(),
-                    "critique".to_string(),
-                    "adversarial".to_string(),
-                    "risk".to_string(),
-                    "analysis".to_string(),
-                    "tenth_man".to_string(),
-                    "verification".to_string(),
-                    "validation".to_string(),
-                    "security".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: SpawnAgentTool::NAME.to_string(),
-                name: SpawnAgentTool::NAME.to_string(),
-                description: SpawnAgentTool::DESCRIPTION.to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "subagent".to_string(),
-                    "spawn".to_string(),
-                    "delegate".to_string(),
-                    "background".to_string(),
-                    "parallel".to_string(),
-                ],
-                cost_estimate: ToolCost::High,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: WaitAgentsTool::NAME.to_string(),
-                name: WaitAgentsTool::NAME.to_string(),
-                description: WaitAgentsTool::DESCRIPTION.to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "subagent".to_string(),
-                    "wait".to_string(),
-                    "join".to_string(),
-                    "completion".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: ListAgentsTool::NAME.to_string(),
-                name: ListAgentsTool::NAME.to_string(),
-                description: ListAgentsTool::DESCRIPTION.to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "subagent".to_string(),
-                    "list".to_string(),
-                    "status".to_string(),
-                    "inspect".to_string(),
-                    "coordination".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: CloseAgentTool::NAME.to_string(),
-                name: CloseAgentTool::NAME.to_string(),
-                description: CloseAgentTool::DESCRIPTION.to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "subagent".to_string(),
-                    "close".to_string(),
-                    "cancel".to_string(),
-                    "wait".to_string(),
-                    "coordination".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-        ]
+        let available_tools = self.get_all_available_tools();
+        let mut seen = std::collections::HashSet::new();
+        selected.retain(|tool_id| seen.insert(tool_id.clone()));
+        selected.retain(|tool_id| available_tools.iter().any(|tool| &tool.id == tool_id));
+
+        if selected.len() > config.max_tools {
+            tracing::warn!(
+                "Deferred base toolset exceeds max_tools ({} > {}), truncating.",
+                selected.len(),
+                config.max_tools
+            );
+            selected.truncate(config.max_tools);
+        }
+
+        selected
+    }
+
+    async fn build_deferred_prompt_injection(&self) -> Option<String> {
+        Some(
+            "\n<tool_mode>\nDeferred tool mode is active. You currently have a minimal core toolset.\nWhen the current tools are insufficient, use `tool_search` action=search to discover relevant tools. If the search result includes `recommended_tool_ids`, you may call `tool_search` action=activate with the same query and omit `tool_ids` to activate the recommended bundle automatically. Otherwise, call action=activate with explicit tool_ids before trying to use them.\nDo not guess hidden tool names. Search first, activate second, then use the activated tool.\n</tool_mode>\n".to_string(),
+        )
     }
 
     /// 根据任务选择相关工具
@@ -592,6 +205,7 @@ impl ToolRouter {
                 }
                 base_tools
             }
+            ToolSelectionStrategy::Deferred => self.select_deferred_core_tools(config),
         };
 
         Ok(self.merge_always_available_tools(selected))
@@ -613,6 +227,15 @@ impl ToolRouter {
         }
 
         match &config.selection_strategy {
+            ToolSelectionStrategy::Deferred => {
+                let tool_ids =
+                    self.merge_always_available_tools(self.select_deferred_core_tools(config));
+                Ok(ToolSelectionPlan {
+                    tool_ids,
+                    injected_system_prompt: self.build_deferred_prompt_injection().await,
+                    selected_skill: None,
+                })
+            }
             ToolSelectionStrategy::Skills(_allowed_groups) => {
                 if !self.is_skills_enabled().await {
                     tracing::info!("Skills tool disabled via config; skipping skills injection.");
@@ -942,13 +565,23 @@ impl ToolRouter {
                 // Keep shell available, but lower priority than interactive_shell in binary tasks.
                 score += 3;
             }
-            if (task_lower.contains("memory")
+            let memory_intent = task_lower.contains("memory")
                 || task_lower.contains("remember")
                 || task_lower.contains("recall")
                 || task_lower.contains("store")
-                || task_lower.contains("save"))
-                && tool.id == MemoryManagerTool::NAME
-            {
+                || task_lower.contains("save")
+                || task_lower.contains("记忆")
+                || task_lower.contains("回忆")
+                || task_lower.contains("回顾")
+                || task_lower.contains("复盘")
+                || task_lower.contains("历史思路")
+                || task_lower.contains("历史分析")
+                || task_lower.contains("之前分析")
+                || task_lower.contains("之前结论")
+                || task_lower.contains("解题思路")
+                || (task_lower.contains("之前") && task_lower.contains("思路"))
+                || (task_lower.contains("历史") && task_lower.contains("思路"));
+            if memory_intent && tool.id == MemoryManagerTool::NAME {
                 score += 25; // High priority for memory operations
             }
             if (task_lower.contains("ocr")
@@ -1045,8 +678,10 @@ impl ToolRouter {
                             description: description.unwrap_or("Workflow tool").to_string(),
                             category: ToolCategory::Workflow,
                             tags,
+                            search_hint: Some("run a workflow-defined tool".to_string()),
                             cost_estimate: ToolCost::High, // 工作流通常较复杂
                             always_available: false,
+                            exposure: ToolExposure::Deferred,
                         });
                     }
                 }
@@ -1127,6 +762,10 @@ impl ToolRouter {
             .filter(|t| {
                 t.name.to_lowercase().contains(&query_lower)
                     || t.description.to_lowercase().contains(&query_lower)
+                    || t.search_hint
+                        .as_deref()
+                        .map(|hint| hint.to_lowercase().contains(&query_lower))
+                        .unwrap_or(false)
                     || t.tags
                         .iter()
                         .any(|tag| tag.to_lowercase().contains(&query_lower))
@@ -1227,8 +866,10 @@ impl ToolRouter {
                             description: description.to_string(),
                             category: ToolCategory::MCP,
                             tags,
+                            search_hint: Some("use a connected MCP server capability".to_string()),
                             cost_estimate: ToolCost::Medium,
                             always_available: false,
+                            exposure: ToolExposure::Deferred,
                         });
                     }
                 }
@@ -1289,8 +930,10 @@ impl ToolRouter {
                     description: description_str.to_string(),
                     category: ToolCategory::Plugin,
                     tags,
+                    search_hint: Some("run a plugin-provided tool".to_string()),
                     cost_estimate: ToolCost::Medium,
                     always_available: false,
+                    exposure: ToolExposure::Deferred,
                 });
             }
         }
@@ -1813,42 +1456,6 @@ Return ONLY:
     }
 }
 
-fn score_skill_match(task_lower: &str, skill_name: &str, description: &str) -> usize {
-    if task_lower.trim().is_empty() {
-        return 0;
-    }
-
-    let mut score = 0usize;
-    let name_lower = skill_name.to_lowercase();
-    let desc_lower = description.to_lowercase();
-
-    if task_lower.contains(&name_lower) {
-        score += 8;
-    }
-
-    let mut keywords = HashSet::new();
-    for part in name_lower
-        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
-        .chain(desc_lower.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-'))
-    {
-        let token = part.trim();
-        if token.len() >= 3 && token.len() <= 32 {
-            keywords.insert(token.to_string());
-        }
-        if keywords.len() >= 36 {
-            break;
-        }
-    }
-
-    for token in keywords {
-        if task_lower.contains(&token) {
-            score += 1;
-        }
-    }
-
-    score
-}
-
 impl Default for ToolRouter {
     fn default() -> Self {
         Self::new()
@@ -1944,134 +1551,6 @@ pub async fn clear_tool_usage_records() {
     records.clear();
 }
 
-/// 从工作流名称和描述中提取标签
-fn extract_workflow_tags(name: &str, description: Option<&str>) -> Vec<String> {
-    let mut tags = Vec::new();
-
-    // 从名称提取
-    let name_lower = name.to_lowercase();
-    let name_words: Vec<&str> = name_lower.split(|c: char| !c.is_alphanumeric()).collect();
-
-    for word in name_words {
-        if word.len() > 2 {
-            tags.push(word.to_string());
-        }
-    }
-
-    // 从描述提取关键词
-    if let Some(desc) = description {
-        let desc_lower = desc.to_lowercase();
-
-        // 常见的工作流类型关键词
-        let keywords = [
-            "scan",
-            "test",
-            "analyze",
-            "report",
-            "monitor",
-            "alert",
-            "security",
-            "vulnerability",
-            "penetration",
-            "reconnaissance",
-            "扫描",
-            "测试",
-            "分析",
-            "报告",
-            "监控",
-            "告警",
-            "安全",
-            "漏洞",
-        ];
-
-        for keyword in keywords {
-            if desc_lower.contains(keyword) {
-                tags.push(keyword.to_string());
-            }
-        }
-    }
-
-    // 去重
-    tags.sort();
-    tags.dedup();
-
-    tags
-}
-
-/// 从 MCP 工具名称和描述中提取标签
-fn extract_mcp_tool_tags(name: &str, description: &str) -> Vec<String> {
-    let mut tags = Vec::new();
-
-    // 从名称提取
-    let name_lower = name.to_lowercase();
-    let name_words: Vec<&str> = name_lower.split(|c: char| !c.is_alphanumeric()).collect();
-
-    for word in name_words {
-        if word.len() > 2 {
-            tags.push(word.to_string());
-        }
-    }
-
-    // 从描述提取关键词
-    let desc_lower = description.to_lowercase();
-
-    // 常见的 MCP 工具类型关键词
-    let keywords = [
-        "file",
-        "read",
-        "write",
-        "search",
-        "query",
-        "fetch",
-        "get",
-        "list",
-        "create",
-        "update",
-        "delete",
-        "execute",
-        "run",
-        "call",
-        "invoke",
-        "database",
-        "api",
-        "web",
-        "http",
-        "git",
-        "github",
-        "filesystem",
-        "文件",
-        "读取",
-        "写入",
-        "搜索",
-        "查询",
-        "获取",
-        "列表",
-        "创建",
-        "更新",
-        "删除",
-        "执行",
-        "运行",
-        "调用",
-        "数据库",
-        "接口",
-    ];
-
-    for keyword in keywords {
-        if desc_lower.contains(keyword) {
-            tags.push(keyword.to_string());
-        }
-    }
-
-    // 添加 MCP 标签
-    tags.push("mcp".to_string());
-
-    // 去重
-    tags.sort();
-    tags.dedup();
-
-    tags
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2131,5 +1610,36 @@ mod tests {
             .await
             .unwrap();
         assert!(!selected.contains(&"shell".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_deferred_plan_includes_tool_search_and_prompt() {
+        let router = ToolRouter::new();
+        let config = ToolConfig {
+            enabled: true,
+            selection_strategy: ToolSelectionStrategy::Deferred,
+            max_tools: 12,
+            fixed_tools: vec![],
+            disabled_tools: vec![],
+            allowed_tools: vec![],
+        };
+
+        let plan = router
+            .plan_tools("find the right tool and activate it", &config, None)
+            .await
+            .unwrap();
+
+        assert!(plan.tool_ids.contains(&"tool_search".to_string()));
+        assert!(plan.tool_ids.contains(&"ask_user_question".to_string()));
+        assert!(plan
+            .injected_system_prompt
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Deferred tool mode is active"));
+        assert!(plan
+            .injected_system_prompt
+            .as_deref()
+            .unwrap_or_default()
+            .contains("recommended_tool_ids"));
     }
 }

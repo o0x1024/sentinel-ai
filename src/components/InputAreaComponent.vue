@@ -248,12 +248,12 @@
         <!-- Text input (auto-resize textarea) -->
         <div class="input-editor-shell flex-1 min-w-0">
           <div
-            v-if="inputMessage"
+            v-if="showTextareaMirror"
             ref="textareaMirrorRef"
             class="textarea-mirror"
             aria-hidden="true"
           >
-            <pre class="textarea-mirror-content">{{ highlightedPlainPrefix }}<template v-for="(segment, idx) in highlightedMentionSegments" :key="`${segment.start}-${idx}`"><span v-if="segment.type === 'text'">{{ segment.value }}</span><span v-else :class="['mention-inline-token', getMentionInlineClass(segment.kind)]" @mouseenter="showMentionPreview(segment, $event)" @mousemove="showMentionPreview(segment, $event)" @mousedown.prevent="handleMentionTokenPointerDown" @click.prevent="beginMentionReplacement(segment)" @mouseleave="scheduleHideMentionPreview">{{ segment.value }}</span></template>{{ highlightedPlainSuffix }}</pre>
+            <pre class="textarea-mirror-content"><template v-for="(segment, idx) in mirrorRenderSegments" :key="segment.type === 'mention' ? `${segment.id}-${segment.start}-${idx}` : `${segment.type}-${segment.start}-${idx}`"><span v-if="segment.type === 'text'">{{ segment.value }}</span><span v-else-if="segment.type === 'caret'" class="textarea-mirror-caret" aria-hidden="true"></span><span v-else :class="['mention-inline-token', getMentionInlineClass(segment.kind)]" @mouseenter="showMentionPreview(segment, $event)" @mousemove="showMentionPreview(segment, $event)" @mousedown.prevent="handleMentionTokenPointerDown" @click.prevent="beginMentionReplacement(segment)" @mouseleave="scheduleHideMentionPreview">{{ segment.value }}</span></template>{{ highlightedPlainSuffix }}</pre>
           </div>
           <textarea
             ref="textareaRef"
@@ -264,13 +264,15 @@
             @keyup="onCaretChanged"
             @select="onCaretChanged"
             @scroll="onTextareaScroll"
+            @focus="onTextareaFocus"
+            @blur="onTextareaBlur"
             @compositionstart="onCompositionStart"
             @compositionend="onCompositionEnd"
             :disabled="isLoading && !allowTakeover"
             :placeholder="placeholderText"
             :class="[
               'w-full bg-transparent outline-none resize-none leading-relaxed text-sm placeholder:text-base-content/50 max-h-40 input-textarea',
-              inputMessage ? 'text-transparent caret-base-content' : ''
+              showTextareaMirror ? 'text-transparent caret-base-content' : 'text-base-content caret-base-content'
             ]"
             rows="1"
           />
@@ -616,12 +618,31 @@ import { useI18n } from 'vue-i18n'
 import draggable from 'vuedraggable'
 import SearchableSelect from '@/components/SearchableSelect.vue'
 import InputToolbarActions from '@/components/InputArea/InputToolbarActions.vue'
+import {
+  formatReferencedFileSize,
+  getAssetRiskBadgeClass,
+  getMentionBadgeClass,
+  getMentionBadgeLabel,
+  getMentionInlineClass,
+  getMethodBadgeClass,
+  getStatusBadgeClass,
+  getTypeBadgeClass,
+  getTypeLabel,
+  getUrlPath,
+} from '@/components/InputArea/inputAreaDisplay'
+import {
+  buildHighlightedMentionSegments,
+  buildMirrorRenderSegments,
+  resolveMirrorCaretIndex,
+  type MirrorMentionSegment,
+  type MirrorRenderSegment,
+  type MirrorTextSegment,
+} from '@/components/InputArea/inputMirrorSupport'
 import { useInputAttachments } from '@/components/InputArea/useInputAttachments'
 import {
   expandSelectionToMentionBoundaries,
   findMentionTokenAdjacentToCursor,
   findMentionTokenForDeletion,
-  parseMentionTokens,
   removeMentionTokenText,
   removeTextRange,
   snapCursorToMentionBoundary,
@@ -641,6 +662,21 @@ import type { MentionTokenKind } from '@/components/InputArea/mentionTokenSuppor
 const { t } = useI18n()
 
 // Context usage info type
+interface MemoryTraceCount {
+  label: string
+  count: number
+}
+
+interface MemoryRetrievalInfo {
+  queryPreview: string
+  requestedTopK: number
+  hitCount: number
+  usedCanonicalFallback: boolean
+  includeReflection: boolean
+  sourceBreakdown: MemoryTraceCount[]
+  kindBreakdown: MemoryTraceCount[]
+}
+
 interface ContextUsageInfo {
   usedTokens: number
   maxTokens: number
@@ -655,9 +691,12 @@ interface ContextUsageInfo {
   sentinelMode?: boolean
   sentinelIntentId?: string | null
   sentinelIntentConfidence?: number | null
+  sentinelIntentTransition?: string | null
+  sentinelParentIntentId?: string | null
   sentinelClarificationNeeded?: boolean
   sentinelClarificationStatus?: string | null
   sentinelCompressionAggressiveness?: string | null
+  memoryRetrieval?: MemoryRetrievalInfo | null
 }
 
 interface AgentOption {
@@ -729,66 +768,6 @@ const emit = defineEmits<{
 
 const allowTakeover = computed(() => props.allowTakeover === true)
 
-const getAssetRiskBadgeClass = (level?: string) => {
-  switch (String(level || 'unknown').toLowerCase()) {
-    case 'critical':
-      return 'badge-error'
-    case 'high':
-      return 'badge-warning'
-    case 'medium':
-      return 'badge-info'
-    case 'low':
-      return 'badge-success'
-    default:
-      return 'badge-ghost'
-  }
-}
-
-const getMentionBadgeClass = (kind: 'file' | 'asset' | 'message' | 'traffic') => {
-  switch (kind) {
-    case 'file':
-      return 'badge-secondary'
-    case 'asset':
-      return 'badge-primary'
-    case 'message':
-      return 'badge-info'
-    case 'traffic':
-      return 'badge-accent'
-    default:
-      return 'badge-ghost'
-  }
-}
-
-const getMentionBadgeLabel = (kind: 'file' | 'asset' | 'message' | 'traffic') => {
-  switch (kind) {
-    case 'file':
-      return 'FILE'
-    case 'asset':
-      return 'ASSET'
-    case 'message':
-      return 'MSG'
-    case 'traffic':
-      return 'HTTP'
-    default:
-      return 'REF'
-  }
-}
-
-const getMentionInlineClass = (kind: 'file' | 'asset' | 'message' | 'traffic') => {
-  switch (kind) {
-    case 'file':
-      return 'mention-inline-file'
-    case 'asset':
-      return 'mention-inline-asset'
-    case 'message':
-      return 'mention-inline-message'
-    case 'traffic':
-      return 'mention-inline-traffic'
-    default:
-      return ''
-  }
-}
-
 // --- New input logic ---
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const textareaMirrorRef = ref<HTMLDivElement | null>(null)
@@ -811,48 +790,39 @@ const availableAgentOptions = computed(() => props.availableAgents || [])
 
 const placeholderText = computed(() => '在这里输入消息，按 Enter 发送')
 
-const highlightedMentionSegments = computed(() => {
-  const text = props.inputMessage || ''
-  const tokens = parseMentionTokens(text)
-  const segments: Array<
-    | { start: number; type: 'text'; value: string }
-    | { end: number; id: string; kind: 'file' | 'asset' | 'message' | 'traffic'; label: string; start: number; type: 'mention'; value: string }
-  > = []
-  let cursor = 0
+const selectionState = ref({
+  end: 0,
+  start: 0,
+})
+const isTextareaFocused = ref(false)
 
-  for (const token of tokens) {
-    if (token.start > cursor) {
-      segments.push({
-        start: cursor,
-        type: 'text',
-        value: text.slice(cursor, token.start),
-      })
-    }
-    segments.push({
-      end: token.end,
-      id: token.id,
-      kind: token.kind,
-      label: token.label,
-      start: token.start,
-      type: 'mention',
-      value: token.text,
-    })
-    cursor = token.end
-  }
-
-  if (cursor < text.length) {
-    segments.push({
-      start: cursor,
-      type: 'text',
-      value: text.slice(cursor),
-    })
-  }
-
-  return segments
+const highlightedMentionSegments = computed<Array<MirrorTextSegment | MirrorMentionSegment>>(() => {
+  return buildHighlightedMentionSegments(props.inputMessage || '')
 })
 
-const highlightedPlainPrefix = computed(() => '')
+const showTextareaMirror = computed(() => {
+  return highlightedMentionSegments.value.some((segment) => segment.type === 'mention')
+})
+
 const highlightedPlainSuffix = computed(() => '\n')
+
+const mirrorCaretIndex = computed<number | null>(() => {
+  if (!showTextareaMirror.value) return null
+  return resolveMirrorCaretIndex(
+    props.inputMessage || '',
+    isTextareaFocused.value,
+    selectionState.value.start,
+    selectionState.value.end,
+  )
+})
+
+const mirrorRenderSegments = computed<MirrorRenderSegment[]>(() => {
+  return buildMirrorRenderSegments(
+    props.inputMessage || '',
+    highlightedMentionSegments.value,
+    mirrorCaretIndex.value,
+  )
+})
 
 const buildMentionReplacementQuery = (segment: {
   id: string
@@ -941,11 +911,19 @@ const autoResize = () => {
   el.style.height = Math.min(el.scrollHeight, 320) + 'px'
 }
 
+const syncSelectionState = (selectionStart: number, selectionEnd: number) => {
+  selectionState.value = {
+    end: selectionEnd,
+    start: selectionStart,
+  }
+}
+
 const setCursorPosition = (cursor: number, preference: 'left' | 'right' | 'nearest' = 'nearest') => {
   const el = textareaRef.value
   if (!el) return
   const normalizedCursor = snapCursorToMentionBoundary(props.inputMessage || '', cursor, preference)
   el.setSelectionRange(normalizedCursor, normalizedCursor)
+  syncSelectionState(normalizedCursor, normalizedCursor)
 }
 
 const normalizeSelectionRange = (
@@ -968,6 +946,7 @@ const setInputValue = (value: string, cursor = value.length) => {
     el.focus()
     const normalizedCursor = snapCursorToMentionBoundary(value, cursor, 'nearest')
     el.setSelectionRange(normalizedCursor, normalizedCursor)
+    syncSelectionState(normalizedCursor, normalizedCursor)
     updateSlashState(value, normalizedCursor)
     updateMentionState(value, normalizedCursor)
     autoResize()
@@ -978,6 +957,7 @@ const setInputValue = (value: string, cursor = value.length) => {
 const onInput = (e: Event) => {
   const target = e.target as HTMLTextAreaElement
   emit('update:input-message', target.value)
+  syncSelectionState(target.selectionStart || 0, target.selectionEnd || target.selectionStart || 0)
   syncMentionBindings(target.value)
   updateSlashState(target.value, target.selectionStart || 0)
   updateMentionState(target.value, target.selectionStart || 0)
@@ -1033,6 +1013,16 @@ const scheduleHideMentionPreview = () => {
 
 const handleMentionTokenPointerDown = () => {
   focusInput()
+}
+
+const onTextareaFocus = (e: FocusEvent) => {
+  isTextareaFocused.value = true
+  const target = e.target as HTMLTextAreaElement
+  syncSelectionState(target.selectionStart || 0, target.selectionEnd || target.selectionStart || 0)
+}
+
+const onTextareaBlur = () => {
+  isTextareaFocused.value = false
 }
 
 const beginMentionReplacement = (segment: {
@@ -1114,6 +1104,7 @@ const onCaretChanged = (e: Event) => {
   ) {
     target.setSelectionRange(normalizedSelection.start, normalizedSelection.end)
   }
+  syncSelectionState(normalizedSelection.start, normalizedSelection.end)
   if (normalizedSelection.start !== normalizedSelection.end) {
     closeMentionPopover()
     closeSlashPopover()
@@ -1352,13 +1343,19 @@ const contextUsageTooltip = computed(() => {
     sentinelMode,
     sentinelIntentId,
     sentinelIntentConfidence,
+    sentinelIntentTransition,
+    sentinelParentIntentId,
     sentinelClarificationNeeded,
     sentinelClarificationStatus,
     sentinelCompressionAggressiveness,
+    memoryRetrieval,
   } = effectiveContextUsage.value
   const inputHint = inputTokenEstimate.value > 0 ? `\n${t('agent.inputTokens')}: ~${formatTokenCount(inputTokenEstimate.value)}` : ''
   const sentinelHint = sentinelMode
-    ? `\nSentinel intent: ${sentinelIntentId || '-'}\nSentinel confidence: ${sentinelIntentConfidence == null ? '-' : sentinelIntentConfidence.toFixed(2)}\nSentinel clarification: ${sentinelClarificationNeeded ? 'needed' : (sentinelClarificationStatus || 'stable')}\nSentinel compression: ${sentinelCompressionAggressiveness || '-'}`
+    ? `\nSentinel intent: ${sentinelIntentId || '-'}\nSentinel transition: ${sentinelIntentTransition || '-'}\nSentinel parent: ${sentinelParentIntentId || '-'}\nSentinel confidence: ${sentinelIntentConfidence == null ? '-' : sentinelIntentConfidence.toFixed(2)}\nSentinel clarification: ${sentinelClarificationNeeded ? 'needed' : (sentinelClarificationStatus || 'stable')}\nSentinel compression: ${sentinelCompressionAggressiveness || '-'}`
+    : ''
+  const memoryHint = memoryRetrieval
+    ? `\nMemory query: ${memoryRetrieval.queryPreview || '-'}\nMemory hits: ${memoryRetrieval.hitCount}/${memoryRetrieval.requestedTopK}\nMemory fallback: ${memoryRetrieval.usedCanonicalFallback ? 'canonical' : 'hybrid'}\nMemory sources: ${formatMemoryTraceBreakdown(memoryRetrieval.sourceBreakdown)}\nMemory kinds: ${formatMemoryTraceBreakdown(memoryRetrieval.kindBreakdown)}`
     : ''
   return `${t('agent.contextUsageDetails')}
 ${t('agent.systemPromptTokens')}: ${formatTokenCount(systemPromptTokens)}
@@ -1367,7 +1364,7 @@ ${t('agent.summaryGlobalTokens')}: ${formatTokenCount(summaryGlobalTokens)}
 ${t('agent.summarySegmentTokens')}: ${formatTokenCount(summarySegmentTokens)} (${t('agent.summarySegments')}: ${summarySegmentCount})
 ${t('agent.historyTokens')}: ${formatTokenCount(historyTokens)}
 ${t('agent.historyMessages')}: ${historyCount}
-${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}${inputHint}${sentinelHint}`
+${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}${inputHint}${sentinelHint}${memoryHint}`
 })
 
 const formatTokenCount = (count: number): string => {
@@ -1378,6 +1375,13 @@ const formatTokenCount = (count: number): string => {
     return (count / 1000).toFixed(1) + 'K'
   }
   return count.toString()
+}
+
+const formatMemoryTraceBreakdown = (items: MemoryTraceCount[] | undefined): string => {
+  if (!items || items.length === 0) return '-'
+  return items
+    .map(item => `${item.label}:${item.count}`)
+    .join(', ')
 }
 
 // 检查是否可以发送
@@ -1428,6 +1432,7 @@ const onCompositionEnd = () => {
   ) {
     el.setSelectionRange(normalizedSelection.start, normalizedSelection.end)
   }
+  syncSelectionState(normalizedSelection.start, normalizedSelection.end)
 }
 
 const onKeydown = (e: KeyboardEvent) => {
@@ -1584,60 +1589,6 @@ const handleClickOutside = (e: MouseEvent) => {
   }
 }
 
-// 流量显示辅助函数
-const getMethodBadgeClass = (method: string): string => {
-  switch (method?.toUpperCase()) {
-    case 'GET': return 'badge-info'
-    case 'POST': return 'badge-success'
-    case 'PUT': return 'badge-warning'
-    case 'DELETE': return 'badge-error'
-    case 'PATCH': return 'badge-accent'
-    default: return 'badge-ghost'
-  }
-}
-
-const getStatusBadgeClass = (status: number): string => {
-  if (!status || status === 0) return 'badge-ghost'
-  if (status >= 200 && status < 300) return 'badge-success'
-  if (status >= 300 && status < 400) return 'badge-info'
-  if (status >= 400 && status < 500) return 'badge-warning'
-  if (status >= 500) return 'badge-error'
-  return 'badge-ghost'
-}
-
-const getUrlPath = (url: string): string => {
-  try {
-    const urlObj = new URL(url)
-    const path = urlObj.pathname + urlObj.search
-    return path.length > 30 ? path.substring(0, 30) + '...' : path
-  } catch {
-    return url.length > 30 ? url.substring(0, 30) + '...' : url
-  }
-}
-
-const getTypeBadgeClass = (type?: TrafficSendType): string => {
-  switch (type) {
-    case 'request': return 'badge-primary'
-    case 'response': return 'badge-secondary'
-    default: return 'badge-accent'
-  }
-}
-
-const getTypeLabel = (type?: TrafficSendType): string => {
-  switch (type) {
-    case 'request': return 'REQ'
-    case 'response': return 'RES'
-    default: return 'ALL'
-  }
-}
-
-const formatReferencedFileSize = (size: number): string => {
-  if (!Number.isFinite(size) || size <= 0) return '0 B'
-  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`
-  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
-  return `${size} B`
-}
-
 const removeReferencedFile = (index: number) => {
   const file = props.referencedFiles?.[index]
   if (file?.mentionText) {
@@ -1709,7 +1660,10 @@ const clearReferencedAssets = () => {
 // 聚焦输入框
 const focusInput = () => {
   nextTick(() => {
-    textareaRef.value?.focus()
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    syncSelectionState(el.selectionStart || 0, el.selectionEnd || el.selectionStart || 0)
   })
 }
 
@@ -1798,6 +1752,21 @@ defineExpose({
 .textarea-mirror-content {
   margin: 0;
   color: hsl(var(--bc) / 0.85);
+}
+
+.textarea-mirror-caret {
+  display: inline-block;
+  width: 2px;
+  min-width: 2px;
+  height: 1.15em;
+  margin-left: -1px;
+  margin-right: -1px;
+  background: hsl(var(--bc));
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px hsl(var(--b1) / 0.35);
+  vertical-align: -0.15em;
+  pointer-events: none;
+  animation: textarea-mirror-caret-blink 1s steps(1, end) infinite;
 }
 
 .mention-inline-token {
@@ -2008,5 +1977,15 @@ defineExpose({
 
 .context-usage-indicator:hover {
   opacity: 0.9;
+}
+
+@keyframes textarea-mirror-caret-blink {
+  0%, 49% {
+    opacity: 1;
+  }
+
+  50%, 100% {
+    opacity: 0;
+  }
 }
 </style>

@@ -3360,11 +3360,10 @@ async fn bridge_invoke(
                             max_iterations,
                             timeout_secs,
                             enable_tenth_man_rule,
-                            v.config
-                                .as_ref()
-                                .and_then(|c| {
-                                    c.get("current_terminal_session_id").and_then(|x| x.as_str())
-                                }),
+                            v.config.as_ref().and_then(|c| {
+                                c.get("current_terminal_session_id")
+                                    .and_then(|x| x.as_str())
+                            }),
                             v.config.as_ref().and_then(|c| {
                                 c.get("current_terminal_session_fingerprint")
                                     .and_then(|x| x.as_str())

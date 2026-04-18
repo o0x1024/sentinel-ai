@@ -1,4 +1,9 @@
 import type { AgentMessage } from '@/types/agent'
+import {
+  buildToolsActivatedMessage,
+  buildToolsPreview,
+} from '@/utils/agentToolActivation'
+import { applyFileVerificationStatuses } from './fileVerificationSupport'
 
 export interface PersistedConversationMessageRow {
   id: string
@@ -116,6 +121,32 @@ export const buildConversationTimeline = (
         return
       }
 
+      if (parsedMetadata?.kind === 'tools_activated') {
+        const tools = Array.isArray(parsedMetadata?.tools) ? parsedMetadata.tools : []
+        const toolIds = Array.isArray(parsedMetadata?.tool_ids) ? parsedMetadata.tool_ids : []
+        const toolsPreview =
+          parsedMetadata?.tools_preview ||
+          buildToolsPreview(tools)
+        timeline.push({
+          id: row.id,
+          type: 'system' as any,
+          content: buildToolsActivatedMessage({
+            ...parsedMetadata,
+            tool_ids: toolIds,
+            tools,
+            tools_preview: toolsPreview,
+          }) || row.content || 'Deferred tools activated',
+          timestamp: ts,
+          metadata: {
+            ...parsedMetadata,
+            tool_ids: toolIds,
+            tools,
+            tools_preview: toolsPreview,
+          },
+        })
+        return
+      }
+
       timeline.push({
         id: row.id,
         type: 'system' as any,
@@ -223,5 +254,5 @@ export const buildConversationTimeline = (
     })
   })
 
-  return timeline
+  return applyFileVerificationStatuses(timeline)
 }

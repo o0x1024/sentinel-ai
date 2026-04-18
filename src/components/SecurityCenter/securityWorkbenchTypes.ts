@@ -69,6 +69,15 @@ export interface WorkbenchCaseListResult {
   pageSize: number
 }
 
+export type WorkbenchIgnoredFindingListItem = WorkbenchFindingSnapshot
+
+export interface WorkbenchIgnoredFindingListResult {
+  items: WorkbenchIgnoredFindingListItem[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 export interface WorkbenchCaseDetailResult {
   caseItem: WorkbenchCase
   notes: WorkbenchNote[]
@@ -110,6 +119,18 @@ export interface WorkbenchDeleteCasesResult {
   deletedActivityCount: number
   deletedExecutionDraftCount: number
   deletedExecutionRunCount: number
+}
+
+export interface WorkbenchIgnoreCasesResult {
+  ignoredFindingIds: string[]
+  ignoredCount: number
+  deletedCaseIds: string[]
+  deletedCaseCount: number
+}
+
+export interface WorkbenchRestoreIgnoredFindingsResult {
+  restoredFindingIds: string[]
+  restoredCount: number
 }
 
 export interface WorkbenchFindingSyncResult {

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { createDefaultIntruderDictionaryPayloadConfig } from './intruderAppDictionaryPayloads'
 import {
   autoMarkIntruderPositions,
   buildIntruderAttackPlan,
   clearIntruderMarkers,
   encodeSelectedPayloadCharacters,
+  estimateAttackCount,
   extractIntruderPositions,
   wrapSelectionWithMarkers,
 } from './attack'
@@ -17,6 +19,7 @@ function createPayloadSet(overrides: Partial<IntruderPayloadSet> = {}): Intruder
     payloadsText: '',
     urlEncode: false,
     urlEncodeCharacters: String.raw`./\=<>?+&*;:"' {}|^#`,
+    dictionaryConfig: createDefaultIntruderDictionaryPayloadConfig(),
     pluginId: '',
     pluginPresetName: '',
     pluginConfig: '{}',
@@ -74,6 +77,39 @@ describe('intruder attack helpers', () => {
     expect(plan.requests).toHaveLength(4)
     expect(plan.requests[0].requestText).toContain('q=admin')
     expect(plan.requests[2].requestText).toContain('role=admin')
+  })
+
+  it('repeats the original request for zero-position race payloads', async () => {
+    const template = 'POST /redeem HTTP/1.1\r\nHost: example.com\r\nContent-Length: 0\r\n\r\n'
+    const plan = await buildIntruderAttackPlan({
+      template,
+      attackType: 'sniper',
+      payloadSets: [
+        createPayloadSet({
+          payloadType: 'nullPayloads',
+          nullCount: 3,
+          nullValue: '',
+        }),
+      ],
+      maxRequests: 10,
+    })
+
+    expect(plan.totalGenerated).toBe(3)
+    expect(plan.requests).toHaveLength(3)
+    expect(plan.requests.every((request) => request.requestText === template)).toBe(true)
+    expect(plan.requests.every((request) => request.payloadValues.length === 1 && request.payloadValues[0] === '')).toBe(true)
+  })
+
+  it('estimates zero-position request counts from the first payload set', () => {
+    const estimate = estimateAttackCount('sniper', 0, [
+      createPayloadSet({
+        payloadType: 'nullPayloads',
+        nullCount: 10,
+        nullValue: '',
+      }),
+    ])
+
+    expect(estimate).toBe(10)
   })
 
   it('encodes only selected payload characters', () => {
@@ -254,6 +290,30 @@ describe('intruder attack helpers', () => {
     expect(plan.requests).toHaveLength(2)
     expect(plan.requests[0].requestText).toContain('q=alpha')
     expect(plan.requests[1].requestText).toContain('q=beta')
+  })
+
+  it('uses async resolver for app dictionary payloads', async () => {
+    const plan = await buildIntruderAttackPlan({
+      template: 'GET /?q=$test$ HTTP/1.1',
+      attackType: 'sniper',
+      payloadSets: [
+        createPayloadSet({
+          payloadType: 'appDictionary',
+          dictionaryConfig: {
+            sources: [{ type: 'dictionary', dictionaryId: 'DICT-1', dictionaryName: 'Users' }],
+            limit: 10,
+            deduplicate: true,
+          },
+        }),
+      ],
+      payloadResolver: async () => ['alice', 'bob'],
+      maxRequests: 10,
+    })
+
+    expect(plan.totalGenerated).toBe(2)
+    expect(plan.requests).toHaveLength(2)
+    expect(plan.requests[0].requestText).toContain('q=alice')
+    expect(plan.requests[1].requestText).toContain('q=bob')
   })
 
   it('runs payload plugin processors after built-in payload rules', async () => {

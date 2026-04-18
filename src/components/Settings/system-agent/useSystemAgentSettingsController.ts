@@ -25,6 +25,7 @@ import {
   cloneProfile,
   parseJsonText,
   type CommandResponse,
+  type SystemAgentAutoVerificationStatus,
   type SystemAgentProfilePayload,
   type SystemAgentProfileVersionPayload,
   type SystemAgentProfileSummary,
@@ -56,6 +57,8 @@ export function useSystemAgentSettingsController() {
   const llmProviderOptions = ref<Array<{ value: string; label: string }>>([])
   const llmProviderModelsMap = ref<Record<string, string[]>>({})
   const globalDefaultLlmLabel = ref('未配置')
+  const autoVerificationStatus = ref<SystemAgentAutoVerificationStatus | null>(null)
+  const autoVerificationMutating = ref(false)
   const behaviorSignalSettings = ref<TrafficBehaviorSignalSettings>({
     mode: 'proxy_inferred',
     browserExtensionConnected: false,
@@ -196,6 +199,29 @@ export function useSystemAgentSettingsController() {
     return getSystemAgentDisplayName(selectedProfile.value, locale.value)
   })
 
+  const isVerificationAgentSelected = computed(
+    () => selectedProfile.value?.id === 'traffic_verification_agent',
+  )
+
+  const effectiveAutoVerificationStatus = computed<SystemAgentAutoVerificationStatus | null>(() => {
+    if (!isVerificationAgentSelected.value || !selectedProfile.value) return null
+    if (autoVerificationStatus.value) return autoVerificationStatus.value
+
+    const safetyPolicy = selectedProfile.value.safetyPolicy || {}
+    return {
+      profileId: selectedProfile.value.id,
+      name: selectedProfileDisplayName.value || selectedProfile.value.name,
+      enabled: safetyPolicy.autoMode === true,
+      profileEnabled: selectedProfile.value.enabled,
+      allowActiveReplay: safetyPolicy.allowActiveReplay === true,
+      scopeHosts: Array.isArray(safetyPolicy.scopeHosts)
+        ? safetyPolicy.scopeHosts
+            .map(item => String(item).trim())
+            .filter(Boolean)
+        : [],
+    }
+  })
+
   const editableProfileSnapshot = computed(() => buildProfileSnapshot(buildProfilePayload()))
 
   const syncTextFieldsFromProfile = (profile: SystemAgentProfilePayload | null) => {
@@ -314,6 +340,23 @@ export function useSystemAgentSettingsController() {
       }
     } catch (error) {
       console.error('Failed to load traffic behavior signal settings', error)
+    }
+  }
+
+  const loadAutoVerificationStatus = async () => {
+    if (!isVerificationAgentSelected.value) {
+      autoVerificationStatus.value = null
+      return
+    }
+
+    try {
+      const response = await invoke<CommandResponse<SystemAgentAutoVerificationStatus>>(
+        'get_system_agent_auto_verification_status',
+      )
+      autoVerificationStatus.value = response.data ?? null
+    } catch (error) {
+      console.error('Failed to load system agent auto verification status', error)
+      autoVerificationStatus.value = null
     }
   }
 
@@ -497,6 +540,7 @@ export function useSystemAgentSettingsController() {
       syncTextFieldsFromProfile(selectedProfile.value)
       lastSavedSnapshot.value = buildProfileSnapshot(selectedProfile.value)
       autoSaveState.value = 'idle'
+      await loadAutoVerificationStatus()
       await loadRuns()
       await loadVersions()
       await loadRecentFindings()
@@ -566,6 +610,7 @@ export function useSystemAgentSettingsController() {
       updateProfileSummary(response.data)
       lastSavedSnapshot.value = buildProfileSnapshot(response.data)
       autoSaveState.value = 'saved'
+      await loadAutoVerificationStatus()
       await loadVersions()
       if (!options?.silent) {
         dialog.toast.success('智能体配置已保存')
@@ -635,11 +680,47 @@ export function useSystemAgentSettingsController() {
   const refreshAll = async () => {
     await loadProfiles()
     await loadLlmOptions()
+    await loadAutoVerificationStatus()
     await loadRuns()
     await loadVersions()
     await loadRecentFindings()
     await loadBehaviorEffectStats()
     await loadContextExtractionSettings()
+  }
+
+  const setAutoVerificationEnabled = async (enabled: boolean) => {
+    if (!isVerificationAgentSelected.value) return
+
+    autoVerificationMutating.value = true
+    try {
+      const response = await invoke<CommandResponse<SystemAgentAutoVerificationStatus>>(
+        'set_system_agent_auto_verification_enabled',
+        { enabled },
+      )
+      if (!response.data) throw new Error(response.error || '切换自动验证失败')
+      autoVerificationStatus.value = response.data
+      if (selectedProfile.value) {
+        selectedProfile.value = {
+          ...selectedProfile.value,
+          safetyPolicy: {
+            ...(selectedProfile.value.safetyPolicy || {}),
+            autoMode: response.data.enabled,
+            allowActiveReplay: response.data.allowActiveReplay,
+            scopeHosts: response.data.scopeHosts,
+          },
+        }
+        syncTextFieldsFromProfile(selectedProfile.value)
+        updateProfileSummary(selectedProfile.value)
+        lastSavedSnapshot.value = buildProfileSnapshot(selectedProfile.value)
+      }
+      dialog.toast.success(enabled ? '已开启自动验证' : '已关闭自动验证')
+    } catch (error) {
+      console.error('Failed to update system agent auto verification status', error)
+      dialog.toast.error(`切换自动验证失败: ${String(error)}`)
+      await loadAutoVerificationStatus()
+    } finally {
+      autoVerificationMutating.value = false
+    }
   }
 
   const saveContextExtractionSettings = async () => {
@@ -727,6 +808,9 @@ export function useSystemAgentSettingsController() {
     llmProviderOptions,
     llmModelSuggestions,
     globalDefaultLlmLabel,
+    autoVerificationStatus,
+    effectiveAutoVerificationStatus,
+    autoVerificationMutating,
     safetyPolicyValue,
     dispatchPayloadText,
     toolBindingValue,
@@ -734,6 +818,7 @@ export function useSystemAgentSettingsController() {
     promptPatchGuidance,
     selectedProfileDescription,
     selectedProfileDisplayName,
+    isVerificationAgentSelected,
     autoSaveStatusText,
     autoSaveStatusClass,
     behaviorSignalSettings,
@@ -750,6 +835,7 @@ export function useSystemAgentSettingsController() {
     profileListItems,
     selectProfile,
     dispatchSelectedProfileEvent,
+    setAutoVerificationEnabled,
     seedDefaults,
     refreshAll,
     saveContextExtractionSettings,

@@ -309,71 +309,6 @@
         </div>
       </div>
 
-      <!-- ExploitDB Sync Section -->
-      <div class="card bg-base-100 shadow-sm mb-6">
-        <div class="card-body">
-          <h3 class="card-title mb-4">
-            <i class="fas fa-bug"></i>
-            {{ t('settings.agent.exploitdb.title') }}
-          </h3>
-          <p class="text-sm text-base-content/70 mb-4">
-            {{ t('settings.agent.exploitdb.desc') }}
-          </p>
-
-          <div class="grid grid-cols-1 gap-4">
-            <label class="form-control">
-              <span class="label-text">{{ t('settings.agent.exploitdb.repoUrl') }}</span>
-              <input
-                v-model="exploitDbSettings.repo_url"
-                type="text"
-                class="input input-bordered font-mono"
-                placeholder="https://gitlab.com/exploit-database/exploitdb"
-              />
-            </label>
-
-            <label class="form-control">
-              <span class="label-text">{{ t('settings.agent.exploitdb.repoPath') }}</span>
-              <div class="join w-full">
-                <input
-                  v-model="exploitDbSettings.repo_path"
-                  type="text"
-                  class="input input-bordered join-item flex-1 font-mono"
-                />
-                <button class="btn btn-outline join-item" @click="selectExploitDbPath">
-                  <i class="fas fa-folder-open mr-1"></i>
-                  {{ t('settings.agent.exploitdb.selectPath') }}
-                </button>
-              </div>
-            </label>
-          </div>
-
-          <div class="flex flex-wrap gap-2 mt-4">
-            <button class="btn btn-sm btn-outline" @click="saveExploitDbSettings" :disabled="exploitDbLoading || exploitDbSyncing">
-              <i class="fas fa-save mr-1"></i>
-              {{ t('settings.agent.exploitdb.save') }}
-            </button>
-            <button class="btn btn-sm btn-primary" @click="syncExploitDb" :disabled="exploitDbSyncing || exploitDbLoading">
-              <span v-if="exploitDbSyncing" class="loading loading-spinner loading-xs mr-2"></span>
-              <i v-else class="fas fa-sync-alt mr-1"></i>
-              {{ t('settings.agent.exploitdb.syncNow') }}
-            </button>
-            <button class="btn btn-sm btn-ghost" @click="loadExploitDbStatus" :disabled="exploitDbLoading || exploitDbSyncing">
-              <i class="fas fa-rotate mr-1"></i>
-              {{ t('settings.agent.exploitdb.refreshStatus') }}
-            </button>
-          </div>
-
-          <div class="mt-4 text-sm bg-base-200 rounded-lg p-3 space-y-1">
-            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.repoReady') }}:</span> <span class="font-mono">{{ exploitDbStatus.repo_exists ? 'yes' : 'no' }}</span></div>
-            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.indexReady') }}:</span> <span class="font-mono">{{ exploitDbStatus.index_exists ? 'yes' : 'no' }}</span></div>
-            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.indexedEntries') }}:</span> <span class="font-mono">{{ exploitDbStatus.indexed_entries }}</span></div>
-            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.lastCommit') }}:</span> <span class="font-mono break-all">{{ exploitDbStatus.last_commit || '-' }}</span></div>
-            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.lastSync') }}:</span> <span class="font-mono">{{ exploitDbStatus.last_sync_at || '-' }}</span></div>
-            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.indexedAt') }}:</span> <span class="font-mono">{{ exploitDbStatus.indexed_at || '-' }}</span></div>
-          </div>
-        </div>
-      </div>
-
       <!-- Image Attachments Section -->
       <div class="card bg-base-100 shadow-sm mb-6">
         <div class="card-body">
@@ -771,22 +706,6 @@ interface WorkspaceSettings {
   max_files_per_conversation: number
 }
 
-interface ExploitDbSettings {
-  repo_url: string
-  repo_path: string
-}
-
-interface ExploitDbSyncStatus {
-  repo_url: string
-  repo_path: string
-  repo_exists: boolean
-  index_exists: boolean
-  indexed_entries: number
-  last_commit: string | null
-  indexed_at: string | null
-  last_sync_at: string | null
-}
-
 const { t } = useI18n()
 
 const loading = ref(true)
@@ -833,22 +752,6 @@ const uploadSettings = ref<WorkspaceSettings>({
   max_files_per_conversation: 100,
 })
 const workingDirectory = ref('')
-const exploitDbSettings = ref<ExploitDbSettings>({
-  repo_url: 'https://gitlab.com/exploit-database/exploitdb',
-  repo_path: ''
-})
-const exploitDbStatus = ref<ExploitDbSyncStatus>({
-  repo_url: 'https://gitlab.com/exploit-database/exploitdb',
-  repo_path: '',
-  repo_exists: false,
-  index_exists: false,
-  indexed_entries: 0,
-  last_commit: null,
-  indexed_at: null,
-  last_sync_at: null
-})
-const exploitDbLoading = ref(false)
-const exploitDbSyncing = ref(false)
 
 const newAllowCommand = ref('')
 const newDenyCommand = ref('')
@@ -985,79 +888,6 @@ async function selectWorkingDirectory() {
     }
   } catch (e) {
     console.error('Failed to select directory:', e)
-  }
-}
-
-async function loadExploitDbSettings() {
-  exploitDbLoading.value = true
-  try {
-    const settings = await invoke<ExploitDbSettings>('get_exploitdb_settings')
-    exploitDbSettings.value = settings
-  } catch (e) {
-    console.error('Failed to load exploitdb settings:', e)
-  } finally {
-    exploitDbLoading.value = false
-  }
-}
-
-async function loadExploitDbStatus() {
-  exploitDbLoading.value = true
-  try {
-    const status = await invoke<ExploitDbSyncStatus>('get_exploitdb_sync_status')
-    exploitDbStatus.value = status
-  } catch (e) {
-    console.error('Failed to load exploitdb status:', e)
-    dialog.toast.error(String(e))
-  } finally {
-    exploitDbLoading.value = false
-  }
-}
-
-async function saveExploitDbSettings() {
-  exploitDbLoading.value = true
-  try {
-    const settings = await invoke<ExploitDbSettings>('save_exploitdb_settings', {
-      repo_url: exploitDbSettings.value.repo_url,
-      repo_path: exploitDbSettings.value.repo_path
-    })
-    exploitDbSettings.value = settings
-    dialog.toast.success(t('settings.saveSuccess'))
-    await loadExploitDbStatus()
-  } catch (e) {
-    console.error('Failed to save exploitdb settings:', e)
-    dialog.toast.error(String(e))
-  } finally {
-    exploitDbLoading.value = false
-  }
-}
-
-async function syncExploitDb() {
-  exploitDbSyncing.value = true
-  try {
-    await invoke('sync_exploitdb', { force_reindex: false })
-    dialog.toast.success(t('settings.agent.exploitdb.syncSuccess'))
-    await loadExploitDbStatus()
-  } catch (e) {
-    console.error('Failed to sync exploitdb:', e)
-    dialog.toast.error(String(e))
-  } finally {
-    exploitDbSyncing.value = false
-  }
-}
-
-async function selectExploitDbPath() {
-  try {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: t('settings.agent.exploitdb.selectPath')
-    })
-    if (selected) {
-      exploitDbSettings.value.repo_path = selected as string
-    }
-  } catch (e) {
-    console.error('Failed to select exploitdb path:', e)
   }
 }
 
@@ -1294,8 +1124,6 @@ function removeDenyCommand(index: number) {
 
 onMounted(() => {
   loadConfig()
-  loadExploitDbSettings()
-  loadExploitDbStatus()
   loadUploadSettings()
   loadUploadedFiles()
 })

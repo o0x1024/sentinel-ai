@@ -4699,7 +4699,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "system-configuration",
  "tokio",
  "tower-layer",
@@ -7936,7 +7936,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.28",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -7975,7 +7975,7 @@ dependencies = [
  "cfg_aliases 0.2.1",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -8674,9 +8674,9 @@ dependencies = [
 
 [[package]]
 name = "rsubdomain"
-version = "1.2.9"
+version = "1.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cf1ef1d65a6503332a1e293b8ced7520933490e80d10862b52cfa56f526eebd"
+checksum = "4aad7eed00f1c9d84f7bd078a8ee5344448cd9d7283f4b0449d3231f7518c993"
 dependencies = [
  "byteorder",
  "chrono",

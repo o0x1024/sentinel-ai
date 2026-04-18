@@ -17,6 +17,9 @@ use sentinel_db::{DatabaseService, TrafficEvidenceRecord};
 
 use crate::services::system_agents::finding_lifecycle::TrafficFindingLifecycle;
 use crate::services::system_agents::language::{is_chinese_ui_language, resolve_ui_language};
+use crate::services::system_agents::pipeline::{
+    EVENT_TRAFFIC_VERIFICATION_COMPLETED, TRAFFIC_VERIFICATION_AGENT_PROFILE_ID,
+};
 use crate::services::system_agents::prompts::verification_followup_planner_prompt;
 use crate::services::system_agents::safety::SystemAgentSafetyPolicy;
 use crate::services::system_agents::tool_policy::SystemAgentToolPolicy;
@@ -43,7 +46,6 @@ use crate::services::system_agents::verification_strategy::{
 };
 use crate::services::SystemAgentRuntime;
 
-const TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID: &str = "traffic_active_verifier";
 const MAX_RECORDED_BODY_LEN: usize = 16_384;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,7 +132,7 @@ pub async fn run_traffic_active_verifier(
     let payload = serde_json::to_value(&request)?;
     let run = runtime
         .start_external_run(
-            TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID,
+            TRAFFIC_VERIFICATION_AGENT_PROFILE_ID,
             payload,
             Some("manual".to_string()),
         )
@@ -151,7 +153,7 @@ pub async fn run_traffic_active_verifier(
             runtime
                 .complete_external_run_success(
                     &run.id,
-                    TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID,
+                    TRAFFIC_VERIFICATION_AGENT_PROFILE_ID,
                     serde_json::to_value(&result)?,
                 )
                 .await?;
@@ -161,7 +163,7 @@ pub async fn run_traffic_active_verifier(
             runtime
                 .complete_external_run_failure(
                     &run.id,
-                    TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID,
+                    TRAFFIC_VERIFICATION_AGENT_PROFILE_ID,
                     error.to_string(),
                 )
                 .await?;
@@ -211,12 +213,12 @@ async fn execute_verification(
 ) -> Result<TrafficActiveVerifierResult> {
     let ui_language = resolve_ui_language(db).await;
     let profile = runtime
-        .get_profile(TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID)
+        .get_profile(TRAFFIC_VERIFICATION_AGENT_PROFILE_ID)
         .await?
         .ok_or_else(|| {
             anyhow!(
                 "System agent profile not found: {}",
-                TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID
+                TRAFFIC_VERIFICATION_AGENT_PROFILE_ID
             )
         })?;
     let safety_policy = SystemAgentSafetyPolicy::from_profile(&profile);
@@ -392,7 +394,7 @@ async fn execute_verification(
 
     let result = TrafficActiveVerifierResult {
         run_id: run_id.to_string(),
-        profile_id: TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID.to_string(),
+        profile_id: TRAFFIC_VERIFICATION_AGENT_PROFILE_ID.to_string(),
         finding_id: finding.id,
         strategy: final_outcome.strategy_used,
         target_request_id: baseline.source_request_id,
@@ -406,6 +408,7 @@ async fn execute_verification(
     };
 
     let _ = app_handle.emit("system-agent:verification-complete", &result);
+    let _ = app_handle.emit(EVENT_TRAFFIC_VERIFICATION_COMPLETED, &result);
     Ok(result)
 }
 
@@ -482,6 +485,7 @@ async fn execute_verification_attempt(
     let PreparedVerificationRequest {
         url: request_url,
         body: request_body,
+        header_overrides,
         mutated,
         notes: strategy_notes,
         strategy_used,
@@ -490,6 +494,7 @@ async fn execute_verification_attempt(
         sequence_mode,
         applied_mutations,
     } = prepared_request;
+    let headers = apply_header_overrides(headers, &header_overrides)?;
     let request_headers_json = headers_to_json(&headers)?;
     let request_diff_summary =
         build_request_diff_summary(baseline, &request_url, request_body.as_deref());
@@ -533,6 +538,7 @@ async fn execute_verification_attempt(
         active_plan.as_ref(),
         &strategy_used,
         verification_response.response_status,
+        &verification_response.response_headers_json,
         &verification_response.response_body,
         matched_body,
         &verification_response.attempt_status_codes,
@@ -599,6 +605,10 @@ async fn execute_verification_attempt(
                 "verificationOutcome": assessment.outcome,
                 "matchedStatus": assessment.matched_status,
                 "matchedBody": assessment.matched_body,
+                "executionKind": active_plan
+                    .as_ref()
+                    .map(|plan| plan.execution_kind.clone())
+                    .unwrap_or_else(|| "replay_diff".to_string()),
                 "strategyUsed": strategy_used,
                 "targetRequestId": baseline.source_request_id,
                 "mutated": mutated,
@@ -1043,6 +1053,20 @@ fn headers_to_json(headers: &HeaderMap) -> Result<String> {
     Ok(Value::Object(map).to_string())
 }
 
+fn apply_header_overrides(
+    mut headers: HeaderMap,
+    overrides: &[(String, String)],
+) -> Result<HeaderMap> {
+    for (name, value) in overrides {
+        let header_name = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| anyhow!("Invalid header override name: {}", name))?;
+        let header_value = HeaderValue::from_str(value)
+            .map_err(|_| anyhow!("Invalid header override value for {}", name))?;
+        headers.insert(header_name, header_value);
+    }
+    Ok(headers)
+}
+
 async fn execute_verification_request(
     client: &Client,
     method: &Method,
@@ -1256,7 +1280,7 @@ async fn persist_blocked_verification_result(
 
     let result = TrafficActiveVerifierResult {
         run_id: run_id.to_string(),
-        profile_id: TRAFFIC_ACTIVE_VERIFIER_PROFILE_ID.to_string(),
+        profile_id: TRAFFIC_VERIFICATION_AGENT_PROFILE_ID.to_string(),
         finding_id: finding_id.to_string(),
         strategy: plan
             .map(|item| item.preferred_strategy.clone())

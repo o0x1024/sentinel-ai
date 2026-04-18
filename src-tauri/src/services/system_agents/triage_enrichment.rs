@@ -16,6 +16,10 @@ pub struct TriageBootstrapDecision {
     #[serde(default)]
     pub should_promote: bool,
     #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub reasoning_family: Option<String>,
+    #[serde(default)]
     pub risk_type: Option<String>,
     #[serde(default)]
     pub confidence: Option<String>,
@@ -48,6 +52,22 @@ pub fn merge_triage_bootstrap_decision(output: &Value, decision: TriageBootstrap
     if should_replace_risk_type(object.get("riskType")) {
         if let Some(risk_type) = decision.risk_type.filter(|value| !value.trim().is_empty()) {
             object.insert("riskType".to_string(), Value::String(risk_type));
+        }
+    }
+    if object.get("domain").is_none_or(Value::is_null) {
+        if let Some(domain) = decision.domain.filter(|value| !value.trim().is_empty()) {
+            object.insert("domain".to_string(), Value::String(domain));
+        }
+    }
+    if object.get("reasoningFamily").is_none_or(Value::is_null) {
+        if let Some(reasoning_family) = decision
+            .reasoning_family
+            .filter(|value| !value.trim().is_empty())
+        {
+            object.insert(
+                "reasoningFamily".to_string(),
+                Value::String(reasoning_family),
+            );
         }
     }
     if should_replace_confidence(object.get("confidence")) {
@@ -181,6 +201,8 @@ mod tests {
         let decision = TriageBootstrapDecision {
             summary: "已补充为可执行的首个验证计划".to_string(),
             should_promote: true,
+            domain: Some("web_app".to_string()),
+            reasoning_family: Some("business_logic".to_string()),
             risk_type: Some("logic".to_string()),
             confidence: Some("medium".to_string()),
             signals: vec!["llm selected a business-parameter mutation".to_string()],
@@ -189,6 +211,7 @@ mod tests {
                 ..VerificationHypothesisState::default()
             },
             verification_plan: Some(VerificationPlan {
+                execution_kind: "input_probe".to_string(),
                 preferred_strategy: "mutate_business_parameter".to_string(),
                 target_request_id: Some(42),
                 candidate_targets: vec![VerificationTarget {
@@ -200,6 +223,7 @@ mod tests {
                 concurrent_requests: None,
                 sequence_request_ids: vec![40, 41, 42],
                 notes: vec!["llm bootstrap".to_string()],
+                probe_payloads: vec![],
                 parameter_mutations: vec![],
             }),
         };
@@ -208,6 +232,14 @@ mod tests {
         assert_eq!(
             merged.get("riskType").and_then(Value::as_str),
             Some("logic")
+        );
+        assert_eq!(
+            merged.get("domain").and_then(Value::as_str),
+            Some("web_app")
+        );
+        assert_eq!(
+            merged.get("reasoningFamily").and_then(Value::as_str),
+            Some("business_logic")
         );
         assert_eq!(
             merged.get("confidence").and_then(Value::as_str),
@@ -243,6 +275,8 @@ mod tests {
         let decision = TriageBootstrapDecision {
             summary: "not enough evidence".to_string(),
             should_promote: false,
+            domain: Some("web_app".to_string()),
+            reasoning_family: Some("business_logic".to_string()),
             risk_type: Some("logic".to_string()),
             confidence: Some("medium".to_string()),
             signals: vec!["ignored".to_string()],

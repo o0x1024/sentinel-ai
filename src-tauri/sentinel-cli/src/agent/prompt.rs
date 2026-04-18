@@ -7,12 +7,23 @@ pub fn contest_system_prompt() -> String {
         "The runner controls challenge lifecycle externally: listing, starting, hint requests, flag submission, and stopping instances are NOT your job.",
         "You may only use the provided tools to inspect the target and gather evidence.",
         "Use browser for JavaScript-rendered pages, authenticated UI flows, uploads, or when rendered content differs from raw HTTP.",
-        "Use http_request for precise single requests and shell for multi-step workflows that need cookies, redirects, multipart forms, loops, or chained commands.",
+        "Use http_request for precise single requests, route_discovery for authenticated route enumeration, and shell for multi-step workflows that need cookies, redirects, multipart forms, loops, or chained commands.",
         "When authentication or session state matters, prefer shell with curl/wget cookie jars over repeating stateless http_request calls.",
         "Browser session state, raw http_request state, and shell cookie-jar state are isolated from each other unless you explicitly recreate the session.",
         "If a login succeeds in browser, continue authenticated navigation in browser unless you have explicitly extracted and replayed the same session in another tool.",
+        "Use web_search when you need up-to-date public references such as CVEs, vendor advisories, product fingerprints, framework docs, cloud service behavior, or exploit leads that are not already local.",
         "When you identify a product, framework, CVE, or exploit family, use search_exploit early instead of guessing payloads from memory.",
-        "If you are stuck, looping, or uncertain about your current line of attack, call tenth_man_review for an adversarial critique before continuing.",
+        "Treat tenth_man_review as the default checkpoint before a third attempt on the same path, not just an escape hatch after you feel stuck.",
+        "If you have spent 2-3 turns on the same attack path, repeated the same family of requests/commands, or still lack a concrete next pivot, call tenth_man_review before continuing.",
+        "If the next step is only a small variation of a failed attempt, or you cannot clearly say what new evidence it should produce, call tenth_man_review first.",
+        "If a page stays empty, a login succeeds without useful post-login content, or a guessed route family keeps failing, call tenth_man_review instead of grinding the same line of attack.",
+        "If the current plan still depends on an unverified assumption, or the approach feels low-signal or repetitive, prefer tenth_man_review over more speculative retries.",
+        "Do not handcraft long sequences of low-yield shell requests when a higher-leverage tool would do the job.",
+        "If you need directory brute force, route discovery, parameter fuzzing, exploit validation, or similar capability, first try to use an existing specialized tool in the environment. Prefer route_discovery before hand-rolled shell loops for hidden web paths.",
+        "If the needed capability is missing, use shell to install or invoke a purpose-built tool, then use that tool. Treat missing tooling as a reason to install tooling, not a reason to keep manually replaying primitive commands.",
+        "If a helper script, exploit stub, parser, request generator, or transformation would be short and deterministic, write the code yourself and run it immediately through shell instead of only reasoning about it.",
+        "For simple one-off automation, directly generate and execute the code or script you need. Do not wait for a dedicated tool if a short script can verify the idea faster.",
+        "Prefer high-leverage tooling such as web_search, route_discovery, ffuf, dirsearch, gobuster, sqlmap, nuclei, jq, grep, and browser automation over repetitive handcrafted probing.",
         "Your goal is to find a valid flag in the format flag{...}.",
         "Do not ask for user input.",
         "Do not describe hypothetical steps without taking them when a tool can verify them.",
@@ -38,8 +49,6 @@ pub fn challenge_turn_prompt(
     hint_allowed: bool,
     step_index: usize,
     max_steps: usize,
-    context_summary: Option<&str>,
-    last_feedback: Option<&str>,
 ) -> String {
     let mut sections = vec![
         format!("execution_id: {}", execution_id),
@@ -69,18 +78,8 @@ pub fn challenge_turn_prompt(
         sections.push(hint.to_string());
     }
 
-    if let Some(summary) = context_summary.filter(|value| !value.trim().is_empty()) {
-        sections.push("compressed_context_summary:".to_string());
-        sections.push(summary.to_string());
-    }
-
-    if let Some(last_feedback) = last_feedback.filter(|value| !value.trim().is_empty()) {
-        sections.push("runner_feedback:".to_string());
-        sections.push(last_feedback.to_string());
-    }
-
     sections.push(
-        "Use tools to verify reality. For JavaScript-heavy pages, prefer browser. For login flows, redirects, file uploads, or cookie-backed workflows, prefer browser or shell with curl and a cookie jar. Keep in mind that browser auth state is separate from http_request and shell state unless you explicitly recreate it. When calling tenth_man_review, use the execution_id above. Do not emit natural language at the end; emit the JSON control signal only."
+        "Additional run-state, compacted history, and recent tool digests may appear as separate user messages before this task prompt. Use them as authoritative context. Use tools to verify reality. For JavaScript-heavy pages, prefer browser. For login flows, redirects, file uploads, or cookie-backed workflows, prefer browser or shell with curl and a cookie jar. Keep in mind that browser auth state is separate from http_request and shell state unless you explicitly recreate it. Before a third attempt on the same path, before repeating the same request or command family without clear new evidence, or when your next step is only a small variation of a failed attempt, call tenth_man_review using the execution_id above before trying more of the same. If you cannot clearly state what new evidence the next attempt should produce, call tenth_man_review first. The runner may inject a tenth-man critique; treat it as mandatory feedback. Use web_search for current external references when local evidence is insufficient, especially for CVEs, vendor docs, cloud products, and AI infrastructure. If you need broad route or parameter discovery, prefer route_discovery first; only fall back to installing or running another scanner through shell when route_discovery is insufficient. If a short script or helper program would close the gap faster than manual repetition, write it and run it immediately. Do not emit natural language at the end; emit the JSON control signal only."
             .to_string(),
     );
 

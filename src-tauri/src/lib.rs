@@ -7,6 +7,7 @@ pub mod engines;
 pub mod events;
 pub mod generators;
 pub mod managers;
+pub mod memory;
 pub mod models;
 pub mod services;
 pub mod skills;
@@ -41,7 +42,7 @@ use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 use commands::{
     ai, ai_conversation_binding_support, ai_execution_state_support, ai_turn_logs, aisettings,
     asset, cleanup_expired_cache, config, database as db_commands, delete_cache, dictionary,
-    get_all_cache_keys, get_cache, llm_test_commands,
+    get_all_cache_keys, get_cache, llm_test_commands, memory_commands,
     monitor_commands::MonitorSchedulerState,
     packet_capture_commands::{self, PacketCaptureState},
     performance,
@@ -531,170 +532,46 @@ pub fn run() {
                         }
                     }
 
-                    // Initialize Memory Tool hooks via existing RAG service
-                    let db_for_store = db_service.clone();
-                    let store_fn = Box::new(move |content: String, title: Option<String>, tags: Vec<String>| {
-                        let db_inner = db_for_store.clone();
-                        Box::pin(async move {
-                            let inferred_kind = sentinel_rag::infer_memory_kind(
-                                None,
-                                title.as_deref(),
-                                &tags,
-                                content.as_str(),
-                            );
-                            let durable_metadata = sentinel_rag::build_memory_durable_metadata(
-                                None,
-                                None,
-                                Some("memory_tool"),
-                                None,
-                                inferred_kind.as_str(),
-                                &tags,
-                            );
-                            let service = crate::commands::rag_commands::get_or_init_rag_service(db_inner.clone())
-                                .await
-                                .map_err(|e| anyhow::anyhow!(e))?;
+                    // Initialize Memory Tool hooks through the unified memory service.
+                    let app_handle_for_store = handle.clone();
+                    let store_fn = Box::new(
+                        move |content: String, title: Option<String>, tags: Vec<String>| {
+                            let app_handle = app_handle_for_store.clone();
+                            Box::pin(async move {
+                                crate::memory::store_memory(&app_handle, content, title, tags)
+                                    .await
+                                    .map(crate::memory::map_store_result)
+                            })
+                                as std::pin::Pin<
+                                    Box<
+                                        dyn std::future::Future<
+                                                Output = anyhow::Result<
+                                                    sentinel_tools::buildin_tools::memory::MemoryManagerStoreResult,
+                                                >,
+                                            > + Send,
+                                    >,
+                                >
+                        },
+                    );
 
-                            // Get memory collection ID
-                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists(db_inner.clone())
-                                .await
-                                .map_err(|e| anyhow::anyhow!(e))?;
-
-                            let mut meta = std::collections::HashMap::new();
-                            if !tags.is_empty() {
-                                meta.insert("tags".to_string(), tags.join(","));
-                            }
-                            meta.insert("type".to_string(), "agent_memory".to_string());
-                            meta.insert("kind".to_string(), inferred_kind.clone());
-                            meta.insert("scope".to_string(), durable_metadata.scope.clone());
-                            meta.insert("stability".to_string(), durable_metadata.stability.clone());
-                            meta.insert("source".to_string(), durable_metadata.source.clone());
-                            meta.insert(
-                                "confidence".to_string(),
-                                format!("{:.2}", durable_metadata.confidence),
-                            );
-
-                            let final_title = if let Some(t) = title {
-                                if t.trim().is_empty() {
-                                    format!("[{}] {}", inferred_kind, content.chars().take(30).collect::<String>())
-                                } else {
-                                    t
-                                }
-                            } else {
-                                // Default title based on content snippet and timestamp
-                                let snippet = content.chars().take(30).collect::<String>();
-                                format!("[{}] {}...", inferred_kind, snippet.trim())
-                            };
-                            let candidate_scope = durable_metadata.scope.clone();
-                            let candidate_stability = durable_metadata.stability.clone();
-                            let candidate_source = durable_metadata.source.clone();
-                            let candidate_confidence = durable_metadata.confidence;
-
-                            service
-                                .ingest_text(
-                                    &final_title,
-                                    &content,
-                                    Some(&collection_id),
-                                    Some(meta),
-                                )
-                                .await
-                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-                            let now_ms = chrono::Utc::now().timestamp_millis();
-                            service
-                                .upsert_memory_lexical_document(sentinel_rag::MemoryLexicalDocument {
-                                    id: sentinel_rag::build_memory_document_id(
-                                        inferred_kind.as_str(),
-                                        content.as_str(),
-                                    ),
-                                    collection_name: "agent_memory".to_string(),
-                                    title: Some(final_title),
-                                    body: content.clone(),
-                                    normalized_text: sentinel_rag::normalize_memory_text(
-                                        content.as_str(),
-                                    ),
-                                    identifiers: sentinel_rag::extract_memory_identifiers(
-                                        content.as_str(),
-                                    ),
-                                    tags: tags.join(","),
-                                    kind: inferred_kind.clone(),
-                                    scope: durable_metadata.scope,
-                                    stability: durable_metadata.stability,
-                                    source: durable_metadata.source,
-                                    confidence: candidate_confidence,
-                                    importance: sentinel_rag::memory_kind_importance(
-                                        inferred_kind.as_str(),
-                                    ),
-                                    created_at_ms: now_ms,
-                                    updated_at_ms: now_ms,
-                                })
-                                .await
-                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-                            crate::skills::candidates::upsert_skill_candidate_from_memory(
-                                db_inner.as_ref(),
-                                &crate::skills::candidates::SkillCandidateMemoryInput {
-                                    memory_id: Some(sentinel_rag::build_memory_document_id(
-                                        inferred_kind.as_str(),
-                                        content.as_str(),
-                                    )),
-                                    text: content.clone(),
-                                    kind: inferred_kind,
-                                    scope: candidate_scope,
-                                    source: candidate_source,
-                                    stability: candidate_stability,
-                                    confidence: candidate_confidence,
-                                },
-                            )
-                            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-                            Ok(())
-                        })
-                            as std::pin::Pin<
-                                Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>,
-                            >
-                    });
-
-                    let db_for_retrieve = db_service.clone();
+                    let app_handle_for_retrieve = handle.clone();
                     let retrieve_fn = Box::new(move |query: String, limit: usize| {
-                        let db_inner = db_for_retrieve.clone();
+                        let app_handle = app_handle_for_retrieve.clone();
                         Box::pin(async move {
-                            let service = crate::commands::rag_commands::get_or_init_rag_service(db_inner.clone())
-                                .await
-                                .map_err(|e| anyhow::anyhow!(e))?;
-
-                            // Get memory collection ID
-                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists(db_inner)
-                                .await
-                                .map_err(|e| anyhow::anyhow!(e))?;
-
-                            let request = sentinel_rag::models::RagQueryRequest {
+                            crate::memory::retrieve_memory_items_structured(
+                                &app_handle,
                                 query,
-                                collection_id: Some(collection_id),
-                                top_k: Some(limit),
-                                use_mmr: Some(true),
-                                mmr_lambda: None,
-                                filters: None,
-                                use_embedding: Some(true),
-                                reranking_enabled: Some(true),
-                                similarity_threshold: None,
-                            };
-
-                            let response = service
-                                .query(request)
-                                .await
-                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-                            let results = response
-                                .results
-                                .into_iter()
-                                .map(|r| r.chunk.content)
-                                .collect();
-                            Ok(results)
+                                limit,
+                            )
+                            .await
                         })
                             as std::pin::Pin<
                                 Box<
-                                    dyn std::future::Future<Output = anyhow::Result<Vec<String>>>
-                                        + Send,
+                                    dyn std::future::Future<
+                                            Output = anyhow::Result<
+                                                sentinel_tools::buildin_tools::memory::MemoryManagerRetrieveResult,
+                                            >,
+                                        > + Send,
                                 >,
                             >
                     });
@@ -1046,6 +923,8 @@ pub fn run() {
             commands::trigger_system_agent_profile,
             commands::dispatch_system_agent_event,
             commands::seed_system_agent_profiles,
+            commands::get_system_agent_auto_verification_status,
+            commands::set_system_agent_auto_verification_enabled,
             // AI task command plus temporary compatibility alias
             commands::fix_plugin_with_ai_task,
             commands::fix_plugin_with_system_agent,
@@ -1372,6 +1251,9 @@ pub fn run() {
             rag_commands::delete_rag_document,
             rag_commands::ensure_default_rag_collection,
             rag_commands::test_embedding_connection,
+            memory_commands::list_durable_memory_diagnostics,
+            memory_commands::get_durable_memory_projection_states,
+            memory_commands::get_durable_memory_diagnostics_by_ids,
             // CPG security rule commands
             // Traffic scan commands
             traffic::start_traffic_analysis,
@@ -1446,6 +1328,9 @@ pub fn run() {
             commands::security_workbench_get_case_detail,
             commands::security_workbench_update_case,
             commands::security_workbench_delete_cases,
+            commands::security_workbench_ignore_cases,
+            commands::security_workbench_list_ignored_findings,
+            commands::security_workbench_restore_ignored_findings,
             commands::security_workbench_add_note,
             commands::security_workbench_sync_case_to_finding,
             commands::security_workbench_create_execution_draft,
@@ -1564,6 +1449,8 @@ pub fn run() {
             tool_commands::save_exploitdb_settings,
             tool_commands::get_exploitdb_sync_status,
             tool_commands::sync_exploitdb,
+            tool_commands::browse_exploitdb_entries,
+            tool_commands::get_exploitdb_entry_detail,
             // Task Tool Integration commands
             commands::task_tool_commands::get_task_active_tools,
             commands::task_tool_commands::get_task_tool_statistics,

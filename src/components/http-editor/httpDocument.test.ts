@@ -10,6 +10,7 @@ describe('httpDocument', () => {
   })
 
   it('still respects explicit content types first', () => {
+    expect(detectHttpBodyLanguage('a=1&b=2', 'application/x-www-form-urlencoded')).toBe('form')
     expect(detectHttpBodyLanguage('alpha', 'application/json')).toBe('json')
     expect(detectHttpBodyLanguage('<div></div>', 'text/html')).toBe('html')
   })

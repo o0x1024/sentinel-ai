@@ -16,6 +16,22 @@
           {{ wb('caseList.selectedSummary', { selectedCount, pageCount: cases.length, total }) }}
         </div>
         <div class="flex flex-wrap items-center gap-2">
+          <button class="btn btn-sm btn-outline btn-success" @click="$emit('mark-current-page-read')">
+            标记本页已读
+          </button>
+          <button
+            class="btn btn-sm btn-outline btn-success"
+            :disabled="!canMarkAllRead"
+            @click="$emit('mark-all-read')"
+          >
+            全部标记已读
+          </button>
+          <button class="btn btn-sm btn-outline btn-success" @click="$emit('mark-selected-read')">
+            标记选中为已读
+          </button>
+          <button class="btn btn-sm btn-outline btn-warning" @click="$emit('ignore-selected')">
+            {{ wb('caseList.ignoreSelected') }}
+          </button>
           <button class="btn btn-sm btn-outline" @click="$emit('clear-selection')">
             {{ wb('caseList.clearSelection') }}
           </button>
@@ -47,7 +63,11 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in cases" :key="item.id">
+            <tr
+              v-for="item in cases"
+              :key="item.id"
+              :class="readIdSet.has(item.id) ? 'opacity-70' : 'bg-primary/5'"
+            >
               <td @click.stop>
                 <input
                   type="checkbox"
@@ -63,7 +83,12 @@
                   @click="$emit('open-case', item.id)"
                 >
                   <div class="space-y-1 p-1">
-                    <p class="font-medium line-clamp-2">{{ item.title }}</p>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <p class="font-medium line-clamp-2 flex-1">{{ item.title }}</p>
+                      <span class="badge badge-xs" :class="readIdSet.has(item.id) ? 'badge-ghost' : 'badge-warning'">
+                        {{ readIdSet.has(item.id) ? '已读' : '未读' }}
+                      </span>
+                    </div>
                     <p class="text-xs text-base-content/60">{{ getWorkbenchCaseSubtitle(item) }}</p>
                   </div>
                 </button>
@@ -80,6 +105,16 @@
                 <div class="flex flex-wrap gap-2">
                   <button class="btn btn-xs btn-outline" @click="$emit('open-case', item.id)">
                     {{ wb('common.open') }}
+                  </button>
+                  <button
+                    v-if="!readIdSet.has(item.id)"
+                    class="btn btn-xs btn-outline btn-success"
+                    @click="$emit('mark-read', item.id)"
+                  >
+                    标已读
+                  </button>
+                  <button class="btn btn-xs btn-warning btn-outline" @click="$emit('ignore-case', item.id)">
+                    {{ wb('common.ignore') }}
                   </button>
                   <button class="btn btn-xs btn-error btn-outline" @click="$emit('delete-case', item.id)">
                     {{ wb('common.delete') }}
@@ -168,6 +203,8 @@ const props = defineProps<{
   pageSize: number
   loading: boolean
   selectedIds: string[]
+  readIds: string[]
+  canMarkAllRead: boolean
 }>()
 
 const emit = defineEmits<{
@@ -177,11 +214,18 @@ const emit = defineEmits<{
   'toggle-selection': [caseId: string]
   'toggle-select-current-page': []
   'clear-selection': []
+  'mark-current-page-read': []
+  'mark-all-read': []
+  'mark-selected-read': []
+  'mark-read': [caseId: string]
+  'ignore-case': [caseId: string]
+  'ignore-selected': []
   'delete-case': [caseId: string]
   'delete-selected': []
 }>()
 
 const selectedIdSet = computed(() => new Set(props.selectedIds))
+const readIdSet = computed(() => new Set(props.readIds))
 const selectedCount = computed(() => props.selectedIds.length)
 const allCurrentPageSelected = computed(() =>
   props.cases.length > 0 && props.cases.every(item => selectedIdSet.value.has(item.id)),

@@ -67,6 +67,8 @@ pub struct SubagentParentContext {
     pub api_key: Option<String>,
     pub api_base: Option<String>,
     pub system_prompt: String,
+    pub active_terminal_session_fingerprint: Option<String>,
+    pub active_terminal_session_id: Option<String>,
     pub tool_config: ToolConfig,
     pub max_iterations: usize,
     pub timeout_secs: u64,
@@ -730,8 +732,10 @@ async fn run_task(task_id: String) {
         model: pending_data.parent.model,
         system_prompt,
         task: task_with_context,
-        active_terminal_session_fingerprint: None,
-        active_terminal_session_id: None,
+        active_terminal_session_fingerprint: pending_data
+            .parent
+            .active_terminal_session_fingerprint,
+        active_terminal_session_id: pending_data.parent.active_terminal_session_id,
         rig_provider: pending_data.parent.rig_provider,
         api_key: pending_data.parent.api_key,
         api_base: pending_data.parent.api_base,

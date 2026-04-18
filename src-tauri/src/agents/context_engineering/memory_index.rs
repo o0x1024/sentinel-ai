@@ -59,6 +59,7 @@ pub struct MemoryQuery {
     pub execution_id: String,
     pub query: String,
     pub top_k: usize,
+    pub include_reflection: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -150,6 +151,7 @@ pub fn retrieve_memory_items(
     let mut items = state
         .memory_items
         .iter_mut()
+        .filter(|item| query.include_reflection || item.kind != "reflection")
         .map(|item| {
             let score = keyword_score(query, item, now_ms);
             (item, score)
@@ -203,6 +205,7 @@ pub async fn retrieve_memory_items_hybrid(
     let keyword_scores: HashMap<String, (f64, String, String, u8, i64)> = state
         .memory_items
         .iter()
+        .filter(|item| query.include_reflection || item.kind != "reflection")
         .map(|item| {
             let ks = keyword_score_raw(&query.query, &item.text);
             (
@@ -220,6 +223,7 @@ pub async fn retrieve_memory_items_hybrid(
     let mut local_keyword_hits = state
         .memory_items
         .iter()
+        .filter(|item| query.include_reflection || item.kind != "reflection")
         .filter_map(|item| {
             let keyword_score = keyword_score_raw(&query.query, &item.text);
             if keyword_score <= 0.0 {
@@ -690,6 +694,10 @@ fn keyword_score_raw(query_text: &str, item_text: &str) -> f64 {
         return 0.0;
     }
     (hit / terms.len() as f64).clamp(0.1, 1.0)
+}
+
+pub fn keyword_score_value(query_text: &str, item_text: &str) -> f64 {
+    keyword_score_raw(query_text, item_text)
 }
 
 fn recency_score(created_at_ms: i64, now_ms: i64) -> f64 {

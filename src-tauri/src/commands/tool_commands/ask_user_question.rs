@@ -8,8 +8,7 @@ use tokio::sync::RwLock;
 use sentinel_tools::buildin_tools::ask_user_question::{
     set_ask_user_question_handler, AskUserQuestionCollectedResponse, AskUserQuestionError,
     AskUserQuestionHandler, AskUserQuestionItem, AskUserQuestionRequest,
-    AskUserQuestionResponseSource, AskUserQuestionResponseStatus,
-    AskUserQuestionTimeoutPolicy,
+    AskUserQuestionResponseSource, AskUserQuestionResponseStatus, AskUserQuestionTimeoutPolicy,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,21 +95,24 @@ impl AskUserQuestionHandler for AskUserQuestionHandlerImpl {
             )));
         }
 
-        let response = match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), rx)
-            .await
-        {
-            Ok(Ok(value)) => value,
-            Ok(Err(_)) => {
-                cleanup_pending_request(&id).await;
-                return Err(AskUserQuestionError::RequestFailed(
-                    "question response channel dropped".to_string(),
-                ));
-            }
-            Err(_) => {
-                cleanup_pending_request(&id).await;
-                return handle_timeout_response(&request.questions, &default_answers, timeout_policy);
-            }
-        };
+        let response =
+            match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), rx).await {
+                Ok(Ok(value)) => value,
+                Ok(Err(_)) => {
+                    cleanup_pending_request(&id).await;
+                    return Err(AskUserQuestionError::RequestFailed(
+                        "question response channel dropped".to_string(),
+                    ));
+                }
+                Err(_) => {
+                    cleanup_pending_request(&id).await;
+                    return handle_timeout_response(
+                        &request.questions,
+                        &default_answers,
+                        timeout_policy,
+                    );
+                }
+            };
 
         cleanup_pending_request(&id).await;
 

@@ -115,6 +115,47 @@
             </div>
 
             <div v-else-if="activeWorkspaceTab === 'config'" class="space-y-4">
+              <div
+                v-if="isVerificationAgentSelected && effectiveAutoVerificationStatus"
+                class="rounded-lg border border-base-300 bg-base-100 px-4 py-3"
+              >
+                <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                  <div class="space-y-1">
+                    <p class="text-sm font-semibold">自动验证总开关</p>
+                    <p class="text-xs text-base-content/60">
+                      单独控制验证 Agent 是否自动消费待验证 finding，不影响手动验证入口。
+                    </p>
+                    <div class="flex flex-wrap gap-2 pt-1">
+                      <span class="badge badge-outline">
+                        状态：{{ effectiveAutoVerificationStatus.enabled ? '已开启' : '已关闭' }}
+                      </span>
+                      <span
+                        class="badge"
+                        :class="effectiveAutoVerificationStatus.allowActiveReplay ? 'badge-success' : 'badge-ghost'"
+                      >
+                        {{ effectiveAutoVerificationStatus.allowActiveReplay ? '允许主动重放' : '禁止主动重放' }}
+                      </span>
+                      <span class="badge badge-outline">
+                        作用域：{{ effectiveAutoVerificationStatus.scopeHosts.length > 0 ? effectiveAutoVerificationStatus.scopeHosts.length : '未限制' }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <label class="label cursor-pointer justify-start gap-3">
+                    <input
+                      :checked="effectiveAutoVerificationStatus.enabled"
+                      :disabled="autoVerificationMutating"
+                      type="checkbox"
+                      class="toggle toggle-primary"
+                      @change="handleAutoVerificationToggle"
+                    />
+                    <span class="label-text">
+                      {{ autoVerificationMutating ? '切换中' : '自动验证' }}
+                    </span>
+                  </label>
+                </div>
+              </div>
+
               <SystemAgentPromptPatchPanel
                 :name="selectedProfileDisplayName"
                 :prompt-patch="selectedProfile.promptPatch || ''"
@@ -302,6 +343,9 @@ const {
   llmProviderOptions,
   llmModelSuggestions,
   globalDefaultLlmLabel,
+  autoVerificationStatus,
+  effectiveAutoVerificationStatus,
+  autoVerificationMutating,
   safetyPolicyValue,
   dispatchPayloadText,
   toolBindingValue,
@@ -309,6 +353,7 @@ const {
   promptPatchGuidance,
   selectedProfileDescription,
   selectedProfileDisplayName,
+  isVerificationAgentSelected,
   autoSaveStatusText,
   autoSaveStatusClass,
   behaviorSignalSettings,
@@ -325,6 +370,7 @@ const {
   profileListItems,
   selectProfile,
   dispatchSelectedProfileEvent,
+  setAutoVerificationEnabled,
   seedDefaults,
   refreshAll,
   saveContextExtractionSettings,
@@ -445,6 +491,11 @@ function updateSelectedProfileProviderOverride(value: string) {
 function updateSelectedProfileModelOverride(value: string) {
   if (!selectedProfile.value) return
   selectedProfile.value.llmModelOverride = value.trim() || null
+}
+
+function handleAutoVerificationToggle(event: Event) {
+  const target = event.target as HTMLInputElement | null
+  void setAutoVerificationEnabled(target?.checked === true)
 }
 
 async function recommendContextCandidatesFromRecentHistory() {

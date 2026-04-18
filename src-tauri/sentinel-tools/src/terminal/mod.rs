@@ -3,11 +3,13 @@
 //! Provides persistent terminal sessions for interactive tools like msfconsole, sqlmap, etc.
 
 pub mod command;
+pub mod input;
 pub mod manager;
 pub mod server;
 pub mod session;
 
-pub use command::{detect_shell_prompt, normalize_command, WaitStrategy};
+pub use command::{detect_shell_prompt, is_shell_prompt_line, normalize_command, WaitStrategy};
+pub use input::decode_transport_html_entities;
 pub use manager::{ContainerInfo, SessionInfo, TerminalSessionManager};
 pub use server::TerminalServer;
 pub use session::{ExecutionMode, SessionState, TerminalSession, TerminalSessionConfig};

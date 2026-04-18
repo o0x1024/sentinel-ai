@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
 
+use crate::output_storage::StoredOutputArtifact;
+
 /// HTTP request arguments
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct HttpRequestArgs {
@@ -53,6 +55,8 @@ pub struct HttpRequestOutput {
     pub response_time_ms: u64,
     pub truncated: bool,
     pub original_size: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stored_artifacts: Vec<StoredOutputArtifact>,
 }
 
 /// HTTP request errors
@@ -180,11 +184,17 @@ impl Tool for HttpRequestTool {
             .await
             .map_err(|e| HttpRequestError::RequestFailed(e.to_string()))?;
         let original_size = body.len();
+        let mut stored_artifacts = Vec::new();
 
         // Store large response only for agent-invoked calls
         let body = if args.enable_large_output_storage {
             match crate::output_storage::store_output_unified("http_response", &body, None).await {
-                Ok(storage_result) => storage_result.get_agent_content(),
+                Ok(storage_result) => {
+                    if let Some(artifact) = storage_result.to_stored_artifact("body") {
+                        stored_artifacts.push(artifact);
+                    }
+                    storage_result.get_agent_content()
+                }
                 Err(e) => {
                     tracing::warn!("Failed to store HTTP response to container: {}", e);
                     // Fallback: return original body (or truncate if too large)
@@ -219,6 +229,7 @@ impl Tool for HttpRequestTool {
             response_time_ms,
             truncated,
             original_size,
+            stored_artifacts,
         })
     }
 }

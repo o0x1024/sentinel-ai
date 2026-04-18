@@ -66,6 +66,7 @@ type Params = {
   responseViewMode: Ref<ProxyHistoryViewMode>
   topPanelHeight: Ref<number>
   mainContainer: Ref<HTMLElement | null>
+  keepDetailsOpenOnRepeatSelect?: boolean
   hideContextMenu?: () => void
   hideDetailContextMenu?: () => void
   emitSendToRepeater: (request: HttpExchangeRequest) => void
@@ -160,7 +161,9 @@ export const useProxyHistoryActions = (params: Params) => {
 
   const selectRequest = (request: ProxyRequest) => {
     if (params.selectedRequest.value?.id === request.id) {
-      closeDetails()
+      if (params.keepDetailsOpenOnRepeatSelect === false) {
+        closeDetails()
+      }
       return
     }
 

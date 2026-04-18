@@ -111,21 +111,30 @@ impl TenthManTool {
     }
 
     pub const NAME: &'static str = "tenth_man_review";
-    pub const DESCRIPTION: &'static str = "Run a structured adversarial review (\"10th Man\") on the current work. \
-        \n\nUse this when the plan, analysis, or conclusion may contain hidden assumptions, weak evidence, blind spots, or risky tradeoffs, and you want a deliberate counterargument before proceeding. \
-        It is especially useful for high-stakes decisions, ambiguous debugging, security reasoning, and design choices with failure modes.\
-        \n\n[CRITICAL RULE]: If you are stuck in a loop, repeatedly failing, or making little progress after multiple attempts, you MUST call this tool to break cognitive bias and get a fresh line of attack.\
-        \n\nIt can review full thread history or just recent messages to surface:\
+    pub const DESCRIPTION: &'static str = "Run a structured adversarial review (\"10th Man\") on the current execution before continuing. \
+        \n\nUse this when you need a deliberate counterargument to challenge hidden assumptions, weak evidence, blind spots, risky tradeoffs, or repeated failed reasoning. \
+        It is especially useful for ambiguous debugging, security reasoning, architecture choices, high-cost decisions, and any step that may be hard to undo.\
+        \n\nDo not use this for simple fact lookup, deterministic low-risk execution, or formatting-only work where no real judgment call is involved.\
+        \n\n[CRITICAL RULE]: Do not wait until you subjectively \"feel stuck\". You MUST call this tool before another retry when any of these are true:\
+        \n- You have already tried 3-4 turns on the same path\
+        \n- You are repeating the same tool family, route family, command pattern, or parameter pattern without clear new evidence\
+        \n- Your next step is only a small variation of a failed attempt\
+        \n- You cannot state what new information the next attempt is expected to produce\
+        \n- Your current plan still depends on an assumption you have not verified\
+        \n\nBefore repeating a path, ask yourself: \"What new evidence will this attempt produce?\" If the answer is weak, unclear, or mostly the same as before, call `tenth_man_review` first.\
+        \n\nRecommended stuck-call:\
+        \n- `review_mode`: `{ \"mode\": \"full_history\" }`\
+        \n- `review_type`: `full`\
+        \n\nThis review can surface:\
         \n- Hidden assumptions and weak evidence\
         \n- Logical gaps, contradictions, and blind spots\
         \n- Edge cases, constraints, and second-order effects\
-        \n- Safer or more robust alternative approaches\
-        \n\nReview modes:\
-        \n- 'full_history' (default): Review the full thread with summarization\
-        \n- 'recent_messages': Review only the last N messages (set count)\
-        \n\nReview types:\
-        \n- 'quick': Short risk-oriented challenge\
-        \n- 'full': Detailed critique with tradeoffs and mitigation ideas";
+        \n- Safer, simpler, or more robust alternative approaches\
+        \n\nArguments:\
+        \n- `execution_id` (required): Current execution ID\
+        \n- `review_mode` (optional): `full_history` for the whole thread, or `recent_messages` with `count` for a narrow local review\
+        \n- `review_type` (optional, default `full`): `quick` finds the highest-risk issue fast, `full` performs a deeper critique with tradeoffs and mitigations\
+        \n- `focus_area` (optional): Short phrase describing what to stress test";
 }
 
 impl Tool for TenthManTool {

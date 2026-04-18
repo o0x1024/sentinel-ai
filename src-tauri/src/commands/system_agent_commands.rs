@@ -7,6 +7,11 @@ use uuid::Uuid;
 
 use crate::commands::command_response_support::CommandResponse;
 use crate::services::system_agents::finding_lifecycle::TrafficFindingLifecycle;
+use crate::services::system_agents::language::resolve_ui_language;
+use crate::services::system_agents::pipeline::{
+    EVENT_TRAFFIC_VERIFICATION_REQUESTED, TRAFFIC_VERIFICATION_AGENT_PROFILE_ID,
+};
+use crate::services::system_agents::profile_localization::localize_system_agent_profile_text;
 use crate::services::system_agents::sop_registry::{
     parse_system_agent_sop_definitions, serialize_system_agent_sop_definitions,
     SystemAgentSopDefinition,
@@ -110,6 +115,17 @@ pub struct SystemAgentProfileVersionPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SystemAgentAutoVerificationStatus {
+    pub profile_id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub profile_enabled: bool,
+    pub allow_active_replay: bool,
+    pub scope_hosts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemAgentFindingFeedbackRequest {
     pub finding_id: String,
     pub feedback_type: String,
@@ -122,6 +138,57 @@ fn parse_json_value(raw: &str) -> Option<Value> {
 
 fn parse_json_array(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()
+}
+
+fn parse_safety_policy(raw: &str) -> Value {
+    parse_json_value(raw)
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}))
+}
+
+fn extract_scope_hosts_from_safety_policy(value: &Value) -> Vec<String> {
+    value
+        .get("scopeHosts")
+        .or_else(|| value.get("allowedHosts"))
+        .or_else(|| value.get("hostAllowlist"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn auto_verification_status_from_profile(
+    profile: &SystemAgentProfileRecord,
+    language: &str,
+) -> SystemAgentAutoVerificationStatus {
+    let safety_policy = parse_safety_policy(&profile.safety_policy_json);
+    let (name, _) = localize_system_agent_profile_text(
+        &profile.id,
+        &profile.name,
+        &profile.description,
+        language,
+    );
+    SystemAgentAutoVerificationStatus {
+        profile_id: profile.id.clone(),
+        name,
+        enabled: safety_policy
+            .get("autoMode")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        profile_enabled: profile.enabled,
+        allow_active_replay: safety_policy
+            .get("allowActiveReplay")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        scope_hosts: extract_scope_hosts_from_safety_policy(&safety_policy),
+    }
 }
 
 fn to_json_object_string(value: Option<&Value>) -> Result<String, String> {
@@ -148,11 +215,16 @@ fn binding_from_record(record: SystemAgentBindingRecord) -> SystemAgentBindingPa
     }
 }
 
-fn summary_from_record(record: SystemAgentProfileRecord) -> SystemAgentProfileSummary {
+fn summary_from_record(
+    record: SystemAgentProfileRecord,
+    language: &str,
+) -> SystemAgentProfileSummary {
+    let (name, description) =
+        localize_system_agent_profile_text(&record.id, &record.name, &record.description, language);
     SystemAgentProfileSummary {
         id: record.id,
-        name: record.name,
-        description: record.description,
+        name,
+        description,
         mode: record.mode,
         capability: record.capability,
         enabled: record.enabled,
@@ -194,11 +266,14 @@ fn version_from_record(
 fn detail_from_record(
     record: SystemAgentProfileRecord,
     bindings: Vec<SystemAgentBindingRecord>,
+    language: &str,
 ) -> SystemAgentProfilePayload {
+    let (name, description) =
+        localize_system_agent_profile_text(&record.id, &record.name, &record.description, language);
     SystemAgentProfilePayload {
         id: record.id,
-        name: record.name,
-        description: record.description,
+        name,
+        description,
         mode: record.mode,
         capability: record.capability,
         enabled: record.enabled,
@@ -315,11 +390,11 @@ fn normalize_profile_bindings(
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    if profile.id == "traffic_active_verifier" {
+    if profile.id == TRAFFIC_VERIFICATION_AGENT_PROFILE_ID {
         let desired_enabled = profile.enabled && auto_mode_enabled;
         if let Some(binding) = bindings
             .iter_mut()
-            .find(|binding| binding.event_name == "traffic.hypothesis.ready")
+            .find(|binding| binding.event_name == EVENT_TRAFFIC_VERIFICATION_REQUESTED)
         {
             binding.enabled = desired_enabled;
             binding.updated_at = Utc::now();
@@ -333,12 +408,16 @@ fn normalize_profile_bindings(
 pub async fn list_system_agent_profiles(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<CommandResponse<Vec<SystemAgentProfileSummary>>, String> {
+    let ui_language = resolve_ui_language(db_service.as_ref()).await;
     let profiles = db_service
         .list_system_agent_profiles()
         .await
         .map_err(|e| e.to_string())?;
     Ok(CommandResponse::ok(
-        profiles.into_iter().map(summary_from_record).collect(),
+        profiles
+            .into_iter()
+            .map(|record| summary_from_record(record, &ui_language))
+            .collect(),
     ))
 }
 
@@ -347,6 +426,7 @@ pub async fn get_system_agent_profile(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<CommandResponse<Option<SystemAgentProfilePayload>>, String> {
+    let ui_language = resolve_ui_language(db_service.as_ref()).await;
     let profile = db_service
         .get_system_agent_profile(&id)
         .await
@@ -357,7 +437,7 @@ pub async fn get_system_agent_profile(
             .list_system_agent_bindings(Some(&id))
             .await
             .map_err(|e| e.to_string())?;
-        Some(detail_from_record(profile, bindings))
+        Some(detail_from_record(profile, bindings, &ui_language))
     } else {
         None
     };
@@ -370,6 +450,7 @@ pub async fn save_system_agent_profile(
     db_service: State<'_, Arc<DatabaseService>>,
     profile: SystemAgentProfilePayload,
 ) -> Result<CommandResponse<SystemAgentProfilePayload>, String> {
+    let ui_language = resolve_ui_language(db_service.as_ref()).await;
     let profile_record = record_from_payload(&profile)?;
     validate_profile_tool_policy(&profile_record).map_err(|e| e.to_string())?;
     let binding_records = normalize_profile_bindings(
@@ -395,6 +476,7 @@ pub async fn save_system_agent_profile(
     Ok(CommandResponse::ok(detail_from_record(
         saved_profile,
         saved_bindings,
+        &ui_language,
     )))
 }
 
@@ -512,6 +594,65 @@ pub async fn seed_system_agent_profiles(
         .map_err(|e| e.to_string())?
         .len();
     Ok(CommandResponse::ok(count))
+}
+
+#[tauri::command]
+pub async fn get_system_agent_auto_verification_status(
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<CommandResponse<SystemAgentAutoVerificationStatus>, String> {
+    let ui_language = resolve_ui_language(db_service.as_ref()).await;
+    let profile = db_service
+        .get_system_agent_profile(TRAFFIC_VERIFICATION_AGENT_PROFILE_ID)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "未找到流量验证 Agent".to_string())?;
+
+    Ok(CommandResponse::ok(auto_verification_status_from_profile(
+        &profile,
+        &ui_language,
+    )))
+}
+
+#[tauri::command]
+pub async fn set_system_agent_auto_verification_enabled(
+    db_service: State<'_, Arc<DatabaseService>>,
+    enabled: bool,
+) -> Result<CommandResponse<SystemAgentAutoVerificationStatus>, String> {
+    let ui_language = resolve_ui_language(db_service.as_ref()).await;
+    let mut profile = db_service
+        .get_system_agent_profile(TRAFFIC_VERIFICATION_AGENT_PROFILE_ID)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "未找到流量验证 Agent".to_string())?;
+    let mut safety_policy = parse_safety_policy(&profile.safety_policy_json);
+    let Some(policy_obj) = safety_policy.as_object_mut() else {
+        return Err("验证 Agent 安全策略格式无效".to_string());
+    };
+    policy_obj.insert("autoMode".to_string(), Value::Bool(enabled));
+    profile.safety_policy_json = safety_policy.to_string();
+    profile.updated_at = Utc::now();
+
+    let bindings = db_service
+        .list_system_agent_bindings(Some(TRAFFIC_VERIFICATION_AGENT_PROFILE_ID))
+        .await
+        .map_err(|e| e.to_string())?;
+    let bindings = normalize_profile_bindings(&profile, bindings);
+
+    db_service
+        .save_system_agent_profile(&profile, &bindings)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let saved_profile = db_service
+        .get_system_agent_profile(TRAFFIC_VERIFICATION_AGENT_PROFILE_ID)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "保存后未找到流量验证 Agent".to_string())?;
+
+    Ok(CommandResponse::ok(auto_verification_status_from_profile(
+        &saved_profile,
+        &ui_language,
+    )))
 }
 
 #[tauri::command]

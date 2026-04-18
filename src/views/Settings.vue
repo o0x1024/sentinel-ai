@@ -152,6 +152,7 @@ import {
   settingsCategories,
 } from './settingsDefinitions'
 import { buildAvailableModels, buildAvailableProviders, loadAiConfig as fetchAiConfig, loadAiUsageStats as fetchAiUsageStats } from './settingsAiSupport'
+import { emitAiConfigUpdated } from '@/services/aiConfigEvents'
 import { applyDatabaseTypeDefaults } from './settingsDatabaseSupport'
 import { createSettingsSecurityActions } from './settingsSecuritySupport'
 import { applyFontSize, applyLanguage, applyTheme, applyUIScale, clampOutputStorageThreshold, normalizeCloseAction } from './settingsUiSupport'
@@ -180,6 +181,10 @@ const aiUsageStats = ref({})
 
 // RAG配置数据
 const ragConfig = ref(createDefaultRagConfig())
+
+const notifyAiConfigUpdated = () => {
+  emitAiConfigUpdated(aiConfig.value)
+}
 
 const loadAiUsageStats = async () => {
   try {
@@ -212,6 +217,7 @@ const clearAiUsageStats = async () => {
 const loadAiConfig = async () => {
   try {
     aiConfig.value = await fetchAiConfig()
+    notifyAiConfigUpdated()
     console.log('Reloaded AI config:', aiConfig.value)
   } catch (e) {
     console.error('Failed to load AI config', e)
@@ -330,6 +336,7 @@ const loadSettings = async () => {
     }
     
     console.log('Loaded AI config:', aiConfig.value)
+    notifyAiConfigUpdated()
     
     // 等待一个 tick 确保 aiConfig 更新完成
     await nextTick()
@@ -592,6 +599,7 @@ const saveAiConfig = async () => {
     
     // 然后保存 AI 配置（这会触发 reload_services，加载上面保存的配置）
     await invoke('save_ai_config', { config: aiConfig.value })
+    notifyAiConfigUpdated()
 
     dialog.toast.success('AI配置已保存')
   } catch (error) {
@@ -605,6 +613,7 @@ const setDefaultProvider = async (provider: string) => {
     await invoke('set_default_llm_provider', { request: { provider } })
     // 同步前端状态
     aiConfig.value.default_llm_provider = provider
+    notifyAiConfigUpdated()
     dialog.toast.success(`默认 Provider 已设置为 ${provider}`)
   } catch (e) {
     console.error('Failed to set default provider', e)
@@ -617,6 +626,7 @@ const setDefaultChatModel = async (model: string) => {
     if (!model) {
       // 清空默认模型
       aiConfig.value.default_llm_model = ''
+      notifyAiConfigUpdated()
       console.log('Settings: Cleared default_llm_model')
       dialog.toast.success('已清空默认 Chat 模型')
       return
@@ -657,6 +667,7 @@ const setDefaultChatModel = async (model: string) => {
     
     // 同步前端状态 - 保存为 'provider/model' 格式
     aiConfig.value.default_llm_model = modelValue
+    notifyAiConfigUpdated()
     console.log('Updated frontend default_llm_model state:', modelValue)
     
     // 如果找到模型信息则显示友好名称，否则显示模型ID
@@ -685,6 +696,7 @@ const setDefaultVlmProvider = async (provider: string) => {
       }]
     })
     aiConfig.value.default_vlm_provider = provider
+    notifyAiConfigUpdated()
     dialog.toast.success(`默认 VLM Provider 已设置为 ${provider}`)
   } catch (e) {
     console.error('Failed to set default VLM provider', e)
@@ -697,6 +709,7 @@ const setDefaultVisionModel = async (model: string) => {
     if (!model) {
       // 清空默认模型
       aiConfig.value.default_vlm_model = ''
+      notifyAiConfigUpdated()
       console.log('Settings: Cleared default_vlm_model')
       dialog.toast.success('已清空默认 VLM 模型')
       return
@@ -715,6 +728,7 @@ const setDefaultVisionModel = async (model: string) => {
     
     // 同步前端状态 - 保存为 'provider/model' 格式
     aiConfig.value.default_vlm_model = model
+    notifyAiConfigUpdated()
     console.log('Updated frontend default_vlm_model state:', model)
     
     let modelName = model
@@ -749,6 +763,7 @@ const setEnableMultimodal = async (enabled: boolean) => {
     })
     // 同步前端状态
     aiConfig.value.enable_multimodal = enabled
+    notifyAiConfigUpdated()
     dialog.toast.success(enabled ? '已启用多模态模式' : '已切换到文本模式')
   } catch (e) {
     console.error('Failed to set enable multimodal', e)
@@ -907,6 +922,7 @@ const applyManualConfig = async (config: any) => {
     
     // 更新本地配置
     aiConfig.value = config
+    notifyAiConfigUpdated()
     
     // 保存到后端
     await invoke('save_ai_config', { config: config })

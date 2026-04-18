@@ -9,10 +9,31 @@
         v-for="item in mainMenuItems"
         :key="item.path"
         :to="item.path"
-        class="btn btn-ghost btn-circle inline-flex items-center justify-center shrink-0 tooltip tooltip-right"
+        class="btn btn-ghost btn-circle inline-flex items-center justify-center shrink-0 tooltip tooltip-right relative"
         :data-tip="item.name"
       >
         <i :class="`${item.icon} text-xl leading-none`"></i>
+        <span
+          v-if="item.badges?.length"
+          class="sidebar-collapsed-badge-group absolute -top-1 -right-3"
+        >
+          <span
+            v-for="badge in item.badges"
+            :key="badge.key"
+            class="badge badge-xs min-w-[1.45rem] h-4 px-1"
+            :class="badge.className"
+            :title="badge.title"
+          >
+            {{ badge.value }}
+          </span>
+        </span>
+        <span
+          v-else-if="item.badge"
+          class="badge badge-xs absolute -top-1 -right-1 min-w-[1.1rem] h-4 px-1"
+          :class="item.badgeClass"
+        >
+          {{ item.badge }}
+        </span>
       </router-link>
 
       <div class="divider divider-neutral my-2"></div>
@@ -22,10 +43,17 @@
         v-for="item in toolMenuItems"
         :key="item.path"
         :to="item.path"
-        class="btn btn-ghost btn-circle inline-flex items-center justify-center shrink-0 tooltip tooltip-right"
+        class="btn btn-ghost btn-circle inline-flex items-center justify-center shrink-0 tooltip tooltip-right relative"
         :data-tip="item.name"
       >
         <i :class="`${item.icon} text-xl leading-none`"></i>
+        <span
+          v-if="item.badge"
+          class="badge badge-xs absolute -top-1 -right-1 min-w-[1.1rem] h-4 px-1"
+          :class="item.badgeClass"
+        >
+          {{ item.badge }}
+        </span>
       </router-link>
     </div>
 
@@ -44,16 +72,32 @@
             <li v-for="item in mainMenuItems" :key="item.path">
               <router-link
                 :to="item.path"
-                class="rounded-lg flex items-center gap-3 px-3 py-2 hover:bg-base-300 transition-colors"
+                class="sidebar-menu-link rounded-lg flex items-center gap-2 px-3 py-2 hover:bg-base-300 transition-colors"
                 :class="{
                   'bg-primary/10 text-primary border-r-2 border-primary': item.path.startsWith('/security-center')
                     ? isSecurityCenterRoute
                     : route.path === item.path,
                 }"
               >
-                <i :class="`${item.icon} text-lg`"></i>
-                <span class="font-medium">{{ item.name }}</span>
-                <span v-if="item.badge" class="badge badge-sm ml-auto" :class="item.badgeClass">
+                <span class="sidebar-menu-icon">
+                  <i :class="`${item.icon} text-lg leading-none`"></i>
+                </span>
+                <span class="sidebar-menu-label font-medium">{{ item.name }}</span>
+                <span
+                  v-if="item.badges?.length"
+                  class="sidebar-menu-badge-group ml-auto"
+                >
+                  <span
+                    v-for="badge in item.badges"
+                    :key="badge.key"
+                    class="badge badge-sm"
+                    :class="badge.className"
+                    :title="badge.title"
+                  >
+                    {{ badge.value }}
+                  </span>
+                </span>
+                <span v-else-if="item.badge" class="badge badge-sm ml-auto" :class="item.badgeClass">
                   {{ item.badge }}
                 </span>
               </router-link>
@@ -72,13 +116,15 @@
             <li v-for="item in toolMenuItems" :key="item.path">
               <router-link
                 :to="item.path"
-                class="rounded-lg flex items-center gap-3 px-3 py-2 hover:bg-base-300 transition-colors"
+                class="sidebar-menu-link rounded-lg flex items-center gap-2 px-3 py-2 hover:bg-base-300 transition-colors"
                 :class="{
                   'bg-primary/10 text-primary border-r-2 border-primary': route.path === item.path,
                 }"
               >
-                <i :class="`${item.icon} text-lg`"></i>
-                <span class="font-medium">{{ item.name }}</span>
+                <span class="sidebar-menu-icon">
+                  <i :class="`${item.icon} text-lg leading-none`"></i>
+                </span>
+                <span class="sidebar-menu-label font-medium">{{ item.name }}</span>
                 <span v-if="item.badge" class="badge badge-sm ml-auto" :class="item.badgeClass">
                   {{ item.badge }}
                 </span>
@@ -98,13 +144,15 @@
             <li v-for="item in systemMenuItems" :key="item.path">
               <router-link
                 :to="item.path"
-                class="rounded-lg flex items-center gap-3 px-3 py-2 hover:bg-base-300 transition-colors"
+                class="sidebar-menu-link rounded-lg flex items-center gap-2 px-2 py-2 hover:bg-base-300 transition-colors"
                 :class="{
                   'bg-primary/10 text-primary border-r-2 border-primary': route.path === item.path,
                 }"
               >
-                <i :class="`${item.icon} text-lg`"></i>
-                <span class="font-medium">{{ item.name }}</span>
+                <span class="sidebar-menu-icon">
+                  <i :class="`${item.icon} text-lg leading-none`"></i>
+                </span>
+                <span class="sidebar-menu-label font-medium">{{ item.name }}</span>
                 <span v-if="item.badge" class="badge badge-sm ml-auto" :class="item.badgeClass">
                   {{ item.badge }}
                 </span>
@@ -147,6 +195,23 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useNotificationCenter } from '@/composables/useNotificationCenter'
+import { useSecurityCenterActivity } from '@/composables/useSecurityCenterActivity'
+
+interface SidebarBadgeItem {
+  key: string
+  value: string
+  className: string
+  title: string
+}
+
+interface SidebarMenuItem {
+  path: string
+  name: string
+  icon: string
+  badge: string | null
+  badgeClass: string
+  badges?: SidebarBadgeItem[]
+}
 
 // 接收折叠状态
 const props = defineProps({
@@ -160,11 +225,70 @@ const props = defineProps({
 const { t } = useI18n()
 const route = useRoute()
 const { unreadMessageCount, unreadNotificationCount } = useNotificationCenter()
+const {
+  initializeSecurityCenterActivity,
+  unreadFindingCount,
+  unreadWorkbenchCaseCount,
+  unreadSecurityCenterCount,
+} = useSecurityCenterActivity()
 const unreadActivityCount = computed(() => unreadMessageCount.value + unreadNotificationCount.value)
-const isSecurityCenterRoute = computed(() => route.path.startsWith('/security-center'))
+const isSecurityCenterRoute = computed(() => {
+  if (route.path.startsWith('/security-center')) {
+    return true
+  }
+
+  return route.name === 'SecurityCenter' || route.name === 'SecurityWorkbench' || route.name === 'ScanTasks' || route.name === 'Vulnerabilities'
+})
+
+const formatBadgeCount = (count: number) => (count > 99 ? '99+' : String(count))
+
+const securityCenterBadges = computed<SidebarBadgeItem[]>(() => {
+  if (unreadSecurityCenterCount.value <= 0) {
+    return []
+  }
+
+  return [
+    {
+      key: 'finding',
+      value: formatBadgeCount(unreadFindingCount.value),
+      className: 'badge-error',
+      title: `漏洞未读：${unreadFindingCount.value}`,
+    },
+    {
+      key: 'workbench',
+      value: formatBadgeCount(unreadWorkbenchCaseCount.value),
+      className: 'badge-warning',
+      title: `工作台未读：${unreadWorkbenchCaseCount.value}`,
+    },
+  ]
+})
+
+const securityCenterBadge = computed(() => {
+  if (securityCenterBadges.value.length > 0) {
+    return null
+  }
+
+  if (taskStats.value.running > 0) {
+    return formatBadgeCount(taskStats.value.running)
+  }
+
+  return null
+})
+
+const securityCenterBadgeClass = computed(() => {
+  if (unreadSecurityCenterCount.value > 0) {
+    return 'badge-warning'
+  }
+
+  if (taskStats.value.running > 0) {
+    return 'badge-primary'
+  }
+
+  return ''
+})
 
 // 主要功能菜单项
-const mainMenuItems = computed(() => [
+const mainMenuItems = computed<SidebarMenuItem[]>(() => [
   {
     path: '/dashboard',
     name: t('sidebar.dashboard', '仪表盘'),
@@ -176,8 +300,9 @@ const mainMenuItems = computed(() => [
     path: '/security-center',
     name: t('sidebar.securityCenter', '安全中心'),
     icon: 'fas fa-shield-alt',
-    badge: taskStats.value.running > 0 ? taskStats.value.running.toString() : null,
-    badgeClass: 'badge-primary',
+    badge: securityCenterBadge.value,
+    badgeClass: securityCenterBadgeClass.value,
+    badges: securityCenterBadges.value,
   },
   {
     path: '/traffic',
@@ -365,6 +490,7 @@ onMounted(() => {
   loadTaskStats()
   // 加载待审核插件数量
   loadPendingPlugins()
+  void initializeSecurityCenterActivity()
 
   // 定期更新任务统计信息
   // setInterval(() => {
@@ -397,6 +523,28 @@ onMounted(() => {
 }
 .sidebar-stat-number {
   font-size: calc(var(--font-size-base, 14px) * 1.15);
+}
+
+.sidebar-menu-icon {
+  width: 1.5rem;
+  min-width: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sidebar-menu-badge-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.sidebar-collapsed-badge-group {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.125rem;
 }
 
 /* 菜单项字体 */

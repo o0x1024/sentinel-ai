@@ -6,35 +6,54 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 use sentinel_db::Database;
-use sentinel_llm::{parse_image_from_json, ChatMessage, StreamContent, StreamingLlmClient};
+use sentinel_llm::{
+    normalize_tool_call_arguments_str, parse_image_from_json, ChatMessage, StreamContent,
+    StreamingLlmClient,
+};
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
-use sentinel_tools::buildin_tools::ShellTool;
+use sentinel_tools::buildin_tools::{ShellTool, ToolSearchTool};
 use sentinel_tools::ToolServer;
 
 use super::run_with_tools_support::{
     accumulate_retry_progress, apply_allowed_tools_policy, build_retry_history,
     clear_retry_turn_state, collect_all_tool_calls, ensure_ai_conversation_exists_for_persistence,
+    final_response_needs_evidence_review, final_response_needs_verification_review,
     finalize_response_state, infer_tool_result_success, is_empty_response_error,
-    is_retryable_error, parse_team_stream_context, patch_builtin_dynamic_tools,
-    persist_ai_message_with_retry, register_skills_tool_guard, tool_loop_fingerprint,
+    is_high_risk_tool_call, is_retryable_error, is_side_effectful_tool_call,
+    looks_like_verification_tool_call, parse_team_stream_context, patch_builtin_dynamic_tools,
+    persist_ai_message_with_retry, register_skills_tool_guard,
+    streaming_content_needs_evidence_review, tool_loop_fingerprint, trailing_failed_tool_calls,
 };
 use super::AgentExecuteParams;
 use crate::agents::context_engineering::reflection::{
     record_execution_reflection, ExecutionOutcome,
 };
 use crate::agents::executor::message_store::save_assistant_message;
+use crate::agents::executor::tenth_man_hypothesis::HypothesisTracker;
+use crate::agents::executor::terminal_session_store::scope_active_terminal_session;
+use crate::agents::executor::tool_activation_events::{
+    emit_and_persist_tool_activation, emit_initial_tool_selection,
+};
+use crate::agents::executor::tool_bias::bias_tool_ids_for_recent_file_changes;
+use crate::agents::executor::tool_feedback::{emit_retry_event, spawn_tenth_man_warning};
+use crate::agents::executor::tool_progress::accumulate_progress;
 use crate::agents::executor::tool_trace_store::{
     append_execution_tool_trace, clear_execution_tool_trace,
 };
 use crate::agents::executor::types::ToolCallRecord;
 use crate::agents::executor::utils::{cleanup_container_context_async, truncate_for_memory};
-use crate::agents::tenth_man::{InterventionContext, InterventionMode, TenthMan, TriggerReason};
+use crate::agents::tenth_man::{
+    InterventionContext, InterventionMode, TenthMan, TenthManTriggerPolicy, TriggerReason,
+};
 use crate::agents::tool_router::ToolRouter;
 use crate::agents::{
-    append_tool_digests, build_context, build_tool_digest, resolve_context_policy,
-    ContextBuildInput,
+    append_tool_digests, apply_sentinel_execution_outcome, apply_tool_digest_to_tracked_artifacts,
+    build_context, build_tool_digest, load_run_state, resolve_context_policy, ContextBuildInput,
+    TrackedArtifact,
 };
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
+
+type PendingToolCalls = std::collections::HashMap<String, (String, String, i64, u32)>;
 
 pub async fn execute_agent_with_tools(
     app_handle: &AppHandle,
@@ -42,7 +61,16 @@ pub async fn execute_agent_with_tools(
     tool_server: &ToolServer,
 ) -> Result<String> {
     clear_execution_tool_trace(&params.execution_id);
+    let _active_terminal_session_guard = scope_active_terminal_session(
+        &params.execution_id,
+        params.active_terminal_session_id.as_deref(),
+    );
     let tool_config = params.tool_config.clone().unwrap_or_default();
+    let tenth_man_trigger_policy: TenthManTriggerPolicy = params
+        .tenth_man_config
+        .as_ref()
+        .map(|config| config.trigger_policy.clone())
+        .unwrap_or_default();
 
     // 1. 创建工具路由器（加载所有动态工具：工作流、MCP、插件）
     use tauri::Manager;
@@ -75,8 +103,13 @@ pub async fn execute_agent_with_tools(
         .plan_tools(&params.task, &tool_config, Some(&llm_config))
         .await?;
 
-    let selected_tool_ids =
-        apply_allowed_tools_policy(selection_plan.tool_ids.clone(), &tool_config.allowed_tools);
+    let selected_tool_ids = bias_tool_ids_for_recent_file_changes(
+        app_handle,
+        &params.execution_id,
+        apply_allowed_tools_policy(selection_plan.tool_ids.clone(), &tool_config.allowed_tools),
+        &tool_config,
+    )
+    .await;
 
     tracing::info!(
         "Selected {} tools for execution_id {}: {:?} (strategy={:?})",
@@ -86,25 +119,14 @@ pub async fn execute_agent_with_tools(
         tool_config.selection_strategy
     );
 
-    // Emit skill_selected event if applicable
-    if let Some(ref skill) = selection_plan.selected_skill {
-        let _ = app_handle.emit(
-            "agent:skill_selected",
-            &json!({
-                "execution_id": params.execution_id,
-                "skill_id": skill.id,
-                "skill_name": skill.name,
-            }),
-        );
-    }
-
-    // 发送工具选择事件到前端
-    let _ = app_handle.emit(
-        "agent:tools_selected",
-        &json!({
-            "execution_id": params.execution_id,
-            "tools": selected_tool_ids,
-        }),
+    emit_initial_tool_selection(
+        app_handle,
+        &params.execution_id,
+        selection_plan
+            .selected_skill
+            .as_ref()
+            .map(|skill| (skill.id.as_str(), skill.name.as_str())),
+        &selected_tool_ids,
     );
 
     // 3. 获取 DynamicTool 实例（用于 rig-core 原生工具调用）
@@ -174,14 +196,16 @@ pub async fn execute_agent_with_tools(
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use std::sync::Mutex;
     let tool_calls_collector: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
-    let pending_calls: Arc<Mutex<std::collections::HashMap<String, (String, String, i64, u32)>>> =
-        Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let pending_calls: Arc<Mutex<PendingToolCalls>> = Arc::new(Mutex::new(PendingToolCalls::new()));
     let tool_seq: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
     let tool_call_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let loop_break_requested: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let loop_guard_prompt_needed: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let last_tool_fingerprint: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
     let repeated_tool_fingerprint_count: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+    let low_evidence_warning_issued: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let hypothesis_tracker: Arc<Mutex<HypothesisTracker>> =
+        Arc::new(Mutex::new(HypothesisTracker::default()));
     let assistant_segment_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     // Track how many assistant text segments have been flushed (persisted) to the database
     // at tool-call boundaries. When > 0, the final save_assistant_message should only save
@@ -190,6 +214,14 @@ pub async fn execute_agent_with_tools(
     let reasoning_content_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let pending_tool_digests: Arc<Mutex<Vec<crate::agents::ToolDigest>>> =
         Arc::new(Mutex::new(Vec::new()));
+    let tracked_artifacts_state: Arc<Mutex<Vec<TrackedArtifact>>> = Arc::new(Mutex::new(
+        load_run_state(app_handle, &params.execution_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|state| state.tracked_artifacts)
+            .unwrap_or_default(),
+    ));
     let context_policy_for_stream = context_policy.clone();
 
     let collector = tool_calls_collector.clone();
@@ -200,9 +232,12 @@ pub async fn execute_agent_with_tools(
     let loop_prompt_flag = loop_guard_prompt_needed.clone();
     let last_tool_fp = last_tool_fingerprint.clone();
     let repeated_tool_fp_count = repeated_tool_fingerprint_count.clone();
+    let low_evidence_warning_flag = low_evidence_warning_issued.clone();
+    let hypothesis_tracker_for_stream = hypothesis_tracker.clone();
     let segment_buf = assistant_segment_buf.clone();
     let reasoning_buf = reasoning_content_buf.clone();
     let pending_digests = pending_tool_digests.clone();
+    let tracked_artifacts_for_stream = tracked_artifacts_state.clone();
     let persisted_seg_count = persisted_segment_count.clone();
 
     // Ensure skills tool enforces per-skill enable flags at execution time.
@@ -219,6 +254,8 @@ pub async fn execute_agent_with_tools(
     let mut last_error: Option<anyhow::Error> = None;
     let mut skill_reload_count = 0;
     let max_skill_reload = 3;
+    let mut tool_activation_reload_count = 0;
+    let max_tool_activation_reload = 6;
 
     // 累积的工具调用记录（跨重试保留）
     let accumulated_tool_calls: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
@@ -228,6 +265,10 @@ pub async fn execute_agent_with_tools(
 
     let skill_reload_requested = Arc::new(AtomicBool::new(false));
     let loaded_skill_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let tool_activation_reload_requested = Arc::new(AtomicBool::new(false));
+    let activated_tool_ids: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let activated_tool_query: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let activated_tool_runtime_hint: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let team_stream_started = Arc::new(AtomicBool::new(false));
     let team_stream_had_delta = Arc::new(AtomicBool::new(false));
 
@@ -248,6 +289,7 @@ pub async fn execute_agent_with_tools(
             &current_tool_ids,
             tool_server,
             &params.execution_id,
+            params.active_terminal_session_id.as_deref(),
         )
         .await;
 
@@ -258,23 +300,13 @@ pub async fn execute_agent_with_tools(
 
         if retries > 0 {
             // 保存当前已完成的工具调用到累积记录
-            if let Ok(current_calls) = tool_calls_collector.lock() {
-                if let Ok(mut acc) = accumulated_tool_calls.lock() {
-                    acc.extend(current_calls.clone());
-                }
-            }
-
-            // 保存当前已输出的内容到累积输出
-            if let Ok(current_output) = assistant_segment_buf.lock() {
-                if !current_output.is_empty() {
-                    if let Ok(mut acc) = accumulated_assistant_output.lock() {
-                        if !acc.is_empty() {
-                            acc.push_str("\n\n");
-                        }
-                        acc.push_str(current_output.as_str());
-                    }
-                }
-            }
+            accumulate_progress(
+                &tool_calls_collector,
+                &accumulated_tool_calls,
+                &assistant_segment_buf,
+                &accumulated_assistant_output,
+                None,
+            );
 
             tracing::warn!(
                 "Retrying agent execution (attempt {}/{}) due to error: {}. Accumulated {} tool calls and {} chars output.",
@@ -286,19 +318,14 @@ pub async fn execute_agent_with_tools(
             );
 
             if !silent_retry_pending {
-                // 发送重试事件给前端（包含已完成的进度信息）
-                let _ = app_handle.emit(
-                    "agent:retry",
-                    &json!({
-                        "execution_id": params.execution_id,
-                        "retry_count": retries,
-                        "max_retries": max_retries,
-                        "error": last_error.as_ref().map(|e| e.to_string()),
-                        "accumulated_progress": {
-                            "tool_calls": accumulated_tool_calls.lock().map(|c| c.len()).unwrap_or(0),
-                            "output_chars": accumulated_assistant_output.lock().map(|s| s.len()).unwrap_or(0),
-                        }
-                    }),
+                emit_retry_event(
+                    app_handle,
+                    &params.execution_id,
+                    retries,
+                    max_retries,
+                    last_error.as_ref(),
+                    &accumulated_tool_calls,
+                    &accumulated_assistant_output,
                 );
             } else {
                 tracing::info!(
@@ -325,7 +352,7 @@ pub async fn execute_agent_with_tools(
             &base_history_messages,
             tool_calls_snapshot,
             output_snapshot,
-            retries,
+            retries as u32,
             include_accumulated,
         );
         if loop_guard_prompt_needed.swap(false, Ordering::SeqCst) {
@@ -376,6 +403,94 @@ pub async fn execute_agent_with_tools(
                             // Accumulate assistant text into a segment buffer.
                             let _ = segment_buf.lock().map(|mut buf| buf.push_str(&text));
 
+                            if params.enable_tenth_man_rule
+                                && tenth_man_trigger_policy.review_low_evidence_high_confidence
+                                && !low_evidence_warning_flag.load(Ordering::SeqCst)
+                            {
+                                let current_segment = segment_buf
+                                    .lock()
+                                    .map(|buf| buf.clone())
+                                    .unwrap_or_default();
+                                let current_focus_hint = hypothesis_tracker_for_stream
+                                    .lock()
+                                    .map(|mut tracker| {
+                                        tracker.observe_text(&current_segment);
+                                        tracker.focus_hint().map(str::to_string)
+                                    })
+                                    .unwrap_or(None);
+                                let all_known_tool_calls = collect_all_tool_calls(
+                                    &accumulated_tool_calls,
+                                    &tool_calls_collector,
+                                );
+
+                                if streaming_content_needs_evidence_review(
+                                    &current_segment,
+                                    current_focus_hint.as_deref(),
+                                    &all_known_tool_calls,
+                                    tenth_man_trigger_policy.minimum_evidence_score(),
+                                ) && !low_evidence_warning_flag.swap(true, Ordering::SeqCst)
+                                {
+                                    let require_confirmation = params
+                                        .tenth_man_config
+                                        .as_ref()
+                                        .map(|config| config.require_user_confirmation)
+                                        .unwrap_or(false);
+                                    let has_recent_verification = all_known_tool_calls
+                                        .iter()
+                                        .rev()
+                                        .take(tenth_man_trigger_policy.recent_verification_window())
+                                        .any(|call| {
+                                            looks_like_verification_tool_call(
+                                                &call.name,
+                                                &call.arguments,
+                                                call.success,
+                                            )
+                                        });
+                                    let last_tool_name = all_known_tool_calls
+                                        .last()
+                                        .map(|call| call.name.clone());
+                                    let has_side_effects = all_known_tool_calls.iter().any(|call| {
+                                        is_side_effectful_tool_call(
+                                            &call.name,
+                                            &call.arguments,
+                                        )
+                                    });
+                                    let context = InterventionContext {
+                                        execution_id: execution_id.clone(),
+                                        task: params.task.clone(),
+                                        tool_call_count: all_known_tool_calls.len(),
+                                        recent_failure_count: trailing_failed_tool_calls(
+                                            &all_known_tool_calls,
+                                        ),
+                                        last_tool_name,
+                                        has_recent_verification,
+                                        has_side_effects,
+                                        current_content: Some(match &current_focus_hint {
+                                            Some(focus_hint) => format!(
+                                                "Current Hypothesis Focus:\n{}\n\nCurrent Content:\n{}",
+                                                focus_hint, current_segment
+                                            ),
+                                            None => current_segment,
+                                        }),
+                                        trigger_reason: TriggerReason::LowEvidenceHighConfidence,
+                                    };
+                                    let tenth_man = TenthMan::new(&params);
+                                    if tenth_man.should_trigger(&context) {
+                                        spawn_tenth_man_warning(
+                                            app.clone(),
+                                            params.clone(),
+                                            context,
+                                            "streaming_low_evidence_high_confidence",
+                                            require_confirmation,
+                                            json!({
+                                                "hypothesis_focus": current_focus_hint,
+                                                "minimum_evidence_score": tenth_man_trigger_policy.minimum_evidence_score(),
+                                            }),
+                                        );
+                                    }
+                                }
+                            }
+
                             let _ = app.emit(
                                 "agent:chunk",
                                 &json!({
@@ -407,48 +522,37 @@ pub async fn execute_agent_with_tools(
 
                             // Tenth Man Intervention Point 1: Before Tool Execution
                             if params.enable_tenth_man_rule {
-                                if let Some(ref tm_config) = params.tenth_man_config {
-                                    let tenth_man = TenthMan::new(&params);
-                                    let current_count = tool_counter.load(Ordering::SeqCst) as usize;
+                                let tenth_man = TenthMan::new(&params);
+                                let current_count = tool_counter.load(Ordering::SeqCst) as usize;
+                                let require_confirmation = params
+                                    .tenth_man_config
+                                    .as_ref()
+                                    .map(|config| config.require_user_confirmation)
+                                    .unwrap_or(false);
 
-                                    let context = InterventionContext {
-                                        execution_id: execution_id.clone(),
-                                        task: params.task.clone(),
-                                        tool_call_count: current_count,
-                                        current_content: Some(format!("Preparing to call tool: {}", name)),
-                                        trigger_reason: TriggerReason::ToolCallThreshold,
-                                    };
+                                let context = InterventionContext {
+                                    execution_id: execution_id.clone(),
+                                    task: params.task.clone(),
+                                    tool_call_count: current_count,
+                                    recent_failure_count: 0,
+                                    last_tool_name: Some(name.clone()),
+                                    has_recent_verification: false,
+                                    has_side_effects: false,
+                                    current_content: Some(format!("Preparing to call tool: {}", name)),
+                                    trigger_reason: TriggerReason::ToolCallThreshold,
+                                };
 
-                                    if tenth_man.should_trigger(&context) {
-                                        let app_clone = app.clone();
-                                        let exec_id = execution_id.clone();
-                                        let tool_name = name.clone();
-                                        let require_confirmation = tm_config.require_user_confirmation;
-
-                                        tauri::async_runtime::spawn(async move {
-                                            match tenth_man.quick_review(&context).await {
-                                                Ok(Some(critique)) => {
-                                                    tracing::info!("Tenth Man warning before tool call: {}", tool_name);
-                                                    let _ = app_clone.emit(
-                                                        "agent:tenth_man_warning",
-                                                        &json!({
-                                                            "execution_id": exec_id,
-                                                            "trigger": "before_tool_call",
-                                                            "tool_name": tool_name,
-                                                            "critique": critique,
-                                                            "requires_confirmation": require_confirmation,
-                                                        })
-                                                    );
-                                                }
-                                                Ok(None) => {
-                                                    tracing::debug!("Tenth Man: No significant risk detected");
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!("Tenth Man quick review failed: {}", e);
-                                                }
-                                            }
-                                        });
-                                    }
+                                if tenth_man.should_trigger(&context) {
+                                    spawn_tenth_man_warning(
+                                        app.clone(),
+                                        params.clone(),
+                                        context,
+                                        "before_tool_call_threshold",
+                                        require_confirmation,
+                                        json!({
+                                            "tool_name": name.clone(),
+                                        }),
+                                    );
                                 }
                             }
 
@@ -476,6 +580,10 @@ pub async fn execute_agent_with_tools(
                             name,
                             arguments,
                         } => {
+                            low_evidence_warning_flag.store(false, Ordering::SeqCst);
+                            if let Ok(mut tracker) = hypothesis_tracker_for_stream.lock() {
+                                tracker.clear();
+                            }
                             tracing::debug!("Tool call complete via rig-core: {} ({})", name, id);
                             sentinel_llm::log::log_tool_call(
                                 &execution_id,
@@ -495,6 +603,64 @@ pub async fn execute_agent_with_tools(
                                     id.clone(),
                                     (name.clone(), arguments.clone(), started_at_ms, seq),
                                 );
+                            }
+
+                            if params.enable_tenth_man_rule
+                                && tenth_man_trigger_policy.review_high_risk_tools
+                                && is_high_risk_tool_call(&name, &arguments)
+                            {
+                                let current_count = tool_counter.load(Ordering::SeqCst) as usize;
+                                let existing_records = collector
+                                    .lock()
+                                    .map(|records| records.clone())
+                                    .unwrap_or_default();
+                                let require_confirmation = params
+                                    .tenth_man_config
+                                    .as_ref()
+                                    .map(|config| config.require_user_confirmation)
+                                    .unwrap_or(false);
+                                let has_recent_verification = existing_records
+                                    .iter()
+                                    .rev()
+                                    .take(tenth_man_trigger_policy.recent_verification_window())
+                                    .any(|record| {
+                                        looks_like_verification_tool_call(
+                                            &record.name,
+                                            &record.arguments,
+                                            record.success,
+                                        )
+                                    });
+                                let context = InterventionContext {
+                                    execution_id: execution_id.clone(),
+                                    task: params.task.clone(),
+                                    tool_call_count: current_count,
+                                    recent_failure_count: trailing_failed_tool_calls(
+                                        &existing_records,
+                                    ),
+                                    last_tool_name: Some(name.clone()),
+                                    has_recent_verification,
+                                    has_side_effects: true,
+                                    current_content: Some(format!(
+                                        "About to execute high-risk tool call.\nTool: {}\nArguments: {}",
+                                        name, arguments
+                                    )),
+                                    trigger_reason: TriggerReason::HighRiskTool(name.clone()),
+                                };
+                                let tenth_man = TenthMan::new(&params);
+                                if tenth_man.should_trigger(&context) {
+                                    spawn_tenth_man_warning(
+                                        app.clone(),
+                                        params.clone(),
+                                        context,
+                                        "high_risk_tool_call",
+                                        require_confirmation,
+                                        json!({
+                                            "tool_call_id": id.clone(),
+                                            "tool_name": name.clone(),
+                                            "arguments": arguments.clone(),
+                                        }),
+                                    );
+                                }
                             }
 
                             // Flush assistant segment BEFORE inserting tool call message (preserve ordering on reload).
@@ -573,9 +739,8 @@ pub async fn execute_agent_with_tools(
                                     .single()
                                     .unwrap_or_else(chrono::Utc::now);
 
-                                let tool_args_val: serde_json::Value =
-                                    serde_json::from_str(&arguments)
-                                        .unwrap_or_else(|_| json!({ "raw": arguments }));
+                                let tool_args_val =
+                                    normalize_tool_call_arguments_str(&name, &arguments);
                                 let meta = json!({
                                     "kind": "tool_call",
                                     "tool_name": name,
@@ -679,6 +844,10 @@ pub async fn execute_agent_with_tools(
                                     if let Ok(mut records) = collector.lock() {
                                         records.push(record.clone());
                                     }
+                                    let current_records = collector
+                                        .lock()
+                                        .map(|records| records.clone())
+                                        .unwrap_or_default();
                                     append_execution_tool_trace(&execution_id, record.clone());
                                     if execution_id.starts_with("sar-") {
                                         let _ = app_handle.emit(
@@ -699,9 +868,10 @@ pub async fn execute_agent_with_tools(
                                             .single()
                                             .unwrap_or_else(chrono::Utc::now);
 
-                                        let tool_args_val: serde_json::Value =
-                                            serde_json::from_str(&args_for_meta)
-                                                .unwrap_or_else(|_| json!({ "raw": args_for_meta }));
+                                        let tool_args_val = normalize_tool_call_arguments_str(
+                                            &name_for_meta,
+                                            &args_for_meta,
+                                        );
                                         let meta = json!({
                                             "kind": "tool_call",
                                             "tool_name": name_for_meta,
@@ -765,9 +935,64 @@ pub async fn execute_agent_with_tools(
                                         }
                                     }
 
+                                    if name_for_meta == ToolSearchTool::NAME {
+                                        let result_json =
+                                            serde_json::from_str::<serde_json::Value>(&result)
+                                                .unwrap_or_else(|_| json!({}));
+                                        let should_reload = result_json
+                                            .get("requires_reload")
+                                            .and_then(|value| value.as_bool())
+                                            .unwrap_or(false);
+                                        if should_reload {
+                                            let requested = result_json
+                                                .get("activated_tool_ids")
+                                                .and_then(|value| value.as_array())
+                                                .map(|items| {
+                                                    items
+                                                        .iter()
+                                                        .filter_map(|item| {
+                                                            item.as_str().map(str::to_string)
+                                                        })
+                                                        .collect::<Vec<_>>()
+                                                })
+                                                .unwrap_or_default();
+                                            if !requested.is_empty() {
+                                                if let Ok(mut slot) = activated_tool_ids.lock() {
+                                                    *slot = requested;
+                                                }
+                                                if let Ok(mut slot) =
+                                                    activated_tool_runtime_hint.lock()
+                                                {
+                                                    *slot = result_json
+                                                        .get("runtime_hint")
+                                                        .and_then(|value| value.as_str())
+                                                        .map(str::to_string);
+                                                }
+                                                if let Ok(args_json) =
+                                                    serde_json::from_str::<serde_json::Value>(
+                                                        &args_for_meta,
+                                                    )
+                                                {
+                                                    if let Ok(mut slot) = activated_tool_query.lock()
+                                                    {
+                                                        *slot = args_json
+                                                            .get("query")
+                                                            .and_then(|value| value.as_str())
+                                                            .map(str::to_string);
+                                                    }
+                                                }
+                                                tool_activation_reload_requested
+                                                    .store(true, Ordering::SeqCst);
+                                            }
+                                        }
+                                    }
+
                                     let args_value: serde_json::Value = serde_json::from_str(&args_for_meta)
                                         .unwrap_or_else(|_| json!({ "raw": args_for_meta }));
                                     let digest = build_tool_digest(&name_for_meta, &args_value, &result);
+                                    if let Ok(mut tracked) = tracked_artifacts_for_stream.lock() {
+                                        apply_tool_digest_to_tracked_artifacts(&mut tracked, &digest);
+                                    }
                                     if let Ok(mut queue) = pending_digests.lock() {
                                         queue.push(digest);
                                     }
@@ -784,12 +1009,79 @@ pub async fn execute_agent_with_tools(
                                         if same_as_last {
                                             repeat_hits =
                                                 repeated_tool_fp_count.fetch_add(1, Ordering::SeqCst) + 1;
-                                            if repeat_hits >= 2 {
+                                            if repeat_hits
+                                                >= tenth_man_trigger_policy.loop_repeat_threshold()
+                                            {
                                                 loop_triggered = true;
                                             }
                                         } else {
                                             *last_slot = Some(fingerprint);
                                             repeated_tool_fp_count.store(0, Ordering::SeqCst);
+                                        }
+                                    }
+
+                                    if params.enable_tenth_man_rule {
+                                        let require_confirmation = params
+                                            .tenth_man_config
+                                            .as_ref()
+                                            .map(|config| config.require_user_confirmation)
+                                            .unwrap_or(false);
+                                        let recent_failure_count =
+                                            trailing_failed_tool_calls(&current_records);
+                                        let has_recent_verification = current_records
+                                            .iter()
+                                            .rev()
+                                            .take(tenth_man_trigger_policy.recent_verification_window())
+                                            .any(|call| {
+                                                looks_like_verification_tool_call(
+                                                    &call.name,
+                                                    &call.arguments,
+                                                    call.success,
+                                                )
+                                            });
+
+                                        if tenth_man_trigger_policy.review_repeated_failures
+                                            && !tool_success
+                                            && recent_failure_count
+                                                >= tenth_man_trigger_policy
+                                                    .repeated_failure_streak()
+                                        {
+                                            let context = InterventionContext {
+                                                execution_id: execution_id.clone(),
+                                                task: params.task.clone(),
+                                                tool_call_count: current_records.len(),
+                                                recent_failure_count,
+                                                last_tool_name: Some(name_for_meta.clone()),
+                                                has_recent_verification,
+                                                has_side_effects: current_records
+                                                    .iter()
+                                                    .any(|call| {
+                                                        is_side_effectful_tool_call(
+                                                            &call.name,
+                                                            &call.arguments,
+                                                        )
+                                                    }),
+                                                current_content: Some(format!(
+                                                    "Recent tools are failing repeatedly.\nLatest tool: {}\nArguments: {}\nResult: {}",
+                                                    name_for_meta, args_for_meta, result
+                                                )),
+                                                trigger_reason: TriggerReason::RepeatedFailurePattern,
+                                            };
+                                            let tenth_man = TenthMan::new(&params);
+                                            if tenth_man.should_trigger(&context) {
+                                                spawn_tenth_man_warning(
+                                                    app.clone(),
+                                                    params.clone(),
+                                                    context,
+                                                    "repeated_failure_pattern",
+                                                    require_confirmation,
+                                                    json!({
+                                                        "tool_call_id": id.clone(),
+                                                        "tool_name": name_for_meta.clone(),
+                                                        "failure_streak": recent_failure_count,
+                                                    }),
+                                                );
+                                            }
                                         }
                                     }
 
@@ -811,10 +1103,76 @@ pub async fn execute_agent_with_tools(
                                                 "reason": "repeated identical tool arguments and result"
                                             }),
                                         );
+
+                                        if params.enable_tenth_man_rule
+                                            && tenth_man_trigger_policy.review_loops
+                                        {
+                                            let require_confirmation = params
+                                                .tenth_man_config
+                                                .as_ref()
+                                                .map(|config| config.require_user_confirmation)
+                                                .unwrap_or(false);
+                                            let context = InterventionContext {
+                                                execution_id: execution_id.clone(),
+                                                task: params.task.clone(),
+                                                tool_call_count: current_records.len(),
+                                                recent_failure_count: trailing_failed_tool_calls(
+                                                    &current_records,
+                                                ),
+                                                last_tool_name: Some(name_for_meta.clone()),
+                                                has_recent_verification: current_records
+                                                    .iter()
+                                                    .rev()
+                                                    .take(
+                                                        tenth_man_trigger_policy
+                                                            .recent_verification_window(),
+                                                    )
+                                                    .any(|call| {
+                                                        looks_like_verification_tool_call(
+                                                            &call.name,
+                                                            &call.arguments,
+                                                            call.success,
+                                                        )
+                                                    }),
+                                                has_side_effects: current_records
+                                                    .iter()
+                                                    .any(|call| {
+                                                        is_side_effectful_tool_call(
+                                                            &call.name,
+                                                            &call.arguments,
+                                                        )
+                                                    }),
+                                                current_content: Some(format!(
+                                                    "Detected repeated identical tool loop.\nTool: {}\nArguments: {}\nResult: {}",
+                                                    name_for_meta, args_for_meta, result
+                                                )),
+                                                trigger_reason: TriggerReason::LoopDetected,
+                                            };
+                                            let tenth_man = TenthMan::new(&params);
+                                            if tenth_man.should_trigger(&context) {
+                                                spawn_tenth_man_warning(
+                                                    app.clone(),
+                                                    params.clone(),
+                                                    context,
+                                                    "loop_detected",
+                                                    require_confirmation,
+                                                    json!({
+                                                        "tool_call_id": id.clone(),
+                                                        "tool_name": name_for_meta.clone(),
+                                                        "repeat_count": repeat_hits,
+                                                    }),
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }
 
+                            let tracked_artifacts_snapshot: Option<Vec<TrackedArtifact>> =
+                                tracked_artifacts_for_stream
+                                    .lock()
+                                    .ok()
+                                    .map(|tracked| tracked.clone());
                             let team_tool_call_id = id.clone();
                             let team_result = result.clone();
                             let team_success = infer_tool_result_success(&result);
@@ -825,6 +1183,7 @@ pub async fn execute_agent_with_tools(
                                     "tool_call_id": id,
                                     "result": result,
                                     "success": team_success,
+                                    "tracked_artifacts": tracked_artifacts_snapshot,
                                 }),
                             );
                             if let Some(ctx) = team_stream_context.as_ref() {
@@ -920,6 +1279,9 @@ pub async fn execute_agent_with_tools(
                     if skill_reload_requested.load(Ordering::SeqCst) {
                         return false;
                     }
+                    if tool_activation_reload_requested.load(Ordering::SeqCst) {
+                        return false;
+                    }
                     true
                 },
             )
@@ -940,31 +1302,95 @@ pub async fn execute_agent_with_tools(
             tracing::warn!("Failed to flush tool digests: {}", e);
         }
 
+        if tool_activation_reload_requested.load(Ordering::SeqCst) {
+            if tool_activation_reload_count >= max_tool_activation_reload {
+                tool_activation_reload_requested.store(false, Ordering::SeqCst);
+            } else {
+                tool_activation_reload_count += 1;
+
+                accumulate_progress(
+                    &tool_calls_collector,
+                    &accumulated_tool_calls,
+                    &assistant_segment_buf,
+                    &accumulated_assistant_output,
+                    Some(&pending),
+                );
+
+                let mut requested_tools = if let Ok(mut slot) = activated_tool_ids.lock() {
+                    std::mem::take(&mut *slot)
+                } else {
+                    Vec::new()
+                };
+                let activation_query = if let Ok(mut slot) = activated_tool_query.lock() {
+                    slot.take()
+                } else {
+                    None
+                };
+                let activation_runtime_hint =
+                    if let Ok(mut slot) = activated_tool_runtime_hint.lock() {
+                        slot.take()
+                    } else {
+                        None
+                    };
+
+                if !requested_tools.is_empty() {
+                    let mut next_tools = tool_config.fixed_tools.clone();
+                    next_tools.extend(requested_tools.clone());
+                    next_tools.extend(current_tool_ids.clone());
+
+                    let available_tools = tool_server
+                        .list_tools()
+                        .await
+                        .into_iter()
+                        .map(|t| t.name)
+                        .collect::<std::collections::HashSet<_>>();
+                    let mut seen = std::collections::HashSet::new();
+                    next_tools.retain(|id| seen.insert(id.clone()));
+                    next_tools.retain(|id| available_tools.contains(id));
+                    next_tools.retain(|id| !tool_config.disabled_tools.contains(id));
+                    current_tool_ids =
+                        apply_allowed_tools_policy(next_tools, &tool_config.allowed_tools);
+
+                    if current_tool_ids.len() > tool_config.max_tools {
+                        current_tool_ids.truncate(tool_config.max_tools);
+                    }
+
+                    requested_tools.retain(|id| current_tool_ids.contains(id));
+
+                    emit_and_persist_tool_activation(
+                        app_handle,
+                        &params.execution_id,
+                        &requested_tools,
+                        activation_query,
+                        activation_runtime_hint,
+                        &current_tool_ids,
+                        db_for_stream.clone(),
+                    );
+                }
+
+                tool_activation_reload_requested.store(false, Ordering::SeqCst);
+                low_evidence_warning_issued.store(false, Ordering::SeqCst);
+                if let Ok(mut tracker) = hypothesis_tracker.lock() {
+                    tracker.clear();
+                }
+                force_history_with_tools = true;
+                continue;
+            }
+        }
+
         if skill_reload_requested.load(Ordering::SeqCst) {
             if skill_reload_count >= max_skill_reload {
                 skill_reload_requested.store(false, Ordering::SeqCst);
             } else {
                 skill_reload_count += 1;
 
-                if let Ok(current_calls) = tool_calls_collector.lock() {
-                    if let Ok(mut acc) = accumulated_tool_calls.lock() {
-                        acc.extend(current_calls.clone());
-                    }
-                }
-                if let Ok(current_output) = assistant_segment_buf.lock() {
-                    if !current_output.is_empty() {
-                        if let Ok(mut acc) = accumulated_assistant_output.lock() {
-                            if !acc.is_empty() {
-                                acc.push_str("\n\n");
-                            }
-                            acc.push_str(current_output.as_str());
-                        }
-                    }
-                }
-
-                if let Ok(mut pending_map) = pending.lock() {
-                    pending_map.clear();
-                }
+                accumulate_progress(
+                    &tool_calls_collector,
+                    &accumulated_tool_calls,
+                    &assistant_segment_buf,
+                    &accumulated_assistant_output,
+                    Some(&pending),
+                );
 
                 let skill_id = if let Ok(mut slot) = loaded_skill_id.lock() {
                     slot.take()
@@ -1079,6 +1505,10 @@ pub async fn execute_agent_with_tools(
                 }
 
                 skill_reload_requested.store(false, Ordering::SeqCst);
+                low_evidence_warning_issued.store(false, Ordering::SeqCst);
+                if let Ok(mut tracker) = hypothesis_tracker.lock() {
+                    tracker.clear();
+                }
                 force_history_with_tools = true;
                 continue;
             }
@@ -1107,6 +1537,10 @@ pub async fn execute_agent_with_tools(
                     Some(&last_tool_fingerprint),
                     Some(repeated_tool_fingerprint_count.as_ref()),
                 );
+                low_evidence_warning_issued.store(false, Ordering::SeqCst);
+                if let Ok(mut tracker) = hypothesis_tracker.lock() {
+                    tracker.clear();
+                }
                 force_history_with_tools = true;
                 continue;
             }
@@ -1122,9 +1556,6 @@ pub async fn execute_agent_with_tools(
                 );
                 let all_tool_calls =
                     collect_all_tool_calls(&accumulated_tool_calls, &tool_calls_collector);
-
-                // Outcome is determined by the execution result itself.
-                // Todos remain process-tracking state and must not block session completion.
 
                 tracing::info!(
                     "Agent with tools completed - execution_id: {}, final_save_length: {}, full_response_length: {}, persisted_segments: {}",
@@ -1185,6 +1616,17 @@ pub async fn execute_agent_with_tools(
                     },
                 )
                 .await;
+                if let Err(err) = apply_sentinel_execution_outcome(
+                    app_handle,
+                    &params.execution_id,
+                    true,
+                    Some(&full_response),
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!("Failed to update sentinel execution outcome: {}", err);
+                }
 
                 let reasoning_content = reasoning_content_buf
                     .lock()
@@ -1212,25 +1654,74 @@ pub async fn execute_agent_with_tools(
                 // Tenth Man Rule: Adversarial Review (System-enforced final check)
                 if params.enable_tenth_man_rule {
                     let tenth_man = TenthMan::new(&params);
+                    let final_focus_hint = hypothesis_tracker
+                        .lock()
+                        .ok()
+                        .and_then(|tracker| tracker.focus_hint().map(str::to_string));
+                    let requires_verification_review = tenth_man_trigger_policy
+                        .review_final_response_without_verification
+                        && final_response_needs_verification_review(
+                            &final_response,
+                            &all_tool_calls,
+                        );
+                    let requires_evidence_review = tenth_man_trigger_policy
+                        .review_low_evidence_high_confidence
+                        && final_response_needs_evidence_review(
+                            &final_response,
+                            final_focus_hint.as_deref(),
+                            &all_tool_calls,
+                            tenth_man_trigger_policy.minimum_evidence_score(),
+                        );
 
                     // Check if we should run final review based on mode
+                    let mut final_trigger = "final_review";
                     let should_run_final = if let Some(ref config) = params.tenth_man_config {
                         match &config.mode {
                             InterventionMode::SystemOnly => true,
                             InterventionMode::Hybrid {
                                 force_final_review, ..
-                            } => *force_final_review,
+                            } => {
+                                if requires_evidence_review && requires_verification_review {
+                                    final_trigger = "final_response_low_evidence_and_unverified";
+                                    true
+                                } else if requires_evidence_review {
+                                    final_trigger = "final_response_low_evidence_high_confidence";
+                                    true
+                                } else if requires_verification_review {
+                                    final_trigger = "final_response_without_verification";
+                                    true
+                                } else {
+                                    *force_final_review
+                                }
+                            }
                             InterventionMode::ToolOnly => false,
-                            _ => true, // Legacy modes default to true
+                            _ => {
+                                if requires_evidence_review && requires_verification_review {
+                                    final_trigger = "final_response_low_evidence_and_unverified";
+                                } else if requires_evidence_review {
+                                    final_trigger = "final_response_low_evidence_high_confidence";
+                                } else if requires_verification_review {
+                                    final_trigger = "final_response_without_verification";
+                                }
+                                true
+                            } // Legacy modes default to true
                         }
                     } else {
+                        if requires_evidence_review && requires_verification_review {
+                            final_trigger = "final_response_low_evidence_and_unverified";
+                        } else if requires_evidence_review {
+                            final_trigger = "final_response_low_evidence_high_confidence";
+                        } else if requires_verification_review {
+                            final_trigger = "final_response_without_verification";
+                        }
                         true // Default: run final review
                     };
 
                     if should_run_final {
                         tracing::info!(
-                            "Running Tenth Man final review with full history for execution_id: {}",
-                            params.execution_id
+                            "Running Tenth Man final review with full history for execution_id: {} (trigger={})",
+                            params.execution_id,
+                            final_trigger
                         );
 
                         match tenth_man.review_with_history(&params.execution_id).await {
@@ -1251,7 +1742,7 @@ pub async fn execute_agent_with_tools(
                                             metadata: Some(
                                                 json!({
                                                     "kind": "tenth_man_critique",
-                                                    "trigger": "final_review",
+                                                    "trigger": final_trigger,
                                                     "mode": "system_enforced"
                                                 })
                                                 .to_string(),
@@ -1281,7 +1772,7 @@ pub async fn execute_agent_with_tools(
                                                 "execution_id": params.execution_id,
                                                 "critique": critique,
                                                 "message_id": review_msg.id,
-                                                "trigger": "final_review",
+                                                "trigger": final_trigger,
                                                 "mode": "system_enforced"
                                             }),
                                         );
@@ -1380,6 +1871,10 @@ pub async fn execute_agent_with_tools(
                         None,
                         None,
                     );
+                    low_evidence_warning_issued.store(false, Ordering::SeqCst);
+                    if let Ok(mut tracker) = hypothesis_tracker.lock() {
+                        tracker.clear();
+                    }
 
                     continue;
                 } else if is_empty_response && empty_response_retries < max_empty_response_retries {
@@ -1408,6 +1903,10 @@ pub async fn execute_agent_with_tools(
                         Some(&last_tool_fingerprint),
                         Some(repeated_tool_fingerprint_count.as_ref()),
                     );
+                    low_evidence_warning_issued.store(false, Ordering::SeqCst);
+                    if let Ok(mut tracker) = hypothesis_tracker.lock() {
+                        tracker.clear();
+                    }
                     force_history_with_tools = true;
                     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
                     continue;
@@ -1457,12 +1956,26 @@ pub async fn execute_agent_with_tools(
                             execution_id: params.execution_id.clone(),
                             task: params.task.clone(),
                             success: false,
-                            error: Some(err_msg_clone),
+                            error: Some(err_msg_clone.clone()),
                             tool_names_used: fail_tool_names,
                             response_excerpt: None,
                         },
                     )
                     .await;
+                    if let Err(update_err) = apply_sentinel_execution_outcome(
+                        app_handle,
+                        &params.execution_id,
+                        false,
+                        None,
+                        Some(&err_msg_clone),
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "Failed to update sentinel execution outcome after error: {}",
+                            update_err
+                        );
+                    }
 
                     if let Some(ctx) = team_stream_context.as_ref() {
                         let _ = app.emit(

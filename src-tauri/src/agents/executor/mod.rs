@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager};
 
 use sentinel_db::Database;
 use sentinel_llm::LlmConfig;
+use sentinel_tools::buildin_tools::set_tool_search_context_provider;
 use sentinel_tools::{get_tool_server, mcp_adapter};
 
 use crate::agents::tenth_man::TenthManConfig;
@@ -14,14 +15,24 @@ use crate::agents::DocumentAttachmentInfo;
 use crate::agents::{ContextEngineMode, ContextPolicy};
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 
+use self::file_tool_state::clear_file_tool_state;
 use self::run_simple::execute_agent_simple;
 use self::run_with_tools::execute_agent_with_tools;
+use self::tool_bias::build_tool_search_runtime_context;
 
+mod file_tool_state;
 pub mod message_store;
 pub mod run_simple;
 pub mod run_with_tools;
 mod run_with_tools_support;
+mod tenth_man_hypothesis;
+mod terminal_session_store;
+mod tool_activation_events;
+mod tool_bias;
 pub mod tool_exec;
+mod tool_feedback;
+mod tool_progress;
+mod tool_search_override;
 pub mod tool_trace_store;
 pub mod types;
 pub mod utils;
@@ -85,6 +96,8 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         api_key: params.api_key.clone(),
         api_base: params.api_base.clone(),
         system_prompt: params.system_prompt.clone(),
+        active_terminal_session_fingerprint: params.active_terminal_session_fingerprint.clone(),
+        active_terminal_session_id: params.active_terminal_session_id.clone(),
         tool_config: params.tool_config.clone().unwrap_or_default(),
         max_iterations: params.max_iterations,
         timeout_secs: params.timeout_secs,
@@ -108,6 +121,11 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
 
     let tool_server = get_tool_server();
     tool_server.init_builtin_tools().await;
+    let app_handle_for_tool_search = app_handle.clone();
+    set_tool_search_context_provider(Arc::new(move |execution_id: String| {
+        let app_handle = app_handle_for_tool_search.clone();
+        Box::pin(async move { build_tool_search_runtime_context(&app_handle, &execution_id).await })
+    }));
 
     use sentinel_tools::buildin_tools::set_sops_app_handle;
     use sentinel_tools::buildin_tools::todos::set_todos_app_handle;
@@ -162,6 +180,7 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     };
 
     crate::agents::subagent_executor::clear_parent_context(&execution_id).await;
+    clear_file_tool_state(&execution_id).await;
 
     result
 }

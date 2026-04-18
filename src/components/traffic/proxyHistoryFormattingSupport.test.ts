@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  formatRequestRaw,
-  formatResponseRaw,
-} from './proxyHistoryFormattingSupport'
+import { formatRequestRaw, formatResponse, formatResponseRaw } from './proxyHistoryFormattingSupport'
 import type { ProxyRequest } from './proxyHistoryTypes'
 
 const createRequest = (overrides: Partial<ProxyRequest> = {}): ProxyRequest => ({
@@ -42,5 +39,21 @@ describe('proxyHistoryFormattingSupport', () => {
 
     expect(text.startsWith('HTTP/2 302 Found\n')).toBe(true)
     expect(text).toContain('location: /home\n')
+  })
+
+  it('preserves image response bodies in pretty view without replacing them with summaries', () => {
+    const text = formatResponse(createRequest({
+      status_code: 200,
+      response_headers: JSON.stringify([
+        { name: 'content-type', value: 'image/png' },
+      ]),
+      response_body: '[BASE64]aGVsbG8=',
+    }), 'pretty')
+
+    expect(text).toContain('content-type: image/png\n')
+    expect(text).toContain('hello')
+    expect(text).not.toContain('[BASE64]')
+    expect(text).not.toContain('[Binary data')
+    expect(text).not.toContain('First 200 characters:')
   })
 })

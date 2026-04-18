@@ -24,6 +24,28 @@ export type MessageType =
   | 'system'        // 系统消息
 
 // 消息元数据
+export interface AgentTrackedArtifactReadRange {
+  start_line: number
+  end_line: number
+}
+
+export interface AgentTrackedArtifact {
+  artifact_id: string
+  artifact_kind: string
+  storage_backend: string
+  source_tool: string
+  source_slot?: string | null
+  size_bytes?: number | null
+  total_lines?: number | null
+  read_ranges?: AgentTrackedArtifactReadRange[]
+  contiguous_read_through_line?: number
+  last_read_start_line?: number | null
+  last_read_end_line?: number | null
+  fully_read?: boolean
+  created_at_ms: number
+  updated_at_ms: number
+}
+
 export interface MessageMetadata {
   tool_name?: string
   tool_args?: Record<string, any>
@@ -51,7 +73,10 @@ export interface MessageMetadata {
   skill_id?: string
   skill_name?: string
   tools?: any[]
+  tool_ids?: string[]
   tools_preview?: string
+  query?: string
+  runtime_hint?: string
   kind?: string  // 消息类型标识（如 'segment_summary', 'global_summary', 'tenth_man_critique'）
   team_member_id?: string
   team_member_name?: string
@@ -73,6 +98,8 @@ export interface MessageMetadata {
   referenced_messages?: ReferencedConversationMessage[]
   referenced_assets?: ReferencedAsset[]
   referenced_traffic?: ReferencedTraffic[]
+  tracked_artifacts?: AgentTrackedArtifact[]
+  file_verification_status?: 'pending' | 'verified'
 }
 
 // Image attachment structure (matches backend MessageAttachment::Image)

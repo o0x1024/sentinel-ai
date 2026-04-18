@@ -1,6 +1,9 @@
 <template>
   <div class="flex h-full min-h-0 flex-col bg-base-100">
-    <div class="flex items-center gap-2 border-b border-base-300 bg-base-200 px-2 py-1">
+    <div
+      class="flex items-center gap-2 border-b border-base-300"
+      :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_TOP_BAR_CLASS : 'bg-base-200 px-2 py-1'"
+    >
       <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         <div
           v-for="item in items"
@@ -16,31 +19,34 @@
           </button>
         </div>
       </div>
-      <button class="btn btn-xs btn-ghost" type="button" @click="openDraftComposer">
+      <button class="btn btn-xs btn-ghost" type="button" @click="openDraftComposer" :title="$t('trafficAnalysis.comparer.actions.newComparison')">
         <i class="fas fa-plus"></i>
-        {{ $t('trafficAnalysis.comparer.actions.newComparison') }}
+        <span v-if="!immersiveDrillModeEnabled">{{ $t('trafficAnalysis.comparer.actions.newComparison') }}</span>
       </button>
     </div>
 
     <div v-if="showDraftComposer" class="flex min-h-0 flex-1 flex-col">
-      <div class="border-b border-base-300 bg-base-200 px-3 py-2">
+      <div
+        class="border-b border-base-300"
+        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2.5 py-1.5 backdrop-blur-sm' : 'bg-base-200 px-3 py-2'"
+      >
         <div class="flex flex-wrap items-center gap-2">
           <span class="font-semibold text-sm">{{ $t('trafficAnalysis.comparer.draft.title') }}</span>
           <button class="btn btn-ghost btn-xs" type="button" @click="pasteDraftSide('left')">
             <i class="fas fa-paste"></i>
-            {{ $t('trafficAnalysis.comparer.actions.pasteLeft') }}
+            <span v-if="!immersiveDrillModeEnabled">{{ $t('trafficAnalysis.comparer.actions.pasteLeft') }}</span>
           </button>
           <button class="btn btn-ghost btn-xs" type="button" @click="pasteDraftSide('right')">
             <i class="fas fa-paste"></i>
-            {{ $t('trafficAnalysis.comparer.actions.pasteRight') }}
+            <span v-if="!immersiveDrillModeEnabled">{{ $t('trafficAnalysis.comparer.actions.pasteRight') }}</span>
           </button>
-          <button class="btn btn-ghost btn-xs" type="button" @click="clearDraft">
+          <button v-if="!immersiveDrillModeEnabled" class="btn btn-ghost btn-xs" type="button" @click="clearDraft">
             <i class="fas fa-eraser"></i>
             {{ $t('trafficAnalysis.comparer.actions.clearDraft') }}
           </button>
           <button class="btn btn-primary btn-xs" type="button" :disabled="!canCreateDraftComparison" @click="createComparisonFromDraft">
             <i class="fas fa-not-equal"></i>
-            {{ $t('trafficAnalysis.comparer.actions.createComparison') }}
+            <span v-if="!immersiveDrillModeEnabled">{{ $t('trafficAnalysis.comparer.actions.createComparison') }}</span>
           </button>
           <div class="flex-1"></div>
           <button
@@ -117,11 +123,14 @@
       class="flex min-h-0 flex-1 flex-col"
       @contextmenu.capture.prevent="showContextMenu($event)"
     >
-      <div class="flex flex-wrap items-center gap-2 border-b border-base-300 bg-base-200 px-3 py-2">
-        <span class="badge badge-outline">{{ compareSourceLabel }}</span>
-        <span class="badge badge-outline">{{ compareKindLabel }}</span>
-        <span class="badge badge-outline">{{ compareMessageTypeLabel }}</span>
-        <span v-if="pinnedBaseline" class="badge badge-accent badge-outline">
+      <div
+        class="flex flex-wrap items-center gap-2 border-b border-base-300"
+        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2.5 py-1.5 backdrop-blur-sm' : 'bg-base-200 px-3 py-2'"
+      >
+        <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ compareSourceLabel }}</span>
+        <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ compareKindLabel }}</span>
+        <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ compareMessageTypeLabel }}</span>
+        <span v-if="pinnedBaseline" :class="[IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS, 'badge-accent']">
           {{ $t('trafficAnalysis.comparer.badges.pinnedBaseline', { label: pinnedBaselineLabel }) }}
         </span>
         <div class="tabs tabs-boxed tabs-xs bg-base-300">
@@ -141,6 +150,7 @@
           </button>
         </div>
         <button
+          v-if="!immersiveDrillModeEnabled"
           v-for="item in comparerToolbarActionMenuItems"
           :key="`comparer-toolbar-action-${item.key}`"
           class="btn btn-ghost btn-xs"
@@ -152,13 +162,13 @@
           {{ $t(`trafficAnalysis.comparer.actions.${item.labelKey}`) }}
         </button>
         <div class="flex-1"></div>
-        <span class="badge badge-outline">{{ currentItem.leftLabel }}: {{ displayedLeftText.length }}</span>
-        <span class="badge badge-outline">{{ currentItem.rightLabel }}: {{ displayedRightText.length }}</span>
-        <span class="badge badge-outline">{{ $t('trafficAnalysis.comparer.labels.changedLines') }}: {{ diffSummary.changedLines }}</span>
-        <span class="badge badge-outline">{{ $t('trafficAnalysis.comparer.labels.similarity') }}: {{ diffSummary.similarity }}%</span>
+        <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ currentItem.leftLabel }}: {{ displayedLeftText.length }}</span>
+        <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ currentItem.rightLabel }}: {{ displayedRightText.length }}</span>
+        <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ $t('trafficAnalysis.comparer.labels.changedLines') }}: {{ diffSummary.changedLines }}</span>
+        <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ $t('trafficAnalysis.comparer.labels.similarity') }}: {{ diffSummary.similarity }}%</span>
       </div>
 
-      <div class="min-h-0 flex-1 p-4" @contextmenu.capture.prevent="showContextMenu($event)">
+      <div class="min-h-0 flex-1" :class="immersiveDrillModeEnabled ? 'p-2' : 'p-4'" @contextmenu.capture.prevent="showContextMenu($event)">
         <CodeDiffViewer
           :left-text="displayedLeftText"
           :right-text="displayedRightText"
@@ -202,7 +212,12 @@ import { computed, ref } from 'vue'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import CodeDiffViewer from '@/components/traffic/CodeDiffViewer.vue'
 import { useI18n } from 'vue-i18n'
+import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { dialog } from '@/composables/useDialog'
+import {
+  IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS,
+  IMMERSIVE_TRAFFIC_TOP_BAR_CLASS,
+} from './immersiveTrafficUi'
 import { createRawRequestFromSource } from '@/components/traffic/intruder/http'
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
 import { buildComparerActionMenuItems } from './trafficComparerActionMenuSupport'

@@ -97,21 +97,40 @@ fn for_each_jsonl_line_reverse<F>(path: &Path, mut visit: F) -> Result<(), Strin
 where
     F: FnMut(&str) -> Result<bool, String>,
 {
-    let mut file = File::open(path)
-        .map_err(|e| format!("Failed to open shell permission log {}: {}", path.display(), e))?;
-    let mut pos = file
-        .seek(SeekFrom::End(0))
-        .map_err(|e| format!("Failed to seek shell permission log {}: {}", path.display(), e))?;
+    let mut file = File::open(path).map_err(|e| {
+        format!(
+            "Failed to open shell permission log {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+    let mut pos = file.seek(SeekFrom::End(0)).map_err(|e| {
+        format!(
+            "Failed to seek shell permission log {}: {}",
+            path.display(),
+            e
+        )
+    })?;
     let mut remainder = Vec::<u8>::new();
     let mut chunk = vec![0u8; 8192];
 
     while pos > 0 {
         let read_size = usize::try_from(pos.min(chunk.len() as u64)).unwrap_or(chunk.len());
         pos -= read_size as u64;
-        file.seek(SeekFrom::Start(pos))
-            .map_err(|e| format!("Failed to seek shell permission log {}: {}", path.display(), e))?;
-        file.read_exact(&mut chunk[..read_size])
-            .map_err(|e| format!("Failed to read shell permission log {}: {}", path.display(), e))?;
+        file.seek(SeekFrom::Start(pos)).map_err(|e| {
+            format!(
+                "Failed to seek shell permission log {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+        file.read_exact(&mut chunk[..read_size]).map_err(|e| {
+            format!(
+                "Failed to read shell permission log {}: {}",
+                path.display(),
+                e
+            )
+        })?;
 
         let mut combined = Vec::with_capacity(read_size + remainder.len());
         combined.extend_from_slice(&chunk[..read_size]);
@@ -167,14 +186,12 @@ pub async fn get_shell_permission_history(
                 return Ok(true);
             }
 
-            let execution_id = event
-                .payload
-                .execution_id
-                .clone()
-                .or_else(|| match event.conversation_id.as_str() {
+            let execution_id = event.payload.execution_id.clone().or_else(|| {
+                match event.conversation_id.as_str() {
                     "" | "N/A" => None,
                     other => Some(other.to_string()),
-                });
+                }
+            });
 
             if execution_filter
                 .as_ref()

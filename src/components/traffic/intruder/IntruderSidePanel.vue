@@ -24,6 +24,7 @@
               @change="handlePayloadTypeChange(($event.target as HTMLSelectElement).value as IntruderPayloadSet['payloadType'])"
             >
               <option value="simpleList">{{ $t('trafficAnalysis.intruder.labels.simpleList') }}</option>
+              <option value="appDictionary">{{ $t('trafficAnalysis.intruder.labels.appDictionary') }}</option>
               <option value="extensionGenerated">{{ $t('trafficAnalysis.intruder.labels.extensionGenerated') }}</option>
               <option value="numbers">{{ $t('trafficAnalysis.intruder.labels.numbers') }}</option>
               <option value="dates">{{ $t('trafficAnalysis.intruder.labels.dates') }}</option>
@@ -71,6 +72,12 @@
                 @input="updateActivePayloadSet({ payloadsText: ($event.target as HTMLTextAreaElement).value })"
               ></textarea>
             </div>
+
+            <IntruderAppDictionaryPanel
+              v-else-if="activePayloadSet?.payloadType === 'appDictionary' && activePayloadSet"
+              :payload-set="activePayloadSet"
+              @update="updateActivePayloadSet($event)"
+            />
 
             <div v-else-if="activePayloadSet?.payloadType === 'extensionGenerated'" class="grid gap-3 p-4">
               <label class="form-control">
@@ -1051,6 +1058,7 @@ import { useI18n } from 'vue-i18n'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { dialog } from '@/composables/useDialog'
+import IntruderAppDictionaryPanel from './IntruderAppDictionaryPanel.vue'
 import IntruderAttackResultsSettingsPanel from './IntruderAttackResultsSettingsPanel.vue'
 import IntruderAutoPausePanel from './IntruderAutoPausePanel.vue'
 import IntruderErrorHandlingPanel from './IntruderErrorHandlingPanel.vue'

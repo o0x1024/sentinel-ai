@@ -5,6 +5,57 @@ import {
 } from './settingsDefinitions'
 import { setLanguage as applyI18nLanguage } from '@/i18n'
 
+const DARK_THEMES = new Set(['dark', 'synthwave', 'halloween', 'forest', 'black', 'luxury', 'dracula'])
+const THEME_MEDIA_QUERY = typeof window !== 'undefined'
+  ? window.matchMedia('(prefers-color-scheme: dark)')
+  : null
+
+let trackedThemePreference = 'light'
+let trackedThemeSettings: any = null
+let autoThemeListenerBound = false
+
+export const resolveThemePreference = (theme: string): string => {
+  if (theme !== 'auto') {
+    return theme
+  }
+
+  return THEME_MEDIA_QUERY?.matches ? 'dark' : 'light'
+}
+
+const syncResolvedTheme = () => {
+  if (typeof document === 'undefined') {
+    return
+  }
+
+  const finalTheme = resolveThemePreference(trackedThemePreference)
+  document.documentElement.setAttribute('data-theme', finalTheme)
+  localStorage.setItem('theme', finalTheme)
+
+  if (trackedThemeSettings?.general) {
+    trackedThemeSettings.general.darkMode = DARK_THEMES.has(finalTheme)
+  }
+}
+
+const ensureAutoThemeListener = () => {
+  if (!THEME_MEDIA_QUERY || autoThemeListenerBound) {
+    return
+  }
+
+  const handleThemeChange = () => {
+    if (trackedThemePreference === 'auto') {
+      syncResolvedTheme()
+    }
+  }
+
+  if (typeof THEME_MEDIA_QUERY.addEventListener === 'function') {
+    THEME_MEDIA_QUERY.addEventListener('change', handleThemeChange)
+  } else {
+    THEME_MEDIA_QUERY.addListener(handleThemeChange)
+  }
+
+  autoThemeListenerBound = true
+}
+
 export const clampOutputStorageThreshold = (value: number): number => {
   if (!Number.isFinite(value)) return OUTPUT_STORAGE_THRESHOLD_DEFAULT
   return Math.min(
@@ -24,18 +75,10 @@ export const normalizeCloseAction = (value: unknown): 'hide' | 'minimize' | 'exi
   return 'minimize'
 }
 export const applyTheme = (theme: string, settings: any) => {
-  let finalTheme = theme
-  if (theme === 'auto') {
-    finalTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  }
-
-  document.documentElement.setAttribute('data-theme', finalTheme)
-  localStorage.setItem('theme', finalTheme)
-
-  const isDark = ['dark', 'synthwave', 'halloween', 'forest', 'black', 'luxury', 'dracula'].includes(finalTheme)
-  if (settings.general) {
-    settings.general.darkMode = isDark
-  }
+  trackedThemePreference = theme
+  trackedThemeSettings = settings
+  ensureAutoThemeListener()
+  syncResolvedTheme()
 }
 
 export const applyFontSize = (fontSize: number) => {

@@ -238,6 +238,7 @@ interface Props {
   toolVersion?: string
   toolCategory?: string
   inputSchema?: any
+  initialParams?: Record<string, unknown> | null
   // 用于执行工具的信息
   executionInfo?: {
     type: 'unified' | 'plugin' | 'workflow'
@@ -251,6 +252,7 @@ const props = withDefaults(defineProps<Props>(), {
   toolVersion: '',
   toolCategory: '',
   inputSchema: null,
+  initialParams: null,
 })
 
 const emit = defineEmits<{
@@ -382,9 +384,22 @@ function generateDefaultParams(schema: any): string {
   return JSON.stringify(params, null, 2)
 }
 
+function buildInitialParamsJson(): string {
+  const defaultParams = props.inputSchema?.properties
+    ? JSON.parse(generateDefaultParams(props.inputSchema))
+    : {}
+
+  const mergedParams = {
+    ...defaultParams,
+    ...(props.initialParams || {}),
+  }
+
+  return JSON.stringify(mergedParams, null, 2)
+}
+
 async function runTest() {
   let inputs: any = {}
-  if (paramsJson.value.trim() && showAdvanced.value) {
+  if (paramsJson.value.trim() && (showAdvanced.value || !!props.initialParams)) {
     try {
       inputs = JSON.parse(paramsJson.value)
     } catch (e) {
@@ -437,9 +452,10 @@ async function runTest() {
 // Watch for modal open to initialize params
 watch(() => props.modelValue, (isOpen) => {
   if (isOpen) {
-    paramsJson.value = generateDefaultParams(props.inputSchema)
+    paramsJson.value = buildInitialParamsJson()
     testResult.value = ''
     testDuration.value = null
+    showAdvanced.value = !!props.initialParams
   }
 })
 </script>

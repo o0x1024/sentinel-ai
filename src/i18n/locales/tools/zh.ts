@@ -185,6 +185,58 @@ export default {
     noReviewPlugins: '没有需要审核的插件'
   },
 
+  exploitdb: {
+    title: 'ExploitDB',
+    description: '管理 search_exploit 的数据源，并查看本地同步的漏洞利用条目。',
+    openManager: '数据',
+    configTitle: '数据源配置',
+    configDescription: '配置本地 ExploitDB 仓库路径，并手动触发同步与索引刷新。',
+    saveSettings: '保存配置',
+    syncNow: '立即同步',
+    refreshStatus: '刷新状态',
+    statusTitle: '同步状态',
+    repoUrl: '仓库地址',
+    repoPath: '本地路径',
+    selectPath: '选择路径',
+    repoReady: '仓库就绪',
+    indexReady: '索引就绪',
+    indexedEntries: '索引条目数',
+    lastCommit: '最近提交',
+    lastSync: '最近同步',
+    indexedAt: '索引时间',
+    syncSuccess: 'ExploitDB 同步完成',
+    browserTitle: '数据浏览',
+    browserDescription: '支持按关键词、CVE、平台和类型检索本地 ExploitDB 索引。',
+    totalResults: '共 {count} 条结果',
+    repoNotReady: '本地 ExploitDB 仓库或索引尚未就绪，请先保存配置并执行同步。',
+    emptySearch: '没有匹配的 ExploitDB 条目。',
+    pageInfo: '第 {page} / {total} 页',
+    detailTitle: '条目详情',
+    detailEmpty: '从左侧选择一个条目查看详情。',
+    openInToolTest: '在工具测试中打开',
+    filters: {
+      query: '关键词',
+      queryPlaceholder: '产品名、组件、漏洞标题',
+      cve: 'CVE',
+      platform: '平台',
+      platformPlaceholder: 'windows / linux / php',
+      type: '类型',
+      typePlaceholder: 'remote / webapps / dos'
+    },
+    detail: {
+      author: '作者',
+      publishedAt: '发布日期',
+      platform: '平台',
+      type: '类型',
+      cves: '关联 CVE',
+      pocCode: 'PoC / 利用代码',
+      truncated: '内容已截断',
+      copyPoc: '复制',
+      copySuccess: 'PoC 已复制到剪贴板',
+      copyFailed: '复制 PoC 失败'
+    }
+  },
+
   // Shell终端
   shell: {
     title: 'Shell 终端',
