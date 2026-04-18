@@ -51,17 +51,40 @@ export const appendTeamMessagesToMainFlow = (
     if (msg.role === 'system') {
       const systemContent = (msg.content || '').trim()
       if (systemContent && !shouldSuppressTeamMirrorNoiseMessage(systemContent)) {
+        const teamMetadata =
+          msg.metadata && typeof msg.metadata === 'object' ? msg.metadata : {}
+        const kind =
+          typeof teamMetadata.kind === 'string' && teamMetadata.kind.trim().length > 0
+            ? teamMetadata.kind.trim()
+            : 'team_system'
         params.pushMainFlowMessage({
           id: `team:${msg.id}`,
           type: 'system',
           content: systemContent,
           timestamp: msgTime,
           metadata: {
-            kind: 'team_system',
+            ...teamMetadata,
+            kind,
             team_member_id: msg.member_id,
             team_member_name: msg.member_name,
             team_member_role: msg.role,
             team_session_id: msg.session_id,
+            team_task_record_id:
+              typeof teamMetadata.task_record_id === 'string'
+                ? teamMetadata.task_record_id
+                : undefined,
+            team_task_key:
+              typeof teamMetadata.task_key === 'string'
+                ? teamMetadata.task_key
+                : undefined,
+            team_task_title:
+              typeof teamMetadata.task_title === 'string'
+                ? teamMetadata.task_title
+                : undefined,
+            action_label:
+              typeof teamMetadata.action_label === 'string'
+                ? teamMetadata.action_label
+                : undefined,
             team_sequence: normalizeTeamSequence(msg.sequence),
           },
         })

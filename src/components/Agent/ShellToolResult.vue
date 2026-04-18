@@ -241,8 +241,8 @@ import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import type { AgentTrackedArtifact } from '@/types/agent'
 import { highlightShellCommand } from '@/utils/shellHighlight'
+import { useAgentTasks } from '@/composables/useAgentTasks'
 import { useTerminal } from '@/composables/useTerminal'
-import { useTodos } from '@/composables/useTodos'
 import StoredArtifactPanel from './StoredArtifactPanel.vue'
 import { buildStoredArtifactViews } from './storedArtifactSupport'
 
@@ -288,7 +288,7 @@ const backgroundRuntimeState = ref<Record<string, any> | null>(null)
 let unlisten: (() => void) | null = null
 let unlistenBackgroundTask: (() => void) | null = null
 const terminal = useTerminal()
-const todos = useTodos()
+const tasks = useAgentTasks()
 const { t } = useI18n()
 
 function decodeHtmlEntities(text: string): string {
@@ -392,12 +392,12 @@ async function handleCancel() {
 }
 
 function openInteractiveTerminal() {
-  todos.close()
+  tasks.close()
   terminal.openTerminal()
 }
 
 function openBackgroundTerminal() {
-  todos.close()
+  tasks.close()
   if (backgroundSessionId.value) {
     terminal.syncActiveSession(backgroundSessionId.value)
   }

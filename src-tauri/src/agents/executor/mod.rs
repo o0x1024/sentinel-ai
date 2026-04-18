@@ -128,9 +128,9 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     }));
 
     use sentinel_tools::buildin_tools::set_sops_app_handle;
-    use sentinel_tools::buildin_tools::todos::set_todos_app_handle;
+    use sentinel_tools::buildin_tools::tasks::set_tasks_app_handle;
     set_sops_app_handle(app_handle.clone()).await;
-    set_todos_app_handle(app_handle.clone()).await;
+    set_tasks_app_handle(app_handle.clone()).await;
 
     use crate::agents::tenth_man_executor;
 

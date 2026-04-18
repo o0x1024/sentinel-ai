@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
     AskUserQuestionTool, CloseAgentTool, HttpRequestTool, ListAgentsTool, OcrTool,
-    SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TenthManTool, TodosTool,
+    SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool, TenthManTool,
     WaitAgentsTool,
 };
 use sentinel_tools::get_tool_server;
@@ -61,7 +61,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(OcrTool::NAME.to_string(), true);
     map.insert(TerminalServer::NAME.to_string(), true);
     map.insert(TenthManTool::NAME.to_string(), true);
-    map.insert(TodosTool::NAME.to_string(), true);
+    map.insert(TasksTool::NAME.to_string(), true);
     map.insert(SpawnAgentTool::NAME.to_string(), true);
     map.insert(WaitAgentsTool::NAME.to_string(), true);
     map.insert(ListAgentsTool::NAME.to_string(), true);
@@ -473,14 +473,14 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         })),
     });
 
-    // todos tool
+    // tasks tool
     tools.push(BuiltinToolInfo {
-        id: TodosTool::NAME.to_string(),
-        name: TodosTool::NAME.to_string(),
-        description: TodosTool::DESCRIPTION.to_string(),
+        id: TasksTool::NAME.to_string(),
+        name: TasksTool::NAME.to_string(),
+        description: TasksTool::DESCRIPTION.to_string(),
         category: ToolCategory::AI.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(TodosTool::NAME).unwrap_or(&true),
+        enabled: *states.get(TasksTool::NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -495,7 +495,7 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                 },
                 "items": {
                     "type": "array",
-                    "description": "List of todo item descriptions (for add_items / replan)",
+                    "description": "List of task item descriptions (for add_items / replan)",
                     "items": { "type": "string" }
                 },
                 "item_index": {

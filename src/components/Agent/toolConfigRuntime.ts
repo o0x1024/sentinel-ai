@@ -10,7 +10,7 @@ export const LEGACY_SKILLS_TOOL_IDS = [
   'close_agent',
   'tenth_man_review',
   'memory',
-  'todos',
+  'tasks',
 ]
 
 export interface UiToolConfigPayload {

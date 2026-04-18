@@ -73,16 +73,16 @@
           </span>
         </div>
         <div class="flex items-center gap-2">
-          <!-- Todos Button - always visible -->
+          <!-- Tasks Button - always visible -->
           <button 
-            @click="handleToggleTodos()"
+            @click="handleToggleTasks()"
             class="btn btn-sm gap-1"
-            :class="activeRightPanel === 'todos' ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="activeRightPanel === 'todos' ? t('agent.todosPanelOpen') : t('agent.viewTodos')"
+            :class="activeRightPanel === 'tasks' ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="activeRightPanel === 'tasks' ? t('agent.tasksPanelOpen') : t('agent.viewTasks')"
           >
             <i class="fas fa-tasks"></i>
-            <span>{{ t('agent.todos') }}</span>
-            <span v-if="todoBadgeCount > 0" class="badge badge-xs badge-primary">{{ todoBadgeCount }}</span>
+            <span>{{ t('agent.tasks') }}</span>
+            <span v-if="taskBadgeCount > 0" class="badge badge-xs badge-primary">{{ taskBadgeCount }}</span>
           </button>
           <!-- HTML Panel Button - shows when there is HTML content -->
           <button 
@@ -127,7 +127,7 @@
         </div>
       </div>
 
-      <!-- {{ t('agent.messagesAndTodos') }} -->
+      <!-- {{ t('agent.messagesAndTasks') }} -->
       <div class="flex flex-1 overflow-hidden min-h-0">
         <!-- Left: Message flow + Input Area -->
         <div class="message-area flex-1 flex flex-col overflow-hidden min-h-0">
@@ -180,6 +180,7 @@
               class="h-full"
               @resend="handleResendMessage"
               @edit="handleEditMessage"
+              @focus-team-task="handleFocusTeamTask"
               @message-focused="handleFocusedMessage"
               @render-html="handleRenderHtml"
             />
@@ -249,7 +250,7 @@
           />
         </div>
         
-        <!-- Right: Side Panel (Todo, HTML, Terminal, or Team) -->
+        <!-- Right: Side Panel (Task, HTML, Terminal, or Team) -->
         <div 
           v-if="activeRightPanel"
           class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
@@ -265,26 +266,35 @@
               v-if="activeRightPanel === 'team'"
               v-model:tab="teamWorkspaceTab"
               :loading="teamWorkspaceLoading"
+              :pending-create-task="pendingTeamCreateTask"
               :tasks="teamTasks"
               :selected-task-id="selectedTeamTaskId"
               :selected-task-title="selectedTeamTaskTitle"
+              :pending-task-action-kind="pendingTeamTaskActionKind"
+              :pending-task-action-task-id="pendingTeamTaskActionTaskId"
               :session-messages="teamSessionMessages"
               :blackboard-entries="teamBlackboardEntries"
               :session-detail="teamSessionDetail"
               :resolve-agent-name="resolveAgentName"
+              @block-task="handleBlockTeamTask"
               @clear-selected-task="clearSelectedTeamTask"
+              @claim-task="handleClaimTeamTask"
+              @complete-task="handleCompleteTeamTask"
+              @create-task="handleCreateTeamTask"
+              @fail-task="handleFailTeamTask"
+              @release-task="handleReleaseTeamTask"
               @toggle-selected-task="toggleSelectedTeamTask"
             />
 
-            <TodoPanel 
-              v-else-if="activeRightPanel === 'todos'" 
-              :todos="todos"
-              :is-active="activeRightPanel === 'todos'"
-              :source-options="todoSourceOptions"
-              :selected-source-key="selectedTodoSourceKey"
+            <TaskPanel 
+              v-else-if="activeRightPanel === 'tasks'" 
+              :tasks="tasks"
+              :is-active="activeRightPanel === 'tasks'"
+              :source-options="taskSourceOptions"
+              :selected-source-key="selectedTaskSourceKey"
               class="h-full p-4 overflow-y-auto border-0 bg-transparent"
-              @close="handleCloseTodos"
-              @source-change="handleTodoSourceChange"
+              @close="handleCloseTasks"
+              @source-change="handleTaskSourceChange"
             />
             <HtmlPanel
               v-else-if="activeRightPanel === 'html'"
@@ -325,8 +335,8 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { useToast } from '@/composables/useToast'
 import type { AgentMessage } from '@/types/agent'
-import type { Todo } from '@/types/todo'
 import type {
   AgentTeamMessage,
   AgentTeamSession,
@@ -337,16 +347,17 @@ import type {
   AgentTeamToolCallEvent,
   AgentTeamToolResultEvent,
   TeamBlackboardEntry,
+  TeamTaskCreateInput,
   TeamTask,
 } from '@/types/agentTeam'
 import { agentTeamApi } from '@/api/agentTeam'
 import { useAgentEvents } from '@/composables/useAgentEvents'
-import { useTodos } from '@/composables/useTodos'
+import { useAgentTasks } from '@/composables/useAgentTasks'
 import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import AskUserQuestionModal from './AskUserQuestionModal.vue'
 import MessageFlow from './MessageFlow.vue'
-import TodoPanel from './TodoPanel.vue'
+import TaskPanel from './TaskPanel.vue'
 import HtmlPanel from './HtmlPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import SubagentDetailModal from './SubagentDetailModal.vue'
@@ -401,6 +412,7 @@ import type {
   TeamRuntimeStepStat,
   TeamStepMovePayload,
 } from './teamOrchestrationTypes'
+import type { TeamTaskReasonActionInput } from '@/types/agentTeam'
 import {
   normalizeUiToolConfigPayload,
   normalizeToolIdList,
@@ -409,6 +421,13 @@ import {
 import { clearFocusLocationQuery } from './focusLocationSupport'
 import { buildFocusedMemoryToolsRoute, deriveFocusBannerState } from './focusBannerSupport'
 import { resolveFocusedMemoryMessageId } from './memoryFocusSupport'
+import { mapPersistedAgentTasks } from './agentTaskHistorySupport'
+import {
+  buildTeamTaskActionToastMessage,
+  getTeamTaskClaimAgentId,
+  getTeamTaskReleaseAgentId,
+} from './teamTaskActionsSupport'
+import { buildTeamTaskCreateRequest } from './teamTaskCreateSupport'
 
 interface AgentStartEvent {
   execution_id: string
@@ -433,12 +452,12 @@ interface TeamSplitMemberOption {
 
 const props = withDefaults(defineProps<{
   executionId?: string
-  showTodos?: boolean
+  showTasks?: boolean
   selectedRole?: any
   focusedMemoryId?: string | null
   focusedMessageId?: string | null
 }>(), {
-  showTodos: true,
+  showTasks: true,
   focusedMemoryId: null,
   focusedMessageId: null,
 })
@@ -454,6 +473,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const toast = useToast()
 
 // Refs
 const messageFlowRef = ref<InstanceType<typeof MessageFlow> | null>(null)
@@ -553,6 +573,9 @@ const teamSessionMessages = ref<AgentTeamMessage[]>([])
 const teamSessionDetail = ref<AgentTeamSession | null>(null)
 const teamTasks = ref<TeamTask[]>([])
 const selectedTeamTaskId = ref<string | null>(null)
+const pendingTeamCreateTask = ref(false)
+const pendingTeamTaskActionTaskId = ref<string | null>(null)
+const pendingTeamTaskActionKind = ref<'claim' | 'release' | 'complete' | 'fail' | 'block' | null>(null)
 const teamBlackboardEntries = ref<TeamBlackboardEntry[]>([])
 const teamOrchestrationPlanText = ref('{\n  "version": 1,\n  "steps": []\n}')
 const teamOrchestrationDraft = ref<TeamOrchestrationPlan>({ version: 1, steps: [] })
@@ -771,6 +794,15 @@ const handleFocusedMessage = (messageId: string) => {
   emit('memory-message-focused', { memoryId, messageId })
 }
 
+const handleFocusTeamTask = (taskId: string) => {
+  const normalizedTaskId = String(taskId || '').trim()
+  if (!normalizedTaskId) return
+  activateRightPanel('team')
+  isTeamWorkspaceActive.value = true
+  teamWorkspaceTab.value = 'tasks'
+  selectedTeamTaskId.value = normalizedTaskId
+}
+
 const clearFocusedLocation = () => {
   const nextQuery = clearFocusLocationQuery(route.query as Record<string, unknown>)
   void router.replace({ query: nextQuery })
@@ -869,8 +901,8 @@ const loadSubagentRuns = async (parentExecutionId: string, loadToken?: number) =
   }
 }
 
-const todosComposable = useTodos()
-const parseTeamTodoExecutionId = (executionId: string) => {
+const taskComposable = useAgentTasks()
+const parseTeamTaskExecutionId = (executionId: string) => {
   if (!executionId.startsWith('team-v3:')) return null
   const parts = executionId.split(':')
   if (parts.length < 4) return null
@@ -889,40 +921,37 @@ const {
   activeRightPanel,
   activateRightPanel,
   clearError,
-  clearTodosForCurrentContext,
+  clearTasksForCurrentContext,
   deactivateRightPanel,
   error,
   handleCloseHtmlPanel,
+  handleCloseTasks,
   handleCloseTerminal,
-  handleCloseTodos,
   handleRenderHtml,
-  handleTodoSourceChange,
+  handleTaskSourceChange,
   handleToggleHtmlPanel,
+  handleToggleTasks,
   handleToggleTerminal,
-  handleToggleTodos,
   hasHtmlPanelContent,
   htmlPanelContent,
   loadSidebarWidth,
-  selectedTodoSourceKey,
-  selectedTaskTodoSourceKey,
+  selectedTaskSourceKey,
   sidebarWidth,
   startResize,
-  todoBadgeCount,
-  todoSourceOptions,
-  todos,
+  taskBadgeCount,
+  taskSourceOptions,
+  tasks,
 } = useAgentPanels({
   activeTeamSessionId,
   agentError: computed(() => agentEvents.error.value),
-  clearTodosForExecution: (executionId) => {
-    todosComposable.clearTodosForExecution(executionId)
-  },
+  clearTasksForExecution: taskComposable.clearTasksForExecution,
   conversationId,
-  getTodosForExecution: (executionId) => todosComposable.getTodosForExecution(executionId),
+  getTasksForExecution: taskComposable.getTasksForExecution,
   isTeamWorkspaceActive,
-  isTodosPanelActive: computed(() => todosComposable.isTodosPanelActive.value),
+  isTaskPanelActive: computed(() => taskComposable.isTaskPanelActive.value),
   localError,
-  parseTeamTodoExecutionId,
-  propsShowTodos: props.showTodos,
+  parseTeamTaskExecutionId,
+  propsShowTasks: props.showTasks,
   resetAgentError: () => {
     agentEvents.resetError()
   },
@@ -937,13 +966,13 @@ const {
   terminalOpen: () => {
     terminalComposable.openTerminal()
   },
-  todosByExecutionId: computed(() => todosComposable.todosByExecutionId.value),
-  todosClose: () => {
-    todosComposable.close()
+  taskExecutionIds: computed(() => taskComposable.executionIds.value),
+  tasksByExecutionId: computed(() => taskComposable.tasksByExecutionId.value),
+  tasksClose: () => {
+    taskComposable.close()
   },
-  todosExecutionIds: computed(() => todosComposable.executionIds.value),
-  todosOpen: () => {
-    todosComposable.open()
+  tasksOpen: () => {
+    taskComposable.open()
   },
 })
 
@@ -956,6 +985,104 @@ const handleToggleRAG = (enabled: boolean) => {
 const handleToggleWebSearch = (enabled: boolean) => {
   webSearchEnabled.value = enabled
   console.log('[AgentView] Web search:', enabled ? 'enabled' : 'disabled')
+}
+
+const hydrateTaskHistory = async (targetConversationId: string) => {
+  const persistedTasks = await invoke<any[]>('get_agent_tasks', { executionId: targetConversationId })
+  taskComposable.setTasksForExecution(targetConversationId, mapPersistedAgentTasks(persistedTasks))
+}
+
+const showTeamTaskActionToast = (result: { success: boolean; message: string; reason?: string | null; next_step?: string | null }) => {
+  const message = buildTeamTaskActionToastMessage(result)
+  if (result.success) {
+    toast.success(message, 2600)
+    return
+  }
+  toast.warning(message, 3600)
+}
+
+const handleCreateTeamTask = async (input: TeamTaskCreateInput) => {
+  const sessionId = String(activeTeamSessionId.value || '').trim()
+  if (!sessionId) return
+
+  pendingTeamCreateTask.value = true
+  try {
+    const result = await agentTeamApi.createTask(
+      sessionId,
+      buildTeamTaskCreateRequest(input),
+    )
+    showTeamTaskActionToast(result)
+    await loadTeamWorkspaceData()
+  } finally {
+    pendingTeamCreateTask.value = false
+  }
+}
+
+const runTeamTaskAction = async (
+  kind: 'claim' | 'release' | 'complete' | 'fail' | 'block',
+  task: TeamTask,
+  reason?: string | null,
+) => {
+  const sessionId = String(activeTeamSessionId.value || '').trim()
+  if (!sessionId) return
+  if (kind === 'claim' || kind === 'release') {
+    const actorId = kind === 'claim'
+      ? getTeamTaskClaimAgentId(task)
+      : getTeamTaskReleaseAgentId(task)
+    if (!actorId) {
+      toast.warning(
+        kind === 'claim'
+          ? t('agent.teamTaskActionClaimMissingActor')
+          : t('agent.teamTaskActionReleaseMissingActor'),
+        3200,
+      )
+      return
+    }
+  }
+
+  pendingTeamTaskActionTaskId.value = task.id
+  pendingTeamTaskActionKind.value = kind
+  try {
+    const result = kind === 'claim'
+      ? await agentTeamApi.claimTask(sessionId, task.id, getTeamTaskClaimAgentId(task)!)
+      : kind === 'release'
+        ? await agentTeamApi.releaseTaskClaim(sessionId, task.id, getTeamTaskReleaseAgentId(task)!)
+        : await agentTeamApi.updateTaskStatus(
+          sessionId,
+          task.id,
+          kind === 'complete' ? 'completed' : (kind === 'fail' ? 'failed' : 'blocked'),
+          kind === 'fail'
+            ? ((reason || '').trim() || task.last_error || t('agent.teamTaskActionFailDefaultReason'))
+            : kind === 'block'
+              ? ((reason || '').trim() || task.last_error || t('agent.teamTaskActionBlockDefaultReason'))
+              : null,
+        )
+    showTeamTaskActionToast(result)
+    await loadTeamWorkspaceData()
+  } finally {
+    pendingTeamTaskActionTaskId.value = null
+    pendingTeamTaskActionKind.value = null
+  }
+}
+
+const handleClaimTeamTask = async (task: TeamTask) => {
+  await runTeamTaskAction('claim', task)
+}
+
+const handleReleaseTeamTask = async (task: TeamTask) => {
+  await runTeamTaskAction('release', task)
+}
+
+const handleCompleteTeamTask = async (task: TeamTask) => {
+  await runTeamTaskAction('complete', task)
+}
+
+const handleFailTeamTask = async (input: TeamTaskReasonActionInput) => {
+  await runTeamTaskAction('fail', input.task, input.reason)
+}
+
+const handleBlockTeamTask = async (input: TeamTaskReasonActionInput) => {
+  await runTeamTaskAction('block', input.task, input.reason)
 }
 
 const handleAssistantModelSelection = (value: string | null) => {
@@ -1483,7 +1610,7 @@ const {
     agentEvents.clearMessages()
   },
   clearDraftArtifacts,
-  clearTodosForCurrentContext,
+  clearTasksForCurrentContext,
   closeConversationDrawer: () => {
     showConversations.value = false
   },
@@ -1501,13 +1628,14 @@ const {
   },
   ensureConversationForTeamSession,
   executionIdProp: props.executionId,
-  forceTodos: props.showTodos,
+  forceTasks: props.showTasks,
   getFailedToClearConversationLabel: () => t('agent.failedToClearConversation'),
   getFailedToStopExecutionLabel: () => t('agent.failedToStopExecution'),
   getNewConversationTitle: () => `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
   getToolCallCompletedLabel: () => t('agent.toolCallCompleted'),
   getUnnamedConversationTitle: () => t('agent.newConversationTitle'),
   handleStopTeamState: applyTeamState,
+  hydrateTaskHistory,
   historyLoadToken,
   inputValue,
   isHistoryLoading,
@@ -1832,7 +1960,7 @@ body.resizing {
     flex-direction: column;
   }
   
-  .todo-sidebar {
+  .task-sidebar {
     width: 100%;
     border-left: none;
     border-top: 1px solid hsl(var(--b3));

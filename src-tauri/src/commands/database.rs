@@ -631,6 +631,7 @@ pub async fn reset_database(
         "ai_conversations",
         "ai_messages",
         "agent_tasks",
+        "execution_tasks",
         "agent_sessions",
         "agent_session_logs",
         "agent_execution_results",

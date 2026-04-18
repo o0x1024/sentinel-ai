@@ -1404,7 +1404,7 @@ pub async fn execute_agent_with_tools(
                         if let Ok(Some(skill)) = db.get_skill(&skill_id).await {
                             let mut next_tools = vec![
                                 "skills".to_string(),
-                                "todos".to_string(),
+                                "tasks".to_string(),
                                 "http_request".to_string(),
                                 "spawn_agent".to_string(),
                                 "wait_agents".to_string(),

@@ -4,11 +4,16 @@ import type {
   AgentTeamRunStatus,
   AgentTeamSession,
   TeamBlackboardEntry,
+  TeamTaskActionResult,
   TeamTask,
   CreateAgentTeamSessionRequest,
   UpdateAgentTeamSessionRequest,
   SubmitAgentTeamMessageRequest,
 } from '@/types/agentTeam'
+import {
+  buildTeamTaskActionFailure,
+  buildTeamTaskActionSuccess,
+} from '@/utils/teamTaskActionPresentation'
 
 type TeamV3MessageRow = {
   id: string
@@ -100,6 +105,9 @@ function mapV3SessionToLegacy(v3: any): AgentTeamSession {
 
 function mapV3MessageToLegacy(row: TeamV3MessageRow): AgentTeamMessage {
   const payload = row.payload && typeof row.payload === 'object' ? row.payload : {}
+  const metadata = payload.metadata && typeof payload.metadata === 'object'
+    ? payload.metadata
+    : undefined
   const messageType = String(row.message_type || 'chat').toLowerCase()
   const toolName = typeof payload.name === 'string'
     ? payload.name
@@ -143,6 +151,7 @@ function mapV3MessageToLegacy(row: TeamV3MessageRow): AgentTeamMessage {
     role,
     content: normalizedContent,
     tool_calls: toolCalls,
+    metadata,
     token_count: undefined,
     timestamp: row.created_at,
     sequence: Number.isFinite(Number(row.sequence)) ? Number(row.sequence) : undefined,
@@ -215,6 +224,9 @@ export const agentTeamApi = {
         instruction: t.instruction,
         status: t.status,
         assignee_agent_id: t.claimed_by_agent_id ?? t.owner_agent_id ?? null,
+        owner_agent_id: t.owner_agent_id ?? null,
+        claimed_by_agent_id: t.claimed_by_agent_id ?? null,
+        acceptance_criteria: typeof t.acceptance_criteria === 'string' ? t.acceptance_criteria : null,
         depends_on: dependsOn,
         attempt,
         max_attempts: maxAttempts,
@@ -225,6 +237,125 @@ export const agentTeamApi = {
         updated_at: t.updated_at,
       }
     })
+  },
+
+  async createTask(
+    sessionId: string,
+    request: {
+      task_key: string
+      title: string
+      instruction: string
+      priority?: number | null
+      owner_agent_id?: string | null
+      acceptance_criteria?: string | null
+      metadata?: Record<string, unknown> | null
+    },
+  ): Promise<TeamTaskActionResult> {
+    try {
+      const task = await invoke<any>('team_v3_create_task', {
+        sessionId,
+        request,
+      })
+      return buildTeamTaskActionSuccess('create', {
+        taskId: task.id,
+        taskKey: task.task_key ?? request.task_key,
+        title: task.title ?? request.title,
+        status: task.status ?? 'pending',
+      })
+    } catch (error) {
+      return buildTeamTaskActionFailure('create', {
+        taskId: request.task_key,
+        taskKey: request.task_key,
+        title: request.title,
+        error,
+      })
+    }
+  },
+
+  async claimTask(
+    sessionId: string,
+    taskId: string,
+    agentId: string,
+    ttlSecs?: number | null,
+  ): Promise<TeamTaskActionResult> {
+    try {
+      const result = await invoke<any>('team_v3_claim_task', {
+        sessionId,
+        taskId,
+        request: {
+          agent_id: agentId,
+          ttl_secs: ttlSecs ?? null,
+        },
+      })
+      return buildTeamTaskActionSuccess('claim', {
+        taskId: result.task_id ?? taskId,
+        taskKey: result.task_key ?? null,
+        title: result.title ?? null,
+        status: result.status ?? 'claimed',
+      })
+    } catch (error) {
+      return buildTeamTaskActionFailure('claim', {
+        taskId,
+        error,
+      })
+    }
+  },
+
+  async releaseTaskClaim(
+    sessionId: string,
+    taskId: string,
+    agentId: string,
+  ): Promise<TeamTaskActionResult> {
+    try {
+      const result = await invoke<any>('team_v3_release_task_claim', {
+        sessionId,
+        taskId,
+        agentId,
+      })
+      return buildTeamTaskActionSuccess('release', {
+        taskId: result.task_id ?? taskId,
+        taskKey: result.task_key ?? null,
+        title: result.title ?? null,
+        status: result.status ?? 'ready_for_claim',
+      })
+    } catch (error) {
+      return buildTeamTaskActionFailure('release', {
+        taskId,
+        error,
+      })
+    }
+  },
+
+  async updateTaskStatus(
+    sessionId: string,
+    taskId: string,
+    status: 'completed' | 'failed' | 'blocked',
+    lastError?: string | null,
+  ): Promise<TeamTaskActionResult> {
+    const action = status === 'completed'
+      ? 'complete'
+      : (status === 'failed' ? 'fail' : 'block')
+    try {
+      const result = await invoke<any>('team_v3_update_task_status', {
+        sessionId,
+        taskId,
+        request: {
+          status,
+          last_error: lastError ?? null,
+        },
+      })
+      return buildTeamTaskActionSuccess(action, {
+        taskId: result.task_id ?? taskId,
+        taskKey: result.task_key ?? null,
+        title: result.title ?? null,
+        status: result.status ?? status,
+      })
+    } catch (error) {
+      return buildTeamTaskActionFailure(action, {
+        taskId,
+        error,
+      })
+    }
   },
 
   async startRun(
@@ -272,6 +403,29 @@ export const agentTeamApi = {
     return rows.map(mapV3MessageToLegacy)
   },
 
+  async sendMessage(
+    sessionId: string,
+    request: {
+      thread_id: string
+      from_agent_id?: string | null
+      to_agent_id?: string | null
+      message_type?: string | null
+      payload: Record<string, unknown>
+    },
+  ): Promise<AgentTeamMessage> {
+    const row = await invoke<TeamV3MessageRow>('team_v3_send_message', {
+      sessionId,
+      request: {
+        thread_id: request.thread_id,
+        from_agent_id: request.from_agent_id ?? null,
+        to_agent_id: request.to_agent_id ?? null,
+        message_type: request.message_type ?? null,
+        payload: request.payload,
+      },
+    })
+    return mapV3MessageToLegacy(row)
+  },
+
   async listBlackboardEntries(sessionId: string, limit = 100): Promise<TeamBlackboardEntry[]> {
     const rows = await invoke<TeamV3BlackboardRow[]>('team_v3_list_blackboard_entries', {
       sessionId,
@@ -295,15 +449,12 @@ export const agentTeamApi = {
   },
 
   async submitMessage(req: SubmitAgentTeamMessageRequest): Promise<void> {
-    return invoke('team_v3_send_message', {
-      sessionId: req.session_id,
-      request: {
-        thread_id: req.session_id,
-        from_agent_id: 'human',
-        to_agent_id: null,
-        message_type: 'human_input',
-        payload: { content: req.content, resume: req.resume },
-      },
+    await this.sendMessage(req.session_id, {
+      thread_id: req.session_id,
+      from_agent_id: 'human',
+      to_agent_id: null,
+      message_type: 'human_input',
+      payload: { content: req.content, resume: req.resume },
     })
   },
 

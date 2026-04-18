@@ -17,15 +17,18 @@ use super::team_v3_commands::{
     run_team_v3_execution_orchestrator, TeamV3BlackboardEntry, TeamV3ClaimTaskRequest,
     TeamV3CreateSessionRequest, TeamV3CreateTaskRequest, TeamV3PlanRevision,
     TeamV3ReviewPlanRevisionRequest, TeamV3RunStatus, TeamV3SendMessageRequest, TeamV3Session,
-    TeamV3SubmitPlanRevisionRequest, TeamV3Task, TeamV3ThreadMessage, TeamV3UpdateSessionRequest,
+    TeamV3SubmitPlanRevisionRequest, TeamV3Task, TeamV3TaskActionResult, TeamV3ThreadMessage,
+    TeamV3UpdateSessionRequest, TeamV3UpdateTaskStatusRequest,
 };
 use super::team_v3_schema::ensure_team_v3_schema;
 use super::team_v3_session_state::{
-    apply_team_v3_execution_outcome, build_team_state_data, first_member_id,
+    append_team_v3_status_message, apply_team_v3_execution_outcome, build_team_state_data, first_member_id,
     get_team_v3_latest_human_message_content, get_team_v3_session_context,
     get_team_v3_session_state_data, parse_state_data_text, set_team_v3_session_conversation_id,
     set_team_v3_session_state, set_team_v3_session_state_data,
 };
+use super::team_v3_task_notices::append_team_v3_dependency_ready_notices;
+use super::team_v3_task_state::{get_team_v3_task_action_result, set_team_v3_task_execution_state};
 
 type DbState<'r> = State<'r, Arc<DatabaseService>>;
 type AiState<'r> = State<'r, Arc<AiServiceManager>>;
@@ -682,7 +685,7 @@ pub async fn team_v3_claim_task(
     session_id: String,
     task_id: String,
     request: TeamV3ClaimTaskRequest,
-) -> Result<(), String> {
+) -> Result<TeamV3TaskActionResult, String> {
     let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
     ensure_team_v3_schema(&runtime_pool)
         .await
@@ -781,7 +784,10 @@ pub async fn team_v3_claim_task(
         }
         DatabasePool::MySQL(_) => return Err("Team V3 does not support MySQL".to_string()),
     }
-    Ok(())
+
+    get_team_v3_task_action_result(&runtime_pool, &session_id, &task_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -790,7 +796,7 @@ pub async fn team_v3_release_task_claim(
     session_id: String,
     task_id: String,
     agent_id: String,
-) -> Result<(), String> {
+) -> Result<TeamV3TaskActionResult, String> {
     let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
     ensure_team_v3_schema(&runtime_pool)
         .await
@@ -798,7 +804,7 @@ pub async fn team_v3_release_task_claim(
     let now = Utc::now().to_rfc3339();
     match &runtime_pool {
         DatabasePool::SQLite(pool) => {
-            sqlx::query(
+            let updated = sqlx::query(
                 r#"UPDATE team_v3_tasks
                    SET status = 'ready_for_claim',
                        claimed_by_agent_id = NULL,
@@ -814,6 +820,9 @@ pub async fn team_v3_release_task_claim(
             .execute(pool)
             .await
             .map_err(|e| e.to_string())?;
+            if updated.rows_affected() == 0 {
+                return Err("Task is not currently claimed by this agent".to_string());
+            }
             sqlx::query(
                 r#"INSERT INTO team_v3_task_claims
                    (id, session_id, task_id, agent_id, action, created_at)
@@ -830,7 +839,7 @@ pub async fn team_v3_release_task_claim(
             .map_err(|e| e.to_string())?;
         }
         DatabasePool::PostgreSQL(pool) => {
-            sqlx::query(
+            let updated = sqlx::query(
                 r#"UPDATE team_v3_tasks
                    SET status = 'ready_for_claim',
                        claimed_by_agent_id = NULL,
@@ -846,6 +855,9 @@ pub async fn team_v3_release_task_claim(
             .execute(pool)
             .await
             .map_err(|e| e.to_string())?;
+            if updated.rows_affected() == 0 {
+                return Err("Task is not currently claimed by this agent".to_string());
+            }
             sqlx::query(
                 r#"INSERT INTO team_v3_task_claims
                    (id, session_id, task_id, agent_id, action, created_at)
@@ -863,7 +875,93 @@ pub async fn team_v3_release_task_claim(
         }
         DatabasePool::MySQL(_) => return Err("Team V3 does not support MySQL".to_string()),
     }
-    Ok(())
+
+    get_team_v3_task_action_result(&runtime_pool, &session_id, &task_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn team_v3_update_task_status(
+    db: DbState<'_>,
+    session_id: String,
+    task_id: String,
+    request: TeamV3UpdateTaskStatusRequest,
+) -> Result<TeamV3TaskActionResult, String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    ensure_team_v3_schema(&runtime_pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let next_status = request.status.trim().to_lowercase();
+    if !matches!(next_status.as_str(), "completed" | "failed" | "blocked") {
+        return Err("Unsupported task status transition".to_string());
+    }
+
+    let previous_tasks = list_team_v3_tasks_internal(&runtime_pool, &session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !previous_tasks.iter().any(|task| task.id == task_id) {
+        return Err("task not found".to_string());
+    }
+
+    set_team_v3_task_execution_state(
+        &runtime_pool,
+        &session_id,
+        &task_id,
+        next_status.as_str(),
+        None,
+        request.last_error.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let next_tasks = list_team_v3_tasks_internal(&runtime_pool, &session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    append_team_v3_dependency_ready_notices(
+        &runtime_pool,
+        &session_id,
+        &previous_tasks,
+        &next_tasks,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let result = get_team_v3_task_action_result(&runtime_pool, &session_id, &task_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status_text = match next_status.as_str() {
+        "completed" => "已标记为已完成",
+        "failed" => "已标记为已失败",
+        "blocked" => "已标记为等待依赖",
+        _ => "状态已更新",
+    };
+    let task_label = result
+        .title
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .or(result.task_key.as_deref())
+        .unwrap_or(task_id.as_str());
+    let message = match next_status.as_str() {
+        "failed" | "blocked" => {
+            let detail = request
+                .last_error
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("：{}", value))
+                .unwrap_or_default();
+            format!("任务 {} {}{}", task_label, status_text, detail)
+        }
+        _ => format!("任务 {} {}", task_label, status_text),
+    };
+    append_team_v3_status_message(&runtime_pool, &session_id, message.as_str())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result)
 }
 
 #[tauri::command]

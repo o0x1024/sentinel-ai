@@ -79,7 +79,7 @@
           :execution-id="session.id"
           :focused-memory-id="focusedMemoryConversationId === session.id ? focusedMemoryId : null"
           :focused-message-id="focusedMemoryConversationId === session.id ? focusedMessageId : null"
-          :show-todos="true"
+          :show-tasks="true"
           :selected-role="selectedRole"
           class="absolute inset-0"
           @submit="handleAgentSubmit"
@@ -191,7 +191,13 @@ const showTurnLogsModal = ref(false)
 const isBootstrapping = ref(true)
 
 // --- 会话管理 ---
-const { sessions, activeSessionId, addSession, syncSessionsWithConversations } = useAgentSessionManager()
+const {
+  sessions,
+  activeSessionId,
+  preferredBootstrapSessionId,
+  addSession,
+  syncSessionsWithConversations,
+} = useAgentSessionManager()
 const agentViewRefs = ref<Record<string, any>>({})
 const focusLocation = computed(() => readFocusLocationState(route.query as Record<string, unknown>))
 const focusedMemoryConversationId = computed(() => focusLocation.value.conversationId)
@@ -299,6 +305,16 @@ const syncConversationFromRoute = async () => {
   )
 }
 
+const syncConversationFromLastSession = async () => {
+  const conversationId = String(preferredBootstrapSessionId.value || '').trim()
+  if (!conversationId) return false
+
+  return await openConversationById(
+    conversationId,
+    `${t('agent.unnamedConversation')} ${conversationId.slice(0, 8)}`,
+  )
+}
+
 // --- 事件处理 ---
 const handleAgentSubmit = (task: string) => {
   console.log('Agent task submitted:', task)
@@ -329,9 +345,12 @@ onMounted(async () => {
     syncSessionsWithConversations(conversations || [])
 
     const openedFromRoute = await syncConversationFromRoute()
+    const openedFromLastSession = openedFromRoute
+      ? false
+      : await syncConversationFromLastSession()
 
     // 如果没有任何会话，尝试恢复最近的一个或创建一个
-    if (!openedFromRoute && sessions.value.length === 0) {
+    if (!openedFromRoute && !openedFromLastSession && sessions.value.length === 0) {
       const latest = pickLatestConversation(conversations || [])
       if (latest) {
         addSession(latest.id, latest.title || t('agent.unnamedConversation'))

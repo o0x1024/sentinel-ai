@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use sentinel_tools::buildin_tools::{
     AskUserQuestionTool, CloseAgentTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
     GrepTool, HttpRequestTool, ListAgentsTool, LspTool, MemoryManagerTool, OcrTool,
-    SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TenthManTool, TodosTool,
+    SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool, TenthManTool,
     ToolSearchTool, WaitAgentsTool, WebSearchTool,
 };
 use sentinel_tools::terminal::server::TerminalServer;
@@ -239,15 +239,15 @@ pub fn build_default_tools() -> Vec<ToolMetadata> {
             exposure: ToolExposure::Core,
         },
         ToolMetadata {
-            id: TodosTool::NAME.to_string(),
-            name: TodosTool::NAME.to_string(),
-            description: TodosTool::DESCRIPTION.to_string(),
+            id: TasksTool::NAME.to_string(),
+            name: TasksTool::NAME.to_string(),
+            description: TasksTool::DESCRIPTION.to_string(),
             category: ToolCategory::System,
             tags: vec![
                 "plan".to_string(),
                 "task".to_string(),
                 "workflow".to_string(),
-                "todos".to_string(),
+                "tracking".to_string(),
             ],
             search_hint: Some("track execution tasks and progress".to_string()),
             cost_estimate: ToolCost::Low,

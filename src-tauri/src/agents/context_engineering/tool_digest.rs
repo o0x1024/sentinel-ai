@@ -316,12 +316,80 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
                         format!(" | {}", condense_text(runtime_hint, 80))
                     }
                 )
-            } else if tool_name.contains("todos") {
+            } else if tool_name.contains("tasks") {
                 let action = args
                     .get("action")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                format!("Todos action: {}", action)
+                let item_count = map
+                    .get("list")
+                    .and_then(|v| v.get("items"))
+                    .and_then(|v| v.as_array())
+                    .map(|items| items.len())
+                    .or_else(|| {
+                        args.get("items")
+                            .and_then(|v| v.as_array())
+                            .map(|items| items.len())
+                    })
+                    .unwrap_or(0);
+                let preview = map
+                    .get("list")
+                    .and_then(|v| v.get("items"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|items| {
+                        items.iter().find_map(|item| {
+                            item.get("description")
+                                .and_then(|v| v.as_str())
+                                .map(|text| condense_text(text, 48))
+                        })
+                    })
+                    .unwrap_or_default();
+
+                match action {
+                    "add_items" | "replan" => format!(
+                        "Tasks planned: {}{}",
+                        item_count,
+                        if preview.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" | {}", preview)
+                        }
+                    ),
+                    "update_status" => {
+                        let status = args
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("updated");
+                        format!(
+                            "Task status -> {}{}",
+                            status,
+                            if preview.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" | {}", preview)
+                            }
+                        )
+                    }
+                    "get_list" => format!(
+                        "Tasks list read: {}{}",
+                        item_count,
+                        if preview.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" | {}", preview)
+                        }
+                    ),
+                    "reset" | "cleanup" => "Tasks cleared".to_string(),
+                    _ => format!(
+                        "Tasks {}{}",
+                        action,
+                        if preview.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" | {}", preview)
+                        }
+                    ),
+                }
             } else {
                 condense_text(result, 240)
             }

@@ -61,8 +61,16 @@ export const mirrorTeamMessageToConversation = async (params: {
   const memberLabel =
     msg.member_name || msg.member_id || (msg.role === 'system' ? 'team_system' : 'team')
   const mirroredContent = `[Team/${memberLabel}] ${rawContent}`
+  const sourceMetadata =
+    msg.metadata && typeof msg.metadata === 'object' ? msg.metadata : {}
+  const mirroredKind =
+    typeof sourceMetadata.kind === 'string' && sourceMetadata.kind === 'team_dependency_ready'
+      ? 'team_dependency_ready'
+      : 'team_v3_mirror'
   const metadata: Record<string, unknown> = {
-    kind: 'team_v3_mirror',
+    ...sourceMetadata,
+    kind: mirroredKind,
+    team_source_kind: 'team_v3_mirror',
     team_session_id: sessionId,
     team_message_id: msg.id,
     team_member_id: msg.member_id,

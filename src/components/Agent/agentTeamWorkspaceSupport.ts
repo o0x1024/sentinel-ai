@@ -21,7 +21,7 @@ export const loadTeamWorkspaceData = async (params: {
   listBlackboardEntries: (sessionId: string, limit: number) => Promise<TeamBlackboardEntry[]>
   listTasks: (sessionId: string) => Promise<TeamTask[]>
   onEmptySession: () => void
-  onSnapshotLoaded: (snapshot: TeamWorkspaceSnapshot) => void
+  onSnapshotLoaded: (snapshot: TeamWorkspaceSnapshot) => void | Promise<void>
   setWorkspaceLoading: (loading: boolean) => void
   syncTeamOrchestrationEditorFromSession: (reset?: boolean) => void
 }): Promise<void> => {
@@ -77,7 +77,7 @@ export const loadTeamWorkspaceData = async (params: {
       console.warn('[AgentView] Failed to load team blackboard entries:', blackboardResp.reason)
     }
 
-    params.onSnapshotLoaded(snapshot)
+    await params.onSnapshotLoaded(snapshot)
     params.syncTeamOrchestrationEditorFromSession()
   } catch (e) {
     console.error('[AgentView] Failed to load team workspace data:', e)

@@ -36,7 +36,7 @@ export const useAgentConversationFlow = (params: {
   buildToolConfig: () => UiToolConfigPayload
   clearAgentMessages: () => void
   clearDraftArtifacts: () => void
-  clearTodosForCurrentContext: () => void
+  clearTasksForCurrentContext: () => void
   closeConversationDrawer: () => void
   conversationExecutionState: Ref<PersistedAgentExecutionState | null>
   conversationId: Ref<string | null>
@@ -46,13 +46,14 @@ export const useAgentConversationFlow = (params: {
   emitSubmit: (task: string) => void
   ensureConversationForTeamSession: () => Promise<any>
   executionIdProp?: string | null
-  forceTodos: boolean
+  forceTasks: boolean
   getFailedToClearConversationLabel: () => string
   getFailedToStopExecutionLabel: () => string
   getNewConversationTitle: () => string
   getToolCallCompletedLabel: () => string
   getUnnamedConversationTitle: () => string
   handleStopTeamState: (nextState: string) => void
+  hydrateTaskHistory: (conversationId: string) => Promise<void>
   historyLoadToken: Ref<number>
   inputValue: Ref<string>
   isHistoryLoading: Ref<boolean>
@@ -191,7 +192,7 @@ export const useAgentConversationFlow = (params: {
     if (!snapshot) return
     await deleteConversationTailForMessageReplay(message, snapshot.messageTimestamp, 'original')
     params.restoreArtifactsFromMessage(message)
-    params.clearTodosForCurrentContext()
+    params.clearTasksForCurrentContext()
     params.inputValue.value = params.teamModeEnabled.value
       ? normalizeTeamHumanInputContent(message.content)
       : message.content
@@ -204,7 +205,7 @@ export const useAgentConversationFlow = (params: {
     if (!snapshot) return
     await deleteConversationTailForMessageReplay(message, snapshot.messageTimestamp, 'edited')
     params.restoreArtifactsFromMessage(message)
-    params.clearTodosForCurrentContext()
+    params.clearTasksForCurrentContext()
     params.inputValue.value = params.teamModeEnabled.value
       ? normalizeTeamHumanInputContent(newContent)
       : newContent
@@ -240,6 +241,8 @@ export const useAgentConversationFlow = (params: {
           params.conversationExecutionState.value = executionState || null
         },
         onEmptyHistoryLoaded: async () => {
+          await params.hydrateTaskHistory(conversationId)
+          if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
           params.setMirroredConversationMessageIds(new Set())
           await params.syncActiveTeamSession()
           if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
@@ -249,6 +252,8 @@ export const useAgentConversationFlow = (params: {
           }
         },
         onMessagesLoaded: async ({ messageCount, mirroredConversationMessageIds, timeline }) => {
+          await params.hydrateTaskHistory(conversationId)
+          if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
           params.setMirroredConversationMessageIds(mirroredConversationMessageIds)
           params.agentMessages.value = timeline
           await params.syncActiveTeamSession()
@@ -461,7 +466,7 @@ export const useAgentConversationFlow = (params: {
           enableRag: params.ragEnabled.value,
           enableTenthManRule: params.tenthManEnabled.value,
           firstMessage: task,
-          forceTodos: params.forceTodos,
+          forceTasks: params.forceTasks,
           fullTask,
           maybeAutoRenameConversation: (renameParams) => {
             void maybeAutoRenameConversationByFirstMessage(renameParams)

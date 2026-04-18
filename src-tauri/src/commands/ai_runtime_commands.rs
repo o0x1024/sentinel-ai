@@ -67,7 +67,7 @@ pub struct AgentExecuteConfig {
     #[serde(default)]
     pub timeout_secs: Option<u64>,
     #[serde(default)]
-    pub force_todos: Option<bool>,
+    pub force_tasks: Option<bool>,
     #[serde(default)]
     pub enable_tenth_man_rule: Option<bool>,
     #[serde(default)]
@@ -86,22 +86,22 @@ enum EffectiveImageAttachmentMode {
     ModelVision,
 }
 
-fn append_force_todos_contract(system_prompt: &str, force_todos: bool) -> String {
-    const TODO_COMPLETION_CONTRACT: &str = "[TodoCompletionContract]
-- For multi-step work, create and maintain todos.
-- Do not claim completion or end the task while any todo remains pending or in_progress.
-- Before the final answer, update every todo to completed or failed.
-- If unfinished todos remain, continue the task instead of ending the response.";
+fn append_force_tasks_contract(system_prompt: &str, force_tasks: bool) -> String {
+    const TASK_COMPLETION_CONTRACT: &str = "[TaskCompletionContract]
+- For multi-step work, create and maintain tasks.
+- Do not claim completion or end the task while any task remains pending or in_progress.
+- Before the final answer, update every task to completed or failed.
+- If unfinished tasks remain, continue the task instead of ending the response.";
 
-    if !force_todos || system_prompt.contains("[TodoCompletionContract]") {
+    if !force_tasks || system_prompt.contains("[TaskCompletionContract]") {
         return system_prompt.to_string();
     }
 
     let trimmed = system_prompt.trim();
     if trimmed.is_empty() {
-        TODO_COMPLETION_CONTRACT.to_string()
+        TASK_COMPLETION_CONTRACT.to_string()
     } else {
-        format!("{}\n\n{}", trimmed, TODO_COMPLETION_CONTRACT)
+        format!("{}\n\n{}", trimmed, TASK_COMPLETION_CONTRACT)
     }
 }
 
@@ -647,7 +647,7 @@ pub async fn agent_execute(
         context_mode: None,
         max_iterations: None,
         timeout_secs: None,
-        force_todos: None,
+        force_tasks: None,
         enable_tenth_man_rule: None,
         tenth_man_config: None,
     });
@@ -990,9 +990,9 @@ pub async fn agent_execute(
             }
         }
 
-        base_system_prompt = Some(append_force_todos_contract(
+        base_system_prompt = Some(append_force_tasks_contract(
             base_system_prompt.as_deref().unwrap_or_default(),
-            config.force_todos.unwrap_or(false),
+            config.force_tasks.unwrap_or(false),
         ));
 
         let mut augmented_task = task_clone.clone();

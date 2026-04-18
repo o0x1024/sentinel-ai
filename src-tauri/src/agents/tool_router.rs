@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::{
     CloseAgentTool, HttpRequestTool, ListAgentsTool, MemoryManagerTool, ShellTool, SkillsTool,
-    SpawnAgentTool, TenthManTool, TodosTool, WaitAgentsTool,
+    SpawnAgentTool, TasksTool, TenthManTool, WaitAgentsTool,
 };
 pub use types::{
     SelectedSkill, ToolCategory, ToolConfig, ToolCost, ToolExposure, ToolMetadata,
@@ -200,8 +200,8 @@ impl ToolRouter {
                 {
                     base_tools.push(MemoryManagerTool::NAME.to_string());
                 }
-                if !config.disabled_tools.contains(&TodosTool::NAME.to_string()) {
-                    base_tools.push(TodosTool::NAME.to_string());
+                if !config.disabled_tools.contains(&TasksTool::NAME.to_string()) {
+                    base_tools.push(TasksTool::NAME.to_string());
                 }
                 base_tools
             }
@@ -262,8 +262,8 @@ impl ToolRouter {
                 {
                     all.push(MemoryManagerTool::NAME.to_string());
                 }
-                if !config.disabled_tools.contains(&TodosTool::NAME.to_string()) {
-                    all.push(TodosTool::NAME.to_string());
+                if !config.disabled_tools.contains(&TasksTool::NAME.to_string()) {
+                    all.push(TasksTool::NAME.to_string());
                 }
                 let injected = self.build_skills_prompt_injection(Some(task)).await;
                 Ok(ToolSelectionPlan {

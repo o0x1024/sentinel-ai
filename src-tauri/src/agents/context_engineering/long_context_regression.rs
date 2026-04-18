@@ -71,7 +71,7 @@ fn long_conversation_retrieval_keeps_core_goal_after_50_turns() {
         &[String::from(
             "Decision: never expose admin endpoint to public network",
         )],
-        &[String::from("Todo: add regression for auth bypass")],
+        &[String::from("Task: add regression for auth bypass")],
     );
 
     for i in 0..60 {
@@ -79,7 +79,7 @@ fn long_conversation_retrieval_keeps_core_goal_after_50_turns() {
             &mut state,
             &[format!("noise fact {}", i)],
             &[format!("noise decision {}", i)],
-            &[format!("noise todo {}", i)],
+            &[format!("noise task {}", i)],
         );
     }
 

@@ -4,15 +4,19 @@
  */
 
 import { ref, onMounted, onUnmounted, computed, type Ref } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage, MessageType } from '@/types/agent'
-import { useTodos } from '@/composables/useTodos'
+import { useAgentTasks } from '@/composables/useAgentTasks'
 import { buildTerminalSessionFingerprint, useTerminal } from '@/composables/useTerminal'
 import {
   buildToolsActivatedMessage,
   buildToolsPreview,
 } from '@/utils/agentToolActivation'
+import { buildAgentTaskSystemMessages } from '@/components/Agent/agentTaskEventSupport'
+import { persistAgentTaskMessage } from '@/components/Agent/agentTaskPersistenceSupport'
 import { applyFileVerificationStatuses } from '@/components/Agent/fileVerificationSupport'
+import type { AgentTasksUpdatePayload, TaskRuntimeItem } from '@/types/taskRuntime'
 import type {
   AgentChunkEvent,
   AgentCompletionGuardFailedEvent,
@@ -60,6 +64,8 @@ export function useAgentEvents(
   const subagents = ref<SubagentItem[]>([])
   const contextUsage = ref<ContextUsageInfo | null>(null)
   const suppressedExecutionId = ref<string | null>(null)
+  const latestTasksByExecution = new Map<string, TaskRuntimeItem[]>()
+  const persistedAgentTaskMessageIds = new Set<string>()
 
   // Thinking content buffer for incremental display
   const thinkingBuffer = ref('')
@@ -371,6 +377,8 @@ export function useAgentEvents(
     subagents.value = []
     contextUsage.value = null
     suppressedExecutionId.value = null
+    latestTasksByExecution.clear()
+    persistedAgentTaskMessageIds.clear()
   }
 
   const resetError = () => {
@@ -501,6 +509,39 @@ export function useAgentEvents(
       })
     })
     unlisteners.push(unlistenUserMessage)
+
+    const unlistenTasks = await listen<AgentTasksUpdatePayload>('agent-tasks-update', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      const previousTasks = latestTasksByExecution.get(payload.execution_id) || []
+      latestTasksByExecution.set(payload.execution_id, payload.tasks)
+
+      const taskMessages = buildAgentTaskSystemMessages({
+        executionId: payload.execution_id,
+        previousTasks,
+        nextTasks: payload.tasks,
+        timestamp: payload.timestamp,
+      })
+
+      if (taskMessages.length > 0) {
+        messages.value.push(...taskMessages)
+        const conversationId = getTargetId()
+        for (const taskMessage of taskMessages) {
+          void persistAgentTaskMessage({
+            conversationId,
+            message: taskMessage,
+            persistedIds: persistedAgentTaskMessageIds,
+            persistMessage: async (request) => {
+              await invoke('save_ai_message', { request })
+            },
+          }).catch((error) => {
+            console.warn('[useAgentEvents] Failed to persist agent task update:', error)
+          })
+        }
+      }
+    })
+    unlisteners.push(unlistenTasks)
 
     // 监听 agent:start 事件（兼容旧版）
     const unlistenStart = await listen<AgentStartEvent>('agent:start', (event) => {
@@ -934,11 +975,11 @@ export function useAgentEvents(
               newPayload.tool_call_id,
             )
             
-            // 如果是 interactive_shell 工具，自动打开终端面板，关闭 todos 面板
+            // 如果是 interactive_shell 工具，自动打开终端面板，关闭任务面板
             if (callInfo.tool_name === 'interactive_shell') {
-              // First close todos panel
-              const todos = useTodos()
-              todos.close()
+              // First close task panel
+              const tasks = useAgentTasks()
+              tasks.close()
 
               const terminal = useTerminal()
 
@@ -1022,11 +1063,11 @@ export function useAgentEvents(
             String(matchingToolCall.metadata?.tool_call_id || ''),
           )
           
-          // 旧格式路径：如果是 interactive_shell 工具，也自动打开终端面板，关闭 todos 面板
+          // 旧格式路径：如果是 interactive_shell 工具，也自动打开终端面板，关闭任务面板
           if (payload.tool_name === 'interactive_shell') {
-            // First close todos panel
-            const todos = useTodos()
-            todos.close()
+            // First close task panel
+            const tasks = useAgentTasks()
+            tasks.close()
 
             const terminal = useTerminal()
 

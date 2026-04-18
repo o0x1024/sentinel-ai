@@ -1,7 +1,7 @@
 //! Context builder for agent execution.
 
 use anyhow::Result;
-use sentinel_db::{AgentTodoItem, Database};
+use sentinel_db::{Database, ExecutionTaskItem};
 use serde_json::json;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
@@ -170,7 +170,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     if policy.include_run_state {
         system_prompt.push_str(&format!(
-            "\n\n[SystemContext: Current Execution ID is '{}'. Use this for todos tool calls.]",
+            "\n\n[SystemContext: Current Execution ID is '{}'. Use this for tasks tool calls.]",
             input.execution_id
         ));
     }
@@ -194,7 +194,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             goals: Vec::new(),
             constraints: Vec::new(),
             decisions: Vec::new(),
-            open_todos: Vec::new(),
+            open_tasks: Vec::new(),
             user_preferences: Vec::new(),
             current_plan: None,
             last_tool_digests: vec![],
@@ -240,9 +240,9 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             state.sentinel_last_clarification = Some(clarification);
         }
 
-        let todos = load_execution_todos(&input.app_handle, &input.execution_id).await;
-        if let Some(ref items) = todos {
-            state.open_todos = items
+        let tasks = load_execution_tasks(&input.app_handle, &input.execution_id).await;
+        if let Some(ref items) = tasks {
+            state.open_tasks = items
                 .iter()
                 .filter(|item| {
                     matches!(
@@ -257,10 +257,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
         let memory_facts = vec![state.task_brief.clone()];
         let memory_decisions = state.decisions.clone();
-        let memory_todos = state.open_todos.clone();
+        let memory_tasks = state.open_tasks.clone();
         // Disable automatic long-term memory persistence:
-        // fact/decision/todo are kept in run-state memory only.
-        ingest_memory_items(&mut state, &memory_facts, &memory_decisions, &memory_todos);
+        // fact/decision/task items are kept in run-state memory only.
+        ingest_memory_items(&mut state, &memory_facts, &memory_decisions, &memory_tasks);
         evict_low_value_items(&mut state);
         run_state_digests = state.last_tool_digests.clone();
         if sentinel_mode {
@@ -318,12 +318,12 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         state.last_updated_at_ms = chrono::Utc::now().timestamp_millis();
         save_run_state(&input.app_handle, &input.execution_id, &state).await?;
 
-        if let Some(ref items) = todos {
+        if let Some(ref items) = tasks {
             if !items.is_empty() {
-                run_state_block.push_str(&build_todos_context(items, policy.run_state_max_chars));
+                run_state_block.push_str(&build_tasks_context(items, policy.run_state_max_chars));
             }
         }
-        // Pass None for todos to avoid duplicating what build_todos_context already rendered
+        // Pass None for tasks to avoid duplicating what build_tasks_context already rendered
         run_state_block.push_str(&render_run_state(&state, &policy, None));
         if sentinel_mode {
             if let (Some(intent), Some(clarification)) = (
@@ -959,7 +959,7 @@ fn trim_layer(text: String, max_chars: usize) -> String {
 fn render_run_state(
     state: &ContextRunState,
     policy: &ContextPolicy,
-    todos: Option<&[AgentTodoItem]>,
+    tasks: Option<&[ExecutionTaskItem]>,
 ) -> String {
     let mut out = String::new();
     if !state.goals.is_empty() {
@@ -986,7 +986,7 @@ fn render_run_state(
             out.push('\n');
         }
     }
-    if let Some(items) = todos {
+    if let Some(items) = tasks {
         if !items.is_empty() {
             out.push_str("Todos Summary:\n");
             for item in items.iter().take(8) {
@@ -1024,9 +1024,9 @@ fn render_run_state(
     condense_text(&out, policy.run_state_max_chars)
 }
 
-fn build_todos_context(items: &[AgentTodoItem], max_chars: usize) -> String {
+fn build_tasks_context(items: &[ExecutionTaskItem], max_chars: usize) -> String {
     let mut out = String::new();
-    out.push_str("\n\n[Todos]\n");
+    out.push_str("\n\n[Tasks]\n");
     for item in items.iter().take(20) {
         out.push_str(&format!("- [{}] {}", item.status, item.description.trim()));
         if let Some(result) = item.result.as_ref().filter(|r| !r.trim().is_empty()) {
@@ -1040,16 +1040,16 @@ fn build_todos_context(items: &[AgentTodoItem], max_chars: usize) -> String {
     condense_text(&out, max_chars)
 }
 
-async fn load_execution_todos(
+async fn load_execution_tasks(
     app_handle: &AppHandle,
     execution_id: &str,
-) -> Option<Vec<AgentTodoItem>> {
+) -> Option<Vec<ExecutionTaskItem>> {
     let db = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>()?;
-    match db.get_agent_todos(execution_id).await {
+    match db.get_execution_tasks(execution_id).await {
         Ok(items) if !items.is_empty() => Some(items),
         Ok(_) => None,
         Err(e) => {
-            tracing::warn!("Failed to load todos for run state: {}", e);
+            tracing::warn!("Failed to load tasks for run state: {}", e);
             None
         }
     }

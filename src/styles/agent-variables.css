@@ -113,22 +113,22 @@
   --message-bg-color: rgba(34, 197, 94, 0.05);
 }
 
-/* ============ Todo 状态颜色 ============ */
+/* ============ Task 状态颜色 ============ */
 
-.todo-status-pending {
-  --todo-indicator-color: var(--color-text-secondary);
+.task-status-pending {
+  --task-indicator-color: var(--color-text-secondary);
 }
 
-.todo-status-in-progress {
-  --todo-indicator-color: var(--color-primary);
+.task-status-in-progress {
+  --task-indicator-color: var(--color-primary);
 }
 
-.todo-status-completed {
-  --todo-indicator-color: var(--color-success);
+.task-status-completed {
+  --task-indicator-color: var(--color-success);
 }
 
-.todo-status-cancelled {
-  --todo-indicator-color: var(--color-error);
+.task-status-cancelled {
+  --task-indicator-color: var(--color-error);
 }
 
 /* ============ 动画关键帧 ============ */
@@ -191,4 +191,3 @@
 .agent-animate-slide-in {
   animation: agent-slide-in 0.2s ease-out;
 }
-

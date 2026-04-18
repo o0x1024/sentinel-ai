@@ -40,17 +40,17 @@
               </div>
             </div>
             <div class="flex items-center gap-2">
-              <!-- Todos toggle button -->
+              <!-- Tasks toggle button -->
               <button 
-                v-if="hasTodos"
-                @click="showTodos = !showTodos"
+                v-if="hasTasks"
+                @click="showTasks = !showTasks"
                 class="btn btn-sm gap-1"
-                :class="showTodos ? 'btn-primary' : 'btn-ghost text-primary'"
-                :title="t('agent.todos')"
+                :class="showTasks ? 'btn-primary' : 'btn-ghost text-primary'"
+                :title="t('agent.tasks')"
               >
                 <i class="fas fa-tasks"></i>
-                <span>{{ t('agent.todos') }}</span>
-                <span class="badge badge-xs badge-primary">{{ todos.length }}</span>
+                <span>{{ t('agent.tasks') }}</span>
+                <span class="badge badge-xs badge-primary">{{ taskItems.length }}</span>
               </button>
               <button 
                 class="btn btn-sm btn-ghost btn-circle"
@@ -98,16 +98,16 @@
               />
             </div>
 
-            <!-- Todos Panel -->
+            <!-- Tasks Panel -->
             <div 
-              v-if="showTodos && hasTodos"
+              v-if="showTasks && hasTasks"
               class="w-80 border-l border-base-300 flex flex-col overflow-hidden bg-base-100"
             >
-              <TodoPanel
-                :todos="todos"
-                :is-active="showTodos"
+              <TaskPanel
+                :tasks="panelTasks"
+                :is-active="showTasks"
                 class="h-full"
-                @close="showTodos = false"
+                @close="showTasks = false"
               />
             </div>
           </div>
@@ -147,8 +147,9 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import SimpleMessageFlow, { type SimpleMessage } from './SimpleMessageFlow.vue'
-import TodoPanel from './TodoPanel.vue'
-import type { Todo } from '@/types/todo'
+import TaskPanel from './TaskPanel.vue'
+import { mapTaskRuntimeItemsToAgentTasks } from '@/types/agentTask'
+import type { TaskRuntimeItem } from '@/types/taskRuntime'
 
 type SubagentStatus = 'running' | 'queued' | 'completed' | 'failed'
 
@@ -193,8 +194,9 @@ const { t } = useI18n()
 const messageFlowRef = ref<InstanceType<typeof SimpleMessageFlow> | null>(null)
 const messages = ref<SubagentMessageRecord[]>([])
 const messagesLoading = ref(false)
-const todos = ref<Todo[]>([])
-const showTodos = ref(false)
+const taskItems = ref<TaskRuntimeItem[]>([])
+const showTasks = ref(false)
+const panelTasks = computed(() => mapTaskRuntimeItemsToAgentTasks(taskItems.value, props.subagent?.id || undefined))
 
 // Streaming state for real-time display
 const streamingContent = ref('')
@@ -228,8 +230,8 @@ const statusIconClass = computed(() => {
   return 'fa-check'
 })
 
-// Has todos
-const hasTodos = computed(() => todos.value.length > 0)
+// Has tasks
+const hasTasks = computed(() => taskItems.value.length > 0)
 
 // Convert messages to SimpleMessage format, including streaming content
 const displayMessages = computed<SimpleMessage[]>(() => {
@@ -527,24 +529,24 @@ const startListening = async () => {
   })
   unlisteners.push(unlistenDone)
 
-  // Listen for todos update (filter by subagent execution_id)
-  const unlistenTodos = await listen<{
+  // Listen for task updates (filter by subagent execution_id)
+  const unlistenTasks = await listen<{
     execution_id: string
-    todos: Todo[]
-  }>('agent-todos-update', (event) => {
+    tasks: TaskRuntimeItem[]
+  }>('agent-tasks-update', (event) => {
     const payload = event.payload
     const subagentId = props.subagent?.id
     
     if (!subagentId || payload.execution_id !== subagentId) return
     
-    todos.value = payload.todos
+    taskItems.value = payload.tasks
     
-    // Auto show todos panel when first todo arrives
-    if (payload.todos.length > 0 && !showTodos.value) {
-      showTodos.value = true
+    // Auto show task panel when first task arrives
+    if (payload.tasks.length > 0 && !showTasks.value) {
+      showTasks.value = true
     }
   })
-  unlisteners.push(unlistenTodos)
+  unlisteners.push(unlistenTasks)
 }
 
 // Stop listening
@@ -559,16 +561,16 @@ watch(
   ([visible, subagentId]) => {
     if (visible && subagentId) {
       loadMessages()
-      // Clear streaming state and todos when switching subagent
+      // Clear streaming state and tasks when switching subagent
       streamingContent.value = ''
       streamingReasoningContent.value = ''
-      todos.value = []
-      showTodos.value = false
+      taskItems.value = []
+      showTasks.value = false
     } else {
       messages.value = []
       streamingContent.value = ''
       streamingReasoningContent.value = ''
-      todos.value = []
+      taskItems.value = []
     }
   },
   { immediate: true }

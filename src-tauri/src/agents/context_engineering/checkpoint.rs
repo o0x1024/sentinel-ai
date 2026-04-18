@@ -51,7 +51,7 @@ pub struct ContextRunState {
     #[serde(default)]
     pub decisions: Vec<String>,
     #[serde(default)]
-    pub open_todos: Vec<String>,
+    pub open_tasks: Vec<String>,
     #[serde(default)]
     pub user_preferences: Vec<String>,
     #[serde(default)]
@@ -285,7 +285,7 @@ fn should_resolve_active_intent(
         return true;
     }
 
-    if state.open_todos.is_empty()
+    if state.open_tasks.is_empty()
         && matches!(
             active_intent.task_type.as_str(),
             "general" | "continuation" | "fix" | "implementation"
@@ -312,7 +312,7 @@ fn should_resolve_active_intent(
                 "next step",
                 "remaining",
                 "still need",
-                "todo",
+                "task",
                 "follow-up",
                 "后续",
                 "下一步",

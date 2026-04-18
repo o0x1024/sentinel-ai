@@ -16,7 +16,7 @@ use crate::buildin_tools::{
     TenthManTool, ToolSearchArgs, ToolSearchOutput, ToolSearchTool, WebSearchTool,
 };
 #[cfg(feature = "db")]
-use crate::buildin_tools::{SopsTool, TodosTool};
+use crate::buildin_tools::{SopsTool, TasksTool};
 use crate::dynamic_tool::{
     DynamicTool, DynamicToolBuilder, DynamicToolDef, ToolExecutionPolicy, ToolExecutor,
     ToolRegistry, ToolSource,
@@ -567,9 +567,9 @@ impl ToolServer {
         self.registry.register(shell_def).await;
 
         #[cfg(feature = "db")]
-        // Register todos tool
-        let todos_def = DynamicToolBuilder::new(TodosTool::NAME.to_string())
-            .description(TodosTool::DESCRIPTION.to_string())
+        // Register tasks tool
+        let tasks_def = DynamicToolBuilder::new(TasksTool::NAME.to_string())
+            .description(TasksTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -616,24 +616,24 @@ impl ToolServer {
                 supports_background: false,
             })
             .executor(|args| async move {
-                use crate::buildin_tools::todos::{TodosArgs, TodosTool};
+                use crate::buildin_tools::tasks::{TasksArgs, TasksTool};
                 use rig::tool::Tool;
 
-                let tool_args: TodosArgs = serde_json::from_value(args)
+                let tool_args: TasksArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-                let tool = TodosTool;
+                let tool = TasksTool;
                 let result = tool.call(tool_args).await
-                    .map_err(|e| format!("Todos operation failed: {}", e))?;
+                    .map_err(|e| format!("Tasks operation failed: {}", e))?;
 
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
             .build()
-            .expect("Failed to build todos tool");
+            .expect("Failed to build tasks tool");
 
         #[cfg(feature = "db")]
-        self.registry.register(todos_def).await;
+        self.registry.register(tasks_def).await;
 
         // Register skills tool
         let skills_def = DynamicToolBuilder::new(SkillsTool::NAME.to_string())
@@ -1865,7 +1865,7 @@ mod tests {
         // Check builtin tools exist
         assert!(server.get_tool("http_request").await.is_some());
         assert!(server.get_tool("shell").await.is_some());
-        assert!(server.get_tool("todos").await.is_some());
+        assert!(server.get_tool("tasks").await.is_some());
         assert!(server.get_tool("web_search").await.is_some());
         assert!(server.get_tool("subdomain_brute").await.is_some());
     }

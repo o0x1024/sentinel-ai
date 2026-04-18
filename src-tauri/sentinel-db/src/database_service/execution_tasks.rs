@@ -1,4 +1,4 @@
-//! Database operations for agent todos persistence
+//! Database operations for execution task persistence
 
 use anyhow::Result;
 use chrono::Utc;
@@ -8,42 +8,42 @@ use sqlx::FromRow;
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
 
-/// Todo item status
+/// Execution task status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum TodoStatus {
+pub enum ExecutionTaskStatus {
     Pending,
     InProgress,
     Completed,
     Failed,
 }
 
-impl ToString for TodoStatus {
+impl ToString for ExecutionTaskStatus {
     fn to_string(&self) -> String {
         match self {
-            TodoStatus::Pending => "pending".to_string(),
-            TodoStatus::InProgress => "in_progress".to_string(),
-            TodoStatus::Completed => "completed".to_string(),
-            TodoStatus::Failed => "failed".to_string(),
+            ExecutionTaskStatus::Pending => "pending".to_string(),
+            ExecutionTaskStatus::InProgress => "in_progress".to_string(),
+            ExecutionTaskStatus::Completed => "completed".to_string(),
+            ExecutionTaskStatus::Failed => "failed".to_string(),
         }
     }
 }
 
-impl From<&str> for TodoStatus {
+impl From<&str> for ExecutionTaskStatus {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "pending" => TodoStatus::Pending,
-            "in_progress" => TodoStatus::InProgress,
-            "completed" => TodoStatus::Completed,
-            "failed" => TodoStatus::Failed,
-            _ => TodoStatus::Pending,
+            "pending" => ExecutionTaskStatus::Pending,
+            "in_progress" => ExecutionTaskStatus::InProgress,
+            "completed" => ExecutionTaskStatus::Completed,
+            "failed" => ExecutionTaskStatus::Failed,
+            _ => ExecutionTaskStatus::Pending,
         }
     }
 }
 
-/// Todo item database model
+/// Execution task database model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct AgentTodoItem {
+pub struct ExecutionTaskItem {
     pub id: String,
     pub execution_id: String,
     pub item_index: i32,
@@ -54,41 +54,41 @@ pub struct AgentTodoItem {
     pub updated_at: String,
 }
 
-/// Todo item for insertion/update
+/// Execution task input for insertion/update
 #[derive(Debug, Clone)]
-pub struct TodoItemInput {
+pub struct ExecutionTaskInput {
     pub description: String,
-    pub status: TodoStatus,
+    pub status: ExecutionTaskStatus,
     pub result: Option<String>,
 }
 
 impl DatabaseService {
-    /// Get all todos for an execution
-    pub async fn get_agent_todos(&self, execution_id: &str) -> Result<Vec<AgentTodoItem>> {
+    /// Get all execution tasks for an execution
+    pub async fn get_execution_tasks(&self, execution_id: &str) -> Result<Vec<ExecutionTaskItem>> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let rows = match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as::<_, AgentTodoItem>(
-                    "SELECT * FROM agent_todos WHERE execution_id = $1 ORDER BY item_index ASC",
+                sqlx::query_as::<_, ExecutionTaskItem>(
+                    "SELECT * FROM execution_tasks WHERE execution_id = $1 ORDER BY item_index ASC",
                 )
                 .bind(execution_id)
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query_as::<_, AgentTodoItem>(
-                    "SELECT * FROM agent_todos WHERE execution_id = ? ORDER BY item_index ASC",
+                sqlx::query_as::<_, ExecutionTaskItem>(
+                    "SELECT * FROM execution_tasks WHERE execution_id = ? ORDER BY item_index ASC",
                 )
                 .bind(execution_id)
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_as::<_, AgentTodoItem>(
-                    "SELECT * FROM agent_todos WHERE execution_id = ? ORDER BY item_index ASC",
+                sqlx::query_as::<_, ExecutionTaskItem>(
+                    "SELECT * FROM execution_tasks WHERE execution_id = ? ORDER BY item_index ASC",
                 )
                 .bind(execution_id)
                 .fetch_all(pool)
@@ -98,11 +98,11 @@ impl DatabaseService {
         Ok(rows)
     }
 
-    /// Save or replace all todos for an execution
-    pub async fn save_agent_todos(
+    /// Save or replace all execution tasks for an execution
+    pub async fn save_execution_tasks(
         &self,
         execution_id: &str,
-        items: &[TodoItemInput],
+        items: &[ExecutionTaskInput],
     ) -> Result<()> {
         let runtime = self
             .runtime_pool
@@ -112,7 +112,7 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("DELETE FROM agent_todos WHERE execution_id = $1")
+                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = $1")
                     .bind(execution_id)
                     .execute(pool)
                     .await?;
@@ -120,7 +120,7 @@ impl DatabaseService {
                 for (index, item) in items.iter().enumerate() {
                     let id = format!("{}_{}", execution_id, index);
                     sqlx::query(
-                        r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+                        r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#
                     )
                     .bind(&id)
@@ -136,7 +136,7 @@ impl DatabaseService {
                 }
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM agent_todos WHERE execution_id = ?")
+                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = ?")
                     .bind(execution_id)
                     .execute(pool)
                     .await?;
@@ -144,7 +144,7 @@ impl DatabaseService {
                 for (index, item) in items.iter().enumerate() {
                     let id = format!("{}_{}", execution_id, index);
                     sqlx::query(
-                        r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+                        r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
                     )
                     .bind(&id)
@@ -160,7 +160,7 @@ impl DatabaseService {
                 }
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM agent_todos WHERE execution_id = ?")
+                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = ?")
                     .bind(execution_id)
                     .execute(pool)
                     .await?;
@@ -168,7 +168,7 @@ impl DatabaseService {
                 for (index, item) in items.iter().enumerate() {
                     let id = format!("{}_{}", execution_id, index);
                     sqlx::query(
-                        r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+                        r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
                     )
                     .bind(&id)
@@ -188,12 +188,12 @@ impl DatabaseService {
         Ok(())
     }
 
-    /// Update a single todo item's status and result
-    pub async fn update_agent_todo_status(
+    /// Update a single execution task's status and result
+    pub async fn update_execution_task_status(
         &self,
         execution_id: &str,
         item_index: i32,
-        status: TodoStatus,
+        status: ExecutionTaskStatus,
         result: Option<&str>,
     ) -> Result<()> {
         let runtime = self
@@ -205,7 +205,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
-                    "UPDATE agent_todos SET status = $1, result = $2, updated_at = $3 WHERE execution_id = $4 AND item_index = $5"
+                    "UPDATE execution_tasks SET status = $1, result = $2, updated_at = $3 WHERE execution_id = $4 AND item_index = $5"
                 )
                 .bind(status.to_string())
                 .bind(result)
@@ -217,7 +217,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query(
-                    "UPDATE agent_todos SET status = ?, result = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
+                    "UPDATE execution_tasks SET status = ?, result = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
                 )
                 .bind(status.to_string())
                 .bind(result)
@@ -229,7 +229,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query(
-                    "UPDATE agent_todos SET status = ?, result = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
+                    "UPDATE execution_tasks SET status = ?, result = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
                 )
                 .bind(status.to_string())
                 .bind(result)
@@ -244,8 +244,8 @@ impl DatabaseService {
         Ok(())
     }
 
-    /// Update a single todo item's description
-    pub async fn update_agent_todo_description(
+    /// Update a single execution task's description
+    pub async fn update_execution_task_description(
         &self,
         execution_id: &str,
         item_index: i32,
@@ -260,7 +260,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
-                    "UPDATE agent_todos SET description = $1, updated_at = $2 WHERE execution_id = $3 AND item_index = $4"
+                    "UPDATE execution_tasks SET description = $1, updated_at = $2 WHERE execution_id = $3 AND item_index = $4"
                 )
                 .bind(description)
                 .bind(&now)
@@ -271,7 +271,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query(
-                    "UPDATE agent_todos SET description = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
+                    "UPDATE execution_tasks SET description = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
                 )
                 .bind(description)
                 .bind(&now)
@@ -282,7 +282,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query(
-                    "UPDATE agent_todos SET description = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
+                    "UPDATE execution_tasks SET description = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
                 )
                 .bind(description)
                 .bind(&now)
@@ -296,27 +296,27 @@ impl DatabaseService {
         Ok(())
     }
 
-    /// Delete all todos for an execution
-    pub async fn delete_agent_todos(&self, execution_id: &str) -> Result<()> {
+    /// Delete all execution tasks for an execution
+    pub async fn delete_execution_tasks(&self, execution_id: &str) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("DELETE FROM agent_todos WHERE execution_id = $1")
+                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = $1")
                     .bind(execution_id)
                     .execute(pool)
                     .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM agent_todos WHERE execution_id = ?")
+                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = ?")
                     .bind(execution_id)
                     .execute(pool)
                     .await?;
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM agent_todos WHERE execution_id = ?")
+                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = ?")
                     .bind(execution_id)
                     .execute(pool)
                     .await?;
@@ -325,8 +325,12 @@ impl DatabaseService {
         Ok(())
     }
 
-    /// Delete a single todo item and reindex remaining items
-    pub async fn delete_agent_todo_item(&self, execution_id: &str, item_index: i32) -> Result<()> {
+    /// Delete a single execution task and reindex remaining items
+    pub async fn delete_execution_task_item(
+        &self,
+        execution_id: &str,
+        item_index: i32,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -335,14 +339,14 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("DELETE FROM agent_todos WHERE execution_id = $1 AND item_index = $2")
+                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = $1 AND item_index = $2")
                     .bind(execution_id)
                     .bind(item_index)
                     .execute(pool)
                     .await?;
 
                 sqlx::query(
-                    "UPDATE agent_todos SET item_index = item_index - 1, updated_at = $1 WHERE execution_id = $2 AND item_index > $3"
+                    "UPDATE execution_tasks SET item_index = item_index - 1, updated_at = $1 WHERE execution_id = $2 AND item_index > $3"
                 )
                 .bind(&now)
                 .bind(execution_id)
@@ -350,11 +354,11 @@ impl DatabaseService {
                 .execute(pool)
                 .await?;
 
-                let remaining = self.get_agent_todos(execution_id).await?;
+                let remaining = self.get_execution_tasks(execution_id).await?;
                 for item in remaining {
                     let new_id = format!("{}_{}", execution_id, item.item_index);
                     if item.id != new_id {
-                        sqlx::query("UPDATE agent_todos SET id = $1 WHERE id = $2")
+                        sqlx::query("UPDATE execution_tasks SET id = $1 WHERE id = $2")
                             .bind(&new_id)
                             .bind(&item.id)
                             .execute(pool)
@@ -363,14 +367,14 @@ impl DatabaseService {
                 }
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM agent_todos WHERE execution_id = ? AND item_index = ?")
+                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = ? AND item_index = ?")
                     .bind(execution_id)
                     .bind(item_index)
                     .execute(pool)
                     .await?;
 
                 sqlx::query(
-                    "UPDATE agent_todos SET item_index = item_index - 1, updated_at = ? WHERE execution_id = ? AND item_index > ?"
+                    "UPDATE execution_tasks SET item_index = item_index - 1, updated_at = ? WHERE execution_id = ? AND item_index > ?"
                 )
                 .bind(&now)
                 .bind(execution_id)
@@ -378,11 +382,11 @@ impl DatabaseService {
                 .execute(pool)
                 .await?;
 
-                let remaining = self.get_agent_todos(execution_id).await?;
+                let remaining = self.get_execution_tasks(execution_id).await?;
                 for item in remaining {
                     let new_id = format!("{}_{}", execution_id, item.item_index);
                     if item.id != new_id {
-                        sqlx::query("UPDATE agent_todos SET id = ? WHERE id = ?")
+                        sqlx::query("UPDATE execution_tasks SET id = ? WHERE id = ?")
                             .bind(&new_id)
                             .bind(&item.id)
                             .execute(pool)
@@ -391,14 +395,14 @@ impl DatabaseService {
                 }
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM agent_todos WHERE execution_id = ? AND item_index = ?")
+                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = ? AND item_index = ?")
                     .bind(execution_id)
                     .bind(item_index)
                     .execute(pool)
                     .await?;
 
                 sqlx::query(
-                    "UPDATE agent_todos SET item_index = item_index - 1, updated_at = ? WHERE execution_id = ? AND item_index > ?"
+                    "UPDATE execution_tasks SET item_index = item_index - 1, updated_at = ? WHERE execution_id = ? AND item_index > ?"
                 )
                 .bind(&now)
                 .bind(execution_id)
@@ -406,11 +410,11 @@ impl DatabaseService {
                 .execute(pool)
                 .await?;
 
-                let remaining = self.get_agent_todos(execution_id).await?;
+                let remaining = self.get_execution_tasks(execution_id).await?;
                 for item in remaining {
                     let new_id = format!("{}_{}", execution_id, item.item_index);
                     if item.id != new_id {
-                        sqlx::query("UPDATE agent_todos SET id = ? WHERE id = ?")
+                        sqlx::query("UPDATE execution_tasks SET id = ? WHERE id = ?")
                             .bind(&new_id)
                             .bind(&item.id)
                             .execute(pool)
@@ -423,13 +427,13 @@ impl DatabaseService {
         Ok(())
     }
 
-    /// Insert a todo item at a specific index and shift others
-    pub async fn insert_agent_todo_item(
+    /// Insert an execution task at a specific index and shift others
+    pub async fn insert_execution_task_item(
         &self,
         execution_id: &str,
         item_index: i32,
         description: &str,
-        status: TodoStatus,
+        status: ExecutionTaskStatus,
     ) -> Result<()> {
         let runtime = self
             .runtime_pool
@@ -440,7 +444,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
-                    "UPDATE agent_todos SET item_index = item_index + 1, updated_at = $1 WHERE execution_id = $2 AND item_index >= $3"
+                    "UPDATE execution_tasks SET item_index = item_index + 1, updated_at = $1 WHERE execution_id = $2 AND item_index >= $3"
                 )
                 .bind(&now)
                 .bind(execution_id)
@@ -450,7 +454,7 @@ impl DatabaseService {
 
                 let id = format!("{}_{}", execution_id, item_index);
                 sqlx::query(
-                    r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+                    r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                        VALUES ($1, $2, $3, $4, $5, NULL, $6, $7)"#
                 )
                 .bind(&id)
@@ -463,11 +467,11 @@ impl DatabaseService {
                 .execute(pool)
                 .await?;
 
-                let all_items = self.get_agent_todos(execution_id).await?;
+                let all_items = self.get_execution_tasks(execution_id).await?;
                 for item in all_items {
                     let expected_id = format!("{}_{}", execution_id, item.item_index);
                     if item.id != expected_id {
-                        sqlx::query("UPDATE agent_todos SET id = $1 WHERE id = $2")
+                        sqlx::query("UPDATE execution_tasks SET id = $1 WHERE id = $2")
                             .bind(&expected_id)
                             .bind(&item.id)
                             .execute(pool)
@@ -477,7 +481,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query(
-                    "UPDATE agent_todos SET item_index = item_index + 1, updated_at = ? WHERE execution_id = ? AND item_index >= ?"
+                    "UPDATE execution_tasks SET item_index = item_index + 1, updated_at = ? WHERE execution_id = ? AND item_index >= ?"
                 )
                 .bind(&now)
                 .bind(execution_id)
@@ -487,7 +491,7 @@ impl DatabaseService {
 
                 let id = format!("{}_{}", execution_id, item_index);
                 sqlx::query(
-                    r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+                    r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, NULL, ?, ?)"#
                 )
                 .bind(&id)
@@ -500,11 +504,11 @@ impl DatabaseService {
                 .execute(pool)
                 .await?;
 
-                let all_items = self.get_agent_todos(execution_id).await?;
+                let all_items = self.get_execution_tasks(execution_id).await?;
                 for item in all_items {
                     let expected_id = format!("{}_{}", execution_id, item.item_index);
                     if item.id != expected_id {
-                        sqlx::query("UPDATE agent_todos SET id = ? WHERE id = ?")
+                        sqlx::query("UPDATE execution_tasks SET id = ? WHERE id = ?")
                             .bind(&expected_id)
                             .bind(&item.id)
                             .execute(pool)
@@ -514,7 +518,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query(
-                    "UPDATE agent_todos SET item_index = item_index + 1, updated_at = ? WHERE execution_id = ? AND item_index >= ?"
+                    "UPDATE execution_tasks SET item_index = item_index + 1, updated_at = ? WHERE execution_id = ? AND item_index >= ?"
                 )
                 .bind(&now)
                 .bind(execution_id)
@@ -524,7 +528,7 @@ impl DatabaseService {
 
                 let id = format!("{}_{}", execution_id, item_index);
                 sqlx::query(
-                    r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+                    r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, NULL, ?, ?)"#
                 )
                 .bind(&id)
@@ -537,11 +541,11 @@ impl DatabaseService {
                 .execute(pool)
                 .await?;
 
-                let all_items = self.get_agent_todos(execution_id).await?;
+                let all_items = self.get_execution_tasks(execution_id).await?;
                 for item in all_items {
                     let expected_id = format!("{}_{}", execution_id, item.item_index);
                     if item.id != expected_id {
-                        sqlx::query("UPDATE agent_todos SET id = ? WHERE id = ?")
+                        sqlx::query("UPDATE execution_tasks SET id = ? WHERE id = ?")
                             .bind(&expected_id)
                             .bind(&item.id)
                             .execute(pool)
@@ -554,11 +558,11 @@ impl DatabaseService {
         Ok(())
     }
 
-    /// Add todo items to the end of the list
-    pub async fn append_agent_todos(
+    /// Add execution tasks to the end of the list
+    pub async fn append_execution_tasks(
         &self,
         execution_id: &str,
-        items: &[TodoItemInput],
+        items: &[ExecutionTaskInput],
     ) -> Result<()> {
         let runtime = self
             .runtime_pool
@@ -568,7 +572,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let max_index: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = $1",
+                    "SELECT MAX(item_index) FROM execution_tasks WHERE execution_id = $1",
                 )
                 .bind(execution_id)
                 .fetch_one(pool)
@@ -579,7 +583,7 @@ impl DatabaseService {
                     let index = start_index + offset as i32;
                     let id = format!("{}_{}", execution_id, index);
                     sqlx::query(
-                        r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+                        r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#
                     )
                     .bind(&id)
@@ -596,7 +600,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 let max_index: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = ?",
+                    "SELECT MAX(item_index) FROM execution_tasks WHERE execution_id = ?",
                 )
                 .bind(execution_id)
                 .fetch_one(pool)
@@ -607,7 +611,7 @@ impl DatabaseService {
                     let index = start_index + offset as i32;
                     let id = format!("{}_{}", execution_id, index);
                     sqlx::query(
-                        r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+                        r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
                     )
                     .bind(&id)
@@ -624,7 +628,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 let max_index: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = ?",
+                    "SELECT MAX(item_index) FROM execution_tasks WHERE execution_id = ?",
                 )
                 .bind(execution_id)
                 .fetch_one(pool)
@@ -635,7 +639,7 @@ impl DatabaseService {
                     let index = start_index + offset as i32;
                     let id = format!("{}_{}", execution_id, index);
                     sqlx::query(
-                        r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+                        r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
                     )
                     .bind(&id)
@@ -655,27 +659,27 @@ impl DatabaseService {
         Ok(())
     }
 
-    /// Check if todos exist for an execution
-    pub async fn has_agent_todos(&self, execution_id: &str) -> Result<bool> {
+    /// Check if execution tasks exist for an execution
+    pub async fn has_execution_tasks(&self, execution_id: &str) -> Result<bool> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let count: i64 = match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_scalar("SELECT COUNT(*) FROM agent_todos WHERE execution_id = $1")
+                sqlx::query_scalar("SELECT COUNT(*) FROM execution_tasks WHERE execution_id = $1")
                     .bind(execution_id)
                     .fetch_one(pool)
                     .await?
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query_scalar("SELECT COUNT(*) FROM agent_todos WHERE execution_id = ?")
+                sqlx::query_scalar("SELECT COUNT(*) FROM execution_tasks WHERE execution_id = ?")
                     .bind(execution_id)
                     .fetch_one(pool)
                     .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_scalar("SELECT COUNT(*) FROM agent_todos WHERE execution_id = ?")
+                sqlx::query_scalar("SELECT COUNT(*) FROM execution_tasks WHERE execution_id = ?")
                     .bind(execution_id)
                     .fetch_one(pool)
                     .await?

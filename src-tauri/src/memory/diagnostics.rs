@@ -140,8 +140,8 @@ mod tests {
             },
             RetrievedMemoryItem {
                 id: "3".to_string(),
-                text: "remember todo".to_string(),
-                kind: "todo".to_string(),
+                text: "remember task".to_string(),
+                kind: "task".to_string(),
                 scope: "session".to_string(),
                 stability: "tentative".to_string(),
                 source: "memory_tool".to_string(),

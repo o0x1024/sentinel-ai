@@ -1,28 +1,28 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
-import type { Todo } from '@/types/todo'
+import type { AgentTask } from '@/types/agentTask'
 
-export type RightPanelKey = 'todos' | 'html' | 'terminal' | 'team'
+export type RightPanelKey = 'tasks' | 'html' | 'terminal' | 'team'
 
-interface TodoSourceOption {
+interface TaskSourceOption {
   key: string
   label: string
   count: number
 }
 
-interface ScopedTodoEntry {
+interface ScopedTaskEntry {
   executionId: string
-  todos: Todo[]
+  tasks: AgentTask[]
   updatedAt: number
 }
 
-interface TeamTodoBucket {
+interface TeamTaskBucket {
   key: string
   label: string
-  todos: Todo[]
+  tasks: AgentTask[]
   updatedAt: number
 }
 
-const TODO_SOURCE_ALL_KEY = '__all__'
+const TASK_SOURCE_ALL_KEY = '__all__'
 const SIDEBAR_MIN_WIDTH = 300
 const SIDEBAR_MAX_WIDTH = 800
 const SIDEBAR_DEFAULT_WIDTH = 350
@@ -30,18 +30,18 @@ const SIDEBAR_DEFAULT_WIDTH = 350
 export const useAgentPanels = (params: {
   activeTeamSessionId: Ref<string | null>
   agentError: ComputedRef<string | null | undefined>
-  clearTodosForExecution: (executionId: string) => void
+  clearTasksForExecution: (executionId: string) => void
   conversationId: Ref<string | null>
-  getTodosForExecution: (executionId: string) => Todo[]
+  getTasksForExecution: (executionId: string) => AgentTask[]
   isTeamWorkspaceActive: Ref<boolean>
-  isTodosPanelActive: ComputedRef<boolean>
+  isTaskPanelActive: ComputedRef<boolean>
   localError: Ref<string | null>
-  parseTeamTodoExecutionId: (executionId: string) => {
+  parseTeamTaskExecutionId: (executionId: string) => {
     sessionId: string
     taskId: string
     memberId?: string
   } | null
-  propsShowTodos: boolean
+  propsShowTasks: boolean
   resetAgentError: () => void
   resolveAgentName: (agentId?: string | null) => string
   selectedTeamTaskAssigneeId: ComputedRef<string | null>
@@ -50,38 +50,37 @@ export const useAgentPanels = (params: {
   terminalHasHistory: ComputedRef<boolean>
   terminalIsActive: ComputedRef<boolean>
   terminalOpen: () => void
-  todosClose: () => void
-  todosByExecutionId: ComputedRef<Record<string, Todo[]>>
-  todosExecutionIds: ComputedRef<string[]>
-  todosOpen: () => void
+  tasksClose: () => void
+  tasksByExecutionId: ComputedRef<Record<string, AgentTask[]>>
+  taskExecutionIds: ComputedRef<string[]>
+  tasksOpen: () => void
 }): {
   activeRightPanel: Ref<RightPanelKey | null>
   activateRightPanel: (panel: RightPanelKey) => void
   clearError: () => void
-  clearTodosForCurrentContext: () => void
+  clearTasksForCurrentContext: () => void
   deactivateRightPanel: (panel: RightPanelKey) => void
   error: ComputedRef<string | null>
   handleCloseHtmlPanel: () => void
+  handleCloseTasks: () => void
   handleCloseTerminal: () => void
-  handleCloseTodos: () => void
   handleRenderHtml: (htmlContent: string) => void
-  handleTodoSourceChange: (sourceKey: string) => void
+  handleTaskSourceChange: (sourceKey: string) => void
   handleToggleHtmlPanel: () => void
+  handleToggleTasks: () => void
   handleToggleTerminal: () => void
-  handleToggleTodos: () => void
   hasHtmlPanelContent: ComputedRef<boolean>
   hasTerminalHistory: ComputedRef<boolean>
   htmlPanelContent: Ref<string>
   loadSidebarWidth: () => void
-  selectedTodoSourceKey: Ref<string>
-  selectedTaskTodoSourceKey: ComputedRef<string>
+  selectedTaskSourceKey: Ref<string>
   sidebarWidth: Ref<number>
   startResize: (event: MouseEvent) => void
-  todoBadgeCount: ComputedRef<number>
-  todoSourceOptions: ComputedRef<TodoSourceOption[]>
-  todos: ComputedRef<Todo[]>
+  taskBadgeCount: ComputedRef<number>
+  taskSourceOptions: ComputedRef<TaskSourceOption[]>
+  tasks: ComputedRef<AgentTask[]>
 } => {
-  const selectedTodoSourceKey = ref<string>(TODO_SOURCE_ALL_KEY)
+  const selectedTaskSourceKey = ref<string>(TASK_SOURCE_ALL_KEY)
   const isHtmlPanelActive = ref(false)
   const htmlPanelContent = ref('')
   const activeRightPanel = ref<RightPanelKey | null>(null)
@@ -89,31 +88,31 @@ export const useAgentPanels = (params: {
   const isResizing = ref(false)
   let isSyncingRightPanel = false
 
-  const isTodoExecutionInCurrentContext = (executionId: string) => {
+  const isTaskExecutionInCurrentContext = (executionId: string) => {
     const convId = params.conversationId.value
     if (convId && executionId === convId) return true
-    const parsed = params.parseTeamTodoExecutionId(executionId)
+    const parsed = params.parseTeamTaskExecutionId(executionId)
     if (!parsed) return false
     return !!params.activeTeamSessionId.value && parsed.sessionId === params.activeTeamSessionId.value
   }
 
-  const scopedTodoEntries = computed<ScopedTodoEntry[]>(() => {
-    const entries = Object.entries(params.todosByExecutionId.value)
-      .filter(([executionId]) => isTodoExecutionInCurrentContext(executionId))
+  const scopedTaskEntries = computed<ScopedTaskEntry[]>(() => {
+    const entries = Object.entries(params.tasksByExecutionId.value)
+      .filter(([executionId]) => isTaskExecutionInCurrentContext(executionId))
       .map(([executionId, list]) => ({
         executionId,
-        todos: list,
-        updatedAt: list.reduce((latest, todo) => Math.max(latest, Number(todo.updated_at || 0)), 0),
+        tasks: list,
+        updatedAt: list.reduce((latest, task) => Math.max(latest, Number(task.updated_at || 0)), 0),
       }))
     return entries.sort((a, b) => b.updatedAt - a.updatedAt)
   })
 
-  const teamTodoBuckets = computed<TeamTodoBucket[]>(() => {
+  const teamTaskBuckets = computed<TeamTaskBucket[]>(() => {
     if (!params.teamWorkspaceAvailable.value || !params.activeTeamSessionId.value) return []
-    const bucketMap = new Map<string, TeamTodoBucket>()
+    const bucketMap = new Map<string, TeamTaskBucket>()
 
-    for (const entry of scopedTodoEntries.value) {
-      const parsed = params.parseTeamTodoExecutionId(entry.executionId)
+    for (const entry of scopedTaskEntries.value) {
+      const parsed = params.parseTeamTaskExecutionId(entry.executionId)
       if (!parsed || parsed.sessionId !== params.activeTeamSessionId.value) continue
       const sourceKey = parsed.memberId ? `member:${parsed.memberId}` : `execution:${entry.executionId}`
       const label = parsed.memberId
@@ -121,13 +120,13 @@ export const useAgentPanels = (params: {
         : `task ${parsed.taskId}`
       const existing = bucketMap.get(sourceKey)
       if (existing) {
-        existing.todos = [...existing.todos, ...entry.todos]
+        existing.tasks = [...existing.tasks, ...entry.tasks]
         existing.updatedAt = Math.max(existing.updatedAt, entry.updatedAt)
       } else {
         bucketMap.set(sourceKey, {
           key: sourceKey,
           label,
-          todos: [...entry.todos],
+          tasks: [...entry.tasks],
           updatedAt: entry.updatedAt,
         })
       }
@@ -136,65 +135,69 @@ export const useAgentPanels = (params: {
     return [...bucketMap.values()].sort((a, b) => b.updatedAt - a.updatedAt)
   })
 
-  const todoSourceOptions = computed<TodoSourceOption[]>(() => {
-    if (!params.teamWorkspaceAvailable.value || teamTodoBuckets.value.length === 0) return []
-    const allCount = teamTodoBuckets.value.reduce((acc, bucket) => acc + bucket.todos.length, 0)
+  const taskSourceOptions = computed<TaskSourceOption[]>(() => {
+    if (!params.teamWorkspaceAvailable.value || teamTaskBuckets.value.length === 0) return []
+    const allCount = teamTaskBuckets.value.reduce((acc, bucket) => acc + bucket.tasks.length, 0)
     return [
       {
-        key: TODO_SOURCE_ALL_KEY,
+        key: TASK_SOURCE_ALL_KEY,
         label: '全局',
         count: allCount,
       },
-      ...teamTodoBuckets.value.map((bucket) => ({
+      ...teamTaskBuckets.value.map((bucket) => ({
         key: bucket.key,
         label: bucket.label,
-        count: bucket.todos.length,
+        count: bucket.tasks.length,
       })),
     ]
   })
 
-  const buildLabeledTodos = (todos: Todo[], label: string): Todo[] => {
-    return todos.map((todo) => ({
-      ...todo,
-      content: `[${label}] ${todo.content}`,
-      active_form: todo.active_form ? `[${label}] ${todo.active_form}` : todo.active_form,
+  const buildLabeledTasks = (tasks: AgentTask[], label: string): AgentTask[] => {
+    return tasks.map((task) => ({
+      ...task,
+      title: `[${label}] ${task.title}`,
+      active_title: task.active_title ? `[${label}] ${task.active_title}` : task.active_title,
+      metadata: {
+        ...task.metadata,
+        source_label: label,
+      },
     }))
   }
 
-  const teamTodos = computed<Todo[]>(() => {
-    if (teamTodoBuckets.value.length === 0) return []
-    const selected = selectedTodoSourceKey.value || TODO_SOURCE_ALL_KEY
-    if (selected !== TODO_SOURCE_ALL_KEY) {
-      return teamTodoBuckets.value.find((bucket) => bucket.key === selected)?.todos || []
+  const teamTasks = computed<AgentTask[]>(() => {
+    if (teamTaskBuckets.value.length === 0) return []
+    const selected = selectedTaskSourceKey.value || TASK_SOURCE_ALL_KEY
+    if (selected !== TASK_SOURCE_ALL_KEY) {
+      return teamTaskBuckets.value.find((bucket) => bucket.key === selected)?.tasks || []
     }
-    if (teamTodoBuckets.value.length === 1) {
-      return [...teamTodoBuckets.value[0].todos]
+    if (teamTaskBuckets.value.length === 1) {
+      return [...teamTaskBuckets.value[0].tasks]
     }
-    return teamTodoBuckets.value
-      .flatMap((bucket) => buildLabeledTodos(bucket.todos, bucket.label))
+    return teamTaskBuckets.value
+      .flatMap((bucket) => buildLabeledTasks(bucket.tasks, bucket.label))
       .sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))
   })
 
-  const conversationTodos = computed<Todo[]>(() => {
+  const conversationTasks = computed<AgentTask[]>(() => {
     const convId = params.conversationId.value
     if (!convId) return []
-    return params.getTodosForExecution(convId)
+    return params.getTasksForExecution(convId)
   })
 
-  const todos = computed<Todo[]>(() => {
+  const tasks = computed<AgentTask[]>(() => {
     if (params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value) {
-      if (teamTodoBuckets.value.length > 0) return teamTodos.value
+      if (teamTaskBuckets.value.length > 0) return teamTasks.value
     }
-    return conversationTodos.value
+    return conversationTasks.value
   })
 
-  const todoBadgeCount = computed(() => todos.value.filter((item) => !item.metadata?.parent_id).length)
+  const taskBadgeCount = computed(() => tasks.value.filter((item) => !item.metadata?.parent_id).length)
   const isTerminalActive = computed(() => params.terminalIsActive.value)
   const hasTerminalHistory = computed(() => params.terminalHasHistory.value)
 
   const closeRightPanelByKey = (panel: RightPanelKey) => {
-    if (panel === 'todos') {
-      params.todosClose()
+    if (panel === 'tasks') {
+      params.tasksClose()
       return
     }
     if (panel === 'html') {
@@ -209,7 +212,7 @@ export const useAgentPanels = (params: {
   }
 
   const closeOtherRightPanels = (activePanel: RightPanelKey) => {
-    if (activePanel !== 'todos') params.todosClose()
+    if (activePanel !== 'tasks') params.tasksClose()
     if (activePanel !== 'html') isHtmlPanelActive.value = false
     if (activePanel !== 'terminal') params.terminalClose()
     if (activePanel !== 'team') params.isTeamWorkspaceActive.value = false
@@ -236,8 +239,8 @@ export const useAgentPanels = (params: {
     }
   }
 
-  watch(params.isTodosPanelActive, (active) => {
-    syncRightPanelState('todos', active)
+  watch(params.isTaskPanelActive, (active) => {
+    syncRightPanelState('tasks', active)
   }, { immediate: true })
 
   watch(isHtmlPanelActive, (active) => {
@@ -270,17 +273,17 @@ export const useAgentPanels = (params: {
     isHtmlPanelActive.value = true
   }
 
-  const handleCloseTodos = () => deactivateRightPanel('todos')
+  const handleCloseTasks = () => deactivateRightPanel('tasks')
   const handleCloseHtmlPanel = () => deactivateRightPanel('html')
   const handleCloseTerminal = () => deactivateRightPanel('terminal')
 
-  const handleToggleTodos = () => {
-    if (activeRightPanel.value === 'todos') {
-      deactivateRightPanel('todos')
+  const handleToggleTasks = () => {
+    if (activeRightPanel.value === 'tasks') {
+      deactivateRightPanel('tasks')
       return
     }
-    activateRightPanel('todos')
-    params.todosOpen()
+    activateRightPanel('tasks')
+    params.tasksOpen()
   }
 
   const handleToggleHtmlPanel = () => {
@@ -354,36 +357,36 @@ export const useAgentPanels = (params: {
     document.addEventListener('mouseup', onMouseUp)
   }
 
-  const handleTodoSourceChange = (sourceKey: string) => {
-    selectedTodoSourceKey.value = sourceKey || TODO_SOURCE_ALL_KEY
+  const handleTaskSourceChange = (sourceKey: string) => {
+    selectedTaskSourceKey.value = sourceKey || TASK_SOURCE_ALL_KEY
   }
 
-  const selectedTaskTodoSourceKey = computed(() => {
+  const selectedTeamTaskSourceKey = computed(() => {
     const assigneeId = params.selectedTeamTaskAssigneeId.value
-    if (!assigneeId) return TODO_SOURCE_ALL_KEY
+    if (!assigneeId) return TASK_SOURCE_ALL_KEY
     return `member:${assigneeId}`
   })
 
-  watch(todoSourceOptions, (options) => {
+  watch(taskSourceOptions, (options) => {
     if (options.length === 0) {
-      selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
+      selectedTaskSourceKey.value = TASK_SOURCE_ALL_KEY
       return
     }
-    if (options.some((option) => option.key === selectedTodoSourceKey.value)) return
-    selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
+    if (options.some((option) => option.key === selectedTaskSourceKey.value)) return
+    selectedTaskSourceKey.value = TASK_SOURCE_ALL_KEY
   }, { immediate: true })
 
-  watch(selectedTaskTodoSourceKey, (nextKey) => {
+  watch(selectedTeamTaskSourceKey, (nextKey) => {
     if (!params.teamWorkspaceAvailable.value || !params.activeTeamSessionId.value) return
-    if (nextKey === TODO_SOURCE_ALL_KEY) {
-      selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
+    if (nextKey === TASK_SOURCE_ALL_KEY) {
+      selectedTaskSourceKey.value = TASK_SOURCE_ALL_KEY
       return
     }
-    if (todoSourceOptions.value.some((option) => option.key === nextKey)) {
-      selectedTodoSourceKey.value = nextKey
+    if (taskSourceOptions.value.some((option) => option.key === nextKey)) {
+      selectedTaskSourceKey.value = nextKey
       return
     }
-    selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
+    selectedTaskSourceKey.value = TASK_SOURCE_ALL_KEY
   }, { immediate: true })
 
   watch(params.teamWorkspaceAvailable, (available) => {
@@ -394,17 +397,17 @@ export const useAgentPanels = (params: {
     params.isTeamWorkspaceActive.value = false
   }, { immediate: true })
 
-  const clearTodosForCurrentContext = () => {
+  const clearTasksForCurrentContext = () => {
     const convId = params.conversationId.value
     if (convId) {
-      params.clearTodosForExecution(convId)
+      params.clearTasksForExecution(convId)
     }
     const sessionId = params.activeTeamSessionId.value
     if (!sessionId) return
-    for (const executionId of params.todosExecutionIds.value) {
-      const parsed = params.parseTeamTodoExecutionId(executionId)
+    for (const executionId of params.taskExecutionIds.value) {
+      const parsed = params.parseTeamTaskExecutionId(executionId)
       if (!parsed || parsed.sessionId !== sessionId) continue
-      params.clearTodosForExecution(executionId)
+      params.clearTasksForExecution(executionId)
     }
   }
 
@@ -421,27 +424,26 @@ export const useAgentPanels = (params: {
     activeRightPanel,
     activateRightPanel,
     clearError,
-    clearTodosForCurrentContext,
+    clearTasksForCurrentContext,
     deactivateRightPanel,
     error,
     handleCloseHtmlPanel,
+    handleCloseTasks,
     handleCloseTerminal,
-    handleCloseTodos,
     handleRenderHtml,
-    handleTodoSourceChange,
+    handleTaskSourceChange,
     handleToggleHtmlPanel,
+    handleToggleTasks,
     handleToggleTerminal,
-    handleToggleTodos,
     hasHtmlPanelContent,
     hasTerminalHistory,
     htmlPanelContent,
     loadSidebarWidth,
-    selectedTodoSourceKey,
-    selectedTaskTodoSourceKey,
+    selectedTaskSourceKey,
     sidebarWidth,
     startResize,
-    todoBadgeCount,
-    todoSourceOptions,
-    todos,
+    taskBadgeCount,
+    taskSourceOptions,
+    tasks,
   }
 }

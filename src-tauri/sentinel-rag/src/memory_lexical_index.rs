@@ -372,6 +372,9 @@ pub fn canonicalize_memory_kind(kind: &str) -> String {
         }
         "decision_log" | "decision_record" => "decision".to_string(),
         "evidence" | "indicator" | "pattern" | "ioc" => "evidence_pattern".to_string(),
+        // `todo` is preserved as a read alias for historical memory rows and
+        // prompts. `task` is the only canonical kind we emit going forward.
+        "todo" | "next_step" | "next-step" => "task".to_string(),
         "" => "fact".to_string(),
         _ => normalized,
     }
@@ -473,8 +476,12 @@ pub fn infer_memory_kind(
     {
         return "evidence_pattern".to_string();
     }
-    if lower.contains("todo") || lower.contains("next step") || lower.contains("待办") {
-        return "todo".to_string();
+    if lower.contains("todo")
+        || lower.contains("task")
+        || lower.contains("next step")
+        || lower.contains("待办")
+    {
+        return "task".to_string();
     }
 
     "fact".to_string()
@@ -506,7 +513,7 @@ pub fn build_memory_durable_metadata(
     let stability = explicit_stability
         .map(canonicalize_memory_stability)
         .unwrap_or_else(|| match normalized_kind.as_str() {
-            "todo" | "fact" => "tentative".to_string(),
+            "task" | "fact" => "tentative".to_string(),
             _ => "stable".to_string(),
         });
 
@@ -522,7 +529,7 @@ pub fn build_memory_durable_metadata(
             "preference" | "anti_pattern" | "sop" => 0.86,
             "evidence_pattern" => 0.82,
             "fact" => 0.72,
-            "todo" => 0.58,
+            "task" => 0.58,
             _ => 0.70,
         });
 
@@ -538,7 +545,7 @@ pub fn memory_kind_importance(kind: &str) -> u8 {
     match canonicalize_memory_kind(kind).as_str() {
         "decision" => 4,
         "preference" | "anti_pattern" | "sop" | "evidence_pattern" => 4,
-        "fact" | "todo" => 3,
+        "fact" | "task" => 3,
         _ => 3,
     }
 }
@@ -657,6 +664,7 @@ mod tests {
         assert_eq!(canonicalize_memory_kind("prefs"), "preference");
         assert_eq!(canonicalize_memory_kind("anti-pattern"), "anti_pattern");
         assert_eq!(canonicalize_memory_kind("runbook"), "sop");
+        assert_eq!(canonicalize_memory_kind("todo"), "task");
     }
 
     #[test]
@@ -679,6 +687,10 @@ mod tests {
             ),
             "preference"
         );
+        assert_eq!(
+            infer_memory_kind(None, None, &[], "Todo: verify changed result before final answer"),
+            "task"
+        );
     }
 
     #[test]
@@ -691,7 +703,7 @@ mod tests {
     #[test]
     fn build_memory_durable_metadata_defaults_from_kind() {
         let metadata =
-            build_memory_durable_metadata(None, None, Some("context"), None, "todo", &[]);
+            build_memory_durable_metadata(None, None, Some("context"), None, "task", &[]);
         assert_eq!(metadata.scope, "project");
         assert_eq!(metadata.stability, "tentative");
         assert_eq!(metadata.source, "context_engineering");

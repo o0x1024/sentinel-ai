@@ -10,7 +10,7 @@ use sentinel_db::DatabaseService;
 use sentinel_llm::{normalize_tool_call_arguments_str, ChatMessage};
 use sentinel_tools::buildin_tools::{
     AskUserQuestionTool, FileEditTool, FileReadTool, FileWriteTool, HttpRequestTool, ShellTool,
-    SkillsTool, TodosTool, ToolSearchTool,
+    SkillsTool, TasksTool, ToolSearchTool,
 };
 use sentinel_tools::dynamic_tool::{
     DynamicTool, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
@@ -1265,54 +1265,54 @@ async fn build_file_write_override_def(
     })
 }
 
-async fn build_todos_override_def(
+async fn build_tasks_override_def(
     tool_server: &ToolServer,
     execution_id: &str,
 ) -> Option<DynamicToolDef> {
-    let todos_info = tool_server.get_tool(TodosTool::NAME).await?;
-    let execution_id_for_todos = execution_id.to_string();
-    let todos_input_schema = todos_info.input_schema.clone();
-    let todos_description = todos_info.description.clone();
-    let todos_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-        let execution_id_for_todos = execution_id_for_todos.clone();
+    let tasks_info = tool_server.get_tool(TasksTool::NAME).await?;
+    let execution_id_for_tasks = execution_id.to_string();
+    let tasks_input_schema = tasks_info.input_schema.clone();
+    let tasks_description = tasks_info.description.clone();
+    let tasks_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id_for_tasks = execution_id_for_tasks.clone();
         Box::pin(async move {
             use rig::tool::Tool;
-            use sentinel_tools::buildin_tools::todos::{TodosArgs, TodosTool};
+            use sentinel_tools::buildin_tools::tasks::{TasksArgs, TasksTool};
 
             let mut patched_args = args;
             if let Some(obj) = patched_args.as_object_mut() {
                 obj.insert(
                     "execution_id".to_string(),
-                    serde_json::Value::String(execution_id_for_todos.clone()),
+                    serde_json::Value::String(execution_id_for_tasks.clone()),
                 );
             }
 
-            let tool_args: TodosArgs = serde_json::from_value(patched_args)
+            let tool_args: TasksArgs = serde_json::from_value(patched_args)
                 .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-            let tool = TodosTool::new();
+            let tool = TasksTool::new();
             let result = tool
                 .call(tool_args)
                 .await
-                .map_err(|e| format!("Todos operation failed: {}", e))?;
+                .map_err(|e| format!("Tasks operation failed: {}", e))?;
 
             serde_json::to_value(result)
-                .map_err(|e| format!("Failed to serialize todos result: {}", e))
+                .map_err(|e| format!("Failed to serialize tasks result: {}", e))
         })
     });
 
     Some(DynamicToolDef {
-        name: TodosTool::NAME.to_string(),
-        description: todos_description,
-        input_schema: todos_input_schema,
+        name: TasksTool::NAME.to_string(),
+        description: tasks_description,
+        input_schema: tasks_input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
         category: "system".to_string(),
-        tags: todos_info.tags.clone(),
-        search_hint: todos_info.search_hint.clone(),
-        exposure: todos_info.exposure.clone(),
-        execution_policy: todos_info.execution_policy.clone(),
-        executor: todos_executor,
+        tags: tasks_info.tags.clone(),
+        search_hint: tasks_info.search_hint.clone(),
+        exposure: tasks_info.exposure.clone(),
+        execution_policy: tasks_info.execution_policy.clone(),
+        executor: tasks_executor,
     })
 }
 
@@ -1485,8 +1485,8 @@ pub(super) async fn patch_builtin_dynamic_tools(
         }
     }
 
-    if current_tool_ids.iter().any(|id| id == TodosTool::NAME) {
-        if let Some(def) = build_todos_override_def(tool_server, execution_id).await {
+    if current_tool_ids.iter().any(|id| id == TasksTool::NAME) {
+        if let Some(def) = build_tasks_override_def(tool_server, execution_id).await {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }

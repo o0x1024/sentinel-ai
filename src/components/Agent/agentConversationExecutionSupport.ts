@@ -98,7 +98,7 @@ export const executeConversationTask = async (params: {
   enableRag: boolean
   enableTenthManRule: boolean
   firstMessage: string
-  forceTodos: boolean
+  forceTasks: boolean
   fullTask: string
   maybeAutoRenameConversation: (params: {
     convId: string
@@ -121,7 +121,7 @@ export const executeConversationTask = async (params: {
       document_attachments?: ProcessedDocumentResult[]
       enable_rag: boolean
       enable_tenth_man_rule: boolean
-      force_todos: boolean
+      force_tasks: boolean
       message_id: null
       model_override?: string
       referenced_assets?: ReferencedAsset[]
@@ -167,7 +167,7 @@ export const executeConversationTask = async (params: {
       document_attachments: params.usedDocuments.length > 0 ? params.usedDocuments : undefined,
       enable_rag: params.enableRag,
       enable_tenth_man_rule: params.enableTenthManRule,
-      force_todos: params.forceTodos,
+      force_tasks: params.forceTasks,
       message_id: null,
       model_override: buildAssistantModelOverride(params.assistantSelectedModel),
       referenced_assets: params.usedAssets.length > 0 ? params.usedAssets : undefined,

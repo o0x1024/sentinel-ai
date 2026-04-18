@@ -38,6 +38,7 @@
         <MessageBlock 
           :message="msg" 
           :is-executing="isExecuting && index === displayedMessages.length - 1"
+          @focus-team-task="(taskId: string) => emit('focusTeamTask', taskId)"
           @resend="handleResend"
           @edit="handleEdit"
           @heightChanged="handleHeightChanged"
@@ -97,6 +98,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'resend', message: AgentMessage): void
   (e: 'edit', message: AgentMessage, newContent: string): void
+  (e: 'focusTeamTask', taskId: string): void
   (e: 'renderHtml', htmlContent: string): void
   (e: 'message-focused', messageId: string): void
 }>()

@@ -622,7 +622,7 @@ function getToolIcon(toolName: string) {
     'memory': 'fas fa-memory',
     'ocr': 'fas fa-file-image',
     'tenth_man_review': 'fas fa-user-secret',
-    'todos': 'fas fa-tasks',
+    'tasks': 'fas fa-tasks',
     'search_exploit': 'fas fa-bug',
   }
   return iconMap[toolName] || 'fas fa-tools'

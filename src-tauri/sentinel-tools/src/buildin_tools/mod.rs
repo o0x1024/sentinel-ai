@@ -27,7 +27,7 @@ pub mod tenth_man_tool;
 mod text_change;
 mod text_preview;
 #[cfg(feature = "db")]
-pub mod todos;
+pub mod tasks;
 pub mod tool_search;
 pub mod web_search;
 
@@ -54,7 +54,7 @@ pub use sops::{set_sops_app_handle, SopsTool};
 pub use subdomain_brute::SubdomainBruteTool;
 pub use tenth_man_tool::TenthManTool;
 #[cfg(feature = "db")]
-pub use todos::TodosTool;
+pub use tasks::TasksTool;
 pub use tool_search::{
     load_tool_search_runtime_context, set_tool_search_context_provider, set_tool_search_executor,
     ToolSearchAction, ToolSearchArgs, ToolSearchMatch, ToolSearchOutput, ToolSearchRuntimeContext,
@@ -78,7 +78,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(LspTool);
     toolset.add_tool(ShellTool::new());
     #[cfg(feature = "db")]
-    toolset.add_tool(TodosTool);
+    toolset.add_tool(TasksTool);
     toolset.add_tool(WebSearchTool::default());
     toolset.add_tool(RouteDiscoveryTool);
     toolset.add_tool(SearchExploitTool);
@@ -121,7 +121,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(LspTool),
         Box::new(ShellTool::new()),
         #[cfg(feature = "db")]
-        Box::new(TodosTool),
+        Box::new(TasksTool),
         Box::new(WebSearchTool::default()),
         Box::new(RouteDiscoveryTool),
         Box::new(SearchExploitTool),

@@ -84,7 +84,7 @@ pub fn ingest_memory_items(
     state: &mut ContextRunState,
     facts: &[String],
     decisions: &[String],
-    todos: &[String],
+    tasks: &[String],
 ) {
     for text in facts {
         let inferred_kind = infer_memory_kind(None, None, &[], text);
@@ -98,8 +98,8 @@ pub fn ingest_memory_items(
     for text in decisions {
         push_memory(state, text, "decision", 4);
     }
-    for text in todos {
-        push_memory(state, text, "todo", 3);
+    for text in tasks {
+        push_memory(state, text, "task", 3);
     }
     state.memory_items.sort_by_key(|item| item.created_at_ms);
     if state.memory_items.len() > MAX_MEMORY_ITEMS {
@@ -114,9 +114,9 @@ pub async fn ingest_memory_items_persistent(
     state: &mut ContextRunState,
     facts: &[String],
     decisions: &[String],
-    todos: &[String],
+    tasks: &[String],
 ) {
-    ingest_memory_items(state, facts, decisions, todos);
+    ingest_memory_items(state, facts, decisions, tasks);
 
     let items_to_persist: Vec<(String, String)> = facts
         .iter()
@@ -126,7 +126,7 @@ pub async fn ingest_memory_items_persistent(
                 .iter()
                 .map(|t| (t.clone(), "decision".to_string())),
         )
-        .chain(todos.iter().map(|t| (t.clone(), "todo".to_string())))
+        .chain(tasks.iter().map(|t| (t.clone(), "task".to_string())))
         .filter(|(t, _)| !t.trim().is_empty())
         .collect();
 

@@ -133,6 +133,7 @@ export interface AgentTeamMessage {
     role: string
     content: string
     tool_calls?: any
+    metadata?: Record<string, any>
     token_count?: number
     timestamp: string
     sequence?: number
@@ -298,15 +299,43 @@ export interface TeamTask {
     title: string
     instruction: string
     status: string
-    assignee_agent_id?: string
+    assignee_agent_id?: string | null
+    owner_agent_id?: string | null
+    claimed_by_agent_id?: string | null
+    acceptance_criteria?: string | null
     depends_on: string[]
     attempt: number
     max_attempts: number
-    last_error?: string
-    started_at?: string
-    completed_at?: string
+    last_error?: string | null
+    started_at?: string | null
+    completed_at?: string | null
     created_at: string
     updated_at: string
+}
+
+export interface TeamTaskCreateInput {
+    title: string
+    instruction: string
+    depends_on?: string[]
+    owner_agent_id?: string | null
+    acceptance_criteria?: string | null
+}
+
+export interface TeamTaskReasonActionInput {
+    task: TeamTask
+    reason?: string | null
+}
+
+export interface TeamTaskActionResult {
+    success: boolean
+    action: 'create' | 'claim' | 'release' | 'complete' | 'fail' | 'block'
+    task_id: string
+    task_key?: string | null
+    title?: string | null
+    status?: string | null
+    message: string
+    reason?: string | null
+    next_step?: string | null
 }
 
 export interface TeamBlackboardEntry {

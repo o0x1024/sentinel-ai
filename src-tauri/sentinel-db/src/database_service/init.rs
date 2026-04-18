@@ -1,5 +1,5 @@
 use crate::database_service::migrations::{
-    AgentTeamMigration, AgentTodosMigration, AsmEnhancementMigration, FloatTypeMigration,
+    AgentTeamMigration, AsmEnhancementMigration, ExecutionTasksMigration, FloatTypeMigration,
     IntegerTypeMigration, SubagentMessagesMigration, SubagentRunsMigration,
     TaskToolIntegrationMigration, TimestampTypeMigration,
 };
@@ -1553,7 +1553,7 @@ impl DatabaseService {
         TaskToolIntegrationMigration::apply(pool).await?;
         SubagentRunsMigration::apply(pool).await?;
         SubagentMessagesMigration::apply(pool).await?;
-        AgentTodosMigration::apply(pool).await?;
+        ExecutionTasksMigration::apply(pool).await?;
         SurfaceGraphMigration::apply(pool).await?;
 
         // Run ASM enhancement migration

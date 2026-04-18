@@ -2,6 +2,7 @@
 #![allow(ambiguous_glob_reexports)]
 
 pub mod ai;
+pub mod agent_task_commands;
 pub(crate) mod ai_conversation_binding_support;
 pub(crate) mod ai_execution_state_support;
 pub(crate) mod ai_runtime_commands;
@@ -67,6 +68,8 @@ pub mod team_v3_artifact_store;
 pub(crate) mod team_v3_blackboard_context;
 pub mod team_v3_commands;
 pub(crate) mod team_v3_memory;
+pub(crate) mod team_v3_task_notices;
+pub(crate) mod team_v3_task_state;
 pub(crate) mod team_v3_planner;
 pub(crate) mod team_v3_prompting;
 pub(crate) mod team_v3_schema;
@@ -82,6 +85,7 @@ pub(crate) mod workflow_notification_support;
 // Re-export commands
 #[allow(ambiguous_glob_reexports)]
 pub use ai::*;
+pub use agent_task_commands::*;
 pub use ai_task_commands::*;
 pub use ai_turn_logs::*;
 pub use aisettings::*;

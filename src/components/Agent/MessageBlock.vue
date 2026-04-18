@@ -140,6 +140,72 @@
     </div>
   </div>
 
+  <div v-else-if="isTeamDependencyReady" class="rounded-lg overflow-hidden bg-success/10 border-l-4 border-success mb-2">
+    <div class="flex items-center gap-3 px-4 py-3 bg-success/20 border-b border-success/20">
+      <div class="w-8 h-8 rounded-full bg-success flex items-center justify-center flex-shrink-0 shadow-sm">
+        <i class="fas fa-unlock text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-success">
+          {{ t('agent.teamDependencyReadyTitle') }}
+        </div>
+        <div class="text-xs text-base-content/70 mt-0.5">
+          {{ message.metadata?.team_task_title || message.metadata?.team_task_key || t('agent.teamWorkspaceTabTasks') }}
+        </div>
+      </div>
+      <button
+        v-if="teamDependencyReadyTaskId"
+        class="btn btn-xs btn-success"
+        @click="handleFocusTeamTask"
+      >
+        {{ message.metadata?.action_label || t('agent.teamDependencyReadyAction') }}
+      </button>
+    </div>
+    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/75">
+      {{ message.content }}
+    </div>
+  </div>
+
+  <div v-else-if="isAgentTaskUpdate" class="rounded-lg overflow-hidden bg-primary/10 border-l-4 border-primary mb-2">
+    <div class="flex items-center gap-3 px-4 py-3 bg-primary/15 border-b border-primary/20">
+      <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0 shadow-sm">
+        <i :class="['fas text-white text-sm', agentTaskUpdateIconClass]"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-primary">
+          {{ agentTaskUpdateTitle }}
+        </div>
+        <div class="text-xs text-base-content/70 mt-0.5">
+          {{ message.metadata?.task_preview || message.content }}
+        </div>
+      </div>
+      <span v-if="agentTaskUpdateCount > 0" class="badge badge-sm badge-ghost">{{ agentTaskUpdateCount }}</span>
+    </div>
+    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/75">
+      {{ message.content }}
+    </div>
+  </div>
+
+  <div v-else-if="taskToolCard" class="rounded-lg overflow-hidden bg-primary/10 border-l-4 border-primary mb-2">
+    <div class="flex items-center gap-3 px-4 py-3 bg-primary/15 border-b border-primary/20">
+      <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0 shadow-sm">
+        <i :class="['fas text-white text-sm', taskToolCard.icon_class]"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-primary">
+          {{ t(taskToolCard.title_key) }}
+        </div>
+        <div v-if="taskToolCard.preview" class="text-xs text-base-content/70 mt-0.5">
+          {{ taskToolCard.preview }}
+        </div>
+      </div>
+      <span v-if="taskToolCard.item_count > 0" class="badge badge-sm badge-ghost">{{ taskToolCard.item_count }}</span>
+    </div>
+    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/75">
+      {{ taskToolCard.detail }}
+    </div>
+  </div>
+
   <!-- Shell Tool - Render as independent message block -->
   <div v-else-if="isSkillsToolCard" :class="['rounded-lg overflow-hidden border-l-4 mb-2', skillsCardContainerClass]">
     <div :class="['flex items-center gap-3 px-4 py-3 border-b', skillsCardHeaderClass]">
@@ -594,6 +660,7 @@ import type {
 import { getMessageTypeName } from '@/types/agent'
 import { formatJsonStringIfPossible, formatJsonValueIfPossible } from '@/utils/jsonFormatting'
 import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
+import { buildTaskToolCardData } from './agentTaskToolPresentation'
 import MemoryToolResult from './MemoryToolResult.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ShellToolResult from './ShellToolResult.vue'
@@ -611,6 +678,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'resend', message: AgentMessage): void
   (e: 'edit', message: AgentMessage, newContent: string): void
+  (e: 'focusTeamTask', taskId: string): void
   (e: 'heightChanged'): void
   (e: 'renderHtml', htmlContent: string): void
 }>()
@@ -863,6 +931,8 @@ const isFileMutationTool = computed(() => {
   return name === 'file_edit' || name === 'file_write'
 })
 
+const taskToolCard = computed(() => buildTaskToolCardData(props.message))
+
 const fileVerificationStatus = computed(() => {
   if (!isFileMutationTool.value) return ''
   return props.message.metadata?.file_verification_status || ''
@@ -912,6 +982,61 @@ const isToolsActivated = computed(() => {
   return props.message.type === 'system' &&
          props.message.metadata?.kind === 'tools_activated'
 })
+
+const isTeamDependencyReady = computed(() => {
+  return props.message.type === 'system' &&
+         props.message.metadata?.kind === 'team_dependency_ready'
+})
+
+const isAgentTaskUpdate = computed(() => {
+  return props.message.type === 'system' &&
+         props.message.metadata?.kind === 'agent_task_update'
+})
+
+const agentTaskUpdateCount = computed(() => {
+  const raw = props.message.metadata?.task_count
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0
+})
+
+const agentTaskUpdateTitle = computed(() => {
+  switch (props.message.metadata?.task_event_type) {
+    case 'planned':
+      return t('agent.agentTaskPlannedTitle')
+    case 'created':
+      return t('agent.agentTaskCreatedTitle')
+    case 'started':
+      return t('agent.agentTaskStartedTitle')
+    case 'completed':
+      return t('agent.agentTaskCompletedTitle')
+    default:
+      return t('agent.agentTaskUpdatedTitle')
+  }
+})
+
+const agentTaskUpdateIconClass = computed(() => {
+  switch (props.message.metadata?.task_event_type) {
+    case 'planned':
+      return 'fa-list-check'
+    case 'created':
+      return 'fa-plus'
+    case 'started':
+      return 'fa-play'
+    case 'completed':
+      return 'fa-check'
+    default:
+      return 'fa-list-check'
+  }
+})
+
+const teamDependencyReadyTaskId = computed(() => {
+  const value = props.message.metadata?.team_task_record_id
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+})
+
+const handleFocusTeamTask = () => {
+  if (!teamDependencyReadyTaskId.value) return
+  emit('focusTeamTask', teamDependencyReadyTaskId.value)
+}
 
 const toolsActivatedIds = computed<string[]>(() => {
   return Array.isArray(props.message.metadata?.tool_ids)
@@ -1207,6 +1332,7 @@ const hasToolCallContent = computed(() => {
   if (isSkillsTool.value) return false
   if (isAskUserQuestionTool.value) return false
   if (isWebSearchTool.value) return false
+  if (taskToolCard.value) return false
   
   // Has content, args, result, or call_id
   return !!(

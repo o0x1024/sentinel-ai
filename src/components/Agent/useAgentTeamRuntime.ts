@@ -605,7 +605,9 @@ export const useAgentTeamRuntime = (params: {
     })
     if (!snapshot) return
     if (snapshot.sessionDetail) params.teamSessionDetail.value = snapshot.sessionDetail
-    if (snapshot.tasks) params.teamTasks.value = snapshot.tasks
+    if (snapshot.tasks) {
+      params.teamTasks.value = snapshot.tasks
+    }
     if (snapshot.blackboardEntries) params.teamBlackboardEntries.value = snapshot.blackboardEntries
   }
 

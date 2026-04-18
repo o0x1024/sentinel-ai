@@ -16,9 +16,9 @@ export { default as ToolCallBlock } from './ToolCallBlock.vue'
 export { default as ProgressBlock } from './ProgressBlock.vue'
 export { default as ShellToolResult } from './ShellToolResult.vue'
 
-// Todos 组件
-export { default as TodoPanel } from './TodoPanel.vue'
-export { default as TodoItem } from './TodoItem.vue'
+// 任务组件
+export { default as TaskPanel } from './TaskPanel.vue'
+export { default as TaskItem } from './TaskItem.vue'
 
 // 标签页组件
 export { default as AgentTabs } from './AgentTabs.vue'

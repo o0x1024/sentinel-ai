@@ -78,10 +78,17 @@ export interface MessageMetadata {
   query?: string
   runtime_hint?: string
   kind?: string  // 消息类型标识（如 'segment_summary', 'global_summary', 'tenth_man_critique'）
+  task_event_type?: string
+  task_count?: number
+  task_preview?: string
   team_member_id?: string
   team_member_name?: string
   team_member_role?: string
   team_session_id?: string
+  team_task_record_id?: string
+  team_task_key?: string
+  team_task_title?: string
+  action_label?: string
   team_stream_id?: string
   team_streaming?: boolean
   team_sequence?: number

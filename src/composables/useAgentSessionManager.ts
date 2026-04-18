@@ -10,6 +10,7 @@ export interface AgentSession {
 const SESSION_STORAGE_KEY = 'ai:session-manager'
 const sessions = ref<AgentSession[]>([])
 const activeSessionId = ref<string | null>(null)
+const lastUsedSessionId = ref<string | null>(null)
 let hasHydrated = false
 
 const canUseStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
@@ -32,9 +33,11 @@ const normalizeSession = (value: unknown): AgentSession | null => {
 const persistSessionState = () => {
   if (!canUseStorage()) return
 
+  lastUsedSessionId.value = activeSessionId.value ? String(activeSessionId.value).trim() : null
+
   try {
     window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
-      activeSessionId: activeSessionId.value,
+      activeSessionId: lastUsedSessionId.value,
       sessions: sessions.value.map(({ id, title }) => ({
         id,
         title,
@@ -64,6 +67,7 @@ const hydrateSessionState = () => {
     sessions.value = restoredSessions
 
     const restoredActiveId = String(parsed?.activeSessionId || '').trim()
+    lastUsedSessionId.value = restoredActiveId || null
     if (restoredActiveId && restoredSessions.some((session) => session.id === restoredActiveId)) {
       activeSessionId.value = restoredActiveId
       return
@@ -95,6 +99,12 @@ export function useAgentSessionManager() {
   const activeSession = computed(() => 
     sessions.value.find(s => s.id === activeSessionId.value)
   )
+  const preferredBootstrapSessionId = computed(() => {
+    const lastUsedId = String(lastUsedSessionId.value || '').trim()
+    if (lastUsedId) return lastUsedId
+    const activeId = String(activeSessionId.value || '').trim()
+    return activeId || null
+  })
 
   const addSession = (id: string, title: string) => {
     if (!sessions.value.find(s => s.id === id)) {
@@ -162,6 +172,7 @@ export function useAgentSessionManager() {
     sessions,
     activeSessionId,
     activeSession,
+    preferredBootstrapSessionId,
     addSession,
     removeSession,
     setActiveSession,

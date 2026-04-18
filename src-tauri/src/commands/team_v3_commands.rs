@@ -16,6 +16,8 @@ use crate::commands::team_v3_blackboard_context::{
 use crate::commands::team_v3_memory::{
     append_team_v3_task_memory_layers, build_task_artifact_ref_content, build_task_artifact_summary,
 };
+use crate::commands::team_v3_task_notices::append_team_v3_dependency_ready_notices;
+use crate::commands::team_v3_task_state::set_team_v3_task_execution_state;
 use crate::commands::team_v3_planner::{
     prepare_team_v3_execution_tasks_with_main_agent, select_team_member_for_task,
     team_member_profiles,
@@ -142,6 +144,16 @@ pub struct TeamV3Task {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamV3TaskActionResult {
+    pub task_id: String,
+    pub task_key: Option<String>,
+    pub title: Option<String>,
+    pub status: String,
+    pub owner_agent_id: Option<String>,
+    pub claimed_by_agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamV3ThreadMessage {
     pub id: String,
     pub session_id: String,
@@ -221,6 +233,12 @@ pub struct TeamV3SendMessageRequest {
     pub to_agent_id: Option<String>,
     pub message_type: Option<String>,
     pub payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamV3UpdateTaskStatusRequest {
+    pub status: String,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -682,117 +700,6 @@ pub(crate) async fn list_team_v3_tasks_internal(
         }
         DatabasePool::MySQL(_) => Err(anyhow!("Team V3 does not support MySQL")),
     }
-}
-
-async fn set_team_v3_task_execution_state(
-    runtime_pool: &DatabasePool,
-    session_id: &str,
-    task_id: &str,
-    status: &str,
-    claimed_by_agent_id: Option<&str>,
-    last_error: Option<&str>,
-) -> Result<()> {
-    let now = Utc::now().to_rfc3339();
-    let claim_expires_at = if status == "running" {
-        Some((Utc::now() + chrono::Duration::minutes(20)).to_rfc3339())
-    } else {
-        None
-    };
-    let raw_metadata: Option<String> = match runtime_pool {
-        DatabasePool::SQLite(pool) => {
-            let row = sqlx::query(
-                r#"SELECT metadata
-                   FROM team_v3_tasks
-                   WHERE session_id = ? AND id = ?"#,
-            )
-            .bind(session_id)
-            .bind(task_id)
-            .fetch_optional(pool)
-            .await?;
-            row.map(|r| r.get("metadata"))
-        }
-        DatabasePool::PostgreSQL(pool) => {
-            let row = sqlx::query(
-                r#"SELECT metadata::text as metadata
-                   FROM team_v3_tasks
-                   WHERE session_id = $1 AND id = $2"#,
-            )
-            .bind(session_id)
-            .bind(task_id)
-            .fetch_optional(pool)
-            .await?;
-            row.map(|r| r.get("metadata"))
-        }
-        DatabasePool::MySQL(_) => return Err(anyhow!("Team V3 does not support MySQL")),
-    };
-
-    let mut metadata = raw_metadata
-        .as_deref()
-        .map(parse_state_data_text)
-        .unwrap_or_else(|| json!({}));
-    if !metadata.is_object() {
-        metadata = json!({});
-    }
-    if let Some(metadata_obj) = metadata.as_object_mut() {
-        if let Some(error_text) = last_error.map(str::trim).filter(|value| !value.is_empty()) {
-            metadata_obj.insert("last_error".to_string(), json!(error_text));
-        } else {
-            metadata_obj.remove("last_error");
-        }
-        if status == "running" {
-            metadata_obj.insert("started_at".to_string(), json!(now.clone()));
-            metadata_obj.remove("completed_at");
-        }
-        if matches!(status, "completed" | "failed" | "blocked" | "cancelled") {
-            metadata_obj.insert("completed_at".to_string(), json!(now.clone()));
-        }
-    }
-    let metadata_text = serde_json::to_string(&metadata)?;
-
-    match runtime_pool {
-        DatabasePool::SQLite(pool) => {
-            sqlx::query(
-                r#"UPDATE team_v3_tasks
-                   SET status = ?,
-                       claimed_by_agent_id = ?,
-                       claim_expires_at = ?,
-                       metadata = ?,
-                       updated_at = ?
-                   WHERE session_id = ? AND id = ?"#,
-            )
-            .bind(status)
-            .bind(claimed_by_agent_id)
-            .bind(claim_expires_at.as_deref())
-            .bind(&metadata_text)
-            .bind(&now)
-            .bind(session_id)
-            .bind(task_id)
-            .execute(pool)
-            .await?;
-        }
-        DatabasePool::PostgreSQL(pool) => {
-            sqlx::query(
-                r#"UPDATE team_v3_tasks
-                   SET status = $1,
-                       claimed_by_agent_id = $2,
-                       claim_expires_at = $3,
-                       metadata = $4::jsonb,
-                       updated_at = $5
-                   WHERE session_id = $6 AND id = $7"#,
-            )
-            .bind(status)
-            .bind(claimed_by_agent_id)
-            .bind(claim_expires_at.as_deref())
-            .bind(&metadata_text)
-            .bind(&now)
-            .bind(session_id)
-            .bind(task_id)
-            .execute(pool)
-            .await?;
-        }
-        DatabasePool::MySQL(_) => return Err(anyhow!("Team V3 does not support MySQL")),
-    }
-    Ok(())
 }
 
 async fn append_team_v3_member_message(
@@ -1346,6 +1253,15 @@ pub(crate) async fn run_team_v3_execution_orchestrator(
                 }
             }
         }
+
+        let tasks_after_wave = list_team_v3_tasks_internal(&runtime_pool, &session_id).await?;
+        append_team_v3_dependency_ready_notices(
+            &runtime_pool,
+            &session_id,
+            &tasks,
+            &tasks_after_wave,
+        )
+        .await?;
 
         if let Some(error) = wave_error {
             return Err(anyhow!(error));

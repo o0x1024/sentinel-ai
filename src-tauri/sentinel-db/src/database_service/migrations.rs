@@ -350,16 +350,52 @@ impl SubagentMessagesMigration {
     }
 }
 
-/// Database migration for agent todos persistence
-pub struct AgentTodosMigration;
+/// Database migration for execution task persistence
+pub struct ExecutionTasksMigration;
 
-impl AgentTodosMigration {
+impl ExecutionTasksMigration {
     pub async fn apply(pool: &PgPool) -> Result<()> {
-        info!("Applying agent todos migration...");
+        info!("Applying execution tasks migration...");
 
-        // Create agent_todos table for persistent todo storage
+        let legacy_table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'agent_todos'
+            )",
+        )
+        .fetch_one(pool)
+        .await?;
+        let execution_table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'execution_tasks'
+            )",
+        )
+        .fetch_one(pool)
+        .await?;
+
+        // Single-agent execution planning used `agent_todos` historically.
+        // The runtime contract is now `tasks`, so we migrate the durable table
+        // name once and keep the data in place instead of maintaining two models.
+        if legacy_table_exists && !execution_table_exists {
+            sqlx::query("ALTER TABLE agent_todos RENAME TO execution_tasks")
+                .execute(pool)
+                .await?;
+        }
+
+        sqlx::query("DROP INDEX IF EXISTS idx_agent_todos_execution")
+            .execute(pool)
+            .await?;
+        sqlx::query("DROP INDEX IF EXISTS idx_agent_todos_execution_index")
+            .execute(pool)
+            .await?;
+        sqlx::query("DROP INDEX IF EXISTS idx_agent_todos_updated")
+            .execute(pool)
+            .await?;
+
+        // Create execution_tasks table for persistent execution task storage
         sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS agent_todos (
+            r#"CREATE TABLE IF NOT EXISTS execution_tasks (
                 id TEXT PRIMARY KEY,
                 execution_id TEXT NOT NULL,
                 item_index INTEGER NOT NULL,
@@ -374,16 +410,16 @@ impl AgentTodosMigration {
         .await?;
 
         let indices = vec![
-            "CREATE INDEX IF NOT EXISTS idx_agent_todos_execution ON agent_todos(execution_id)",
-            "CREATE INDEX IF NOT EXISTS idx_agent_todos_execution_index ON agent_todos(execution_id, item_index)",
-            "CREATE INDEX IF NOT EXISTS idx_agent_todos_updated ON agent_todos(updated_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_execution_tasks_execution ON execution_tasks(execution_id)",
+            "CREATE INDEX IF NOT EXISTS idx_execution_tasks_execution_index ON execution_tasks(execution_id, item_index)",
+            "CREATE INDEX IF NOT EXISTS idx_execution_tasks_updated ON execution_tasks(updated_at DESC)",
         ];
 
         for index_sql in indices {
             sqlx::query(index_sql).execute(pool).await?;
         }
 
-        info!("Agent todos migration completed successfully");
+        info!("Execution tasks migration completed successfully");
         Ok(())
     }
 }
@@ -420,8 +456,8 @@ impl FloatTypeMigration {
             // ai_memories table
             ("ai_memories", "cost"),
             ("ai_memories", "confidence"),
-            // agent_todos table
-            ("agent_todos", "confidence"),
+            // execution_tasks table
+            ("execution_tasks", "confidence"),
             // workflow_runs table
             ("workflow_runs", "progress"),
             // tasks table

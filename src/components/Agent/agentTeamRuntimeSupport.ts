@@ -98,6 +98,7 @@ export const pollTeamRunStatusOnce = async (params: {
 
   await params.syncTeamMessagesToMainFlow(sessionId)
   await params.refreshTeamRuntimeData(sessionId)
+  await params.syncTeamMessagesToMainFlow(sessionId)
 
   const status = await params.getRunStatus(sessionId)
   if (!status || params.activeTeamSessionId !== sessionId) return
