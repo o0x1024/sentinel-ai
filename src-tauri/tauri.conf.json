@@ -37,6 +37,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": "v1Compatible",
     "resources": [
       "../extensions/chrome-behavior-capture"
     ],

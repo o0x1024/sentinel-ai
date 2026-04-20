@@ -242,18 +242,42 @@ jobs:
             fi
           }
 
+          require_file() {
+            local path="$1"
+            local hint="$2"
+
+            if [ ! -f "$path" ]; then
+              echo "::error::Missing required release asset: $(basename "$path"). $hint"
+              echo "Bundle directory contents:"
+              find "$BUNDLE_DIR" -maxdepth 3 -type f -print | sort || true
+              exit 1
+            fi
+          }
+
           case "${{ matrix.platform }}" in
             darwin-aarch64)
               copy_if_found "*.app.tar.gz" "sentinel-ai-${VERSION}-aarch64.app.tar.gz"
               copy_if_found "*.app.tar.gz.sig" "sentinel-ai-${VERSION}-aarch64.app.tar.gz.sig"
               copy_if_found "*.dmg" "sentinel-ai-${VERSION}-aarch64.dmg"
               copy_if_found "*.dmg.sig" "sentinel-ai-${VERSION}-aarch64.dmg.sig"
+              require_file \
+                "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.app.tar.gz" \
+                "Ensure src-tauri/tauri.conf.json sets bundle.createUpdaterArtifacts and TAURI_SIGNING_PRIVATE_KEY is configured."
+              require_file \
+                "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.app.tar.gz.sig" \
+                "Ensure TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD are valid for tagged builds."
               ;;
             windows-x86_64)
               copy_if_found "*_x64-setup.exe" "sentinel-ai-${VERSION}-x64-setup.exe"
               copy_if_found "*_x64-setup.exe.sig" "sentinel-ai-${VERSION}-x64-setup.exe.sig"
               copy_if_found "*_x64-setup.nsis.zip" "sentinel-ai-${VERSION}-x64-setup.nsis.zip"
               copy_if_found "*_x64-setup.nsis.zip.sig" "sentinel-ai-${VERSION}-x64-setup.nsis.zip.sig"
+              require_file \
+                "$UPLOAD_DIR/sentinel-ai-${VERSION}-x64-setup.nsis.zip" \
+                "Tauri v2 only creates the .nsis.zip updater bundle when bundle.createUpdaterArtifacts is set to v1Compatible."
+              require_file \
+                "$UPLOAD_DIR/sentinel-ai-${VERSION}-x64-setup.nsis.zip.sig" \
+                "Ensure updater signing is enabled and TAURI_SIGNING_PRIVATE_KEY is available in GitHub Actions secrets."
               ;;
             *)
               echo "::error::Unsupported platform: ${{ matrix.platform }}"
