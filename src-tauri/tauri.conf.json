@@ -53,6 +53,12 @@
     ]
   },
   "plugins": {
+    "updater": {
+      "pubkey": "__TAURI_UPDATER_PUBLIC_KEY__",
+      "endpoints": [
+        "https://github.com/o0x1024/sentinel-ai/releases/latest/download/latest.json"
+      ]
+    },
     "opener": {
       "requireLiteralLeadingDot": false
     }

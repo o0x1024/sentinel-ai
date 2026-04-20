@@ -57,6 +57,7 @@ jobs:
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
 
     steps:
       - name: Checkout Repository
@@ -136,6 +137,51 @@ jobs:
 
       - name: Install Frontend Dependencies
         run: yarn install
+
+      - name: Validate updater signing secrets for tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "::error::Missing TAURI_SIGNING_PRIVATE_KEY for tagged release."
+            exit 1
+          fi
+
+          if [ -z "$TAURI_UPDATER_PUBLIC_KEY" ]; then
+            echo "::error::Missing TAURI_UPDATER_PUBLIC_KEY for tagged release."
+            exit 1
+          fi
+
+      - name: Inject Tauri updater public key
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const configPath = "src-tauri/tauri.conf.json";
+            const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+            config.plugins = config.plugins || {};
+            config.plugins.updater = config.plugins.updater || {};
+            config.plugins.updater.pubkey = process.env.TAURI_UPDATER_PUBLIC_KEY;
+            fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+          '
+
+      - name: Validate injected updater config
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const config = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
+            const pubkey = config?.plugins?.updater?.pubkey;
+            const endpoints = config?.plugins?.updater?.endpoints;
+            if (!pubkey || pubkey === "__TAURI_UPDATER_PUBLIC_KEY__") {
+              throw new Error("plugins.updater.pubkey was not injected");
+            }
+            if (!Array.isArray(endpoints) || endpoints.length === 0) {
+              throw new Error("plugins.updater.endpoints is missing");
+            }
+          '
 
       - name: Validate macOS signing secrets for tagged release
         if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
