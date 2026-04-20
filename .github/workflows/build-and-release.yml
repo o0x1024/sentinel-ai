@@ -10,9 +10,38 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  create_release:
+    name: Create Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
+    steps:
+      - name: Get Version from Tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: 'Sentinel AI v${{ steps.get_version.outputs.VERSION }}'
+          body: |
+            ## Sentinel AI v${{ steps.get_version.outputs.VERSION }}
+            
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+
   build:
     name: Build for ${{ matrix.platform }}
+    needs: create_release
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -190,16 +219,62 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
           codesign --display --verbose=4 "$APP_BUNDLE" | sed -n '1,30p'
 
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: tauri-build-${{ matrix.platform }}
-          path: |
-            src-tauri/target/${{ matrix.rust_target }}/release/bundle/
+      - name: Upload Release Assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          VERSION="${{ needs.create_release.outputs.version }}"
+          BUNDLE_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle"
+          UPLOAD_DIR=$(mktemp -d)
+
+          copy_if_found() {
+            local pattern="$1"
+            local target_name="$2"
+            local source
+
+            source=$(find "$BUNDLE_DIR" -type f -name "$pattern" -print -quit || true)
+            if [ -n "$source" ]; then
+              cp "$source" "$UPLOAD_DIR/$target_name"
+            fi
+          }
+
+          case "${{ matrix.platform }}" in
+            darwin-aarch64)
+              copy_if_found "*.app.tar.gz" "sentinel-ai-${VERSION}-aarch64.app.tar.gz"
+              copy_if_found "*.app.tar.gz.sig" "sentinel-ai-${VERSION}-aarch64.app.tar.gz.sig"
+              copy_if_found "*.dmg" "sentinel-ai-${VERSION}-aarch64.dmg"
+              copy_if_found "*.dmg.sig" "sentinel-ai-${VERSION}-aarch64.dmg.sig"
+              ;;
+            windows-x86_64)
+              copy_if_found "*_x64-setup.exe" "sentinel-ai-${VERSION}-x64-setup.exe"
+              copy_if_found "*_x64-setup.exe.sig" "sentinel-ai-${VERSION}-x64-setup.exe.sig"
+              copy_if_found "*_x64-setup.nsis.zip" "sentinel-ai-${VERSION}-x64-setup.nsis.zip"
+              copy_if_found "*_x64-setup.nsis.zip.sig" "sentinel-ai-${VERSION}-x64-setup.nsis.zip.sig"
+              ;;
+            *)
+              echo "::error::Unsupported platform: ${{ matrix.platform }}"
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$(ls -A "$UPLOAD_DIR")" ]; then
+            echo "::error::No release assets found in $BUNDLE_DIR"
+            find "$BUNDLE_DIR" -maxdepth 3 -type f -print || true
+            exit 1
+          fi
+
+          ls -la "$UPLOAD_DIR"
+          gh release upload "${{ github.ref_name }}" "$UPLOAD_DIR"/* --clobber
 
   release:
-    name: Create Release
-    needs: build
+    name: Publish Update Manifests
+    needs:
+      - create_release
+      - build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -213,181 +288,32 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Dependencies
-        run: yarn install
-
-      - name: Download All Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: src-tauri/target/
-
-      - name: Get Version from Tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-
-      - name: Generate Update Manifest
-        run: |
-          chmod +x scripts/generate-update-manifest.cjs
-          node scripts/generate-update-manifest.cjs
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          RELEASE_NOTES: "See the release notes for details."
-          npm_package_version: ${{ steps.get_version.outputs.VERSION }}
-
-      - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          tag_name: ${{ github.ref_name }}
-          name: 'Sentinel AI v${{ steps.get_version.outputs.VERSION }}'
-          body: |
-            ## Sentinel AI v${{ steps.get_version.outputs.VERSION }}
-            
-          draft: false
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-
-      - name: Upload Release Assets
+      - name: Download Release Signatures
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euxo pipefail
-
-          TARGET_DIR="src-tauri/target"
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
           UPLOAD_DIR=$(mktemp -d)
           echo "UPLOAD_DIR=$UPLOAD_DIR" >> $GITHUB_ENV
+          gh release download "${{ github.ref_name }}" --dir "$UPLOAD_DIR" --pattern "*.sig"
 
-          collect_macos() {
-            local platform_dir="$1"
-            local arch="$2"
+      - name: Generate and Upload Update Manifests
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_NOTES: "See the release notes for details."
+          npm_package_version: ${{ needs.create_release.outputs.version }}
+        run: |
+          set -euxo pipefail
 
-            local macos_dir="$platform_dir/macos"
-            if [ -d "$macos_dir" ]; then
-              local app_pkg
-              app_pkg=$(find "$macos_dir" -type f -name "*.app.tar.gz" -print -quit || true)
-              if [ -n "$app_pkg" ]; then
-                cp "$app_pkg" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.app.tar.gz"
-              fi
-
-              local app_sig
-              app_sig=$(find "$macos_dir" -type f -name "*.app.tar.gz.sig" -print -quit || true)
-              if [ -n "$app_sig" ]; then
-                cp "$app_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.app.tar.gz.sig"
-              fi
-            else
-              local fallback_app
-              fallback_app=$(find "$platform_dir" -maxdepth 2 -type f -name "*.app.tar.gz" -print -quit || true)
-              if [ -n "$fallback_app" ]; then
-                cp "$fallback_app" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.app.tar.gz"
-              fi
-
-              local fallback_app_sig
-              fallback_app_sig=$(find "$platform_dir" -maxdepth 2 -type f -name "*.app.tar.gz.sig" -print -quit || true)
-              if [ -n "$fallback_app_sig" ]; then
-                cp "$fallback_app_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.app.tar.gz.sig"
-              fi
-            fi
-
-            local dmg_dir="$platform_dir/dmg"
-            if [ -d "$dmg_dir" ]; then
-              local dmg_pkg
-              dmg_pkg=$(find "$dmg_dir" -type f -name "*.dmg" -print -quit || true)
-              if [ -n "$dmg_pkg" ]; then
-                cp "$dmg_pkg" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.dmg"
-              fi
-
-              local dmg_sig
-              dmg_sig=$(find "$dmg_dir" -type f -name "*.dmg.sig" -print -quit || true)
-              if [ -n "$dmg_sig" ]; then
-                cp "$dmg_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.dmg.sig"
-              fi
-            else
-              local fallback_dmg
-              fallback_dmg=$(find "$platform_dir" -maxdepth 2 -type f -name "*.dmg" -print -quit || true)
-              if [ -n "$fallback_dmg" ]; then
-                cp "$fallback_dmg" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.dmg"
-              fi
-
-              local fallback_dmg_sig
-              fallback_dmg_sig=$(find "$platform_dir" -maxdepth 2 -type f -name "*.dmg.sig" -print -quit || true)
-              if [ -n "$fallback_dmg_sig" ]; then
-                cp "$fallback_dmg_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.dmg.sig"
-              fi
-            fi
-          }
-
-          collect_windows() {
-            local platform_dir="$1"
-            local arch="$2"
-            local nsis_dir="$platform_dir/nsis"
-
-            if [ -d "$nsis_dir" ]; then
-              local installer
-              installer=$(find "$nsis_dir" -type f -name "*_x64-setup.exe" -print -quit || true)
-              if [ -n "$installer" ]; then
-                cp "$installer" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}-setup.exe"
-              fi
-
-              local installer_sig
-              installer_sig=$(find "$nsis_dir" -type f -name "*_x64-setup.exe.sig" -print -quit || true)
-              if [ -n "$installer_sig" ]; then
-                cp "$installer_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}-setup.exe.sig"
-              fi
-
-              local nsis_pkg
-              nsis_pkg=$(find "$nsis_dir" -type f -name "*_x64-setup.nsis.zip" -print -quit || true)
-              if [ -n "$nsis_pkg" ]; then
-                cp "$nsis_pkg" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}-setup.nsis.zip"
-              fi
-
-              local nsis_sig
-              nsis_sig=$(find "$nsis_dir" -type f -name "*_x64-setup.nsis.zip.sig" -print -quit || true)
-              if [ -n "$nsis_sig" ]; then
-                cp "$nsis_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}-setup.nsis.zip.sig"
-              fi
-            fi
-          }
-
-          for PLATFORM_PATH in "$TARGET_DIR"/tauri-build-*; do
-            [ -d "$PLATFORM_PATH" ] || continue
-            PLATFORM_NAME=$(basename "$PLATFORM_PATH")
-
-            case "$PLATFORM_NAME" in
-              tauri-build-darwin-aarch64)
-                collect_macos "$PLATFORM_PATH" "aarch64"
-                ;;
-              tauri-build-windows-x86_64)
-                collect_windows "$PLATFORM_PATH" "x64"
-                ;;
-              *)
-                echo "Skipping unsupported platform directory: $PLATFORM_NAME"
-                ;;
-            esac
-          done
-
-          echo "Files in upload directory:"
           ls -la "$UPLOAD_DIR"
-          echo "Signature files:"
           find "$UPLOAD_DIR" -name "*.sig" -ls
 
-          # Regenerate manifest with actual signature files
-          echo "Regenerating update manifest..."
-          UPLOAD_DIR="$UPLOAD_DIR" node scripts/generate-update-manifest.cjs
+          chmod +x scripts/generate-update-manifest.cjs
+          node scripts/generate-update-manifest.cjs
 
-          # Copy manifest files
-          if [ -d "dist/update-manifests" ]; then
-            if [ -f "dist/update-manifests/latest.json" ]; then
-              cp "dist/update-manifests/latest.json" "$UPLOAD_DIR/latest.json"
-            fi
-            find dist/update-manifests -name "*.json" -exec cp {} "$UPLOAD_DIR/" \;
-          fi
-
-          ls -l "$UPLOAD_DIR"
-
-          # Upload all files
-          if [ -n "$(ls -A "$UPLOAD_DIR")" ]; then
-            gh release upload ${{ github.ref_name }} "$UPLOAD_DIR"/*
+          if [ -d "dist/update-manifests" ] && [ -n "$(find dist/update-manifests -maxdepth 1 -name '*.json' -print -quit)" ]; then
+            gh release upload "${{ github.ref_name }}" dist/update-manifests/*.json --clobber
           else
-            echo "No files to upload."
+            echo "No manifest files to upload."
           fi
