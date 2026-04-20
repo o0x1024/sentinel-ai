@@ -357,8 +357,7 @@ impl PluginEngine {
         }
         loader.register_module(
             "sentinel://monitor_progress.ts",
-            include_str!("../../../../sentinel-plugin/plugins/agent/monitor_progress.ts")
-                .to_string(),
+            include_str!("../runtime/monitor_progress.ts").to_string(),
         );
 
         // Create Deno Runtime with extensions and module loader

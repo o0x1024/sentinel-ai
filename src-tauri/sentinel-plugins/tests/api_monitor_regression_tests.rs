@@ -66,9 +66,7 @@ globalThis.fetch = async function(input, init) {
 };
 "#,
     );
-    code.push_str(include_str!(
-        "../../../../sentinel-plugin/plugins/agent/api_monitor.ts"
-    ));
+    code.push_str(include_str!("../runtime/agent/api_monitor.ts"));
 
     let metadata = PluginMetadata {
         id: "api_monitor_regression".to_string(),
@@ -181,9 +179,7 @@ globalThis.fetch = async function(input, init) {
 };
 "#,
     );
-    code.push_str(include_str!(
-        "../../../../sentinel-plugin/plugins/agent/api_monitor.ts"
-    ));
+    code.push_str(include_str!("../runtime/agent/api_monitor.ts"));
 
     let metadata = PluginMetadata {
         id: "api_monitor_concat_guard".to_string(),
@@ -285,9 +281,7 @@ globalThis.fetch = async function(input, init) {
 };
 "#,
     );
-    code.push_str(include_str!(
-        "../../../../sentinel-plugin/plugins/agent/api_monitor.ts"
-    ));
+    code.push_str(include_str!("../runtime/agent/api_monitor.ts"));
 
     let metadata = PluginMetadata {
         id: "api_monitor_status_shell".to_string(),
@@ -376,9 +370,7 @@ globalThis.fetch = async function(input, init) {
 };
 "#,
     );
-    code.push_str(include_str!(
-        "../../../../sentinel-plugin/plugins/agent/api_monitor.ts"
-    ));
+    code.push_str(include_str!("../runtime/agent/api_monitor.ts"));
 
     let metadata = PluginMetadata {
         id: "api_monitor_notfound_target".to_string(),
@@ -463,9 +455,7 @@ globalThis.fetch = async function(input, init) {
 };
 "#,
     );
-    code.push_str(include_str!(
-        "../../../../sentinel-plugin/plugins/agent/api_monitor.ts"
-    ));
+    code.push_str(include_str!("../runtime/agent/api_monitor.ts"));
 
     let metadata = PluginMetadata {
         id: "api_monitor_probe_fallback".to_string(),
