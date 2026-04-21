@@ -31,6 +31,61 @@ pub struct StorePluginListResponse {
     pub error: Option<String>,
 }
 
+fn plugin_download_candidates(download_url: &str) -> Vec<String> {
+    let mut candidates = vec![download_url.to_string()];
+
+    if download_url.contains("/plugins/passive/") {
+        let traffic_url = download_url.replacen("/plugins/passive/", "/plugins/traffic/", 1);
+        if traffic_url != download_url {
+            candidates.push(traffic_url);
+        }
+    }
+
+    candidates
+}
+
+async fn download_plugin_source(
+    client: &reqwest::Client,
+    download_url: &str,
+) -> Result<String, String> {
+    let candidates = plugin_download_candidates(download_url);
+    let mut last_error = None;
+
+    for candidate in candidates {
+        match client.get(&candidate).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                if candidate != download_url {
+                    tracing::info!(
+                        "Recovered plugin download using fallback URL: {} -> {}",
+                        download_url,
+                        candidate
+                    );
+                }
+                return resp
+                    .text()
+                    .await
+                    .map_err(|e| format!("Failed to read response: {}", e));
+            }
+            Ok(resp) => {
+                let error = format!("HTTP {}", resp.status());
+                if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                    tracing::warn!(
+                        "Plugin download candidate not found: {} ({})",
+                        candidate,
+                        error
+                    );
+                    last_error = Some(error);
+                    continue;
+                }
+                return Err(error);
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| "HTTP 404 Not Found".to_string()))
+}
+
 #[tauri::command]
 pub async fn fetch_store_plugins(repo_url: String) -> Result<StorePluginListResponse, String> {
     tracing::info!("Fetching store plugins from: {}", repo_url);
@@ -150,26 +205,14 @@ pub async fn fetch_plugin_code(download_url: String) -> Result<serde_json::Value
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let response = client.get(&download_url).send().await;
-
-    match response {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                let code = resp.text().await.map_err(|e| e.to_string())?;
-                Ok(serde_json::json!({
-                    "success": true,
-                    "code": code
-                }))
-            } else {
-                Ok(serde_json::json!({
-                    "success": false,
-                    "error": format!("HTTP error: {}", resp.status())
-                }))
-            }
-        }
-        Err(e) => Ok(serde_json::json!({
+    match download_plugin_source(&client, &download_url).await {
+        Ok(code) => Ok(serde_json::json!({
+            "success": true,
+            "code": code
+        })),
+        Err(error) => Ok(serde_json::json!({
             "success": false,
-            "error": format!("Network error: {}", e)
+            "error": error
         })),
     }
 }
@@ -188,25 +231,12 @@ pub async fn install_store_plugin(
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let response = client.get(&plugin.download_url).send().await;
-
-    let plugin_code = match response {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                resp.text()
-                    .await
-                    .map_err(|e| format!("Failed to read response: {}", e))?
-            } else {
-                return Ok(CommandResponse::err(format!(
-                    "Failed to download plugin: HTTP {}",
-                    resp.status()
-                )));
-            }
-        }
-        Err(e) => {
+    let plugin_code = match download_plugin_source(&client, &plugin.download_url).await {
+        Ok(code) => code,
+        Err(error) => {
             return Ok(CommandResponse::err(format!(
                 "Failed to download plugin: {}",
-                e
+                error
             )));
         }
     };
@@ -324,25 +354,12 @@ pub async fn update_store_plugin(
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let response = client.get(&plugin.download_url).send().await;
-
-    let plugin_code = match response {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                resp.text()
-                    .await
-                    .map_err(|e| format!("Failed to read response: {}", e))?
-            } else {
-                return Ok(CommandResponse::err(format!(
-                    "Failed to download plugin: HTTP {}",
-                    resp.status()
-                )));
-            }
-        }
-        Err(e) => {
+    let plugin_code = match download_plugin_source(&client, &plugin.download_url).await {
+        Ok(code) => code,
+        Err(error) => {
             return Ok(CommandResponse::err(format!(
                 "Failed to download plugin: {}",
-                e
+                error
             )));
         }
     };
