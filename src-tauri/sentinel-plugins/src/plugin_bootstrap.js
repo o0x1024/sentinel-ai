@@ -580,6 +580,104 @@ globalThis.Deno.makeTempFile = async function(options = {}) {
 // Deno.core (already available, but ensure it's exposed)
 globalThis.Deno.core = globalThis.Deno.core || Deno.core
 
+const ACTIVE_PROBE_DEFAULTS = {
+  jitterRange: [300, 1000],
+  minHostCooldownMs: 1000,
+}
+
+const activeProbeHostQueues = new Map()
+const activeProbeHostLastRun = new Map()
+
+function clampPositiveInteger(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.trunc(value)
+    : fallback
+}
+
+function normalizeActiveProbeOptions(url, init = {}) {
+  const source =
+    init.activeProbe && typeof init.activeProbe === 'object'
+      ? init.activeProbe
+      : init.activeProbe
+        ? {}
+        : null
+
+  if (!source) {
+    return null
+  }
+
+  let key = 'global'
+  try {
+    key = source.cooldownKey || init.cooldownKey || new URL(String(url)).host || 'global'
+  } catch {
+    key = source.cooldownKey || init.cooldownKey || 'global'
+  }
+
+  const rawRange =
+    source.jitterRange || init.jitterRange || ACTIVE_PROBE_DEFAULTS.jitterRange
+  const normalizedRange = Array.isArray(rawRange) && rawRange.length === 2
+    ? [
+        clampPositiveInteger(rawRange[0], ACTIVE_PROBE_DEFAULTS.jitterRange[0]),
+        clampPositiveInteger(rawRange[1], ACTIVE_PROBE_DEFAULTS.jitterRange[1]),
+      ]
+    : [...ACTIVE_PROBE_DEFAULTS.jitterRange]
+  const jitterMin = Math.min(normalizedRange[0], normalizedRange[1])
+  const jitterMax = Math.max(normalizedRange[0], normalizedRange[1])
+
+  return {
+    key,
+    jitterRange: [jitterMin, jitterMax],
+    minHostCooldownMs: clampPositiveInteger(
+      source.minHostCooldownMs ?? init.minHostCooldownMs,
+      ACTIVE_PROBE_DEFAULTS.minHostCooldownMs,
+    ),
+  }
+}
+
+function randomIntInclusive(min, max) {
+  if (max <= min) {
+    return min
+  }
+  return Math.floor(Math.random() * (max - min + 1)) + min
+}
+
+async function scheduleActiveProbe(url, init, task) {
+  const options = normalizeActiveProbeOptions(url, init)
+  if (!options) {
+    return await task()
+  }
+
+  const previous = activeProbeHostQueues.get(options.key) || Promise.resolve()
+  const runPromise = previous.catch(() => {}).then(async () => {
+    const lastRun = activeProbeHostLastRun.get(options.key) || 0
+    const cooldownWait = Math.max(
+      0,
+      options.minHostCooldownMs - (Date.now() - lastRun),
+    )
+    const jitterWait = randomIntInclusive(
+      options.jitterRange[0],
+      options.jitterRange[1],
+    )
+
+    if (cooldownWait + jitterWait > 0) {
+      await globalThis.sleep(cooldownWait + jitterWait)
+    }
+
+    activeProbeHostLastRun.set(options.key, Date.now())
+    return await task()
+  })
+
+  const queuedPromise = runPromise.finally(() => {
+    if (activeProbeHostQueues.get(options.key) === queuedPromise) {
+      activeProbeHostQueues.delete(options.key)
+    }
+  })
+
+  activeProbeHostQueues.set(options.key, queuedPromise)
+
+  return await runPromise
+}
+
 // Fetch polyfill (custom op based) with enhanced features for security testing
 globalThis.fetch = async function (input, init = {}) {
   const url = typeof input === 'string' ? input : input.url
@@ -637,15 +735,17 @@ globalThis.fetch = async function (input, init = {}) {
 
   let result
   try {
-    result = await Deno.core.ops.op_fetch(url, {
-      method,
-      headers,
-      body,
-      timeout,
-      redirect,
-      max_redirects: maxRedirects,
-      max_body_bytes: maxBodyBytes,
-      request_id: requestId,
+    result = await scheduleActiveProbe(url, init, async () => {
+      return await Deno.core.ops.op_fetch(url, {
+        method,
+        headers,
+        body,
+        timeout,
+        redirect,
+        max_redirects: maxRedirects,
+        max_body_bytes: maxBodyBytes,
+        request_id: requestId,
+      })
     })
   } finally {
     if (timeoutId) clearTimeout(timeoutId)

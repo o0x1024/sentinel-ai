@@ -148,7 +148,7 @@ globalThis.scan_transaction = scan_transaction;
 1. **MUST export `scan_transaction`**.
 2. **MUST return an array of findings** (empty array if no issues found).
 3. **Handle `transaction.response` being potentially null**.
-4. **No network calls** (fetch, etc.) are allowed in traffic plugins.
+4. **Bounded active verification is allowed** in traffic plugins. If you use `fetch`, keep requests low-rate, serial by host, and non-destructive by default.
 5. **MUST include the `globalThis` export at the end** - Without this, the plugin will fail with "Function not found" error.
 
 Now generate the Traffic Scan Plugin.
