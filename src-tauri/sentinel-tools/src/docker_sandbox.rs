@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -433,6 +435,36 @@ pub struct DockerSandbox {
     config: DockerSandboxConfig,
 }
 
+fn spawn_output_reader<T>(stream: Option<T>) -> JoinHandle<std::io::Result<Vec<u8>>>
+where
+    T: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        if let Some(mut stream) = stream {
+            stream.read_to_end(&mut bytes).await?;
+        }
+        Ok(bytes)
+    })
+}
+
+async fn collect_output_reader(
+    handle: JoinHandle<std::io::Result<Vec<u8>>>,
+    stream_name: &str,
+) -> Result<Vec<u8>, DockerError> {
+    handle
+        .await
+        .map_err(|e| {
+            DockerError::ExecutionFailed(format!(
+                "Failed to join {} output reader: {}",
+                stream_name, e
+            ))
+        })?
+        .map_err(|e| {
+            DockerError::ExecutionFailed(format!("Failed to read {} output: {}", stream_name, e))
+        })
+}
+
 impl DockerSandbox {
     pub fn new(config: DockerSandboxConfig) -> Self {
         Self { config }
@@ -534,6 +566,8 @@ impl DockerSandbox {
             .map_err(|e| {
                 DockerError::ExecutionFailed(format!("Failed to execute command: {}", e))
             })?;
+        let stdout_reader = spawn_output_reader(child.stdout.take());
+        let stderr_reader = spawn_output_reader(child.stderr.take());
 
         let timeout_sleep = tokio::time::sleep(Duration::from_secs(timeout_secs));
         tokio::pin!(timeout_sleep);
@@ -543,18 +577,23 @@ impl DockerSandbox {
                 if token.is_cancelled() {
                     let _ = child.kill().await;
                     let _ = child.wait().await;
+                    let _ = stdout_reader.await;
+                    let _ = stderr_reader.await;
                     return Err(DockerError::ExecutionFailed("cancelled".to_string()));
                 }
             }
 
             match child.try_wait() {
-                Ok(Some(_)) => {
-                    let output = child.wait_with_output().await.map_err(|e| {
-                        DockerError::ExecutionFailed(format!("Failed to read output: {}", e))
-                    })?;
-                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    let exit_code = output.status.code().unwrap_or(-1);
+                Ok(Some(status)) => {
+                    let stdout = String::from_utf8_lossy(
+                        &collect_output_reader(stdout_reader, "stdout").await?,
+                    )
+                    .to_string();
+                    let stderr = String::from_utf8_lossy(
+                        &collect_output_reader(stderr_reader, "stderr").await?,
+                    )
+                    .to_string();
+                    let exit_code = status.code().unwrap_or(-1);
                     return Ok((stdout, stderr, exit_code));
                 }
                 Ok(None) => {
@@ -562,6 +601,8 @@ impl DockerSandbox {
                         _ = &mut timeout_sleep => {
                             let _ = child.kill().await;
                             let _ = child.wait().await;
+                            let _ = stdout_reader.await;
+                            let _ = stderr_reader.await;
                             return Err(DockerError::Timeout(timeout_secs));
                         }
                         _ = tokio::time::sleep(Duration::from_millis(120)) => {}

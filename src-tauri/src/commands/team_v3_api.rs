@@ -22,8 +22,8 @@ use super::team_v3_commands::{
 };
 use super::team_v3_schema::ensure_team_v3_schema;
 use super::team_v3_session_state::{
-    append_team_v3_status_message, apply_team_v3_execution_outcome, build_team_state_data, first_member_id,
-    get_team_v3_latest_human_message_content, get_team_v3_session_context,
+    append_team_v3_status_message, apply_team_v3_execution_outcome, build_team_state_data,
+    first_member_id, get_team_v3_latest_human_message_content, get_team_v3_session_context,
     get_team_v3_session_state_data, parse_state_data_text, set_team_v3_session_conversation_id,
     set_team_v3_session_state, set_team_v3_session_state_data,
 };

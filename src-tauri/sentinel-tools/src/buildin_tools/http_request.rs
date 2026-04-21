@@ -188,7 +188,9 @@ impl Tool for HttpRequestTool {
 
         // Store large response only for agent-invoked calls
         let body = if args.enable_large_output_storage {
-            match crate::output_storage::store_output_unified("http_response", &body, None).await {
+            match crate::output_storage::store_output_unified("http_response", &body, None, None)
+                .await
+            {
                 Ok(storage_result) => {
                     if let Some(artifact) = storage_result.to_stored_artifact("body") {
                         stored_artifacts.push(artifact);

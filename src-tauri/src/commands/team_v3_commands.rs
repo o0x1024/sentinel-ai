@@ -16,8 +16,6 @@ use crate::commands::team_v3_blackboard_context::{
 use crate::commands::team_v3_memory::{
     append_team_v3_task_memory_layers, build_task_artifact_ref_content, build_task_artifact_summary,
 };
-use crate::commands::team_v3_task_notices::append_team_v3_dependency_ready_notices;
-use crate::commands::team_v3_task_state::set_team_v3_task_execution_state;
 use crate::commands::team_v3_planner::{
     prepare_team_v3_execution_tasks_with_main_agent, select_team_member_for_task,
     team_member_profiles,
@@ -29,6 +27,8 @@ use crate::commands::team_v3_prompting::{
 use crate::commands::team_v3_session_state::{
     append_team_v3_status_message, parse_state_data_text, parse_task_dependencies,
 };
+use crate::commands::team_v3_task_notices::append_team_v3_dependency_ready_notices;
+use crate::commands::team_v3_task_state::set_team_v3_task_execution_state;
 use crate::services::ai::AiServiceManager;
 use anyhow::{anyhow, Result};
 use chrono::Utc;

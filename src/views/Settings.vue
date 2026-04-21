@@ -67,9 +67,7 @@
                     @apply-manual-config="applyManualConfig"
                     @set-default-provider="setDefaultProvider"
                     @set-default-chat-model="setDefaultChatModel"
-                    @set-default-vlm-provider="setDefaultVlmProvider"
-                    @set-default-vision-model="setDefaultVisionModel"
-                    @set-enable-multimodal="setEnableMultimodal"
+                    @refresh-vision-capability-cache="refreshVisionCapabilityCache"
                     @clear-usage-stats="clearAiUsageStats" />
 
         <!-- 知识库配置 -->
@@ -151,8 +149,15 @@ import {
   type DatabaseConfig,
   settingsCategories,
 } from './settingsDefinitions'
-import { buildAvailableModels, buildAvailableProviders, loadAiConfig as fetchAiConfig, loadAiUsageStats as fetchAiUsageStats } from './settingsAiSupport'
+import {
+  buildAvailableModels,
+  buildAvailableProviders,
+  loadAiConfig as fetchAiConfig,
+  loadAiUsageStats as fetchAiUsageStats,
+  stripDerivedAiConfigFields,
+} from './settingsAiSupport'
 import { emitAiConfigUpdated } from '@/services/aiConfigEvents'
+import { inferModelSupportsVision } from '@/services/aiModelCapabilities'
 import { applyDatabaseTypeDefaults } from './settingsDatabaseSupport'
 import { createSettingsSecurityActions } from './settingsSecuritySupport'
 import { applyFontSize, applyLanguage, applyTheme, applyUIScale, clampOutputStorageThreshold, normalizeCloseAction } from './settingsUiSupport'
@@ -210,6 +215,42 @@ const clearAiUsageStats = async () => {
       console.error('Failed to clear AI usage stats', e)
       dialog.toast.error('Failed to clear statistics')
     }
+  }
+}
+
+const refreshVisionCapabilityCache = async (payload: {
+  provider: string
+  apiBase?: string | null
+  rigProvider?: string | null
+}) => {
+  try {
+    const removed = (await invoke('clear_model_vision_capability_cache', {
+      request: {
+        provider: payload.provider,
+        api_base: payload.apiBase || null,
+        rig_provider: payload.rigProvider || null,
+      },
+    })) as number
+    if (removed > 0) {
+      dialog.toast.success(
+        t(
+          'settings.ai.visionCapabilityCacheCleared',
+          'Vision capability cache cleared. The next image request will probe this provider again.',
+        ),
+      )
+    } else {
+      dialog.toast.success(
+        t(
+          'settings.ai.visionCapabilityCacheAlreadyEmpty',
+          'No cached vision capability entries were found for this provider.',
+        ),
+      )
+    }
+  } catch (e) {
+    console.error('Failed to clear vision capability cache', e)
+    dialog.toast.error(
+      t('settings.ai.visionCapabilityCacheClearFailed', 'Failed to clear vision capability cache'),
+    )
   }
 }
 
@@ -289,13 +330,6 @@ const loadSettings = async () => {
       
       const configMap = new Map(configs.map(c => [c.key, c.value]))
       
-      // enable_multimodal
-      if (configMap.has('enable_multimodal')) {
-        aiConfig.value.enable_multimodal = configMap.get('enable_multimodal') === 'true'
-      } else {
-        aiConfig.value.enable_multimodal = true
-      }
-      
       // temperature
       if (configMap.has('temperature')) {
          const temp = parseFloat(configMap.get('temperature') || '0.7')
@@ -331,8 +365,6 @@ const loadSettings = async () => {
       }
     } catch (e) {
       console.warn('Failed to load extra AI configs', e)
-      // 默认启用多模态
-      aiConfig.value.enable_multimodal = true
     }
     
     console.log('Loaded AI config:', aiConfig.value)
@@ -496,16 +528,19 @@ const refreshModels = async (provider: string) => {
     console.log('Fetched models for', provider, ':', modelIds)
     
     // 将简单的字符串数组转换为前端期望的模型对象格式
-    const models = modelIds.map(modelId => ({
-      id: modelId,
-      name: modelId,
-      description: `${provider} model`,
-      is_available: true,
-      context_length: getDefaultContextLength(provider, modelId),
-      supports_streaming: true,
-      supports_tools: getSupportsTools(provider, modelId),
-      supports_vision: getSupportsVision(provider, modelId)
-    }))
+    const models = modelIds.map(modelId => {
+      const inferredSupportsVision = inferModelSupportsVision(provider, modelId)
+      return {
+        id: modelId,
+        name: modelId,
+        description: `${provider} model`,
+        is_available: true,
+        context_length: getDefaultContextLength(provider, modelId),
+        supports_streaming: true,
+        supports_tools: getSupportsTools(provider, modelId),
+        ...(inferredSupportsVision ? { supports_vision: true } : {}),
+      }
+    })
     
     // 更新配置中的模型列表
     if (aiConfig.value.providers && (aiConfig.value.providers as any)[provider]) {
@@ -554,20 +589,6 @@ const getSupportsTools = (provider: string, modelId: string): boolean => {
       return modelId.includes('chat')
     case 'gemini':
       return true
-    default:
-      return false
-  }
-}
-
-// 获取是否支持视觉
-const getSupportsVision = (provider: string, modelId: string): boolean => {
-  switch (provider.toLowerCase()) {
-    case 'openai':
-      return modelId.includes('gpt-4') && modelId.includes('vision')
-    case 'anthropic':
-      return modelId.includes('claude-3')
-    case 'gemini':
-      return modelId.includes('vision') || modelId.includes('pro')
     default:
       return false
   }
@@ -628,7 +649,7 @@ const setDefaultChatModel = async (model: string) => {
       aiConfig.value.default_llm_model = ''
       notifyAiConfigUpdated()
       console.log('Settings: Cleared default_llm_model')
-      dialog.toast.success('已清空默认 Chat 模型')
+      dialog.toast.success('已清空默认模型')
       return
     }
     
@@ -672,102 +693,9 @@ const setDefaultChatModel = async (model: string) => {
     
     // 如果找到模型信息则显示友好名称，否则显示模型ID
     const displayName = modelInfo ? modelInfo.name : model
-    dialog.toast.success(`默认 Chat 模型已设置为 ${displayName}`)
+    dialog.toast.success(`默认模型已设置为 ${displayName}`)
   } catch (e) {
-    dialog.toast.error('设置默认 Chat 模型失败')
-  }
-}
-
-const setDefaultVlmProvider = async (provider: string) => {
-  try {
-    await invoke('save_config_batch', {
-      configs: [{
-        category: 'ai',
-        key: 'default_vlm_provider',
-        value: String(provider),
-        description: 'Default VLM provider',
-        is_encrypted: false
-      }, {
-        category: 'ai',
-        key: 'default_vlm_provider',
-        value: String(provider),
-        description: 'Deprecated: use default_vlm_provider',
-        is_encrypted: false
-      }]
-    })
-    aiConfig.value.default_vlm_provider = provider
-    notifyAiConfigUpdated()
-    dialog.toast.success(`默认 VLM Provider 已设置为 ${provider}`)
-  } catch (e) {
-    console.error('Failed to set default VLM provider', e)
-    dialog.toast.error('设置默认 VLM Provider 失败')
-  }
-}
-
-const setDefaultVisionModel = async (model: string) => {
-  try {
-    if (!model) {
-      // 清空默认模型
-      aiConfig.value.default_vlm_model = ''
-      notifyAiConfigUpdated()
-      console.log('Settings: Cleared default_vlm_model')
-      dialog.toast.success('已清空默认 VLM 模型')
-      return
-    }
-    
-    // 保存默认 VLM 模型配置
-    await invoke('save_config_batch', {
-      configs: [{
-        category: 'ai',
-        key: 'default_vlm_model',
-        value: String(model),
-        description: 'Default VLM model',
-        is_encrypted: false
-      }]
-    })
-    
-    // 同步前端状态 - 保存为 'provider/model' 格式
-    aiConfig.value.default_vlm_model = model
-    notifyAiConfigUpdated()
-    console.log('Updated frontend default_vlm_model state:', model)
-    
-    let modelName = model
-    if (model.includes('/')) {
-      const [providerLower, modelId] = model.split('/', 2)
-      const providerConfigKey = Object.keys(aiConfig.value.providers || {}).find(key => 
-        key.toLowerCase() === providerLower.toLowerCase()
-      )
-      const providerConfig = providerConfigKey ? aiConfig.value.providers[providerConfigKey] : null
-      const modelInfo = providerConfig?.models?.find((m: any) => m.id === modelId)
-      modelName = modelInfo?.name || modelId
-    }
-    
-    dialog.toast.success(`默认 VLM 模型已设置为 ${modelName}`)
-  } catch (e) {
-    console.error('Failed to set default vision model', e)
-    dialog.toast.error('设置默认 VLM 模型失败')
-  }
-}
-
-const setEnableMultimodal = async (enabled: boolean) => {
-  try {
-    // 保存到数据库配置
-    await invoke('save_config_batch', {
-      configs: [{
-        category: 'ai',
-        key: 'enable_multimodal',
-        value: String(enabled),
-        description: '是否启用多模态模式（截图）',
-        is_encrypted: false
-      }]
-    })
-    // 同步前端状态
-    aiConfig.value.enable_multimodal = enabled
-    notifyAiConfigUpdated()
-    dialog.toast.success(enabled ? '已启用多模态模式' : '已切换到文本模式')
-  } catch (e) {
-    console.error('Failed to set enable multimodal', e)
-    dialog.toast.error('设置多模态模式失败')
+    dialog.toast.error('设置默认模型失败')
   }
 }
 
@@ -919,13 +847,14 @@ const applyManualConfig = async (config: any) => {
       dialog.toast.error('配置格式无效')
       return
     }
+    const sanitizedConfig = stripDerivedAiConfigFields(config)
     
     // 更新本地配置
-    aiConfig.value = config
+    aiConfig.value = sanitizedConfig
     notifyAiConfigUpdated()
     
     // 保存到后端
-    await invoke('save_ai_config', { config: config })
+    await invoke('save_ai_config', { config: sanitizedConfig })
     
     dialog.toast.success('手动配置已应用并保存')
   } catch (error) {

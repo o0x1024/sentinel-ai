@@ -7,6 +7,13 @@ export default {
   entry: 'Entry',
   addTime: 'Add Time',
   operations: 'Operations',
+  viewMode: 'View Mode',
+  viewModes: {
+    list: 'List',
+    card: 'Card'
+  },
+  empty: 'No dictionaries',
+  pageSize: 'Page Size',
   deleteSelected: 'Delete Selected',
   clearDictionary: 'Clear Dictionary',
   close: 'Close',

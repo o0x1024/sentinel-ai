@@ -217,19 +217,13 @@
                 {{ $t('trafficAnalysis.repeater.actions.compareRequestVersions') }}
               </button>
             </div>
-            <div class="tabs tabs-boxed tabs-xs bg-base-300">
-              <button
-                :class="['tab tab-xs', currentTab.requestTab === 'pretty' ? 'tab-active' : '']"
-                @click="currentTab.requestTab = 'pretty'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.pretty') }}</button>
-              <button
-                :class="['tab tab-xs', currentTab.requestTab === 'raw' ? 'tab-active' : '']"
-                @click="currentTab.requestTab = 'raw'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.raw') }}</button>
-              <button
-                :class="['tab tab-xs', currentTab.requestTab === 'hex' ? 'tab-active' : '']"
-                @click="currentTab.requestTab = 'hex'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.hex') }}</button>
+            <div class="flex items-center gap-2">
+              <TrafficMessageViewTabs
+                :model-value="currentTab.requestTab"
+                :tabs="requestViewTabs"
+                @update:model-value="currentTab.requestTab = $event as RepeaterTab['requestTab']"
+              />
+              <TrafficMessageDisplayControls />
             </div>
           </div>
 
@@ -256,6 +250,7 @@
                 :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
                 :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
                 :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                :show-display-toolbar="false"
               />
             </template>
             <template v-else-if="currentTab.requestTab === 'raw'">
@@ -278,6 +273,7 @@
                 :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
                 :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
                 :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                :show-display-toolbar="false"
               />
             </template>
             <template v-else>
@@ -300,6 +296,7 @@
                 :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
                 :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
                 :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                :show-display-toolbar="false"
               />
             </template>
           </div>
@@ -317,10 +314,10 @@
         <div class="response-panel flex-1 flex flex-col overflow-hidden min-h-0 min-w-0">
           <!-- Response Header -->
           <div
-            class="flex items-center justify-between border-b border-base-300"
+            class="flex items-center justify-between gap-3 border-b border-base-300"
             :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS : 'bg-base-200 px-3 py-1'"
           >
-            <div class="flex items-center gap-2">
+            <div class="flex min-w-0 items-center gap-2">
               <span class="font-semibold text-sm">{{ $t('trafficAnalysis.repeater.contextMenu.response') }}</span>
               <button
                 v-if="!immersiveDrillModeEnabled"
@@ -340,30 +337,27 @@
                   {{ currentTab.response.statusCode }}
                 </span>
               </template>
+              <span
+                v-if="currentResponseMeta"
+                class="truncate text-xs text-base-content/70"
+                :title="currentResponseMeta"
+              >
+                {{ currentResponseMeta }}
+              </span>
             </div>
-            <div class="tabs tabs-boxed tabs-xs bg-base-300">
-              <button
-                :class="['tab tab-xs', currentTab.responseTab === 'pretty' ? 'tab-active' : '']"
-                @click="currentTab.responseTab = 'pretty'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.pretty') }}</button>
-              <button
-                :class="['tab tab-xs', currentTab.responseTab === 'raw' ? 'tab-active' : '']"
-                @click="currentTab.responseTab = 'raw'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.raw') }}</button>
-              <button
-                :class="['tab tab-xs', currentTab.responseTab === 'hex' ? 'tab-active' : '']"
-                @click="currentTab.responseTab = 'hex'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.hex') }}</button>
-              <button
-                :class="['tab tab-xs', currentTab.responseTab === 'render' ? 'tab-active' : '']"
-                @click="currentTab.responseTab = 'render'"
-              >{{ $t('trafficAnalysis.repeater.contextMenu.render') }}</button>
+            <div class="flex items-center gap-2">
+              <TrafficMessageViewTabs
+                :model-value="currentTab.responseTab"
+                :tabs="responseViewTabs"
+                @update:model-value="currentTab.responseTab = $event as RepeaterTab['responseTab']"
+              />
+              <TrafficMessageDisplayControls v-if="currentTab.responseTab !== 'render'" />
             </div>
           </div>
 
           <!-- Response Content -->
           <div class="flex-1 overflow-hidden" @contextmenu.prevent="showContextMenu($event, 'response')">
-            <template v-if="currentTab.response || currentTab.rawResponse">
+            <template v-if="currentTab.isSending || currentTab.response || currentTab.rawResponse">
               <!-- Pretty/Raw View -->
               <template v-if="currentTab.responseTab === 'pretty' || currentTab.responseTab === 'raw'">
                 <HttpMessageSurface
@@ -385,6 +379,7 @@
                   :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
                   :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
                   :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                  :show-display-toolbar="false"
                 />
               </template>
               
@@ -409,6 +404,7 @@
                   :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
                   :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
                   :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                  :show-display-toolbar="false"
                 />
               </template>
               
@@ -426,13 +422,6 @@
               </div>
             </div>
           </div>
-          
-          <!-- Response Footer -->
-          <div class="bg-base-200 px-3 py-1 flex items-center justify-end border-t border-base-300">
-            <div class="text-xs text-base-content/70" v-if="currentTab.response">
-              {{ formatBytes(currentTab.rawResponse?.length || 0) }} | {{ currentTab.response.responseTimeMs }} ms
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -440,13 +429,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onDeactivated,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import { useI18n } from 'vue-i18n';
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
+import { openTrafficAssistantPanel } from '@/services/trafficAssistantWorkspace'
 import { dialog } from '@/composables/useDialog';
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
+import TrafficMessageDisplayControls from '@/components/traffic/TrafficMessageDisplayControls.vue'
+import TrafficMessageViewTabs from '@/components/traffic/TrafficMessageViewTabs.vue'
 import TrafficResponseRenderPane from './TrafficResponseRenderPane.vue'
 import {
   IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS,
@@ -484,11 +485,23 @@ import {
 import {
   convertRepeaterPrettyRequestToRaw,
   formatRepeaterPrettyRequest,
+  normalizeRepeaterPrettyRequestLineEndings,
 } from './trafficRepeaterPrettyRequestSupport'
 import { getDisplayResponseBody } from './trafficResponsePreviewSupport'
 
 const { t } = useI18n();
 const { enabledTargets } = useTrafficSendTargets()
+const requestViewTabs = computed(() => [
+  { value: 'pretty', label: t('trafficAnalysis.repeater.contextMenu.pretty') },
+  { value: 'raw', label: t('trafficAnalysis.repeater.contextMenu.raw') },
+  { value: 'hex', label: t('trafficAnalysis.repeater.contextMenu.hex') },
+])
+const responseViewTabs = computed(() => [
+  { value: 'pretty', label: t('trafficAnalysis.repeater.contextMenu.pretty') },
+  { value: 'raw', label: t('trafficAnalysis.repeater.contextMenu.raw') },
+  { value: 'hex', label: t('trafficAnalysis.repeater.contextMenu.hex') },
+  { value: 'render', label: t('trafficAnalysis.repeater.contextMenu.render') },
+])
 const emit = defineEmits<{
   (e: 'sendToComparer', payload: TrafficComparePayload): void
   (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
@@ -517,6 +530,7 @@ interface RepeaterTab {
   initialRawRequest: string;
   rawRequest: string;
   prettyRequest: string;
+  lastCompletedRawResponse: string;
   previousRawResponse: string;
   rawResponse: string;
   requestTab: 'pretty' | 'raw' | 'hex';
@@ -569,6 +583,7 @@ let startWidth = 0;
 let startHeight = 0;
 let saveTimer: number | null = null;
 let hostDetectionTimer: number | null = null;
+let repeaterScrollState = { top: 0, left: 0 };
 
 // Computed
 const currentTab = computed(() => {
@@ -589,6 +604,10 @@ const currentRequestProtocol = computed(() => {
   const requestLine = currentTab.value?.rawRequest.split(/\r\n|\r|\n/)[0]?.trim() || ''
   const protocol = requestLine.split(/\s+/)[2] || ''
   return protocol || (currentTab.value?.useTls ? 'HTTP/1.1' : 'HTTP/1.1')
+})
+const currentResponseMeta = computed(() => {
+  if (!currentTab.value?.response) return ''
+  return `${formatBytes(currentTab.value.rawResponse.length)} | ${currentTab.value.response.responseTimeMs} ms`
 })
 
 // 向后兼容的 isSending（用于模板）
@@ -717,7 +736,7 @@ function createTab(request?: HttpExchangeRequest): RepeaterTab {
     rawRequest = 'GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Sentinel-AI/1.0\r\nAccept: */*\r\n\r\n';
   }
   
-  const prettyRequest = formatRepeaterPrettyRequest(rawRequest)
+  const prettyRequest = normalizeRepeaterPrettyRequestLineEndings(rawRequest)
 
   return {
     id: generateRepeaterId(),
@@ -730,6 +749,7 @@ function createTab(request?: HttpExchangeRequest): RepeaterTab {
     initialRawRequest: rawRequest,
     rawRequest,
     prettyRequest,
+    lastCompletedRawResponse: '',
     previousRawResponse: '',
     rawResponse: '',
     requestTab: getDefaultTrafficMessageViewTab(),
@@ -848,6 +868,7 @@ async function sendRequest() {
     if (tab.overrideSni && tab.sniHost.trim()) {
       exchangeRequest.endpoint.sniHost = tab.sniHost.trim()
     }
+    tab.prettyRequest = formatRepeaterPrettyRequest(tab.rawRequest)
     
     const response = await invoke<ReplayCommandResponse<RawReplayCommandResult>>('replay_raw_request', {
       endpoint: exchangeRequest.endpoint,
@@ -863,8 +884,9 @@ async function sendRequest() {
     if (!targetTab) return;
     
     if (response.success && response.data) {
-      targetTab.previousRawResponse = targetTab.rawResponse;
+      targetTab.previousRawResponse = targetTab.lastCompletedRawResponse;
       const replayResponse = buildHttpReplayResponseFromCommandResult(response.data)
+      targetTab.lastCompletedRawResponse = replayResponse.rawText;
       targetTab.rawResponse = replayResponse.rawText;
       
       // 检查响应体大小
@@ -1249,13 +1271,11 @@ async function sendRequestToAssistant() {
   };
   
   // 发送全局事件
+  openTrafficAssistantPanel()
   await tauriEmit('traffic:send-to-assistant', { requests: [trafficData], type: 'request' });
   dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToAssistant', {
     type: t('trafficAnalysis.repeater.types.request'),
   }));
-  
-  // 跳转到 AI 助手页面
-  window.location.hash = '#/ai-assistant';
 }
 
 function contextMenuSendRequestToAssistant() {
@@ -1382,7 +1402,8 @@ function loadTabs() {
     tabs.value = tabsData.map(data => ({
       ...data,
       initialRawRequest: data.initialRawRequest || data.rawRequest,
-      prettyRequest: formatRepeaterPrettyRequest(data.rawRequest),
+      prettyRequest: normalizeRepeaterPrettyRequestLineEndings(data.rawRequest),
+      lastCompletedRawResponse: '',
       previousRawResponse: '',
       rawResponse: '',
       response: null,
@@ -1543,7 +1564,7 @@ watch(tabs, () => {
 watch(() => currentTab.value?.rawRequest, (newRequest, oldRequest) => {
   if (newRequest && currentTab.value && newRequest !== oldRequest) {
     if (currentTab.value.requestTab !== 'pretty') {
-      currentTab.value.prettyRequest = formatRepeaterPrettyRequest(newRequest)
+      currentTab.value.prettyRequest = normalizeRepeaterPrettyRequestLineEndings(newRequest)
     }
 
     // 清除之前的定时器
@@ -1576,6 +1597,20 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
+function saveRepeaterScrollState() {
+  if (!repeaterRoot.value) return;
+  repeaterScrollState = {
+    top: repeaterRoot.value.scrollTop,
+    left: repeaterRoot.value.scrollLeft,
+  };
+}
+
+function restoreRepeaterScrollState() {
+  if (!repeaterRoot.value) return;
+  repeaterRoot.value.scrollTop = repeaterScrollState.top;
+  repeaterRoot.value.scrollLeft = repeaterScrollState.left;
+}
+
 // Lifecycle
 onMounted(() => {
   // 尝试从 localStorage 恢复 tabs
@@ -1588,12 +1623,27 @@ onMounted(() => {
   
   // 添加键盘快捷键监听
   document.addEventListener('keydown', handleKeydown);
+  repeaterRoot.value?.addEventListener('scroll', saveRepeaterScrollState, { passive: true });
+});
+
+onDeactivated(() => {
+  saveRepeaterScrollState();
+});
+
+onActivated(() => {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      restoreRepeaterScrollState();
+    });
+  });
 });
 
 onUnmounted(() => {
+  saveRepeaterScrollState();
   document.removeEventListener('mousemove', handleResize);
   document.removeEventListener('mouseup', stopResize);
   document.removeEventListener('keydown', handleKeydown);
+  repeaterRoot.value?.removeEventListener('scroll', saveRepeaterScrollState);
   
   // 清理所有取消控制器
   abortControllers.clear();

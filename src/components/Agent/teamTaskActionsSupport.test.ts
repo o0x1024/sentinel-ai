@@ -8,8 +8,12 @@ import {
   canTeamTaskComplete,
   canTeamTaskFail,
   canTeamTaskRelease,
+  getAvailableTeamTaskActions,
   getTeamTaskClaimAgentId,
+  getTeamTaskMissingActionHintKey,
   getTeamTaskReleaseAgentId,
+  isTeamTaskActionPending,
+  shouldShowTeamTaskMissingActionHint,
 } from './teamTaskActionsSupport'
 
 const buildTask = (overrides: Partial<TeamTask> = {}): TeamTask => ({
@@ -64,5 +68,27 @@ describe('teamTaskActionsSupport', () => {
     expect(canTeamTaskComplete(task)).toBe(true)
     expect(canTeamTaskFail(task)).toBe(true)
     expect(canTeamTaskBlock(task)).toBe(true)
+  })
+
+  it('builds the ordered action list for a runnable task', () => {
+    const task = buildTask({ status: 'running', claimed_by_agent_id: 'agent-owner' })
+    expect(getAvailableTeamTaskActions(task)).toEqual([
+      'release',
+      'complete',
+      'fail',
+      'block',
+    ])
+  })
+
+  it('shows a missing actor hint when a claimable task has no owner', () => {
+    const task = buildTask({ owner_agent_id: null, assignee_agent_id: null })
+    expect(shouldShowTeamTaskMissingActionHint(task)).toBe(true)
+    expect(getTeamTaskMissingActionHintKey(task)).toBe('agent.teamTaskActionClaimMissingActor')
+  })
+
+  it('tracks pending actions against task id and action kind', () => {
+    const task = buildTask()
+    expect(isTeamTaskActionPending(task, 'claim', 'task-1', 'claim')).toBe(true)
+    expect(isTeamTaskActionPending(task, 'release', 'task-1', 'claim')).toBe(false)
   })
 })

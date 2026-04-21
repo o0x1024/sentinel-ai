@@ -49,6 +49,33 @@ describe('trafficRepeaterPrettyRequestSupport', () => {
     ].join('\r\n'))
   })
 
+  it('pretty prints multi-line json bodies while preserving source key order', () => {
+    const rawRequest = [
+      'POST /api HTTP/1.1',
+      'Host: example.com',
+      'Content-Type: application/json',
+      '',
+      '{ "suspended": false,',
+      '"12313": "",',
+      '"nested": { "2": true, "alpha": false } }',
+    ].join('\r\n')
+
+    expect(formatRepeaterPrettyRequest(rawRequest)).toBe([
+      'POST /api HTTP/1.1',
+      'Host: example.com',
+      'Content-Type: application/json',
+      '',
+      '{',
+      '  "suspended": false,',
+      '  "12313": "",',
+      '  "nested": {',
+      '    "2": true,',
+      '    "alpha": false',
+      '  }',
+      '}',
+    ].join('\n'))
+  })
+
   it('keeps non-json bodies unchanged apart from line-ending normalization', () => {
     const prettyRequest = [
       'POST /submit HTTP/1.1',
@@ -67,29 +94,5 @@ describe('trafficRepeaterPrettyRequestSupport', () => {
       'alpha',
       'beta',
     ].join('\r\n'))
-  })
-
-  it('preserves multi-line json bodies without reordering numeric-like keys', () => {
-    const rawRequest = [
-      'POST /api HTTP/1.1',
-      'Host: example.com',
-      'Content-Type: application/json',
-      '',
-      '{',
-      '  "suspended": false,',
-      '  "12313": ""',
-      '}',
-    ].join('\r\n')
-
-    expect(formatRepeaterPrettyRequest(rawRequest)).toBe([
-      'POST /api HTTP/1.1',
-      'Host: example.com',
-      'Content-Type: application/json',
-      '',
-      '{',
-      '  "suspended": false,',
-      '  "12313": ""',
-      '}',
-    ].join('\n'))
   })
 })

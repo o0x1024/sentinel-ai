@@ -15,8 +15,8 @@
     <div v-if="rawHtml" class="html-content flex-1 overflow-hidden">
       <iframe
         class="html-iframe w-full h-full"
-        :srcdoc="rawHtml"
-        sandbox="allow-scripts allow-same-origin"
+        :srcdoc="previewDocument"
+        sandbox="allow-scripts"
       ></iframe>
     </div>
 
@@ -34,6 +34,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { buildSandboxedHtmlDocument } from '@/utils/sandboxedHtmlDocument'
 
 const props = defineProps<{
   htmlContent: string
@@ -46,6 +47,7 @@ defineEmits<{
 
 // 直接使用原始 HTML，iframe sandbox 已提供隔离
 const rawHtml = computed(() => (props.htmlContent || '').trim())
+const previewDocument = computed(() => buildSandboxedHtmlDocument(rawHtml.value))
 </script>
 
 <style scoped>

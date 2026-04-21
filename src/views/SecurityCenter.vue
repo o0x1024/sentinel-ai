@@ -19,6 +19,7 @@
 
     <!-- Tab 导航 -->
     <div
+      v-if="showTabs"
       class="tabs tabs-boxed bg-base-100 shadow-sm"
       :class="immersiveDrillModeEnabled ? 'tabs-sm rounded-2xl px-1 py-1' : ''"
     >
@@ -67,7 +68,12 @@
     <KeepAlive>
       <component
         :is="activeTabComponent"
+        :immersive-mode="isEmbeddedImmersiveOverlay"
+        :immersive-open-finding-request="immersiveOpenFindingRequest"
+        :immersive-open-case-request="immersiveOpenWorkbenchCaseRequest"
         @stats-updated="updateVulnStats"
+        @open-finding="handleImmersiveOpenFinding"
+        @open-workbench-case="handleImmersiveOpenWorkbenchCase"
       />
     </KeepAlive>
   </div>
@@ -91,6 +97,10 @@ defineOptions({
   name: 'SecurityCenter'
 });
 
+const props = defineProps<{
+  immersiveActiveTab?: 'workbench' | 'vulnerabilities'
+}>()
+
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
@@ -106,6 +116,11 @@ const lastWorkbenchLocation = ref('/security-center/workbench')
 const visibleSecurityTabs = computed<SecurityCenterTab[]>(() =>
   immersiveDrillModeEnabled.value ? [...immersiveDrillSecurityTabs] : allSecurityTabs,
 )
+const isEmbeddedImmersiveOverlay = computed(() => Boolean(props.immersiveActiveTab))
+const showTabs = computed(() => !isEmbeddedImmersiveOverlay.value)
+const immersiveNavigationRequestKey = ref(0)
+const immersiveOpenFindingRequest = ref<{ findingId: string; requestKey: number } | null>(null)
+const immersiveOpenWorkbenchCaseRequest = ref<{ caseId: string; requestKey: number } | null>(null)
 
 const isTabVisible = (tab: SecurityCenterTab) => visibleSecurityTabs.value.includes(tab)
 
@@ -156,6 +171,11 @@ const overviewStats = ref({
 
 // 从 URL 参数读取初始 Tab
 onMounted(() => {
+  if (props.immersiveActiveTab) {
+    activeTab.value = props.immersiveActiveTab
+    return
+  }
+
   const tab = route.query.tab as string;
   const findingId = typeof route.query.findingId === 'string' ? route.query.findingId : ''
   const caseId =
@@ -240,6 +260,10 @@ const normalizeToWorkbenchRoute = () => {
 watch(
   () => [route.name, route.path, route.query.tab, route.query.findingId, route.params.caseId, route.query.caseId],
   ([routeName, routePath, tab, findingId, routeCaseId, queryCaseId]) => {
+    if (isEmbeddedImmersiveOverlay.value) {
+      return
+    }
+
     if (!isSecurityCenterContainerRoute(routePath, routeName)) {
       return
     }
@@ -260,6 +284,18 @@ watch(
   },
 )
 
+watch(
+  () => props.immersiveActiveTab,
+  tab => {
+    if (!tab) {
+      return
+    }
+
+    activeTab.value = tab
+  },
+  { immediate: true },
+)
+
 watch(visibleSecurityTabs, tabs => {
   if (!tabs.includes(activeTab.value)) {
     activeTab.value = tabs[0] ?? 'workbench'
@@ -269,6 +305,10 @@ watch(visibleSecurityTabs, tabs => {
 
 // 更新 URL 参数
 const updateUrlTab = (tab: SecurityCenterTab) => {
+  if (isEmbeddedImmersiveOverlay.value) {
+    return
+  }
+
   if (tab === 'workbench') {
     router.replace(lastWorkbenchLocation.value)
     return
@@ -343,6 +383,37 @@ const refreshAll = () => {
   // 触发所有子组件刷新
   refreshTab(activeTab.value);
 };
+
+const nextImmersiveNavigationRequestKey = () => {
+  immersiveNavigationRequestKey.value += 1
+  return immersiveNavigationRequestKey.value
+}
+
+const handleImmersiveOpenFinding = (findingId: string) => {
+  if (!isEmbeddedImmersiveOverlay.value) {
+    return
+  }
+
+  activeTab.value = 'vulnerabilities'
+  immersiveOpenWorkbenchCaseRequest.value = null
+  immersiveOpenFindingRequest.value = {
+    findingId,
+    requestKey: nextImmersiveNavigationRequestKey(),
+  }
+}
+
+const handleImmersiveOpenWorkbenchCase = (caseId: string) => {
+  if (!isEmbeddedImmersiveOverlay.value) {
+    return
+  }
+
+  activeTab.value = 'workbench'
+  immersiveOpenFindingRequest.value = null
+  immersiveOpenWorkbenchCaseRequest.value = {
+    caseId,
+    requestKey: nextImmersiveNavigationRequestKey(),
+  }
+}
 </script>
 
 <style scoped>

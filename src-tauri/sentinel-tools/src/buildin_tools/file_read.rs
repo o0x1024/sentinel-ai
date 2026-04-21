@@ -1,10 +1,13 @@
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 use crate::buildin_tools::file_context::hash_bytes;
+use crate::buildin_tools::file_runtime::{
+    current_runtime_metadata, get_path_kind, read_path_bytes, FilePathKind, FileRuntimeMetadata,
+};
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct FileReadArgs {
@@ -29,6 +32,7 @@ fn default_limit() -> usize {
 #[derive(Debug, Clone, Serialize)]
 pub struct FileReadOutput {
     pub file_path: String,
+    pub runtime: FileRuntimeMetadata,
     pub content: String,
     pub start_line: usize,
     pub end_line: usize,
@@ -77,29 +81,25 @@ impl Tool for FileReadTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let path = resolve_path(&args.file_path)?;
-        let metadata = tokio::fs::metadata(&path)
-            .await
-            .map_err(|error| FileReadError::ReadFailed(error.to_string()))?;
-        if metadata.is_dir() {
+        if matches!(
+            get_path_kind(&args.file_path)
+                .await
+                .map_err(FileReadError::ReadFailed)?,
+            FilePathKind::Directory
+        ) {
             return Err(FileReadError::IsDirectory(args.file_path));
         }
 
-        let mut sample_file = tokio::fs::File::open(&path)
+        let file_bytes = read_path_bytes(&args.file_path)
             .await
-            .map_err(|error| FileReadError::ReadFailed(error.to_string()))?;
-        let mut sample = [0u8; 1024];
-        let sample_len = sample_file
-            .read(&mut sample)
-            .await
-            .map_err(|error| FileReadError::ReadFailed(error.to_string()))?;
-        if looks_binary(&sample[..sample_len]) {
+            .map_err(FileReadError::ReadFailed)?;
+        if looks_binary(&file_bytes[..file_bytes.len().min(1024)]) {
             return Err(FileReadError::BinaryFile);
         }
 
         let start_line = args.offset.max(1);
         let line_limit = args.limit.max(1).min(2000);
-        let read_result = read_file_range(&path, start_line, line_limit).await?;
+        let read_result = read_file_range(&file_bytes, start_line, line_limit)?;
         let start_index = start_line.saturating_sub(1).min(read_result.total_lines);
         let end_index = start_index
             .saturating_add(read_result.selected_lines.len())
@@ -111,6 +111,7 @@ impl Tool for FileReadTool {
 
         Ok(FileReadOutput {
             file_path: args.file_path,
+            runtime: current_runtime_metadata(),
             content,
             start_line,
             end_line,
@@ -127,15 +128,13 @@ struct FileReadRangeResult {
     content_hash: String,
 }
 
-async fn read_file_range(
-    path: &Path,
+fn read_file_range(
+    file_bytes: &[u8],
     start_line: usize,
     line_limit: usize,
 ) -> Result<FileReadRangeResult, FileReadError> {
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|error| FileReadError::ReadFailed(error.to_string()))?;
-    let mut reader = BufReader::new(file);
+    let cursor = std::io::Cursor::new(file_bytes);
+    let mut reader = BufReader::new(cursor);
     let mut line_buffer = String::new();
     let mut selected_lines = Vec::new();
     let mut total_lines = 0usize;
@@ -143,10 +142,9 @@ async fn read_file_range(
 
     loop {
         line_buffer.clear();
-        let bytes_read = reader
-            .read_line(&mut line_buffer)
-            .await
-            .map_err(|error| FileReadError::ReadFailed(error.to_string()))?;
+        let bytes_read = reader.read_line(&mut line_buffer).map_err(|error| {
+            FileReadError::ReadFailed(format!("failed to parse text lines: {}", error))
+        })?;
         if bytes_read == 0 {
             break;
         }
@@ -168,22 +166,6 @@ async fn read_file_range(
 
 fn trim_line_ending(line: &str) -> &str {
     line.trim_end_matches(['\n', '\r'])
-}
-
-fn resolve_path(raw: &str) -> Result<PathBuf, FileReadError> {
-    if raw.trim().is_empty() {
-        return Err(FileReadError::InvalidPath(
-            "path cannot be empty".to_string(),
-        ));
-    }
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        let cwd = std::env::current_dir()
-            .map_err(|error| FileReadError::InvalidPath(error.to_string()))?;
-        Ok(cwd.join(path))
-    }
 }
 
 fn looks_binary(bytes: &[u8]) -> bool {

@@ -4,6 +4,7 @@ pub mod browser;
 mod file_context;
 pub mod file_edit;
 pub mod file_read;
+pub mod file_runtime;
 pub mod file_write;
 pub mod glob;
 pub mod grep;
@@ -23,11 +24,11 @@ pub mod sops;
 pub mod subagent_tool;
 #[cfg(feature = "plugins")]
 pub mod subdomain_brute;
+#[cfg(feature = "db")]
+pub mod tasks;
 pub mod tenth_man_tool;
 mod text_change;
 mod text_preview;
-#[cfg(feature = "db")]
-pub mod tasks;
 pub mod tool_search;
 pub mod web_search;
 
@@ -52,9 +53,9 @@ pub use skills::SkillsTool;
 pub use sops::{set_sops_app_handle, SopsTool};
 #[cfg(feature = "plugins")]
 pub use subdomain_brute::SubdomainBruteTool;
-pub use tenth_man_tool::TenthManTool;
 #[cfg(feature = "db")]
 pub use tasks::TasksTool;
+pub use tenth_man_tool::TenthManTool;
 pub use tool_search::{
     load_tool_search_runtime_context, set_tool_search_context_provider, set_tool_search_executor,
     ToolSearchAction, ToolSearchArgs, ToolSearchMatch, ToolSearchOutput, ToolSearchRuntimeContext,

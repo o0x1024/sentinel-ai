@@ -95,28 +95,23 @@ export const buildConversationTimeline = (
     }
 
     if (row.role === 'system') {
+      if (parsedMetadata?.kind === 'agent_task_update') {
+        return
+      }
+
       if (parsedMetadata?.kind === 'skill_loaded') {
-        const tools = Array.isArray(parsedMetadata?.tools) ? parsedMetadata.tools : []
-        const toolsPreview =
-          parsedMetadata?.tools_preview ||
-          (() => {
-            const preview = tools.slice(0, 6).join(', ')
-            const suffix = tools.length > 6 ? ` +${tools.length - 6}` : ''
-            return `${preview}${suffix}`.trim()
-          })()
         const content =
           row.content ||
           `Skill loaded: ${parsedMetadata?.skill_name || 'unknown'} (${parsedMetadata?.skill_id || 'unknown'})`
+        const restMetadata = { ...(parsedMetadata || {}) }
+        delete restMetadata.tools
+        delete restMetadata.tools_preview
         timeline.push({
           id: row.id,
           type: 'system' as any,
           content,
           timestamp: ts,
-          metadata: {
-            ...parsedMetadata,
-            tools,
-            tools_preview: toolsPreview,
-          },
+          metadata: restMetadata,
         })
         return
       }

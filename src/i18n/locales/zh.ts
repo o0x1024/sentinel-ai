@@ -97,6 +97,16 @@ export default {
   // Security Center section
   securityCenter: {
     title: '安全中心',
+    immersiveSidebar: {
+      title: '安全中心侧栏',
+      description: '在沉浸模式下集中切换安全工作台和漏洞视图。',
+      workbenchDescription: '查看 case、证据链和验证流程。',
+      vulnerabilitiesDescription: '查看漏洞列表、详情和相关证据。',
+      resize: '调整安全中心宽度',
+      minimize: '最小化安全中心',
+      restore: '恢复安全中心',
+      minimizedHint: '已最小化，可随时恢复',
+    },
     tabs: {
       workbench: '安全工作台',
       vulnerabilities: '漏洞',
@@ -225,6 +235,8 @@ export default {
     pluginStatus: '插件状态',
     searchPlaceholder: '搜索插件...',
     searchPlugins: '搜索插件...',
+    allMainCategories: '全部分类',
+    allSubCategories: '全部子分类',
     noPlugins: '暂无插件，请上传或扫描插件目录',
     totalPlugins: '插件总数',
     allStatus: '全部',

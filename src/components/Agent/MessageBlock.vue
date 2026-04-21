@@ -1,8 +1,13 @@
 <template>
   <!-- Tenth Man Critique - Special Alert Message -->
-  <div v-if="isTenthManCritique" class="tenth-man-panel rounded-lg overflow-hidden bg-error/10 border-l-4 border-error mb-2 shadow-lg">
+  <div
+    v-if="isTenthManCritique"
+    class="tenth-man-panel rounded-lg overflow-hidden bg-error/10 border-l-4 border-error mb-2 shadow-lg"
+  >
     <div class="flex items-center gap-3 px-4 py-3 bg-error/20 border-b border-error/20">
-      <div class="w-8 h-8 rounded-full bg-error flex items-center justify-center flex-shrink-0 shadow-sm">
+      <div
+        class="w-8 h-8 rounded-full bg-error flex items-center justify-center flex-shrink-0 shadow-sm"
+      >
         <i class="fas fa-user-secret text-white text-sm"></i>
       </div>
       <div class="flex-1">
@@ -12,7 +17,9 @@
     </div>
     <div class="px-5 py-4 bg-base-100/80 text-base-content relative">
       <!-- Watermark -->
-      <i class="fas fa-exclamation-triangle absolute right-4 top-4 text-8xl text-error/5 pointer-events-none"></i>
+      <i
+        class="fas fa-exclamation-triangle absolute right-4 top-4 text-8xl text-error/5 pointer-events-none"
+      ></i>
       <div class="relative z-10 prose prose-sm max-w-none">
         <MarkdownRenderer :content="message.content" />
       </div>
@@ -20,32 +27,44 @@
   </div>
 
   <!-- Segment Summary Message - Sliding Window Memory -->
-  <div v-else-if="isSegmentSummary" class="segment-summary-panel rounded-lg overflow-hidden bg-info/10 border-l-4 border-info">
+  <div
+    v-else-if="isSegmentSummary"
+    class="segment-summary-panel rounded-lg overflow-hidden bg-info/10 border-l-4 border-info"
+  >
     <!-- Panel Header -->
-    <div 
-      @click="toggleSummaryPanel" 
+    <div
+      @click="toggleSummaryPanel"
       class="summary-panel-header flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-info/20 transition-colors"
     >
       <!-- Icon -->
       <i class="fas fa-layer-group text-info text-lg"></i>
-      
+
       <!-- Title -->
       <div class="flex-1">
         <div class="font-semibold text-sm text-info">{{ t('agent.segmentSummary') }}</div>
         <div class="text-xs text-base-content/60 mt-0.5">
-          {{ t('agent.segmentIndex') }}: #{{ message.metadata?.segment_index }} · {{ formatNumber(message.metadata?.summary_tokens) }} tokens
+          {{ t('agent.segmentIndex') }}: #{{ message.metadata?.segment_index }} ·
+          {{ formatNumber(message.metadata?.summary_tokens) }} tokens
         </div>
       </div>
-      
+
       <!-- Expand/Collapse Icon -->
-      <i :class="['fas transition-transform text-xs text-info', isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down']"></i>
+      <i
+        :class="[
+          'fas transition-transform text-xs text-info',
+          isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down',
+        ]"
+      ></i>
     </div>
-    
+
     <!-- Panel Content (collapsible) -->
     <div v-show="isSummaryPanelExpanded" class="summary-panel-content border-t border-info/30">
       <div class="px-4 py-3 bg-base-100/50">
         <div class="text-xs text-base-content/70">
-          <div v-if="message.metadata?.summary_content" class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto">
+          <div
+            v-if="message.metadata?.summary_content"
+            class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto"
+          >
             <MarkdownRenderer :content="message.metadata.summary_content" />
           </div>
         </div>
@@ -54,32 +73,44 @@
   </div>
 
   <!-- Global Summary Message - Long-term Memory -->
-  <div v-else-if="isGlobalSummary" class="global-summary-panel rounded-lg overflow-hidden bg-warning/10 border-l-4 border-warning">
+  <div
+    v-else-if="isGlobalSummary"
+    class="global-summary-panel rounded-lg overflow-hidden bg-warning/10 border-l-4 border-warning"
+  >
     <!-- Panel Header -->
-    <div 
-      @click="toggleSummaryPanel" 
+    <div
+      @click="toggleSummaryPanel"
       class="summary-panel-header flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-warning/20 transition-colors"
     >
       <!-- Icon -->
       <i class="fas fa-brain text-warning text-lg"></i>
-      
+
       <!-- Title -->
       <div class="flex-1">
         <div class="font-semibold text-sm text-warning">{{ t('agent.globalSummary') }}</div>
         <div class="text-xs text-base-content/60 mt-0.5">
-          {{ t('agent.longTermMemory') }} · {{ formatNumber(message.metadata?.summary_tokens) }} tokens
+          {{ t('agent.longTermMemory') }} ·
+          {{ formatNumber(message.metadata?.summary_tokens) }} tokens
         </div>
       </div>
-      
+
       <!-- Expand/Collapse Icon -->
-      <i :class="['fas transition-transform text-xs text-warning', isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down']"></i>
+      <i
+        :class="[
+          'fas transition-transform text-xs text-warning',
+          isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down',
+        ]"
+      ></i>
     </div>
-    
+
     <!-- Panel Content (collapsible) -->
     <div v-show="isSummaryPanelExpanded" class="summary-panel-content border-t border-warning/30">
       <div class="px-4 py-3 bg-base-100/50">
         <div class="text-xs text-base-content/70">
-          <div v-if="message.metadata?.summary_content" class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto">
+          <div
+            v-if="message.metadata?.summary_content"
+            class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto"
+          >
             <MarkdownRenderer :content="message.metadata.summary_content" />
           </div>
         </div>
@@ -88,9 +119,14 @@
   </div>
 
   <!-- Skill Loaded Message -->
-  <div v-else-if="isSkillLoaded" class="rounded-lg overflow-hidden bg-success/10 border-l-4 border-success mb-2">
+  <div
+    v-else-if="isSkillLoaded"
+    class="rounded-lg overflow-hidden bg-success/10 border-l-4 border-success mb-2"
+  >
     <div class="flex items-center gap-3 px-4 py-3 bg-success/20 border-b border-success/20">
-      <div class="w-8 h-8 rounded-full bg-success flex items-center justify-center flex-shrink-0 shadow-sm">
+      <div
+        class="w-8 h-8 rounded-full bg-success flex items-center justify-center flex-shrink-0 shadow-sm"
+      >
         <i class="fas fa-lightbulb text-white text-sm"></i>
       </div>
       <div class="flex-1">
@@ -101,17 +137,18 @@
           {{ message.metadata?.skill_name }} ({{ message.metadata?.skill_id }})
         </div>
       </div>
-      <span class="badge badge-sm badge-ghost">{{ message.metadata?.tools?.length || 0 }}</span>
-    </div>
-    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/70">
-      {{ message.metadata?.tools_preview }}
     </div>
   </div>
 
   <!-- Deferred Tools Activated Message -->
-  <div v-else-if="isToolsActivated" class="rounded-lg overflow-hidden bg-info/10 border-l-4 border-info mb-2">
+  <div
+    v-else-if="isToolsActivated"
+    class="rounded-lg overflow-hidden bg-info/10 border-l-4 border-info mb-2"
+  >
     <div class="flex items-center gap-3 px-4 py-3 bg-info/20 border-b border-info/20">
-      <div class="w-8 h-8 rounded-full bg-info flex items-center justify-center flex-shrink-0 shadow-sm">
+      <div
+        class="w-8 h-8 rounded-full bg-info flex items-center justify-center flex-shrink-0 shadow-sm"
+      >
         <i class="fas fa-toolbox text-white text-sm"></i>
       </div>
       <div class="flex-1">
@@ -140,9 +177,14 @@
     </div>
   </div>
 
-  <div v-else-if="isTeamDependencyReady" class="rounded-lg overflow-hidden bg-success/10 border-l-4 border-success mb-2">
+  <div
+    v-else-if="isTeamDependencyReady"
+    class="rounded-lg overflow-hidden bg-success/10 border-l-4 border-success mb-2"
+  >
     <div class="flex items-center gap-3 px-4 py-3 bg-success/20 border-b border-success/20">
-      <div class="w-8 h-8 rounded-full bg-success flex items-center justify-center flex-shrink-0 shadow-sm">
+      <div
+        class="w-8 h-8 rounded-full bg-success flex items-center justify-center flex-shrink-0 shadow-sm"
+      >
         <i class="fas fa-unlock text-white text-sm"></i>
       </div>
       <div class="flex-1">
@@ -150,7 +192,11 @@
           {{ t('agent.teamDependencyReadyTitle') }}
         </div>
         <div class="text-xs text-base-content/70 mt-0.5">
-          {{ message.metadata?.team_task_title || message.metadata?.team_task_key || t('agent.teamWorkspaceTabTasks') }}
+          {{
+            message.metadata?.team_task_title ||
+            message.metadata?.team_task_key ||
+            t('agent.teamWorkspaceTabTasks')
+          }}
         </div>
       </div>
       <button
@@ -166,50 +212,18 @@
     </div>
   </div>
 
-  <div v-else-if="isAgentTaskUpdate" class="rounded-lg overflow-hidden bg-primary/10 border-l-4 border-primary mb-2">
-    <div class="flex items-center gap-3 px-4 py-3 bg-primary/15 border-b border-primary/20">
-      <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0 shadow-sm">
-        <i :class="['fas text-white text-sm', agentTaskUpdateIconClass]"></i>
-      </div>
-      <div class="flex-1">
-        <div class="font-semibold text-sm text-primary">
-          {{ agentTaskUpdateTitle }}
-        </div>
-        <div class="text-xs text-base-content/70 mt-0.5">
-          {{ message.metadata?.task_preview || message.content }}
-        </div>
-      </div>
-      <span v-if="agentTaskUpdateCount > 0" class="badge badge-sm badge-ghost">{{ agentTaskUpdateCount }}</span>
-    </div>
-    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/75">
-      {{ message.content }}
-    </div>
-  </div>
-
-  <div v-else-if="taskToolCard" class="rounded-lg overflow-hidden bg-primary/10 border-l-4 border-primary mb-2">
-    <div class="flex items-center gap-3 px-4 py-3 bg-primary/15 border-b border-primary/20">
-      <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0 shadow-sm">
-        <i :class="['fas text-white text-sm', taskToolCard.icon_class]"></i>
-      </div>
-      <div class="flex-1">
-        <div class="font-semibold text-sm text-primary">
-          {{ t(taskToolCard.title_key) }}
-        </div>
-        <div v-if="taskToolCard.preview" class="text-xs text-base-content/70 mt-0.5">
-          {{ taskToolCard.preview }}
-        </div>
-      </div>
-      <span v-if="taskToolCard.item_count > 0" class="badge badge-sm badge-ghost">{{ taskToolCard.item_count }}</span>
-    </div>
-    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/75">
-      {{ taskToolCard.detail }}
-    </div>
-  </div>
-
   <!-- Shell Tool - Render as independent message block -->
-  <div v-else-if="isSkillsToolCard" :class="['rounded-lg overflow-hidden border-l-4 mb-2', skillsCardContainerClass]">
+  <div
+    v-else-if="isSkillsToolCard"
+    :class="['rounded-lg overflow-hidden border-l-4 mb-2', skillsCardContainerClass]"
+  >
     <div :class="['flex items-center gap-3 px-4 py-3 border-b', skillsCardHeaderClass]">
-      <div :class="['w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm', skillsCardIconClass]">
+      <div
+        :class="[
+          'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm',
+          skillsCardIconClass,
+        ]"
+      >
         <i class="fas fa-book-open text-white text-sm"></i>
       </div>
       <div class="flex-1">
@@ -220,7 +234,10 @@
           {{ skillsCardTarget }}
         </div>
       </div>
-      <span v-if="toolStatus" :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium', toolStatusClass]">
+      <span
+        v-if="toolStatus"
+        :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium', toolStatusClass]"
+      >
         {{ toolStatusText }}
       </span>
     </div>
@@ -260,17 +277,26 @@
     :error="message.metadata?.error"
     :status="message.metadata?.status"
   />
-  
+
   <!-- Tool Call Message - Collapsible Panel (only render if has content) -->
-  <div v-else-if="message.type === 'tool_call' && hasToolCallContent" class="tool-call-panel rounded-lg overflow-hidden  bg-base-200 border-l-4" :class="toolPanelBorderClass">
+  <div
+    v-else-if="message.type === 'tool_call' && hasToolCallContent"
+    class="tool-call-panel rounded-lg overflow-hidden bg-base-200 border-l-4"
+    :class="toolPanelBorderClass"
+  >
     <!-- Panel Header (always visible) -->
-    <div 
-      @click="toggleToolPanel" 
+    <div
+      @click="toggleToolPanel"
       class="tool-panel-header flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-base-300/50 transition-colors"
     >
       <!-- Expand/Collapse Icon -->
-      <i :class="['fas transition-transform text-xs', isToolPanelExpanded ? 'fa-chevron-down' : 'fa-chevron-right']"></i>
-      
+      <i
+        :class="[
+          'fas transition-transform text-xs',
+          isToolPanelExpanded ? 'fa-chevron-down' : 'fa-chevron-right',
+        ]"
+      ></i>
+
       <!-- Tool Name -->
       <span class="font-mono text-sm font-semibold">{{ toolName || 'Tool' }}</span>
 
@@ -280,62 +306,89 @@
       >
         {{ fileVerificationText }}
       </span>
-      
+
       <!-- Status Badge -->
-      <span v-if="toolStatus" :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium ml-auto', toolStatusClass]">
+      <span
+        v-if="toolStatus"
+        :class="[
+          'status-badge px-2 py-0.5 rounded-full text-xs font-medium ml-auto',
+          toolStatusClass,
+        ]"
+      >
         {{ toolStatusText }}
       </span>
-      
+
       <!-- Duration -->
       <span v-if="duration" class="text-xs text-base-content/60">{{ duration }}</span>
     </div>
-    
+
     <!-- Panel Content (collapsible) -->
     <div v-show="isToolPanelExpanded" class="tool-panel-content">
       <!-- Tool Arguments -->
       <div v-if="hasToolArgs" class="border-t border-base-300">
-        <div 
+        <div
           ref="argsBodyRef"
           @click="toggleArgs"
-          :class="['px-4 py-3 bg-base-100 cursor-pointer transition-all relative', 
-                   isArgsExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden']"
+          :class="[
+            'px-4 py-3 bg-base-100 cursor-pointer transition-all relative',
+            isArgsExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden',
+          ]"
         >
           <div class="text-xs text-base-content/50 mb-2">📥 {{ t('agent.inputParameters') }}</div>
-          <pre class="text-xs font-mono text-base-content/70 whitespace-pre-wrap break-words overflow-x-auto">{{ formattedArgs }}</pre>
-          
+          <pre
+            class="text-xs font-mono text-base-content/70 whitespace-pre-wrap break-words overflow-x-auto"
+            >{{ formattedArgs }}</pre
+          >
+
           <!-- Expand hint overlay -->
-          <div v-if="!isArgsExpanded && argsHasOverflow" class="expand-hint absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-base-100 to-transparent flex items-end justify-center pb-1 pointer-events-none">
+          <div
+            v-if="!isArgsExpanded && argsHasOverflow"
+            class="expand-hint absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-base-100 to-transparent flex items-end justify-center pb-1 pointer-events-none"
+          >
             <span class="text-base-content/50 text-xs">点击展开</span>
           </div>
         </div>
       </div>
-      
+
       <!-- Tool Result -->
       <div v-if="hasToolResult" class="border-t border-base-300">
-        <div 
+        <div
           ref="resultBodyRef"
           @click="toggleResult"
-          :class="['px-4 py-3 bg-base-100 cursor-pointer transition-all relative', 
-                   isResultExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden']"
+          :class="[
+            'px-4 py-3 bg-base-100 cursor-pointer transition-all relative',
+            isResultExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden',
+          ]"
         >
           <div class="text-xs text-base-content/50 mb-2">📤 {{ t('agent.executionResult') }}</div>
-          <pre class="text-xs font-mono text-base-content/70 whitespace-pre-wrap break-words overflow-x-auto">{{ formattedToolResult }}</pre>
-          
+          <pre
+            class="text-xs font-mono text-base-content/70 whitespace-pre-wrap break-words overflow-x-auto"
+            >{{ formattedToolResult }}</pre
+          >
+
           <!-- Expand hint overlay -->
-          <div v-if="!isResultExpanded && resultHasOverflow" class="expand-hint absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-base-100 to-transparent flex items-end justify-center pb-1 pointer-events-none">
+          <div
+            v-if="!isResultExpanded && resultHasOverflow"
+            class="expand-hint absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-base-100 to-transparent flex items-end justify-center pb-1 pointer-events-none"
+          >
             <span class="text-base-content/50 text-xs">点击展开</span>
           </div>
         </div>
+        <ToolRuntimeMeta :result="message.metadata?.tool_result" class="mx-4 mb-3" />
         <StoredArtifactPanel
           v-if="toolResultStoredArtifactViews.length > 0"
           :artifacts="toolResultStoredArtifactViews"
         />
       </div>
-      
+
       <!-- Tool Call ID -->
-      <div v-if="message.metadata?.tool_call_id" class="px-4 py-2 border-t border-base-300 bg-base-100">
+      <div
+        v-if="message.metadata?.tool_call_id"
+        class="px-4 py-2 border-t border-base-300 bg-base-100"
+      >
         <span class="text-xs text-base-content/50">
-          {{ t('agent.toolCallId') }}: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
+          {{ t('agent.toolCallId') }}:
+          <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
         </span>
       </div>
     </div>
@@ -344,7 +397,10 @@
   <!-- Regular message block for non-tool-call messages (only render if has content) -->
   <div v-else-if="hasRegularMessageContent" class="message-container group relative max-w-full">
     <div :class="['message-block relative rounded-lg px-3 py-2 overflow-hidden', typeClass]">
-      <div v-if="isTeamMessage" class="message-team-indicator inline-flex items-center gap-1 text-xs text-primary font-medium mb-1">
+      <div
+        v-if="isTeamMessage"
+        class="message-team-indicator inline-flex items-center gap-1 text-xs text-primary font-medium mb-1"
+      >
         <i class="fas fa-users"></i>
         <span>{{ teamSpeakerLabel }}</span>
       </div>
@@ -354,7 +410,9 @@
         class="message-actions absolute right-2 top-2 z-10"
       >
         <!-- Desktop/hover: icon buttons -->
-        <div class="hidden md:flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
+        <div
+          class="hidden md:flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto"
+        >
           <button
             v-if="message.type === 'user'"
             @click="handleEdit"
@@ -382,7 +440,9 @@
 
         <!-- Touch/mobile: overflow menu -->
         <details class="dropdown dropdown-end md:hidden">
-          <summary class="btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content">
+          <summary
+            class="btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content"
+          >
             <i class="fas fa-ellipsis-h"></i>
           </summary>
           <ul class="menu dropdown-content bg-base-100 rounded-box shadow w-40 p-1 mt-1">
@@ -407,11 +467,13 @@
           </ul>
         </details>
       </div>
-      
+
       <!-- Header with type indicator -->
       <div class="message-header flex items-center gap-2 mb-2 text-sm" v-if="showHeader">
         <span class="message-type font-semibold text-base-content/70">{{ typeName }}</span>
-        <span v-if="toolName" class="tool-name font-mono text-xs text-primary">`{{ toolName }}`</span>
+        <span v-if="toolName" class="tool-name font-mono text-xs text-primary"
+          >`{{ toolName }}`</span
+        >
         <span
           v-if="fileVerificationStatus"
           :class="['px-2 py-0.5 rounded text-xs font-medium', fileVerificationClass]"
@@ -419,15 +481,25 @@
           {{ fileVerificationText }}
         </span>
         <!-- Tool Status Indicator -->
-        <span v-if="toolStatus" :class="['status-badge px-2 py-0.5 rounded text-xs font-medium', toolStatusClass]">
+        <span
+          v-if="toolStatus"
+          :class="['status-badge px-2 py-0.5 rounded text-xs font-medium', toolStatusClass]"
+        >
           {{ toolStatusText }}
         </span>
-        <span v-if="statusIcon" :class="['status-icon font-bold', statusClass]">{{ statusIcon }}</span>
-        <span v-if="duration" class="duration ml-auto text-xs text-base-content/60">{{ duration }}</span>
+        <span v-if="statusIcon" :class="['status-icon font-bold', statusClass]">{{
+          statusIcon
+        }}</span>
+        <span v-if="duration" class="duration ml-auto text-xs text-base-content/60">{{
+          duration
+        }}</span>
       </div>
-      
+
       <!-- RAG Citation Indicator -->
-      <div v-if="ragInfo" class="rag-indicator flex items-center gap-2 mb-2 px-3 py-2 bg-info/10 rounded-md border border-info/30">
+      <div
+        v-if="ragInfo"
+        class="rag-indicator flex items-center gap-2 mb-2 px-3 py-2 bg-info/10 rounded-md border border-info/30"
+      >
         <i class="fas fa-book text-info text-sm"></i>
         <span class="text-xs text-info font-medium">
           <template v-if="ragInfo.rag_sources_used">
@@ -438,9 +510,12 @@
           </template>
         </span>
       </div>
-      
+
       <!-- Image Attachments (for user messages) -->
-      <div v-if="message.type === 'user' && imageAttachments.length > 0" class="image-attachments mb-2">
+      <div
+        v-if="message.type === 'user' && imageAttachments.length > 0"
+        class="image-attachments mb-2"
+      >
         <div class="flex items-center gap-2 mb-2">
           <i class="fas fa-image text-primary text-sm"></i>
           <span class="text-xs text-base-content/60">
@@ -460,13 +535,15 @@
               :title="getImageFilename(img)"
               @click="openImagePreview(getImagePreviewUrl(img))"
             />
-            <div class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-1 py-0.5 truncate opacity-0 group-hover:opacity-100 transition-opacity">
+            <div
+              class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-1 py-0.5 truncate opacity-0 group-hover:opacity-100 transition-opacity"
+            >
               {{ getImageFilename(img) }}
             </div>
           </div>
         </div>
       </div>
-      
+
       <!-- Content -->
       <div class="message-content text-base-content break-words overflow-hidden">
         <!-- Edit Mode -->
@@ -489,10 +566,7 @@
               <i class="fas fa-paper-plane"></i>
               <span>{{ t('agent.sendEdited') }}</span>
             </button>
-            <button
-              @click="handleCancelEdit"
-              class="btn btn-xs btn-ghost"
-            >
+            <button @click="handleCancelEdit" class="btn btn-xs btn-ghost">
               <i class="fas fa-times"></i>
               <span>{{ t('common.cancel') }}</span>
             </button>
@@ -501,7 +575,7 @@
             </span>
           </div>
         </div>
-        
+
         <!-- Display Mode -->
         <div v-else>
           <div
@@ -510,17 +584,20 @@
           >
             {{ lightweightStreamingContent }}
           </div>
-          <MarkdownRenderer 
+          <MarkdownRenderer
             v-else
-            :content="formattedContent" 
+            :content="formattedContent"
             :citations="ragInfo?.citations"
             :show-table-download="showTableDownload"
             @download-table="handleDownloadTable"
             @render-html="(html: string) => emit('renderHtml', html)"
           />
-          
+
           <!-- Document attachments for user messages (shown below content) -->
-          <div v-if="message.type === 'user' && documentAttachments.length > 0" class="document-attachments mt-2 pt-2 border-t border-base-300/50">
+          <div
+            v-if="message.type === 'user' && documentAttachments.length > 0"
+            class="document-attachments mt-2 pt-2 border-t border-base-300/50"
+          >
             <div class="flex flex-wrap gap-2">
               <div
                 v-for="doc in documentAttachments"
@@ -528,14 +605,21 @@
                 class="doc-attachment inline-flex items-center gap-2 px-2 py-1 rounded-lg text-xs"
                 :class="doc.file_path ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'"
               >
-                <i :class="['fas', doc.file_path ? 'fa-file-lines' : 'fa-file-circle-exclamation']"></i>
-                <span class="font-medium truncate max-w-32" :title="doc.original_filename">{{ doc.original_filename }}</span>
+                <i
+                  :class="['fas', doc.file_path ? 'fa-file-lines' : 'fa-file-circle-exclamation']"
+                ></i>
+                <span class="font-medium truncate max-w-32" :title="doc.original_filename">{{
+                  doc.original_filename
+                }}</span>
                 <span class="opacity-70">({{ formatDocSize(doc.file_size) }})</span>
               </div>
             </div>
           </div>
 
-          <div v-if="message.type === 'user' && referencedFiles.length > 0" class="mt-2 pt-2 border-t border-base-300/50">
+          <div
+            v-if="message.type === 'user' && referencedFiles.length > 0"
+            class="mt-2 pt-2 border-t border-base-300/50"
+          >
             <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
               <i class="fas fa-file-code text-secondary"></i>
               <span>引用文件 ({{ referencedFiles.length }})</span>
@@ -547,13 +631,18 @@
                 class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-secondary/10 border border-secondary/25 text-xs"
               >
                 <span class="badge badge-xs badge-secondary">FILE</span>
-                <span class="font-medium truncate max-w-56" :title="file.relativePath">{{ file.relativePath }}</span>
+                <span class="font-medium truncate max-w-56" :title="file.relativePath">{{
+                  file.relativePath
+                }}</span>
                 <span class="text-base-content/60">{{ formatDocSize(file.size) }}</span>
               </div>
             </div>
           </div>
 
-          <div v-if="message.type === 'user' && referencedMessages.length > 0" class="mt-2 pt-2 border-t border-base-300/50">
+          <div
+            v-if="message.type === 'user' && referencedMessages.length > 0"
+            class="mt-2 pt-2 border-t border-base-300/50"
+          >
             <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
               <i class="fas fa-comment-dots text-info"></i>
               <span>引用消息 ({{ referencedMessages.length }})</span>
@@ -565,17 +654,17 @@
                 class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-info/10 border border-info/25 text-xs"
               >
                 <span class="badge badge-xs badge-info">{{ referencedMessage.roleLabel }}</span>
-                <span
-                  class="font-medium truncate max-w-72"
-                  :title="referencedMessage.content"
-                >
+                <span class="font-medium truncate max-w-72" :title="referencedMessage.content">
                   {{ referencedMessage.content }}
                 </span>
               </div>
             </div>
           </div>
 
-          <div v-if="message.type === 'user' && referencedAssets.length > 0" class="mt-2 pt-2 border-t border-base-300/50">
+          <div
+            v-if="message.type === 'user' && referencedAssets.length > 0"
+            class="mt-2 pt-2 border-t border-base-300/50"
+          >
             <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
               <i class="fas fa-cubes text-primary"></i>
               <span>引用资产 ({{ referencedAssets.length }})</span>
@@ -587,13 +676,20 @@
                 class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-primary/10 border border-primary/25 text-xs"
               >
                 <span class="badge badge-xs badge-outline">{{ asset.asset_type }}</span>
-                <span class="font-medium truncate max-w-44" :title="asset.name">{{ asset.name }}</span>
-                <span class="text-base-content/60 truncate max-w-56" :title="asset.value">{{ asset.value }}</span>
+                <span class="font-medium truncate max-w-44" :title="asset.name">{{
+                  asset.name
+                }}</span>
+                <span class="text-base-content/60 truncate max-w-56" :title="asset.value">{{
+                  asset.value
+                }}</span>
               </div>
             </div>
           </div>
 
-          <div v-if="message.type === 'user' && referencedTraffic.length > 0" class="mt-2 pt-2 border-t border-base-300/50">
+          <div
+            v-if="message.type === 'user' && referencedTraffic.length > 0"
+            class="mt-2 pt-2 border-t border-base-300/50"
+          >
             <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
               <i class="fas fa-network-wired text-accent"></i>
               <span>引用流量 ({{ referencedTraffic.length }})</span>
@@ -614,30 +710,48 @@
           </div>
         </div>
       </div>
-      
+
       <!-- Tool Result details (for standalone tool_result messages) -->
-      <div v-if="message.type === 'tool_result' && (hasToolArgs || message.content)" class="tool-details mt-2 pt-2 border-t border-base-300">
-        <button @click="toggleDetails" class="toggle-btn text-xs text-base-content/60 bg-transparent border-none cursor-pointer p-0 underline hover:text-base-content">
+      <div
+        v-if="message.type === 'tool_result' && (hasToolArgs || message.content)"
+        class="tool-details mt-2 pt-2 border-t border-base-300"
+      >
+        <button
+          @click="toggleDetails"
+          class="toggle-btn text-xs text-base-content/60 bg-transparent border-none cursor-pointer p-0 underline hover:text-base-content"
+        >
           {{ isExpanded ? t('agent.collapseDetails') : t('agent.expandDetails') }}
         </button>
         <div v-if="isExpanded" class="mt-2 space-y-3">
           <!-- Tool Arguments -->
           <div v-if="hasToolArgs" class="tool-args-section">
-            <div class="text-xs text-base-content/60 mb-1 font-medium">📥 {{ t('agent.inputParameters') }}:</div>
-            <pre class="tool-args p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-48 overflow-y-auto">{{ formattedArgs }}</pre>
+            <div class="text-xs text-base-content/60 mb-1 font-medium">
+              📥 {{ t('agent.inputParameters') }}:
+            </div>
+            <pre
+              class="tool-args p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-48 overflow-y-auto"
+              >{{ formattedArgs }}</pre
+            >
           </div>
           <!-- Tool Result -->
           <div v-if="message.content" class="tool-result-section">
-            <div class="text-xs text-base-content/60 mb-1 font-medium">📤 {{ t('agent.executionResult') }}:</div>
-            <pre class="tool-result p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-64 overflow-y-auto whitespace-pre-wrap">{{ formattedStandaloneToolResult }}</pre>
+            <div class="text-xs text-base-content/60 mb-1 font-medium">
+              📤 {{ t('agent.executionResult') }}:
+            </div>
+            <pre
+              class="tool-result p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-64 overflow-y-auto whitespace-pre-wrap"
+              >{{ formattedStandaloneToolResult }}</pre
+            >
           </div>
+          <ToolRuntimeMeta :result="message.content" class="mt-2" />
           <StoredArtifactPanel
             v-if="standaloneStoredArtifactViews.length > 0"
             :artifacts="standaloneStoredArtifactViews"
           />
           <!-- Tool Call ID -->
           <div v-if="message.metadata?.tool_call_id" class="text-xs text-base-content/50">
-            {{ t('agent.toolCallId') }}: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
+            {{ t('agent.toolCallId') }}:
+            <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
           </div>
         </div>
       </div>
@@ -660,12 +774,16 @@ import type {
 import { getMessageTypeName } from '@/types/agent'
 import { formatJsonStringIfPossible, formatJsonValueIfPossible } from '@/utils/jsonFormatting'
 import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
-import { buildTaskToolCardData } from './agentTaskToolPresentation'
 import MemoryToolResult from './MemoryToolResult.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ShellToolResult from './ShellToolResult.vue'
 import StoredArtifactPanel from './StoredArtifactPanel.vue'
+import ToolRuntimeMeta from './ToolRuntimeMeta.vue'
 import WebSearchToolResult from './WebSearchToolResult.vue'
+import {
+  shouldShowDefaultToolCallPanel,
+  shouldShowRegularMessageBlock,
+} from './messageVisibilitySupport'
 import { buildStoredArtifactViews } from './storedArtifactSupport'
 
 const { t } = useI18n()
@@ -759,13 +877,19 @@ onMounted(() => {
 })
 
 // Watch for content changes
-watch(() => props.message.metadata?.tool_args, () => {
-  checkArgsOverflow()
-})
+watch(
+  () => props.message.metadata?.tool_args,
+  () => {
+    checkArgsOverflow()
+  }
+)
 
-watch(() => props.message.metadata?.tool_result, () => {
-  checkResultOverflow()
-})
+watch(
+  () => props.message.metadata?.tool_result,
+  () => {
+    checkResultOverflow()
+  }
+)
 
 // 复制消息内容
 const handleCopy = async () => {
@@ -805,7 +929,7 @@ const handleEdit = () => {
 const handleSaveEdit = () => {
   const newContent = editedContent.value.trim()
   if (!newContent) return
-  
+
   isEditing.value = false
   emit('edit', props.message, newContent)
 }
@@ -918,20 +1042,24 @@ const isAskUserQuestionTool = computed(() => {
 
 const isWebSearchTool = computed(() => {
   const name = props.message.metadata?.tool_name?.toLowerCase()
-  return (props.message.type === 'tool_call' || props.message.type === 'tool_result') && name === 'web_search'
+  return (
+    (props.message.type === 'tool_call' || props.message.type === 'tool_result') &&
+    name === 'web_search'
+  )
 })
 
 const isMemoryTool = computed(() => {
   const name = props.message.metadata?.tool_name?.toLowerCase()
-  return (props.message.type === 'tool_call' || props.message.type === 'tool_result') && name === 'memory'
+  return (
+    (props.message.type === 'tool_call' || props.message.type === 'tool_result') &&
+    name === 'memory'
+  )
 })
 
 const isFileMutationTool = computed(() => {
   const name = props.message.metadata?.tool_name?.toLowerCase()
   return name === 'file_edit' || name === 'file_write'
 })
-
-const taskToolCard = computed(() => buildTaskToolCardData(props.message))
 
 const fileVerificationStatus = computed(() => {
   if (!isFileMutationTool.value) return ''
@@ -962,70 +1090,29 @@ const fileVerificationClass = computed(() => {
 
 // Check if this is a segment summary message (sliding window)
 const isSegmentSummary = computed(() => {
-  return props.message.type === 'system' && 
-         props.message.metadata?.kind === 'segment_summary'
+  return props.message.type === 'system' && props.message.metadata?.kind === 'segment_summary'
 })
 
 // Check if this is a global summary message (long-term memory)
 const isGlobalSummary = computed(() => {
-  return props.message.type === 'system' && 
-         props.message.metadata?.kind === 'global_summary'
+  return props.message.type === 'system' && props.message.metadata?.kind === 'global_summary'
 })
 
 // Check if this is a skill loaded system message
 const isSkillLoaded = computed(() => {
-  return props.message.type === 'system' &&
-         props.message.metadata?.kind === 'skill_loaded'
+  return props.message.type === 'system' && props.message.metadata?.kind === 'skill_loaded'
 })
 
 const isToolsActivated = computed(() => {
-  return props.message.type === 'system' &&
-         props.message.metadata?.kind === 'tools_activated'
+  return props.message.type === 'system' && props.message.metadata?.kind === 'tools_activated'
 })
 
 const isTeamDependencyReady = computed(() => {
-  return props.message.type === 'system' &&
-         props.message.metadata?.kind === 'team_dependency_ready'
+  return props.message.type === 'system' && props.message.metadata?.kind === 'team_dependency_ready'
 })
 
 const isAgentTaskUpdate = computed(() => {
-  return props.message.type === 'system' &&
-         props.message.metadata?.kind === 'agent_task_update'
-})
-
-const agentTaskUpdateCount = computed(() => {
-  const raw = props.message.metadata?.task_count
-  return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0
-})
-
-const agentTaskUpdateTitle = computed(() => {
-  switch (props.message.metadata?.task_event_type) {
-    case 'planned':
-      return t('agent.agentTaskPlannedTitle')
-    case 'created':
-      return t('agent.agentTaskCreatedTitle')
-    case 'started':
-      return t('agent.agentTaskStartedTitle')
-    case 'completed':
-      return t('agent.agentTaskCompletedTitle')
-    default:
-      return t('agent.agentTaskUpdatedTitle')
-  }
-})
-
-const agentTaskUpdateIconClass = computed(() => {
-  switch (props.message.metadata?.task_event_type) {
-    case 'planned':
-      return 'fa-list-check'
-    case 'created':
-      return 'fa-plus'
-    case 'started':
-      return 'fa-play'
-    case 'completed':
-      return 'fa-check'
-    default:
-      return 'fa-list-check'
-  }
+  return props.message.type === 'system' && props.message.metadata?.kind === 'agent_task_update'
 })
 
 const teamDependencyReadyTaskId = computed(() => {
@@ -1047,7 +1134,10 @@ const toolsActivatedIds = computed<string[]>(() => {
 })
 
 const toolsActivatedCount = computed(() => {
-  return toolsActivatedIds.value.length || (Array.isArray(props.message.metadata?.tools) ? props.message.metadata.tools.length : 0)
+  return (
+    toolsActivatedIds.value.length ||
+    (Array.isArray(props.message.metadata?.tools) ? props.message.metadata.tools.length : 0)
+  )
 })
 
 const toolsActivatedPreview = computed(() => {
@@ -1069,10 +1159,12 @@ const toolsActivatedActiveSetPreview = computed(() => {
 
 // Check if this is a Tenth Man Critique message
 const isTenthManCritique = computed(() => {
-  return props.message.type === 'system' && 
-         (props.message.metadata?.kind === 'tenth_man_critique' ||
-          props.message.metadata?.kind === 'tenth_man_intervention' ||
-          props.message.metadata?.kind === 'tenth_man_warning')
+  return (
+    props.message.type === 'system' &&
+    (props.message.metadata?.kind === 'tenth_man_critique' ||
+      props.message.metadata?.kind === 'tenth_man_intervention' ||
+      props.message.metadata?.kind === 'tenth_man_warning')
+  )
 })
 
 const isTeamMessage = computed(() => {
@@ -1317,8 +1409,9 @@ const toolPanelBorderClass = computed(() => {
 
 // Has tool args
 const hasToolArgs = computed(() => {
-  return props.message.metadata?.tool_args && 
-    Object.keys(props.message.metadata.tool_args).length > 0
+  return (
+    props.message.metadata?.tool_args && Object.keys(props.message.metadata.tool_args).length > 0
+  )
 })
 
 // Has tool result (合并显示的结果)
@@ -1328,33 +1421,26 @@ const hasToolResult = computed(() => {
 
 // Check if tool_call message has any content to display
 const hasToolCallContent = computed(() => {
-  if (props.message.type !== 'tool_call') return false
-  if (isSkillsTool.value) return false
-  if (isAskUserQuestionTool.value) return false
-  if (isWebSearchTool.value) return false
-  if (taskToolCard.value) return false
-  
-  // Has content, args, result, or call_id
-  return !!(
-    props.message.content ||
-    hasToolArgs.value ||
-    hasToolResult.value ||
-    props.message.metadata?.tool_call_id
-  )
+  return shouldShowDefaultToolCallPanel({
+    messageType: props.message.type,
+    hasContent: !!props.message.content,
+    hasToolArgs: hasToolArgs.value,
+    hasToolResult: hasToolResult.value,
+    hasToolCallId: !!props.message.metadata?.tool_call_id,
+    isSkillsTool: isSkillsTool.value,
+    isAskUserQuestionTool: isAskUserQuestionTool.value,
+    isWebSearchTool: isWebSearchTool.value,
+  })
 })
 
 // Check if regular message has any content to display
 const hasRegularMessageContent = computed(() => {
-  // tool_call messages are handled separately
-  if (props.message.type === 'tool_call') return false
-  
-  // For tool_result, check if has content or args
-  if (props.message.type === 'tool_result') {
-    return !!(props.message.content || hasToolArgs.value)
-  }
-  
-  // For all other message types, check if content is not empty
-  return !!props.message.content && props.message.content.trim().length > 0
+  return shouldShowRegularMessageBlock({
+    messageType: props.message.type,
+    hasContent: !!props.message.content && props.message.content.trim().length > 0,
+    hasToolArgs: hasToolArgs.value,
+    isAgentTaskUpdate: isAgentTaskUpdate.value,
+  })
 })
 
 // Formatted args
@@ -1377,15 +1463,12 @@ const formattedStandaloneToolResult = computed(() => {
 const toolResultStoredArtifactViews = computed(() =>
   buildStoredArtifactViews(
     props.message.metadata?.tool_result,
-    props.message.metadata?.tracked_artifacts,
+    props.message.metadata?.tracked_artifacts
   )
 )
 
 const standaloneStoredArtifactViews = computed(() =>
-  buildStoredArtifactViews(
-    props.message.content,
-    props.message.metadata?.tracked_artifacts,
-  )
+  buildStoredArtifactViews(props.message.content, props.message.metadata?.tracked_artifacts)
 )
 
 // Type-specific class
@@ -1421,7 +1504,7 @@ const imageAttachments = computed(() => {
   if (props.message.type !== 'user') return []
   const attachments = props.message.metadata?.image_attachments
   if (!attachments) return []
-  
+
   // Handle both array format and single object format
   if (Array.isArray(attachments)) {
     return attachments.map((att: any) => {
@@ -1437,7 +1520,7 @@ const imageAttachments = computed(() => {
       return att
     })
   }
-  
+
   return []
 })
 
@@ -1488,18 +1571,18 @@ const getImagePreviewUrl = (img: any): string => {
     if (img?.data) {
       const mediaTypeRaw: string | undefined = img.media_type
       const mime = toMimeType(mediaTypeRaw)
-      
+
       // Handle base64 data
       if (img.data.type === 'base64' && img.data.data) {
         return `data:${mime};base64,${img.data.data}`
       }
-      
+
       // Handle URL
       if (img.data.type === 'url' && img.data.url) {
         return img.data.url
       }
     }
-    
+
     // Handle legacy format (direct base64 string in data field)
     const mediaTypeRaw: string | undefined = img?.media_type
     const mime = toMimeType(mediaTypeRaw)
@@ -1562,10 +1645,10 @@ const formattedContent = computed(() => {
   switch (type) {
     case 'thinking':
       return `> **Thinking**\n>\n> ${content.replace(/\n/g, '\n> ')}${cursor}`
-    
+
     case 'planning':
       return `**Planning**\n\n${content}${cursor}`
-    
+
     case 'tool_result': {
       // Wrap result in code block if not already markdown
       const formattedJson = formatJsonStringIfPossible(content)
@@ -1575,19 +1658,19 @@ const formattedContent = computed(() => {
       }
       return result + cursor
     }
-    
+
     case 'progress': {
       const step = metadata?.step_index ?? 0
       const total = metadata?.total_steps ?? 0
       return `**Progress** Step ${step}/${total}\n\n${content}${cursor}`
     }
-    
+
     case 'error':
       return `> **Error**\n>\n> ${content}`
-    
+
     case 'final':
       return wrapHtmlAsCodeBlock(content, cursor)
-    
+
     default:
       return wrapHtmlAsCodeBlock(content, cursor)
   }
@@ -1610,24 +1693,22 @@ const escapeCsvCell = (value: string) => {
 }
 
 const buildCsvContent = (rows: string[][]) => {
-  return rows
-    .map(row => row.map(cell => escapeCsvCell(cell ?? '')).join(','))
-    .join('\n')
+  return rows.map(row => row.map(cell => escapeCsvCell(cell ?? '')).join(',')).join('\n')
 }
 
 const downloadTableAsCsv = async (data: string[][]) => {
   if (data.length === 0) return
-  
+
   const csv = buildCsvContent(data)
   const defaultFilename = `table-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`
-  
+
   try {
     // Use Tauri save dialog
     const filePath = await save({
       defaultPath: defaultFilename,
-      filters: [{ name: 'CSV', extensions: ['csv'] }]
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
     })
-    
+
     if (filePath) {
       await writeTextFile(filePath, csv)
       console.log('[MessageBlock] Table saved to:', filePath)
@@ -1656,7 +1737,7 @@ const extractAllTablesFromContent = (content: string): string[][][] => {
   if (!content) return []
   if (!contentMayContainTable(content)) return []
   const tables: string[][][] = []
-  
+
   // Extract HTML tables
   const htmlBlock = extractHtmlBlock(content)
   const htmlCandidate = htmlBlock || content
@@ -1664,7 +1745,7 @@ const extractAllTablesFromContent = (content: string): string[][][] => {
   if (htmlTable.length > 0) {
     tables.push(htmlTable)
   }
-  
+
   // Extract Markdown tables
   const lines = content.split('\n')
   for (let i = 0; i < lines.length - 1; i += 1) {
@@ -1685,7 +1766,7 @@ const extractAllTablesFromContent = (content: string): string[][][] => {
     }
     i = j - 1 // Skip processed lines
   }
-  
+
   return tables
 }
 
@@ -1791,5 +1872,4 @@ const handleDownloadTable = (tableIndex: number) => {
 .tool-panel-content > div > div::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
-
 </style>

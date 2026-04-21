@@ -503,12 +503,13 @@ export default {
     imageAttachments: {
       title: 'Image Attachments',
       mode: 'Processing Mode',
-      modeDesc: 'Choose how to handle image attachments when sending messages.',
-      localOcr: 'Local OCR (default)',
+      modeDesc: 'Choose how to handle image attachments when sending messages. Auto prefers model vision when the current model supports it; otherwise it falls back to local OCR.',
+      auto: 'Auto (recommended)',
+      localOcr: 'Always use local OCR',
       modelVision: 'Upload to model (vision)',
       allowUpload: 'Allow uploading images to model',
       allowUploadDesc: 'If enabled, image files may be sent to the selected AI service for vision understanding.',
-      uploadDisabledWarning: 'Uploading images to model is disabled. Switch back to local OCR or enable upload permission.'
+      uploadDisabledWarning: 'Uploading images to model is disabled. Switch to Auto/local OCR or enable upload permission.'
     },
     fileUploads: {
       title: 'Workspace Management',

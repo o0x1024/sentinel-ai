@@ -78,6 +78,8 @@ impl Default for TerminalConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageAttachmentMode {
+    /// Automatically use model vision when the current model supports it; otherwise fallback to OCR
+    Auto,
     /// Use local OCR to extract text, do not upload images to the model
     LocalOcr,
     /// Upload images to the model for vision understanding
@@ -96,7 +98,7 @@ pub struct ImageAttachmentConfig {
 impl Default for ImageAttachmentConfig {
     fn default() -> Self {
         Self {
-            mode: ImageAttachmentMode::LocalOcr,
+            mode: ImageAttachmentMode::Auto,
             allow_upload_to_model: false,
         }
     }
@@ -578,6 +580,7 @@ pub async fn load_image_attachment_config_from_db(
 
     if let Ok(Some(value)) = db.get_config("agent", "image_attachment_mode").await {
         cfg.mode = match value.as_str() {
+            "auto" => ImageAttachmentMode::Auto,
             "model_vision" => ImageAttachmentMode::ModelVision,
             _ => ImageAttachmentMode::LocalOcr,
         };
@@ -596,6 +599,7 @@ async fn save_image_attachment_config_to_db(
     db: &sentinel_db::DatabaseService,
 ) -> Result<(), String> {
     let mode_str = match config.mode {
+        ImageAttachmentMode::Auto => "auto",
         ImageAttachmentMode::LocalOcr => "local_ocr",
         ImageAttachmentMode::ModelVision => "model_vision",
     };
@@ -604,7 +608,7 @@ async fn save_image_attachment_config_to_db(
         "agent",
         "image_attachment_mode",
         mode_str,
-        Some("Default processing mode for image attachments (local_ocr/model_vision)"),
+        Some("Default processing mode for image attachments (auto/local_ocr/model_vision)"),
     )
     .await
     .map_err(|e| e.to_string())?;

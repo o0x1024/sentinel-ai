@@ -20,7 +20,10 @@ struct TeamDependencyReadyNotice {
     content: String,
 }
 
-fn effective_task_section(task: &TeamV3Task, status_by_key: &HashMap<String, String>) -> &'static str {
+fn effective_task_section(
+    task: &TeamV3Task,
+    status_by_key: &HashMap<String, String>,
+) -> &'static str {
     if matches!(task.status.as_str(), "pending" | "ready_for_claim") {
         let dependencies = parse_task_dependencies(&task.metadata);
         let has_unresolved_dependencies = dependencies.iter().any(|dependency| {
@@ -46,7 +49,8 @@ fn effective_task_section(task: &TeamV3Task, status_by_key: &HashMap<String, Str
 }
 
 fn build_status_by_task_key(tasks: &[TeamV3Task]) -> HashMap<String, String> {
-    tasks.iter()
+    tasks
+        .iter()
         .map(|task| (task.task_key.clone(), task.status.clone()))
         .collect()
 }

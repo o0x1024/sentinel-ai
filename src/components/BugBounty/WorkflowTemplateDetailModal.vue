@@ -257,7 +257,7 @@
 
   <!-- Add/Edit Step Modal (teleported to avoid nesting/clipping) -->
   <Teleport to="body">
-    <div v-if="showAddStepModal" class="modal modal-open z-[60]">
+    <div v-if="showAddStepModal" class="modal modal-open z-[1001]">
       <div class="modal-box max-w-2xl max-h-[85vh] overflow-y-auto bg-base-100" @click.stop>
         <h3 class="font-bold text-lg mb-4">
           {{ editingStep ? t('bugBounty.workflowTemplates.editStep') : t('bugBounty.workflowTemplates.addStep') }}

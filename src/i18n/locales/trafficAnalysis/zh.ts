@@ -56,6 +56,21 @@ export default {
       disableLineWrap: '关闭自动换行',
     },
   },
+  aiWorkspace: {
+    eyebrow: 'Context Copilot',
+    title: '流量分析 AI 助手',
+    panelBadge: '侧边协同',
+    immersiveBadge: '沉浸挖洞',
+    panelDescription: '保持当前流量分析上下文，在右侧连续追问，不再跳走到独立助手菜单。',
+    immersiveDescription: '需要长链路推理、反复对比和连续追问时，展开成沉浸式挖洞工作区。',
+    expand: '进入沉浸模式',
+    collapse: '收起为侧边',
+    close: '关闭助手',
+    resize: '调整助手宽度',
+    launcherTitle: 'AI 助手',
+    launcherHint: '原地追问当前流量，不打断分析节奏',
+    launcherOpenHint: '已接管当前分析上下文，点击可收起',
+  },
   comparer: {
     tabs: {
       pretty: '格式化',

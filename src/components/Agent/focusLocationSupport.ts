@@ -1,12 +1,21 @@
+import type {
+  LocationQuery,
+  LocationQueryRaw,
+  LocationQueryValue,
+  LocationQueryValueRaw,
+} from 'vue-router'
+
 export interface FocusLocationState {
   conversationId: string | null
   memoryId: string | null
   focusedMessageId: string | null
 }
 
-export type QueryLike = Record<string, unknown>
+export type QueryLike = LocationQuery | LocationQueryRaw
 
-const normalizeQueryValue = (value: unknown): string | null => {
+const normalizeQueryValue = (
+  value: LocationQueryValue | LocationQueryValue[] | LocationQueryValueRaw | LocationQueryValueRaw[] | undefined,
+): string | null => {
   if (Array.isArray(value)) {
     for (const entry of value) {
       const normalized = normalizeQueryValue(entry)
@@ -32,7 +41,7 @@ export const readFocusLocationState = (query: QueryLike): FocusLocationState => 
 export const buildFocusedMessageQuery = (
   query: QueryLike,
   params: { memoryId: string; messageId: string },
-): QueryLike => {
+): LocationQueryRaw => {
   const currentMemoryId = normalizeQueryValue(query.memoryId)
   const normalizedMemoryId = normalizeQueryValue(params.memoryId)
   const normalizedMessageId = normalizeQueryValue(params.messageId)
@@ -41,14 +50,14 @@ export const buildFocusedMessageQuery = (
     return { ...query }
   }
 
-  const nextQuery = { ...query }
+  const nextQuery: LocationQueryRaw = { ...query }
   delete nextQuery.memoryId
   nextQuery.focusedMessageId = normalizedMessageId
   return nextQuery
 }
 
-export const clearFocusLocationQuery = (query: QueryLike): QueryLike => {
-  const nextQuery = { ...query }
+export const clearFocusLocationQuery = (query: QueryLike): LocationQueryRaw => {
+  const nextQuery: LocationQueryRaw = { ...query }
   delete nextQuery.memoryId
   delete nextQuery.focusedMessageId
   return nextQuery

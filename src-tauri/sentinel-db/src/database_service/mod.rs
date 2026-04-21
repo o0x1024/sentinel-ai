@@ -9,6 +9,7 @@ pub mod cache;
 pub mod config;
 pub mod connection_manager;
 pub mod db_config;
+pub mod execution_tasks;
 pub mod init;
 pub mod memory;
 pub mod migration;
@@ -39,7 +40,6 @@ pub mod surface_runs;
 pub mod surface_topology;
 pub mod system_agent;
 pub mod task_tool;
-pub mod execution_tasks;
 pub mod traffic;
 pub mod traits;
 pub mod traits_impl;
@@ -65,6 +65,8 @@ pub use config::*;
 pub use connection_manager::*;
 #[allow(unused_imports)]
 pub use db_config::*;
+#[allow(unused_imports)]
+pub use execution_tasks::*;
 #[allow(unused_imports)]
 pub use init::*;
 #[allow(unused_imports)]
@@ -120,8 +122,6 @@ pub use surface_runs::*;
 pub use surface_topology::*;
 #[allow(unused_imports)]
 pub use system_agent::*;
-#[allow(unused_imports)]
-pub use execution_tasks::*;
 #[allow(unused_imports)]
 pub use traffic::*;
 #[allow(unused_imports)]

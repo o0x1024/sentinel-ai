@@ -18,7 +18,9 @@ use crate::log::{
     build_log_session_id, log_error_response, log_request, log_response, log_stream_event,
     log_turn_summary,
 };
-use crate::message::{build_user_message, convert_chat_history, ChatMessage, ImageAttachment};
+use crate::message::{
+    build_user_message_with_images, convert_chat_history, ChatMessage, ImageAttachment,
+};
 use crate::tool_args::normalize_tool_call_arguments_json;
 use crate::tool_hooks::ToolArgumentGuardHook;
 use sentinel_tools::DynamicTool;
@@ -255,7 +257,7 @@ impl StreamingLlmClient {
         system_prompt: Option<&str>,
         user_prompt: &str,
         history: &[ChatMessage],
-        image: Option<&ImageAttachment>,
+        images: &[ImageAttachment],
         on_content: F,
     ) -> Result<String>
     where
@@ -265,7 +267,7 @@ impl StreamingLlmClient {
             system_prompt,
             user_prompt,
             history,
-            image,
+            images,
             vec![],
             on_content,
         )
@@ -279,7 +281,7 @@ impl StreamingLlmClient {
         system_prompt: Option<&str>,
         user_prompt: &str,
         history: &[ChatMessage],
-        image: Option<&ImageAttachment>,
+        images: &[ImageAttachment],
         dynamic_tools: Vec<DynamicTool>,
         mut on_content: F,
     ) -> Result<String>
@@ -296,11 +298,12 @@ impl StreamingLlmClient {
         let history_count = history.len();
 
         info!(
-            "StreamingLlmClient - Provider: {}, Model: {}, Tools: {:?}, History: {} messages",
+            "StreamingLlmClient - Provider: {}, Model: {}, Tools: {:?}, History: {} messages, Images: {}",
             provider,
             model,
             tool_names,
-            history.len()
+            history.len(),
+            images.len()
         );
 
         let mut system_prompt_with_hack = system_prompt
@@ -368,7 +371,7 @@ impl StreamingLlmClient {
             }
         }
 
-        let user_message = build_user_message(user_prompt, image);
+        let user_message = build_user_message_with_images(user_prompt, images);
         let chat_history = convert_chat_history(history);
         let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
         let is_bigmodel_compat =

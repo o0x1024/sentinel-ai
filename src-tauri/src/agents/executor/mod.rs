@@ -25,6 +25,7 @@ pub mod message_store;
 pub mod run_simple;
 pub mod run_with_tools;
 mod run_with_tools_support;
+mod skill_loaded_events;
 mod tenth_man_hypothesis;
 mod terminal_session_store;
 mod tool_activation_events;

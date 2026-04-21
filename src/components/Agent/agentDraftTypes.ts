@@ -7,6 +7,7 @@ import type {
   TrafficSendType,
 } from '@/types/agentReferences'
 import type { UiToolConfigPayload } from './toolConfigRuntime'
+import type { ModelVisionCapability } from '@/services/aiModelCapabilities'
 export type {
   ReferencedConversationMessage,
   ReferencedAsset,
@@ -29,6 +30,8 @@ export interface AssistantModelOption {
   value: string
   label: string
   description?: string
+  supportsVision?: boolean
+  visionCapability?: ModelVisionCapability
 }
 
 export type AssistantContextMode = 'claude-like' | 'codex-like' | 'sentinel-like'

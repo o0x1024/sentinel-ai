@@ -57,6 +57,7 @@ export default {
   yes: '是',
   no: '否',
   immersiveDrillMode: '沉浸式挖洞模式',
+  exitImmersiveDrillMode: '退出挖洞模式',
 
   // Navigation
   nav: {

@@ -241,6 +241,7 @@ Any other command will be executed in the system shell.`,
     alwaysAcceptHint: 'Add this command to allow list and execute',
     allowRulePreviewTitle: 'Always Accept will save these rules:',
     semanticLabels: {
+      read_only: 'Read-only',
       readOnly: 'Read-only',
       mutating: 'Mutating',
       dangerous: 'High-risk'

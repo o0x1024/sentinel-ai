@@ -8674,9 +8674,9 @@ dependencies = [
 
 [[package]]
 name = "rsubdomain"
-version = "1.2.10"
+version = "1.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4aad7eed00f1c9d84f7bd078a8ee5344448cd9d7283f4b0449d3231f7518c993"
+checksum = "b3b8acb004dbe17ec2d711da93ca2d214a7e6e8d2a6e13ac6664dffaa2b6a5cb"
 dependencies = [
  "byteorder",
  "chrono",
@@ -8684,7 +8684,6 @@ dependencies = [
  "colored 2.2.0",
  "crossbeam-channel",
  "itertools 0.13.0",
- "lazy_static",
  "log",
  "pnet",
  "rand 0.8.5",

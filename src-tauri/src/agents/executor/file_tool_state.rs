@@ -1,9 +1,7 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
 use tokio::sync::RwLock;
 
 static FILE_TOOL_STATE: Lazy<Arc<RwLock<HashMap<String, HashMap<String, FileReadSnapshot>>>>> =
@@ -11,13 +9,12 @@ static FILE_TOOL_STATE: Lazy<Arc<RwLock<HashMap<String, HashMap<String, FileRead
 
 #[derive(Debug, Clone)]
 struct FileReadSnapshot {
-    modified_at_ms: u64,
+    revision_token: String,
     partial_view: bool,
 }
 
 #[derive(Debug)]
 pub(crate) enum FileToolStateError {
-    EmptyPath,
     MissingSnapshot(String),
     PartialView(String),
     StaleSnapshot(String),
@@ -27,7 +24,6 @@ pub(crate) enum FileToolStateError {
 impl std::fmt::Display for FileToolStateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::EmptyPath => write!(f, "file path cannot be empty"),
             Self::MissingSnapshot(path) => write!(
                 f,
                 "file must be read with file_read before editing or overwriting: {}",
@@ -53,41 +49,15 @@ impl std::fmt::Display for FileToolStateError {
 impl std::error::Error for FileToolStateError {}
 
 pub(crate) async fn normalize_file_path(path: &str) -> Result<String, FileToolStateError> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err(FileToolStateError::EmptyPath);
-    }
-    let candidate = PathBuf::from(trimmed);
-    let absolute = if candidate.is_absolute() {
-        candidate
-    } else {
-        std::env::current_dir()
-            .map_err(|error| FileToolStateError::Metadata(error.to_string()))?
-            .join(candidate)
-    };
-
-    match tokio::fs::canonicalize(&absolute).await {
-        Ok(canonical) => Ok(canonical.to_string_lossy().to_string()),
-        Err(_) => Ok(absolute.to_string_lossy().to_string()),
-    }
-}
-
-async fn file_modified_at_ms(path: &Path) -> Result<u64, FileToolStateError> {
-    let metadata = tokio::fs::metadata(path)
+    sentinel_tools::buildin_tools::file_runtime::snapshot_key(path)
         .await
-        .map_err(|error| FileToolStateError::Metadata(error.to_string()))?;
-    let modified = metadata
-        .modified()
-        .map_err(|error| FileToolStateError::Metadata(error.to_string()))?;
-    let duration = modified
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| FileToolStateError::Metadata(error.to_string()))?;
-    Ok(duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .map_err(FileToolStateError::Metadata)
 }
 
 pub(crate) async fn record_file_read_snapshot(
     execution_id: &str,
     file_path: &str,
+    revision_token: &str,
     start_line: usize,
     end_line: usize,
     total_lines: usize,
@@ -95,13 +65,12 @@ pub(crate) async fn record_file_read_snapshot(
 ) -> Result<(), FileToolStateError> {
     let normalized_path = normalize_file_path(file_path).await?;
     let partial_view = start_line > 1 || truncated || (total_lines > 0 && end_line < total_lines);
-    let modified_at_ms = file_modified_at_ms(Path::new(&normalized_path)).await?;
 
     let mut state = FILE_TOOL_STATE.write().await;
     state.entry(execution_id.to_string()).or_default().insert(
         normalized_path,
         FileReadSnapshot {
-            modified_at_ms,
+            revision_token: revision_token.to_string(),
             partial_view,
         },
     );
@@ -126,7 +95,9 @@ pub(crate) async fn ensure_file_snapshot_is_editable(
     file_path: &str,
 ) -> Result<(), FileToolStateError> {
     let normalized_path = normalize_file_path(file_path).await?;
-    let modified_at_ms = file_modified_at_ms(Path::new(&normalized_path)).await?;
+    let revision_token = sentinel_tools::buildin_tools::file_runtime::revision_token(file_path)
+        .await
+        .map_err(FileToolStateError::Metadata)?;
     let state = FILE_TOOL_STATE.read().await;
     let Some(execution_state) = state.get(execution_id) else {
         return Err(FileToolStateError::MissingSnapshot(file_path.to_string()));
@@ -137,7 +108,7 @@ pub(crate) async fn ensure_file_snapshot_is_editable(
     if snapshot.partial_view {
         return Err(FileToolStateError::PartialView(file_path.to_string()));
     }
-    if snapshot.modified_at_ms != modified_at_ms {
+    if snapshot.revision_token != revision_token {
         return Err(FileToolStateError::StaleSnapshot(file_path.to_string()));
     }
     Ok(())
@@ -163,9 +134,22 @@ mod tests {
 
         let execution_id = format!("exec-{}", uuid::Uuid::new_v4());
 
-        record_file_read_snapshot(&execution_id, &file_path.to_string_lossy(), 1, 2, 3, true)
-            .await
-            .unwrap();
+        let initial_revision = sentinel_tools::buildin_tools::file_runtime::revision_token(
+            &file_path.to_string_lossy(),
+        )
+        .await
+        .unwrap();
+        record_file_read_snapshot(
+            &execution_id,
+            &file_path.to_string_lossy(),
+            &initial_revision,
+            1,
+            2,
+            3,
+            true,
+        )
+        .await
+        .unwrap();
         assert!(matches!(
             ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
                 .await
@@ -173,9 +157,17 @@ mod tests {
             FileToolStateError::PartialView(_)
         ));
 
-        record_file_read_snapshot(&execution_id, &file_path.to_string_lossy(), 1, 3, 3, false)
-            .await
-            .unwrap();
+        record_file_read_snapshot(
+            &execution_id,
+            &file_path.to_string_lossy(),
+            &initial_revision,
+            1,
+            3,
+            3,
+            false,
+        )
+        .await
+        .unwrap();
         ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
             .await
             .expect("full read should allow edit");

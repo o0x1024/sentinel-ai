@@ -56,6 +56,21 @@ export default {
       disableLineWrap: 'Disable line wrapping',
     },
   },
+  aiWorkspace: {
+    eyebrow: 'Context Copilot',
+    title: 'Traffic AI Assistant',
+    panelBadge: 'Sidecar',
+    immersiveBadge: 'Immersive Drill',
+    panelDescription: 'Keep the current traffic context on screen and continue asking from the side panel instead of jumping to the assistant menu.',
+    immersiveDescription: 'Expand into an immersive drill workspace when you need longer reasoning chains, repeated comparisons, and deeper follow-up.',
+    expand: 'Enter Immersive Mode',
+    collapse: 'Back to Side Panel',
+    close: 'Close Assistant',
+    resize: 'Resize assistant panel',
+    launcherTitle: 'AI Assistant',
+    launcherHint: 'Ask within the current traffic context without leaving the page',
+    launcherOpenHint: 'Assistant is attached to this analysis. Click to collapse it',
+  },
   comparer: {
     tabs: {
       pretty: 'Pretty',

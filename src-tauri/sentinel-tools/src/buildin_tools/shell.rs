@@ -12,8 +12,10 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -707,6 +709,36 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         }
     }
 
+    fn spawn_output_reader<T>(stream: Option<T>) -> JoinHandle<std::io::Result<Vec<u8>>>
+    where
+        T: tokio::io::AsyncRead + Unpin + Send + 'static,
+    {
+        tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            if let Some(mut stream) = stream {
+                stream.read_to_end(&mut bytes).await?;
+            }
+            Ok(bytes)
+        })
+    }
+
+    async fn collect_output_reader(
+        handle: JoinHandle<std::io::Result<Vec<u8>>>,
+        stream_name: &str,
+    ) -> Result<Vec<u8>, ShellError> {
+        handle
+            .await
+            .map_err(|e| {
+                ShellError::ExecutionFailed(format!(
+                    "Failed to join {} output reader: {}",
+                    stream_name, e
+                ))
+            })?
+            .map_err(|e| {
+                ShellError::ExecutionFailed(format!("Failed to read {} output: {}", stream_name, e))
+            })
+    }
+
     /// Execute command on host machine with cross-platform support
     async fn execute_on_host(
         &self,
@@ -789,6 +821,8 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         let mut child = command
             .spawn()
             .map_err(|e| ShellError::ExecutionFailed(e.to_string()))?;
+        let stdout_reader = Self::spawn_output_reader(child.stdout.take());
+        let stderr_reader = Self::spawn_output_reader(child.stderr.take());
         let timeout_duration = tokio::time::sleep(Duration::from_secs(timeout_secs));
         tokio::pin!(timeout_duration);
 
@@ -797,20 +831,23 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
                 if token.is_cancelled() {
                     let _ = child.kill().await;
                     let _ = child.wait().await;
+                    let _ = stdout_reader.await;
+                    let _ = stderr_reader.await;
                     return Err(ShellError::Cancelled);
                 }
             }
 
             match child.try_wait() {
-                Ok(Some(_status)) => {
-                    let output = child
-                        .wait_with_output()
-                        .await
-                        .map_err(|e| ShellError::ExecutionFailed(e.to_string()))?;
-
-                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    let exit_code = output.status.code().unwrap_or(-1);
+                Ok(Some(status)) => {
+                    let stdout = String::from_utf8_lossy(
+                        &Self::collect_output_reader(stdout_reader, "stdout").await?,
+                    )
+                    .to_string();
+                    let stderr = String::from_utf8_lossy(
+                        &Self::collect_output_reader(stderr_reader, "stderr").await?,
+                    )
+                    .to_string();
+                    let exit_code = status.code().unwrap_or(-1);
 
                     tracing::debug!(
                         "Command completed - exit_code: {}, stdout_len: {}, stderr_len: {}",
@@ -826,6 +863,8 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
                         _ = &mut timeout_duration => {
                             let _ = child.kill().await;
                             let _ = child.wait().await;
+                            let _ = stdout_reader.await;
+                            let _ = stderr_reader.await;
                             tracing::error!("Command timeout after {} seconds", timeout_secs);
                             return Err(ShellError::Timeout(timeout_secs));
                         }
@@ -993,6 +1032,7 @@ impl Tool for ShellTool {
                                 "shell_stdout",
                                 &stdout,
                                 None,
+                                execution_id.as_deref(),
                             ).await {
                                 Ok(storage_result) => {
                                     if let Some(artifact) = storage_result.to_stored_artifact("stdout") {
@@ -1022,6 +1062,7 @@ impl Tool for ShellTool {
                                 "shell_stderr",
                                 &stderr,
                                 None,
+                                execution_id.as_deref(),
                             ).await {
                                 Ok(storage_result) => {
                                     if let Some(artifact) = storage_result.to_stored_artifact("stderr") {
@@ -1077,6 +1118,7 @@ impl Tool for ShellTool {
                                     "shell_stdout_host_fallback",
                                     &stdout,
                                     None,
+                                    execution_id.as_deref(),
                                 ).await {
                                     Ok(storage_result) => {
                                         if let Some(artifact) = storage_result.to_stored_artifact("stdout") {
@@ -1099,6 +1141,7 @@ impl Tool for ShellTool {
                                     "shell_stderr_host_fallback",
                                     &stderr,
                                     None,
+                                    execution_id.as_deref(),
                                 ).await {
                                     Ok(storage_result) => {
                                         if let Some(artifact) = storage_result.to_stored_artifact("stderr") {
@@ -1151,6 +1194,7 @@ impl Tool for ShellTool {
                         "shell_stdout_host",
                         &stdout,
                         None,
+                        execution_id.as_deref(),
                     ).await {
                         Ok(storage_result) => {
                             if let Some(artifact) = storage_result.to_stored_artifact("stdout") {
@@ -1174,6 +1218,7 @@ impl Tool for ShellTool {
                         "shell_stderr_host",
                         &stderr,
                         None,
+                        execution_id.as_deref(),
                     ).await {
                         Ok(storage_result) => {
                             if let Some(artifact) = storage_result.to_stored_artifact("stderr") {

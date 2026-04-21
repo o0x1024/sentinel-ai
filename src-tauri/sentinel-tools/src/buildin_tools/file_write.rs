@@ -1,10 +1,13 @@
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 use crate::buildin_tools::file_context::{
     build_host_file_artifact, count_text_lines, hash_bytes, hash_text,
+};
+use crate::buildin_tools::file_runtime::{
+    current_runtime_metadata, get_path_kind, read_path_bytes, write_path_bytes, FilePathKind,
+    FileRuntimeMetadata,
 };
 use crate::buildin_tools::text_change::{summarize_text_change, TextChangeSummary};
 use crate::buildin_tools::text_preview::condense_preview as condense_text_preview;
@@ -29,6 +32,7 @@ pub struct FileWriteArgs {
 #[derive(Debug, Clone, Serialize)]
 pub struct FileWriteOutput {
     pub file_path: String,
+    pub runtime: FileRuntimeMetadata,
     pub operation: String,
     pub created: bool,
     pub bytes_written: usize,
@@ -84,18 +88,20 @@ impl Tool for FileWriteTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let path = resolve_path(&args.file_path)?;
         let mut previous_preview = None;
         let mut previous_content = String::new();
         let mut current_hash = None;
         let expects_missing = args.expected_hash.as_deref() == Some(MISSING_REVISION_TOKEN);
-        if let Ok(metadata) = tokio::fs::metadata(&path).await {
-            if metadata.is_dir() {
-                return Err(FileWriteError::IsDirectory(args.file_path));
-            }
-            let existing_bytes = tokio::fs::read(&path)
+        let path_kind = get_path_kind(&args.file_path)
+            .await
+            .map_err(FileWriteError::WriteFailed)?;
+        if matches!(path_kind, FilePathKind::Directory) {
+            return Err(FileWriteError::IsDirectory(args.file_path));
+        }
+        if matches!(path_kind, FilePathKind::File) {
+            let existing_bytes = read_path_bytes(&args.file_path)
                 .await
-                .map_err(|error| FileWriteError::WriteFailed(error.to_string()))?;
+                .map_err(FileWriteError::WriteFailed)?;
             let existing = String::from_utf8(existing_bytes.clone())
                 .map_err(|error| FileWriteError::WriteFailed(error.to_string()))?;
             current_hash = Some(hash_bytes(&existing_bytes));
@@ -112,10 +118,6 @@ impl Tool for FileWriteTool {
             }
             previous_content = existing.clone();
             previous_preview = Some(condense_text_preview(&existing, 120));
-        } else if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|error| FileWriteError::WriteFailed(error.to_string()))?;
         }
 
         if let Some(expected_hash) = args.expected_hash.as_deref() {
@@ -137,13 +139,13 @@ impl Tool for FileWriteTool {
             }
         }
 
-        let created = tokio::fs::metadata(&path).await.is_err();
+        let created = matches!(path_kind, FilePathKind::Missing);
         let operation = if created { "create" } else { "overwrite" }.to_string();
         let content_preview = condense_text_preview(&args.content, 120);
         let change_summary = summarize_text_change(&previous_content, &args.content);
-        tokio::fs::write(&path, args.content.as_bytes())
+        write_path_bytes(&args.file_path, args.content.as_bytes(), created)
             .await
-            .map_err(|error| FileWriteError::WriteFailed(error.to_string()))?;
+            .map_err(FileWriteError::WriteFailed)?;
         let content_hash = hash_text(&args.content);
         let stored_artifacts = vec![build_host_file_artifact(
             "file",
@@ -154,6 +156,7 @@ impl Tool for FileWriteTool {
 
         Ok(FileWriteOutput {
             file_path: args.file_path,
+            runtime: current_runtime_metadata(),
             operation,
             created,
             bytes_written: args.content.len(),
@@ -163,22 +166,6 @@ impl Tool for FileWriteTool {
             change_summary,
             stored_artifacts,
         })
-    }
-}
-
-fn resolve_path(raw: &str) -> Result<PathBuf, FileWriteError> {
-    if raw.trim().is_empty() {
-        return Err(FileWriteError::InvalidPath(
-            "path cannot be empty".to_string(),
-        ));
-    }
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        let cwd = std::env::current_dir()
-            .map_err(|error| FileWriteError::InvalidPath(error.to_string()))?;
-        Ok(cwd.join(path))
     }
 }
 

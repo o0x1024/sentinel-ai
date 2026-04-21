@@ -63,38 +63,185 @@ pub struct ExecutionTaskInput {
 }
 
 impl DatabaseService {
-    /// Get all execution tasks for an execution
-    pub async fn get_execution_tasks(&self, execution_id: &str) -> Result<Vec<ExecutionTaskItem>> {
+    async fn ensure_execution_tasks_schema(&self) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-        let rows = match runtime {
+
+        match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as::<_, ExecutionTaskItem>(
+                let legacy_table_exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_name = 'agent_todos'
+                    )",
+                )
+                .fetch_one(pool)
+                .await?;
+                let execution_table_exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_name = 'execution_tasks'
+                    )",
+                )
+                .fetch_one(pool)
+                .await?;
+
+                if legacy_table_exists && !execution_table_exists {
+                    sqlx::query("ALTER TABLE agent_todos RENAME TO execution_tasks")
+                        .execute(pool)
+                        .await?;
+                }
+
+                sqlx::query(
+                    r#"CREATE TABLE IF NOT EXISTS execution_tasks (
+                        id TEXT PRIMARY KEY,
+                        execution_id TEXT NOT NULL,
+                        item_index INTEGER NOT NULL,
+                        description TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        result TEXT,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL
+                    )"#,
+                )
+                .execute(pool)
+                .await?;
+
+                for index_sql in [
+                    "DROP INDEX IF EXISTS idx_agent_todos_execution",
+                    "DROP INDEX IF EXISTS idx_agent_todos_execution_index",
+                    "DROP INDEX IF EXISTS idx_agent_todos_updated",
+                    "CREATE INDEX IF NOT EXISTS idx_execution_tasks_execution ON execution_tasks(execution_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_execution_tasks_execution_index ON execution_tasks(execution_id, item_index)",
+                    "CREATE INDEX IF NOT EXISTS idx_execution_tasks_updated ON execution_tasks(updated_at DESC)",
+                ] {
+                    sqlx::query(index_sql).execute(pool).await?;
+                }
+            }
+            DatabasePool::SQLite(pool) => {
+                let legacy_table_exists: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+                )
+                .bind("agent_todos")
+                .fetch_one(pool)
+                .await?;
+                let execution_table_exists: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+                )
+                .bind("execution_tasks")
+                .fetch_one(pool)
+                .await?;
+
+                if legacy_table_exists > 0 && execution_table_exists == 0 {
+                    sqlx::query("ALTER TABLE agent_todos RENAME TO execution_tasks")
+                        .execute(pool)
+                        .await?;
+                }
+
+                sqlx::query(
+                    r#"CREATE TABLE IF NOT EXISTS execution_tasks (
+                        id TEXT PRIMARY KEY,
+                        execution_id TEXT NOT NULL,
+                        item_index INTEGER NOT NULL,
+                        description TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        result TEXT,
+                        created_at DATETIME NOT NULL,
+                        updated_at DATETIME NOT NULL
+                    )"#,
+                )
+                .execute(pool)
+                .await?;
+
+                for index_sql in [
+                    "DROP INDEX IF EXISTS idx_agent_todos_execution",
+                    "DROP INDEX IF EXISTS idx_agent_todos_execution_index",
+                    "DROP INDEX IF EXISTS idx_agent_todos_updated",
+                    "CREATE INDEX IF NOT EXISTS idx_execution_tasks_execution ON execution_tasks(execution_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_execution_tasks_execution_index ON execution_tasks(execution_id, item_index)",
+                    "CREATE INDEX IF NOT EXISTS idx_execution_tasks_updated ON execution_tasks(updated_at DESC)",
+                ] {
+                    sqlx::query(index_sql).execute(pool).await?;
+                }
+            }
+            DatabasePool::MySQL(pool) => {
+                let legacy_table_exists: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+                )
+                .bind("agent_todos")
+                .fetch_one(pool)
+                .await?;
+                let execution_table_exists: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+                )
+                .bind("execution_tasks")
+                .fetch_one(pool)
+                .await?;
+
+                if legacy_table_exists > 0 && execution_table_exists == 0 {
+                    sqlx::query("RENAME TABLE agent_todos TO execution_tasks")
+                        .execute(pool)
+                        .await?;
+                }
+
+                sqlx::query(
+                    r#"CREATE TABLE IF NOT EXISTS execution_tasks (
+                        id TEXT PRIMARY KEY,
+                        execution_id TEXT NOT NULL,
+                        item_index INTEGER NOT NULL,
+                        description TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        result TEXT,
+                        created_at DATETIME NOT NULL,
+                        updated_at DATETIME NOT NULL
+                    )"#,
+                )
+                .execute(pool)
+                .await?;
+
+                for index_sql in [
+                    "CREATE INDEX idx_execution_tasks_execution ON execution_tasks(execution_id)",
+                    "CREATE INDEX idx_execution_tasks_execution_index ON execution_tasks(execution_id, item_index)",
+                    "CREATE INDEX idx_execution_tasks_updated ON execution_tasks(updated_at)",
+                ] {
+                    let _ = sqlx::query(index_sql).execute(pool).await;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get all execution tasks for an execution
+    pub async fn get_execution_tasks(&self, execution_id: &str) -> Result<Vec<ExecutionTaskItem>> {
+        self.ensure_execution_tasks_schema().await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let rows =
+            match runtime {
+                DatabasePool::PostgreSQL(pool) => sqlx::query_as::<_, ExecutionTaskItem>(
                     "SELECT * FROM execution_tasks WHERE execution_id = $1 ORDER BY item_index ASC",
                 )
                 .bind(execution_id)
                 .fetch_all(pool)
-                .await?
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query_as::<_, ExecutionTaskItem>(
+                .await?,
+                DatabasePool::SQLite(pool) => sqlx::query_as::<_, ExecutionTaskItem>(
                     "SELECT * FROM execution_tasks WHERE execution_id = ? ORDER BY item_index ASC",
                 )
                 .bind(execution_id)
                 .fetch_all(pool)
-                .await?
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query_as::<_, ExecutionTaskItem>(
+                .await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as::<_, ExecutionTaskItem>(
                     "SELECT * FROM execution_tasks WHERE execution_id = ? ORDER BY item_index ASC",
                 )
                 .bind(execution_id)
                 .fetch_all(pool)
-                .await?
-            }
-        };
+                .await?,
+            };
         Ok(rows)
     }
 
@@ -104,6 +251,7 @@ impl DatabaseService {
         execution_id: &str,
         items: &[ExecutionTaskInput],
     ) -> Result<()> {
+        self.ensure_execution_tasks_schema().await?;
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -196,6 +344,7 @@ impl DatabaseService {
         status: ExecutionTaskStatus,
         result: Option<&str>,
     ) -> Result<()> {
+        self.ensure_execution_tasks_schema().await?;
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -251,6 +400,7 @@ impl DatabaseService {
         item_index: i32,
         description: &str,
     ) -> Result<()> {
+        self.ensure_execution_tasks_schema().await?;
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -298,6 +448,7 @@ impl DatabaseService {
 
     /// Delete all execution tasks for an execution
     pub async fn delete_execution_tasks(&self, execution_id: &str) -> Result<()> {
+        self.ensure_execution_tasks_schema().await?;
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -331,6 +482,7 @@ impl DatabaseService {
         execution_id: &str,
         item_index: i32,
     ) -> Result<()> {
+        self.ensure_execution_tasks_schema().await?;
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -339,11 +491,13 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = $1 AND item_index = $2")
-                    .bind(execution_id)
-                    .bind(item_index)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "DELETE FROM execution_tasks WHERE execution_id = $1 AND item_index = $2",
+                )
+                .bind(execution_id)
+                .bind(item_index)
+                .execute(pool)
+                .await?;
 
                 sqlx::query(
                     "UPDATE execution_tasks SET item_index = item_index - 1, updated_at = $1 WHERE execution_id = $2 AND item_index > $3"
@@ -367,11 +521,13 @@ impl DatabaseService {
                 }
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = ? AND item_index = ?")
-                    .bind(execution_id)
-                    .bind(item_index)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "DELETE FROM execution_tasks WHERE execution_id = ? AND item_index = ?",
+                )
+                .bind(execution_id)
+                .bind(item_index)
+                .execute(pool)
+                .await?;
 
                 sqlx::query(
                     "UPDATE execution_tasks SET item_index = item_index - 1, updated_at = ? WHERE execution_id = ? AND item_index > ?"
@@ -395,11 +551,13 @@ impl DatabaseService {
                 }
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM execution_tasks WHERE execution_id = ? AND item_index = ?")
-                    .bind(execution_id)
-                    .bind(item_index)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "DELETE FROM execution_tasks WHERE execution_id = ? AND item_index = ?",
+                )
+                .bind(execution_id)
+                .bind(item_index)
+                .execute(pool)
+                .await?;
 
                 sqlx::query(
                     "UPDATE execution_tasks SET item_index = item_index - 1, updated_at = ? WHERE execution_id = ? AND item_index > ?"
@@ -435,6 +593,7 @@ impl DatabaseService {
         description: &str,
         status: ExecutionTaskStatus,
     ) -> Result<()> {
+        self.ensure_execution_tasks_schema().await?;
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -564,6 +723,7 @@ impl DatabaseService {
         execution_id: &str,
         items: &[ExecutionTaskInput],
     ) -> Result<()> {
+        self.ensure_execution_tasks_schema().await?;
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -661,6 +821,7 @@ impl DatabaseService {
 
     /// Check if execution tasks exist for an execution
     pub async fn has_execution_tasks(&self, execution_id: &str) -> Result<bool> {
+        self.ensure_execution_tasks_schema().await?;
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -686,5 +847,100 @@ impl DatabaseService {
             }
         };
         Ok(count > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::SqlitePool;
+
+    fn build_test_service(pool: SqlitePool) -> DatabaseService {
+        let mut service = DatabaseService::new();
+        service.runtime_pool = Some(DatabasePool::SQLite(pool));
+        service
+    }
+
+    #[tokio::test]
+    async fn get_execution_tasks_creates_table_when_missing() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let service = build_test_service(pool.clone());
+
+        let items = service.get_execution_tasks("exec-1").await.unwrap();
+        assert!(items.is_empty());
+
+        let execution_table_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .bind("execution_tasks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(execution_table_exists, 1);
+    }
+
+    #[tokio::test]
+    async fn get_execution_tasks_migrates_legacy_agent_todos_table() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        sqlx::query(
+            r#"CREATE TABLE agent_todos (
+                id TEXT PRIMARY KEY,
+                execution_id TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result TEXT,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE INDEX idx_agent_todos_execution ON agent_todos(execution_id)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("exec-legacy_0")
+        .bind("exec-legacy")
+        .bind(0_i32)
+        .bind("Read file")
+        .bind("pending")
+        .bind(Option::<String>::None)
+        .bind("2026-04-19T00:00:00Z")
+        .bind("2026-04-19T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = build_test_service(pool.clone());
+        let items = service.get_execution_tasks("exec-legacy").await.unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].description, "Read file");
+
+        let execution_table_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .bind("execution_tasks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let legacy_table_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .bind("agent_todos")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(execution_table_exists, 1);
+        assert_eq!(legacy_table_exists, 0);
     }
 }

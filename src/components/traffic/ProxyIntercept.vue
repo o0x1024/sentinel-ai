@@ -301,25 +301,13 @@
           </div>
 
           <!-- Content Tabs -->
-          <div class="tabs tabs-boxed bg-base-200 border-b border-base-300 px-3 py-1 flex-shrink-0">
-            <a 
-              :class="['tab tab-sm', activeTab === 'pretty' ? 'tab-active' : '']"
-              @click="activeTab = 'pretty'"
-            >
-              {{ $t('trafficAnalysis.intercept.tabs.pretty') }}
-            </a>
-            <a 
-              :class="['tab tab-sm', activeTab === 'raw' ? 'tab-active' : '']"
-              @click="activeTab = 'raw'"
-            >
-              {{ $t('trafficAnalysis.intercept.tabs.raw') }}
-            </a>
-            <a 
-              :class="['tab tab-sm', activeTab === 'hex' ? 'tab-active' : '']"
-              @click="activeTab = 'hex'"
-            >
-              {{ $t('trafficAnalysis.intercept.tabs.hex') }}
-            </a>
+          <div class="flex items-center justify-between border-b border-base-300 bg-base-200 px-3 py-1 flex-shrink-0">
+            <TrafficMessageViewTabs
+              :model-value="activeTab"
+              :tabs="interceptViewTabs"
+              @update:model-value="activeTab = $event as 'raw' | 'pretty' | 'hex'"
+            />
+            <TrafficMessageDisplayControls v-if="activeTab !== 'hex'" />
           </div>
 
           <!-- Content View -->
@@ -339,6 +327,7 @@
                   height="100%"
                   display-mode="raw"
                   :state-key="currentItem ? `intercept:${currentItem.type}:${currentItemIndex}:raw` : ''"
+                  :show-display-toolbar="false"
                   @contextmenu="showCurrentItemContextMenu($event)"
                 />
               </div>
@@ -357,6 +346,7 @@
                   height="100%"
                   display-mode="pretty"
                   :state-key="currentItem ? `intercept:${currentItem.type}:${currentItemIndex}:pretty` : ''"
+                  :show-display-toolbar="false"
                   @contextmenu="showCurrentItemContextMenu($event)"
                 />
               </div>
@@ -481,8 +471,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
 import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
+import { openTrafficAssistantPanel } from '@/services/trafficAssistantWorkspace'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue';
+import TrafficMessageDisplayControls from '@/components/traffic/TrafficMessageDisplayControls.vue'
+import TrafficMessageViewTabs from '@/components/traffic/TrafficMessageViewTabs.vue'
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
 import TrafficContextSubmenu from './TrafficContextSubmenu.vue'
 import type { TrafficComparerDraftRequestInput } from './transfers'
@@ -516,8 +508,12 @@ import type { HttpExchangeRequest } from './http/model'
 import { normalizeHttpVersionToken } from './http/version'
 
 const { t } = useI18n();
-const router = useRouter();
 const { enabledTargets } = useTrafficSendTargets()
+const interceptViewTabs = computed(() => [
+  { value: 'pretty', label: t('trafficAnalysis.intercept.tabs.pretty') },
+  { value: 'raw', label: t('trafficAnalysis.intercept.tabs.raw') },
+  { value: 'hex', label: t('trafficAnalysis.intercept.tabs.hex') },
+])
 
 // 注入父组件的刷新触发器
 const refreshTrigger = inject<any>('refreshTrigger', ref(0));
@@ -1011,14 +1007,8 @@ async function contextMenuSendToAI() {
   }
   
   closeContextMenu();
-  
-  // Navigate to AI assistant page first
-  await router.push('/ai-assistant');
-  
-  // Wait for the page to mount and set up event listener
-  await new Promise(resolve => setTimeout(resolve, 100));
-  
-  // Send event to AI assistant
+
+  openTrafficAssistantPanel()
   await tauriEmit('traffic:send-to-assistant', { 
     requests: [proxyRequest], 
     type: 'request',

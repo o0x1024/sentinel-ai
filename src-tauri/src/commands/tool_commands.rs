@@ -10,9 +10,10 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
-    AskUserQuestionTool, CloseAgentTool, HttpRequestTool, ListAgentsTool, OcrTool,
+    AskUserQuestionTool, BrowserTool, CloseAgentTool, FileEditTool, FileReadTool, FileWriteTool,
+    GlobTool, GrepTool, HttpRequestTool, ListAgentsTool, LspTool, OcrTool, RouteDiscoveryTool,
     SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool, TenthManTool,
-    WaitAgentsTool,
+    ToolSearchTool, WaitAgentsTool,
 };
 use sentinel_tools::get_tool_server;
 use sentinel_tools::terminal::server::TerminalServer;
@@ -48,7 +49,17 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     // All tools enabled by default
     map.insert(HttpRequestTool::NAME.to_string(), true);
     map.insert(AskUserQuestionTool::NAME.to_string(), true);
+    map.insert(BrowserTool::NAME.to_string(), true);
+    map.insert(RouteDiscoveryTool::NAME.to_string(), true);
     map.insert(ShellTool::NAME.to_string(), true);
+    map.insert(GlobTool::NAME.to_string(), true);
+    map.insert(GrepTool::NAME.to_string(), true);
+    map.insert(FileReadTool::NAME.to_string(), true);
+    map.insert(FileEditTool::NAME.to_string(), true);
+    map.insert(FileWriteTool::NAME.to_string(), true);
+    map.insert(LspTool::NAME.to_string(), true);
+    map.insert(ToolSearchTool::NAME.to_string(), true);
+    map.insert(SkillsTool::NAME.to_string(), true);
     map.insert(
         sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(),
         true,
@@ -72,449 +83,27 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
 /// Get all builtin tools with their status
 #[tauri::command]
 pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, String> {
+    let tool_server = get_tool_server();
+    tool_server.init_builtin_tools().await;
     let states = TOOL_STATES.read().await;
-
-    let mut tools = vec![
-        BuiltinToolInfo {
-            id: AskUserQuestionTool::NAME.to_string(),
-            name: AskUserQuestionTool::NAME.to_string(),
-            description: AskUserQuestionTool::DESCRIPTION.to_string(),
-            category: "system".to_string(),
+    let mut tools: Vec<BuiltinToolInfo> = tool_server
+        .list_tools()
+        .await
+        .into_iter()
+        .filter(|tool| tool.source == "builtin")
+        .filter(|tool| tool.name != "sops")
+        .map(|tool| BuiltinToolInfo {
+            id: tool.name.clone(),
+            name: tool.name.clone(),
+            description: tool.description,
+            category: tool.category,
             version: "1.0.0".to_string(),
-            enabled: *states.get(AskUserQuestionTool::NAME).unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "questions": {
-                        "type": "array",
-                        "description": "Questions to ask the user (1-4 questions).",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "header": {
-                                    "type": "string",
-                                    "description": "Very short question header."
-                                },
-                                "question": {
-                                    "type": "string",
-                                    "description": "Question text."
-                                },
-                                "options": {
-                                    "type": "array",
-                                    "description": "Multiple-choice options.",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "label": {
-                                                "type": "string",
-                                                "description": "Short option label."
-                                            },
-                                            "description": {
-                                                "type": "string",
-                                                "description": "Short option description."
-                                            },
-                                            "preview": {
-                                                "type": "string",
-                                                "description": "Optional preview content for the option."
-                                            }
-                                        },
-                                        "required": ["label", "description"]
-                                    }
-                                }
-                            },
-                            "required": ["header", "question", "options"]
-                        }
-                    }
-                },
-                "required": ["questions"]
-            })),
-        },
-        BuiltinToolInfo {
-            id: HttpRequestTool::NAME.to_string(),
-            name: HttpRequestTool::NAME.to_string(),
-            description: HttpRequestTool::DESCRIPTION.to_string(),
-            category: "network".to_string(),
-            version: "1.0.0".to_string(),
-            enabled: *states.get(HttpRequestTool::NAME).unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Target URL"
-                    },
-                    "method": {
-                        "type": "string",
-                        "description": "HTTP method",
-                        "default": "GET",
-                        "enum": ["GET", "POST", "PUT", "DELETE", "HEAD", "PATCH"]
-                    },
-                    "headers": {
-                        "type": "object",
-                        "description": "Request headers as key-value pairs"
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "Request body (for POST, PUT, etc.)"
-                    },
-                    "timeout_secs": {
-                        "type": "integer",
-                        "description": "Request timeout in seconds",
-                        "default": 30
-                    },
-                    "follow_redirects": {
-                        "type": "boolean",
-                        "description": "Follow redirects",
-                        "default": true
-                    }
-                },
-                "required": ["url"]
-            })),
-        },
-        BuiltinToolInfo {
-            id: ShellTool::NAME.to_string(),
-            name: ShellTool::NAME.to_string(),
-            description: ShellTool::DESCRIPTION.to_string(),
-            category: "system".to_string(),
-            version: "1.0.0".to_string(),
-            enabled: *states.get(ShellTool::NAME).unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Shell command to execute"
-                    },
-                    "cwd": {
-                        "type": "string",
-                        "description": "Working directory (optional)"
-                    },
-                    "timeout_secs": {
-                        "type": "integer",
-                        "description": "Command timeout in seconds",
-                        "default": 60
-                    },
-                    "run_in_background": {
-                        "type": "boolean",
-                        "description": "Run the command in a dedicated interactive shell session and return immediately.",
-                        "default": false
-                    }
-                },
-                "required": ["command"]
-            })),
-        },
-        BuiltinToolInfo {
-            id: sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(),
-            name: sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(),
-            description: sentinel_tools::buildin_tools::WebSearchTool::DESCRIPTION.to_string(),
-            category: "network".to_string(),
-            version: "1.0.0".to_string(),
-            enabled: *states
-                .get(sentinel_tools::buildin_tools::WebSearchTool::NAME)
-                .unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query"
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Maximum number of results (default: 5)",
-                        "default": 5
-                    },
-                    "search_depth": {
-                        "type": "string",
-                        "description": "Search depth: 'basic' or 'advanced' (default: 'basic')",
-                        "default": "basic",
-                        "enum": ["basic", "advanced"]
-                    }
-                },
-                "required": ["query"]
-            })),
-        },
-        BuiltinToolInfo {
-            id: sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(),
-            name: sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(),
-            description: sentinel_tools::buildin_tools::MemoryManagerTool::DESCRIPTION.to_string(),
-            category: "ai".to_string(),
-            version: "1.0.0".to_string(),
-            enabled: *states
-                .get(sentinel_tools::buildin_tools::MemoryManagerTool::NAME)
-                .unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": "The action to perform: 'store' or 'retrieve'",
-                        "enum": ["store", "retrieve"]
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to store (if action='store') or query to retrieve (if action='retrieve')"
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "Optional title for the memory (only for 'store'). If not provided, a title will be generated from content."
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Tags to categorize the memory (only for 'store')"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max number of results to return (only for 'retrieve'), default 5",
-                        "default": 5
-                    }
-                },
-                "required": ["action", "content"]
-            })),
-        },
-        BuiltinToolInfo {
-            id: SearchExploitTool::NAME.to_string(),
-            name: SearchExploitTool::NAME.to_string(),
-            description: SearchExploitTool::DESCRIPTION.to_string(),
-            category: "security".to_string(),
-            version: "1.0.0".to_string(),
-            enabled: *states.get(SearchExploitTool::NAME).unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": "search or get",
-                        "enum": ["search", "get"],
-                        "default": "search"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Free-form query"
-                    },
-                    "cves": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "CVE list"
-                    },
-                    "product": {
-                        "type": "string",
-                        "description": "Target product"
-                    },
-                    "version": {
-                        "type": "string",
-                        "description": "Target version"
-                    },
-                    "service": {
-                        "type": "string",
-                        "description": "Target service/protocol"
-                    },
-                    "port": {
-                        "type": "integer",
-                        "description": "Target service port"
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "default": 5,
-                        "description": "Maximum results for search"
-                    },
-                    "edb_id": {
-                        "type": "integer",
-                        "description": "ExploitDB ID for action=get"
-                    }
-                }
-            })),
-        },
-        BuiltinToolInfo {
-            id: OcrTool::NAME.to_string(),
-            name: OcrTool::NAME.to_string(),
-            description: OcrTool::DESCRIPTION.to_string(),
-            category: "ai".to_string(),
-            version: "1.0.0".to_string(),
-            enabled: *states.get(OcrTool::NAME).unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "image_path": {
-                        "type": "string",
-                        "description": "Path to the image file to extract text from"
-                    }
-                },
-                "required": ["image_path"]
-            })),
-        },
-    ];
+            enabled: states.get(&tool.name).copied().unwrap_or(tool.enabled),
+            input_schema: Some(tool.input_schema),
+        })
+        .collect();
 
-    // Add interactive_shell
-    tools.push(BuiltinToolInfo {
-        id: TerminalServer::NAME.to_string(),
-        name: TerminalServer::NAME.to_string(),
-        description: TerminalServer::DESCRIPTION.to_string(),
-        category: ToolCategory::System.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(TerminalServer::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "use_docker": {
-                    "type": "boolean",
-                    "description": "Whether to run in Docker container (recommended for security)",
-                    "default": true
-                },
-                "docker_image": {
-                    "type": "string",
-                    "description": "Docker image to use (default: sentinel-sandbox:latest)",
-                    "default": "sentinel-sandbox:latest"
-                },
-                "initial_command": {
-                    "type": "string",
-                    "description": "Optional initial command to run (e.g., 'msfconsole', 'sqlmap')"
-                }
-            }
-        })),
-    });
-
-    let spawn_definition = SpawnAgentTool::default().definition(String::new()).await;
-    tools.push(BuiltinToolInfo {
-        id: SpawnAgentTool::NAME.to_string(),
-        name: SpawnAgentTool::NAME.to_string(),
-        description: SpawnAgentTool::DESCRIPTION.to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(SpawnAgentTool::NAME).unwrap_or(&true),
-        input_schema: Some(spawn_definition.parameters),
-    });
-
-    let wait_definition = WaitAgentsTool::default().definition(String::new()).await;
-    tools.push(BuiltinToolInfo {
-        id: WaitAgentsTool::NAME.to_string(),
-        name: WaitAgentsTool::NAME.to_string(),
-        description: WaitAgentsTool::DESCRIPTION.to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(WaitAgentsTool::NAME).unwrap_or(&true),
-        input_schema: Some(wait_definition.parameters),
-    });
-
-    let list_definition = ListAgentsTool::default().definition(String::new()).await;
-    tools.push(BuiltinToolInfo {
-        id: ListAgentsTool::NAME.to_string(),
-        name: ListAgentsTool::NAME.to_string(),
-        description: ListAgentsTool::DESCRIPTION.to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(ListAgentsTool::NAME).unwrap_or(&true),
-        input_schema: Some(list_definition.parameters),
-    });
-
-    let close_definition = CloseAgentTool::default().definition(String::new()).await;
-    tools.push(BuiltinToolInfo {
-        id: CloseAgentTool::NAME.to_string(),
-        name: CloseAgentTool::NAME.to_string(),
-        description: CloseAgentTool::DESCRIPTION.to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(CloseAgentTool::NAME).unwrap_or(&true),
-        input_schema: Some(close_definition.parameters),
-    });
-
-    // Add tenth_man_review
-    tools.push(BuiltinToolInfo {
-        id: TenthManTool::NAME.to_string(),
-        name: TenthManTool::NAME.to_string(),
-        description: TenthManTool::DESCRIPTION.to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(TenthManTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "execution_id": {
-                    "type": "string",
-                    "description": "The current execution ID (required)"
-                },
-                "review_mode": {
-                    "type": "object",
-                    "description": "Review mode (defaults to full_history)",
-                    "oneOf": [
-                        {
-                            "properties": {
-                                "mode": { "const": "full_history" }
-                            },
-                            "required": ["mode"]
-                        },
-                        {
-                            "properties": {
-                                "mode": { "const": "recent_messages" },
-                                "count": {
-                                    "type": "integer",
-                                    "description": "Number of recent messages to review"
-                                }
-                            },
-                            "required": ["mode", "count"]
-                        }
-                    ],
-                    "default": { "mode": "full_history" }
-                },
-                "review_type": {
-                    "type": "string",
-                    "description": "Type of review: 'quick' (lightweight) or 'full' (comprehensive)",
-                    "default": "quick",
-                    "enum": ["quick", "full"]
-                },
-                "focus_area": {
-                    "type": "string",
-                    "description": "Optional focus area for the review",
-                    "x-ui-widget": "textarea"
-                }
-            },
-            "required": ["execution_id"]
-        })),
-    });
-
-    // tasks tool
-    tools.push(BuiltinToolInfo {
-        id: TasksTool::NAME.to_string(),
-        name: TasksTool::NAME.to_string(),
-        description: TasksTool::DESCRIPTION.to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(TasksTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "execution_id": {
-                    "type": "string",
-                    "description": "Current execution/conversation ID"
-                },
-                "action": {
-                    "type": "string",
-                    "description": "Action: add_items, update_status, get_list, reset, replan, update_item, delete_item, insert_item, cleanup",
-                    "enum": ["add_items", "update_status", "get_list", "reset", "replan", "update_item", "delete_item", "insert_item", "cleanup"]
-                },
-                "items": {
-                    "type": "array",
-                    "description": "List of task item descriptions (for add_items / replan)",
-                    "items": { "type": "string" }
-                },
-                "item_index": {
-                    "type": "integer",
-                    "description": "Zero-based index of the item to update/delete/insert-before"
-                },
-                "status": {
-                    "type": "string",
-                    "description": "New status: pending, in_progress, completed, cancelled",
-                    "enum": ["pending", "in_progress", "completed", "cancelled"]
-                },
-                "description": {
-                    "type": "string",
-                    "description": "New description for update_item / item description for insert_item"
-                }
-            },
-            "required": ["execution_id", "action"]
-        })),
-    });
+    tools.sort_by(|left, right| left.name.cmp(&right.name));
 
     Ok(tools)
 }
@@ -1656,4 +1245,43 @@ pub async fn get_exploitdb_entry_detail(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<exploitdb::ExploitDbDetailResponse, String> {
     exploitdb::get_exploitdb_entry_detail(edb_id, db_service).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn builtin_tool_menu_includes_deferred_and_browser_tools() {
+        let tools = get_builtin_tools_with_status()
+            .await
+            .expect("builtin tools should load");
+
+        let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
+        assert!(names.contains(&"tool_search"));
+        assert!(names.contains(&"browser"));
+        assert!(names.contains(&"route_discovery"));
+        assert!(names.contains(&"file_read"));
+        assert!(names.contains(&"grep"));
+    }
+
+    #[tokio::test]
+    async fn toggle_builtin_tool_changes_menu_enabled_state() {
+        toggle_builtin_tool("tool_search".to_string(), false)
+            .await
+            .expect("toggle should succeed");
+
+        let tools = get_builtin_tools_with_status()
+            .await
+            .expect("builtin tools should load");
+        let tool_search = tools
+            .iter()
+            .find(|tool| tool.name == "tool_search")
+            .expect("tool_search should exist");
+        assert!(!tool_search.enabled);
+
+        toggle_builtin_tool("tool_search".to_string(), true)
+            .await
+            .expect("restore toggle should succeed");
+    }
 }

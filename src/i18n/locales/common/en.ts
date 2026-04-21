@@ -77,6 +77,7 @@ export default {
   yes: 'Yes',
   no: 'No',
   immersiveDrillMode: 'Immersive Drill Mode',
+  exitImmersiveDrillMode: 'Exit Drill Mode',
   ok: 'OK',
   view: 'View',
   reset: 'Reset',

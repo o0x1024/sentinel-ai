@@ -93,6 +93,11 @@ const replaceSessionsState = (nextSessions: AgentSession[], nextActiveSessionId?
   persistSessionState()
 }
 
+const normalizeSessionId = (value: string | null | undefined) => String(value || '').trim()
+
+const getFallbackSessionTitle = (title?: string | null) =>
+  String(title || '').trim() || 'New Conversation'
+
 export function useAgentSessionManager() {
   hydrateSessionState()
 
@@ -144,6 +149,44 @@ export function useAgentSessionManager() {
     }
   }
 
+  const replaceSession = (currentId: string, nextId: string, title?: string | null) => {
+    const normalizedCurrentId = normalizeSessionId(currentId)
+    const normalizedNextId = normalizeSessionId(nextId)
+    if (!normalizedCurrentId || !normalizedNextId) {
+      return false
+    }
+
+    const currentIndex = sessions.value.findIndex((session) => session.id === normalizedCurrentId)
+    if (currentIndex === -1) {
+      addSession(normalizedNextId, getFallbackSessionTitle(title))
+      return true
+    }
+
+    const currentSession = sessions.value[currentIndex]
+    const nextTitle = getFallbackSessionTitle(title || currentSession.title)
+    const existingIndex = sessions.value.findIndex((session) => session.id === normalizedNextId)
+
+    if (existingIndex !== -1 && existingIndex !== currentIndex) {
+      sessions.value[existingIndex] = {
+        ...sessions.value[existingIndex],
+        title: nextTitle,
+      }
+      sessions.value.splice(currentIndex, 1)
+      activeSessionId.value = normalizedNextId
+      persistSessionState()
+      return true
+    }
+
+    sessions.value[currentIndex] = {
+      ...currentSession,
+      id: normalizedNextId,
+      title: nextTitle,
+    }
+    activeSessionId.value = normalizedNextId
+    persistSessionState()
+    return true
+  }
+
   const syncSessionsWithConversations = (conversations: AiConversationSummary[]) => {
     const conversationMap = new Map(
       (Array.isArray(conversations) ? conversations : [])
@@ -175,6 +218,7 @@ export function useAgentSessionManager() {
     preferredBootstrapSessionId,
     addSession,
     removeSession,
+    replaceSession,
     setActiveSession,
     updateSessionTitle,
     syncSessionsWithConversations,

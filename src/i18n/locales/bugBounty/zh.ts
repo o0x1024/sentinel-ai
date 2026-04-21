@@ -1162,6 +1162,7 @@ export default {
       unknown: '未知',
       running: '运行中',
       completed: '已完成',
+      completed_with_errors: '完成（含错误）',
       failed: '失败',
     },
     relationDirection: {

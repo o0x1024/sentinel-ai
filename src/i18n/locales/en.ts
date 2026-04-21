@@ -97,6 +97,16 @@ export default {
   // Security Center section
   securityCenter: {
     title: 'Security Center',
+    immersiveSidebar: {
+      title: 'Security Center Sidebar',
+      description: 'Switch between the workbench and vulnerabilities views in immersive mode.',
+      workbenchDescription: 'Review cases, evidence chains, and verification flow.',
+      vulnerabilitiesDescription: 'Browse findings, details, and related evidence.',
+      resize: 'Resize security center width',
+      minimize: 'Minimize security center',
+      restore: 'Restore security center',
+      minimizedHint: 'Minimized and ready to restore',
+    },
     tabs: {
       workbench: 'Security Workbench',
       vulnerabilities: 'Vulnerabilities',
@@ -224,6 +234,8 @@ export default {
     pluginAuthor: 'Plugin Author',
     pluginStatus: 'Plugin Status',
     searchPlaceholder: 'Search plugins...',
+    allMainCategories: 'All Categories',
+    allSubCategories: 'All Subcategories',
     noPlugins: 'No plugins found',
     totalPlugins: 'Total Plugins',
     allStatus: 'All',

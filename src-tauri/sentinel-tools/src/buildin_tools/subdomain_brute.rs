@@ -4,7 +4,7 @@ use std::sync::Arc;
 use rig::tool::Tool;
 use rsubdomain::{
     BruteForceProgress, BruteForceProgressPhase, DnsRecord, DnsResolveResult, ProgressCallback,
-    SubdomainBruteConfig, SubdomainBruteEngine, SubdomainResult, VerifyResult,
+    QueryType, SubdomainBruteConfig, SubdomainBruteEngine, SubdomainResult, VerifyResult,
 };
 use schemars::JsonSchema;
 use sentinel_plugins::{
@@ -44,28 +44,58 @@ const FALLBACK_DICTIONARY: &[&str] = &[
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SubdomainBruteArgs {
+    /// Root domains to brute force, such as example.com.
     #[serde(default)]
     pub targets: Vec<String>,
+    /// Single root domain shortcut. Merged into `targets` during normalization.
     #[serde(default)]
     pub domain: Option<String>,
+    /// Optional shared dictionary identifier from the runtime dictionary registry.
     #[serde(default)]
     pub dictionary_id: Option<String>,
+    /// Inline subdomain prefixes. Used together with the runtime dictionary when provided.
     #[serde(default)]
     pub dictionary: Vec<String>,
+    /// Custom DNS resolvers in host:port form.
     #[serde(default)]
     pub resolvers: Vec<String>,
+    /// Skip wildcard domains to reduce noisy matches.
     #[serde(default = "default_skip_wildcard")]
     pub skip_wildcard: bool,
+    /// Optional global bandwidth cap accepted by rsubdomain, for example `3M`.
     #[serde(default = "default_bandwidth_limit")]
     pub bandwidth_limit: Option<String>,
+    /// Enable HTTP verification for discovered subdomains.
     #[serde(default)]
     pub verify_mode: bool,
+    /// Maximum DNS retries per query.
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u8,
+    /// Maximum wait time in seconds for the brute force round to finish.
+    #[serde(default = "default_max_wait_seconds")]
+    pub max_wait_seconds: u64,
+    /// HTTP verification timeout in seconds for each discovered subdomain.
+    #[serde(default = "default_verify_timeout_seconds")]
+    pub verify_timeout_seconds: u64,
+    /// Maximum parallel HTTP verification workers.
+    #[serde(default = "default_verify_concurrency")]
+    pub verify_concurrency: usize,
+    /// Resolve and return DNS records for matched subdomains.
     #[serde(default = "default_resolve_records")]
     pub resolve_records: bool,
+    /// DNS record types to query. Defaults to `["a"]` when omitted.
+    #[serde(default)]
+    pub query_types: Vec<SubdomainQueryTypeInput>,
+    /// Return raw DNS records from rsubdomain without extra normalization.
+    #[serde(default)]
+    pub raw_records: bool,
+    /// Optional network device passed through to rsubdomain.
     #[serde(default)]
     pub device: Option<String>,
+    /// Previous snapshots used to compute change events.
     #[serde(default)]
     pub previous_snapshots: HashMap<String, SubdomainSnapshot>,
+    /// Maximum number of dictionary entries to use from the merged dictionary.
     #[serde(default = "default_dictionary_limit")]
     pub dictionary_limit: i32,
     #[schemars(skip)]
@@ -78,6 +108,30 @@ pub struct SubdomainSnapshot {
     pub domain: String,
     pub subdomains: Vec<String>,
     pub last_checked: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SubdomainQueryTypeInput {
+    A,
+    Aaaa,
+    Cname,
+    Mx,
+    Ns,
+    Txt,
+}
+
+impl From<SubdomainQueryTypeInput> for QueryType {
+    fn from(value: SubdomainQueryTypeInput) -> Self {
+        match value {
+            SubdomainQueryTypeInput::A => QueryType::A,
+            SubdomainQueryTypeInput::Aaaa => QueryType::Aaaa,
+            SubdomainQueryTypeInput::Cname => QueryType::Cname,
+            SubdomainQueryTypeInput::Mx => QueryType::Mx,
+            SubdomainQueryTypeInput::Ns => QueryType::Ns,
+            SubdomainQueryTypeInput::Txt => QueryType::Txt,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -421,6 +475,16 @@ fn build_brute_config(
     targets: &[String],
     dictionary: &[String],
 ) -> SubdomainBruteConfig {
+    let query_types = if args.query_types.is_empty() {
+        vec![QueryType::A]
+    } else {
+        args.query_types
+            .iter()
+            .copied()
+            .map(QueryType::from)
+            .collect()
+    };
+
     SubdomainBruteConfig {
         domains: targets.to_vec(),
         resolvers: args
@@ -434,8 +498,14 @@ fn build_brute_config(
         skip_wildcard: args.skip_wildcard,
         bandwidth_limit: args.bandwidth_limit.clone(),
         verify_mode: args.verify_mode,
+        max_retries: args.max_retries,
+        max_wait_seconds: args.max_wait_seconds,
+        verify_timeout_seconds: args.verify_timeout_seconds,
+        verify_concurrency: args.verify_concurrency.max(1),
         resolve_records: args.resolve_records,
+        query_types,
         silent: true,
+        raw_records: args.raw_records,
         device: args.device.clone(),
         progress_callback: build_progress_callback(args.monitor_progress.as_ref()),
     }
@@ -535,6 +605,22 @@ fn default_skip_wildcard() -> bool {
 
 fn default_resolve_records() -> bool {
     true
+}
+
+fn default_max_retries() -> u8 {
+    5
+}
+
+fn default_max_wait_seconds() -> u64 {
+    300
+}
+
+fn default_verify_timeout_seconds() -> u64 {
+    10
+}
+
+fn default_verify_concurrency() -> usize {
+    50
 }
 
 fn default_bandwidth_limit() -> Option<String> {
@@ -953,5 +1039,87 @@ fn build_surface_artifacts(
                 })
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_args() -> SubdomainBruteArgs {
+        SubdomainBruteArgs {
+            targets: vec!["example.com".to_string()],
+            domain: None,
+            dictionary_id: None,
+            dictionary: vec!["www".to_string()],
+            resolvers: vec!["1.1.1.1:53".to_string()],
+            skip_wildcard: default_skip_wildcard(),
+            bandwidth_limit: default_bandwidth_limit(),
+            verify_mode: false,
+            max_retries: default_max_retries(),
+            max_wait_seconds: default_max_wait_seconds(),
+            verify_timeout_seconds: default_verify_timeout_seconds(),
+            verify_concurrency: default_verify_concurrency(),
+            resolve_records: default_resolve_records(),
+            query_types: Vec::new(),
+            raw_records: false,
+            device: None,
+            previous_snapshots: HashMap::new(),
+            dictionary_limit: default_dictionary_limit(),
+            monitor_progress: None,
+        }
+    }
+
+    #[test]
+    fn query_type_input_maps_to_rsubdomain_query_type() {
+        assert!(matches!(
+            QueryType::from(SubdomainQueryTypeInput::A),
+            QueryType::A
+        ));
+        assert!(matches!(
+            QueryType::from(SubdomainQueryTypeInput::Aaaa),
+            QueryType::Aaaa
+        ));
+        assert!(matches!(
+            QueryType::from(SubdomainQueryTypeInput::Cname),
+            QueryType::Cname
+        ));
+        assert!(matches!(
+            QueryType::from(SubdomainQueryTypeInput::Mx),
+            QueryType::Mx
+        ));
+        assert!(matches!(
+            QueryType::from(SubdomainQueryTypeInput::Ns),
+            QueryType::Ns
+        ));
+        assert!(matches!(
+            QueryType::from(SubdomainQueryTypeInput::Txt),
+            QueryType::Txt
+        ));
+    }
+
+    #[test]
+    fn build_brute_config_defaults_to_a_query_type() {
+        let args = sample_args();
+        let config = build_brute_config(&args, &args.targets, &args.dictionary);
+
+        assert_eq!(config.domains, vec!["example.com".to_string()]);
+        assert_eq!(config.dictionary, Some(vec!["www".to_string()]));
+        assert!(matches!(config.query_types.as_slice(), [QueryType::A]));
+    }
+
+    #[test]
+    fn build_brute_config_clamps_verify_concurrency() {
+        let mut args = sample_args();
+        args.verify_mode = true;
+        args.verify_concurrency = 0;
+        args.query_types = vec![SubdomainQueryTypeInput::Aaaa, SubdomainQueryTypeInput::Txt];
+
+        let config = build_brute_config(&args, &args.targets, &args.dictionary);
+
+        assert_eq!(config.verify_concurrency, 1);
+        assert_eq!(config.query_types.len(), 2);
+        assert!(matches!(config.query_types[0], QueryType::Aaaa));
+        assert!(matches!(config.query_types[1], QueryType::Txt));
     }
 }

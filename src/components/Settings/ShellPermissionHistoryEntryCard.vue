@@ -51,13 +51,13 @@
         {{ t(entry.semantic_reason_key) }}
       </div>
 
-      <div v-if="entry.persisted_allow_rules.length > 0" class="mt-3">
+      <div v-if="(entry.persisted_allow_rules?.length ?? 0) > 0" class="mt-3">
         <div class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
           {{ t('settings.agent.permissionHistory.persistedRules') }}
         </div>
         <div class="mt-2 flex flex-wrap gap-2">
           <span
-            v-for="rule in entry.persisted_allow_rules"
+            v-for="rule in entry.persisted_allow_rules || []"
             :key="`persisted-${rule}`"
             class="badge badge-outline badge-sm font-mono"
           >
@@ -66,13 +66,13 @@
         </div>
       </div>
 
-      <div v-if="entry.suggested_allow_rules.length > 0" class="mt-3">
+      <div v-if="(entry.suggested_allow_rules?.length ?? 0) > 0" class="mt-3">
         <div class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
           {{ t('settings.agent.permissionHistory.suggestedRules') }}
         </div>
         <div class="mt-2 space-y-2">
           <div
-            v-for="item in entry.suggested_allow_rules"
+            v-for="item in entry.suggested_allow_rules || []"
             :key="`suggested-${item.rule}`"
             class="rounded-lg bg-base-100 px-3 py-2"
           >

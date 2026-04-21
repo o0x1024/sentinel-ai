@@ -81,9 +81,9 @@
           <SearchableSelect
             :model-value="selectedModel || ''"
             :options="displayModels"
-            placeholder="跟随默认模型"
-            search-placeholder="搜索模型或提供商..."
-            no-results-text="没有匹配的模型"
+            :placeholder="t('agent.followDefaultModel')"
+            :search-placeholder="t('agent.searchModelsOrProviders')"
+            :no-results-text="t('agent.noMatchingModels')"
             :disabled="modelLoading"
             size="md"
             group-by="description"
@@ -91,7 +91,7 @@
           />
           <label class="label">
             <span class="label-text-alt text-base-content/60">
-              {{ modelLoading ? '正在加载模型列表…' : '覆盖当前会话的根助手模型。' }}
+              {{ modelLoading ? t('agent.loadingAssistantModels') : t('agent.workConfigVisionHint') }}
             </span>
           </label>
         </div>
@@ -112,11 +112,14 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import SearchableSelect from '@/components/SearchableSelect.vue'
 import type { AssistantModelOption, AssistantContextMode, AssistantRunMode } from './agentDraftTypes'
 import type { AssistantProfileOption } from './assistantProfiles'
 import ToolConfigPanel from './ToolConfigPanel.vue'
 import type { UiToolConfigPayload } from './toolConfigRuntime'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   availableModels: AssistantModelOption[]
@@ -135,11 +138,22 @@ const selectedProfileDescription = computed(() =>
   '当前会话会跟随这个 profile 的默认上下文与运行模式。',
 )
 
+const getVisionCapabilitySuffix = (visionCapability: AssistantModelOption['visionCapability']) => {
+  switch (visionCapability) {
+    case 'supported':
+      return ` [${t('agent.visionCapabilitySupportedLabel')}]`
+    case 'unsupported':
+      return ` [${t('agent.visionCapabilityUnsupportedLabel')}]`
+    default:
+      return ` [${t('agent.visionCapabilityUnknownLabel')}]`
+  }
+}
+
 const displayModels = computed(() =>
   [
     {
       value: '',
-      label: '跟随默认模型',
+      label: t('agent.followDefaultModel'),
       description: '',
     },
     ...[...props.availableModels]
@@ -149,6 +163,7 @@ const displayModels = computed(() =>
           || 'Unknown'
         return {
           ...model,
+          label: `${model.label}${getVisionCapabilitySuffix(model.visionCapability)}`,
           description: providerLabel,
         }
       }),

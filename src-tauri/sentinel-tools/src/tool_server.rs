@@ -11,9 +11,10 @@ use crate::buildin_tools::OcrTool;
 #[cfg(feature = "plugins")]
 use crate::buildin_tools::SubdomainBruteTool;
 use crate::buildin_tools::{
-    AskUserQuestionTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool,
-    HttpRequestTool, LspTool, MemoryManagerTool, SearchExploitTool, ShellTool, SkillsTool,
-    TenthManTool, ToolSearchArgs, ToolSearchOutput, ToolSearchTool, WebSearchTool,
+    AskUserQuestionTool, BrowserTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
+    GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, RouteDiscoveryTool, SearchExploitTool,
+    ShellTool, SkillsTool, TenthManTool, ToolSearchArgs, ToolSearchOutput, ToolSearchTool,
+    WebSearchTool,
 };
 #[cfg(feature = "db")]
 use crate::buildin_tools::{SopsTool, TasksTool};
@@ -242,6 +243,53 @@ impl ToolServer {
 
         self.registry.register(ask_user_question_def).await;
 
+        let browser_def = DynamicToolBuilder::new(BrowserTool::NAME.to_string())
+            .description(BrowserTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::browser::BrowserToolArgs
+                ))
+                .unwrap_or_default(),
+            )
+            .source(ToolSource::Builtin)
+            .category("browser")
+            .tags(vec![
+                "browser".to_string(),
+                "playwright".to_string(),
+                "javascript".to_string(),
+                "session".to_string(),
+                "cookies".to_string(),
+            ])
+            .search_hint("interact with a real browser session for JS-heavy or login-backed pages")
+            .exposure("deferred")
+            .execution_policy(ToolExecutionPolicy {
+                read_only: false,
+                mutating: true,
+                concurrency_safe: false,
+                requires_permission: false,
+                supports_background: false,
+            })
+            .executor(|args| async move {
+                use crate::buildin_tools::browser::{BrowserTool, BrowserToolArgs};
+                use rig::tool::Tool;
+
+                let tool_args: BrowserToolArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = BrowserTool::default();
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("Browser tool failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build browser tool");
+
+        self.registry.register(browser_def).await;
+
         let glob_def = DynamicToolBuilder::new(GlobTool::NAME.to_string())
             .description(GlobTool::DESCRIPTION.to_string())
             .input_schema(
@@ -267,13 +315,16 @@ impl ToolServer {
                 supports_background: false,
             })
             .executor(|args| async move {
+                use crate::buildin_tools::file_runtime::{
+                    build_default_file_runtime_context, with_file_runtime_context,
+                };
                 use crate::buildin_tools::glob::{GlobArgs, GlobTool};
                 use rig::tool::Tool;
 
                 let tool_args: GlobArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let result = GlobTool
-                    .call(tool_args)
+                let runtime_context = build_default_file_runtime_context().await;
+                let result = with_file_runtime_context(runtime_context, GlobTool.call(tool_args))
                     .await
                     .map_err(|e| format!("Glob failed: {}", e))?;
 
@@ -310,13 +361,16 @@ impl ToolServer {
                 supports_background: false,
             })
             .executor(|args| async move {
+                use crate::buildin_tools::file_runtime::{
+                    build_default_file_runtime_context, with_file_runtime_context,
+                };
                 use crate::buildin_tools::grep::{GrepArgs, GrepTool};
                 use rig::tool::Tool;
 
                 let tool_args: GrepArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let result = GrepTool
-                    .call(tool_args)
+                let runtime_context = build_default_file_runtime_context().await;
+                let result = with_file_runtime_context(runtime_context, GrepTool.call(tool_args))
                     .await
                     .map_err(|e| format!("Grep failed: {}", e))?;
 
@@ -356,14 +410,18 @@ impl ToolServer {
             })
             .executor(|args| async move {
                 use crate::buildin_tools::file_read::{FileReadArgs, FileReadTool};
+                use crate::buildin_tools::file_runtime::{
+                    build_default_file_runtime_context, with_file_runtime_context,
+                };
                 use rig::tool::Tool;
 
                 let tool_args: FileReadArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let result = FileReadTool
-                    .call(tool_args)
-                    .await
-                    .map_err(|e| format!("File read failed: {}", e))?;
+                let runtime_context = build_default_file_runtime_context().await;
+                let result =
+                    with_file_runtime_context(runtime_context, FileReadTool.call(tool_args))
+                        .await
+                        .map_err(|e| format!("File read failed: {}", e))?;
 
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
@@ -401,14 +459,18 @@ impl ToolServer {
             })
             .executor(|args| async move {
                 use crate::buildin_tools::file_edit::{FileEditArgs, FileEditTool};
+                use crate::buildin_tools::file_runtime::{
+                    build_default_file_runtime_context, with_file_runtime_context,
+                };
                 use rig::tool::Tool;
 
                 let tool_args: FileEditArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let result = FileEditTool
-                    .call(tool_args)
-                    .await
-                    .map_err(|e| format!("File edit failed: {}", e))?;
+                let runtime_context = build_default_file_runtime_context().await;
+                let result =
+                    with_file_runtime_context(runtime_context, FileEditTool.call(tool_args))
+                        .await
+                        .map_err(|e| format!("File edit failed: {}", e))?;
 
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
@@ -444,15 +506,19 @@ impl ToolServer {
                 supports_background: false,
             })
             .executor(|args| async move {
+                use crate::buildin_tools::file_runtime::{
+                    build_default_file_runtime_context, with_file_runtime_context,
+                };
                 use crate::buildin_tools::file_write::{FileWriteArgs, FileWriteTool};
                 use rig::tool::Tool;
 
                 let tool_args: FileWriteArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let result = FileWriteTool
-                    .call(tool_args)
-                    .await
-                    .map_err(|e| format!("File write failed: {}", e))?;
+                let runtime_context = build_default_file_runtime_context().await;
+                let result =
+                    with_file_runtime_context(runtime_context, FileWriteTool.call(tool_args))
+                        .await
+                        .map_err(|e| format!("File write failed: {}", e))?;
 
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
@@ -487,13 +553,16 @@ impl ToolServer {
                 supports_background: false,
             })
             .executor(|args| async move {
+                use crate::buildin_tools::file_runtime::{
+                    build_default_file_runtime_context, with_file_runtime_context,
+                };
                 use crate::buildin_tools::lsp::{LspArgs, LspTool};
                 use rig::tool::Tool;
 
                 let tool_args: LspArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let result = LspTool
-                    .call(tool_args)
+                let runtime_context = build_default_file_runtime_context().await;
+                let result = with_file_runtime_context(runtime_context, LspTool.call(tool_args))
                     .await
                     .map_err(|e| format!("LSP navigation failed: {}", e))?;
 
@@ -863,6 +932,55 @@ impl ToolServer {
 
         self.registry.register(web_search_def).await;
 
+        let route_discovery_def = DynamicToolBuilder::new(RouteDiscoveryTool::NAME.to_string())
+            .description(RouteDiscoveryTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::route_discovery::RouteDiscoveryArgs
+                ))
+                .unwrap_or_default(),
+            )
+            .source(ToolSource::Builtin)
+            .category("network")
+            .tags(vec![
+                "route".to_string(),
+                "discovery".to_string(),
+                "content".to_string(),
+                "endpoint".to_string(),
+                "recon".to_string(),
+            ])
+            .search_hint("probe likely web routes and hidden endpoints with wildcard filtering")
+            .exposure("deferred")
+            .execution_policy(ToolExecutionPolicy {
+                read_only: true,
+                mutating: false,
+                concurrency_safe: true,
+                requires_permission: false,
+                supports_background: false,
+            })
+            .executor(|args| async move {
+                use crate::buildin_tools::route_discovery::{
+                    RouteDiscoveryArgs, RouteDiscoveryTool,
+                };
+                use rig::tool::Tool;
+
+                let tool_args: RouteDiscoveryArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = RouteDiscoveryTool::default();
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("Route discovery failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build route_discovery tool");
+
+        self.registry.register(route_discovery_def).await;
+
         #[cfg(feature = "plugins")]
         {
             let subdomain_brute_def = DynamicToolBuilder::new(SubdomainBruteTool::NAME.to_string())
@@ -874,7 +992,15 @@ impl ToolServer {
                     .unwrap_or_default(),
                 )
                 .source(ToolSource::Builtin)
-                .category("monitor")
+                .category("monitoring")
+                .tags(vec![
+                    "subdomain".to_string(),
+                    "dns".to_string(),
+                    "recon".to_string(),
+                    "monitoring".to_string(),
+                ])
+                .search_hint("enumerate likely subdomains for an asset or program")
+                .exposure("deferred")
                 .executor(|args| async move {
                     use crate::buildin_tools::subdomain_brute::{
                         SubdomainBruteArgs, SubdomainBruteTool,
@@ -1709,12 +1835,7 @@ impl ToolServer {
                     ToolSource::Plugin { plugin_id } => format!("plugin::{}", plugin_id),
                     ToolSource::Workflow { workflow_id } => format!("workflow::{}", workflow_id),
                 },
-                category: match &def.source {
-                    ToolSource::Builtin => "builtin".to_string(),
-                    ToolSource::Mcp { .. } => "mcp".to_string(),
-                    ToolSource::Plugin { .. } => "plugin".to_string(),
-                    ToolSource::Workflow { .. } => "workflow".to_string(),
-                },
+                category: def.category.clone(),
                 tags: def.tags.clone(),
                 search_hint: def.search_hint.clone(),
                 exposure: def.exposure.clone(),
@@ -1868,6 +1989,28 @@ mod tests {
         assert!(server.get_tool("tasks").await.is_some());
         assert!(server.get_tool("web_search").await.is_some());
         assert!(server.get_tool("subdomain_brute").await.is_some());
+        assert!(server.get_tool("tool_search").await.is_some());
+        assert!(server.get_tool("browser").await.is_some());
+        assert!(server.get_tool("route_discovery").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn list_tools_by_source_preserves_builtin_categories() {
+        let server = ToolServer::new();
+        server.init_builtin_tools().await;
+
+        let builtin_tools = server.list_tools_by_source("builtin").await;
+        let browser = builtin_tools
+            .iter()
+            .find(|tool| tool.name == "browser")
+            .expect("browser tool should exist");
+        let route_discovery = builtin_tools
+            .iter()
+            .find(|tool| tool.name == "route_discovery")
+            .expect("route_discovery tool should exist");
+
+        assert_eq!(browser.category, "browser");
+        assert_eq!(route_discovery.category, "network");
     }
 
     #[tokio::test]

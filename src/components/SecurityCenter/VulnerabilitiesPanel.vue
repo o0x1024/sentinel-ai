@@ -448,8 +448,16 @@ const route = useRoute()
 const router = useRouter()
 const securityCenterActivity = useSecurityCenterActivity()
 const { isFindingRead } = securityCenterActivity
+const props = defineProps<{
+  immersiveMode?: boolean
+  immersiveOpenFindingRequest?: {
+    findingId: string
+    requestKey: number
+  } | null
+}>()
 const emit = defineEmits<{
   'stats-updated': [stats: { total: number; critical: number }]
+  'open-workbench-case': [caseId: string]
 }>()
 
 const findings = ref<Finding[]>([])
@@ -465,6 +473,7 @@ const exportingSnapshot = ref(false)
 const evaluationComparison = ref<EvaluationComparisonSummary | null>(null)
 const evaluationComparisonHistory = ref<EvaluationComparisonSummary[]>([])
 const consumedRouteFindingId = ref<string | null>(null)
+const consumedImmersiveFindingRequestKey = ref<number | null>(null)
 
 const stats = ref({ critical: 0, high: 0, medium: 0, low: 0 })
 
@@ -916,6 +925,10 @@ const closeDetails = () => {
   selectedFinding.value = null
   detailTab.value = 'overview'
 
+  if (props.immersiveMode) {
+    return
+  }
+
   if (typeof route.query.findingId === 'string' && route.query.findingId.trim()) {
     const nextQuery = { ...route.query }
     delete nextQuery.findingId
@@ -930,6 +943,10 @@ const openWorkbenchForFinding = async (finding: Finding) => {
     showDetailsModal.value = false
     selectedFinding.value = null
     detailTab.value = 'overview'
+    if (props.immersiveMode) {
+      emit('open-workbench-case', caseItem.id)
+      return
+    }
     await router.replace({ path: `/security-center/workbench/${caseItem.id}` })
   } catch (error) {
     console.error('Failed to open workbench for finding', error)
@@ -1036,19 +1053,32 @@ const syncSelectedFinding = () => {
 }
 
 const openFindingFromRoute = async () => {
-  const findingId = typeof route.query.findingId === 'string' ? route.query.findingId.trim() : ''
+  const findingId = props.immersiveMode
+    ? props.immersiveOpenFindingRequest?.findingId?.trim() || ''
+    : typeof route.query.findingId === 'string'
+      ? route.query.findingId.trim()
+      : ''
+  const immersiveRequestKey = props.immersiveMode
+    ? props.immersiveOpenFindingRequest?.requestKey ?? null
+    : null
   if (!findingId) {
     consumedRouteFindingId.value = null
+    consumedImmersiveFindingRequestKey.value = null
     return
   }
 
-  if (consumedRouteFindingId.value === findingId) {
+  if (props.immersiveMode) {
+    if (immersiveRequestKey !== null && consumedImmersiveFindingRequestKey.value === immersiveRequestKey) {
+      return
+    }
+  } else if (consumedRouteFindingId.value === findingId) {
     return
   }
 
   const existingFinding = findings.value.find(item => item.id === findingId)
   if (existingFinding) {
     consumedRouteFindingId.value = findingId
+    consumedImmersiveFindingRequestKey.value = immersiveRequestKey
     openDetails(existingFinding)
     return
   }
@@ -1060,6 +1090,7 @@ const openFindingFromRoute = async () => {
     }
 
     consumedRouteFindingId.value = findingId
+    consumedImmersiveFindingRequestKey.value = immersiveRequestKey
     securityCenterActivity.markFindingAsRead(findingId)
     selectedFinding.value = {
       ...response.data.vulnerability,
@@ -1185,7 +1216,7 @@ watch(selectedFinding, finding => {
 })
 
 watch(
-  () => route.query.findingId,
+  () => props.immersiveMode ? props.immersiveOpenFindingRequest?.requestKey : route.query.findingId,
   () => {
     void openFindingFromRoute()
   }
@@ -1194,6 +1225,10 @@ watch(
 watch(
   () => route.query.severity,
   () => {
+    if (props.immersiveMode) {
+      return
+    }
+
     if (!syncFiltersFromRouteQuery()) {
       return
     }
@@ -1217,7 +1252,9 @@ const handleKeyDown = (e: KeyboardEvent) => {
 
 onMounted(async () => {
   pageInput.value = String(currentPage.value)
-  syncFiltersFromRouteQuery()
+  if (!props.immersiveMode) {
+    syncFiltersFromRouteQuery()
+  }
   await securityCenterActivity.initializeSecurityCenterActivity()
   try {
     evaluationComparison.value = await loadPersistedEvaluationComparison()

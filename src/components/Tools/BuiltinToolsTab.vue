@@ -502,7 +502,10 @@ const categoryConfigs: CategoryConfig[] = [
   { key: 'network', label: '网络', icon: 'fas fa-network-wired', btnClass: 'btn-info', badgeClass: 'badge-info', bgClass: 'bg-info/10', textClass: 'text-info' },
   { key: 'system', label: '系统', icon: 'fas fa-cog', btnClass: 'btn-neutral', badgeClass: 'badge-neutral', bgClass: 'bg-neutral/10', textClass: 'text-neutral' },
   { key: 'ai', label: 'AI', icon: 'fas fa-brain', btnClass: 'btn-warning', badgeClass: 'badge-warning', bgClass: 'bg-warning/10', textClass: 'text-warning' },
+  { key: 'browser', label: '浏览器', icon: 'fas fa-window-maximize', btnClass: 'btn-primary', badgeClass: 'badge-primary', bgClass: 'bg-primary/10', textClass: 'text-primary' },
   { key: 'utility', label: '工具', icon: 'fas fa-tools', btnClass: 'btn-success', badgeClass: 'badge-success', bgClass: 'bg-success/10', textClass: 'text-success' },
+  { key: 'exploitation', label: '利用', icon: 'fas fa-bug', btnClass: 'btn-error', badgeClass: 'badge-error', bgClass: 'bg-error/10', textClass: 'text-error' },
+  { key: 'monitoring', label: '监控', icon: 'fas fa-satellite-dish', btnClass: 'btn-secondary', badgeClass: 'badge-secondary', bgClass: 'bg-secondary/10', textClass: 'text-secondary' },
   { key: 'other', label: '其他', icon: 'fas fa-tools', btnClass: 'btn-ghost', badgeClass: 'badge-ghost', bgClass: 'bg-base-200', textClass: 'text-base-content' },
 ]
 
@@ -511,6 +514,7 @@ const knownCategoryKeys = new Set(categoryConfigs.map(c => c.key))
 const normalizeCategory = (category: unknown): string => {
   const raw = String(category || '').toLowerCase().trim()
   if (!raw) return 'utility'
+  if (raw === 'monitor') return 'monitoring'
   return knownCategoryKeys.has(raw) ? raw : 'other'
 }
 
@@ -615,15 +619,30 @@ function selectSourceFilter(filter: BuiltinSourceFilter) {
 function getToolIcon(toolName: string) {
   const iconMap: Record<string, string> = {
     'ask_user_question': 'fas fa-list-check',
+    'browser': 'fas fa-window-maximize',
+    'tool_search': 'fas fa-magnifying-glass',
     'shell': 'fas fa-terminal',
     'interactive_shell': 'fas fa-terminal',
+    'glob': 'fas fa-folder-tree',
+    'grep': 'fas fa-file-lines',
+    'file_read': 'fas fa-file-arrow-down',
+    'file_edit': 'fas fa-file-pen',
+    'file_write': 'fas fa-file-circle-plus',
+    'lsp': 'fas fa-diagram-project',
     'web_search': 'fas fa-search',
+    'route_discovery': 'fas fa-route',
     'http_request': 'fas fa-globe',
+    'skills': 'fas fa-lightbulb',
     'memory': 'fas fa-memory',
     'ocr': 'fas fa-file-image',
     'tenth_man_review': 'fas fa-user-secret',
     'tasks': 'fas fa-tasks',
+    'spawn_agent': 'fas fa-code-branch',
+    'wait_agents': 'fas fa-hourglass-half',
+    'list_agents': 'fas fa-list-ul',
+    'close_agent': 'fas fa-xmark',
     'search_exploit': 'fas fa-bug',
+    'subdomain_brute': 'fas fa-sitemap',
   }
   return iconMap[toolName] || 'fas fa-tools'
 }

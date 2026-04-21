@@ -384,8 +384,8 @@ impl ImageAttachment {
 // 消息构建辅助函数
 // ============================================================================
 
-/// 构建用户消息（可能包含图片）
-pub fn build_user_message(user_prompt: &str, image: Option<&ImageAttachment>) -> Message {
+/// 构建用户消息（可能包含多张图片）
+pub fn build_user_message_with_images(user_prompt: &str, images: &[ImageAttachment]) -> Message {
     // Some OpenAI-compatible providers reject empty text content.
     let safe_prompt = user_prompt.trim();
     let text = if safe_prompt.is_empty() {
@@ -394,18 +394,27 @@ pub fn build_user_message(user_prompt: &str, image: Option<&ImageAttachment>) ->
         safe_prompt
     };
 
-    if let Some(img) = image {
+    if !images.is_empty() {
+        let mut contents: Vec<UserContent> = images
+            .iter()
+            .map(|img| UserContent::Image(img.to_rig_image()))
+            .collect();
+        contents.push(UserContent::text(text.to_string()));
         Message::User {
-            content: OneOrMany::many(vec![
-                UserContent::Image(img.to_rig_image()),
-                UserContent::text(text.to_string()),
-            ])
-            .expect("Failed to create multi-content message"),
+            content: OneOrMany::many(contents).expect("Failed to create multi-content message"),
         }
     } else {
         Message::User {
             content: OneOrMany::one(UserContent::text(text.to_string())),
         }
+    }
+}
+
+/// 构建用户消息（兼容单图调用）
+pub fn build_user_message(user_prompt: &str, image: Option<&ImageAttachment>) -> Message {
+    match image {
+        Some(img) => build_user_message_with_images(user_prompt, std::slice::from_ref(img)),
+        None => build_user_message_with_images(user_prompt, &[]),
     }
 }
 
@@ -415,28 +424,25 @@ pub fn build_user_message(user_prompt: &str, image: Option<&ImageAttachment>) ->
 /// ```json
 /// [{ "type": "image", "media_type": "png", "data": { "type": "base64", "data": "..." } }]
 /// ```
-pub fn parse_image_from_json(attachments: Option<&Value>) -> Option<ImageAttachment> {
-    let att_json = attachments?;
-    let arr = att_json.as_array()?;
-    let first = arr.first()?;
-
-    let is_image = first
+fn parse_one_image_attachment(value: &Value) -> Option<ImageAttachment> {
+    let image = if value
         .get("type")
         .and_then(|v| v.as_str())
         .map(|t| t.eq_ignore_ascii_case("image"))
-        .unwrap_or(false);
+        .unwrap_or(false)
+    {
+        value
+    } else {
+        value.get("image")?
+    };
 
-    if !is_image {
-        return None;
-    }
-
-    let media_type = first
+    let media_type = image
         .get("media_type")
         .and_then(|v| v.as_str())
         .unwrap_or("jpeg")
         .to_string();
 
-    let base64_data = first
+    let base64_data = image
         .get("data")
         .and_then(|v| v.as_object())
         .and_then(|obj| obj.get("data"))
@@ -448,4 +454,71 @@ pub fn parse_image_from_json(attachments: Option<&Value>) -> Option<ImageAttachm
     }
 
     Some(ImageAttachment::new(base64_data, media_type))
+}
+
+/// 从 JSON 附件解析多张图片
+pub fn parse_images_from_json(attachments: Option<&Value>) -> Vec<ImageAttachment> {
+    let Some(att_json) = attachments else {
+        return Vec::new();
+    };
+
+    match att_json {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(parse_one_image_attachment)
+            .collect(),
+        Value::Object(_) => parse_one_image_attachment(att_json).into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// 从 JSON 附件解析第一张图片（兼容旧调用）
+pub fn parse_image_from_json(attachments: Option<&Value>) -> Option<ImageAttachment> {
+    parse_images_from_json(attachments).into_iter().next()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn build_user_message_with_images_appends_text_after_all_images() {
+        let images = vec![
+            ImageAttachment::new("a", "png"),
+            ImageAttachment::new("b", "jpeg"),
+        ];
+        let message = build_user_message_with_images("describe", &images);
+
+        let Message::User { content } = message else {
+            panic!("expected user message");
+        };
+        let items: Vec<UserContent> = std::iter::once(content.first_ref().clone())
+            .chain(content.rest())
+            .collect();
+
+        assert_eq!(items.len(), 3);
+        assert!(matches!(items[0], UserContent::Image(_)));
+        assert!(matches!(items[1], UserContent::Image(_)));
+        match &items[2] {
+            UserContent::Text(text) => assert_eq!(text.text, "describe"),
+            other => panic!("expected trailing text content, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_images_from_json_collects_multiple_images() {
+        let attachments = json!([
+            { "type": "image", "media_type": "png", "data": { "type": "base64", "data": "aaa" } },
+            { "type": "image", "media_type": "jpeg", "data": { "type": "base64", "data": "bbb" } }
+        ]);
+
+        let images = parse_images_from_json(Some(&attachments));
+
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].media_type, "png");
+        assert_eq!(images[0].base64_data, "aaa");
+        assert_eq!(images[1].media_type, "jpeg");
+        assert_eq!(images[1].base64_data, "bbb");
+    }
 }

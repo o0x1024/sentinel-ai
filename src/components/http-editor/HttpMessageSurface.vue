@@ -20,6 +20,7 @@
       :search-clear-title="searchClearTitle"
       :search-no-matches-text="searchNoMatchesText"
       :search-invalid-regexp-text="searchInvalidRegexpText"
+      :show-display-toolbar="showDisplayToolbar"
       @contextmenu="emit('contextmenu', $event)"
     />
     <HttpMessageTextEditor
@@ -44,6 +45,7 @@
       :search-clear-title="searchClearTitle"
       :search-no-matches-text="searchNoMatchesText"
       :search-invalid-regexp-text="searchInvalidRegexpText"
+      :show-display-toolbar="showDisplayToolbar"
       @update:model-value="emit('update:modelValue', $event)"
       @contextmenu="emit('contextmenu', $event)"
     />
@@ -75,6 +77,7 @@ const props = withDefaults(defineProps<{
   searchClearTitle?: string
   searchNoMatchesText?: string
   searchInvalidRegexpText?: string
+  showDisplayToolbar?: boolean
 }>(), {
   modelValue: '',
   readonly: false,
@@ -95,6 +98,7 @@ const props = withDefaults(defineProps<{
   searchClearTitle: 'Clear search',
   searchNoMatchesText: 'No matches',
   searchInvalidRegexpText: 'Invalid regex',
+  showDisplayToolbar: true,
 })
 
 const emit = defineEmits<{

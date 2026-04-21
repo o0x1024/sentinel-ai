@@ -688,7 +688,12 @@ mod tests {
             "preference"
         );
         assert_eq!(
-            infer_memory_kind(None, None, &[], "Todo: verify changed result before final answer"),
+            infer_memory_kind(
+                None,
+                None,
+                &[],
+                "Todo: verify changed result before final answer"
+            ),
             "task"
         );
     }

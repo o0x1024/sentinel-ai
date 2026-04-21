@@ -328,8 +328,11 @@ defineExpose({
 })
 
 watch(
-  () => [focusedMessageId.value, props.messages.length],
-  ([messageId]) => {
+  () => ({
+    messageId: focusedMessageId.value,
+    messageCount: props.messages.length,
+  }),
+  ({ messageId }) => {
     if (!messageId) return
     void focusMessage(messageId)
   },

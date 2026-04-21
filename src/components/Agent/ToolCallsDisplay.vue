@@ -9,18 +9,18 @@
         v-if="isShellCall(call)"
         :args="parseArgs(call.arguments)"
         :result="parseResult(call.result)"
-        :error="call.success === false ? (call.result || 'Shell execution failed') : undefined"
+        :error="call.success === false ? call.result || 'Shell execution failed' : undefined"
         :status="call.success === false ? 'failed' : 'completed'"
       />
       <AskUserQuestionToolResult
         v-else-if="isAskUserQuestionCall(call)"
         :args="parseArgs(call.arguments)"
         :result="parseResult(call.result)"
-        :error="call.success === false ? (call.result || 'AskUserQuestion failed') : undefined"
+        :error="call.success === false ? call.result || 'AskUserQuestion failed' : undefined"
         :status="call.success === false ? 'failed' : 'completed'"
       />
       <!-- Tool call header -->
-      <div 
+      <div
         v-else
         class="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-base-200/80 transition-colors"
         @click="toggleExpand(index)"
@@ -28,7 +28,7 @@
         <div class="flex items-center gap-2">
           <i class="fas fa-wrench text-warning text-xs"></i>
           <span class="text-sm font-medium text-base-content">{{ call.name }}</span>
-          <span 
+          <span
             v-if="call.success !== undefined"
             class="badge badge-xs"
             :class="call.success ? 'badge-success' : 'badge-error'"
@@ -40,7 +40,10 @@
           <span v-if="call.duration_ms" class="text-xs text-base-content/50">
             {{ formatDuration(call.duration_ms) }}
           </span>
-          <i class="fas text-xs text-base-content/50" :class="expandedItems.has(index) ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+          <i
+            class="fas text-xs text-base-content/50"
+            :class="expandedItems.has(index) ? 'fa-chevron-up' : 'fa-chevron-down'"
+          ></i>
         </div>
       </div>
 
@@ -50,12 +53,19 @@
           <!-- Arguments -->
           <div v-if="call.arguments" class="px-3 py-2 border-b border-base-300">
             <div class="text-xs text-base-content/50 mb-1">Arguments:</div>
-            <pre class="text-xs font-mono bg-base-300/50 rounded p-2 overflow-x-auto max-h-32 text-base-content">{{ formatJson(call.arguments) }}</pre>
+            <pre
+              class="text-xs font-mono bg-base-300/50 rounded p-2 overflow-x-auto max-h-32 text-base-content"
+              >{{ formatJson(call.arguments) }}</pre
+            >
           </div>
           <!-- Result -->
           <div v-if="call.result" class="px-3 py-2">
             <div class="text-xs text-base-content/50 mb-1">Result:</div>
-            <pre class="text-xs font-mono bg-base-300/50 rounded p-2 overflow-x-auto max-h-48 text-base-content">{{ formatResult(call.result) }}</pre>
+            <pre
+              class="text-xs font-mono bg-base-300/50 rounded p-2 overflow-x-auto max-h-48 text-base-content"
+              >{{ formatResult(call.result) }}</pre
+            >
+            <ToolRuntimeMeta :result="parseResult(call.result)" class="mt-2" />
           </div>
         </div>
       </Transition>
@@ -67,6 +77,7 @@
 import { computed, ref } from 'vue'
 import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
 import ShellToolResult from './ShellToolResult.vue'
+import ToolRuntimeMeta from './ToolRuntimeMeta.vue'
 
 interface ToolCall {
   id?: string

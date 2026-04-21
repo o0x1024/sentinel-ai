@@ -1,10 +1,13 @@
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 use crate::buildin_tools::file_context::{
     build_host_file_artifact, count_text_lines, hash_bytes, hash_text,
+};
+use crate::buildin_tools::file_runtime::{
+    current_runtime_metadata, get_path_kind, read_path_bytes, write_path_bytes, FilePathKind,
+    FileRuntimeMetadata,
 };
 use crate::buildin_tools::text_change::{summarize_text_change, TextChangeSummary};
 use crate::buildin_tools::text_preview::condense_preview as condense_text_preview;
@@ -29,6 +32,7 @@ pub struct FileEditArgs {
 #[derive(Debug, Clone, Serialize)]
 pub struct FileEditOutput {
     pub file_path: String,
+    pub runtime: FileRuntimeMetadata,
     pub replacements: usize,
     pub bytes_written: usize,
     pub content_hash: String,
@@ -93,17 +97,20 @@ impl Tool for FileEditTool {
             return Err(FileEditError::EmptyOldString);
         }
 
-        let path = resolve_path(&args.file_path)?;
-        let metadata = tokio::fs::metadata(&path)
+        match get_path_kind(&args.file_path)
             .await
-            .map_err(|_| FileEditError::MissingFile(args.file_path.clone()))?;
-        if metadata.is_dir() {
-            return Err(FileEditError::IsDirectory(args.file_path));
+            .map_err(FileEditError::EditFailed)?
+        {
+            FilePathKind::Missing => {
+                return Err(FileEditError::MissingFile(args.file_path.clone()))
+            }
+            FilePathKind::Directory => return Err(FileEditError::IsDirectory(args.file_path)),
+            FilePathKind::File => {}
         }
 
-        let bytes = tokio::fs::read(&path)
+        let bytes = read_path_bytes(&args.file_path)
             .await
-            .map_err(|error| FileEditError::EditFailed(error.to_string()))?;
+            .map_err(FileEditError::EditFailed)?;
         if looks_binary(&bytes) {
             return Err(FileEditError::BinaryFile);
         }
@@ -135,9 +142,9 @@ impl Tool for FileEditTool {
         let before_preview = preview_around_marker(&text, &args.old_string);
         let after_preview = preview_around_marker(&updated, &args.new_string);
         let change_summary = summarize_text_change(&text, &updated);
-        tokio::fs::write(&path, updated.as_bytes())
+        write_path_bytes(&args.file_path, updated.as_bytes(), false)
             .await
-            .map_err(|error| FileEditError::EditFailed(error.to_string()))?;
+            .map_err(FileEditError::EditFailed)?;
         let content_hash = hash_text(&updated);
         let stored_artifacts = vec![build_host_file_artifact(
             "file",
@@ -148,6 +155,7 @@ impl Tool for FileEditTool {
 
         Ok(FileEditOutput {
             file_path: args.file_path,
+            runtime: current_runtime_metadata(),
             replacements: if args.replace_all { matches } else { 1 },
             bytes_written: updated.len(),
             content_hash,
@@ -156,22 +164,6 @@ impl Tool for FileEditTool {
             change_summary,
             stored_artifacts,
         })
-    }
-}
-
-fn resolve_path(raw: &str) -> Result<PathBuf, FileEditError> {
-    if raw.trim().is_empty() {
-        return Err(FileEditError::InvalidPath(
-            "path cannot be empty".to_string(),
-        ));
-    }
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        let cwd = std::env::current_dir()
-            .map_err(|error| FileEditError::InvalidPath(error.to_string()))?;
-        Ok(cwd.join(path))
     }
 }
 

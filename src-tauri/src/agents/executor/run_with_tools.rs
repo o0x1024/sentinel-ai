@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter};
 
 use sentinel_db::Database;
 use sentinel_llm::{
-    normalize_tool_call_arguments_str, parse_image_from_json, ChatMessage, StreamContent,
+    normalize_tool_call_arguments_str, parse_images_from_json, ChatMessage, StreamContent,
     StreamingLlmClient,
 };
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
@@ -29,6 +29,7 @@ use crate::agents::context_engineering::reflection::{
     record_execution_reflection, ExecutionOutcome,
 };
 use crate::agents::executor::message_store::save_assistant_message;
+use crate::agents::executor::skill_loaded_events::emit_and_persist_skill_loaded;
 use crate::agents::executor::tenth_man_hypothesis::HypothesisTracker;
 use crate::agents::executor::terminal_session_store::scope_active_terminal_session;
 use crate::agents::executor::tool_activation_events::{
@@ -166,7 +167,7 @@ pub async fn execute_agent_with_tools(
     }
 
     // 解析图片附件
-    let image_attachment = parse_image_from_json(params.image_attachments.as_ref());
+    let image_attachments = parse_images_from_json(params.image_attachments.as_ref());
 
     // 6. 使用 rig-core 原生工具调用
     // rig 的 multi_turn() 会自动处理工具调用循环
@@ -366,7 +367,7 @@ pub async fn execute_agent_with_tools(
                 final_system_prompt_content.as_deref(),
                 &params.task,
                 &history_for_retry,
-                image_attachment.as_ref(), // 传递图片附件
+                image_attachments.as_slice(),
                 dynamic_tools.clone(),
                 |content| {
                     if crate::commands::ai::is_conversation_cancelled(&execution_id) {
@@ -1441,65 +1442,13 @@ pub async fn execute_agent_with_tools(
                                     "tools": current_tool_ids,
                                 }),
                             );
-                            let _ = app_handle.emit(
-                                "agent:skill_loaded",
-                                &json!({
-                                    "execution_id": params.execution_id,
-                                    "skill_id": skill.id,
-                                    "skill_name": skill.name,
-                                    "tools": current_tool_ids,
-                                }),
+                            emit_and_persist_skill_loaded(
+                                app_handle,
+                                &params.execution_id,
+                                &skill.id,
+                                &skill.name,
+                                db_for_stream.clone(),
                             );
-
-                            if let Some(db) = db_for_stream.clone() {
-                                use sentinel_core::models::database as core_db;
-                                let tools_preview = {
-                                    let preview = current_tool_ids
-                                        .iter()
-                                        .take(6)
-                                        .cloned()
-                                        .collect::<Vec<_>>()
-                                        .join(", ");
-                                    let suffix = if current_tool_ids.len() > 6 {
-                                        format!(" +{}", current_tool_ids.len() - 6)
-                                    } else {
-                                        String::new()
-                                    };
-                                    format!("{}{}", preview, suffix)
-                                };
-                                let meta = json!({
-                                    "kind": "skill_loaded",
-                                    "skill_id": skill.id,
-                                    "skill_name": skill.name,
-                                    "tools": current_tool_ids,
-                                    "tools_preview": tools_preview,
-                                });
-                                let msg = core_db::AiMessage {
-                                    id: uuid::Uuid::new_v4().to_string(),
-                                    conversation_id: params.execution_id.clone(),
-                                    role: "system".to_string(),
-                                    content: format!("Skill loaded: {} ({})", skill.name, skill.id),
-                                    metadata: Some(meta.to_string()),
-                                    token_count: None,
-                                    cost: None,
-                                    tool_calls: None,
-                                    attachments: None,
-                                    reasoning_content: None,
-                                    timestamp: chrono::Utc::now(),
-                                    architecture_type: None,
-                                    architecture_meta: None,
-                                    structured_data: None,
-                                };
-                                let db_clone = db;
-                                tauri::async_runtime::spawn(async move {
-                                    if let Err(e) = db_clone.upsert_ai_message_append(&msg).await {
-                                        tracing::warn!(
-                                            "Failed to persist skill_loaded message: {}",
-                                            e
-                                        );
-                                    }
-                                });
-                            }
                         }
                     }
                 }

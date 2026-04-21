@@ -7,12 +7,8 @@ export default {
   tasks: 'Tasks',
   noTasks: 'No Tasks',
   tasksWillAppearHere: 'Execution tasks derived by the agent will appear here.',
-  agentTaskPlannedTitle: 'Execution Tasks Planned',
-  agentTaskCreatedTitle: 'Tasks Added',
-  agentTaskStartedTitle: 'Task Started',
-  agentTaskCompletedTitle: 'Task Completed',
-  agentTaskListReadTitle: 'Task List Read',
-  agentTaskUpdatedTitle: 'Task Updated',
+  taskMetaSourceLabel: 'Source',
+  taskMetaReasonLabel: 'Reason',
   terminalPanelOpen: 'Terminal Panel Open',
   viewTerminal: 'View Interactive Terminal',
   terminal: 'Terminal',
@@ -35,6 +31,16 @@ export default {
   failedToCreateConversation: 'Failed to create conversation',
   failedToGetConversationTitle: 'Failed to get conversation title',
   failedToUpdateConversationTitle: 'Failed to update conversation title',
+  openWorkConfig: 'Open Work Config',
+  followDefaultModel: 'Follow Default Model',
+  searchModelsOrProviders: 'Search models or providers...',
+  noMatchingModels: 'No matching models',
+  loadingAssistantModels: 'Loading model list...',
+  visionCapabilitySupportedLabel: 'Vision',
+  visionCapabilityUnsupportedLabel: 'No Vision',
+  visionCapabilityUnknownLabel: 'Unknown',
+  workConfigVisionHint:
+    'Override the root assistant model for this conversation. [Vision] can read images directly, [No Vision] is confirmed to reject image input, and [Unknown] has not been confirmed yet.',
   executionOutcomeSucceeded: 'Succeeded',
   executionOutcomeFailed: 'Failed',
   executionOutcomeCancelled: 'Cancelled',
@@ -118,6 +124,7 @@ export default {
   resendingMessage: 'Resending message',
   messageNotFound: 'Message not found',
   cannotResendWhileExecuting: 'Cannot resend while executing',
+  loadingConversation: 'Loading conversation history...',
   loadingConversationHistory: 'Loading conversation history',
   receivedMessages: 'Received messages',
   loadedMessagesFromConversation: 'Loaded messages from conversation',
@@ -159,6 +166,7 @@ export default {
   manualSelection: 'Manual Selection',
   allTools: 'All Tools (For Testing)',
   maxTools: 'Maximum Tools',
+  maxToolsHint: 'Maximum number of tools available per conversation round, minimum is 1',
   selectTools: 'Select Tools',
   toolManagement: 'Tool Management',
   searchToolNamesOrDescriptions: 'Search tool names or descriptions...',
@@ -166,7 +174,7 @@ export default {
   plugins: 'Plugins',
   pluginCategory: {
     category: 'Plugins',
-    referToAi: 'Reference to AI Assistant'
+    referToAi: 'Reference to AI Assistant',
   },
   autoSelect: 'Auto Select',
   alwaysEnabled: 'Always Enabled',
@@ -206,24 +214,28 @@ export default {
   tour: {
     welcome: {
       title: 'Welcome to AI Agent',
-      description: 'This is your intelligent assistant, which can help you complete various security testing tasks.'
+      description:
+        'This is your intelligent assistant, which can help you complete various security testing tasks.',
     },
     conversationList: {
       title: 'Conversation List',
-      description: 'Click here to view and switch between different conversations, each maintaining an independent context.'
+      description:
+        'Click here to view and switch between different conversations, each maintaining an independent context.',
     },
     newConversation: {
       title: 'New Conversation',
-      description: 'Create a new conversation to start a fresh dialogue.'
+      description: 'Create a new conversation to start a fresh dialogue.',
     },
     messageArea: {
       title: 'Message Area',
-      description: 'Here displays your dialogue history with the AI, supporting code highlighting and Markdown rendering.'
+      description:
+        'Here displays your dialogue history with the AI, supporting code highlighting and Markdown rendering.',
     },
     inputArea: {
       title: 'Input Area',
-      description: 'Enter your questions or instructions here, and the AI will perform the corresponding tasks according to your needs.'
-    }
+      description:
+        'Enter your questions or instructions here, and the AI will perform the corresponding tasks according to your needs.',
+    },
   },
 
   // Skills
@@ -294,7 +306,8 @@ export default {
   teamWorkspaceTabAgents: 'Agents',
   teamWorkspaceLoading: 'Loading team workspace...',
   teamWorkspaceNoTasks: 'No tasks yet. Create one or wait for the planner to populate the board.',
-  teamWorkspaceActionGuide: 'Prioritize items in “Ready to Work”. Update results as soon as work finishes, and record dependencies or blockers when progress stops.',
+  teamWorkspaceActionGuide:
+    'Prioritize items in “Ready to Work”. Update results as soon as work finishes, and record dependencies or blockers when progress stops.',
   teamWorkspaceMessageScope: 'Message view',
   teamWorkspaceGlobalView: 'Global',
   teamWorkspaceClearTaskSelection: 'Show all',
@@ -306,20 +319,24 @@ export default {
   teamTaskCreateFieldTitle: 'Task title',
   teamTaskCreateFieldTitlePlaceholder: 'e.g. Summarize Findings and Next Actions',
   teamTaskCreateFieldInstruction: 'Task instructions',
-  teamTaskCreateFieldInstructionPlaceholder: 'Explain the required work, output, and key constraints.',
+  teamTaskCreateFieldInstructionPlaceholder:
+    'Explain the required work, output, and key constraints.',
   teamTaskCreateFieldOwner: 'Owner',
   teamTaskCreateFieldOwnerUnassigned: 'Leave unassigned for now',
   teamTaskCreateFieldDependencies: 'Dependencies',
-  teamTaskCreateFieldDependenciesEmpty: 'There are no prerequisite tasks yet, so this task will start without dependencies.',
+  teamTaskCreateFieldDependenciesEmpty:
+    'There are no prerequisite tasks yet, so this task will start without dependencies.',
   teamTaskCreateFieldAcceptance: 'Acceptance criteria',
-  teamTaskCreateFieldAcceptancePlaceholder: 'Describe how the team should decide this task is done.',
+  teamTaskCreateFieldAcceptancePlaceholder:
+    'Describe how the team should decide this task is done.',
   teamTaskCreateValidationTitle: 'Enter a task title first.',
   teamTaskCreateValidationInstruction: 'Enter task instructions first.',
   teamWorkspaceNoInboxMessages: 'No thread messages yet.',
   teamWorkspaceNoBlackboardEntries: 'No shared blackboard entries yet.',
   teamWorkspaceNoAgents: 'No team agents yet.',
   teamWorkspaceNoResponsibility: 'No responsibility defined',
-  teamWorkspaceEnabledMessage: 'Team workspace is active. Use the task board, inbox, blackboard, and agent views to track collaboration.',
+  teamWorkspaceEnabledMessage:
+    'Team workspace is active. Use the task board, inbox, blackboard, and agent views to track collaboration.',
   teamTaskOwnerLabel: 'Owner',
   teamTaskCurrentHandlerLabel: 'Current handler',
   teamTaskDependencyLabel: 'Dependencies',
@@ -328,7 +345,6 @@ export default {
   teamTaskNoDependencies: 'None',
   teamTaskAcceptanceCriteriaLabel: 'Acceptance criteria',
   teamTaskAttemptsLabel: 'Attempts',
-  teamTaskUpdatedAtLabel: 'Last updated',
   teamTaskSelectedHint: 'Switched the message view to this task owner',
   teamTaskSelectHint: 'Click to focus messages related to this task',
   teamTaskActionClaim: 'Claim Task',
@@ -336,17 +352,23 @@ export default {
   teamTaskActionComplete: 'Mark Complete',
   teamTaskActionFail: 'Mark Failed',
   teamTaskActionBlock: 'Mark Blocked',
-  teamTaskActionClaimMissingActor: 'This task has no owner yet. Assign an owner before claiming it.',
-  teamTaskActionReleaseMissingActor: 'This task has no active handler, so it cannot be released directly.',
+  teamTaskActionClaimMissingActor:
+    'This task has no owner yet. Assign an owner before claiming it.',
+  teamTaskActionReleaseMissingActor:
+    'This task has no active handler, so it cannot be released directly.',
   teamTaskActionFailDefaultReason: 'No valid result was produced or execution hit an error.',
   teamTaskActionBlockDefaultReason: 'There is an unresolved dependency or external blocker.',
   teamTaskStatusReasonTitleFail: 'Describe the failure',
   teamTaskStatusReasonTitleBlock: 'Describe the blocker',
-  teamTaskStatusReasonHintFail: 'Write a concrete failure reason so the team can decide whether to recover or split follow-up work.',
-  teamTaskStatusReasonHintBlock: 'Write the current blocker clearly so other members know how to unblock it.',
+  teamTaskStatusReasonHintFail:
+    'Write a concrete failure reason so the team can decide whether to recover or split follow-up work.',
+  teamTaskStatusReasonHintBlock:
+    'Write the current blocker clearly so other members know how to unblock it.',
   teamTaskStatusReasonLabel: 'Reason',
-  teamTaskStatusReasonPlaceholderFail: 'For example: no reproducible sample yet, so the task cannot be completed with confidence.',
-  teamTaskStatusReasonPlaceholderBlock: 'For example: waiting on an upstream task result or missing an external input.',
+  teamTaskStatusReasonPlaceholderFail:
+    'For example: no reproducible sample yet, so the task cannot be completed with confidence.',
+  teamTaskStatusReasonPlaceholderBlock:
+    'For example: waiting on an upstream task result or missing an external input.',
   teamTaskStatusReasonValidation: 'Enter a reason before updating the task status.',
   teamTaskStatusReasonSubmit: 'Update Status',
   teamTaskStatusReasonCancel: 'Cancel',
@@ -399,10 +421,14 @@ export default {
   teamTaskSectionAction: {
     executable: 'Next step: claim a dependency-free task, or create a new independent work item.',
     active: 'Next step: claim something from “Ready to Work” so the team does not stall.',
-    blocked: 'Next step: check “Recently Completed” and “In Progress” to see whether any dependency just cleared.',
-    review: 'Next step: add a short result summary when work finishes, then move it into review or handoff.',
-    completed: 'Next step: keep short result summaries so the team can see what work just unlocked.',
-    attention: 'Next step: add the failure reason quickly, then decide whether to retry, reassign, or close the task.',
+    blocked:
+      'Next step: check “Recently Completed” and “In Progress” to see whether any dependency just cleared.',
+    review:
+      'Next step: add a short result summary when work finishes, then move it into review or handoff.',
+    completed:
+      'Next step: keep short result summaries so the team can see what work just unlocked.',
+    attention:
+      'Next step: add the failure reason quickly, then decide whether to retry, reassign, or close the task.',
   },
   teamAgentStatus: {
     idle: 'Idle',
@@ -472,7 +498,8 @@ export default {
   noToolsAvailable: 'No tools available',
   tools: 'tools',
   memoryFeedbackTitle: 'Memory Feedback',
-  memoryFeedbackDescription: 'Review candidate drafts and suppression feedback from the skill loop.',
+  memoryFeedbackDescription:
+    'Review candidate drafts and suppression feedback from the skill loop.',
   candidateDraftsTitle: 'Candidate Drafts',
   candidateDraftsDescription: 'Durable memory promoted into reviewable skill drafts.',
   activeCount: '{count} active',
@@ -488,7 +515,8 @@ export default {
   noSuppressionRules: 'No suppression rules yet.',
   suppressionRulesShapingCapture: '{count} rules are shaping future draft capture.',
   candidateDraftDetailsTitle: 'Candidate Draft Details',
-  candidateDraftDetailsDescription: 'Inspect candidate provenance and review decisions before promotion.',
+  candidateDraftDetailsDescription:
+    'Inspect candidate provenance and review decisions before promotion.',
   showReviewed: 'Show reviewed',
   noCandidateDraftsInFilter: 'No candidate drafts in the current filter.',
   useAsDraft: 'Use as Draft',
@@ -496,7 +524,8 @@ export default {
   promoteCandidate: 'Promote',
   candidateConfidence: 'confidence {confidence}',
   rejectAs: 'Reject As',
-  structuredRejectionReasonHint: 'Choose a structured rejection reason so future suppression rules stay reviewable.',
+  structuredRejectionReasonHint:
+    'Choose a structured rejection reason so future suppression rules stay reviewable.',
   provenance: 'Provenance',
   sourceMemory: 'Source memory',
   reviewTimeline: 'Review Timeline',
@@ -504,7 +533,8 @@ export default {
   publishedAsSkill: 'Published as skill',
   draftContent: 'Draft Content',
   suppressionRuleDetailsTitle: 'Suppression Rule Details',
-  suppressionRuleDetailsDescription: 'Inspect active suppression rules, hit rates, and expiry windows.',
+  suppressionRuleDetailsDescription:
+    'Inspect active suppression rules, hit rates, and expiry windows.',
   extendSuppressionRule: 'Extend {days}d',
   expireSuppressionRuleNow: 'Expire now',
   suppressedPattern: 'Suppressed Pattern',
@@ -515,7 +545,8 @@ export default {
   lastMatchExcerpt: 'Last Match Excerpt',
   createdUpdated: 'Created {created} · Updated {updated}',
   skillLibraryTitle: 'Skill Library',
-  skillLibraryDescription: 'Browse reusable skills in {mode} and keep low-value drift under control.',
+  skillLibraryDescription:
+    'Browse reusable skills in {mode} and keep low-value drift under control.',
   enabledCountLower: '{count} enabled',
   disabledCountLower: '{count} disabled',
   noSkillDescriptionYet: 'No description yet.',
@@ -524,7 +555,8 @@ export default {
   switchOn: 'On',
   switchOff: 'Off',
   skillDerivedFromCandidate: 'Derived from memory candidate {id}',
-  refineCandidateBrief: 'Refine this {memoryKind} draft into a production-ready reusable skill. Keep the proven core workflow, improve structure, add clear verification steps, and preserve the review-gate metadata.',
+  refineCandidateBrief:
+    'Refine this {memoryKind} draft into a production-ready reusable skill. Keep the proven core workflow, improve structure, add clear verification steps, and preserve the review-gate metadata.',
   promoteCandidateConfirm: 'Promote candidate "{title}" into a formal skill?',
   promoteCandidateFailed: 'Failed to promote skill candidate: {error}',
   rejectionCategoryDuplicateNoise: 'Duplicate Noise',
@@ -537,15 +569,19 @@ export default {
   reviewCandidateConfirm: 'Do you want to {actionLabel} candidate "{title}"{actionSuffix}?',
   reviewArchivedFromGate: 'Archived from SkillsManager review gate',
   reviewCandidateFailed: 'Failed to review skill candidate: {error}',
-  extendSuppressionRuleConfirm: 'Extend suppression rule "{ruleId}" by {days} days? Similar low-value memories will stay suppressed longer.',
+  extendSuppressionRuleConfirm:
+    'Extend suppression rule "{ruleId}" by {days} days? Similar low-value memories will stay suppressed longer.',
   extendSuppressionRuleFailed: 'Failed to extend suppression rule: {error}',
-  expireSuppressionRuleConfirm: 'Expire suppression rule "{ruleId}" now? It will be removed on the next refresh and similar memories may become candidates again.',
+  expireSuppressionRuleConfirm:
+    'Expire suppression rule "{ruleId}" now? It will be removed on the next refresh and similar memories may become candidates again.',
   expireSuppressionRuleFailed: 'Failed to expire suppression rule: {error}',
-  removeSuppressionRuleConfirm: 'Remove suppression rule "{ruleId}"? Future similar memories may become candidates again.',
+  removeSuppressionRuleConfirm:
+    'Remove suppression rule "{ruleId}"? Future similar memories may become candidates again.',
   deleteSuppressionRuleFailed: 'Failed to delete suppression rule: {error}',
   rejectionReviewNoteDuplicateNoise: 'Rejected as duplicate low-signal draft noise',
   rejectionReviewNoteStalePreference: 'Rejected as a stale or non-reusable preference draft',
-  rejectionReviewNoteOverfitProcedure: 'Rejected as an overfit procedure that should stay contextual',
+  rejectionReviewNoteOverfitProcedure:
+    'Rejected as an overfit procedure that should stay contextual',
   rejectionReviewNoteIncorrectPattern: 'Rejected as an incorrect or misleading reusable pattern',
   rejectionReviewNoteDefault: 'Rejected by SkillsManager review gate',
   uncategorized: 'Uncategorized',
@@ -572,7 +608,7 @@ export default {
   // MessageFlow
   aiIsThinking: 'AI is thinking...',
   agentReady: 'Agent Ready',
-  startConversation: 'Start a conversation to see the Agent\'s responses and task execution.',
+  startConversation: "Start a conversation to see the Agent's responses and task execution.",
   loadMoreMessages: 'Load {count} earlier messages',
 
   // MessageBlock
@@ -585,6 +621,11 @@ export default {
   inputParameters: 'Input Parameters',
   executionResult: 'Execution Result',
   toolCallId: 'Tool Call ID',
+  toolRuntime: 'Runtime',
+  toolRuntimeHost: 'Host',
+  toolRuntimeDocker: 'Docker',
+  toolRuntimeWorkingDir: 'Working Dir',
+  toolRuntimeContainer: 'Container',
 
   // Sliding window memory
   segmentSummary: 'Memory Segment Compressed',
@@ -646,5 +687,5 @@ export default {
     dockerNotAvailable: 'Docker unavailable, security analysis disabled',
     selectProcessingMode: 'Please select processing mode',
     selectModeFirst: 'Please select document processing mode first',
-  }
+  },
 }

@@ -48,34 +48,6 @@
           <i class="fas fa-crosshairs text-sm"></i>
       </button>
 
-      <nav class="flex flex-col gap-1.5">
-        <router-link
-          v-for="item in drillNavigationItems"
-          :key="item.id"
-          :to="item.to"
-          data-toolbar-focusable
-          class="group relative flex h-10 w-10 items-center justify-center rounded-xl border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100"
-          :class="
-            isItemActive(item)
-              ? 'border-primary bg-primary text-primary-content shadow-lg shadow-primary/20'
-              : 'border-base-300/70 bg-base-200/75 text-base-content/72 hover:border-primary/40 hover:bg-base-200'
-          "
-          :tabindex="0"
-          :title="item.label"
-          :aria-label="item.label"
-        >
-          <i :class="`${item.icon} text-[13px]`"></i>
-          <span
-            class="toolbar-label pointer-events-none absolute whitespace-nowrap rounded-xl border border-base-300/70 bg-base-100 px-3 py-2 text-xs font-medium text-base-content opacity-0 shadow-lg transition-all duration-200 group-hover:opacity-100"
-            :class="tooltipDockClass"
-          >
-            {{ item.label }}
-          </span>
-        </router-link>
-      </nav>
-
-      <div v-if="showTrafficWorkbenchControls" class="h-px w-6 bg-base-300/80"></div>
-
       <nav v-if="showTrafficWorkbenchControls" class="flex flex-col gap-1.5">
         <button
           v-for="item in trafficWorkbenchItems"
@@ -129,25 +101,28 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { setImmersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import {
-  closeImmersiveTrafficWorkbench,
+  closeImmersiveSecurityCenterSidebar,
+  clearImmersiveSecurityCenterReturnPath,
+  immersiveSecurityCenterReturnPath,
+  immersiveSecurityCenterSidebarOpen,
+  openImmersiveSecurityCenterSidebar,
+} from '@/services/immersiveSecurityCenterSidebar'
+import {
+  closeTrafficAssistant,
+  openTrafficAssistantPanel,
+  trafficAssistantVisible,
+} from '@/services/trafficAssistantWorkspace'
+import { closeAllImmersiveTools } from '@/services/immersiveToolCoordinator'
+import {
   openImmersiveTrafficWorkbenchTool,
+  showImmersiveTrafficHistory,
+  toggleImmersiveTrafficWorkbenchTool,
   toggleImmersiveTrafficBasket,
   toggleImmersiveTrafficInterceptDrawer,
   toggleImmersiveTrafficProxySettings,
   useImmersiveTrafficDockState,
   type ImmersiveTrafficWorkbenchTool,
 } from '@/components/traffic/immersiveTrafficDockState'
-
-interface DrillNavigationItem {
-  id: string
-  label: string
-  icon: string
-  matchMode?: 'exact' | 'prefix'
-  to: {
-    path: string
-    query?: Record<string, string>
-  }
-}
 
 interface TrafficWorkbenchToolbarItem {
   id: string
@@ -257,45 +232,71 @@ const panelStyle = computed(() => ({
   willChange: 'transform',
 }))
 
-const drillNavigationItems = computed<DrillNavigationItem[]>(() => [
-  {
-    id: 'traffic-analysis',
-    label: t('sidebar.traffic', '流量分析'),
-    icon: 'fas fa-satellite-dish',
-    to: { path: '/traffic' },
-  },
-  {
-    id: 'security-workbench',
-    label: t('common.securityWorkbench', '安全工作台'),
-    icon: 'fas fa-shield-alt',
-    matchMode: 'prefix',
-    to: { path: '/security-center/workbench' },
-  },
-  {
-    id: 'vulnerabilities',
-    label: t('securityCenter.tabs.vulnerabilities', '漏洞管理'),
-    icon: 'fas fa-bug',
-    to: { path: '/security-center', query: { tab: 'vulnerabilities' } },
-  },
-])
+const toggleSecurityCenter = () => {
+  if (!immersiveSecurityCenterSidebarOpen.value) {
+    openImmersiveSecurityCenterSidebar(route.fullPath)
+    return
+  }
 
-const showTrafficWorkbenchControls = computed(() => route.path === '/traffic')
+  closeImmersiveSecurityCenterSidebar()
+  const returnPath = immersiveSecurityCenterReturnPath.value
+  clearImmersiveSecurityCenterReturnPath()
+  if (returnPath && returnPath !== route.fullPath) {
+    void router.push(returnPath)
+  }
+}
+
+const showTrafficWorkbenchControls = computed(() => true)
 
 const activateTrafficTool = (tool: ImmersiveTrafficWorkbenchTool) => {
   if (route.path !== '/traffic') {
     void router.push('/traffic')
+    openImmersiveTrafficWorkbenchTool(tool)
+    return
   }
-  openImmersiveTrafficWorkbenchTool(tool)
+
+  toggleImmersiveTrafficWorkbenchTool(tool)
+}
+
+const toggleTrafficAssistant = () => {
+  if (route.path !== '/traffic') {
+    void router.push('/traffic')
+  }
+
+  if (trafficAssistantVisible.value) {
+    closeTrafficAssistant()
+    return
+  }
+
+  openTrafficAssistantPanel()
 }
 
 const trafficWorkbenchItems = computed<TrafficWorkbenchToolbarItem[]>(() => [
   {
+    id: 'security-center',
+    label: t('securityCenter.title', '安全中心'),
+    icon: 'fas fa-shield-alt',
+    active: immersiveSecurityCenterSidebarOpen.value,
+    count: 0,
+    onClick: toggleSecurityCenter,
+  },
+  {
     id: 'history',
     label: t('trafficAnalysis.tabs.history', '历史记录'),
     icon: 'fas fa-history',
-    active: !workbenchOpen.value,
+    active: !workbenchOpen.value
+      && !trafficAssistantVisible.value
+      && !immersiveSecurityCenterSidebarOpen.value
+      && !interceptDrawerOpen.value
+      && !basketOpen.value
+      && !proxySettingsOpen.value,
     count: 0,
-    onClick: () => closeImmersiveTrafficWorkbench(),
+    onClick: () => {
+      closeTrafficAssistant()
+      closeImmersiveSecurityCenterSidebar()
+      clearImmersiveSecurityCenterReturnPath()
+      showImmersiveTrafficHistory()
+    },
   },
   {
     id: 'repeater',
@@ -323,6 +324,14 @@ const trafficWorkbenchItems = computed<TrafficWorkbenchToolbarItem[]>(() => [
     count: comparerCount.value,
     badgeClass: 'toolbar-badge-primary',
     onClick: () => activateTrafficTool('comparer'),
+  },
+  {
+    id: 'assistant',
+    label: t('trafficAnalysis.aiWorkspace.launcherTitle', 'AI 助手'),
+    icon: 'fas fa-robot',
+    active: trafficAssistantVisible.value,
+    count: 0,
+    onClick: toggleTrafficAssistant,
   },
   {
     id: 'control',
@@ -365,19 +374,9 @@ const itemClasses = (item: TrafficWorkbenchToolbarItem) => {
   return 'border-base-300/70 bg-base-200/75 text-base-content/72 hover:border-primary/40 hover:bg-base-200'
 }
 
-const isItemActive = (item: DrillNavigationItem) => {
-  const matchesPath =
-    item.matchMode === 'prefix' ? route.path.startsWith(item.to.path) : route.path === item.to.path
-
-  if (!matchesPath) {
-    return false
-  }
-
-  const itemQuery = item.to.query ?? {}
-  return Object.entries(itemQuery).every(([key, value]) => route.query[key] === value)
-}
-
 const exitImmersiveMode = () => {
+  closeAllImmersiveTools()
+  clearImmersiveSecurityCenterReturnPath()
   setImmersiveDrillModeEnabled(false)
 }
 

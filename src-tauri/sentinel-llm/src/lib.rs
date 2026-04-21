@@ -48,7 +48,10 @@ pub use client::LlmClient;
 pub use config::LlmConfig;
 pub use log::{log_request, log_request_with_image, log_response, write_llm_log};
 pub use message::ImageAttachment;
-pub use message::{build_user_message, convert_chat_history, parse_image_from_json, ChatMessage};
+pub use message::{
+    build_user_message, build_user_message_with_images, convert_chat_history,
+    parse_image_from_json, parse_images_from_json, ChatMessage,
+};
 pub use service::{AiService, StreamChunk};
 pub use streaming::{StreamContent, StreamingLlmClient};
 pub use tool_args::{
@@ -115,7 +118,7 @@ impl StreamingLlmClient {
     where
         F: FnMut(StreamContent) -> bool,
     {
-        self.stream_chat(system_prompt, user_prompt, &[], None, on_content)
+        self.stream_chat(system_prompt, user_prompt, &[], &[], on_content)
             .await
     }
 }

@@ -36,10 +36,13 @@ import {
 } from '../systemAgentSettingsSupport'
 import type { AgentListItemViewModel } from '../agentListItemSupport'
 
+const TRAFFIC_VERIFICATION_AGENT_ID = 'traffic_verification_agent'
+
 export function useSystemAgentSettingsController() {
   const { locale } = useI18n({ useScope: 'global' })
   const loading = ref(false)
   const saving = ref(false)
+  const bulkMutating = ref(false)
   const dispatching = ref(false)
   const mutatingRuns = ref(false)
   const deletingRunId = ref('')
@@ -199,8 +202,15 @@ export function useSystemAgentSettingsController() {
     return getSystemAgentDisplayName(selectedProfile.value, locale.value)
   })
 
+  const enabledProfilesCount = computed(() =>
+    profiles.value.filter(profile => profile.enabled).length,
+  )
+  const disabledProfilesCount = computed(() =>
+    profiles.value.filter(profile => !profile.enabled).length,
+  )
+
   const isVerificationAgentSelected = computed(
-    () => selectedProfile.value?.id === 'traffic_verification_agent',
+    () => selectedProfile.value?.id === TRAFFIC_VERIFICATION_AGENT_ID,
   )
 
   const effectiveAutoVerificationStatus = computed<SystemAgentAutoVerificationStatus | null>(() => {
@@ -688,6 +698,59 @@ export function useSystemAgentSettingsController() {
     await loadContextExtractionSettings()
   }
 
+  const setAllProfilesEnabled = async (enabled: boolean) => {
+    const profileIds = profiles.value.map(profile => profile.id).filter(Boolean)
+    if (profileIds.length === 0) return 0
+
+    if (
+      selectedProfile.value
+      && editableProfileSnapshot.value
+      && editableProfileSnapshot.value !== lastSavedSnapshot.value
+    ) {
+      await saveSelectedProfile({ silent: true })
+    }
+
+    bulkMutating.value = true
+    try {
+      const response = await invoke<CommandResponse<number>>('set_system_agent_profiles_enabled', {
+        profileIds,
+        enabled,
+      })
+      const updatedCount = response.data ?? 0
+
+      profiles.value = profiles.value.map(profile =>
+        profileIds.includes(profile.id)
+          ? {
+              ...profile,
+              enabled,
+            }
+          : profile,
+      )
+
+      if (selectedProfile.value && profileIds.includes(selectedProfile.value.id)) {
+        selectedProfile.value = {
+          ...selectedProfile.value,
+          enabled,
+        }
+        lastSavedSnapshot.value = buildProfileSnapshot(buildProfilePayload())
+        autoSaveState.value = 'saved'
+      }
+
+      if (profileIds.includes(TRAFFIC_VERIFICATION_AGENT_ID)) {
+        await loadAutoVerificationStatus()
+      }
+
+      dialog.toast.success(enabled ? '已一键开启后台 Agent' : '已一键关闭后台 Agent')
+      return updatedCount
+    } catch (error) {
+      console.error('Failed to bulk update system agent enabled status', error)
+      dialog.toast.error(`批量切换后台 Agent 状态失败: ${String(error)}`)
+      throw error
+    } finally {
+      bulkMutating.value = false
+    }
+  }
+
   const setAutoVerificationEnabled = async (enabled: boolean) => {
     if (!isVerificationAgentSelected.value) return
 
@@ -793,6 +856,7 @@ export function useSystemAgentSettingsController() {
 
   return {
     loading,
+    bulkMutating,
     dispatching,
     mutatingRuns,
     deletingRunId,
@@ -818,6 +882,8 @@ export function useSystemAgentSettingsController() {
     promptPatchGuidance,
     selectedProfileDescription,
     selectedProfileDisplayName,
+    enabledProfilesCount,
+    disabledProfilesCount,
     isVerificationAgentSelected,
     autoSaveStatusText,
     autoSaveStatusClass,
@@ -838,6 +904,7 @@ export function useSystemAgentSettingsController() {
     setAutoVerificationEnabled,
     seedDefaults,
     refreshAll,
+    setAllProfilesEnabled,
     saveContextExtractionSettings,
     loadRuns,
     deleteRun,

@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use sentinel_llm::{ChatMessage, LlmConfig};
 use sentinel_tools::output_storage::{
-    get_history_path, get_host_context_dir, CONTAINER_CONTEXT_DIR,
+    get_execution_context_dir, get_history_path, get_host_context_dir, CONTAINER_CONTEXT_DIR,
 };
 use sentinel_tools::shell::ShellExecutionMode;
 
@@ -464,13 +464,16 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     );
 
     if policy.include_context_storage {
+        let execution_session_dir =
+            get_execution_context_dir(&execution_context.context_dir, Some(&input.execution_id));
         let history_path =
             get_history_path(&execution_context.context_dir, Some(&input.execution_id));
         system_prompt.push_str(&format!(
             "\n\n[Context Storage]\n\
             - Environment: {} ({})\n\
             - Execution ID: {}\n\
-            - All large tool outputs are stored at '{}'\n\
+            - Base context root: '{}'\n\
+            - This execution's session directory: '{}'\n\
             - Tool outputs exceeding threshold are saved as files (not truncated)\n\
             - Applies to: shell commands, HTTP responses, and other tools\n\
             - Your conversation history is at '{}' (isolated per execution)\n\
@@ -484,6 +487,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             execution_context.os_name,
             input.execution_id,
             execution_context.context_dir,
+            execution_session_dir,
             history_path
         ));
     }

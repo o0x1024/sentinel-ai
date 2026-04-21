@@ -329,6 +329,18 @@
                     type="radio"
                     name="imageAttachmentMode"
                     class="radio radio-primary"
+                    :checked="imageAttachments.mode === 'auto'"
+                    @change="setImageMode('auto')"
+                  />
+                  <span class="label-text">{{ t('settings.agent.imageAttachments.auto') }}</span>
+                </label>
+              </div>
+              <div class="form-control">
+                <label class="label cursor-pointer gap-3">
+                  <input
+                    type="radio"
+                    name="imageAttachmentMode"
+                    class="radio radio-primary"
                     :checked="imageAttachments.mode === 'local_ocr'"
                     @change="setImageMode('local_ocr')"
                   />
@@ -368,10 +380,7 @@
             </label>
           </div>
 
-          <div
-            v-if="imageAttachments.mode === 'model_vision' && !imageAttachments.allow_upload_to_model"
-            class="alert alert-warning text-xs"
-          >
+          <div v-if="imageAttachments.mode === 'model_vision' && !imageAttachments.allow_upload_to_model" class="alert alert-warning text-xs">
             <i class="fas fa-exclamation-triangle"></i>
             <span>{{ t('settings.agent.imageAttachments.uploadDisabledWarning') }}</span>
           </div>
@@ -665,7 +674,7 @@ interface TerminalConfig {
 }
 
 interface ImageAttachmentsConfig {
-  mode: 'local_ocr' | 'model_vision'
+  mode: 'auto' | 'local_ocr' | 'model_vision'
   allow_upload_to_model: boolean
 }
 
@@ -724,7 +733,7 @@ const terminalConfig = ref<TerminalConfig>({
 })
 
 const imageAttachments = ref<ImageAttachmentsConfig>({
-  mode: 'local_ocr',
+  mode: 'auto',
   allow_upload_to_model: false
 })
 
@@ -816,7 +825,7 @@ async function loadConfig() {
     }
     if (result?.image_attachments) {
       imageAttachments.value = {
-        mode: (result.image_attachments.mode as ImageAttachmentsConfig['mode']) || 'local_ocr',
+        mode: (result.image_attachments.mode as ImageAttachmentsConfig['mode']) || 'auto',
         allow_upload_to_model: !!result.image_attachments.allow_upload_to_model
       }
     }
@@ -1001,9 +1010,9 @@ const setImageMode = (mode: ImageAttachmentsConfig['mode']) => {
 const toggleAllowUploadToModel = (event: Event) => {
   const target = event.target as HTMLInputElement
   imageAttachments.value.allow_upload_to_model = target.checked
-  // If user disabled upload, force mode back to local OCR (safety)
+  // If user disabled upload, force away from vision-only mode.
   if (!target.checked && imageAttachments.value.mode === 'model_vision') {
-    imageAttachments.value.mode = 'local_ocr'
+    imageAttachments.value.mode = 'auto'
   }
   autoSaveConfig()
 }

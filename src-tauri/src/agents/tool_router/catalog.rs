@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
 use sentinel_tools::buildin_tools::{
-    AskUserQuestionTool, CloseAgentTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
-    GrepTool, HttpRequestTool, ListAgentsTool, LspTool, MemoryManagerTool, OcrTool,
-    SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool, TenthManTool,
-    ToolSearchTool, WaitAgentsTool, WebSearchTool,
+    AskUserQuestionTool, BrowserTool, CloseAgentTool, FileEditTool, FileReadTool, FileWriteTool,
+    GlobTool, GrepTool, HttpRequestTool, ListAgentsTool, LspTool, MemoryManagerTool, OcrTool,
+    RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool,
+    TenthManTool, ToolSearchTool, WaitAgentsTool, WebSearchTool,
 };
 use sentinel_tools::terminal::server::TerminalServer;
 
@@ -189,6 +189,26 @@ pub fn build_default_tools() -> Vec<ToolMetadata> {
             exposure: ToolExposure::Core,
         },
         ToolMetadata {
+            id: BrowserTool::NAME.to_string(),
+            name: BrowserTool::NAME.to_string(),
+            description: BrowserTool::DESCRIPTION.to_string(),
+            category: ToolCategory::Browser,
+            tags: vec![
+                "browser".to_string(),
+                "playwright".to_string(),
+                "javascript".to_string(),
+                "dom".to_string(),
+                "cookies".to_string(),
+            ],
+            search_hint: Some(
+                "interact with a real browser session for JS-heavy or login-backed pages"
+                    .to_string(),
+            ),
+            cost_estimate: ToolCost::Medium,
+            always_available: false,
+            exposure: ToolExposure::Deferred,
+        },
+        ToolMetadata {
             id: WebSearchTool::NAME.to_string(),
             name: WebSearchTool::NAME.to_string(),
             description: WebSearchTool::DESCRIPTION.to_string(),
@@ -200,6 +220,25 @@ pub fn build_default_tools() -> Vec<ToolMetadata> {
                 "research".to_string(),
             ],
             search_hint: Some("search the public web for current information".to_string()),
+            cost_estimate: ToolCost::Medium,
+            always_available: false,
+            exposure: ToolExposure::Deferred,
+        },
+        ToolMetadata {
+            id: RouteDiscoveryTool::NAME.to_string(),
+            name: RouteDiscoveryTool::NAME.to_string(),
+            description: RouteDiscoveryTool::DESCRIPTION.to_string(),
+            category: ToolCategory::Network,
+            tags: vec![
+                "route".to_string(),
+                "discovery".to_string(),
+                "endpoint".to_string(),
+                "path".to_string(),
+                "recon".to_string(),
+            ],
+            search_hint: Some(
+                "probe likely web routes and hidden endpoints with wildcard filtering".to_string(),
+            ),
             cost_estimate: ToolCost::Medium,
             always_available: false,
             exposure: ToolExposure::Deferred,

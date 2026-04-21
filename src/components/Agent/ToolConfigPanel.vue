@@ -564,10 +564,16 @@ const getCategoryDisplayName = (category: string) => {
     'data': '数据',
     'ai': 'AI',
     'system': '系统',
+    'utility': '工具',
     'mcp': 'MCP',
     'plugin': '插件',
     'workflow': '工作流',
     'browser': '浏览器',
+    'recon': '侦察',
+    'scanning': '扫描',
+    'exploitation': '利用',
+    'monitoring': '监控',
+    'other': '其他',
   }
   return nameMap[category.toLowerCase()] || category
 }
@@ -579,10 +585,16 @@ const getCategoryBadgeClass = (category: string) => {
     'data': 'btn-success',
     'ai': 'btn-warning',
     'system': 'btn-neutral',
+    'utility': 'btn-success',
     'mcp': 'btn-primary',
     'plugin': 'btn-secondary',
     'workflow': 'btn-accent',
     'browser': 'btn-primary',
+    'recon': 'btn-info',
+    'scanning': 'btn-accent',
+    'exploitation': 'btn-error',
+    'monitoring': 'btn-secondary',
+    'other': 'btn-ghost',
   }
   return map[category.toLowerCase()] || 'btn-ghost'
 }
@@ -594,10 +606,16 @@ const getCategoryIcon = (category: string) => {
     'data': 'fas fa-database',
     'ai': 'fas fa-brain',
     'system': 'fas fa-cog',
+    'utility': 'fas fa-tools',
     'mcp': 'fas fa-plug',
     'plugin': 'fas fa-puzzle-piece',
     'workflow': 'fas fa-project-diagram',
-    'browser': 'fas fa-globe',
+    'browser': 'fas fa-window-maximize',
+    'recon': 'fas fa-binoculars',
+    'scanning': 'fas fa-radar',
+    'exploitation': 'fas fa-bug',
+    'monitoring': 'fas fa-satellite-dish',
+    'other': 'fas fa-tools',
   }
   return map[category.toLowerCase()] || 'fas fa-tools'
 }

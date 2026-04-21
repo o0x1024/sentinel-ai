@@ -1,7 +1,6 @@
 use anyhow::Result;
 use serde_json::json;
 use std::collections::HashSet;
-use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -9,8 +8,8 @@ use sentinel_db::Database;
 use sentinel_db::DatabaseService;
 use sentinel_llm::{normalize_tool_call_arguments_str, ChatMessage};
 use sentinel_tools::buildin_tools::{
-    AskUserQuestionTool, FileEditTool, FileReadTool, FileWriteTool, HttpRequestTool, ShellTool,
-    SkillsTool, TasksTool, ToolSearchTool,
+    AskUserQuestionTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool,
+    HttpRequestTool, LspTool, ShellTool, SkillsTool, TasksTool, ToolSearchTool,
 };
 use sentinel_tools::dynamic_tool::{
     DynamicTool, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
@@ -19,8 +18,7 @@ use sentinel_tools::terminal::server::TerminalServer;
 use sentinel_tools::ToolServer;
 
 use crate::agents::executor::file_tool_state::{
-    ensure_file_snapshot_is_editable, invalidate_file_snapshot, normalize_file_path,
-    record_file_read_snapshot,
+    ensure_file_snapshot_is_editable, invalidate_file_snapshot, record_file_read_snapshot,
 };
 use crate::agents::executor::terminal_session_store::{
     get_active_terminal_session, set_active_terminal_session,
@@ -1106,35 +1104,187 @@ async fn build_http_override_def(tool_server: &ToolServer) -> Option<DynamicTool
     })
 }
 
+async fn build_glob_override_def(
+    tool_server: &ToolServer,
+    active_terminal_session_id: Option<&str>,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(GlobTool::NAME).await?;
+    let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
+    let input_schema = info.input_schema.clone();
+    let description = info.description.clone();
+    let execution_policy = info.execution_policy.clone();
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let active_terminal_session_id = active_terminal_session_id.clone();
+        Box::pin(async move {
+            use rig::tool::Tool;
+            use sentinel_tools::buildin_tools::file_runtime::{
+                build_file_runtime_context, with_file_runtime_context,
+            };
+            use sentinel_tools::buildin_tools::glob::{GlobArgs, GlobTool};
+
+            let tool_args: GlobArgs =
+                serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
+            let runtime_context =
+                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let result = with_file_runtime_context(runtime_context, GlobTool.call(tool_args))
+                .await
+                .map_err(|e| format!("Glob failed: {}", e))?;
+
+            serde_json::to_value(result)
+                .map_err(|e| format!("Failed to serialize glob result: {}", e))
+        })
+    });
+
+    Some(DynamicToolDef {
+        name: GlobTool::NAME.to_string(),
+        description,
+        input_schema,
+        output_schema: info.output_schema.clone(),
+        source: ToolSource::Builtin,
+        category: "utility".to_string(),
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
+        execution_policy,
+        executor,
+    })
+}
+
+async fn build_grep_override_def(
+    tool_server: &ToolServer,
+    active_terminal_session_id: Option<&str>,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(GrepTool::NAME).await?;
+    let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
+    let input_schema = info.input_schema.clone();
+    let description = info.description.clone();
+    let execution_policy = info.execution_policy.clone();
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let active_terminal_session_id = active_terminal_session_id.clone();
+        Box::pin(async move {
+            use rig::tool::Tool;
+            use sentinel_tools::buildin_tools::file_runtime::{
+                build_file_runtime_context, with_file_runtime_context,
+            };
+            use sentinel_tools::buildin_tools::grep::{GrepArgs, GrepTool};
+
+            let tool_args: GrepArgs =
+                serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
+            let runtime_context =
+                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let result = with_file_runtime_context(runtime_context, GrepTool.call(tool_args))
+                .await
+                .map_err(|e| format!("Grep failed: {}", e))?;
+
+            serde_json::to_value(result)
+                .map_err(|e| format!("Failed to serialize grep result: {}", e))
+        })
+    });
+
+    Some(DynamicToolDef {
+        name: GrepTool::NAME.to_string(),
+        description,
+        input_schema,
+        output_schema: info.output_schema.clone(),
+        source: ToolSource::Builtin,
+        category: "utility".to_string(),
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
+        execution_policy,
+        executor,
+    })
+}
+
+async fn build_lsp_override_def(
+    tool_server: &ToolServer,
+    active_terminal_session_id: Option<&str>,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(LspTool::NAME).await?;
+    let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
+    let input_schema = info.input_schema.clone();
+    let description = info.description.clone();
+    let execution_policy = info.execution_policy.clone();
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let active_terminal_session_id = active_terminal_session_id.clone();
+        Box::pin(async move {
+            use rig::tool::Tool;
+            use sentinel_tools::buildin_tools::file_runtime::{
+                build_file_runtime_context, with_file_runtime_context,
+            };
+            use sentinel_tools::buildin_tools::lsp::{LspArgs, LspTool};
+
+            let tool_args: LspArgs =
+                serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
+            let runtime_context =
+                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let result = with_file_runtime_context(runtime_context, LspTool.call(tool_args))
+                .await
+                .map_err(|e| format!("LSP navigation failed: {}", e))?;
+
+            serde_json::to_value(result)
+                .map_err(|e| format!("Failed to serialize lsp result: {}", e))
+        })
+    });
+
+    Some(DynamicToolDef {
+        name: LspTool::NAME.to_string(),
+        description,
+        input_schema,
+        output_schema: info.output_schema.clone(),
+        source: ToolSource::Builtin,
+        category: "utility".to_string(),
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
+        execution_policy,
+        executor,
+    })
+}
+
 async fn build_file_read_override_def(
     tool_server: &ToolServer,
     execution_id: &str,
+    active_terminal_session_id: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(FileReadTool::NAME).await?;
     let execution_id_for_file_read = execution_id.to_string();
+    let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let execution_id_for_file_read = execution_id_for_file_read.clone();
+        let active_terminal_session_id = active_terminal_session_id.clone();
         Box::pin(async move {
             use rig::tool::Tool;
             use sentinel_tools::buildin_tools::file_read::{FileReadArgs, FileReadTool};
+            use sentinel_tools::buildin_tools::file_runtime::{
+                build_file_runtime_context, with_file_runtime_context,
+            };
 
             let tool_args: FileReadArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-            let result = FileReadTool
-                .call(tool_args.clone())
-                .await
-                .map_err(|e| format!("File read failed: {}", e))?;
+            let runtime_context =
+                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let result = with_file_runtime_context(
+                runtime_context.clone(),
+                FileReadTool.call(tool_args.clone()),
+            )
+            .await
+            .map_err(|e| format!("File read failed: {}", e))?;
 
-            record_file_read_snapshot(
-                &execution_id_for_file_read,
-                &tool_args.file_path,
-                result.start_line,
-                result.end_line,
-                result.total_lines,
-                result.truncated,
+            with_file_runtime_context(
+                runtime_context,
+                record_file_read_snapshot(
+                    &execution_id_for_file_read,
+                    &tool_args.file_path,
+                    &result.content_hash,
+                    result.start_line,
+                    result.end_line,
+                    result.total_lines,
+                    result.truncated,
+                ),
             )
             .await
             .map_err(|e| format!("Failed to record file read state: {}", e))?;
@@ -1162,29 +1312,46 @@ async fn build_file_read_override_def(
 async fn build_file_edit_override_def(
     tool_server: &ToolServer,
     execution_id: &str,
+    active_terminal_session_id: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(FileEditTool::NAME).await?;
     let execution_id_for_file_edit = execution_id.to_string();
+    let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let execution_id_for_file_edit = execution_id_for_file_edit.clone();
+        let active_terminal_session_id = active_terminal_session_id.clone();
         Box::pin(async move {
             use rig::tool::Tool;
             use sentinel_tools::buildin_tools::file_edit::{FileEditArgs, FileEditTool};
+            use sentinel_tools::buildin_tools::file_runtime::{
+                build_file_runtime_context, with_file_runtime_context,
+            };
 
             let tool_args: FileEditArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-            ensure_file_snapshot_is_editable(&execution_id_for_file_edit, &tool_args.file_path)
-                .await
-                .map_err(|e| e.to_string())?;
+            let runtime_context =
+                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            with_file_runtime_context(
+                runtime_context.clone(),
+                ensure_file_snapshot_is_editable(&execution_id_for_file_edit, &tool_args.file_path),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
-            let result = FileEditTool
-                .call(tool_args.clone())
-                .await
-                .map_err(|e| format!("File edit failed: {}", e))?;
-            invalidate_file_snapshot(&execution_id_for_file_edit, &tool_args.file_path).await;
+            let result = with_file_runtime_context(
+                runtime_context.clone(),
+                FileEditTool.call(tool_args.clone()),
+            )
+            .await
+            .map_err(|e| format!("File edit failed: {}", e))?;
+            with_file_runtime_context(
+                runtime_context,
+                invalidate_file_snapshot(&execution_id_for_file_edit, &tool_args.file_path),
+            )
+            .await;
 
             serde_json::to_value(result)
                 .map_err(|e| format!("Failed to serialize file_edit result: {}", e))
@@ -1209,41 +1376,58 @@ async fn build_file_edit_override_def(
 async fn build_file_write_override_def(
     tool_server: &ToolServer,
     execution_id: &str,
+    active_terminal_session_id: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(FileWriteTool::NAME).await?;
     let execution_id_for_file_write = execution_id.to_string();
+    let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let execution_id_for_file_write = execution_id_for_file_write.clone();
+        let active_terminal_session_id = active_terminal_session_id.clone();
         Box::pin(async move {
             use rig::tool::Tool;
+            use sentinel_tools::buildin_tools::file_runtime::{
+                build_file_runtime_context, path_exists, with_file_runtime_context,
+            };
             use sentinel_tools::buildin_tools::file_write::{FileWriteArgs, FileWriteTool};
 
             let tool_args: FileWriteArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-            let normalized_path = normalize_file_path(&tool_args.file_path)
-                .await
-                .map_err(|e| e.to_string())?;
-            let exists = tokio::fs::metadata(Path::new(&normalized_path))
-                .await
-                .is_ok();
+            let runtime_context =
+                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let exists = with_file_runtime_context(
+                runtime_context.clone(),
+                path_exists(&tool_args.file_path),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
             if exists && tool_args.overwrite {
-                ensure_file_snapshot_is_editable(
-                    &execution_id_for_file_write,
-                    &tool_args.file_path,
+                with_file_runtime_context(
+                    runtime_context.clone(),
+                    ensure_file_snapshot_is_editable(
+                        &execution_id_for_file_write,
+                        &tool_args.file_path,
+                    ),
                 )
                 .await
                 .map_err(|e| e.to_string())?;
             }
 
-            let result = FileWriteTool
-                .call(tool_args.clone())
-                .await
-                .map_err(|e| format!("File write failed: {}", e))?;
-            invalidate_file_snapshot(&execution_id_for_file_write, &tool_args.file_path).await;
+            let result = with_file_runtime_context(
+                runtime_context.clone(),
+                FileWriteTool.call(tool_args.clone()),
+            )
+            .await
+            .map_err(|e| format!("File write failed: {}", e))?;
+            with_file_runtime_context(
+                runtime_context,
+                invalidate_file_snapshot(&execution_id_for_file_write, &tool_args.file_path),
+            )
+            .await;
 
             serde_json::to_value(result)
                 .map_err(|e| format!("Failed to serialize file_write result: {}", e))
@@ -1467,20 +1651,47 @@ pub(super) async fn patch_builtin_dynamic_tools(
         }
     }
 
+    if current_tool_ids.iter().any(|id| id == GlobTool::NAME) {
+        if let Some(def) = build_glob_override_def(tool_server, active_terminal_session_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
+    if current_tool_ids.iter().any(|id| id == GrepTool::NAME) {
+        if let Some(def) = build_grep_override_def(tool_server, active_terminal_session_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
+    if current_tool_ids.iter().any(|id| id == LspTool::NAME) {
+        if let Some(def) = build_lsp_override_def(tool_server, active_terminal_session_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
     if current_tool_ids.iter().any(|id| id == FileReadTool::NAME) {
-        if let Some(def) = build_file_read_override_def(tool_server, execution_id).await {
+        if let Some(def) =
+            build_file_read_override_def(tool_server, execution_id, active_terminal_session_id)
+                .await
+        {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
 
     if current_tool_ids.iter().any(|id| id == FileEditTool::NAME) {
-        if let Some(def) = build_file_edit_override_def(tool_server, execution_id).await {
+        if let Some(def) =
+            build_file_edit_override_def(tool_server, execution_id, active_terminal_session_id)
+                .await
+        {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
 
     if current_tool_ids.iter().any(|id| id == FileWriteTool::NAME) {
-        if let Some(def) = build_file_write_override_def(tool_server, execution_id).await {
+        if let Some(def) =
+            build_file_write_override_def(tool_server, execution_id, active_terminal_session_id)
+                .await
+        {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
@@ -1926,10 +2137,23 @@ mod tests {
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
         let file_path: PathBuf = temp_dir.join("sample.txt");
         tokio::fs::write(&file_path, "a\nb\nc\n").await.unwrap();
+        let revision_token = sentinel_tools::buildin_tools::file_runtime::revision_token(
+            &file_path.to_string_lossy(),
+        )
+        .await
+        .unwrap();
 
-        record_file_read_snapshot(&execution_id, &file_path.to_string_lossy(), 1, 2, 3, true)
-            .await
-            .unwrap();
+        record_file_read_snapshot(
+            &execution_id,
+            &file_path.to_string_lossy(),
+            &revision_token,
+            1,
+            2,
+            3,
+            true,
+        )
+        .await
+        .unwrap();
         let partial_err =
             ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
                 .await
@@ -1937,9 +2161,17 @@ mod tests {
                 .to_string();
         assert!(partial_err.contains("partially read"));
 
-        record_file_read_snapshot(&execution_id, &file_path.to_string_lossy(), 1, 3, 3, false)
-            .await
-            .unwrap();
+        record_file_read_snapshot(
+            &execution_id,
+            &file_path.to_string_lossy(),
+            &revision_token,
+            1,
+            3,
+            3,
+            false,
+        )
+        .await
+        .unwrap();
         ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
             .await
             .unwrap();

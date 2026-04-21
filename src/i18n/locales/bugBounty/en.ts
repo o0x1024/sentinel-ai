@@ -1161,6 +1161,7 @@ export default {
       unknown: 'Unknown',
       running: 'Running',
       completed: 'Completed',
+      completed_with_errors: 'Completed (with errors)',
       failed: 'Failed',
     },
     relationDirection: {

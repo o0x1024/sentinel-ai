@@ -1,39 +1,44 @@
 <template>
   <div
     class="http-code-editor"
-    :class="{
-      'fullscreen': fullscreen,
-      'readonly-mode': readonly,
-      'pretty-mode': displayMode === 'pretty',
-      'raw-mode': displayMode === 'raw',
-      'with-search-bar': showSearchBar,
-    }"
+    :class="[
+      editorThemeMode,
+      {
+        'fullscreen': fullscreen,
+        'readonly-mode': readonly,
+        'pretty-mode': displayMode === 'pretty',
+        'raw-mode': displayMode === 'raw',
+        'with-search-bar': showSearchBar,
+      },
+    ]"
     :style="editorStyle"
   >
-    <div class="editor-display-toolbar">
-      <button
-        type="button"
-        class="btn btn-ghost btn-xs editor-display-button"
-        :class="{ 'btn-active': settings.showLineEndings }"
-        :title="lineEndingToggleTitle"
-        @click="toggleLineEndingIndicators"
-      >
-        <span class="editor-display-button-label">↵</span>
-      </button>
-      <button
-        type="button"
-        class="btn btn-ghost btn-xs editor-display-button"
-        :class="{ 'btn-active': settings.wrapLongLines }"
-        :title="lineWrapToggleTitle"
-        @click="toggleLineWrap"
-      >
-        <i class="fas fa-text-width"></i>
-      </button>
+    <div v-if="showDisplayToolbar" class="editor-topbar">
+      <div class="editor-display-toolbar">
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs editor-display-button"
+          :class="{ 'btn-active': settings.showLineEndings }"
+          :title="lineEndingToggleTitle"
+          @click="toggleLineEndingIndicators"
+        >
+          <span class="editor-display-button-label">↵</span>
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs editor-display-button"
+          :class="{ 'btn-active': settings.wrapLongLines }"
+          :title="lineWrapToggleTitle"
+          @click="toggleLineWrap"
+        >
+          <i class="fas fa-text-width"></i>
+        </button>
+      </div>
     </div>
     <div ref="editorContainer" class="editor-container"></div>
-    <div v-if="showSearchBar" class="editor-search-bar border-t border-base-300 bg-base-200/95">
+    <div v-if="showSearchBar" class="editor-search-bar">
       <div class="editor-search-main">
-        <label class="input input-sm input-bordered flex items-center gap-2 w-full bg-base-100">
+        <label class="input input-sm flex items-center gap-2 w-full">
           <i class="fas fa-search text-base-content/50 text-xs"></i>
           <input
             ref="searchInput"
@@ -101,7 +106,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onDeactivated,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from 'vue'
 import { EditorState, Compartment } from '@codemirror/state'
 import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, indentWithTab, history, undo, redo } from '@codemirror/commands'
@@ -137,6 +151,7 @@ const props = withDefaults(defineProps<{
   searchClearTitle?: string
   searchNoMatchesText?: string
   searchInvalidRegexpText?: string
+  showDisplayToolbar?: boolean
 }>(), {
   modelValue: '',
   readonly: false,
@@ -157,6 +172,7 @@ const props = withDefaults(defineProps<{
   searchClearTitle: 'Clear search',
   searchNoMatchesText: 'No matches',
   searchInvalidRegexpText: 'Invalid regex',
+  showDisplayToolbar: true,
 })
 
 const emit = defineEmits<{
@@ -178,6 +194,7 @@ let currentMarkerSignature = ''
 let currentReadonlyAccessibilitySignature = ''
 let currentSearchExtensionSignature = ''
 let contextMenuListenerAttached = false
+const editorThemeMode = ref<'burp-light' | 'burp-dark'>(isDarkHttpEditorTheme() ? 'burp-dark' : 'burp-light')
 const readOnlyCompartment = new Compartment()
 const editableCompartment = new Compartment()
 const lineWrapCompartment = new Compartment()
@@ -222,26 +239,26 @@ function getThemeExtensions() {
   const highlightEnabled = shouldHighlightTrafficMessageSyntax(props.messageType)
   return getHttpCodeThemeExtensions(highlightEnabled, isDarkHttpEditorTheme()
     ? {
-        backgroundColor: '#111827',
-        color: '#e5e7eb',
-        gutterBackgroundColor: '#0f172a',
-        gutterColor: '#64748b',
-        gutterBorderRight: '1px solid #1e293b',
-        activeLineBackgroundColor: 'transparent',
-        activeLineGutterBackgroundColor: '#0f172a',
-        selectionBackgroundColor: '#1f3a5f',
-        caretColor: props.readonly ? 'transparent' : '#e5e7eb',
+        backgroundColor: '#1f2329',
+        color: '#e6edf3',
+        gutterBackgroundColor: '#181b20',
+        gutterColor: '#8b949e',
+        gutterBorderRight: '1px solid #30363d',
+        activeLineBackgroundColor: '#22272e',
+        activeLineGutterBackgroundColor: '#22272e',
+        selectionBackgroundColor: '#264f78',
+        caretColor: props.readonly ? 'transparent' : '#e6edf3',
       }
     : {
         backgroundColor: '#ffffff',
-        color: '#1f2937',
-        gutterBackgroundColor: '#f6f7f9',
-        gutterColor: '#8b93a1',
-        gutterBorderRight: '1px solid #d9dde4',
-        activeLineBackgroundColor: 'transparent',
-        activeLineGutterBackgroundColor: '#f6f7f9',
-        selectionBackgroundColor: '#d7e8ff',
-        caretColor: props.readonly ? 'transparent' : '#1f2937',
+        color: '#111111',
+        gutterBackgroundColor: '#f3f3f3',
+        gutterColor: '#707070',
+        gutterBorderRight: '1px solid #d4d4d4',
+        activeLineBackgroundColor: '#fffdf5',
+        activeLineGutterBackgroundColor: '#ececec',
+        selectionBackgroundColor: '#cfe3ff',
+        caretColor: props.readonly ? 'transparent' : '#111111',
       })
 }
 
@@ -410,6 +427,12 @@ function restoreScrollState() {
   scroller.scrollLeft = state.left
 }
 
+function restoreScrollStateOnNextFrame() {
+  requestAnimationFrame(() => {
+    restoreScrollState()
+  })
+}
+
 function buildSearchQuery() {
   return new SearchQuery({
     search: searchQuery.value,
@@ -541,6 +564,7 @@ function initEditor() {
   }
 
   editorContainer.value.innerHTML = ''
+  editorThemeMode.value = isDarkHttpEditorTheme() ? 'burp-dark' : 'burp-light'
   currentLanguageSignature = getLanguageSignature(initialContent)
   currentThemeSignature = getThemeSignature()
   currentMarkerSignature = props.markerMode
@@ -660,6 +684,7 @@ function updateLineEndings(enabled: boolean) {
 
 function updateTheme() {
   if (!editorView) return
+  editorThemeMode.value = isDarkHttpEditorTheme() ? 'burp-dark' : 'burp-light'
   const nextSignature = getThemeSignature()
   if (nextSignature === currentThemeSignature) return
   currentThemeSignature = nextSignature
@@ -824,6 +849,14 @@ onMounted(async () => {
   })
 })
 
+onDeactivated(() => {
+  saveScrollState()
+})
+
+onActivated(() => {
+  restoreScrollStateOnNextFrame()
+})
+
 onUnmounted(() => {
   saveScrollState()
   if (editorView) {
@@ -849,6 +882,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   position: relative;
+  border: 1px solid #d4d4d4;
+  background: #ffffff;
 }
 
 .http-code-editor.fullscreen {
@@ -867,31 +902,28 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-.editor-display-toolbar {
-  position: absolute;
-  top: 0.35rem;
-  right: 0.45rem;
-  z-index: 4;
+.editor-topbar {
   display: flex;
-  gap: 0.25rem;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
+  justify-content: flex-end;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 2.2rem;
+  padding: 0.35rem 0.45rem 0.2rem;
 }
 
-.http-code-editor:hover .editor-display-toolbar,
-.http-code-editor:focus-within .editor-display-toolbar {
-  opacity: 1;
-  pointer-events: auto;
+.editor-display-toolbar {
+  display: flex;
+  gap: 0.25rem;
 }
 
 .editor-display-button {
   min-width: 1.85rem;
   height: 1.65rem;
   padding: 0 0.45rem;
-  border: 1px solid oklch(var(--b3) / 0.85);
-  background: oklch(var(--b1) / 0.95);
-  box-shadow: 0 4px 14px oklch(0 0 0 / 0.08);
+  border: 1px solid #cfcfcf;
+  background: linear-gradient(180deg, #ffffff 0%, #f1f1f1 100%);
+  color: #4a4a4a;
+  box-shadow: 0 1px 1px rgb(0 0 0 / 0.05);
 }
 
 .editor-display-button-label {
@@ -905,6 +937,8 @@ onUnmounted(() => {
   gap: 0.5rem;
   padding: 0.375rem 0.5rem;
   flex: 0 0 auto;
+  border-top: 1px solid #d4d4d4;
+  background: #f3f3f3;
 }
 
 .editor-search-main {
@@ -951,6 +985,10 @@ onUnmounted(() => {
   padding-right: 0.65rem;
 }
 
+:deep(.cm-lineNumbers .cm-gutterElement) {
+  font-variant-numeric: tabular-nums;
+}
+
 :deep(.cm-gutter-lint) {
   width: 0;
 }
@@ -965,22 +1003,91 @@ onUnmounted(() => {
 }
 
 :deep(.cm-selectionLayer .cm-selectionBackground) {
-  background-color: oklch(var(--p) / 0.2) !important;
+  background-color: var(--traffic-selection-bg, #cfe3ff) !important;
   border-radius: 0;
 }
 
 :deep(.cm-content ::selection) {
-  background-color: transparent;
+  background-color: var(--traffic-selection-bg, #cfe3ff);
 }
 
 :deep(.cm-line-ending-indicator) {
   display: inline-block;
   margin-left: 0.2rem;
-  color: oklch(var(--bc) / 0.32);
+  color: #9aa0a6;
   font-size: 0.72em;
   font-weight: 600;
   letter-spacing: 0.02em;
   pointer-events: none;
   user-select: none;
+}
+
+.http-code-editor.burp-light .editor-search-bar :deep(.input) {
+  border-color: #c8c8c8;
+  background: #ffffff;
+  box-shadow: inset 0 1px 1px rgb(0 0 0 / 0.04);
+}
+
+.http-code-editor.burp-light {
+  --traffic-selection-bg: rgb(207 227 255 / 0.9);
+}
+
+.http-code-editor.burp-light .editor-search-bar :deep(.btn) {
+  border-color: #cfcfcf;
+  background: linear-gradient(180deg, #ffffff 0%, #f1f1f1 100%);
+  color: #444444;
+}
+
+.http-code-editor.burp-light .editor-search-bar :deep(.btn.btn-active) {
+  border-color: #a9bfdc;
+  background: linear-gradient(180deg, #e9f2ff 0%, #d5e7ff 100%);
+  color: #1f4d9a;
+}
+
+.http-code-editor.burp-light .editor-topbar {
+  border-bottom: 1px solid #e6e6e6;
+  background: linear-gradient(180deg, #fafafa 0%, #f3f3f3 100%);
+}
+
+.http-code-editor.burp-dark {
+  border-color: #30363d;
+  background: #1f2329;
+  --traffic-selection-bg: rgb(38 79 120 / 0.8);
+}
+
+.http-code-editor.burp-dark .editor-display-button {
+  border-color: #3d444d;
+  background: linear-gradient(180deg, #2d333b 0%, #252b32 100%);
+  color: #d0d7de;
+  box-shadow: none;
+}
+
+.http-code-editor.burp-dark .editor-search-bar {
+  border-top-color: #30363d;
+  background: #181b20;
+}
+
+.http-code-editor.burp-dark .editor-topbar {
+  border-bottom: 1px solid #30363d;
+  background: linear-gradient(180deg, #22272e 0%, #1b2026 100%);
+}
+
+.http-code-editor.burp-dark .editor-search-bar :deep(.input) {
+  border-color: #3d444d;
+  background: #22272e;
+  color: #e6edf3;
+  box-shadow: none;
+}
+
+.http-code-editor.burp-dark .editor-search-bar :deep(.btn) {
+  border-color: #3d444d;
+  background: linear-gradient(180deg, #2d333b 0%, #252b32 100%);
+  color: #d0d7de;
+}
+
+.http-code-editor.burp-dark .editor-search-bar :deep(.btn.btn-active) {
+  border-color: #4f7cac;
+  background: linear-gradient(180deg, #23476b 0%, #1c3d5d 100%);
+  color: #f0f6fc;
 }
 </style>

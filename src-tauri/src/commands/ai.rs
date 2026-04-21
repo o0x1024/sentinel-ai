@@ -14,7 +14,7 @@ use anyhow::Result;
 use chrono::Utc;
 use sentinel_db::Database;
 use sentinel_llm::{
-    normalize_tool_call_arguments_value, parse_image_from_json, ChatMessage as LlmChatMessage,
+    normalize_tool_call_arguments_value, parse_images_from_json, ChatMessage as LlmChatMessage,
     StreamContent, StreamingLlmClient,
 };
 use sentinel_rag;
@@ -434,7 +434,7 @@ pub(crate) async fn stream_chat_with_llm(
     // 注意：用户消息已经在 agent_execute 中保存，这里不需要重复保存
 
     // 解析图片附件
-    let image = parse_image_from_json(attachments.as_ref());
+    let images = parse_images_from_json(attachments.as_ref());
 
     // 转换历史消息，重新组合 assistant + tool 消息以符合 DeepSeek API 要求
     let mut history: Vec<LlmChatMessage> = reconstruct_chat_history(&history_messages);
@@ -478,7 +478,7 @@ pub(crate) async fn stream_chat_with_llm(
             final_system_prompt.as_deref(),
             user_message,
             &history,
-            image.as_ref(),
+            images.as_slice(),
             move |chunk| {
                 if is_conversation_cancelled(&conv_id) {
                     return false;
@@ -1217,7 +1217,7 @@ pub async fn plugin_assistant_chat_stream(
                 system_prompt.as_deref(),
                 &user_message,
                 &history,
-                None,
+                &[],
                 move |chunk| {
                     if is_conversation_cancelled(&sid_for_callback) {
                         return false;

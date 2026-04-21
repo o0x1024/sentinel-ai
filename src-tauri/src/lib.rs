@@ -425,6 +425,23 @@ pub fn run() {
                 }
                 let db_service = Arc::new(db_service);
 
+                match crate::commands::aisettings::cleanup_legacy_ai_config_keys(
+                    db_service.as_ref(),
+                )
+                .await
+                {
+                    Ok(removed) if removed > 0 => {
+                        tracing::info!(
+                            "Removed {} legacy AI config key(s) during startup",
+                            removed
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!("Failed to clean legacy default VLM config keys: {}", e);
+                    }
+                }
+
                 // Initialize dictionary pool for plugins using the active runtime backend.
                 tracing::info!("Preparing dictionary pool for plugins from runtime database");
                 match db_service.get_runtime_pool() {
@@ -885,8 +902,8 @@ pub fn run() {
             aisettings::get_ai_config,
             ai::print_ai_conversations,
             aisettings::set_default_llm_model,
-            aisettings::set_default_vlm_model,
             aisettings::set_default_llm_provider,
+            aisettings::clear_model_vision_capability_cache,
             ai::upload_image_attachment,
             ai::upload_multiple_images,
             ai::agent_execute,
@@ -916,6 +933,7 @@ pub fn run() {
             commands::list_system_agent_profiles,
             commands::get_system_agent_profile,
             commands::save_system_agent_profile,
+            commands::set_system_agent_profiles_enabled,
             commands::delete_system_agent_profile,
             commands::list_system_agent_runs,
             commands::delete_system_agent_run,

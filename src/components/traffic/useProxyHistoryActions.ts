@@ -3,8 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { emit as tauriEmit } from '@tauri-apps/api/event'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
-import { useRouter } from 'vue-router'
 import { dialog } from '@/composables/useDialog'
+import { openTrafficAssistantPanel } from '@/services/trafficAssistantWorkspace'
 import type { HttpExchangeRequest } from './http/model'
 import { parseStoredHeaderEntries } from './http/headers'
 import { clearProxyHistoryDerivedCache } from './proxyHistoryDerivedSupport'
@@ -95,7 +95,6 @@ const buildCurlCommand = (request: ProxyRequest) => {
 }
 
 export const useProxyHistoryActions = (params: Params) => {
-  const router = useRouter()
   const compareVersionLabels = {
     requestVersions: params.t('trafficAnalysis.history.batchCompare.requestVersions'),
     responseVersions: params.t('trafficAnalysis.history.batchCompare.responseVersions'),
@@ -477,12 +476,12 @@ export const useProxyHistoryActions = (params: Params) => {
       return
     }
     const detailedSelected = await resolveRequestDetailsBatch(selected)
+    openTrafficAssistantPanel()
     await tauriEmit('traffic:send-to-assistant', { requests: detailedSelected, type })
     params.emitSendToAssistant(detailedSelected)
     dialog.toast.success(`已发送 ${detailedSelected.length} 条请求到 AI 助手`)
     clearSelection()
     params.isMultiSelectMode.value = false
-    router.push('/ai-assistant')
   }
 
   const sendSelectedRequestVersionsToComparer = async () => {
@@ -533,10 +532,10 @@ export const useProxyHistoryActions = (params: Params) => {
 
   const sendSingleToAssistant = async (request: ProxyRequest, type: SendType = 'request') => {
     const detailedRequest = (await resolveRequestDetails(request)) || request
+    openTrafficAssistantPanel()
     await tauriEmit('traffic:send-to-assistant', { requests: [detailedRequest], type })
     params.emitSendToAssistant([detailedRequest])
     dialog.toast.success('已发送请求到 AI 助手')
-    router.push('/ai-assistant')
   }
 
   const sendRequestToAssistantFromMenu = () => {

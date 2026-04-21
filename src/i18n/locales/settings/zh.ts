@@ -493,12 +493,13 @@ export default {
     imageAttachments: {
       title: '图片附件',
       mode: '处理方式',
-      modeDesc: '选择发送消息时如何处理图片附件。',
-      localOcr: '本地 OCR（默认）',
+      modeDesc: '选择发送消息时如何处理图片附件。自动模式会优先使用当前支持视觉的模型；如果模型不支持视觉，则回退到本地 OCR。',
+      auto: '自动（推荐）',
+      localOcr: '始终使用本地 OCR',
       modelVision: '上传到模型（视觉）',
       allowUpload: '允许上传图片到模型',
       allowUploadDesc: '开启后，图片可能会被发送到所选 AI 服务用于视觉理解。',
-      uploadDisabledWarning: '当前未允许上传图片到模型，请切回本地 OCR 或开启上传权限。'
+      uploadDisabledWarning: '当前未允许上传图片到模型，请切回自动/本地 OCR 或开启上传权限。'
     },
     fileUploads: {
       title: '工作区管理',

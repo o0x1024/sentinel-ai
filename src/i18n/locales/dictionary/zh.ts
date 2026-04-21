@@ -7,6 +7,13 @@ export default {
   entry: '条目',
   addTime: '添加时间',
   operations: '操作',
+  viewMode: '显示方式',
+  viewModes: {
+    list: '列表',
+    card: '卡片'
+  },
+  empty: '暂无字典',
+  pageSize: '每页显示',
   deleteSelected: '删除选中',
   clearDictionary: '清空字典',
   close: '关闭',

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildConversationTimeline } from './agentConversationHistorySupport'
 
 describe('agentConversationHistorySupport', () => {
-  it('preserves persisted agent task update metadata for task cards', () => {
+  it('filters persisted agent task update system messages', () => {
     const timeline = buildConversationTimeline(
       [
         {
@@ -25,11 +25,7 @@ describe('agentConversationHistorySupport', () => {
       },
     )
 
-    expect(timeline).toHaveLength(1)
-    expect(timeline[0].type).toBe('system')
-    expect(timeline[0].metadata?.kind).toBe('agent_task_update')
-    expect(timeline[0].metadata?.task_event_type).toBe('planned')
-    expect(timeline[0].metadata?.task_preview).toContain('读取 openapi.json')
+    expect(timeline).toHaveLength(0)
   })
 
   it('renders persisted tools_activated system messages with runtime hint', () => {
@@ -63,5 +59,36 @@ describe('agentConversationHistorySupport', () => {
       'Reason: recent file changes detected; prefer readback',
     )
     expect(timeline[0].metadata?.kind).toBe('tools_activated')
+  })
+
+  it('strips legacy tool previews from persisted skill_loaded system messages', () => {
+    const timeline = buildConversationTimeline(
+      [
+        {
+          id: 'msg-skill-1',
+          role: 'system',
+          content: '',
+          metadata: JSON.stringify({
+            kind: 'skill_loaded',
+            skill_id: 'agent-browser',
+            skill_name: 'agent-browser',
+            tools: ['skills', 'tasks', 'http_request'],
+            tools_preview: 'skills, tasks, http_request',
+          }),
+          timestamp: '2026-04-20T00:00:00Z',
+        },
+      ],
+      {
+        toolCallCompletedLabel: 'Tool call completed',
+        shouldSuppressTeamMirrorNoiseMessage: () => false,
+      },
+    )
+
+    expect(timeline).toHaveLength(1)
+    expect(timeline[0].type).toBe('system')
+    expect(timeline[0].content).toBe('Skill loaded: agent-browser (agent-browser)')
+    expect(timeline[0].metadata?.kind).toBe('skill_loaded')
+    expect(timeline[0].metadata?.tools).toBeUndefined()
+    expect(timeline[0].metadata?.tools_preview).toBeUndefined()
   })
 })

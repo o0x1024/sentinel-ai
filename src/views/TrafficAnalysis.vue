@@ -1,17 +1,21 @@
 <template>
-  <TrafficWorkbench
-    v-if="immersiveDrillModeEnabled"
-    ref="trafficViewRef"
-  />
-  <TrafficLegacyTabs
-    v-else
-    ref="trafficViewRef"
-  />
+  <div ref="trafficRouteRoot" class="relative h-full min-h-0">
+    <TrafficWorkbench
+      v-if="immersiveDrillModeEnabled"
+      ref="trafficViewRef"
+    />
+    <TrafficLegacyTabs
+      v-else
+      ref="trafficViewRef"
+    />
+    <TrafficAssistantOverlay />
+  </div>
 </template>
 
 <script setup lang="ts">
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
+  onDeactivated,
   nextTick,
   onActivated,
   onMounted,
@@ -20,6 +24,7 @@ import {
   ref,
 } from 'vue'
 import TrafficLegacyTabs from '@/components/traffic/TrafficLegacyTabs.vue'
+import TrafficAssistantOverlay from '@/components/traffic/TrafficAssistantOverlay.vue'
 import TrafficWorkbench from '@/components/traffic/TrafficWorkbench.vue'
 import type { HttpExchangeRequest } from '@/components/traffic/http/model'
 import type { TrafficAnalysisViewHandle } from '@/components/traffic/trafficAnalysisViewTypes'
@@ -42,10 +47,12 @@ const OPEN_TRAFFIC_HISTORY_REQUEST_STORAGE_KEY = 'traffic-history:pending-open-r
 
 const refreshTrigger = ref(0)
 const trafficViewRef = ref<TrafficAnalysisViewHandle | null>(null)
+const trafficRouteRoot = ref<HTMLElement | null>(null)
 
 let unlistenOpenHistoryRequest: UnlistenFn | null = null
 let lastOpenedHistoryRequestKey: string | null = null
 let lastOpenedHistoryRequestAt = 0
+const scrollStateByPath = new Map<string, { top: number; left: number }>()
 
 provide('refreshTrigger', refreshTrigger)
 
@@ -98,6 +105,99 @@ async function getTrafficViewHandle() {
 
   await nextTick()
   return trafficViewRef.value
+}
+
+function isScrollableElement(element: HTMLElement) {
+  const style = window.getComputedStyle(element)
+  const overflowYScrollable = /(auto|scroll|overlay)/.test(style.overflowY)
+  const overflowXScrollable = /(auto|scroll|overlay)/.test(style.overflowX)
+  return (
+    (overflowYScrollable && element.scrollHeight > element.clientHeight)
+    || (overflowXScrollable && element.scrollWidth > element.clientWidth)
+  )
+}
+
+function buildElementPath(element: HTMLElement, root: HTMLElement) {
+  if (element === root) {
+    return 'root'
+  }
+
+  const segments: string[] = []
+  let current: HTMLElement | null = element
+  while (current && current !== root) {
+    const parent = current.parentElement
+    if (!parent) {
+      return null
+    }
+
+    const childIndex = Array.from(parent.children).indexOf(current)
+    segments.push(String(childIndex))
+    current = parent as HTMLElement
+  }
+
+  if (current !== root) {
+    return null
+  }
+
+  return segments.reverse().join('.')
+}
+
+function collectScrollableElements(root: HTMLElement) {
+  return [root, ...Array.from(root.querySelectorAll<HTMLElement>('*'))]
+    .filter(isScrollableElement)
+}
+
+function saveTrafficScrollState() {
+  const root = trafficRouteRoot.value
+  if (!root) {
+    return
+  }
+
+  scrollStateByPath.clear()
+  for (const element of collectScrollableElements(root)) {
+    const path = buildElementPath(element, root)
+    if (!path) {
+      continue
+    }
+
+    scrollStateByPath.set(path, {
+      top: element.scrollTop,
+      left: element.scrollLeft,
+    })
+  }
+}
+
+function restoreTrafficScrollState() {
+  const root = trafficRouteRoot.value
+  if (!root || scrollStateByPath.size === 0) {
+    return
+  }
+
+  for (const element of collectScrollableElements(root)) {
+    const path = buildElementPath(element, root)
+    if (!path) {
+      continue
+    }
+
+    const state = scrollStateByPath.get(path)
+    if (!state) {
+      continue
+    }
+
+    element.scrollTop = state.top
+    element.scrollLeft = state.left
+  }
+}
+
+function restoreTrafficScrollStateAfterLayout() {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      restoreTrafficScrollState()
+      requestAnimationFrame(() => {
+        restoreTrafficScrollState()
+      })
+    })
+  })
 }
 
 async function forwardToRepeater(request: HttpExchangeRequest) {
@@ -197,6 +297,7 @@ async function openHistoryRequest(payload: TrafficContextCandidateEvidenceSelect
 onMounted(async () => {
   window.addEventListener('storage', handleTransferStorage)
   await processPendingTransfers()
+  restoreTrafficScrollStateAfterLayout()
 
   const pendingPayload = parseStoredHistoryRequestPayload(
     window.sessionStorage.getItem(OPEN_TRAFFIC_HISTORY_REQUEST_STORAGE_KEY),
@@ -227,10 +328,16 @@ onMounted(async () => {
 
 onActivated(() => {
   void processPendingTransfers()
+  restoreTrafficScrollStateAfterLayout()
   refreshTrigger.value += 1
 })
 
+onDeactivated(() => {
+  saveTrafficScrollState()
+})
+
 onUnmounted(() => {
+  saveTrafficScrollState()
   window.removeEventListener('storage', handleTransferStorage)
   unlistenOpenHistoryRequest?.()
   unlistenOpenHistoryRequest = null

@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="legacyTabsRoot"
     class="flex flex-col h-[calc(100vh-var(--app-navbar-height,4rem))]"
     :class="immersiveDrillModeEnabled ? 'px-3 py-3' : 'page-content-padded'"
   >
@@ -201,6 +202,9 @@
 
 <script setup lang="ts">
 import {
+  onActivated,
+  onDeactivated,
+  onMounted,
   ref,
   watch,
   nextTick,
@@ -247,6 +251,7 @@ const allTrafficTabs: TrafficTab[] = [
 ]
 
 const activeTab = ref<TrafficTab>('proxyhistory')
+const legacyTabsRoot = ref<HTMLElement | null>(null)
 const repeaterRef = ref<InstanceType<typeof ProxyRepeater> | null>(null)
 const comparerRef = ref<InstanceType<typeof ProxyComparer> | null>(null)
 const intruderRef = ref<InstanceType<typeof ProxyIntruder> | null>(null)
@@ -260,6 +265,7 @@ const intruderCount = ref(0)
 const controlInterceptCount = ref(0)
 const controlTabPulse = ref(false)
 let controlTabPulseTimeout: ReturnType<typeof setTimeout> | null = null
+const TRAFFIC_LEGACY_TABS_SCROLL_STORAGE_KEY = 'trafficLegacyTabs.scrollTop'
 
 const visibleTrafficTabs = computed<TrafficTab[]>(() =>
   immersiveDrillModeEnabled.value ? [...immersiveDrillTrafficTabs] : allTrafficTabs,
@@ -274,6 +280,26 @@ const ensureVisibleTrafficTab = (tab: TrafficTab) => {
   }
 
   activeTab.value = 'proxyhistory'
+}
+
+const saveLegacyTabsScrollState = () => {
+  if (!legacyTabsRoot.value) {
+    return
+  }
+
+  window.sessionStorage.setItem(
+    TRAFFIC_LEGACY_TABS_SCROLL_STORAGE_KEY,
+    String(legacyTabsRoot.value.scrollTop),
+  )
+}
+
+const restoreLegacyTabsScrollState = () => {
+  if (!legacyTabsRoot.value) {
+    return
+  }
+
+  const saved = Number(window.sessionStorage.getItem(TRAFFIC_LEGACY_TABS_SCROLL_STORAGE_KEY) || '0')
+  legacyTabsRoot.value.scrollTop = Number.isFinite(saved) ? saved : 0
 }
 
 defineOptions({
@@ -460,9 +486,30 @@ watch(
 )
 
 onUnmounted(() => {
+  saveLegacyTabsScrollState()
+  legacyTabsRoot.value?.removeEventListener('scroll', saveLegacyTabsScrollState)
   if (controlTabPulseTimeout) {
     clearTimeout(controlTabPulseTimeout)
   }
+})
+
+onMounted(() => {
+  legacyTabsRoot.value?.addEventListener('scroll', saveLegacyTabsScrollState, { passive: true })
+  requestAnimationFrame(() => {
+    restoreLegacyTabsScrollState()
+  })
+})
+
+onDeactivated(() => {
+  saveLegacyTabsScrollState()
+})
+
+onActivated(() => {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      restoreLegacyTabsScrollState()
+    })
+  })
 })
 </script>
 

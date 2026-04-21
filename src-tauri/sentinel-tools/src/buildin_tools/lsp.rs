@@ -3,7 +3,11 @@ use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+
+use crate::buildin_tools::file_runtime::{
+    current_runtime_metadata, list_files_under, read_path_bytes, resolve_runtime_path,
+    FileRuntimeMetadata,
+};
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -53,6 +57,7 @@ pub struct LspReferenceMatch {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LspOutput {
     pub action: String,
+    pub runtime: FileRuntimeMetadata,
     pub symbols: Vec<LspSymbolMatch>,
     pub references: Vec<LspReferenceMatch>,
     pub truncated: bool,
@@ -103,12 +108,17 @@ impl Tool for LspTool {
         match args.action {
             LspAction::WorkspaceSymbol => {
                 let query = args.query.as_deref().ok_or(LspError::MissingQuery)?;
-                let base_dir = resolve_base_dir(args.path.as_deref())?;
-                let focus_file = args.file_path.as_deref().map(PathBuf::from);
+                let listing = list_files_under(args.path.as_deref())
+                    .await
+                    .map_err(LspError::InvalidPath)?;
+                let focus_file = resolve_optional_runtime_path(args.file_path.as_deref())
+                    .await?
+                    .map(PathBuf::from);
                 let (symbols, truncated) =
-                    workspace_symbol(&base_dir, query, focus_file.as_deref(), limit).await?;
+                    workspace_symbol(&listing, query, focus_file.as_deref(), limit).await?;
                 Ok(LspOutput {
                     action: "workspace_symbol".to_string(),
+                    runtime: current_runtime_metadata(),
                     symbols,
                     references: Vec::new(),
                     truncated,
@@ -116,16 +126,19 @@ impl Tool for LspTool {
             }
             LspAction::DocumentSymbol => {
                 let file_path = args.file_path.as_deref().ok_or(LspError::MissingFilePath)?;
-                let path = resolve_path(file_path)?;
-                let content = tokio::fs::read_to_string(&path)
-                    .await
-                    .map_err(|error| LspError::ReadFailed(error.to_string()))?;
+                let path = PathBuf::from(
+                    resolve_runtime_path(file_path)
+                        .await
+                        .map_err(LspError::InvalidPath)?,
+                );
+                let content = read_text_file(&path).await?;
                 let display_path = display_path(&path, path.parent().unwrap_or(Path::new("")));
                 let mut symbols =
                     extract_symbols(&display_path, &content, &symbol_patterns_for_path(&path));
                 symbols.truncate(limit);
                 Ok(LspOutput {
                     action: "document_symbol".to_string(),
+                    runtime: current_runtime_metadata(),
                     symbols,
                     references: Vec::new(),
                     truncated: false,
@@ -133,14 +146,16 @@ impl Tool for LspTool {
             }
             LspAction::GoToDefinition => {
                 let symbol = args.symbol.as_deref().ok_or(LspError::MissingSymbol)?;
-                let base_dir = resolve_base_dir(args.path.as_deref())?;
-                let focus_file = args.file_path.as_deref().map(resolve_path).transpose()?;
+                let listing = list_files_under(args.path.as_deref())
+                    .await
+                    .map_err(LspError::InvalidPath)?;
+                let focus_file = resolve_optional_runtime_path(args.file_path.as_deref())
+                    .await?
+                    .map(PathBuf::from);
                 let mut symbols = Vec::new();
                 if let Some(path) = focus_file.as_ref() {
-                    let content = tokio::fs::read_to_string(&path)
-                        .await
-                        .map_err(|error| LspError::ReadFailed(error.to_string()))?;
-                    let display = display_path(path, &base_dir);
+                    let content = read_text_file(path).await?;
+                    let display = display_for_runtime_path(&listing, path);
                     symbols.extend(
                         extract_symbols(&display, &content, &symbol_patterns_for_path(&path))
                             .into_iter()
@@ -149,7 +164,7 @@ impl Tool for LspTool {
                 }
                 if symbols.is_empty() {
                     let (workspace_hits, _) =
-                        workspace_symbol(&base_dir, symbol, focus_file.as_deref(), limit * 4)
+                        workspace_symbol(&listing, symbol, focus_file.as_deref(), limit * 4)
                             .await?;
                     symbols = workspace_hits
                         .into_iter()
@@ -160,6 +175,7 @@ impl Tool for LspTool {
                 }
                 Ok(LspOutput {
                     action: "go_to_definition".to_string(),
+                    runtime: current_runtime_metadata(),
                     symbols,
                     references: Vec::new(),
                     truncated: false,
@@ -167,12 +183,17 @@ impl Tool for LspTool {
             }
             LspAction::FindReferences => {
                 let symbol = args.symbol.as_deref().ok_or(LspError::MissingSymbol)?;
-                let base_dir = resolve_base_dir(args.path.as_deref())?;
-                let focus_file = args.file_path.as_deref().map(resolve_path).transpose()?;
+                let listing = list_files_under(args.path.as_deref())
+                    .await
+                    .map_err(LspError::InvalidPath)?;
+                let focus_file = resolve_optional_runtime_path(args.file_path.as_deref())
+                    .await?
+                    .map(PathBuf::from);
                 let (references, truncated) =
-                    find_references(&base_dir, symbol, focus_file.as_deref(), limit).await?;
+                    find_references(&listing, symbol, focus_file.as_deref(), limit).await?;
                 Ok(LspOutput {
                     action: "find_references".to_string(),
+                    runtime: current_runtime_metadata(),
                     symbols: Vec::new(),
                     references,
                     truncated,
@@ -183,24 +204,27 @@ impl Tool for LspTool {
 }
 
 async fn workspace_symbol(
-    base_dir: &Path,
+    listing: &crate::buildin_tools::file_runtime::RuntimeFileListing,
     query: &str,
     focus_file: Option<&Path>,
     limit: usize,
 ) -> Result<(Vec<LspSymbolMatch>, bool), LspError> {
     let query_lower = query.to_lowercase();
     let mut symbols = Vec::new();
-    for entry in WalkDir::new(base_dir).into_iter().filter_map(Result::ok) {
-        let path = entry.path();
-        if !path.is_file() || !is_supported_source_file(path) {
+    for entry in &listing.files {
+        let path = Path::new(&entry.logical_path);
+        if !is_supported_source_file(path) {
             continue;
         }
-        let content = match tokio::fs::read_to_string(path).await {
+        let content = match read_text_file(path).await {
             Ok(content) => content,
             Err(_) => continue,
         };
-        let display = display_path(path, base_dir);
-        for symbol in extract_symbols(&display, &content, &symbol_patterns_for_path(path)) {
+        for symbol in extract_symbols(
+            &entry.display_path,
+            &content,
+            &symbol_patterns_for_path(path),
+        ) {
             if !(symbol.name.to_lowercase().contains(&query_lower)
                 || symbol
                     .signature
@@ -226,7 +250,7 @@ async fn workspace_symbol(
 }
 
 async fn find_references(
-    base_dir: &Path,
+    listing: &crate::buildin_tools::file_runtime::RuntimeFileListing,
     symbol: &str,
     focus_file: Option<&Path>,
     limit: usize,
@@ -234,22 +258,21 @@ async fn find_references(
     let pattern = Regex::new(&format!(r"\b{}\b", regex::escape(symbol)))
         .map_err(|error| LspError::InvalidPath(error.to_string()))?;
     let mut references = Vec::new();
-    for entry in WalkDir::new(base_dir).into_iter().filter_map(Result::ok) {
-        let path = entry.path();
-        if !path.is_file() || !is_supported_source_file(path) {
+    for entry in &listing.files {
+        let path = Path::new(&entry.logical_path);
+        if !is_supported_source_file(path) {
             continue;
         }
-        let content = match tokio::fs::read_to_string(path).await {
+        let content = match read_text_file(path).await {
             Ok(content) => content,
             Err(_) => continue,
         };
-        let display = display_path(path, base_dir);
         for (index, line) in content.lines().enumerate() {
             if !pattern.is_match(line) {
                 continue;
             }
             references.push(LspReferenceMatch {
-                file_path: display.clone(),
+                file_path: entry.display_path.clone(),
                 line: index + 1,
                 snippet: condense_preview(line, 160),
             });
@@ -588,34 +611,34 @@ fn compile_patterns(defs: &[(&'static str, &'static str)]) -> Vec<SymbolPattern>
         .collect()
 }
 
-fn resolve_base_dir(path: Option<&str>) -> Result<PathBuf, LspError> {
-    let cwd = std::env::current_dir().map_err(|error| LspError::InvalidPath(error.to_string()))?;
-    let dir = match path {
-        Some(raw) if !raw.trim().is_empty() => {
-            let candidate = PathBuf::from(raw);
-            if candidate.is_absolute() {
-                candidate
-            } else {
-                cwd.join(candidate)
-            }
-        }
-        _ => cwd,
-    };
-    Ok(dir)
+async fn read_text_file(path: &Path) -> Result<String, LspError> {
+    let bytes = read_path_bytes(&path.to_string_lossy())
+        .await
+        .map_err(LspError::ReadFailed)?;
+    String::from_utf8(bytes).map_err(|error| LspError::ReadFailed(error.to_string()))
 }
 
-fn resolve_path(raw: &str) -> Result<PathBuf, LspError> {
-    if raw.trim().is_empty() {
-        return Err(LspError::InvalidPath("path cannot be empty".to_string()));
+async fn resolve_optional_runtime_path(raw: Option<&str>) -> Result<Option<String>, LspError> {
+    match raw {
+        Some(value) => resolve_runtime_path(value)
+            .await
+            .map(Some)
+            .map_err(LspError::InvalidPath),
+        None => Ok(None),
     }
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        let cwd =
-            std::env::current_dir().map_err(|error| LspError::InvalidPath(error.to_string()))?;
-        Ok(cwd.join(path))
-    }
+}
+
+fn display_for_runtime_path(
+    listing: &crate::buildin_tools::file_runtime::RuntimeFileListing,
+    path: &Path,
+) -> String {
+    let logical = path.to_string_lossy();
+    listing
+        .files
+        .iter()
+        .find(|entry| entry.logical_path == logical)
+        .map(|entry| entry.display_path.clone())
+        .unwrap_or_else(|| display_path(path, Path::new(&listing.base_path)))
 }
 
 fn display_path(path: &Path, base_dir: &Path) -> String {

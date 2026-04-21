@@ -14,6 +14,10 @@ use crate::models::attachment::{load_image_from_path, MessageAttachment};
 use crate::models::database::{SubagentMessage, SubagentRun};
 use crate::services::ai::AiServiceManager;
 use crate::services::database::DatabaseService;
+use crate::services::model_capabilities::{
+    classify_model_vision_capability_error, resolve_model_vision_capability,
+    save_cached_model_vision_capability, ModelVisionCapabilityStatus,
+};
 use crate::services::SystemAgentRuntime;
 use chrono::Utc;
 use sentinel_db::Database;
@@ -82,8 +86,16 @@ pub struct AgentExecuteRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EffectiveImageAttachmentMode {
+    Auto,
     LocalOcr,
     ModelVision,
+}
+
+fn build_vision_unsupported_message(provider: &str, model_name: &str) -> String {
+    format!(
+        "Current model does not support image understanding: {}/{}. Switch to a vision-capable model in the conversation work config, or explicitly change image handling to local OCR.",
+        provider, model_name
+    )
 }
 
 fn append_force_tasks_contract(system_prompt: &str, force_tasks: bool) -> String {
@@ -739,8 +751,16 @@ pub async fn agent_execute(
     dynamic_config.model = model_name.clone();
 
     let db_service = app_handle.state::<Arc<DatabaseService>>();
-    let (image_mode, allow_image_upload_to_model) =
+    let (configured_image_mode, allow_image_upload_to_model) =
         load_image_attachment_settings(db_service.inner()).await;
+    let resolved_model_vision_capability = resolve_model_vision_capability(
+        db_service.inner(),
+        &provider,
+        &model_name,
+        provider_config.api_base.as_deref(),
+        provider_config.rig_provider.as_deref(),
+    )
+    .await;
     let mut service = crate::services::ai::AiService::new(
         dynamic_config,
         db_service.inner().clone(),
@@ -789,6 +809,10 @@ pub async fn agent_execute(
 
     let model_name_for_closure = model_name.clone();
     let provider_config_for_closure = provider_config.clone();
+    let provider_for_capability_cache = provider.clone();
+    let model_for_capability_cache = model_name.clone();
+    let api_base_for_capability_cache = provider_config.api_base.clone();
+    let rig_provider_for_capability_cache = provider_config.rig_provider.clone();
 
     tokio::spawn(async move {
         let _guard = CancellationGuard(conv_id.clone(), cancel_gen);
@@ -1026,15 +1050,75 @@ pub async fn agent_execute(
             }
         }
 
-        let effective_mode = if image_mode == EffectiveImageAttachmentMode::ModelVision
-            && allow_image_upload_to_model
-        {
-            EffectiveImageAttachmentMode::ModelVision
-        } else {
-            EffectiveImageAttachmentMode::LocalOcr
+        let effective_mode = match configured_image_mode {
+            EffectiveImageAttachmentMode::Auto => {
+                if allow_image_upload_to_model
+                    && resolved_model_vision_capability.status
+                        != ModelVisionCapabilityStatus::Unsupported
+                {
+                    EffectiveImageAttachmentMode::ModelVision
+                } else {
+                    EffectiveImageAttachmentMode::LocalOcr
+                }
+            }
+            EffectiveImageAttachmentMode::LocalOcr => EffectiveImageAttachmentMode::LocalOcr,
+            EffectiveImageAttachmentMode::ModelVision => {
+                if allow_image_upload_to_model
+                    && resolved_model_vision_capability.status
+                        != ModelVisionCapabilityStatus::Unsupported
+                {
+                    EffectiveImageAttachmentMode::ModelVision
+                } else {
+                    EffectiveImageAttachmentMode::LocalOcr
+                }
+            }
         };
 
+        if raw_attachments
+            .as_ref()
+            .and_then(|value| value.as_array())
+            .map(|items| !items.is_empty())
+            .unwrap_or(false)
+        {
+            tracing::info!(
+                "Image attachment routing: provider={}, model={}, configured_mode={:?}, vision_status={:?}, vision_source={:?}, allow_upload_to_model={}, effective_mode={:?}",
+                provider,
+                model_name,
+                configured_image_mode,
+                resolved_model_vision_capability.status,
+                resolved_model_vision_capability.source,
+                allow_image_upload_to_model,
+                effective_mode
+            );
+        }
+
+        if raw_attachments
+            .as_ref()
+            .and_then(|value| value.as_array())
+            .map(|items| !items.is_empty())
+            .unwrap_or(false)
+            && configured_image_mode != EffectiveImageAttachmentMode::LocalOcr
+            && resolved_model_vision_capability.status == ModelVisionCapabilityStatus::Unsupported
+        {
+            let error_message = build_vision_unsupported_message(&provider, &model_name);
+            tracing::warn!(
+                "Rejecting image request for unsupported vision model {} / {}",
+                provider,
+                model_name
+            );
+            emit_agent_execution_finished(
+                &app_handle,
+                &conv_id,
+                AgentExecutionOutcome::Failed,
+                Some(error_message),
+                None,
+                None,
+            );
+            return;
+        }
+
         let image_attachments_for_execution: Option<serde_json::Value> = match effective_mode {
+            EffectiveImageAttachmentMode::Auto => None,
             EffectiveImageAttachmentMode::LocalOcr => {
                 if let Some(ref raw) = raw_attachments {
                     match crate::utils::image_ocr::ocr_images_from_attachments(raw).await {
@@ -1052,6 +1136,9 @@ pub async fn agent_execute(
             }
             EffectiveImageAttachmentMode::ModelVision => attachments_for_save.clone(),
         };
+        let attempted_model_vision =
+            matches!(effective_mode, EffectiveImageAttachmentMode::ModelVision)
+                && image_attachments_for_execution.is_some();
 
         if enable_rag {
             if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
@@ -1200,6 +1287,26 @@ pub async fn agent_execute(
                             );
                             return;
                         }
+                        if attempted_model_vision {
+                            if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+                                if let Err(e) = save_cached_model_vision_capability(
+                                    db.inner(),
+                                    &provider_for_capability_cache,
+                                    &model_for_capability_cache,
+                                    api_base_for_capability_cache.as_deref(),
+                                    rig_provider_for_capability_cache.as_deref(),
+                                    ModelVisionCapabilityStatus::Supported,
+                                    Some("Vision request completed successfully".to_string()),
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        "Failed to persist supported model vision capability: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        }
                         tracing::info!("Agent with tools completed for conversation: {}", conv_id);
                         emit_agent_execution_finished(
                             &app_handle,
@@ -1217,6 +1324,32 @@ pub async fn agent_execute(
                                 conv_id
                             );
                             return;
+                        }
+                        if attempted_model_vision {
+                            let error_text = e.to_string();
+                            if matches!(
+                                classify_model_vision_capability_error(&error_text),
+                                Some(ModelVisionCapabilityStatus::Unsupported)
+                            ) {
+                                if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+                                    if let Err(save_error) = save_cached_model_vision_capability(
+                                        db.inner(),
+                                        &provider_for_capability_cache,
+                                        &model_for_capability_cache,
+                                        api_base_for_capability_cache.as_deref(),
+                                        rig_provider_for_capability_cache.as_deref(),
+                                        ModelVisionCapabilityStatus::Unsupported,
+                                        Some(error_text.clone()),
+                                    )
+                                    .await
+                                    {
+                                        tracing::warn!(
+                                            "Failed to persist unsupported model vision capability: {}",
+                                            save_error
+                                        );
+                                    }
+                                }
+                            }
                         }
                         tracing::error!("Agent with tools execution failed: {}", e);
                         emit_agent_execution_finished(
@@ -1246,8 +1379,57 @@ pub async fn agent_execute(
         )
         .await
         {
-            Ok(_) => tracing::info!("Stream chat completed for conversation: {}", conv_id),
-            Err(e) => tracing::error!("Stream chat failed: {}", e),
+            Ok(_) => {
+                if attempted_model_vision {
+                    if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+                        if let Err(e) = save_cached_model_vision_capability(
+                            db.inner(),
+                            &provider_for_capability_cache,
+                            &model_for_capability_cache,
+                            api_base_for_capability_cache.as_deref(),
+                            rig_provider_for_capability_cache.as_deref(),
+                            ModelVisionCapabilityStatus::Supported,
+                            Some("Vision request completed successfully".to_string()),
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                "Failed to persist supported model vision capability: {}",
+                                e
+                            );
+                        }
+                    }
+                }
+                tracing::info!("Stream chat completed for conversation: {}", conv_id)
+            }
+            Err(e) => {
+                if attempted_model_vision {
+                    if matches!(
+                        classify_model_vision_capability_error(&e),
+                        Some(ModelVisionCapabilityStatus::Unsupported)
+                    ) {
+                        if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+                            if let Err(save_error) = save_cached_model_vision_capability(
+                                db.inner(),
+                                &provider_for_capability_cache,
+                                &model_for_capability_cache,
+                                api_base_for_capability_cache.as_deref(),
+                                rig_provider_for_capability_cache.as_deref(),
+                                ModelVisionCapabilityStatus::Unsupported,
+                                Some(e.clone()),
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    "Failed to persist unsupported model vision capability: {}",
+                                    save_error
+                                );
+                            }
+                        }
+                    }
+                }
+                tracing::error!("Stream chat failed: {}", e)
+            }
         }
     });
 
@@ -1286,11 +1468,11 @@ async fn load_image_attachment_settings(
         .await
         .ok()
         .flatten()
-        .unwrap_or_else(|| "local_ocr".to_string());
-    let mode = if mode_str == "model_vision" {
-        EffectiveImageAttachmentMode::ModelVision
-    } else {
-        EffectiveImageAttachmentMode::LocalOcr
+        .unwrap_or_else(|| "auto".to_string());
+    let mode = match mode_str.as_str() {
+        "auto" => EffectiveImageAttachmentMode::Auto,
+        "model_vision" => EffectiveImageAttachmentMode::ModelVision,
+        _ => EffectiveImageAttachmentMode::LocalOcr,
     };
 
     let allow_upload = db

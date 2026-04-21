@@ -27,8 +27,13 @@
     <Transition name="slide-drawer-right">
       <div 
         v-if="showToolConfig"
-        class="tool-config-drawer absolute right-0 top-0 bottom-0 w-[420px] bg-base-100 shadow-2xl z-50 overflow-hidden"
+        class="tool-config-drawer absolute right-0 top-0 bottom-0 bg-base-100 shadow-2xl z-50 overflow-hidden"
+        :style="{ width: toolConfigDrawerWidth + 'px' }"
       >
+        <div
+          class="resize-handle drawer-resize-handle absolute left-0 top-0 bottom-0 z-10 w-1 cursor-col-resize"
+          @mousedown="startToolConfigDrawerResize"
+        ></div>
         <AssistantWorkConfigPanel
           :available-models="assistantModelOptions"
           :context-mode="assistantSessionSettings.contextMode"
@@ -246,7 +251,7 @@
             @clear-assets="handleClearAssets"
             @create-new-conversation="handleCreateConversation"
             @clear-conversation="handleClearConversation"
-            @open-tool-config="showToolConfig = true"
+            @open-tool-config="openToolConfigDrawer"
           />
         </div>
         
@@ -312,9 +317,21 @@
       </div>
 
       <!-- {{ t('agent.errorDisplay') }} -->
-      <div v-if="error" class="error-banner flex items-center gap-2 px-4 py-3 bg-error/10 border-t border-error text-error text-sm">
-        <span class="error-icon flex-shrink-0">⚠️</span>
-        <span class="error-message flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{{ error }}</span>
+      <div
+        v-if="error"
+        class="error-banner flex items-start gap-3 px-4 py-3 bg-error/10 border-t border-error text-error text-sm"
+      >
+        <span class="error-icon flex-shrink-0 pt-0.5">⚠️</span>
+        <div class="min-w-0 flex-1">
+          <div class="error-message break-words">{{ error }}</div>
+          <button
+            v-if="isVisionModelUnsupportedFailure"
+            class="btn btn-xs btn-outline btn-error mt-2"
+            @click="openToolConfigDrawer"
+          >
+            {{ t('agent.openWorkConfig') }}
+          </button>
+        </div>
         <button @click="clearError" class="error-close bg-transparent border-none text-error cursor-pointer text-xl leading-none px-1 hover:text-base-content">×</button>
       </div>
     </div>
@@ -330,24 +347,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick, type Ref } from 'vue'
+import { ref, computed, watch, nextTick, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { useToast } from '@/composables/useToast'
 import type { AgentMessage } from '@/types/agent'
 import type {
   AgentTeamMessage,
   AgentTeamSession,
-  AgentTeamStateChangedEvent,
-  AgentTeamMessageStreamStartEvent,
-  AgentTeamMessageStreamDeltaEvent,
-  AgentTeamMessageStreamDoneEvent,
-  AgentTeamToolCallEvent,
-  AgentTeamToolResultEvent,
   TeamBlackboardEntry,
-  TeamTaskCreateInput,
   TeamTask,
 } from '@/types/agentTeam'
 import { agentTeamApi } from '@/api/agentTeam'
@@ -373,74 +381,41 @@ import {
   type PersistedAgentExecutionState,
 } from './executionState'
 import {
-  buildOrchestrationPresetPlan,
-  defaultOrchestrationPlan,
-  generateTeamStepId,
-  getAllTeamAgentSteps,
-  moveTeamStepByPath,
-  nestTeamStep,
-  normalizeTeamOrchestrationPlan,
-  parseTeamOrchestrationPlanInput as parseTeamOrchestrationPlanInputSupport,
-  promoteTeamStep,
-  serializeTeamOrchestrationPlan,
-  TEAM_ORCHESTRATION_PRESET_METAS,
-  TEAM_RECOVERY_PRESETS,
-  teamOrchestrationPlanToJson,
 } from './teamOrchestrationSupport'
 import { useAgentConversationFlow } from './useAgentConversationFlow'
 import { useAgentModelAndToolConfig } from './useAgentModelAndToolConfig'
 import { useAgentPanels } from './useAgentPanels'
-import { useAssistantProfiles, type AssistantProfileOption } from './assistantProfiles'
+import { useAssistantProfiles } from './assistantProfiles'
 import { useAssistantSessionSettings } from './useAssistantSessionSettings'
 import { useAgentTeamRuntime } from './useAgentTeamRuntime'
 import { useAgentTeamViewState } from './useAgentTeamViewState'
 import type {
-  AssistantConversationBinding,
   ReferencedAsset,
   ReferencedTraffic,
   TrafficSendType,
 } from './agentDraftTypes'
 import { useAgentDraftArtifacts } from './useAgentDraftArtifacts'
 import type {
-  TeamOrchestrationPlan,
   TeamOrchestrationPresetId,
+  TeamOrchestrationPlan,
   TeamOrchestrationPresetMeta,
-  TeamOrchestrationStep,
   TeamRecoveryPreset,
   TeamRecoveryPresetId,
   TeamRuntimeFailureMode,
   TeamRuntimeStepStat,
-  TeamStepMovePayload,
 } from './teamOrchestrationTypes'
-import type { TeamTaskReasonActionInput } from '@/types/agentTeam'
 import {
-  normalizeUiToolConfigPayload,
-  normalizeToolIdList,
   type UiToolConfigPayload,
 } from './toolConfigRuntime'
-import { clearFocusLocationQuery } from './focusLocationSupport'
-import { buildFocusedMemoryToolsRoute, deriveFocusBannerState } from './focusBannerSupport'
-import { resolveFocusedMemoryMessageId } from './memoryFocusSupport'
 import { mapPersistedAgentTasks } from './agentTaskHistorySupport'
-import {
-  buildTeamTaskActionToastMessage,
-  getTeamTaskClaimAgentId,
-  getTeamTaskReleaseAgentId,
-} from './teamTaskActionsSupport'
-import { buildTeamTaskCreateRequest } from './teamTaskCreateSupport'
-
-interface AgentStartEvent {
-  execution_id: string
-  task: string
-}
-
-interface AgentAssistantMessageSavedEvent {
-  execution_id: string
-  message_id: string
-  content: string
-  reasoning_content?: string | null
-  timestamp: number
-}
+import { useAgentMessageFocus } from './useAgentMessageFocus'
+import { useAgentTeamOrchestration } from './useAgentTeamOrchestration'
+import { useAgentTeamTaskActions } from './useAgentTeamTaskActions'
+import { useAgentConversationBinding } from './useAgentConversationBinding'
+import { useAgentViewLifecycle } from './useAgentViewLifecycle'
+import { useAgentSubagents } from './useAgentSubagents'
+import { useAgentViewEffects } from './useAgentViewEffects'
+import { isVisionModelUnsupportedError } from './agentVisionErrorSupport'
 
 interface TeamSplitMemberOption {
   key: string
@@ -466,14 +441,17 @@ const emit = defineEmits<{
   (e: 'submit', task: string): void
   (e: 'complete', result: any): void
   (e: 'error', error: string): void
+  (e: 'conversation-changed', payload: {
+    previousConversationId: string | null
+    conversationId: string
+    title: string | null
+  }): void
   (e: 'memory-message-focused', payload: { memoryId: string; messageId: string }): void
 }>()
 
 // i18n & router
 const { t } = useI18n()
-const route = useRoute()
 const router = useRouter()
-const toast = useToast()
 
 // Refs
 const messageFlowRef = ref<InstanceType<typeof MessageFlow> | null>(null)
@@ -490,7 +468,7 @@ const conversationExecutionState = ref<PersistedAgentExecutionState | null>(null
 const historyLoadToken = ref(0)
 const isHistoryLoading = ref(false)
 const autoTitleGeneratingConversationIds = new Set<string>()
-const focusedMemoryMessageId = ref<string | null>(null)
+const lastAutoOpenedVisionError = ref<string | null>(null)
 
 const conversationExecutionStateBadgeText = computed(() => {
   const labelKey = getExecutionStateLabelKey(conversationExecutionState.value?.outcome)
@@ -573,48 +551,12 @@ const teamSessionMessages = ref<AgentTeamMessage[]>([])
 const teamSessionDetail = ref<AgentTeamSession | null>(null)
 const teamTasks = ref<TeamTask[]>([])
 const selectedTeamTaskId = ref<string | null>(null)
-const pendingTeamCreateTask = ref(false)
-const pendingTeamTaskActionTaskId = ref<string | null>(null)
-const pendingTeamTaskActionKind = ref<'claim' | 'release' | 'complete' | 'fail' | 'block' | null>(null)
 const teamBlackboardEntries = ref<TeamBlackboardEntry[]>([])
-const teamOrchestrationPlanText = ref('{\n  "version": 1,\n  "steps": []\n}')
 const teamOrchestrationDraft = ref<TeamOrchestrationPlan>({ version: 1, steps: [] })
-const teamPlanDirty = ref(false)
-const teamPlanSaving = ref(false)
-const teamPlanError = ref<string | null>(null)
-const teamPlanSuccess = ref<string | null>(null)
-const teamResumeStepId = ref('')
 const teamSelectedOrchestrationPresetId = ref<TeamOrchestrationPresetId | null>(null)
 const teamSelectedRecoveryPresetId = ref<TeamRecoveryPresetId>('balanced')
-const teamRecoveryPresetApplying = ref(false)
 const isSubagentPanelOpen = ref(false)
 const subagents = computed(() => agentEvents.subagents.value)
-
-// Subagent detail modal
-const showSubagentDetailModal = ref(false)
-const selectedSubagent = ref<{
-  id: string
-  role?: string
-  status: 'running' | 'queued' | 'completed' | 'failed'
-  progress?: number
-  tools?: string[]
-  parentId: string
-  summary?: string
-  task?: string
-  error?: string
-  startedAt?: number
-  duration?: number
-} | null>(null)
-let unlistenAiConfigUpdated: UnlistenFn | null = null
-let unlistenTeamStateChanged: UnlistenFn | null = null
-let unlistenTeamMessageStreamStart: UnlistenFn | null = null
-let unlistenTeamMessageStreamDelta: UnlistenFn | null = null
-let unlistenTeamMessageStreamDone: UnlistenFn | null = null
-let unlistenTeamToolCall: UnlistenFn | null = null
-let unlistenTeamToolResult: UnlistenFn | null = null
-let unlistenAgentStart: UnlistenFn | null = null
-let unlistenAgentComplete: UnlistenFn | null = null
-let unlistenAgentAssistantSaved: UnlistenFn | null = null
 const {
   assistantDefaultMaxContextTokens,
   assistantModelOptions,
@@ -635,11 +577,6 @@ const {
   localError,
 })
 
-const CONVERSATION_BINDING_SAVE_DEBOUNCE_MS = 300
-const assistantProfileRegistryReady = ref(false)
-const isHydratingConversationBinding = ref(false)
-const conversationBindingReadyId = ref<string | null>(null)
-let conversationBindingSaveTimer: ReturnType<typeof setTimeout> | null = null
 const assistantContextMode = computed(() => assistantSessionSettings.value.contextMode)
 
 // Agent events
@@ -752,49 +689,7 @@ const isExecuting = computed(() => agentEvents.isExecuting.value || isTeamRunAct
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 const contextUsage = computed(() => agentEvents.contextUsage.value)
-const normalizedFocusedMemoryId = computed(() => {
-  const value = String(props.focusedMemoryId || '').trim()
-  return value || ''
-})
-const normalizedFocusedMessageId = computed(() => {
-  const value = String(props.focusedMessageId || '').trim()
-  return value || ''
-})
-const lastFocusedMemoryId = ref<string | null>(normalizedFocusedMemoryId.value || null)
-const focusBannerState = computed(() => deriveFocusBannerState({
-  focusedMemoryId: normalizedFocusedMemoryId.value,
-  focusedMessageId: normalizedFocusedMessageId.value,
-  resolvedMessageId: focusedMemoryMessageId.value,
-  lastFocusedMemoryId: lastFocusedMemoryId.value,
-}))
-const focusBannerMemoryId = computed(() => focusBannerState.value.memoryId)
-const isFocusBannerVisible = computed(() => focusBannerState.value.visible)
-
-watch(
-  () => [normalizedFocusedMessageId.value, normalizedFocusedMemoryId.value, visibleMessages.value],
-  ([messageId, memoryId]) => {
-    if (messageId) {
-      focusedMemoryMessageId.value = messageId
-      return
-    }
-    focusedMemoryMessageId.value = memoryId
-      ? resolveFocusedMemoryMessageId(visibleMessages.value, memoryId)
-      : null
-  },
-  { immediate: true },
-)
-
-watch(focusBannerState, (state) => {
-  lastFocusedMemoryId.value = state.nextLastFocusedMemoryId
-}, { immediate: true })
-
-const handleFocusedMessage = (messageId: string) => {
-  const memoryId = normalizedFocusedMemoryId.value
-  if (!memoryId) return
-  emit('memory-message-focused', { memoryId, messageId })
-}
-
-const handleFocusTeamTask = (taskId: string) => {
+const focusTeamTaskInWorkspace = (taskId: string) => {
   const normalizedTaskId = String(taskId || '').trim()
   if (!normalizedTaskId) return
   activateRightPanel('team')
@@ -802,17 +697,21 @@ const handleFocusTeamTask = (taskId: string) => {
   teamWorkspaceTab.value = 'tasks'
   selectedTeamTaskId.value = normalizedTaskId
 }
-
-const clearFocusedLocation = () => {
-  const nextQuery = clearFocusLocationQuery(route.query as Record<string, unknown>)
-  void router.replace({ query: nextQuery })
-}
-
-const openFocusedMemoryInTools = () => {
-  const target = buildFocusedMemoryToolsRoute(focusBannerMemoryId.value)
-  if (!target) return
-  void router.push(target)
-}
+const {
+  clearFocusedLocation,
+  focusBannerMemoryId,
+  focusedMemoryMessageId,
+  handleFocusedMessage,
+  handleFocusTeamTask,
+  isFocusBannerVisible,
+  openFocusedMemoryInTools,
+} = useAgentMessageFocus({
+  focusedMemoryId: computed(() => props.focusedMemoryId),
+  focusedMessageId: computed(() => props.focusedMessageId),
+  visibleMessages,
+  emitMemoryMessageFocused: (payload) => emit('memory-message-focused', payload),
+  focusTeamTaskInWorkspace,
+})
 
 const scrollMessageViewportToBottom = () => {
   messageFlowRef.value?.scrollToBottom()
@@ -825,81 +724,16 @@ const taskStatusBadgeClass = (status: string) => {
   if (normalized === 'blocked') return 'badge-warning'
   return 'badge-ghost'
 }
-
-type SubagentRunRecord = {
-  id: string
-  parent_execution_id: string
-  role?: string | null
-  task: string
-  status: 'running' | 'queued' | 'completed' | 'failed'
-  output?: string | null
-  error?: string | null
-  started_at: string
-  completed_at?: string | null
-  created_at: string
-  updated_at: string
-}
-
-const loadSubagentRuns = async (parentExecutionId: string, loadToken?: number) => {
-  try {
-    const runs = await invoke<SubagentRunRecord[]>('get_subagent_runs', {
-      parentExecutionId,
-    })
-    if (
-      (typeof loadToken === 'number' && loadToken !== historyLoadToken.value) ||
-      conversationId.value !== parentExecutionId
-    ) {
-      return
-    }
-
-    const toMillis = (v: any) => {
-      const ms = new Date(v).getTime()
-      return Number.isFinite(ms) ? ms : undefined
-    }
-
-    const mapped = (runs || []).map(r => {
-      const startedAt = toMillis(r.started_at)
-      const completedAt = toMillis(r.completed_at)
-      const duration = startedAt !== undefined && completedAt !== undefined
-        ? Math.max(0, completedAt - startedAt)
-        : undefined
-
-      const summary = (r.output || '').trim()
-      return {
-        id: r.id,
-        parentId: r.parent_execution_id,
-        role: r.role || undefined,
-        status: r.status,
-        progress: r.status === 'running' || r.status === 'queued' ? 0 : 100,
-        task: r.task,
-        summary: summary.length > 0 ? summary.slice(0, 200) : undefined,
-        error: r.error || undefined,
-        startedAt,
-        duration,
-      }
-    })
-
-    // Merge by id (do not drop live in-memory updates)
-    const existing = agentEvents.subagents.value
-    const byId = new Map<string, any>()
-    existing.forEach(s => byId.set(s.id, s))
-    mapped.forEach(s => {
-      const prev = byId.get(s.id)
-      byId.set(s.id, prev ? { ...s, ...prev } : s)
-    })
-
-    // Prefer newest first (startedAt desc), fallback by id
-    agentEvents.subagents.value = [...byId.values()].sort((a: any, b: any) => {
-      const at = a.startedAt ?? 0
-      const bt = b.startedAt ?? 0
-      if (bt !== at) return bt - at
-      return String(b.id).localeCompare(String(a.id))
-    })
-  } catch (e) {
-    console.error('[AgentView] Failed to load subagent runs:', e)
-    // Keep existing in-memory list if any
-  }
-}
+const {
+  handleViewSubagentDetails,
+  loadSubagentRuns,
+  selectedSubagent,
+  showSubagentDetailModal,
+} = useAgentSubagents({
+  conversationId,
+  historyLoadToken,
+  subagents: agentEvents.subagents,
+})
 
 const taskComposable = useAgentTasks()
 const parseTeamTaskExecutionId = (executionId: string) => {
@@ -935,12 +769,15 @@ const {
   hasHtmlPanelContent,
   htmlPanelContent,
   loadSidebarWidth,
+  loadToolConfigDrawerWidth,
   selectedTaskSourceKey,
   sidebarWidth,
+  startToolConfigDrawerResize,
   startResize,
   taskBadgeCount,
   taskSourceOptions,
   tasks,
+  toolConfigDrawerWidth,
 } = useAgentPanels({
   activeTeamSessionId,
   agentError: computed(() => agentEvents.error.value),
@@ -976,6 +813,13 @@ const {
   },
 })
 
+const isVisionModelUnsupportedFailure = computed(() => isVisionModelUnsupportedError(error.value))
+
+const openToolConfigDrawer = () => {
+  showConversations.value = false
+  showToolConfig.value = true
+}
+
 // Handle retrieval toggle
 const handleToggleRAG = (enabled: boolean) => {
   ragEnabled.value = enabled
@@ -992,280 +836,8 @@ const hydrateTaskHistory = async (targetConversationId: string) => {
   taskComposable.setTasksForExecution(targetConversationId, mapPersistedAgentTasks(persistedTasks))
 }
 
-const showTeamTaskActionToast = (result: { success: boolean; message: string; reason?: string | null; next_step?: string | null }) => {
-  const message = buildTeamTaskActionToastMessage(result)
-  if (result.success) {
-    toast.success(message, 2600)
-    return
-  }
-  toast.warning(message, 3600)
-}
-
-const handleCreateTeamTask = async (input: TeamTaskCreateInput) => {
-  const sessionId = String(activeTeamSessionId.value || '').trim()
-  if (!sessionId) return
-
-  pendingTeamCreateTask.value = true
-  try {
-    const result = await agentTeamApi.createTask(
-      sessionId,
-      buildTeamTaskCreateRequest(input),
-    )
-    showTeamTaskActionToast(result)
-    await loadTeamWorkspaceData()
-  } finally {
-    pendingTeamCreateTask.value = false
-  }
-}
-
-const runTeamTaskAction = async (
-  kind: 'claim' | 'release' | 'complete' | 'fail' | 'block',
-  task: TeamTask,
-  reason?: string | null,
-) => {
-  const sessionId = String(activeTeamSessionId.value || '').trim()
-  if (!sessionId) return
-  if (kind === 'claim' || kind === 'release') {
-    const actorId = kind === 'claim'
-      ? getTeamTaskClaimAgentId(task)
-      : getTeamTaskReleaseAgentId(task)
-    if (!actorId) {
-      toast.warning(
-        kind === 'claim'
-          ? t('agent.teamTaskActionClaimMissingActor')
-          : t('agent.teamTaskActionReleaseMissingActor'),
-        3200,
-      )
-      return
-    }
-  }
-
-  pendingTeamTaskActionTaskId.value = task.id
-  pendingTeamTaskActionKind.value = kind
-  try {
-    const result = kind === 'claim'
-      ? await agentTeamApi.claimTask(sessionId, task.id, getTeamTaskClaimAgentId(task)!)
-      : kind === 'release'
-        ? await agentTeamApi.releaseTaskClaim(sessionId, task.id, getTeamTaskReleaseAgentId(task)!)
-        : await agentTeamApi.updateTaskStatus(
-          sessionId,
-          task.id,
-          kind === 'complete' ? 'completed' : (kind === 'fail' ? 'failed' : 'blocked'),
-          kind === 'fail'
-            ? ((reason || '').trim() || task.last_error || t('agent.teamTaskActionFailDefaultReason'))
-            : kind === 'block'
-              ? ((reason || '').trim() || task.last_error || t('agent.teamTaskActionBlockDefaultReason'))
-              : null,
-        )
-    showTeamTaskActionToast(result)
-    await loadTeamWorkspaceData()
-  } finally {
-    pendingTeamTaskActionTaskId.value = null
-    pendingTeamTaskActionKind.value = null
-  }
-}
-
-const handleClaimTeamTask = async (task: TeamTask) => {
-  await runTeamTaskAction('claim', task)
-}
-
-const handleReleaseTeamTask = async (task: TeamTask) => {
-  await runTeamTaskAction('release', task)
-}
-
-const handleCompleteTeamTask = async (task: TeamTask) => {
-  await runTeamTaskAction('complete', task)
-}
-
-const handleFailTeamTask = async (input: TeamTaskReasonActionInput) => {
-  await runTeamTaskAction('fail', input.task, input.reason)
-}
-
-const handleBlockTeamTask = async (input: TeamTaskReasonActionInput) => {
-  await runTeamTaskAction('block', input.task, input.reason)
-}
-
 const handleAssistantModelSelection = (value: string | null) => {
   handleAssistantModelChange(value || '')
-}
-
-const buildProfileToolConfigDefault = (profile: AssistantProfileOption, enabledOverride?: boolean) => {
-  const enabled = typeof enabledOverride === 'boolean'
-    ? enabledOverride
-    : profile.defaultToolsEnabled === true
-  return {
-    ...defaultToolConfig.value,
-    enabled,
-    selection_strategy: profile.defaultToolSelectionStrategy || defaultToolConfig.value.selection_strategy,
-    max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
-    fixed_tools: normalizeToolIdList(profile.defaultFixedTools),
-    disabled_tools: normalizeToolIdList(profile.defaultDisabledTools),
-    manual_tools: normalizeToolIdList(profile.defaultManualTools),
-  } as UiToolConfigPayload
-}
-
-const applyProfileModelDefault = (profile: AssistantProfileOption) => {
-  const defaultModel = profile.defaultModel?.trim()
-  if (!defaultModel) return
-  setAssistantSelectedModel(defaultModel, { persist: false })
-}
-
-const applyProfileToolsDefault = (profile: AssistantProfileOption, enabledOverride?: boolean) => {
-  const nextToolConfig = buildProfileToolConfigDefault(profile, enabledOverride)
-  toolsEnabled.value = nextToolConfig.enabled
-  toolConfig.value = nextToolConfig
-}
-
-const applyProfileTeamPresetDefaults = (profile: AssistantProfileOption) => {
-  if (profile.runMode !== 'team' || activeTeamSessionId.value) return
-  const orchestrationPresetId = profile.defaultTeamOrchestrationPresetId?.trim()
-  const recoveryPresetId = profile.defaultTeamRecoveryPresetId?.trim()
-  if (orchestrationPresetId) {
-    teamSelectedOrchestrationPresetId.value = orchestrationPresetId as TeamOrchestrationPresetId
-  }
-  if (recoveryPresetId) {
-    teamSelectedRecoveryPresetId.value = recoveryPresetId as TeamRecoveryPresetId
-  }
-}
-
-const handleAssistantProfileChange = (profileId: string) => {
-  const profile = getAssistantProfileOption(profileId)
-  if (profile) {
-    applyProfilePreset(profile)
-    applyProfileModelDefault(profile)
-    applyProfileToolsDefault(profile)
-    applyProfileTeamPresetDefaults(profile)
-    void handleToggleTeamMode(profile.runMode === 'team')
-    return
-  }
-  setProfileId(profileId)
-}
-
-const handleAssistantContextModeChange = (mode: 'claude-like' | 'codex-like' | 'sentinel-like') => {
-  setContextMode(mode)
-}
-
-const handleAssistantRunModeChange = async (mode: 'assistant' | 'team') => {
-  setRunMode(mode)
-  await handleToggleTeamMode(mode === 'team')
-}
-
-const applyConversationBindingState = (binding: AssistantConversationBinding | null) => {
-  applyConversationBinding(binding)
-  const boundProfile = binding?.profileId ? getAssistantProfileOption(binding.profileId) : null
-  const profileToolConfig = boundProfile
-    ? buildProfileToolConfigDefault(
-      boundProfile,
-      typeof binding?.toolsEnabled === 'boolean' ? binding.toolsEnabled : undefined,
-    )
-    : null
-
-  if (binding?.selectedModel) {
-    setAssistantSelectedModel(binding.selectedModel, { persist: false })
-  } else if (boundProfile) {
-    applyProfileModelDefault(boundProfile)
-  }
-
-  if (binding?.toolConfig) {
-    const nextToolConfig = normalizeUiToolConfigPayload(
-      binding.toolConfig,
-      profileToolConfig || toolConfig.value,
-    )
-    toolsEnabled.value = nextToolConfig.enabled
-    toolConfig.value = nextToolConfig
-  } else if (profileToolConfig) {
-    toolsEnabled.value = profileToolConfig.enabled
-    toolConfig.value = profileToolConfig
-  } else if (typeof binding?.toolsEnabled === 'boolean') {
-    toolsEnabled.value = binding.toolsEnabled
-    toolConfig.value = {
-      ...toolConfig.value,
-      enabled: binding.toolsEnabled,
-    } as UiToolConfigPayload
-  }
-}
-
-const applyDefaultAssistantProfile = () => {
-  resetSessionSettings()
-  const defaultProfileId = defaultAssistantProfileId.value.trim()
-  if (!defaultProfileId) return
-  const defaultProfile = getAssistantProfileOption(defaultProfileId)
-  if (defaultProfile) {
-    applyProfilePreset(defaultProfile)
-    applyProfileModelDefault(defaultProfile)
-    applyProfileToolsDefault(defaultProfile)
-    applyProfileTeamPresetDefaults(defaultProfile)
-    return
-  }
-  setProfileId(defaultProfileId)
-}
-
-const loadConversationBinding = async (targetConversationId: string | null) => {
-  if (!targetConversationId) {
-    conversationBindingReadyId.value = null
-    applyDefaultAssistantProfile()
-    return
-  }
-
-  isHydratingConversationBinding.value = true
-  conversationBindingReadyId.value = null
-  try {
-    const binding = await invoke<AssistantConversationBinding | null>('get_ai_conversation_binding', {
-      conversationId: targetConversationId,
-    })
-    if (conversationId.value !== targetConversationId) return
-    if (binding) {
-      applyConversationBindingState(binding)
-    } else {
-      applyDefaultAssistantProfile()
-    }
-    conversationBindingReadyId.value = targetConversationId
-  } catch (error) {
-    console.warn('[AgentView] Failed to load conversation binding:', error)
-    if (conversationId.value === targetConversationId) {
-      applyDefaultAssistantProfile()
-      conversationBindingReadyId.value = targetConversationId
-    }
-  } finally {
-    if (conversationId.value === targetConversationId) {
-      isHydratingConversationBinding.value = false
-    }
-  }
-}
-
-const persistConversationBinding = async (targetConversationId: string) => {
-  const binding = toConversationBinding({
-    selectedModel: assistantSelectedModel.value,
-    toolsEnabled: toolsEnabled.value,
-    toolConfig: toolConfig.value,
-  })
-
-  await invoke('save_ai_conversation_binding', {
-    conversationId: targetConversationId,
-    binding,
-  })
-}
-
-const schedulePersistConversationBinding = () => {
-  const targetConversationId = conversationId.value
-  if (!targetConversationId) return
-  if (isHydratingConversationBinding.value) return
-  if (conversationBindingReadyId.value !== targetConversationId) return
-
-  if (conversationBindingSaveTimer) {
-    clearTimeout(conversationBindingSaveTimer)
-  }
-
-  conversationBindingSaveTimer = setTimeout(async () => {
-    try {
-      if (!conversationId.value || conversationId.value !== targetConversationId) return
-      await persistConversationBinding(targetConversationId)
-    } catch (error) {
-      console.warn('[AgentView] Failed to persist conversation binding:', error)
-    } finally {
-      conversationBindingSaveTimer = null
-    }
-  }, CONVERSATION_BINDING_SAVE_DEBOUNCE_MS)
 }
 const {
   appendTeamBridgeMessage,
@@ -1340,253 +912,83 @@ const {
   toolConfig: toolConfig as Ref<UiToolConfigPayload>,
   webSearchEnabled,
 })
-
-const updateTeamOrchestrationTextFromDraft = () => {
-  teamOrchestrationPlanText.value = serializeTeamOrchestrationPlan(teamOrchestrationDraft.value)
-}
-
-const syncTeamOrchestrationEditorFromSession = (force = false) => {
-  const plan = teamSessionDetail.value?.orchestration_plan ?? defaultOrchestrationPlan()
-  if (teamPlanDirty.value && !force) return
-  const normalized = normalizeTeamOrchestrationPlan(plan)
-  teamOrchestrationDraft.value = normalized
-  teamOrchestrationPlanText.value = serializeTeamOrchestrationPlan(normalized)
-  teamPlanDirty.value = false
-  teamPlanError.value = null
-  if (force || !teamResumeStepId.value.trim()) {
-    const lastStepId = teamSessionDetail.value?.state_machine?.orchestration_runtime?.last_step_id
-    teamResumeStepId.value = typeof lastStepId === 'string' ? lastStepId : ''
-  }
-  teamSelectedOrchestrationPresetId.value = null
-  teamSelectedRecoveryPresetId.value = teamCurrentNoHumanInputPolicy.value
-}
-
-const handleTeamOrchestrationInput = (event: Event) => {
-  const target = event.target as HTMLTextAreaElement
-  teamOrchestrationPlanText.value = target.value
-  try {
-    const parsed = JSON.parse(target.value)
-    teamOrchestrationDraft.value = normalizeTeamOrchestrationPlan(parsed)
-  } catch {
-    // Keep text as source when json is temporarily invalid during editing.
-  }
-  teamPlanDirty.value = true
-  teamPlanError.value = null
-  teamPlanSuccess.value = null
-}
-
-const handleTeamReloadOrchestrationPlan = () => {
-  syncTeamOrchestrationEditorFromSession(true)
-  teamPlanSuccess.value = '已从会话重新载入编排计划。'
-}
-
-const markTeamVisualPlanDirty = () => {
-  updateTeamOrchestrationTextFromDraft()
-  teamPlanDirty.value = true
-  teamPlanError.value = null
-  teamPlanSuccess.value = null
-}
-
-const handleTeamVisualStepsUpdated = (steps: TeamOrchestrationStep[]) => {
-  teamOrchestrationDraft.value.steps = steps
-  markTeamVisualPlanDirty()
-}
-
-const handleTeamApplyOrchestrationPreset = (presetId: TeamOrchestrationPresetId) => {
-  const presetPlan = buildOrchestrationPresetPlan({
-    memberOptions: teamMemberNameOptions.value,
-    presetId,
-    version: Math.max(1, Number(teamOrchestrationDraft.value.version || 1)),
-  })
-  const normalized = normalizeTeamOrchestrationPlan(presetPlan)
-  teamOrchestrationDraft.value = normalized
-  updateTeamOrchestrationTextFromDraft()
-  teamPlanDirty.value = true
-  teamPlanError.value = null
-  teamSelectedOrchestrationPresetId.value = presetId
-
-  const missingMemberCount = getAllTeamAgentSteps(normalized.steps)
-    .filter((step) => !step.member || !step.member.trim())
-    .length
-  if (missingMemberCount > 0) {
-    teamPlanSuccess.value = `已应用预设（${missingMemberCount} 个节点未匹配 Agent，请手动选择后保存）。`
-  } else {
-    teamPlanSuccess.value = '已应用编排预设，请保存后运行。'
-  }
-}
-
-const handleTeamApplyRecoveryPreset = async (presetId: TeamRecoveryPresetId) => {
-  const preset = TEAM_RECOVERY_PRESETS.find((item) => item.id === presetId)
-  if (!preset) return
-
-  teamPlanError.value = null
-  teamPlanSuccess.value = null
-  teamSelectedRecoveryPresetId.value = presetId
-
-  const agentSteps = getAllTeamAgentSteps(teamOrchestrationDraft.value.steps)
-  for (const step of agentSteps) {
-    step.retry = {
-      max_attempts: preset.max_attempts,
-      backoff_ms: preset.backoff_ms,
-    }
-  }
-  if (agentSteps.length > 0) {
-    markTeamVisualPlanDirty()
-  }
-
-  if (!activeTeamSessionId.value) {
-    teamPlanSuccess.value = '已应用恢复策略 preset（会话未激活，仅更新本地编排草稿）。'
-    return
-  }
-
-  const currentStateMachine = teamSessionDetail.value?.state_machine && typeof teamSessionDetail.value.state_machine === 'object'
-    ? teamSessionDetail.value.state_machine
-    : {}
-  const currentIntervention = (currentStateMachine as any)?.human_intervention && typeof (currentStateMachine as any).human_intervention === 'object'
-    ? (currentStateMachine as any).human_intervention
-    : {}
-
-  const nextStateMachine = {
-    ...currentStateMachine,
-    no_human_input_policy: preset.no_human_input_policy,
-    human_intervention_timeout_secs: preset.human_intervention_timeout_secs,
-    max_human_interventions: preset.max_human_interventions,
-    human_intervention: {
-      ...currentIntervention,
-      policy: preset.no_human_input_policy,
-      timeout_secs: preset.human_intervention_timeout_secs,
-    },
-  }
-
-  teamRecoveryPresetApplying.value = true
-  try {
-    await agentTeamApi.updateSession(activeTeamSessionId.value, {
-      state_machine: nextStateMachine,
-    })
-    if (teamSessionDetail.value) {
-      teamSessionDetail.value = {
-        ...teamSessionDetail.value,
-        state_machine: nextStateMachine,
-      }
-    }
-    teamPlanSuccess.value = '已应用恢复策略 preset，并同步会话恢复配置。'
-  } catch (e: any) {
-    teamPlanError.value = e?.message || String(e)
-  } finally {
-    teamRecoveryPresetApplying.value = false
-  }
-}
-
-const handleTeamMoveStepByPath = (payload: TeamStepMovePayload) => {
-  const changed = moveTeamStepByPath(teamOrchestrationDraft.value.steps, payload)
-  if (!changed) {
-    markTeamVisualPlanDirty()
-    return
-  }
-  markTeamVisualPlanDirty()
-}
-
-const handleTeamPromoteStep = (path: number[]) => {
-  if (!promoteTeamStep(teamOrchestrationDraft.value.steps, path)) return
-  markTeamVisualPlanDirty()
-}
-
-const handleTeamNestStep = (path: number[]) => {
-  if (!nestTeamStep(teamOrchestrationDraft.value.steps, path)) return
-  markTeamVisualPlanDirty()
-}
-
-const parseTeamOrchestrationPlanInput = (): any => {
-  const { jsonValue, normalized } = parseTeamOrchestrationPlanInputSupport(teamOrchestrationPlanText.value)
-  teamOrchestrationDraft.value = normalized
-  return jsonValue
-}
-
-const handleTeamSaveOrchestrationPlan = async () => {
-  if (!activeTeamSessionId.value) return
-  teamPlanSaving.value = true
-  teamPlanError.value = null
-  teamPlanSuccess.value = null
-  try {
-    parseTeamOrchestrationPlanInput()
-    teamPlanError.value = '会话编排直改入口已下线。'
-  } catch (e: any) {
-    teamPlanError.value = e?.message || String(e)
-  } finally {
-    teamPlanSaving.value = false
-  }
-}
-
-const handleTeamStartRunWithPlan = async () => {
-  if (!activeTeamSessionId.value || isTeamRunActive.value) return
-  teamPlanError.value = null
-  teamPlanSuccess.value = null
-  try {
-    if (teamPlanDirty.value) {
-      await handleTeamSaveOrchestrationPlan()
-      if (teamPlanError.value) return
-    }
-    await runTeamExecutionFromWorkspace('[Team] 已按当前编排计划启动执行。')
-    await loadTeamWorkspaceData()
-  } catch (e: any) {
-    teamPlanError.value = e?.message || String(e)
-  }
-}
-
-const handleTeamRetryRun = async () => {
-  if (!activeTeamSessionId.value || isTeamRunActive.value) return
-  teamPlanError.value = null
-  teamPlanSuccess.value = null
-  try {
-    if (teamPlanDirty.value) {
-      await handleTeamSaveOrchestrationPlan()
-      if (teamPlanError.value) return
-    }
-    await runTeamExecutionFromWorkspace('[Team] 已触发重试运行。')
-    await loadTeamWorkspaceData()
-  } catch (e: any) {
-    teamPlanError.value = e?.message || String(e)
-  }
-}
-
-const handleTeamResumeFromStep = async () => {
-  if (!activeTeamSessionId.value || isTeamRunActive.value) return
-  teamPlanError.value = null
-  teamPlanSuccess.value = null
-  try {
-    const stepId = teamResumeStepId.value.trim()
-    if (!stepId) {
-      throw new Error('请先填写要恢复的 step_id。')
-    }
-    const currentStateMachine = teamSessionDetail.value?.state_machine && typeof teamSessionDetail.value.state_machine === 'object'
-      ? teamSessionDetail.value.state_machine
-      : {}
-    const currentRuntime = currentStateMachine?.orchestration_runtime && typeof currentStateMachine.orchestration_runtime === 'object'
-      ? currentStateMachine.orchestration_runtime
-      : {}
-    await agentTeamApi.updateSession(activeTeamSessionId.value, {
-      state_machine: {
-        ...currentStateMachine,
-        orchestration_runtime: {
-          ...currentRuntime,
-          resume_from_step_id: stepId,
-        },
-      },
-    })
-    await runTeamExecutionFromWorkspace(`[Team] 已从 step '${stepId}' 发起恢复执行。`)
-    await loadTeamWorkspaceData()
-  } catch (e: any) {
-    teamPlanError.value = e?.message || String(e)
-  }
-}
-
-const handleTeamFillResumeStep = (stepId: string) => {
-  const normalized = (stepId || '').trim()
-  if (!normalized) return
-  teamResumeStepId.value = normalized
-  teamPlanError.value = null
-  teamPlanSuccess.value = `已选择恢复节点：${normalized}`
-}
+const {
+  handleBlockTeamTask,
+  handleClaimTeamTask,
+  handleCompleteTeamTask,
+  handleCreateTeamTask,
+  handleFailTeamTask,
+  handleReleaseTeamTask,
+  pendingTeamCreateTask,
+  pendingTeamTaskActionKind,
+  pendingTeamTaskActionTaskId,
+} = useAgentTeamTaskActions({
+  activeTeamSessionId,
+  loadTeamWorkspaceData,
+})
+const {
+  handleTeamApplyOrchestrationPreset,
+  handleTeamApplyRecoveryPreset,
+  handleTeamFillResumeStep,
+  handleTeamMoveStepByPath,
+  handleTeamNestStep,
+  handleTeamOrchestrationInput,
+  handleTeamPromoteStep,
+  handleTeamReloadOrchestrationPlan,
+  handleTeamResumeFromStep,
+  handleTeamRetryRun,
+  handleTeamSaveOrchestrationPlan,
+  handleTeamStartRunWithPlan,
+  handleTeamVisualStepsUpdated,
+  parseTeamOrchestrationPlanInput,
+  syncTeamOrchestrationEditorFromSession,
+  teamOrchestrationPlanText,
+  teamPlanDirty,
+  teamPlanError,
+  teamPlanSaving,
+  teamPlanSuccess,
+  teamRecoveryPresetApplying,
+  teamResumeStepId,
+} = useAgentTeamOrchestration({
+  activeTeamSessionId,
+  isTeamRunActive,
+  loadTeamWorkspaceData,
+  runTeamExecutionFromWorkspace,
+  teamOrchestrationDraft,
+  teamCurrentNoHumanInputPolicy,
+  teamMemberNameOptions,
+  teamSelectedOrchestrationPresetId,
+  teamSelectedRecoveryPresetId,
+  teamSessionDetail,
+})
+const {
+  assistantProfileRegistryReady,
+  handleAssistantContextModeChange,
+  handleAssistantProfileChange,
+  handleAssistantRunModeChange,
+  loadConversationBinding,
+  schedulePersistConversationBinding,
+} = useAgentConversationBinding({
+  conversationId,
+  activeTeamSessionId,
+  assistantSelectedModel,
+  defaultAssistantProfileId,
+  defaultToolConfig,
+  toolConfig,
+  toolsEnabled,
+  teamSelectedOrchestrationPresetId,
+  teamSelectedRecoveryPresetId,
+  applyConversationBinding,
+  applyProfilePreset,
+  getAssistantProfileOption,
+  handleToggleTeamMode,
+  resetSessionSettings,
+  setAssistantSelectedModel,
+  setContextMode,
+  setProfileId,
+  setRunMode,
+  toConversationBinding,
+})
 const {
   handleClearConversation,
   handleConversationExecutionStateUpdate,
@@ -1603,6 +1005,7 @@ const {
   agentMessages: agentEvents.messages,
   agentStreamingContent: agentEvents.streamingContent,
   agentSubagents: agentEvents.subagents,
+  assistantModelOptions,
   assistantContextMode,
   assistantSelectedModel,
   buildToolConfig: () => toolConfig.value as unknown as UiToolConfigPayload,
@@ -1676,99 +1079,63 @@ const {
   webSearchEnabled,
 })
 
-// Handle view subagent details - open modal to show details
-const handleViewSubagentDetails = (subagentId: string) => {
-  console.log('[AgentView] View subagent details:', subagentId)
-  const subagent = subagents.value.find(s => s.id === subagentId)
-  if (subagent) {
-    selectedSubagent.value = subagent
-    showSubagentDetailModal.value = true
-  }
-}
-
 const handleSelectConversation = async (convId: string) => {
+  const previousConversationId = conversationId.value
   await handleSelectConversationFlow(convId)
+  const nextConversationId = String(conversationId.value || '').trim()
+  if (nextConversationId && nextConversationId !== String(previousConversationId || '').trim()) {
+    emit('conversation-changed', {
+      previousConversationId: previousConversationId?.trim() || null,
+      conversationId: nextConversationId,
+      title: currentConversationTitle.value.trim() || null,
+    })
+  }
 }
 
 const handleCreateConversation = async (newConvId?: string) => {
+  const previousConversationId = conversationId.value
   await handleCreateConversationFlow(newConvId)
+  const nextConversationId = String(conversationId.value || '').trim()
+  if (nextConversationId && nextConversationId !== String(previousConversationId || '').trim()) {
+    emit('conversation-changed', {
+      previousConversationId: previousConversationId?.trim() || null,
+      conversationId: nextConversationId,
+      title: currentConversationTitle.value.trim() || null,
+    })
+  }
   nextTick(() => {
     inputAreaRef.value?.focusInput()
   })
 }
-
-// Initialize
-onMounted(async () => {
-  console.log('[AgentView] Mounted with executionId:', props.executionId)
-  await Promise.all([
-    loadAssistantModelOptions(),
-    loadAssistantProfiles(),
-    loadDefaultAssistantProfile(),
-  ])
-  unlistenAiConfigUpdated = await listen('ai_config_updated', async () => {
-    await loadAssistantModelOptions()
-  })
-  unlistenTeamStateChanged = await listen<AgentTeamStateChangedEvent>('agent_team:state_changed', (event) => {
-    if (!activeTeamSessionId.value || event.payload.session_id !== activeTeamSessionId.value) {
-      return
-    }
-    applyTeamState(event.payload.state)
-    void syncTeamMessagesToMainFlow(event.payload.session_id)
-    if (isTeamWorkspaceActive.value) {
-      void loadTeamWorkspaceData()
-    }
-  })
-  unlistenTeamMessageStreamStart = await listen<AgentTeamMessageStreamStartEvent>('agent_team:message_stream_start', (event) => {
-    handleTeamMessageStreamStart(event.payload)
-  })
-  unlistenTeamMessageStreamDelta = await listen<AgentTeamMessageStreamDeltaEvent>('agent_team:message_stream_delta', (event) => {
-    handleTeamMessageStreamDelta(event.payload)
-  })
-  unlistenTeamMessageStreamDone = await listen<AgentTeamMessageStreamDoneEvent>('agent_team:message_stream_done', (event) => {
-    handleTeamMessageStreamDone(event.payload)
-  })
-  unlistenTeamToolCall = await listen<AgentTeamToolCallEvent>('agent_team:tool_call', (event) => {
-    handleTeamToolCall(event.payload)
-  })
-  unlistenTeamToolResult = await listen<AgentTeamToolResultEvent>('agent_team:tool_result', (event) => {
-    handleTeamToolResult(event.payload)
-  })
-  unlistenAgentStart = await listen<AgentStartEvent>('agent:start', (event) => {
-    if (event.payload.execution_id !== conversationId.value) return
-    conversationExecutionState.value = null
-  })
-  unlistenAgentComplete = await listen<AgentExecutionFinishedEvent>('agent:execution_finished', (event) => {
-    handleConversationExecutionStateUpdate(event.payload)
-    void handleTeamExecutionFinished(event.payload)
-  })
-  unlistenAgentAssistantSaved = await listen<AgentAssistantMessageSavedEvent>('agent:assistant_message_saved', (event) => {
-    void handleTeamAssistantMessageSaved(event.payload)
-  })
-  
-  // Load saved sidebar width
-  loadSidebarWidth()
-  
-  const startupTasks: Promise<unknown>[] = [loadToolConfig()]
-
-  // Load conversation history if executionId is provided
-  if (props.executionId) {
-    conversationId.value = props.executionId
-    startupTasks.push(loadConversationHistory(props.executionId))
-  } else {
-    // Default load the last conversation
-    startupTasks.push(loadLatestConversation())
-  }
-
-  await Promise.allSettled(startupTasks)
-  assistantProfileRegistryReady.value = true
-  
-  // Preconnect terminal server in background (non-blocking)
-  terminalComposable.preconnect()
-  
-  // 自动聚焦输入框
-  nextTick(() => {
-    inputAreaRef.value?.focusInput()
-  })
+useAgentViewLifecycle({
+  activeTeamSessionId,
+  assistantProfileRegistryReady,
+  conversationExecutionState,
+  conversationId,
+  executionId: props.executionId,
+  isTeamWorkspaceActive,
+  loadAssistantModelOptions,
+  loadAssistantProfiles,
+  loadDefaultAssistantProfile,
+  loadConversationHistory,
+  loadLatestConversation,
+  loadSidebarWidth,
+  loadToolConfigDrawerWidth,
+  loadTeamWorkspaceData,
+  loadToolConfig,
+  focusInput: () => inputAreaRef.value?.focusInput(),
+  handleConversationExecutionStateUpdate,
+  handleTeamAssistantMessageSaved,
+  handleTeamExecutionFinished,
+  handleTeamMessageStreamDelta,
+  handleTeamMessageStreamDone,
+  handleTeamMessageStreamStart,
+  handleTeamToolCall,
+  handleTeamToolResult,
+  preconnectTerminal: () => terminalComposable.preconnect(),
+  scrollMessageViewportToBottom,
+  syncTeamMessagesToMainFlow,
+  applyTeamState,
 })
 
 watch(
@@ -1796,84 +1163,29 @@ watch(
   },
 )
 
-onUnmounted(() => {
-  if (conversationBindingSaveTimer) {
-    clearTimeout(conversationBindingSaveTimer)
-    conversationBindingSaveTimer = null
+watch(error, (value) => {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  if (!normalized) {
+    lastAutoOpenedVisionError.value = null
+    return
   }
-  if (unlistenAiConfigUpdated) {
-    unlistenAiConfigUpdated()
-    unlistenAiConfigUpdated = null
-  }
-  if (unlistenTeamStateChanged) {
-    unlistenTeamStateChanged()
-    unlistenTeamStateChanged = null
-  }
-  if (unlistenTeamMessageStreamStart) {
-    unlistenTeamMessageStreamStart()
-    unlistenTeamMessageStreamStart = null
-  }
-  if (unlistenTeamMessageStreamDelta) {
-    unlistenTeamMessageStreamDelta()
-    unlistenTeamMessageStreamDelta = null
-  }
-  if (unlistenTeamMessageStreamDone) {
-    unlistenTeamMessageStreamDone()
-    unlistenTeamMessageStreamDone = null
-  }
-  if (unlistenTeamToolCall) {
-    unlistenTeamToolCall()
-    unlistenTeamToolCall = null
-  }
-  if (unlistenTeamToolResult) {
-    unlistenTeamToolResult()
-    unlistenTeamToolResult = null
-  }
-  if (unlistenAgentComplete) {
-    unlistenAgentComplete()
-    unlistenAgentComplete = null
-  }
-  if (unlistenAgentStart) {
-    unlistenAgentStart()
-    unlistenAgentStart = null
-  }
-  if (unlistenAgentAssistantSaved) {
-    unlistenAgentAssistantSaved()
-    unlistenAgentAssistantSaved = null
-  }
+  if (!isVisionModelUnsupportedError(normalized)) return
+  if (lastAutoOpenedVisionError.value === normalized) return
+  lastAutoOpenedVisionError.value = normalized
+  openToolConfigDrawer()
 })
 
-// When component is activated (e.g., switching back from another page)
-onActivated(() => {
-  console.log('[AgentView] Activated, scrolling to bottom')
-  // Scroll to bottom when returning to this page
-  nextTick(() => {
-    scrollMessageViewportToBottom()
-  })
-})
-
-// Watch for conversation changes to update title
-watch(conversationId, async (newId) => {
-  setMirroredConversationMessageIds(new Set())
-  if (!newId) {
-    currentConversationTitle.value = t('agent.newConversationTitle')
-    conversationExecutionState.value = null
-  }
-  await syncActiveTeamSession()
-})
-
-watch(teamTasks, (tasks) => {
-  if (!selectedTeamTaskId.value) return
-  if (tasks.some((task) => task.id === selectedTeamTaskId.value)) return
-  selectedTeamTaskId.value = null
-}, { deep: true })
-
-// Update session title in manager
 const { updateSessionTitle } = useAgentSessionManager()
-watch(currentConversationTitle, (newTitle) => {
-  if (conversationId.value && newTitle) {
-    updateSessionTitle(conversationId.value, newTitle)
-  }
+useAgentViewEffects({
+  conversationId,
+  conversationExecutionState,
+  currentConversationTitle,
+  getNewConversationTitle: () => t('agent.newConversationTitle'),
+  selectedTeamTaskId,
+  setMirroredConversationMessageIds,
+  syncActiveTeamSession,
+  teamTasks,
+  updateSessionTitle,
 })
 
 // Expose methods
@@ -1891,7 +1203,7 @@ defineExpose({
 
 <style scoped>
 .agent-view {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--app-font-sans);
 }
 
 /* Conversation Drawer Styles */
@@ -1933,6 +1245,10 @@ defineExpose({
   transform: translateX(100%);
 }
 
+.tool-config-drawer {
+  max-width: calc(100vw - 1rem);
+}
+
 /* Resize handle */
 .resize-handle {
   transition: background-color 0.2s;
@@ -1970,6 +1286,11 @@ body.resizing {
   .conversation-drawer {
     width: 85vw !important;
     max-width: 320px;
+  }
+
+  .tool-config-drawer {
+    width: 100% !important;
+    max-width: none;
   }
   
   .sidebar-container {

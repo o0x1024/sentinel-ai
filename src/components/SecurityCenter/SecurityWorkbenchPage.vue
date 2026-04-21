@@ -202,6 +202,16 @@ const route = useRoute()
 const router = useRouter()
 const securityCenterActivity = useSecurityCenterActivity()
 const { readWorkbenchCaseIds } = securityCenterActivity
+const props = defineProps<{
+  immersiveMode?: boolean
+  immersiveOpenCaseRequest?: {
+    caseId: string
+    requestKey: number
+  } | null
+}>()
+const emit = defineEmits<{
+  'open-finding': [findingId: string]
+}>()
 
 type CaseDetailTabId = 'overview' | 'evidence' | 'analysis' | 'plan' | 'drafts' | 'verification' | 'review'
 type WorkbenchListView = 'cases' | 'ignored'
@@ -230,6 +240,23 @@ type WorkbenchRouteSnapshot = WorkbenchListRouteState & {
   timelineSearch: string
   timelineFilter: 'all' | 'system' | 'notes' | 'draft_execution' | 'finding_sync' | 'suggestion_sync' | WorkbenchNoteKind
 }
+
+const createDefaultWorkbenchRouteSnapshot = (): WorkbenchRouteSnapshot => ({
+  caseId: '',
+  view: 'cases',
+  search: '',
+  status: '',
+  read: '',
+  page: 1,
+  pageSize: 20,
+  workbenchTab: 'overview',
+  evidenceId: null,
+  draftId: null,
+  runId: null,
+  timelineId: null,
+  timelineSearch: '',
+  timelineFilter: 'all',
+})
 
 const isLoadingList = ref(false)
 const isLoadingCase = ref(false)
@@ -343,22 +370,7 @@ const buildWorkbenchRouteSnapshot = (): WorkbenchRouteSnapshot => {
 const workbenchRouteSnapshot = ref<WorkbenchRouteSnapshot>(
   isWorkbenchRouteActive()
     ? buildWorkbenchRouteSnapshot()
-    : {
-        caseId: '',
-        view: 'cases',
-        search: '',
-        status: '',
-        read: '',
-        page: 1,
-        pageSize: 20,
-        workbenchTab: 'overview',
-        evidenceId: null,
-        draftId: null,
-        runId: null,
-        timelineId: null,
-        timelineSearch: '',
-        timelineFilter: 'all',
-      },
+    : createDefaultWorkbenchRouteSnapshot(),
 )
 
 const selectedCaseId = computed(() => workbenchRouteSnapshot.value.caseId)
@@ -401,21 +413,83 @@ const buildListRouteQuery = () => {
   return nextQuery
 }
 
-const syncCurrentListRoute = async () => {
-  const nextQuery = {
-    ...buildListRouteQuery(),
-    ...(selectedCaseId.value ? { workbenchTab: selectedWorkbenchTab.value } : {}),
-    ...(selectedCaseId.value && selectedEvidenceId.value ? { evidenceId: selectedEvidenceId.value } : {}),
-    ...(selectedCaseId.value && selectedDraftId.value ? { draftId: selectedDraftId.value } : {}),
-    ...(selectedCaseId.value && selectedRunId.value ? { runId: selectedRunId.value } : {}),
-    ...(selectedCaseId.value && selectedTimelineItemId.value ? { timelineId: selectedTimelineItemId.value } : {}),
-    ...(selectedCaseId.value && selectedTimelineSearch.value ? { timelineSearch: selectedTimelineSearch.value } : {}),
-    ...(selectedCaseId.value && selectedTimelineFilter.value !== 'all' ? { timelineFilter: selectedTimelineFilter.value } : {}),
+const buildWorkbenchRouteQueryFromSnapshot = (snapshot: WorkbenchRouteSnapshot) => {
+  const nextQuery: Record<string, string> = {}
+  if (snapshot.view === 'ignored') nextQuery.view = 'ignored'
+  if (snapshot.search.trim()) nextQuery.search = snapshot.search.trim()
+  if (snapshot.view === 'cases' && snapshot.status) nextQuery.status = snapshot.status
+  if (snapshot.view === 'cases' && snapshot.read) nextQuery.read = snapshot.read
+  if (snapshot.page > 1) nextQuery.page = String(snapshot.page)
+  if (snapshot.pageSize !== 20) nextQuery.pageSize = String(snapshot.pageSize)
+  if (snapshot.caseId) nextQuery.workbenchTab = snapshot.workbenchTab
+  if (snapshot.caseId && snapshot.evidenceId) nextQuery.evidenceId = snapshot.evidenceId
+  if (snapshot.caseId && snapshot.draftId) nextQuery.draftId = snapshot.draftId
+  if (snapshot.caseId && snapshot.runId) nextQuery.runId = snapshot.runId
+  if (snapshot.caseId && snapshot.timelineId) nextQuery.timelineId = snapshot.timelineId
+  if (snapshot.caseId && snapshot.timelineSearch) nextQuery.timelineSearch = snapshot.timelineSearch
+  if (snapshot.caseId && snapshot.timelineFilter !== 'all') nextQuery.timelineFilter = snapshot.timelineFilter
+  return nextQuery
+}
+
+const buildSnapshotFromCurrentState = (): WorkbenchRouteSnapshot => ({
+  view: listView.value,
+  search: search.value,
+  status: statusFilter.value,
+  read: readFilter.value,
+  page: page.value,
+  pageSize: pageSize.value,
+  caseId: selectedCaseId.value,
+  workbenchTab: selectedWorkbenchTab.value,
+  evidenceId: selectedEvidenceId.value,
+  draftId: selectedDraftId.value,
+  runId: selectedRunId.value,
+  timelineId: selectedTimelineItemId.value,
+  timelineSearch: selectedTimelineSearch.value,
+  timelineFilter: selectedTimelineFilter.value,
+})
+
+const normalizeWorkbenchRouteSnapshot = (
+  patch: Partial<WorkbenchRouteSnapshot>,
+): WorkbenchRouteSnapshot => {
+  const nextSnapshot = {
+    ...buildSnapshotFromCurrentState(),
+    ...patch,
   }
+
+  if (!nextSnapshot.caseId) {
+    return {
+      ...nextSnapshot,
+      caseId: '',
+      workbenchTab: 'overview',
+      evidenceId: null,
+      draftId: null,
+      runId: null,
+      timelineId: null,
+      timelineSearch: '',
+      timelineFilter: 'all',
+    }
+  }
+
+  return nextSnapshot
+}
+
+const applyWorkbenchSnapshot = async (patch: Partial<WorkbenchRouteSnapshot>) => {
+  const nextSnapshot = normalizeWorkbenchRouteSnapshot(patch)
+  if (props.immersiveMode) {
+    workbenchRouteSnapshot.value = nextSnapshot
+    return
+  }
+
   await router.replace({
-    path: selectedCaseId.value ? `/security-center/workbench/${selectedCaseId.value}` : '/security-center/workbench',
-    query: nextQuery,
+    path: nextSnapshot.caseId
+      ? `/security-center/workbench/${nextSnapshot.caseId}`
+      : '/security-center/workbench',
+    query: buildWorkbenchRouteQueryFromSnapshot(nextSnapshot),
   })
+}
+
+const syncCurrentListRoute = async () => {
+  await applyWorkbenchSnapshot({})
 }
 
 const loadCaseList = async () => {
@@ -532,10 +606,7 @@ const loadCaseDetail = async (caseId: string) => {
     const detail = await getWorkbenchCaseDetail(caseId)
     if (!detail) {
       selectedCaseDetail.value = null
-      await router.replace({
-        path: '/security-center/workbench',
-        query: buildListRouteQuery(),
-      })
+      await applyWorkbenchSnapshot({ caseId: '' })
       return
     }
     selectedCaseDetail.value = detail
@@ -549,18 +620,20 @@ const loadCaseDetail = async (caseId: string) => {
 }
 
 const openCase = async (caseId: string | null) => {
-  const listQuery = buildListRouteQuery()
   if (caseId) {
-    await router.replace({
-      path: `/security-center/workbench/${caseId}`,
-      query: {
-        ...listQuery,
-        workbenchTab: 'overview',
-      },
+    await applyWorkbenchSnapshot({
+      caseId,
+      workbenchTab: 'overview',
+      evidenceId: null,
+      draftId: null,
+      runId: null,
+      timelineId: null,
+      timelineSearch: '',
+      timelineFilter: 'all',
     })
     return
   }
-  await router.replace({ path: '/security-center/workbench', query: listQuery })
+  await applyWorkbenchSnapshot({ caseId: '' })
 }
 
 const updateCaseLocation = async (
@@ -572,16 +645,12 @@ const updateCaseLocation = async (
     runId?: string | null
   } = {},
 ) => {
-  const nextQuery: Record<string, string> = {
-    ...buildListRouteQuery(),
+  await applyWorkbenchSnapshot({
+    caseId,
     workbenchTab: target.tab || selectedWorkbenchTab.value,
-  }
-  if (target.evidenceId) nextQuery.evidenceId = target.evidenceId
-  if (target.draftId) nextQuery.draftId = target.draftId
-  if (target.runId) nextQuery.runId = target.runId
-  await router.replace({
-    path: `/security-center/workbench/${caseId}`,
-    query: nextQuery,
+    evidenceId: target.evidenceId ?? null,
+    draftId: target.draftId ?? null,
+    runId: target.runId ?? null,
   })
 }
 
@@ -699,16 +768,12 @@ const changeTimelineState = async (state: {
     | WorkbenchNoteKind
 }) => {
   if (!selectedCaseId.value || selectedWorkbenchTab.value !== 'review') return
-  const nextQuery: Record<string, string> = {
-    ...buildListRouteQuery(),
+  await applyWorkbenchSnapshot({
+    caseId: selectedCaseId.value,
     workbenchTab: 'review',
-  }
-  if (selectedTimelineItemId.value) nextQuery.timelineId = selectedTimelineItemId.value
-  if (state.search) nextQuery.timelineSearch = state.search
-  if (state.filter !== 'all') nextQuery.timelineFilter = state.filter
-  await router.replace({
-    path: `/security-center/workbench/${selectedCaseId.value}`,
-    query: nextQuery,
+    timelineId: selectedTimelineItemId.value,
+    timelineSearch: state.search,
+    timelineFilter: state.filter,
   })
 }
 
@@ -1003,12 +1068,7 @@ const restoreIgnoredFinding = async (findingId: string) => {
     selectedCaseIds.value = []
     await securityCenterActivity.refreshSecurityCenterActivity()
     dialog.toast.success(wb('toast.restoredIgnoredFindings', { count: 1 }))
-    await router.replace({
-      path: `/security-center/workbench/${caseItem.id}`,
-      query: {
-        workbenchTab: 'overview',
-      },
-    })
+    await openCase(caseItem.id)
   } catch (error) {
     console.error('Failed to restore ignored workbench finding', error)
     dialog.toast.error(wb('toast.restoreIgnoredFindingFailed'))
@@ -1016,6 +1076,11 @@ const restoreIgnoredFinding = async (findingId: string) => {
 }
 
 const openIgnoredFinding = async (findingId: string) => {
+  if (props.immersiveMode) {
+    emit('open-finding', findingId)
+    return
+  }
+
   await router.replace({
     path: '/security-center',
     query: {
@@ -1252,30 +1317,50 @@ watch(
 )
 
 watch(
-  () => [
-    route.name,
-    route.path,
-    route.params.caseId,
-    route.query.caseId,
-    route.query.view,
-    route.query.search,
-    route.query.status,
-    route.query.read,
-    route.query.page,
-    route.query.pageSize,
-    route.query.workbenchTab,
-    route.query.evidenceId,
-    route.query.draftId,
-    route.query.runId,
-    route.query.timelineId,
-    route.query.timelineSearch,
-    route.query.timelineFilter,
-  ],
+  () => props.immersiveMode
+    ? [
+        workbenchRouteSnapshot.value.caseId,
+        workbenchRouteSnapshot.value.view,
+        workbenchRouteSnapshot.value.search,
+        workbenchRouteSnapshot.value.status,
+        workbenchRouteSnapshot.value.read,
+        workbenchRouteSnapshot.value.page,
+        workbenchRouteSnapshot.value.pageSize,
+        workbenchRouteSnapshot.value.workbenchTab,
+        workbenchRouteSnapshot.value.evidenceId,
+        workbenchRouteSnapshot.value.draftId,
+        workbenchRouteSnapshot.value.runId,
+        workbenchRouteSnapshot.value.timelineId,
+        workbenchRouteSnapshot.value.timelineSearch,
+        workbenchRouteSnapshot.value.timelineFilter,
+      ]
+    : [
+        route.name,
+        route.path,
+        route.params.caseId,
+        route.query.caseId,
+        route.query.view,
+        route.query.search,
+        route.query.status,
+        route.query.read,
+        route.query.page,
+        route.query.pageSize,
+        route.query.workbenchTab,
+        route.query.evidenceId,
+        route.query.draftId,
+        route.query.runId,
+        route.query.timelineId,
+        route.query.timelineSearch,
+        route.query.timelineFilter,
+      ],
   async () => {
-    if (!isWorkbenchRouteActive()) {
+    if (!props.immersiveMode && !isWorkbenchRouteActive()) {
       return
     }
-    workbenchRouteSnapshot.value = buildWorkbenchRouteSnapshot()
+
+    if (!props.immersiveMode) {
+      workbenchRouteSnapshot.value = buildWorkbenchRouteSnapshot()
+    }
     applyListRouteState()
     if (listView.value === 'ignored') {
       await loadIgnoredFindingList()
@@ -1284,6 +1369,17 @@ watch(
     await loadCaseList()
   },
   { immediate: true },
+)
+
+watch(
+  () => props.immersiveOpenCaseRequest?.requestKey,
+  async requestKey => {
+    if (!props.immersiveMode || !requestKey || !props.immersiveOpenCaseRequest?.caseId) {
+      return
+    }
+
+    await openCase(props.immersiveOpenCaseRequest.caseId)
+  },
 )
 
 onMounted(async () => {

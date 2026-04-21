@@ -1,8 +1,11 @@
-use glob::{glob_with, MatchOptions};
+use glob::Pattern;
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+
+use crate::buildin_tools::file_runtime::{
+    current_runtime_metadata, list_files_under, FileRuntimeMetadata,
+};
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct GlobArgs {
@@ -24,6 +27,7 @@ fn default_limit() -> usize {
 pub struct GlobOutput {
     pub pattern: String,
     pub base_path: String,
+    pub runtime: FileRuntimeMetadata,
     pub filenames: Vec<String>,
     pub num_files: usize,
     pub truncated: bool,
@@ -64,34 +68,27 @@ impl Tool for GlobTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let base_dir = resolve_base_dir(args.path.as_deref())?;
-        let joined_pattern = base_dir.join(&args.pattern);
-        let pattern = joined_pattern.to_string_lossy().to_string();
-        let options = MatchOptions {
-            case_sensitive: true,
-            require_literal_separator: false,
-            require_literal_leading_dot: false,
-        };
+        let listing = list_files_under(args.path.as_deref())
+            .await
+            .map_err(GlobError::InvalidBasePath)?;
+        let pattern = Pattern::new(&args.pattern)
+            .map_err(|error| GlobError::InvalidPattern(error.to_string()))?;
 
         let mut filenames = Vec::new();
         let mut truncated = false;
         let limit = args.limit.max(1).min(2000);
 
-        let entries = glob_with(&pattern, options)
-            .map_err(|error| GlobError::InvalidPattern(error.to_string()))?;
-        for entry in entries {
-            let path = match entry {
-                Ok(path) => path,
-                Err(_) => continue,
-            };
-            if !path.is_file() {
+        for entry in &listing.files {
+            if !(pattern.matches(&entry.display_path)
+                || pattern.matches_path(std::path::Path::new(&entry.logical_path)))
+            {
                 continue;
             }
             if filenames.len() >= limit {
                 truncated = true;
                 break;
             }
-            filenames.push(to_relative_or_absolute(&base_dir, &path));
+            filenames.push(entry.display_path.clone());
         }
 
         filenames.sort();
@@ -99,35 +96,13 @@ impl Tool for GlobTool {
 
         Ok(GlobOutput {
             pattern: args.pattern,
-            base_path: base_dir.to_string_lossy().to_string(),
+            base_path: listing.base_path,
+            runtime: current_runtime_metadata(),
             filenames,
             num_files,
             truncated,
         })
     }
-}
-
-fn resolve_base_dir(path: Option<&str>) -> Result<PathBuf, GlobError> {
-    let cwd =
-        std::env::current_dir().map_err(|error| GlobError::InvalidBasePath(error.to_string()))?;
-    let dir = match path {
-        Some(raw) if !raw.trim().is_empty() => {
-            let candidate = PathBuf::from(raw);
-            if candidate.is_absolute() {
-                candidate
-            } else {
-                cwd.join(candidate)
-            }
-        }
-        _ => cwd,
-    };
-    Ok(dir)
-}
-
-fn to_relative_or_absolute(base_dir: &Path, path: &Path) -> String {
-    path.strip_prefix(base_dir)
-        .map(|relative| relative.to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.to_string_lossy().to_string())
 }
 
 #[cfg(test)]

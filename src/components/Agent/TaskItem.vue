@@ -8,6 +8,8 @@
       </span>
     </div>
 
+    <TaskMetaList v-if="metaItems.length > 0" :items="metaItems" class="ml-6 mt-1" />
+
     <div v-if="childrenCount > 0" class="task-children ml-5 pl-2 border-l border-base-300">
       <TaskItem
         v-for="child in children"
@@ -24,6 +26,8 @@
 import { computed } from 'vue'
 import type { AgentTask } from '@/types/agentTask'
 import { getAgentTaskDisplayText } from '@/types/agentTask'
+import TaskMetaList from './TaskMetaList.vue'
+import { buildAgentTaskMetaItems } from './taskMetaPresentation'
 import {
   getAgentTaskContentClass,
   getAgentTaskIndicator,
@@ -43,4 +47,5 @@ const contentClass = computed(() => getAgentTaskContentClass(props.task.status))
 const rowClass = computed(() => getAgentTaskRowClass(props.task.status))
 const displayText = computed(() => getAgentTaskDisplayText(props.task))
 const childrenCount = computed(() => props.children.length)
+const metaItems = computed(() => buildAgentTaskMetaItems(props.task))
 </script>

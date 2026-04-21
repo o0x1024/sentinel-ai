@@ -8,6 +8,8 @@ import { invoke } from '@tauri-apps/api/core'
 import TopNavbar from './components/Layout/TopNavbar.vue'
 import GlobalSearchPalette from './components/Layout/GlobalSearchPalette.vue'
 import ImmersiveDrillDock from './components/Layout/ImmersiveDrillDock.vue'
+import ImmersiveMinimizedToolTray from './components/Layout/ImmersiveMinimizedToolTray.vue'
+import ImmersiveSecurityCenterOverlay from './components/Layout/ImmersiveSecurityCenterOverlay.vue'
 import Sidebar from './components/Layout/Sidebar.vue'
 import LicenseActivation from './components/LicenseActivation.vue'
 import GlobalPluginEditor from './components/PluginManagement/GlobalPluginEditor.vue'
@@ -19,12 +21,15 @@ import {
   immersiveDrillModeEnabled,
   toggleImmersiveDrillMode,
 } from './services/immersiveDrillMode'
+import { showImmersiveTrafficHistory } from './components/traffic/immersiveTrafficDockState'
+import { closeTrafficAssistant } from './services/trafficAssistantWorkspace'
 import { applyTheme } from './views/settingsUiSupport'
 
 const router = useRouter()
 const route = useRoute()
 const isStandaloneRoute = computed(() => Boolean(route.meta?.standalone))
-
+const mainContentRef = ref<HTMLElement | null>(null)
+const routeScrollPositions = new Map<string, number>()
 // License activation state
 const isLicensed = ref(true) // Default to true, check on mount
 
@@ -49,6 +54,32 @@ const toggleMobileMenu = () => {
 // 关闭移动端菜单
 const closeMobileMenu = () => {
   showMobileMenu.value = false
+}
+
+const saveMainScrollPosition = (routeKey: string) => {
+  if (!routeKey || isStandaloneRoute.value) {
+    return
+  }
+
+  const container = mainContentRef.value
+  if (!container) {
+    return
+  }
+
+  routeScrollPositions.set(routeKey, container.scrollTop)
+}
+
+const restoreMainScrollPosition = (routeKey: string) => {
+  if (!routeKey || isStandaloneRoute.value) {
+    return
+  }
+
+  const container = mainContentRef.value
+  if (!container) {
+    return
+  }
+
+  container.scrollTop = routeScrollPositions.get(routeKey) ?? 0
 }
 
 const isEditableTarget = (target: EventTarget | null) => {
@@ -149,13 +180,32 @@ onMounted(async () => {
   } catch (e) {
     console.error('Failed to init shell permission handler:', e)
   }
+
+  requestAnimationFrame(() => {
+    restoreMainScrollPosition(route.fullPath)
+  })
 })
 
 // 组件卸载时清理事件监听器
 onUnmounted(() => {
+  saveMainScrollPosition(route.fullPath)
   window.removeEventListener('keydown', handleKeyDown)
   document.removeEventListener('click', handleClickOutside)
 })
+
+watch(
+  () => route.fullPath,
+  async (newRouteKey, oldRouteKey) => {
+    if (oldRouteKey) {
+      saveMainScrollPosition(oldRouteKey)
+    }
+
+    await nextTick()
+    requestAnimationFrame(() => {
+      restoreMainScrollPosition(newRouteKey)
+    })
+  },
+)
 
 const updateStoredGeneralSettings = (mutate: (general: Record<string, any>) => void) => {
   const savedSettings = localStorage.getItem('sentinel-settings')
@@ -204,14 +254,6 @@ const availableThemes = [
   { code: 'corporate', name: t('settings.themes.corporate'), icon: 'fa-building' },
 ]
 
-onMounted(() => {
-  // 加载FontAwesome
-  const link = document.createElement('link');
-  link.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css';
-  link.rel = 'stylesheet';
-  document.head.appendChild(link);
-})
-
 // 字体大小和界面缩放
 const fontSize = ref('normal')
 const uiScale = ref(100)
@@ -233,6 +275,15 @@ const shouldShowNavbar = computed(
 const shouldShowSidebar = computed(
   () => !isStandaloneRoute.value && !immersiveDrillModeEnabled.value,
 )
+
+const handleNavbarImmersiveDrillModeToggle = () => {
+  if (!immersiveDrillModeEnabled.value) {
+    showImmersiveTrafficHistory()
+    closeTrafficAssistant()
+  }
+
+  toggleImmersiveDrillMode()
+}
 
 // 计算应用的内联样式
 const appStyles = computed(() => {
@@ -339,7 +390,7 @@ window.updateUIScale = (newScale: number) => {
       <TopNavbar
         v-if="shouldShowNavbar"
         @toggle-sidebar="toggleSidebar"
-        @toggle-immersive-drill-mode="toggleImmersiveDrillMode"
+        @toggle-immersive-drill-mode="handleNavbarImmersiveDrillModeToggle"
         @set-theme="setTheme"
         @switch-language="switchLanguage"
       />
@@ -353,20 +404,25 @@ window.updateUIScale = (newScale: number) => {
             'w-64': !sidebarCollapsed
           }" />
 
-        <main class="flex-1 transition-all duration-300 overflow-y-auto" :style="mainContentStyle" :class="{
+        <main ref="mainContentRef" class="flex-1 transition-all duration-300 overflow-y-auto" :style="mainContentStyle" :class="{
           'ml-0': !shouldShowSidebar,
           'ml-16': shouldShowSidebar && sidebarCollapsed,
           'ml-64': shouldShowSidebar && !sidebarCollapsed
         }">
           <router-view v-slot="{ Component }">
             <keep-alive :include="['TrafficAnalysis', 'AIAssistant', 'Vulnerabilities','Settings','Plugin','SecurityCenter','WorkflowStudio','BugBountyView','AgentManagement']">
-              <component :is="Component" class="min-h-full" />
+              <component
+                :is="Component"
+                class="min-h-full"
+              />
             </keep-alive>
           </router-view>
         </main>
       </div>
 
       <ImmersiveDrillDock v-if="immersiveDrillModeEnabled" />
+      <ImmersiveMinimizedToolTray v-if="immersiveDrillModeEnabled" />
+      <ImmersiveSecurityCenterOverlay v-if="immersiveDrillModeEnabled" />
       <GlobalPluginEditor />
     </template>
 
@@ -426,7 +482,7 @@ body {
   height: 100%;
   margin: 0;
   padding: 0;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--app-font-sans);
 }
 
 /* 字体大小设置 - 现在基于系统设置 */

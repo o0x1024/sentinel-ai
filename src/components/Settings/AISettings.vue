@@ -149,7 +149,6 @@
                   <span class="label-text font-medium flex items-center gap-2">
                     <i class="fas fa-comment-dots text-primary"></i>
                     {{ t('settings.ai.defaultChatModel') }}
-                    <span class="badge badge-sm badge-ghost">{{ t('settings.ai.fastModel') }}</span>
                   </span>
                 </label>
                 <EditableSelect v-model="defaultChatModelLocal" :options="chatModelOptions"
@@ -157,38 +156,9 @@
                   :custom-value-text="t('settings.ai.useCustomModel')"
                   :disabled="!defaultProviderLocal"
                   @change="onChangeDefaultChatModel" />
-              </div>
-
-              <!-- Default VLM Provider Selector -->
-              <div class="space-y-2">
-                <label class="label">
-                  <span class="label-text font-medium flex items-center gap-2">
-                    <i class="fas fa-sitemap text-secondary"></i>
-                    {{ t('settings.ai.defaultVlmProvider') }}
-                  </span>
-                </label>
-                <SearchableSelect v-model="defaultVlmProviderLocal" :options="providerOptions"
-                  :placeholder="t('settings.ai.selectProvider')" :search-placeholder="t('settings.ai.searchProvider')"
-                  @change="onChangeDefaultVlmProvider" />
-              </div>
-
-              <!-- Default VLM Model Selector -->
-              <div class="space-y-2">
-                <label class="label">
-                  <span class="label-text font-medium flex items-center gap-2">
-                    <i class="fas fa-eye text-accent"></i>
-                    {{ t('settings.ai.defaultVlmModel') }}
-                    <span class="badge badge-sm badge-ghost">{{ t('settings.ai.smartModel') }}</span>
-                  </span>
-                </label>
-                <EditableSelect v-model="defaultVlmModelLocal" :options="vlmModelOptions"
-                  :placeholder="t('settings.ai.selectOrInputModel')" 
-                  :custom-value-text="t('settings.ai.useCustomModel')"
-                  :disabled="!defaultVlmProviderLocal"
-                  @change="onChangeDefaultVisionModel" />
                 <label class="label">
                   <span class="label-text-alt text-base-content/60">
-                    {{ t('settings.ai.visionModelDescription') }}
+                    {{ t('settings.ai.defaultModelDescription') }}
                   </span>
                 </label>
               </div>
@@ -391,6 +361,15 @@
                     {{ t('settings.ai.canInputCustomModel') }}
                   </span>
                 </label>
+                <div class="flex items-center gap-3">
+                  <button class="btn btn-outline btn-sm" @click="refreshVisionCapabilityCache">
+                    <i class="fas fa-eye"></i>
+                    {{ t('settings.ai.refreshVisionCapabilityCache') }}
+                  </button>
+                  <span class="text-xs text-base-content/60">
+                    {{ t('settings.ai.refreshVisionCapabilityCacheDescription') }}
+                  </span>
+                </div>
               </div>
 
               <!-- 最大上下文长度设置 -->
@@ -690,8 +669,12 @@
                     <div v-if="model.supports_tools" class="badge badge-secondary badge-xs">
                       {{ t('settings.ai.tools') }}
                     </div>
-                    <div v-if="model.supports_vision" class="badge badge-accent badge-xs">
-                      {{ t('settings.ai.vision') }}
+                    <div
+                      class="badge badge-xs"
+                      :class="getVisionCapabilityBadgeClass(getModelVisionCapabilityState(selectedAiProvider, model))"
+                      :title="getModelVisionCapabilityTitle(selectedAiProvider, model)"
+                    >
+                      {{ getVisionCapabilityLabel(getModelVisionCapabilityState(selectedAiProvider, model)) }}
                     </div>
                   </div>
                 </div>
@@ -928,6 +911,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SearchableSelect from '@/components/SearchableSelect.vue'
 import EditableSelect from '@/components/EditableSelect.vue'
+import { getModelVisionCapability, type ModelVisionCapability } from '@/services/aiModelCapabilities'
 import {
   getEnabledProviders,
   getProviderIcon,
@@ -984,9 +968,8 @@ interface Emits {
   'applyManualConfig': [config: any]
   'setDefaultProvider': [provider: string]
   'setDefaultChatModel': [model: string]
-  'setDefaultVisionModel': [model: string]
-  'setDefaultVlmProvider': [provider: string]
   'clearUsageStats': []
+  'refreshVisionCapabilityCache': [payload: { provider: string; apiBase?: string | null; rigProvider?: string | null }]
 }
 
 const emit = defineEmits<Emits>()
@@ -1141,6 +1124,83 @@ const selectedProviderConfig = computed(() => {
   return props.aiConfig.providers[props.selectedAiProvider]
 })
 
+const getModelVisionCapabilityState = (provider: string, model: any): ModelVisionCapability => {
+  return getModelVisionCapability(provider, model)
+}
+
+const getVisionCapabilityLabel = (capability: ModelVisionCapability): string => {
+  switch (capability) {
+    case 'supported':
+      return t('settings.ai.visionCapabilitySupported')
+    case 'unsupported':
+      return t('settings.ai.visionCapabilityUnsupported')
+    default:
+      return t('settings.ai.visionCapabilityUnknown')
+  }
+}
+
+const getVisionCapabilityBadgeClass = (capability: ModelVisionCapability): string => {
+  switch (capability) {
+    case 'supported':
+      return 'badge-accent'
+    case 'unsupported':
+      return 'badge-error'
+    default:
+      return 'badge-ghost'
+  }
+}
+
+const getVisionCapabilityHint = (capability: ModelVisionCapability): string => {
+  switch (capability) {
+    case 'supported':
+      return t('settings.ai.visionCapabilitySupportedHint')
+    case 'unsupported':
+      return t('settings.ai.visionCapabilityUnsupportedHint')
+    default:
+      return t('settings.ai.visionCapabilityUnknownHint')
+  }
+}
+
+const getVisionCapabilitySourceLabel = (source?: string | null): string => {
+  switch (source) {
+    case 'provider_metadata':
+      return t('settings.ai.visionCapabilitySourceProviderMetadata')
+    case 'runtime_probe':
+      return t('settings.ai.visionCapabilitySourceRuntimeProbe')
+    case 'local_registry':
+      return t('settings.ai.visionCapabilitySourceLocalRegistry')
+    default:
+      return ''
+  }
+}
+
+const getModelVisionCapabilityTitle = (provider: string, model: any): string => {
+  const capability = getModelVisionCapabilityState(provider, model)
+  const lines = [getVisionCapabilityHint(capability)]
+  const sourceLabel = getVisionCapabilitySourceLabel(model?.vision_capability_source)
+  if (sourceLabel) {
+    lines.push(sourceLabel)
+  }
+  const evidence = typeof model?.vision_capability_evidence === 'string'
+    ? model.vision_capability_evidence.trim()
+    : ''
+  if (evidence) {
+    lines.push(evidence)
+  }
+  return lines.join('\n')
+}
+
+const formatModelOptionLabel = (provider: string, model: any): string => {
+  const capability = getModelVisionCapabilityState(provider, model)
+  return `${model.name} [${getVisionCapabilityLabel(capability)}]`
+}
+
+const formatModelOptionDescription = (provider: string, model: any): string => {
+  const description = typeof model?.description === 'string' ? model.description.trim() : ''
+  const capabilityHint = getVisionCapabilityHint(getModelVisionCapabilityState(provider, model))
+  return description ? `${description} · ${capabilityHint}` : capabilityHint
+}
+
 const rigProviderLocal = computed({
   get: () => selectedProviderConfig.value?.rig_provider || '',
   set: (value: string) => {
@@ -1234,10 +1294,6 @@ watch(() => props.selectedAiProvider, () => {
 const defaultProviderLocal = ref('')
 // 默认 Chat 模型选择
 const defaultChatModelLocal = ref('')
-// 默认 VLM Provider 选择
-const defaultVlmProviderLocal = ref('')
-// 默认 VLM 模型选择
-const defaultVlmModelLocal = ref('')
 
 watch(() => props.aiConfig, (cfg: any) => {
 
@@ -1257,25 +1313,6 @@ watch(() => props.aiConfig, (cfg: any) => {
   } else {
     defaultChatModelLocal.value = String(dcm)
   }
-
-  // 初始化默认 VLM 配置
-  const dvm = (cfg && (cfg as any).default_vlm_model) || ''
-  let dvmProvider = ''
-  let dvmModel = ''
-  if (dvm && dvm.includes('/')) {
-    const slashIndex = dvm.indexOf('/')
-    dvmProvider = slashIndex !== -1 ? dvm.substring(0, slashIndex) : ''
-    dvmModel = slashIndex !== -1 ? dvm.substring(slashIndex + 1) : dvm
-  } else {
-    dvmModel = String(dvm)
-  }
-
-  const dvp = (cfg && (cfg as any).default_vlm_provider) || dvmProvider || dp
-  const matchedVlmProvider = Object.keys(cfg?.providers || {}).find(key =>
-    key.toLowerCase() === String(dvp).toLowerCase()
-  )
-  defaultVlmProviderLocal.value = matchedVlmProvider || String(dvp || '')
-  defaultVlmModelLocal.value = dvmModel || ''
 }, { immediate: true, deep: true })
 
 const onChangeDefaultProvider = async () => {
@@ -1292,41 +1329,12 @@ const onChangeDefaultProvider = async () => {
   }
 }
 
-const onChangeDefaultVlmProvider = async () => {
-  try {
-    const provider = defaultVlmProviderLocal.value
-    emit('setDefaultVlmProvider', provider.toLowerCase())
-
-    // 当VLM提供商变化时，清空默认模型选择
-    defaultVlmModelLocal.value = ''
-    emit('setDefaultVisionModel', '')
-  } catch (e) {
-    console.error('Failed to set default VLM provider', e)
-  }
-}
-
 const onChangeDefaultChatModel = async () => {
   try {
     const model = defaultChatModelLocal.value
     emit('setDefaultChatModel', model)
   } catch (e) {
     console.error('Failed to set default chat model', e)
-  }
-}
-
-const onChangeDefaultVisionModel = async () => {
-  try {
-    const model = defaultVlmModelLocal.value
-    if (!model) {
-      emit('setDefaultVisionModel', '')
-      return
-    }
-    const provider = defaultVlmProviderLocal.value
-    const providerValue = provider ? provider.toLowerCase() : ''
-    const modelValue = providerValue ? `${providerValue}/${model}` : model
-    emit('setDefaultVisionModel', modelValue)
-  } catch (e) {
-    console.error('Failed to set default vision model', e)
   }
 }
 
@@ -1344,18 +1352,8 @@ const chatModelOptions = computed(() => {
   const models = getProviderModels(props.aiConfig, defaultProviderLocal.value)
   return models.map((model: any) => ({
     value: model.id,
-    label: model.name,
-    description: model.description || ''
-  }))
-})
-
-// VLM 模型选项（用于可搜索下拉）
-const vlmModelOptions = computed(() => {
-  const models = getProviderModels(props.aiConfig, defaultVlmProviderLocal.value)
-  return models.map((model: any) => ({
-    value: model.id,
-    label: model.supports_vision ? `👁️ ${model.name}` : model.name,
-    description: model.description || ''
+    label: formatModelOptionLabel(defaultProviderLocal.value, model),
+    description: formatModelOptionDescription(defaultProviderLocal.value, model)
   }))
 })
 
@@ -1364,8 +1362,8 @@ const selectedProviderModelOptions = computed(() => {
   const models = selectedProviderConfig.value?.models || []
   return models.map((model: any) => ({
     value: model.id,
-    label: model.name,
-    description: model.description || ''
+    label: formatModelOptionLabel(selectedAiProvider.value, model),
+    description: formatModelOptionDescription(selectedAiProvider.value, model)
   }))
 })
 
@@ -1400,6 +1398,17 @@ const testConnection = (provider: string) => {
 
 const refreshModels = (provider: string) => {
   emit('refreshModels', provider)
+}
+
+const refreshVisionCapabilityCache = () => {
+  if (!selectedAiProvider.value) {
+    return
+  }
+  emit('refreshVisionCapabilityCache', {
+    provider: selectedAiProvider.value,
+    apiBase: selectedProviderConfig.value?.api_base || null,
+    rigProvider: selectedProviderConfig.value?.rig_provider || null,
+  })
 }
 
 const testCustomProvider = () => {

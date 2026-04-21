@@ -1,4 +1,9 @@
 import { ref } from 'vue'
+import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
+import {
+  closeOtherImmersiveTools,
+  registerImmersiveToolCloser,
+} from '@/services/immersiveToolCoordinator'
 
 export type ImmersiveTrafficWorkbenchTool = 'repeater' | 'intruder' | 'comparer'
 
@@ -30,6 +35,23 @@ export function useImmersiveTrafficDockState() {
 }
 
 export function openImmersiveTrafficWorkbenchTool(tool: ImmersiveTrafficWorkbenchTool) {
+  if (immersiveDrillModeEnabled.value) {
+    closeOtherImmersiveTools('traffic-workbench')
+  }
+
+  activeWorkbenchTool.value = tool
+  workbenchOpen.value = true
+  interceptDrawerOpen.value = false
+  proxySettingsOpen.value = false
+  basketOpen.value = false
+}
+
+export function toggleImmersiveTrafficWorkbenchTool(tool: ImmersiveTrafficWorkbenchTool) {
+  if (workbenchOpen.value && activeWorkbenchTool.value === tool) {
+    workbenchOpen.value = false
+    return
+  }
+
   activeWorkbenchTool.value = tool
   workbenchOpen.value = true
 }
@@ -40,18 +62,69 @@ export function closeImmersiveTrafficWorkbench() {
 
 export function showImmersiveTrafficHistory() {
   workbenchOpen.value = false
+  interceptDrawerOpen.value = false
+  proxySettingsOpen.value = false
+  basketOpen.value = false
 }
 
 export function toggleImmersiveTrafficInterceptDrawer() {
-  interceptDrawerOpen.value = !interceptDrawerOpen.value
+  if (interceptDrawerOpen.value) {
+    interceptDrawerOpen.value = false
+    return
+  }
+
+  openImmersiveTrafficInterceptDrawer()
+}
+
+export function openImmersiveTrafficInterceptDrawer() {
+  if (immersiveDrillModeEnabled.value) {
+    closeOtherImmersiveTools('traffic-control')
+  }
+
+  workbenchOpen.value = false
+  interceptDrawerOpen.value = true
+  proxySettingsOpen.value = false
+  basketOpen.value = false
 }
 
 export function toggleImmersiveTrafficBasket() {
-  basketOpen.value = !basketOpen.value
+  if (basketOpen.value) {
+    basketOpen.value = false
+    return
+  }
+
+  openImmersiveTrafficBasket()
+}
+
+export function openImmersiveTrafficBasket() {
+  if (immersiveDrillModeEnabled.value) {
+    closeOtherImmersiveTools('traffic-basket')
+  }
+
+  workbenchOpen.value = false
+  interceptDrawerOpen.value = false
+  proxySettingsOpen.value = false
+  basketOpen.value = true
 }
 
 export function toggleImmersiveTrafficProxySettings() {
-  proxySettingsOpen.value = !proxySettingsOpen.value
+  if (proxySettingsOpen.value) {
+    proxySettingsOpen.value = false
+    return
+  }
+
+  openImmersiveTrafficProxySettings()
+}
+
+export function openImmersiveTrafficProxySettings() {
+  if (immersiveDrillModeEnabled.value) {
+    closeOtherImmersiveTools('traffic-settings')
+  }
+
+  workbenchOpen.value = false
+  interceptDrawerOpen.value = false
+  proxySettingsOpen.value = true
+  basketOpen.value = false
 }
 
 export function syncImmersiveTrafficDockState(payload: {
@@ -90,3 +163,14 @@ export function resetImmersiveTrafficDockState() {
   controlInterceptCount.value = 0
   basketCount.value = 0
 }
+
+registerImmersiveToolCloser('traffic-workbench', closeImmersiveTrafficWorkbench, () => workbenchOpen.value)
+registerImmersiveToolCloser('traffic-control', () => {
+  interceptDrawerOpen.value = false
+}, () => interceptDrawerOpen.value)
+registerImmersiveToolCloser('traffic-basket', () => {
+  basketOpen.value = false
+}, () => basketOpen.value)
+registerImmersiveToolCloser('traffic-settings', () => {
+  proxySettingsOpen.value = false
+}, () => proxySettingsOpen.value)

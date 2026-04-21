@@ -5,6 +5,7 @@ import { json } from '@codemirror/lang-json'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { keymap } from '@codemirror/view'
 import { defaultKeymap, indentWithTab } from '@codemirror/commands'
+import { stripDerivedAiConfigFields } from '@/views/settingsAiSupport'
 
 const buildDefaultProvider = (
   id: string,
@@ -226,7 +227,7 @@ export const useAiSettingsManualEditor = (params: {
     () => params.aiConfig.value,
     (newConfig) => {
       if (newConfig && !useGuiMode.value) {
-        const newText = JSON.stringify(newConfig, null, 2)
+        const newText = JSON.stringify(stripDerivedAiConfigFields(newConfig), null, 2)
         manualConfigText.value = newText
         updateEditorContent(newText)
         validateConfigText()
@@ -237,7 +238,7 @@ export const useAiSettingsManualEditor = (params: {
 
   watch(useGuiMode, async (isGuiMode) => {
     if (!isGuiMode && params.aiConfig.value) {
-      manualConfigText.value = JSON.stringify(params.aiConfig.value, null, 2)
+      manualConfigText.value = JSON.stringify(stripDerivedAiConfigFields(params.aiConfig.value), null, 2)
       validateConfigText()
       await nextTick()
       initCodeMirror()

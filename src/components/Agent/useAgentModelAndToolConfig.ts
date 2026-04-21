@@ -1,5 +1,6 @@
 import { computed, ref, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getModelSupportsVision, getModelVisionCapability } from '@/services/aiModelCapabilities'
 import {
   normalizeToolIdList,
   normalizeUiToolConfigPayload,
@@ -104,7 +105,13 @@ export const useAgentModelAndToolConfig = (params: {
         providerMaxContextMap[String(providerKey).toLowerCase()] = maxContextLength
 
         const modelsRaw = Array.isArray(cfg?.models) ? cfg.models : []
-        const modelIds = modelsRaw.map(extractModelId).filter((value: string) => !!value)
+        const modelRecords = new Map<string, any>()
+        modelsRaw.forEach((model: any) => {
+          const modelId = extractModelId(model).trim()
+          if (!modelId) return
+          modelRecords.set(modelId, model)
+        })
+        const modelIds = Array.from(modelRecords.keys())
         if (typeof cfg?.default_model === 'string' && cfg.default_model.trim()) {
           const providerDefaultModel = cfg.default_model.trim()
           if (!modelIds.some((id) => id === providerDefaultModel)) {
@@ -113,10 +120,15 @@ export const useAgentModelAndToolConfig = (params: {
         }
 
         Array.from(new Set<string>(modelIds)).forEach((modelId: string) => {
+          const modelRecord = modelRecords.get(modelId) || { id: modelId, name: modelId }
+          const visionCapability = getModelVisionCapability(providerRaw, modelRecord)
+          const supportsVision = getModelSupportsVision(providerRaw, modelRecord)
           options.push({
             value: `${provider}/${modelId}`,
             label: modelId,
             description: normalizeProviderName(providerRaw),
+            supportsVision,
+            visionCapability,
           })
         })
       })
@@ -133,10 +145,15 @@ export const useAgentModelAndToolConfig = (params: {
           providerLower &&
           defaultModelName
         ) {
+          const fallbackModel = { id: defaultModelName, name: defaultModelName }
+          const visionCapability = getModelVisionCapability(providerLower, fallbackModel)
+          const supportsVision = getModelSupportsVision(providerLower, fallbackModel)
           options.unshift({
             value: key,
             label: defaultModelName,
             description: normalizeProviderName(providerLower),
+            supportsVision,
+            visionCapability,
           })
         }
       }

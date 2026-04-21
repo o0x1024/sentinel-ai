@@ -13,10 +13,8 @@ import {
   buildToolsActivatedMessage,
   buildToolsPreview,
 } from '@/utils/agentToolActivation'
-import { buildAgentTaskSystemMessages } from '@/components/Agent/agentTaskEventSupport'
-import { persistAgentTaskMessage } from '@/components/Agent/agentTaskPersistenceSupport'
 import { applyFileVerificationStatuses } from '@/components/Agent/fileVerificationSupport'
-import type { AgentTasksUpdatePayload, TaskRuntimeItem } from '@/types/taskRuntime'
+import type { AgentTasksUpdatePayload } from '@/types/taskRuntime'
 import type {
   AgentChunkEvent,
   AgentCompletionGuardFailedEvent,
@@ -64,8 +62,6 @@ export function useAgentEvents(
   const subagents = ref<SubagentItem[]>([])
   const contextUsage = ref<ContextUsageInfo | null>(null)
   const suppressedExecutionId = ref<string | null>(null)
-  const latestTasksByExecution = new Map<string, TaskRuntimeItem[]>()
-  const persistedAgentTaskMessageIds = new Set<string>()
 
   // Thinking content buffer for incremental display
   const thinkingBuffer = ref('')
@@ -377,8 +373,6 @@ export function useAgentEvents(
     subagents.value = []
     contextUsage.value = null
     suppressedExecutionId.value = null
-    latestTasksByExecution.clear()
-    persistedAgentTaskMessageIds.clear()
   }
 
   const resetError = () => {
@@ -513,33 +507,6 @@ export function useAgentEvents(
     const unlistenTasks = await listen<AgentTasksUpdatePayload>('agent-tasks-update', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
-
-      const previousTasks = latestTasksByExecution.get(payload.execution_id) || []
-      latestTasksByExecution.set(payload.execution_id, payload.tasks)
-
-      const taskMessages = buildAgentTaskSystemMessages({
-        executionId: payload.execution_id,
-        previousTasks,
-        nextTasks: payload.tasks,
-        timestamp: payload.timestamp,
-      })
-
-      if (taskMessages.length > 0) {
-        messages.value.push(...taskMessages)
-        const conversationId = getTargetId()
-        for (const taskMessage of taskMessages) {
-          void persistAgentTaskMessage({
-            conversationId,
-            message: taskMessage,
-            persistedIds: persistedAgentTaskMessageIds,
-            persistMessage: async (request) => {
-              await invoke('save_ai_message', { request })
-            },
-          }).catch((error) => {
-            console.warn('[useAgentEvents] Failed to persist agent task update:', error)
-          })
-        }
-      }
     })
     unlisteners.push(unlistenTasks)
 
@@ -1164,13 +1131,10 @@ export function useAgentEvents(
       execution_id: string
       skill_id: string
       skill_name: string
-      tools: string[]
     }>('agent:skill_loaded', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
 
-      const toolsPreview = payload.tools.slice(0, 6).join(', ')
-      const suffix = payload.tools.length > 6 ? ` +${payload.tools.length - 6}` : ''
       messages.value.push({
         id: crypto.randomUUID(),
         type: 'system',
@@ -1180,8 +1144,6 @@ export function useAgentEvents(
           kind: 'skill_loaded',
           skill_id: payload.skill_id,
           skill_name: payload.skill_name,
-          tools: payload.tools,
-          tools_preview: `${toolsPreview}${suffix}`,
         }
       })
     })

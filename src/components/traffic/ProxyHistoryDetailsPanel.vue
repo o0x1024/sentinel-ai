@@ -27,10 +27,13 @@
           <span v-if="!immersiveDrillModeEnabled" class="badge badge-xs badge-ghost" :title="$t('trafficAnalysis.history.detailsPanel.scheme')">{{ requestSchemeLabel }}</span>
           <span v-if="!immersiveDrillModeEnabled" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ requestHttpVersion }}</span>
         </div>
-        <div class="btn-group btn-group-xs">
-          <button :class="['btn btn-xs', requestTab === 'pretty' ? 'btn-active' : '']" @click="$emit('update:requestTab', 'pretty')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.pretty') }}</button>
-          <button :class="['btn btn-xs', requestTab === 'raw' ? 'btn-active' : '']" @click="$emit('update:requestTab', 'raw')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.raw') }}</button>
-          <button :class="['btn btn-xs', requestTab === 'hex' ? 'btn-active' : '']" @click="$emit('update:requestTab', 'hex')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.hex') }}</button>
+        <div class="flex items-center gap-2">
+          <TrafficMessageViewTabs
+            :model-value="requestTab"
+            :tabs="requestViewTabs"
+            @update:model-value="$emit('update:requestTab', $event as ProxyHistoryRequestTab)"
+          />
+          <TrafficMessageDisplayControls />
         </div>
       </div>
       <div
@@ -102,6 +105,7 @@
           :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
           :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
           :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+          :show-display-toolbar="false"
           @contextmenu="showDetailContextMenu($event, 'request')"
         />
         <HttpMessageSurface
@@ -122,6 +126,7 @@
           :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
           :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
           :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+          :show-display-toolbar="false"
           @contextmenu="showDetailContextMenu($event, 'request')"
         />
       </div>
@@ -147,11 +152,13 @@
           </div>
           <span v-if="!immersiveDrillModeEnabled" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ responseHttpVersion }}</span>
         </div>
-        <div class="btn-group btn-group-xs">
-          <button :class="['btn btn-xs', responseTab === 'pretty' ? 'btn-active' : '']" @click="$emit('update:responseTab', 'pretty')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.pretty') }}</button>
-          <button :class="['btn btn-xs', responseTab === 'raw' ? 'btn-active' : '']" @click="$emit('update:responseTab', 'raw')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.raw') }}</button>
-          <button :class="['btn btn-xs', responseTab === 'hex' ? 'btn-active' : '']" @click="$emit('update:responseTab', 'hex')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.hex') }}</button>
-          <button :class="['btn btn-xs', responseTab === 'render' ? 'btn-active' : '']" @click="$emit('update:responseTab', 'render')">{{ $t('trafficAnalysis.history.detailsPanel.tabs.render') }}</button>
+        <div class="flex items-center gap-2">
+          <TrafficMessageViewTabs
+            :model-value="responseTab"
+            :tabs="responseViewTabs"
+            @update:model-value="$emit('update:responseTab', $event as ProxyHistoryResponseTab)"
+          />
+          <TrafficMessageDisplayControls v-if="responseTab !== 'render'" />
         </div>
       </div>
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'response')">
@@ -178,6 +185,7 @@
           :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
           :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
           :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+          :show-display-toolbar="false"
           @contextmenu="showDetailContextMenu($event, 'response')"
         />
         <HttpMessageSurface
@@ -198,6 +206,7 @@
           :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
           :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
           :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+          :show-display-toolbar="false"
           @contextmenu="showDetailContextMenu($event, 'response')"
         />
       </div>
@@ -213,6 +222,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   formatProxyHistorySchemeLabel,
   normalizeProxyHistoryHttpVersion,
@@ -236,10 +246,13 @@ import {
   type TrafficContextEvidenceSource,
 } from './trafficContextEvidenceHighlightSupport'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
+import TrafficMessageDisplayControls from '@/components/traffic/TrafficMessageDisplayControls.vue'
+import TrafficMessageViewTabs from '@/components/traffic/TrafficMessageViewTabs.vue'
 import TrafficResponseRenderPane from './TrafficResponseRenderPane.vue'
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS } from './immersiveTrafficUi'
 import type { ProxyHistoryRequestTab, ProxyHistoryResponseTab, ProxyHistoryViewMode, ProxyRequest } from './proxyHistoryTypes'
+const { t } = useI18n()
 const props = defineProps<{ selectedRequest: ProxyRequest | null; isLoadingSelectedRequest: boolean; leftPanelWidth: number; requestTab: ProxyHistoryRequestTab; responseTab: ProxyHistoryResponseTab; requestViewMode: ProxyHistoryViewMode; responseViewMode: ProxyHistoryViewMode; contextEvidencePane?: 'request' | 'response'; contextEvidenceMatchedLocations?: string[]; contextEvidenceSearchTerms?: string[]; showDetailContextMenu: (event: MouseEvent, pane: 'request' | 'response') => void; startVerticalResize: (event: MouseEvent) => void }>()
 const emit = defineEmits<{ 'update:requestTab': [value: ProxyHistoryRequestTab]; 'update:responseTab': [value: ProxyHistoryResponseTab]; 'update:requestViewMode': [value: ProxyHistoryViewMode]; 'update:responseViewMode': [value: ProxyHistoryViewMode] }>()
 const requestSurface = ref<{
@@ -253,6 +266,17 @@ const responseSurface = ref<{
 const pendingEvidenceLocation = ref<string | null>(null)
 const pendingEvidenceSearchTerm = ref<string | null>(null)
 const lastAutoFocusedEvidenceKey = ref('')
+const requestViewTabs = computed(() => [
+  { value: 'pretty', label: t('trafficAnalysis.history.detailsPanel.tabs.pretty') },
+  { value: 'raw', label: t('trafficAnalysis.history.detailsPanel.tabs.raw') },
+  { value: 'hex', label: t('trafficAnalysis.history.detailsPanel.tabs.hex') },
+])
+const responseViewTabs = computed(() => [
+  { value: 'pretty', label: t('trafficAnalysis.history.detailsPanel.tabs.pretty') },
+  { value: 'raw', label: t('trafficAnalysis.history.detailsPanel.tabs.raw') },
+  { value: 'hex', label: t('trafficAnalysis.history.detailsPanel.tabs.hex') },
+  { value: 'render', label: t('trafficAnalysis.history.detailsPanel.tabs.render') },
+])
 
 const requestRawContent = computed(() =>
   props.selectedRequest ? formatRequestRaw(props.selectedRequest, props.requestViewMode) : '',

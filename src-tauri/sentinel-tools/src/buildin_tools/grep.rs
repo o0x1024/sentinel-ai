@@ -3,8 +3,10 @@ use regex::RegexBuilder;
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+
+use crate::buildin_tools::file_runtime::{
+    current_runtime_metadata, list_files_under, read_path_bytes, FileRuntimeMetadata,
+};
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -54,6 +56,7 @@ pub struct GrepContentMatch {
 pub struct GrepOutput {
     pub pattern: String,
     pub base_path: String,
+    pub runtime: FileRuntimeMetadata,
     pub output_mode: String,
     pub filenames: Vec<String>,
     pub content: Vec<GrepContentMatch>,
@@ -97,7 +100,9 @@ impl Tool for GrepTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let base_dir = resolve_base_dir(args.path.as_deref())?;
+        let listing = list_files_under(args.path.as_deref())
+            .await
+            .map_err(GrepError::InvalidBasePath)?;
         let regex = RegexBuilder::new(&args.pattern)
             .multi_line(false)
             .build()
@@ -114,24 +119,17 @@ impl Tool for GrepTool {
         let mut emitted = 0_usize;
         let mut truncated = false;
 
-        'files: for entry in WalkDir::new(&base_dir)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-
-            let relative = to_relative_or_absolute(&base_dir, path);
+        'files: for entry in &listing.files {
+            let relative = entry.display_path.clone();
             if let Some(pattern) = &glob {
-                if !(pattern.matches(&relative) || pattern.matches_path(path)) {
+                if !(pattern.matches(&relative)
+                    || pattern.matches_path(std::path::Path::new(&entry.logical_path)))
+                {
                     continue;
                 }
             }
 
-            let bytes = match tokio::fs::read(path).await {
+            let bytes = match read_path_bytes(&entry.logical_path).await {
                 Ok(bytes) => bytes,
                 Err(_) => continue,
             };
@@ -189,7 +187,8 @@ impl Tool for GrepTool {
 
         Ok(GrepOutput {
             pattern: args.pattern,
-            base_path: base_dir.to_string_lossy().to_string(),
+            base_path: listing.base_path,
+            runtime: current_runtime_metadata(),
             output_mode: match args.output_mode {
                 GrepOutputMode::Content => "content".to_string(),
                 GrepOutputMode::FilesWithMatches => "files_with_matches".to_string(),
@@ -204,31 +203,8 @@ impl Tool for GrepTool {
     }
 }
 
-fn resolve_base_dir(path: Option<&str>) -> Result<PathBuf, GrepError> {
-    let cwd =
-        std::env::current_dir().map_err(|error| GrepError::InvalidBasePath(error.to_string()))?;
-    let dir = match path {
-        Some(raw) if !raw.trim().is_empty() => {
-            let candidate = PathBuf::from(raw);
-            if candidate.is_absolute() {
-                candidate
-            } else {
-                cwd.join(candidate)
-            }
-        }
-        _ => cwd,
-    };
-    Ok(dir)
-}
-
 fn looks_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(1024).any(|byte| *byte == 0)
-}
-
-fn to_relative_or_absolute(base_dir: &Path, path: &Path) -> String {
-    path.strip_prefix(base_dir)
-        .map(|relative| relative.to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.to_string_lossy().to_string())
 }
 
 #[cfg(test)]

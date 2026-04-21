@@ -33,6 +33,11 @@
           <template #toolbar>
             <SystemAgentToolbarPanel
               :loading="loading"
+              :bulk-mutating="bulkMutating"
+              :enabled-count="enabledProfilesCount"
+              :total-count="profiles.length"
+              @enable-all="handleBulkProfileToggle(true)"
+              @disable-all="handleBulkProfileToggle(false)"
               @seed="seedDefaults"
               @refresh="refreshAll"
             />
@@ -329,9 +334,11 @@ const systemAgentListFilterOptions = [
 
 const {
   loading,
+  bulkMutating,
   dispatching,
   mutatingRuns,
   deletingRunId,
+  profiles,
   runs,
   versions,
   recentFindings,
@@ -353,6 +360,8 @@ const {
   promptPatchGuidance,
   selectedProfileDescription,
   selectedProfileDisplayName,
+  enabledProfilesCount,
+  disabledProfilesCount,
   isVerificationAgentSelected,
   autoSaveStatusText,
   autoSaveStatusClass,
@@ -373,6 +382,7 @@ const {
   setAutoVerificationEnabled,
   seedDefaults,
   refreshAll,
+  setAllProfilesEnabled,
   saveContextExtractionSettings,
   loadRuns,
   deleteRun,
@@ -496,6 +506,20 @@ function updateSelectedProfileModelOverride(value: string) {
 function handleAutoVerificationToggle(event: Event) {
   const target = event.target as HTMLInputElement | null
   void setAutoVerificationEnabled(target?.checked === true)
+}
+
+async function handleBulkProfileToggle(enabled: boolean) {
+  const affectedCount = enabled ? disabledProfilesCount.value : enabledProfilesCount.value
+  if (affectedCount <= 0) return
+
+  const confirmed = await dialog.confirm(
+    enabled
+      ? `确认一键开启 ${affectedCount} 个后台 Agent 吗？`
+      : `确认一键关闭 ${affectedCount} 个后台 Agent 吗？`
+  )
+  if (!confirmed) return
+
+  await setAllProfilesEnabled(enabled)
 }
 
 async function recommendContextCandidatesFromRecentHistory() {

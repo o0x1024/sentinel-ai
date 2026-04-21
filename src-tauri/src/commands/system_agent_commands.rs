@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tauri::State;
 use uuid::Uuid;
 
@@ -478,6 +478,53 @@ pub async fn save_system_agent_profile(
         saved_bindings,
         &ui_language,
     )))
+}
+
+#[tauri::command]
+pub async fn set_system_agent_profiles_enabled(
+    db_service: State<'_, Arc<DatabaseService>>,
+    profile_ids: Vec<String>,
+    enabled: bool,
+) -> Result<CommandResponse<usize>, String> {
+    let mut updated = 0usize;
+    let mut seen = HashSet::new();
+
+    for raw_id in profile_ids {
+        let profile_id = raw_id.trim();
+        if profile_id.is_empty() || !seen.insert(profile_id.to_string()) {
+            continue;
+        }
+
+        let Some(mut profile) = db_service
+            .get_system_agent_profile(profile_id)
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            continue;
+        };
+
+        if profile.enabled == enabled {
+            continue;
+        }
+
+        profile.enabled = enabled;
+        profile.updated_at = Utc::now();
+
+        let bindings = db_service
+            .list_system_agent_bindings(Some(profile_id))
+            .await
+            .map_err(|e| e.to_string())?;
+        let bindings = normalize_profile_bindings(&profile, bindings);
+
+        db_service
+            .save_system_agent_profile(&profile, &bindings)
+            .await
+            .map_err(|e| format!("更新后台 Agent {} 状态失败: {}", profile_id, e))?;
+
+        updated += 1;
+    }
+
+    Ok(CommandResponse::ok(updated))
 }
 
 #[tauri::command]

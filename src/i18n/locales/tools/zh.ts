@@ -284,6 +284,7 @@ export default {
     alwaysAcceptHint: '将此命令添加到允许列表并执行',
     allowRulePreviewTitle: '始终接受将保存以下规则：',
     semanticLabels: {
+      read_only: '只读',
       readOnly: '只读',
       mutating: '变更',
       dangerous: '高风险'

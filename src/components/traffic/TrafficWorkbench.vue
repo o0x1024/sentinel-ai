@@ -118,11 +118,11 @@
               </p>
             </div>
             <div class="flex items-center gap-2">
-              <button type="button" class="btn btn-xs btn-outline rounded-2xl" @click="proxySettingsOpen = true">
+              <button type="button" class="btn btn-xs btn-outline rounded-2xl" @click="openProxySettingsDrawer">
                 <i class="fas fa-cog mr-1"></i>
                 代理设置
               </button>
-              <button type="button" class="btn btn-sm btn-ghost rounded-2xl" @click="interceptDrawerOpen = false">
+              <button type="button" class="btn btn-sm btn-ghost rounded-2xl" @click="closeInterceptDrawer">
                 <i class="fas fa-times"></i>
               </button>
             </div>
@@ -162,7 +162,7 @@
                 监听器、作用域、响应拦截和规则编辑收进这里，不再打断主工作流。
               </p>
             </div>
-            <button type="button" class="btn btn-sm btn-ghost rounded-2xl" @click="proxySettingsOpen = false">
+            <button type="button" class="btn btn-sm btn-ghost rounded-2xl" @click="closeProxySettingsDrawer">
               <i class="fas fa-times"></i>
             </button>
           </div>
@@ -178,7 +178,7 @@
       <TrafficWorkbenchBasketDrawer
         :open="basketOpen"
         :items="basketItems"
-        @close="basketOpen = false"
+        @close="closeBasketDrawer"
         @remove="removeBasketItem"
         @clear="clearBasket"
         @sendToRepeater="sendBasketItemToRepeater"
@@ -221,7 +221,7 @@
         type="button"
         class="floating-trigger"
         :class="{ 'floating-trigger-warning': controlInterceptCount > 0 }"
-        @click="interceptDrawerOpen = !interceptDrawerOpen"
+        @click="toggleInterceptDrawer"
       >
         <i class="fas fa-sliders-h text-sm"></i>
         <span class="floating-trigger-label">
@@ -235,7 +235,7 @@
         type="button"
         class="floating-trigger"
         :class="{ 'floating-trigger-active': basketOpen }"
-        @click="basketOpen = !basketOpen"
+        @click="toggleBasketDrawer"
       >
         <i class="fas fa-basket-shopping text-sm"></i>
         <span class="floating-trigger-label">请求篮子</span>
@@ -247,7 +247,7 @@
         type="button"
         class="floating-trigger"
         :class="{ 'floating-trigger-active': proxySettingsOpen }"
-        @click="proxySettingsOpen = !proxySettingsOpen"
+        @click="toggleProxySettingsDrawer"
       >
         <i class="fas fa-cog text-sm"></i>
         <span class="floating-trigger-label">代理设置</span>
@@ -285,8 +285,13 @@ import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import {
   closeImmersiveTrafficWorkbench,
   openImmersiveTrafficWorkbenchTool,
+  openImmersiveTrafficBasket,
+  openImmersiveTrafficProxySettings,
   resetImmersiveTrafficDockState,
   syncImmersiveTrafficDockState,
+  toggleImmersiveTrafficBasket,
+  toggleImmersiveTrafficInterceptDrawer,
+  toggleImmersiveTrafficProxySettings,
   useImmersiveTrafficDockState,
 } from './immersiveTrafficDockState'
 interface FilterRule {
@@ -647,17 +652,17 @@ function handleSendDraftRequestToComparerFromHistory(payload: TrafficComparerDra
 }
 
 function handleSendToRepeaterFromIntercept(request: HttpExchangeRequest) {
-  interceptDrawerOpen.value = false
+  closeInterceptDrawer()
   pushRequestToRepeater(request, getInterceptSource())
 }
 
 function handleSendToIntruderFromIntercept(request: HttpExchangeRequest) {
-  interceptDrawerOpen.value = false
+  closeInterceptDrawer()
   pushRequestToIntruder(request, getInterceptSource())
 }
 
 function handleSendDraftRequestToComparerFromIntercept(payload: TrafficComparerDraftRequestInput) {
-  interceptDrawerOpen.value = false
+  closeInterceptDrawer()
   pushDraftToComparer(payload, getInterceptSource())
 }
 
@@ -698,12 +703,12 @@ function addBasketCandidate(source: TrafficWorkbenchSource, payload: TrafficWork
 
 function handleAddToBasketFromHistory(payload: TrafficWorkbenchBasketCandidateInput) {
   addBasketCandidate(getHistorySource(payload.requestId), payload)
-  basketOpen.value = true
+  openImmersiveTrafficBasket()
 }
 
 function handleAddToBasketFromIntercept(payload: TrafficWorkbenchBasketCandidateInput) {
   addBasketCandidate(getInterceptSource(), payload)
-  basketOpen.value = true
+  openImmersiveTrafficBasket()
 }
 
 function removeBasketItem(id: string) {
@@ -747,7 +752,7 @@ function sendAllBasketItemsToIntruder() {
 }
 
 async function openHistoryRequestFromBasket(requestId: number) {
-  basketOpen.value = false
+  closeBasketDrawer()
   await openHistoryRequest({
     requestId,
     pane: 'request',
@@ -762,7 +767,7 @@ function handleAddFilterRule(rule: FilterRule) {
     rule.condition,
     rule.relationship || 'matches',
   )
-  proxySettingsOpen.value = true
+  openImmersiveTrafficProxySettings()
 }
 
 function handleFilterRuleAdded(rule: FilterRule) {
@@ -774,7 +779,7 @@ function handleFilterRuleAdded(rule: FilterRule) {
 }
 
 async function handleOpenResponseInterceptionSettings() {
-  proxySettingsOpen.value = true
+  openImmersiveTrafficProxySettings()
   await nextTick()
   await proxyConfigRef.value?.openResponseInterceptionRules?.()
 }
@@ -788,7 +793,7 @@ async function openHistoryRequest(payload: TrafficContextCandidateEvidenceSelect
     return
   }
 
-  basketOpen.value = false
+  closeBasketDrawer()
   await nextTick()
   await proxyHistoryRef.value?.openRequestById?.(
     payload.requestId,
@@ -796,6 +801,34 @@ async function openHistoryRequest(payload: TrafficContextCandidateEvidenceSelect
     payload.pane || 'request',
     payload.searchTerms || [],
   )
+}
+
+function closeInterceptDrawer() {
+  interceptDrawerOpen.value = false
+}
+
+function toggleInterceptDrawer() {
+  toggleImmersiveTrafficInterceptDrawer()
+}
+
+function closeBasketDrawer() {
+  basketOpen.value = false
+}
+
+function toggleBasketDrawer() {
+  toggleImmersiveTrafficBasket()
+}
+
+function openProxySettingsDrawer() {
+  openImmersiveTrafficProxySettings()
+}
+
+function closeProxySettingsDrawer() {
+  proxySettingsOpen.value = false
+}
+
+function toggleProxySettingsDrawer() {
+  toggleImmersiveTrafficProxySettings()
 }
 
 defineExpose<TrafficAnalysisViewHandle>({

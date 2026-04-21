@@ -21,6 +21,18 @@ export interface ShellPermissionHistoryEntry {
   persisted_allow_rules: string[]
 }
 
+const normalizeHistoryEntry = (entry: ShellPermissionHistoryEntry): ShellPermissionHistoryEntry => {
+  return {
+    ...entry,
+    suggested_allow_rules: Array.isArray(entry.suggested_allow_rules)
+      ? entry.suggested_allow_rules
+      : [],
+    persisted_allow_rules: Array.isArray(entry.persisted_allow_rules)
+      ? entry.persisted_allow_rules
+      : [],
+  }
+}
+
 const PAGE_SIZE = 20
 const STORAGE_KEY = 'sentinel:settings:shell-permission-history-panel:v1'
 
@@ -154,9 +166,10 @@ export function useShellPermissionHistoryPanel() {
             execution_id: executionIdFilter.value || null,
             limit: requestedLimit,
           }
-      history.value = await invoke<ShellPermissionHistoryEntry[]>('get_shell_permission_history', {
+      const records = await invoke<ShellPermissionHistoryEntry[]>('get_shell_permission_history', {
         request,
       })
+      history.value = records.map(normalizeHistoryEntry)
       hasMoreHistory.value = history.value.length >= requestedLimit
       if (!preserveExpanded) {
         expandedEntries.value = {}

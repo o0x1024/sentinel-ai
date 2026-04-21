@@ -1,5 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 
+const MODEL_DERIVED_KEYS = [
+  'vision_capability_status',
+  'vision_capability_source',
+  'vision_capability_evidence',
+]
+
 export const loadAiUsageStats = async () => {
   const stats = (await invoke('get_ai_usage_stats')) as Record<
     string,
@@ -10,15 +16,33 @@ export const loadAiUsageStats = async () => {
 
 export const loadAiConfig = async () => {
   const aiConfig = (await invoke('get_ai_config')) as any
-  try {
-    const configs = (await invoke('get_config', {
-      request: { category: 'ai', key: 'enable_multimodal' },
-    })) as Array<{ key: string; value: string }>
-    aiConfig.enable_multimodal = configs && configs.length > 0 ? configs[0].value === 'true' : true
-  } catch {
-    aiConfig.enable_multimodal = true
-  }
   return aiConfig
+}
+
+export const stripDerivedAiConfigFields = (aiConfig: any) => {
+  if (!aiConfig || typeof aiConfig !== 'object') {
+    return aiConfig
+  }
+
+  const cloned = JSON.parse(JSON.stringify(aiConfig))
+  const providers = cloned?.providers
+  if (!providers || typeof providers !== 'object') {
+    return cloned
+  }
+
+  Object.values(providers).forEach((provider: any) => {
+    if (!Array.isArray(provider?.models)) return
+    provider.models = provider.models.map((model: any) => {
+      if (!model || typeof model !== 'object') return model
+      const sanitized = { ...model }
+      MODEL_DERIVED_KEYS.forEach((key) => {
+        delete sanitized[key]
+      })
+      return sanitized
+    })
+  })
+
+  return cloned
 }
 
 export const buildAvailableModels = (aiConfig: any) => {

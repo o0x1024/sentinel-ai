@@ -26,6 +26,7 @@ use sentinel_tools::buildin_tools::subagent_tool::{
     SubagentSpawnArgs, SubagentSpawnOutput, SubagentStatus, SubagentTaskInfo, SubagentTaskResult,
     SubagentToolError, SubagentWaitArgs, SubagentWaitOutput,
 };
+use sentinel_tools::output_storage::get_history_path;
 
 use super::{condense_text, execute_agent, ContextPolicy, ToolConfig};
 use crate::agents::ToolSelectionStrategy;
@@ -241,11 +242,7 @@ fn build_subagent_task(
     }
 
     let brief = condense_text(parent, ContextPolicy::subagent().task_brief_max_chars);
-    let parent_history_path = format!(
-        "{}/history_{}.txt",
-        context_dir,
-        &parent_execution_id[..12.min(parent_execution_id.len())]
-    );
+    let parent_history_path = get_history_path(context_dir, Some(parent_execution_id));
 
     format!(
         "[Parent Context Summary]\n\

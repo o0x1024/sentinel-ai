@@ -1,5 +1,10 @@
 use crate::services::ai::AiServiceManager;
 use crate::services::database::DatabaseService;
+use crate::services::{
+    clear_cached_model_vision_capabilities, get_cached_model_vision_capability_from_snapshot,
+    load_model_vision_capability_cache_snapshot, ModelVisionCapabilitySource,
+    ModelVisionCapabilityStatus,
+};
 use sentinel_core::global_proxy::create_client_with_proxy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -53,6 +58,13 @@ pub struct DeleteProviderRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ClearModelVisionCapabilityCacheRequest {
+    pub provider: String,
+    pub api_base: Option<String>,
+    pub rig_provider: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AiProviderConfig {
     pub id: String,
     pub provider: String,
@@ -65,6 +77,185 @@ pub struct AiProviderConfig {
     pub models: Vec<serde_json::Value>,
     pub rig_provider: Option<String>,
     pub max_context_length: Option<u32>,
+}
+
+const DERIVED_MODEL_CONFIG_KEYS: [&str; 3] = [
+    "vision_capability_status",
+    "vision_capability_source",
+    "vision_capability_evidence",
+];
+
+pub async fn cleanup_legacy_ai_config_keys(db: &DatabaseService) -> Result<usize, String> {
+    let mut removed = 0usize;
+    for key in [
+        "default_vlm_provider",
+        "default_vlm_model",
+        "enable_multimodal",
+    ] {
+        match db.get_config_internal("ai", key).await {
+            Ok(Some(_)) => {
+                db.delete_config_internal("ai", key).await.map_err(|e| {
+                    format!("Failed to clear legacy AI config key '{}': {}", key, e)
+                })?;
+                removed += 1;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return Err(format!(
+                    "Failed to inspect legacy AI config key '{}': {}",
+                    key, e
+                ));
+            }
+        }
+    }
+    Ok(removed)
+}
+
+fn read_json_bool_field(value: &serde_json::Value, key: &str) -> Option<bool> {
+    match value.get(key) {
+        Some(serde_json::Value::Bool(v)) => Some(*v),
+        Some(serde_json::Value::String(v)) => match v.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Some(true),
+            "false" | "0" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn read_json_bool_value(value: Option<&serde_json::Value>) -> Option<bool> {
+    match value {
+        Some(serde_json::Value::Bool(v)) => Some(*v),
+        Some(serde_json::Value::String(v)) => match v.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Some(true),
+            "false" | "0" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn annotate_model_vision_capabilities(
+    providers_config: &mut serde_json::Value,
+    capability_cache: &HashMap<
+        String,
+        crate::services::model_capabilities::ModelVisionCapabilityRecord,
+    >,
+) {
+    let Some(providers) = providers_config.as_object_mut() else {
+        return;
+    };
+
+    for (provider_key, provider_value) in providers.iter_mut() {
+        let Some(provider_obj) = provider_value.as_object_mut() else {
+            continue;
+        };
+
+        let provider_name = provider_obj
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or(provider_key.as_str())
+            .to_string();
+        let api_base = provider_obj
+            .get("api_base")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string());
+        let rig_provider = provider_obj
+            .get("rig_provider")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string());
+
+        let Some(models) = provider_obj
+            .get_mut("models")
+            .and_then(|v| v.as_array_mut())
+        else {
+            continue;
+        };
+
+        for model in models.iter_mut() {
+            let Some(model_obj) = model.as_object_mut() else {
+                continue;
+            };
+
+            let model_name = model_obj
+                .get("id")
+                .and_then(|v| v.as_str())
+                .or_else(|| model_obj.get("name").and_then(|v| v.as_str()))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+
+            let explicit = read_json_bool_value(model_obj.get("supports_vision")).or_else(|| {
+                model_obj
+                    .get("config")
+                    .and_then(|cfg| read_json_bool_field(cfg, "supports_vision"))
+            });
+
+            let (status, source, evidence) = if let Some(supports_vision) = explicit {
+                (
+                    if supports_vision {
+                        ModelVisionCapabilityStatus::Supported
+                    } else {
+                        ModelVisionCapabilityStatus::Unsupported
+                    },
+                    Some(ModelVisionCapabilitySource::ProviderMetadata),
+                    Some("providers_config.supports_vision".to_string()),
+                )
+            } else if !model_name.is_empty() {
+                match get_cached_model_vision_capability_from_snapshot(
+                    capability_cache,
+                    &provider_name,
+                    &model_name,
+                    api_base.as_deref(),
+                    rig_provider.as_deref(),
+                ) {
+                    Some(record) => (record.status, Some(record.source), record.evidence),
+                    None => (ModelVisionCapabilityStatus::Unknown, None, None),
+                }
+            } else {
+                (ModelVisionCapabilityStatus::Unknown, None, None)
+            };
+
+            model_obj.insert(
+                "vision_capability_status".to_string(),
+                serde_json::to_value(status).unwrap_or(serde_json::Value::String("unknown".into())),
+            );
+            match source {
+                Some(source_value) => {
+                    model_obj.insert(
+                        "vision_capability_source".to_string(),
+                        serde_json::to_value(source_value)
+                            .unwrap_or(serde_json::Value::String("runtime_probe".into())),
+                    );
+                }
+                None => {
+                    model_obj.remove("vision_capability_source");
+                }
+            }
+            match evidence {
+                Some(evidence_value) if !evidence_value.trim().is_empty() => {
+                    model_obj.insert(
+                        "vision_capability_evidence".to_string(),
+                        serde_json::Value::String(evidence_value),
+                    );
+                }
+                _ => {
+                    model_obj.remove("vision_capability_evidence");
+                }
+            }
+        }
+    }
+}
+
+fn strip_derived_model_config_fields(models: &mut [serde_json::Value]) {
+    for model in models.iter_mut() {
+        let Some(model_obj) = model.as_object_mut() else {
+            continue;
+        };
+        for key in DERIVED_MODEL_CONFIG_KEYS {
+            model_obj.remove(key);
+        }
+    }
 }
 
 // ============== Tauri Commands ==============
@@ -139,6 +330,11 @@ pub async fn save_ai_config(
     tracing::info!("Starting to save AI configuration...");
 
     let db_service = db.inner().clone();
+    let mut config = config;
+
+    for provider in config.providers.values_mut() {
+        strip_derived_model_config_fields(&mut provider.models);
+    }
 
     // Save providers config as JSON
     let config_str = serde_json::to_string(&config.providers)
@@ -213,6 +409,32 @@ pub async fn save_ai_config(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_derived_model_config_fields;
+
+    #[test]
+    fn strip_derived_model_config_fields_removes_runtime_vision_keys() {
+        let mut models = vec![serde_json::json!({
+            "id": "gpt-4o",
+            "supports_vision": true,
+            "vision_capability_status": "supported",
+            "vision_capability_source": "runtime_probe",
+            "vision_capability_evidence": "probe ok"
+        })];
+
+        strip_derived_model_config_fields(&mut models);
+
+        assert_eq!(
+            models[0],
+            serde_json::json!({
+                "id": "gpt-4o",
+                "supports_vision": true
+            })
+        );
+    }
 }
 
 /// Add custom provider
@@ -405,27 +627,6 @@ pub async fn delete_ai_provider(
         }
     }
 
-    if let Ok(Some(default_vlm_provider)) =
-        db.get_config_internal("ai", "default_vlm_provider").await
-    {
-        if default_vlm_provider.eq_ignore_ascii_case(&deleted_provider_lower) {
-            if let Some(fallback_provider) = &fallback_provider {
-                db.set_config_internal(
-                    "ai",
-                    "default_vlm_provider",
-                    fallback_provider,
-                    Some("Default VLM provider"),
-                )
-                .await
-                .map_err(|e| format!("Failed to update default VLM provider: {}", e))?;
-            } else {
-                db.delete_config_internal("ai", "default_vlm_provider")
-                    .await
-                    .map_err(|e| format!("Failed to clear default VLM provider: {}", e))?;
-            }
-        }
-    }
-
     if let Ok(Some(default_llm_model)) = db.get_config_internal("ai", "default_llm_model").await {
         if provider_model_belongs_to(&default_llm_model, &deleted_provider_lower) {
             db.delete_config_internal("ai", "default_llm_model")
@@ -438,12 +639,11 @@ pub async fn delete_ai_provider(
         }
     }
 
-    if let Ok(Some(default_vlm_model)) = db.get_config_internal("ai", "default_vlm_model").await {
-        if provider_model_belongs_to(&default_vlm_model, &deleted_provider_lower) {
-            db.delete_config_internal("ai", "default_vlm_model")
-                .await
-                .map_err(|e| format!("Failed to clear default VLM model: {}", e))?;
-        }
+    if let Err(e) = cleanup_legacy_ai_config_keys(db.inner()).await {
+        tracing::warn!(
+            "Failed to clear legacy AI config keys after provider delete: {}",
+            e
+        );
     }
 
     if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
@@ -563,6 +763,13 @@ pub async fn set_default_llm_provider(
     .await
     .map_err(|e| e.to_string())?;
 
+    if let Err(e) = cleanup_legacy_ai_config_keys(db.inner()).await {
+        tracing::warn!(
+            "Failed to clear legacy AI config keys after default provider update: {}",
+            e
+        );
+    }
+
     // Apply to runtime
     if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
         if let Err(e) = ai_manager.set_default_alias_to(&provider).await {
@@ -594,6 +801,13 @@ pub async fn set_default_llm_model(
         .await
         .map_err(|e| e.to_string())?;
 
+    if let Err(e) = cleanup_legacy_ai_config_keys(db.inner()).await {
+        tracing::warn!(
+            "Failed to clear legacy AI config keys after default model update: {}",
+            e
+        );
+    }
+
     // Update AI manager if format is provider/model_name
     if let Some((provider, model_name)) = model.split_once('/') {
         if let Err(e) = ai_manager.set_default_llm_model(provider, model_name).await {
@@ -610,18 +824,22 @@ pub async fn set_default_llm_model(
     Ok(())
 }
 
-/// Set default VLM model
 #[tauri::command]
-pub async fn set_default_vlm_model(
-    model: String,
+pub async fn clear_model_vision_capability_cache(
+    request: ClearModelVisionCapabilityCacheRequest,
     db: State<'_, Arc<DatabaseService>>,
-) -> Result<(), String> {
-    db.set_config_internal("ai", "default_vlm_model", &model, Some("Default VLM model"))
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<usize, String> {
+    if request.provider.trim().is_empty() {
+        return Err("Provider is required".to_string());
+    }
 
-    tracing::info!("Set default vision model to: {}", model);
-    Ok(())
+    clear_cached_model_vision_capabilities(
+        db.inner(),
+        &request.provider,
+        request.api_base.as_deref(),
+        request.rig_provider.as_deref(),
+    )
+    .await
 }
 
 /// Get AI configuration
@@ -662,7 +880,10 @@ pub async fn get_ai_config(
             default_providers_config()
         }
     };
-    ai_config["providers"] = providers_config.clone();
+    let mut providers_config_with_capabilities = providers_config.clone();
+    let capability_cache = load_model_vision_capability_cache_snapshot(db.inner()).await;
+    annotate_model_vision_capabilities(&mut providers_config_with_capabilities, &capability_cache);
+    ai_config["providers"] = providers_config_with_capabilities;
 
     if should_persist_default_providers {
         match serde_json::to_string(&providers_config) {
@@ -706,16 +927,6 @@ pub async fn get_ai_config(
         ai_config["default_llm_model"] = serde_json::Value::String(default_llm_model);
     }
 
-    if let Ok(Some(default_vlm_provider)) =
-        db.get_config_internal("ai", "default_vlm_provider").await
-    {
-        ai_config["default_vlm_provider"] = serde_json::Value::String(default_vlm_provider);
-    }
-
-    if let Ok(Some(default_vlm_model)) = db.get_config_internal("ai", "default_vlm_model").await {
-        ai_config["default_vlm_model"] = serde_json::Value::String(default_vlm_model);
-    }
-
     if let Ok(Some(temperature_str)) = db.get_config_internal("ai", "temperature").await {
         if let Ok(temperature) = temperature_str.parse::<f64>() {
             ai_config["temperature"] = serde_json::Value::Number(
@@ -735,13 +946,6 @@ pub async fn get_ai_config(
     if let Ok(Some(stream_response_str)) = db.get_config_internal("ai", "stream_response").await {
         if let Ok(stream_response) = stream_response_str.parse::<bool>() {
             ai_config["stream_response"] = serde_json::Value::Bool(stream_response);
-        }
-    }
-
-    if let Ok(Some(enable_multimodal_str)) = db.get_config_internal("ai", "enable_multimodal").await
-    {
-        if let Ok(enable_multimodal) = enable_multimodal_str.parse::<bool>() {
-            ai_config["enable_multimodal"] = serde_json::Value::Bool(enable_multimodal);
         }
     }
 

@@ -35,6 +35,8 @@ pub fn get_storage_threshold() -> usize {
 
 /// Container context directory (unified for all tools)
 pub const CONTAINER_CONTEXT_DIR: &str = "/workspace/context";
+const EXECUTION_DIR_PREFIX: &str = "session_";
+const DEFAULT_HISTORY_FILENAME: &str = "history.txt";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredOutputArtifact {
@@ -57,6 +59,49 @@ pub fn get_host_context_dir() -> std::path::PathBuf {
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join(".sentinel-context")
     }
+}
+
+fn normalize_execution_scope_id(execution_id: Option<&str>) -> Option<String> {
+    let raw = execution_id?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let sanitized = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+        .take(12)
+        .collect::<String>();
+
+    if sanitized.is_empty() {
+        None
+    } else {
+        Some(sanitized)
+    }
+}
+
+fn execution_dir_name(execution_id: Option<&str>) -> Option<String> {
+    normalize_execution_scope_id(execution_id)
+        .map(|short_id| format!("{}{}", EXECUTION_DIR_PREFIX, short_id))
+}
+
+pub fn get_execution_context_dir(context_dir: &str, execution_id: Option<&str>) -> String {
+    match execution_dir_name(execution_id) {
+        Some(dir_name) => format!("{}/{}", context_dir, dir_name),
+        None => context_dir.to_string(),
+    }
+}
+
+pub fn get_host_execution_context_dir(execution_id: Option<&str>) -> std::path::PathBuf {
+    let base_dir = get_host_context_dir();
+    match execution_dir_name(execution_id) {
+        Some(dir_name) => base_dir.join(dir_name),
+        None => base_dir,
+    }
+}
+
+fn history_filename() -> &'static str {
+    DEFAULT_HISTORY_FILENAME
 }
 
 /// Generate platform-specific file access commands
@@ -313,6 +358,7 @@ pub async fn store_output_in_container(
     tool_name: &str,
     output: &str,
     call_id: Option<&str>,
+    execution_id: Option<&str>,
 ) -> anyhow::Result<StorageResult> {
     // Check size against configured threshold
     let threshold = get_storage_threshold();
@@ -326,10 +372,11 @@ pub async fn store_output_in_container(
         .map(|id| format!("_{}", &id[..8.min(id.len())]))
         .unwrap_or_default();
     let filename = format!("{}_{}{}.txt", tool_name, timestamp, call_suffix);
-    let container_path = format!("{}/{}", CONTAINER_CONTEXT_DIR, filename);
+    let session_context_dir = get_execution_context_dir(CONTAINER_CONTEXT_DIR, execution_id);
+    let container_path = format!("{}/{}", session_context_dir, filename);
 
     // Create context directory in container if not exists
-    let mkdir_cmd = format!("mkdir -p {}", CONTAINER_CONTEXT_DIR);
+    let mkdir_cmd = format!("mkdir -p {}", session_context_dir);
     let _ = sandbox.execute(&mkdir_cmd, 5).await;
 
     // Write output to file in container using echo with base64 encoding to avoid quote issues
@@ -373,7 +420,7 @@ All context files are in: {}
         preview,
         preview_end,
         readback_plan.protocol,
-        CONTAINER_CONTEXT_DIR
+        session_context_dir
     );
 
     Ok(StorageResult::Stored {
@@ -399,19 +446,11 @@ pub async fn store_history_in_container_with_id(
     history_content: &str,
     execution_id: Option<&str>,
 ) -> anyhow::Result<String> {
-    // Use execution_id for isolation, fallback to "default" for backward compatibility
-    let history_filename = match execution_id {
-        Some(id) if !id.is_empty() => {
-            // Use first 12 chars of execution_id for filename
-            let short_id = &id[..12.min(id.len())];
-            format!("history_{}.txt", short_id)
-        }
-        _ => "history.txt".to_string(),
-    };
-    let container_path = format!("{}/{}", CONTAINER_CONTEXT_DIR, history_filename);
+    let session_context_dir = get_execution_context_dir(CONTAINER_CONTEXT_DIR, execution_id);
+    let container_path = format!("{}/{}", session_context_dir, history_filename());
 
     // Create context directory
-    let mkdir_cmd = format!("mkdir -p {}", CONTAINER_CONTEXT_DIR);
+    let mkdir_cmd = format!("mkdir -p {}", session_context_dir);
     let _ = sandbox.execute(&mkdir_cmd, 5).await;
 
     // Write history using base64 encoding
@@ -432,19 +471,11 @@ pub async fn store_history_on_host(
     history_content: &str,
     execution_id: Option<&str>,
 ) -> anyhow::Result<String> {
-    let context_dir = get_host_context_dir();
+    let context_dir = get_host_execution_context_dir(execution_id);
     std::fs::create_dir_all(&context_dir)
         .map_err(|e| anyhow::anyhow!("Failed to create context directory: {}", e))?;
 
-    // Use execution_id for isolation
-    let history_filename = match execution_id {
-        Some(id) if !id.is_empty() => {
-            let short_id = &id[..12.min(id.len())];
-            format!("history_{}.txt", short_id)
-        }
-        _ => "history.txt".to_string(),
-    };
-    let host_path = context_dir.join(&history_filename);
+    let host_path = context_dir.join(history_filename());
 
     std::fs::write(&host_path, history_content)
         .map_err(|e| anyhow::anyhow!("Failed to write history to host file: {}", e))?;
@@ -454,14 +485,8 @@ pub async fn store_history_on_host(
 
 /// Get history file path for a given execution_id
 pub fn get_history_path(context_dir: &str, execution_id: Option<&str>) -> String {
-    let history_filename = match execution_id {
-        Some(id) if !id.is_empty() => {
-            let short_id = &id[..12.min(id.len())];
-            format!("history_{}.txt", short_id)
-        }
-        _ => "history.txt".to_string(),
-    };
-    format!("{}/{}", context_dir, history_filename)
+    let session_context_dir = get_execution_context_dir(context_dir, execution_id);
+    format!("{}/{}", session_context_dir, history_filename())
 }
 
 /// Initialize context directory in container
@@ -478,12 +503,12 @@ pub async fn init_container_context(sandbox: &DockerSandbox) -> anyhow::Result<(
 /// Should be called when execution completes
 ///
 /// Removes:
-/// - Tool output files: http_response_*.txt, shell_stdout_*.txt, shell_stderr_*.txt
 /// - Temporary files in /workspace root: *.py, *.js, *.php, *.txt, etc.
 /// - Temporary directories in /workspace (except context/)
-/// - The specific execution's history file (history_{execution_id}.txt)
+/// - The specific execution's history file
 ///
 /// Preserves:
+/// - Per-execution output artifacts under /workspace/context/session_*
 /// - Other executions' history files
 pub async fn cleanup_container_context(sandbox: &DockerSandbox) -> anyhow::Result<()> {
     cleanup_container_context_with_id(sandbox, None).await
@@ -502,9 +527,8 @@ pub async fn cleanup_container_context_with_id(
 
     // 2. If execution_id provided, also remove that specific history file
     if let Some(id) = execution_id {
-        if !id.is_empty() {
-            let short_id = &id[..12.min(id.len())];
-            let history_file = format!("{}/history_{}.txt", CONTAINER_CONTEXT_DIR, short_id);
+        if normalize_execution_scope_id(Some(id)).is_some() {
+            let history_file = get_history_path(CONTAINER_CONTEXT_DIR, Some(id));
             let rm_history_cmd = format!("rm -f {} 2>/dev/null || true", history_file);
             let _ = sandbox.execute(&rm_history_cmd, 5).await;
             tracing::info!("Removed execution-specific history file: {}", history_file);
@@ -537,28 +561,27 @@ pub fn cleanup_host_context_with_id(execution_id: Option<&str>) -> anyhow::Resul
         return Ok(());
     }
 
-    // Remove tool output files (not history files)
-    if let Ok(entries) = std::fs::read_dir(&context_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                // Skip history files unless it's for this specific execution
-                if filename.starts_with("history") {
-                    if let Some(id) = execution_id {
-                        let short_id = &id[..12.min(id.len())];
-                        let expected = format!("history_{}.txt", short_id);
-                        if filename == expected {
-                            let _ = std::fs::remove_file(&path);
-                            tracing::info!(
-                                "Removed execution-specific history file: {}",
-                                path.display()
-                            );
-                        }
-                    }
-                    continue;
-                }
-                // Remove other output files
-                let _ = std::fs::remove_file(&path);
+    match execution_id {
+        Some(id) if normalize_execution_scope_id(Some(id)).is_some() => {
+            let context_dir_str = context_dir.display().to_string();
+            let history_path =
+                std::path::PathBuf::from(get_history_path(&context_dir_str, Some(id)));
+            if history_path.exists() {
+                let _ = std::fs::remove_file(&history_path);
+                tracing::info!(
+                    "Removed execution-specific history file: {}",
+                    history_path.display()
+                );
+            }
+        }
+        _ => {
+            let legacy_history_path = context_dir.join(history_filename());
+            if legacy_history_path.exists() {
+                let _ = std::fs::remove_file(&legacy_history_path);
+                tracing::info!(
+                    "Removed legacy history file: {}",
+                    legacy_history_path.display()
+                );
             }
         }
     }
@@ -567,19 +590,20 @@ pub fn cleanup_host_context_with_id(execution_id: Option<&str>) -> anyhow::Resul
     Ok(())
 }
 
-/// Clean up all workspace files including context and tool outputs
-/// Use with caution - removes everything in /workspace except context/history.txt
+/// Clean up workspace scratch files while preserving stored context artifacts
 ///
 /// Alternative cleanup option that does the same as cleanup_container_context
 /// but uses a single find command for efficiency
 pub async fn cleanup_container_workspace_full(sandbox: &DockerSandbox) -> anyhow::Result<()> {
     tracing::info!("Full cleanup of container workspace (alternative method)");
 
-    // Remove everything except context/history.txt
-    // This includes all tool output files and temporary files
+    // Preserve the full context/ and uploads/ trees so per-session artifacts remain available.
     let cleanup_cmd = r#"
         cd /workspace 2>/dev/null && \
-        find . ! -path './context/history.txt' ! -path './context' ! -path '.' -delete 2>/dev/null || true
+        find . -mindepth 1 \
+            ! -path './context' ! -path './context/*' \
+            ! -path './uploads' ! -path './uploads/*' \
+            -delete 2>/dev/null || true
     "#;
 
     sandbox
@@ -597,6 +621,7 @@ pub async fn store_output_on_host(
     tool_name: &str,
     output: &str,
     call_id: Option<&str>,
+    execution_id: Option<&str>,
 ) -> anyhow::Result<StorageResult> {
     // Check size against configured threshold
     let threshold = get_storage_threshold();
@@ -605,7 +630,7 @@ pub async fn store_output_on_host(
     }
 
     // Create context directory on host
-    let context_dir = get_host_context_dir();
+    let context_dir = get_host_execution_context_dir(execution_id);
     std::fs::create_dir_all(&context_dir)
         .map_err(|e| anyhow::anyhow!("Failed to create context directory: {}", e))?;
 
@@ -673,6 +698,7 @@ pub async fn store_output_unified(
     tool_name: &str,
     output: &str,
     call_id: Option<&str>,
+    execution_id: Option<&str>,
 ) -> anyhow::Result<StorageResult> {
     // Check size against configured threshold
     let threshold = get_storage_threshold();
@@ -683,7 +709,7 @@ pub async fn store_output_unified(
     // Check if Docker is available
     if !DockerSandbox::is_docker_available().await {
         tracing::debug!("Docker not available, using host filesystem storage");
-        return store_output_on_host(tool_name, output, call_id).await;
+        return store_output_on_host(tool_name, output, call_id, execution_id).await;
     }
 
     // Try to use container storage
@@ -693,14 +719,14 @@ pub async fn store_output_unified(
     let sandbox = DockerSandbox::new(docker_config);
 
     // Try container storage, fallback to host if it fails
-    match store_output_in_container(&sandbox, tool_name, output, call_id).await {
+    match store_output_in_container(&sandbox, tool_name, output, call_id, execution_id).await {
         Ok(result) => Ok(result),
         Err(e) => {
             tracing::warn!(
                 "Container storage failed ({}), falling back to host storage",
                 e
             );
-            store_output_on_host(tool_name, output, call_id).await
+            store_output_on_host(tool_name, output, call_id, execution_id).await
         }
     }
 }
@@ -758,5 +784,21 @@ mod tests {
         assert_eq!(artifact.storage_backend, "container");
         assert_eq!(artifact.size, 4096);
         assert_eq!(artifact.lines, 320);
+    }
+
+    #[test]
+    fn execution_context_dir_is_scoped_by_execution_id() {
+        assert_eq!(
+            get_execution_context_dir("/workspace/context", Some("exec-1234567890abcdef")),
+            "/workspace/context/session_exec-1234567"
+        );
+    }
+
+    #[test]
+    fn history_path_uses_session_directory() {
+        assert_eq!(
+            get_history_path("/workspace/context", Some("exec-1234567890abcdef")),
+            "/workspace/context/session_exec-1234567/history.txt"
+        );
     }
 }

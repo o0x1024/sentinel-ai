@@ -1227,6 +1227,16 @@ impl DatabaseService {
                 state_json TEXT NOT NULL,
                 updated_at BIGINT NOT NULL
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS execution_tasks (
+                id TEXT PRIMARY KEY,
+                execution_id TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result TEXT,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"#,
             r#"CREATE TABLE IF NOT EXISTS agent_session_logs (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,

@@ -26,6 +26,11 @@ const TASK_SOURCE_ALL_KEY = '__all__'
 const SIDEBAR_MIN_WIDTH = 300
 const SIDEBAR_MAX_WIDTH = 800
 const SIDEBAR_DEFAULT_WIDTH = 350
+const SIDEBAR_WIDTH_STORAGE_KEY = 'sentinel:sidebar:width'
+const TOOL_CONFIG_DRAWER_MIN_WIDTH = 360
+const TOOL_CONFIG_DRAWER_MAX_WIDTH = 720
+const TOOL_CONFIG_DRAWER_DEFAULT_WIDTH = 420
+const TOOL_CONFIG_DRAWER_WIDTH_STORAGE_KEY = 'sentinel:tool-config-drawer:width'
 
 export const useAgentPanels = (params: {
   activeTeamSessionId: Ref<string | null>
@@ -73,18 +78,22 @@ export const useAgentPanels = (params: {
   hasTerminalHistory: ComputedRef<boolean>
   htmlPanelContent: Ref<string>
   loadSidebarWidth: () => void
+  loadToolConfigDrawerWidth: () => void
   selectedTaskSourceKey: Ref<string>
   sidebarWidth: Ref<number>
+  startToolConfigDrawerResize: (event: MouseEvent) => void
   startResize: (event: MouseEvent) => void
   taskBadgeCount: ComputedRef<number>
   taskSourceOptions: ComputedRef<TaskSourceOption[]>
   tasks: ComputedRef<AgentTask[]>
+  toolConfigDrawerWidth: Ref<number>
 } => {
   const selectedTaskSourceKey = ref<string>(TASK_SOURCE_ALL_KEY)
   const isHtmlPanelActive = ref(false)
   const htmlPanelContent = ref('')
   const activeRightPanel = ref<RightPanelKey | null>(null)
   const sidebarWidth = ref(SIDEBAR_DEFAULT_WIDTH)
+  const toolConfigDrawerWidth = ref(TOOL_CONFIG_DRAWER_DEFAULT_WIDTH)
   const isResizing = ref(false)
   let isSyncingRightPanel = false
 
@@ -304,33 +313,84 @@ export const useAgentPanels = (params: {
     params.terminalOpen()
   }
 
-  const loadSidebarWidth = () => {
+  const clampWidth = (width: number, minWidth: number, maxWidth: number) => {
+    return Math.max(minWidth, Math.min(maxWidth, width))
+  }
+
+  const getToolConfigDrawerMaxWidth = () => {
+    if (typeof window === 'undefined') return TOOL_CONFIG_DRAWER_MAX_WIDTH
+    return Math.max(
+      TOOL_CONFIG_DRAWER_MIN_WIDTH,
+      Math.min(TOOL_CONFIG_DRAWER_MAX_WIDTH, window.innerWidth - 32),
+    )
+  }
+
+  const loadStoredWidth = (
+    storageKey: string,
+    applyWidth: (width: number) => void,
+    isAllowedWidth: (width: number) => boolean,
+  ) => {
     try {
-      const saved = localStorage.getItem('sentinel:sidebar:width')
+      const saved = localStorage.getItem(storageKey)
       if (saved) {
         const width = parseInt(saved, 10)
-        if (width >= SIDEBAR_MIN_WIDTH && width <= SIDEBAR_MAX_WIDTH) {
-          sidebarWidth.value = width
+        if (isAllowedWidth(width)) {
+          applyWidth(width)
         }
       }
     } catch (e) {
-      console.warn('[AgentView] Failed to load sidebar width:', e)
+      console.warn(`[AgentView] Failed to load width from ${storageKey}:`, e)
     }
   }
 
-  const saveSidebarWidth = (width: number) => {
+  const saveStoredWidth = (storageKey: string, width: number) => {
     try {
-      localStorage.setItem('sentinel:sidebar:width', width.toString())
+      localStorage.setItem(storageKey, width.toString())
     } catch (e) {
-      console.warn('[AgentView] Failed to save sidebar width:', e)
+      console.warn(`[AgentView] Failed to save width to ${storageKey}:`, e)
     }
   }
 
-  const startResize = (event: MouseEvent) => {
+  const applySidebarWidth = (width: number) => {
+    sidebarWidth.value = clampWidth(width, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+  }
+
+  const applyToolConfigDrawerWidth = (width: number) => {
+    toolConfigDrawerWidth.value = clampWidth(
+      width,
+      TOOL_CONFIG_DRAWER_MIN_WIDTH,
+      getToolConfigDrawerMaxWidth(),
+    )
+  }
+
+  const loadSidebarWidth = () => {
+    loadStoredWidth(
+      SIDEBAR_WIDTH_STORAGE_KEY,
+      applySidebarWidth,
+      (width) => width >= SIDEBAR_MIN_WIDTH && width <= SIDEBAR_MAX_WIDTH,
+    )
+  }
+
+  const loadToolConfigDrawerWidth = () => {
+    loadStoredWidth(
+      TOOL_CONFIG_DRAWER_WIDTH_STORAGE_KEY,
+      applyToolConfigDrawerWidth,
+      (width) => width >= TOOL_CONFIG_DRAWER_MIN_WIDTH && width <= TOOL_CONFIG_DRAWER_MAX_WIDTH,
+    )
+  }
+
+  const startHorizontalResize = (
+    event: MouseEvent,
+    options: {
+      getWidth: () => number
+      applyWidth: (width: number) => void
+      persist: () => void
+    },
+  ) => {
     event.preventDefault()
     isResizing.value = true
     const startX = event.clientX
-    const startWidth = sidebarWidth.value
+    const startWidth = options.getWidth()
 
     document.body.classList.add('resizing')
     document.body.style.cursor = 'col-resize'
@@ -338,14 +398,13 @@ export const useAgentPanels = (params: {
     const onMouseMove = (moveEvent: MouseEvent) => {
       if (!isResizing.value) return
       const delta = startX - moveEvent.clientX
-      const newWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, startWidth + delta))
-      sidebarWidth.value = newWidth
+      options.applyWidth(startWidth + delta)
     }
 
     const onMouseUp = () => {
       if (isResizing.value) {
         isResizing.value = false
-        saveSidebarWidth(sidebarWidth.value)
+        options.persist()
       }
       document.body.classList.remove('resizing')
       document.body.style.cursor = ''
@@ -355,6 +414,22 @@ export const useAgentPanels = (params: {
 
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
+  }
+
+  const startResize = (event: MouseEvent) => {
+    startHorizontalResize(event, {
+      getWidth: () => sidebarWidth.value,
+      applyWidth: applySidebarWidth,
+      persist: () => saveStoredWidth(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth.value),
+    })
+  }
+
+  const startToolConfigDrawerResize = (event: MouseEvent) => {
+    startHorizontalResize(event, {
+      getWidth: () => toolConfigDrawerWidth.value,
+      applyWidth: applyToolConfigDrawerWidth,
+      persist: () => saveStoredWidth(TOOL_CONFIG_DRAWER_WIDTH_STORAGE_KEY, toolConfigDrawerWidth.value),
+    })
   }
 
   const handleTaskSourceChange = (sourceKey: string) => {
@@ -439,11 +514,14 @@ export const useAgentPanels = (params: {
     hasTerminalHistory,
     htmlPanelContent,
     loadSidebarWidth,
+    loadToolConfigDrawerWidth,
     selectedTaskSourceKey,
     sidebarWidth,
+    startToolConfigDrawerResize,
     startResize,
     taskBadgeCount,
     taskSourceOptions,
     tasks,
+    toolConfigDrawerWidth,
   }
 }

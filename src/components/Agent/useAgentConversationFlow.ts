@@ -23,6 +23,8 @@ import {
 import type { AiConversationDetail, AiConversationSummary } from './conversationTypes'
 import type { AgentExecutionFinishedEvent, PersistedAgentExecutionState } from './executionState'
 import { normalizeTeamHumanInputContent, shouldSuppressTeamMirrorNoiseMessage } from './agentTeamMessageSupport'
+import type { AssistantModelOption } from './agentDraftTypes'
+import { buildVisionModelUnsupportedError } from './agentVisionErrorSupport'
 import { prepareSubmission } from './agentSubmissionSupport'
 import { buildRuntimeToolConfigForExecution, type UiToolConfigPayload } from './toolConfigRuntime'
 
@@ -31,6 +33,7 @@ export const useAgentConversationFlow = (params: {
   agentMessages: Ref<AgentMessage[]>
   agentStreamingContent: Ref<string>
   agentSubagents: Ref<any[]>
+  assistantModelOptions: Ref<AssistantModelOption[]>
   assistantContextMode: Ref<'claude-like' | 'codex-like' | 'sentinel-like'>
   assistantSelectedModel: Ref<string>
   buildToolConfig: () => UiToolConfigPayload
@@ -85,11 +88,35 @@ export const useAgentConversationFlow = (params: {
   tenthManEnabled: Ref<boolean>
   webSearchEnabled: Ref<boolean>
 }) => {
+  const getUnsupportedVisionModelError = (usedAttachments: unknown[]): string | null => {
+    if (usedAttachments.length === 0) return null
+    const selectedModelKey = params.assistantSelectedModel.value.trim()
+    const selectedModelOption = params.assistantModelOptions.value.find(
+      (item) => item.value === selectedModelKey,
+    )
+    if (selectedModelOption?.visionCapability !== 'unsupported') {
+      return null
+    }
+    const [provider = '', ...modelParts] = selectedModelKey.split('/')
+    return buildVisionModelUnsupportedError(provider, modelParts.join('/'))
+  }
+
   const handleConversationExecutionStateUpdate = (payload: AgentExecutionFinishedEvent) => {
     if (payload.execution_id !== params.conversationId.value) return
     params.conversationExecutionState.value = {
       ...payload,
       completed_at: new Date().toISOString(),
+    }
+  }
+
+  const hydrateTaskHistorySafely = async (conversationId: string) => {
+    try {
+      await params.hydrateTaskHistory(conversationId)
+    } catch (error) {
+      console.warn(
+        `[useAgentConversationFlow] Failed to hydrate task history for ${conversationId}:`,
+        error,
+      )
     }
   }
 
@@ -241,7 +268,7 @@ export const useAgentConversationFlow = (params: {
           params.conversationExecutionState.value = executionState || null
         },
         onEmptyHistoryLoaded: async () => {
-          await params.hydrateTaskHistory(conversationId)
+          await hydrateTaskHistorySafely(conversationId)
           if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
           params.setMirroredConversationMessageIds(new Set())
           await params.syncActiveTeamSession()
@@ -252,10 +279,10 @@ export const useAgentConversationFlow = (params: {
           }
         },
         onMessagesLoaded: async ({ messageCount, mirroredConversationMessageIds, timeline }) => {
-          await params.hydrateTaskHistory(conversationId)
+          params.agentMessages.value = timeline
+          await hydrateTaskHistorySafely(conversationId)
           if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
           params.setMirroredConversationMessageIds(mirroredConversationMessageIds)
-          params.agentMessages.value = timeline
           await params.syncActiveTeamSession()
           if (currentLoadToken !== params.historyLoadToken.value || params.conversationId.value !== conversationId) return
           if (params.activeTeamSessionId.value) {
@@ -336,7 +363,7 @@ export const useAgentConversationFlow = (params: {
           }
 
           await params.ensureConversationForTeamSession()
-          const { fullTask } = prepareSubmission({
+          const { fullTask, usedAttachments } = prepareSubmission({
             clearDraftState: () => {
               params.inputValue.value = ''
               params.clearDraftArtifacts()
@@ -356,6 +383,13 @@ export const useAgentConversationFlow = (params: {
             toMessageContextItems: (messages) => messages,
             toTrafficContextItems: (traffic) => traffic,
           })
+
+          const teamVisionError = getUnsupportedVisionModelError(usedAttachments)
+          if (teamVisionError) {
+            params.localError.value = teamVisionError
+            params.emitError(teamVisionError)
+            return
+          }
 
           nextTick(() => {
             params.scrollMessageViewportToBottom()
@@ -433,6 +467,13 @@ export const useAgentConversationFlow = (params: {
         toMessageContextItems: (messages) => messages,
         toTrafficContextItems: (traffic) => traffic,
       })
+
+      const visionError = getUnsupportedVisionModelError(usedAttachments)
+      if (visionError) {
+        params.localError.value = visionError
+        params.emitError(visionError)
+        return
+      }
 
       nextTick(() => {
         params.scrollMessageViewportToBottom()

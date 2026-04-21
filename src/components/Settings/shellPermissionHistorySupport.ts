@@ -34,18 +34,20 @@ export const buildDetailSummary = (
   entry: ShellPermissionHistoryEntry,
   t: ComposerTranslation,
 ) => {
+  const persistedRules = entry.persisted_allow_rules ?? []
+  const suggestedRules = entry.suggested_allow_rules ?? []
   const parts: string[] = []
-  if (entry.persisted_allow_rules.length > 0) {
+  if (persistedRules.length > 0) {
     parts.push(
       t('settings.agent.permissionHistory.summary.persistedRules', {
-        count: entry.persisted_allow_rules.length,
+        count: persistedRules.length,
       })
     )
   }
-  if (entry.suggested_allow_rules.length > 0) {
+  if (suggestedRules.length > 0) {
     parts.push(
       t('settings.agent.permissionHistory.summary.suggestedRules', {
-        count: entry.suggested_allow_rules.length,
+        count: suggestedRules.length,
       })
     )
   }

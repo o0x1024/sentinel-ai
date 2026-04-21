@@ -11,6 +11,7 @@ pub mod database {
 }
 pub mod http_gateway;
 pub mod mcp;
+pub mod model_capabilities;
 pub mod system_agents;
 pub mod vulnerability;
 
@@ -21,6 +22,12 @@ pub use sentinel_services::performance;
 
 // AI services
 pub use ai_manager::{AiServiceManager, AiServiceWrapper};
+pub use model_capabilities::{
+    classify_model_vision_capability_error, clear_cached_model_vision_capabilities,
+    get_cached_model_vision_capability_from_snapshot, load_model_vision_capability_cache_snapshot,
+    resolve_model_vision_capability, save_cached_model_vision_capability,
+    ModelVisionCapabilitySource, ModelVisionCapabilityStatus, ResolvedModelVisionCapability,
+};
 pub use sentinel_llm::{AiConfig, AiService, SchedulerConfig, SchedulerStage};
 
 // Compatibility module

@@ -9,9 +9,9 @@
     </div>
     <iframe
       v-else-if="body"
-      :srcdoc="body"
+      :srcdoc="previewDocument"
       class="traffic-response-render-frame"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+      sandbox="allow-scripts"
     ></iframe>
     <div v-else-if="isImageResponse" class="traffic-response-render-empty">
       图片响应为空，无法预览。
@@ -29,6 +29,7 @@ import {
   isImageResponseContentType,
   normalizeResponseContentType,
 } from './trafficResponsePreviewSupport'
+import { buildSandboxedHtmlDocument } from '@/utils/sandboxedHtmlDocument'
 
 const props = defineProps<{
   body: string
@@ -38,6 +39,7 @@ const props = defineProps<{
 const normalizedContentType = computed(() => normalizeResponseContentType(props.contentType || ''))
 const isImageResponse = computed(() => isImageResponseContentType(normalizedContentType.value))
 const imagePreviewSrc = computed(() => buildImagePreviewSrc(props.body || '', normalizedContentType.value))
+const previewDocument = computed(() => buildSandboxedHtmlDocument(props.body || ''))
 const previewAlt = computed(() => normalizedContentType.value || 'response preview image')
 </script>
 

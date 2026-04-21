@@ -7,12 +7,8 @@ export default {
   tasks: '任务',
   noTasks: '暂无任务',
   tasksWillAppearHere: 'AI 在执行过程中拆解出的任务会显示在这里。',
-  agentTaskPlannedTitle: '已建立执行任务',
-  agentTaskCreatedTitle: '已新增任务',
-  agentTaskStartedTitle: '开始处理任务',
-  agentTaskCompletedTitle: '已完成任务',
-  agentTaskListReadTitle: '已读取任务列表',
-  agentTaskUpdatedTitle: '任务已更新',
+  taskMetaSourceLabel: '来源',
+  taskMetaReasonLabel: '原因',
   terminalPanelOpen: '终端面板已打开',
   viewTerminal: '查看交互式终端',
   terminal: '终端',
@@ -35,6 +31,16 @@ export default {
   failedToCreateConversation: '创建会话失败',
   failedToGetConversationTitle: '获取会话标题失败',
   failedToUpdateConversationTitle: '更新会话标题失败',
+  openWorkConfig: '打开工作配置',
+  followDefaultModel: '跟随默认模型',
+  searchModelsOrProviders: '搜索模型或提供商...',
+  noMatchingModels: '没有匹配的模型',
+  loadingAssistantModels: '正在加载模型列表…',
+  visionCapabilitySupportedLabel: 'Vision',
+  visionCapabilityUnsupportedLabel: 'No Vision',
+  visionCapabilityUnknownLabel: 'Unknown',
+  workConfigVisionHint:
+    '覆盖当前会话的根助手模型。[Vision] 可直接看图，[No Vision] 已确认不支持图片，[Unknown] 表示尚未确认。',
   executionOutcomeSucceeded: '成功',
   executionOutcomeFailed: '失败',
   executionOutcomeCancelled: '已取消',
@@ -118,6 +124,7 @@ export default {
   resendingMessage: '重新发送消息',
   messageNotFound: '消息未找到',
   cannotResendWhileExecuting: '执行中不能重新发送',
+  loadingConversation: '正在加载历史对话...',
   loadingConversationHistory: '加载会话历史',
   receivedMessages: '收到消息',
   loadedMessagesFromConversation: '从会话加载消息',
@@ -159,6 +166,7 @@ export default {
   manualSelection: '手动选择',
   allTools: '全部工具（测试用）',
   maxTools: '最大工具数量',
+  maxToolsHint: '每轮对话最多可使用的工具数量，最小为 1',
   selectTools: '选择工具',
   toolManagement: '工具管理',
   searchToolNamesOrDescriptions: '搜索工具名称或描述...',
@@ -166,7 +174,7 @@ export default {
   plugins: '插件',
   pluginCategory: {
     category: '插件',
-    referToAi: '引用到AI助手'
+    referToAi: '引用到AI助手',
   },
   autoSelect: '自动选择',
   alwaysEnabled: '始终启用',
@@ -206,24 +214,24 @@ export default {
   tour: {
     welcome: {
       title: '欢迎使用 AI Agent',
-      description: '这是您的智能助手，可以帮助您完成各种安全测试任务。'
+      description: '这是您的智能助手，可以帮助您完成各种安全测试任务。',
     },
     conversationList: {
       title: '会话列表',
-      description: '点击这里可以查看和切换不同的会话，每个会话都保持独立的上下文。'
+      description: '点击这里可以查看和切换不同的会话，每个会话都保持独立的上下文。',
     },
     newConversation: {
       title: '新建会话',
-      description: '创建一个新的会话，开始全新的对话。'
+      description: '创建一个新的会话，开始全新的对话。',
     },
     messageArea: {
       title: '消息区域',
-      description: '这里显示您与 AI 的对话历史，支持代码高亮和 Markdown 渲染。'
+      description: '这里显示您与 AI 的对话历史，支持代码高亮和 Markdown 渲染。',
     },
     inputArea: {
       title: '输入区域',
-      description: '在这里输入您的问题或指令，AI 会根据您的需求执行相应的任务。'
-    }
+      description: '在这里输入您的问题或指令，AI 会根据您的需求执行相应的任务。',
+    },
   },
 
   // Skills
@@ -294,7 +302,8 @@ export default {
   teamWorkspaceTabAgents: '成员',
   teamWorkspaceLoading: '团队任务板加载中...',
   teamWorkspaceNoTasks: '当前没有任务。可以先创建任务，或等待规划结果写入任务板。',
-  teamWorkspaceActionGuide: '优先处理“当前可执行”的任务；完成后立即更新结果，若无法继续推进，请明确写出依赖或阻塞原因。',
+  teamWorkspaceActionGuide:
+    '优先处理“当前可执行”的任务；完成后立即更新结果，若无法继续推进，请明确写出依赖或阻塞原因。',
   teamWorkspaceMessageScope: '消息视图',
   teamWorkspaceGlobalView: '全局',
   teamWorkspaceClearTaskSelection: '查看全部',
@@ -319,7 +328,8 @@ export default {
   teamWorkspaceNoBlackboardEntries: '当前没有共享白板记录。',
   teamWorkspaceNoAgents: '当前没有团队成员。',
   teamWorkspaceNoResponsibility: '未设置职责',
-  teamWorkspaceEnabledMessage: '团队工作台已启用。可在任务板、收件箱、共享白板和成员视图中查看协作状态。',
+  teamWorkspaceEnabledMessage:
+    '团队工作台已启用。可在任务板、收件箱、共享白板和成员视图中查看协作状态。',
   teamTaskOwnerLabel: '负责人',
   teamTaskCurrentHandlerLabel: '当前处理',
   teamTaskDependencyLabel: '依赖任务',
@@ -328,7 +338,6 @@ export default {
   teamTaskNoDependencies: '无',
   teamTaskAcceptanceCriteriaLabel: '验收标准',
   teamTaskAttemptsLabel: '尝试次数',
-  teamTaskUpdatedAtLabel: '最近更新',
   teamTaskSelectedHint: '已切换到该任务负责人的消息视图',
   teamTaskSelectHint: '点击切换到该任务相关消息',
   teamTaskActionClaim: '认领任务',
@@ -524,7 +533,8 @@ export default {
   switchOn: '开',
   switchOff: '关',
   skillDerivedFromCandidate: '来源于记忆候选 {id}',
-  refineCandidateBrief: '将这个 {memoryKind} 草稿打磨成可生产复用的技能。保留已验证的核心流程，优化结构，补充清晰的验证步骤，并保留审阅门控元数据。',
+  refineCandidateBrief:
+    '将这个 {memoryKind} 草稿打磨成可生产复用的技能。保留已验证的核心流程，优化结构，补充清晰的验证步骤，并保留审阅门控元数据。',
   promoteCandidateConfirm: '确定将候选“{title}”提升为正式 Skill 吗？',
   promoteCandidateFailed: '提升候选 Skill 失败：{error}',
   rejectionCategoryDuplicateNoise: '重复噪声',
@@ -537,9 +547,11 @@ export default {
   reviewCandidateConfirm: '确定要{actionLabel}候选“{title}”{actionSuffix}吗？',
   reviewArchivedFromGate: '已从 SkillsManager 审阅门归档',
   reviewCandidateFailed: '审阅候选 Skill 失败：{error}',
-  extendSuppressionRuleConfirm: '确定将抑制规则“{ruleId}”延长 {days} 天吗？相似的低价值记忆会被更久地抑制。',
+  extendSuppressionRuleConfirm:
+    '确定将抑制规则“{ruleId}”延长 {days} 天吗？相似的低价值记忆会被更久地抑制。',
   extendSuppressionRuleFailed: '延长抑制规则失败：{error}',
-  expireSuppressionRuleConfirm: '确定让抑制规则“{ruleId}”立即过期吗？下次刷新后将被移除，相似记忆可能重新成为候选。',
+  expireSuppressionRuleConfirm:
+    '确定让抑制规则“{ruleId}”立即过期吗？下次刷新后将被移除，相似记忆可能重新成为候选。',
   expireSuppressionRuleFailed: '让抑制规则过期失败：{error}',
   removeSuppressionRuleConfirm: '确定移除抑制规则“{ruleId}”吗？未来相似记忆可能重新成为候选。',
   deleteSuppressionRuleFailed: '删除抑制规则失败：{error}',
@@ -585,6 +597,11 @@ export default {
   inputParameters: '输入参数',
   executionResult: '执行结果',
   toolCallId: '工具调用 ID',
+  toolRuntime: '运行环境',
+  toolRuntimeHost: '宿主机',
+  toolRuntimeDocker: 'Docker',
+  toolRuntimeWorkingDir: '工作目录',
+  toolRuntimeContainer: '容器',
 
   // Sliding window memory
   segmentSummary: '记忆段落压缩',
@@ -646,5 +663,5 @@ export default {
     dockerNotAvailable: 'Docker 不可用，无法进行安全分析',
     selectProcessingMode: '请选择处理方式',
     selectModeFirst: '请先选择文档处理方式',
-  }
+  },
 }

@@ -339,10 +339,45 @@ watch(aiPluginType, (nextType) => {
 // Computed Properties
 const categories = computed(() => [
   { value: 'all', label: t('plugins.categories.all', '全部'), icon: 'fas fa-th' },
+  { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件'), icon: 'fas fa-shield-alt' },
+  { value: 'agents', label: t('plugins.categories.agents', 'Agent插件'), icon: 'fas fa-robot' },
+  { value: 'intruder', label: t('plugins.categories.intruder', 'Intruder插件'), icon: 'fas fa-crosshairs' },
 ])
 
+const resolvePluginMainCategory = (plugin: PluginRecord): string => {
+  const mainCategory = (plugin.metadata.main_category || '').trim()
+  if (mainCategory === 'traffic' || mainCategory === 'agent' || mainCategory === 'intruder') {
+    return mainCategory
+  }
+
+  const category = (plugin.metadata.category || '').trim()
+  if (trafficCategories.includes(category) || category === 'traffic') {
+    return 'traffic'
+  }
+  if (intruderCategories.includes(category)) {
+    return 'intruder'
+  }
+  if (agentsCategories.includes(category)) {
+    return 'agent'
+  }
+
+  return mainCategory
+}
+
+const normalizePluginRecord = (plugin: PluginRecord): PluginRecord => ({
+  ...plugin,
+  metadata: {
+    ...plugin.metadata,
+    main_category: resolvePluginMainCategory(plugin),
+  },
+})
+
 const availableMainCategories = computed(() => {
-  const available = new Set(plugins.value.map(plugin => plugin.metadata.main_category).filter(Boolean))
+  const available = new Set(
+    plugins.value
+      .map(plugin => resolvePluginMainCategory(plugin))
+      .filter(Boolean)
+  )
   return mainCategories
     .filter(category => available.has(category.value))
     .map(category => ({
@@ -353,31 +388,29 @@ const availableMainCategories = computed(() => {
 
 const matchesMainCategory = (plugin: PluginRecord, mainCategory: string): boolean => {
   if (!mainCategory) return true
-  if (plugin.metadata.main_category === mainCategory) return true
+  return resolvePluginMainCategory(plugin) === mainCategory
+}
 
-  if (mainCategory === 'traffic') {
-    return trafficCategories.includes(plugin.metadata.category) || plugin.metadata.category === 'traffic'
-  }
-
-  if (mainCategory === 'agent') {
-    return agentsCategories.includes(plugin.metadata.category)
-  }
-
-  if (mainCategory === 'intruder') {
-    return intruderCategories.includes(plugin.metadata.category)
-  }
-
-  return false
+const matchesSelectedCategory = (plugin: PluginRecord, category: string): boolean => {
+  if (!category || category === 'all') return true
+  if (category === 'traffic') return resolvePluginMainCategory(plugin) === 'traffic'
+  if (category === 'agents') return resolvePluginMainCategory(plugin) === 'agent'
+  if (category === 'intruder') return resolvePluginMainCategory(plugin) === 'intruder'
+  return plugin.metadata.category === category
 }
 
 const baseFilteredPlugins = computed(() => {
   let filtered = plugins.value
 
-  if (pluginViewMode.value === 'favorited') {
+  if (selectedCategory.value !== 'all') {
+    filtered = filtered.filter(plugin => matchesSelectedCategory(plugin, selectedCategory.value))
+  }
+
+  if (selectedCategory.value === 'all' && pluginViewMode.value === 'favorited') {
     filtered = filtered.filter(p => isPluginFavorited(p))
   }
 
-  if (selectedMainCategory.value) {
+  if (selectedCategory.value === 'all' && selectedMainCategory.value) {
     filtered = filtered.filter(p => matchesMainCategory(p, selectedMainCategory.value))
   }
 
@@ -460,14 +493,12 @@ const installedPlugins = computed(() => plugins.value.map(p => ({
 const isPluginFavorited = (plugin: PluginRecord): boolean => plugin.is_favorited || false
 
 const isTrafficPluginType = (plugin: PluginRecord): boolean => {
-  if (plugin.metadata.main_category === 'traffic') return true
-  if (trafficCategories.includes(plugin.metadata.category)) return true
-  return plugin.metadata.category === 'traffic'
+  return resolvePluginMainCategory(plugin) === 'traffic'
 }
 
 const isAgentPluginType = (plugin: PluginRecord): boolean => {
-  if (['agent', 'intruder'].includes(plugin.metadata.main_category)) return true
-  return agentsCategories.includes(plugin.metadata.category)
+  const mainCategory = resolvePluginMainCategory(plugin)
+  return mainCategory === 'agent' || mainCategory === 'intruder'
 }
 
 const getStatusText = (status: string): string => {
@@ -527,7 +558,7 @@ const getCategoryIcon = (category: string): string => {
 
 const getCategoryCount = (category: string): number => {
   if (category === 'all') return plugins.value.length
-  return plugins.value.filter(p => p.metadata.category === category).length
+  return plugins.value.filter(plugin => matchesSelectedCategory(plugin, category)).length
 }
 
 const getReviewStatusText = (status: string): string => {
@@ -566,7 +597,7 @@ const refreshPlugins = async () => {
   try {
     const response = await invoke<CommandResponse<PluginRecord[]>>('list_plugins')
     if (response.success && response.data) {
-      plugins.value = response.data
+      plugins.value = response.data.map(normalizePluginRecord)
       syncSelectedPluginIds()
     }
   } catch (error) {
@@ -1572,6 +1603,8 @@ watch(reviewEditMode, (newValue) => {
 watch(selectedCategory, async (newValue) => {
   pluginCurrentPage.value = 1
   selectedPluginIds.value = []
+  selectedMainCategory.value = ''
+  selectedSubCategory.value = ''
   if (newValue === 'store') {
     await refreshPluginStore(true)
   }
