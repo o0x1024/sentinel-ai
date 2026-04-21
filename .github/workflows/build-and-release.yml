@@ -342,47 +342,55 @@ jobs:
           ls -la "$UPLOAD_DIR"
           gh release upload "${{ github.ref_name }}" "$UPLOAD_DIR"/* --clobber
 
-  release:
-    name: Publish Update Manifests
-    needs:
-      - create_release
-      - build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Download Release Signatures
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
-        run: |
-          set -euxo pipefail
-          UPLOAD_DIR=$(mktemp -d)
-          echo "UPLOAD_DIR=$UPLOAD_DIR" >> $GITHUB_ENV
-          gh release download "${{ github.ref_name }}" --dir "$UPLOAD_DIR" --pattern "*.sig"
-
-      - name: Generate and Upload Update Manifests
+      - name: Publish Update Manifests
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-x86_64'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_NOTES: "See the release notes for details."
           npm_package_version: ${{ needs.create_release.outputs.version }}
+        shell: bash
         run: |
           set -euxo pipefail
+
+          VERSION="${{ needs.create_release.outputs.version }}"
+          UPLOAD_DIR=$(mktemp -d)
+          EXPECTED_SIGS=(
+            "sentinel-ai-${VERSION}-aarch64.app.tar.gz.sig"
+            "sentinel-ai-${VERSION}-x64-setup.nsis.zip.sig"
+          )
+          DEADLINE=$((SECONDS + 900))
+
+          while :; do
+            find "$UPLOAD_DIR" -mindepth 1 -maxdepth 1 -type f -delete || true
+            gh release download "${{ github.ref_name }}" --dir "$UPLOAD_DIR" --pattern "*.sig" || true
+
+            MISSING=0
+            for SIG in "${EXPECTED_SIGS[@]}"; do
+              if [ ! -f "$UPLOAD_DIR/$SIG" ]; then
+                MISSING=1
+                echo "Waiting for release signature: $SIG"
+              fi
+            done
+
+            if [ "$MISSING" -eq 0 ]; then
+              break
+            fi
+
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              echo "::error::Timed out waiting for all updater signature files to be uploaded."
+              ls -la "$UPLOAD_DIR" || true
+              exit 1
+            fi
+
+            sleep 15
+          done
 
           ls -la "$UPLOAD_DIR"
           find "$UPLOAD_DIR" -name "*.sig" -ls
 
           chmod +x scripts/generate-update-manifest.cjs
-          node scripts/generate-update-manifest.cjs
+          UPLOAD_DIR="$UPLOAD_DIR" node scripts/generate-update-manifest.cjs
 
           if [ -d "dist/update-manifests" ] && [ -n "$(find dist/update-manifests -maxdepth 1 -name '*.json' -print -quit)" ]; then
             gh release upload "${{ github.ref_name }}" dist/update-manifests/*.json --clobber
