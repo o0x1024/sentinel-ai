@@ -130,11 +130,8 @@ fn default_target_asset_types_for_plugin(plugin_id: &str) -> Vec<&'static str> {
         | "js_analyzer"
         | "js_link_finder"
         | "risk_scanner" => vec!["web"],
-        "subdomain_enumerator"
-        | "dns_resolver"
-        | "subdomain_brute"
-        | "cert_monitor"
-        | "ssl_scanner" => vec!["domain", "service"],
+        "subdomain_enumerator" | "dns_resolver" | "subdomain_brute" => vec!["domain"],
+        "cert_monitor" | "ssl_scanner" => vec!["domain", "service"],
         "port_monitor" => vec!["ip"],
         "service_monitor" | "service_probe" => vec!["service"],
         "cidr_mapper" => vec!["ip"],
@@ -359,8 +356,35 @@ impl ChangeMonitorConfig {
             self.ip_plugins = migrated_ip_plugins;
         }
 
+        for plugin in &mut self.dns_plugins {
+            let normalized_plugin_id = plugin
+                .plugin_id
+                .strip_prefix("plugin__")
+                .unwrap_or(&plugin.plugin_id);
+            if !matches!(
+                normalized_plugin_id,
+                "subdomain_enumerator" | "subdomain_brute"
+            ) {
+                continue;
+            }
+
+            plugin.target_asset_types = vec!["domain".to_string()];
+        }
+
         if !self.ip_plugins.is_empty() {
             self.enable_ip_monitoring = true;
+        }
+
+        for plugin in &mut self.ip_plugins {
+            let normalized_plugin_id = plugin
+                .plugin_id
+                .strip_prefix("plugin__")
+                .unwrap_or(&plugin.plugin_id);
+            if normalized_plugin_id != "dns_resolver" {
+                continue;
+            }
+
+            plugin.target_asset_types = vec!["domain".to_string()];
         }
 
         let mut migrated_service_plugins = Vec::new();

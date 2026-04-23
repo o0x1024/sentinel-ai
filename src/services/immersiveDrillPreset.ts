@@ -4,7 +4,6 @@ export const immersiveDrillTrafficTabs = [
   'repeater',
   'comparer',
   'intruder',
-  'proxyconfig',
 ] as const
 
 export const immersiveDrillSecurityTabs = ['workbench', 'vulnerabilities'] as const

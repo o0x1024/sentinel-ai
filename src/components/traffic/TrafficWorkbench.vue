@@ -92,6 +92,12 @@
             class="absolute inset-0 h-full overflow-auto"
             @sendToRepeater="handleSendToRepeaterFromComparer"
           />
+          <TrafficOastPanel
+            v-show="activeWorkbenchTool === 'oast'"
+            class="absolute inset-0 h-full overflow-auto"
+            @openConfig="openProxySettingsDrawer"
+            @openSourceRequest="openHistoryRequestFromOast"
+          />
         </div>
       </section>
 
@@ -140,40 +146,46 @@
         />
       </section>
 
-      <section
-        v-show="proxySettingsOpen"
-        class="settings-drawer workbench-solid-surface absolute bottom-4 right-4 top-4 z-[32] overflow-hidden rounded-[28px] border border-base-300/80 shadow-[0_28px_72px_rgba(15,23,42,0.16)]"
-        :style="settingsDrawerStyle"
+      <AppModal
+        :open="proxySettingsOpen"
+        box-class="traffic-proxy-config-modal-box"
+        resizable
+        resize-storage-key="traffic-proxy-config-modal-size"
+        :min-width="1040"
+        :min-height="720"
+        @close="closeProxySettingsDrawer"
       >
-        <div
-          class="drawer-width-resizer absolute bottom-0 left-0 top-0 z-[2]"
-          @mousedown="startDrawerWidthResize('settings', $event)"
-        ></div>
-        <div class="border-b border-base-300/70 px-4 py-3">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/80">
-                Proxy Settings
-              </p>
-              <h3 class="mt-1 text-lg font-semibold text-base-content">
-                代理设置
-              </h3>
-              <p class="mt-1 text-sm text-base-content/65">
-                监听器、作用域、响应拦截和规则编辑收进这里，不再打断主工作流。
-              </p>
+        <div class="flex h-full min-h-0 flex-col overflow-hidden">
+          <div class="border-b border-base-300/70 px-6 py-4">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/80">
+                  Proxy Settings
+                </p>
+                <h3 class="mt-1 text-xl font-semibold text-base-content">
+                  代理设置
+                </h3>
+              </div>
+              <button
+                type="button"
+                class="btn btn-sm btn-ghost rounded-2xl"
+                @click="closeProxySettingsDrawer"
+              >
+                <i class="fas fa-times"></i>
+              </button>
             </div>
-            <button type="button" class="btn btn-sm btn-ghost rounded-2xl" @click="closeProxySettingsDrawer">
-              <i class="fas fa-times"></i>
-            </button>
+          </div>
+
+          <div class="min-h-0 flex-1 bg-base-200/35 p-4">
+            <ProxyConfiguration
+              v-if="proxySettingsOpen"
+              ref="proxyConfigRef"
+              class="h-full min-h-0"
+              @filterRuleAdded="handleFilterRuleAdded"
+            />
           </div>
         </div>
-
-        <ProxyConfiguration
-          ref="proxyConfigRef"
-          class="h-full overflow-auto px-4 py-4"
-          @filterRuleAdded="handleFilterRuleAdded"
-        />
-      </section>
+      </AppModal>
 
       <TrafficWorkbenchBasketDrawer
         :open="basketOpen"
@@ -189,6 +201,19 @@
       />
     </div>
 
+    <TrafficActiveProbePanel
+      :shell-style="activeProbeShellStyle"
+      :entries="visibleActiveProbeEntries"
+      :queued-count="activeProbeQueuedCount"
+      :collapsed="activeProbeCollapsed"
+      :preview-request-map="activeProbePreviewRequests"
+      :loading-traffic-request-id="activeProbePreviewLoadingId"
+      @toggle-collapsed="toggleActiveProbeCollapsed"
+      @ensure-preview="ensureActiveProbePreview"
+      @open-history="openHistoryRequestById"
+      @open-history-by-traffic-request-id="openHistoryRequestByTrafficRequestId"
+      @preview-pinned-change="setActiveProbePinnedRequestId"
+    />
     <div v-if="!immersiveDrillModeEnabled" class="fixed bottom-6 right-6 z-40 flex flex-col gap-3">
       <button
         type="button"
@@ -258,6 +283,8 @@
 
 <script setup lang="ts">
 import { nextTick, computed, onMounted, onUnmounted, ref, watchEffect } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import ProxyRepeater from './ProxyRepeater.vue'
 import ProxyIntruder from './ProxyIntruder.vue'
@@ -265,8 +292,13 @@ import ProxyComparer from './ProxyComparer.vue'
 import TrafficControl from './ProxyIntercept.vue'
 import ProxyConfiguration from './ProxyConfiguration.vue'
 import TrafficHistoryWorkbench from './TrafficHistoryWorkbench.vue'
+import TrafficOastPanel from './TrafficOastPanel.vue'
+import TrafficActiveProbePanel from './TrafficActiveProbePanel.vue'
 import TrafficWorkbenchBasketDrawer from './TrafficWorkbenchBasketDrawer.vue'
+import AppModal from '@/components/AppModal.vue'
+import { useToast } from '@/composables/useToast'
 import type { HttpExchangeRequest } from './http/model'
+import type { ProxyRequest } from './proxyHistoryTypes'
 import type { TrafficContextCandidateEvidenceSelection } from './trafficContextCandidateTypes'
 import type {
   TrafficComparerDraftRequestInput,
@@ -282,27 +314,40 @@ import type {
 import { useTrafficWorkbenchBasket } from './useTrafficWorkbenchBasket'
 import { useTrafficWorkbenchSessions } from './useTrafficWorkbenchSessions'
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
+import { closeTopmostImmersiveTool } from '@/services/immersiveToolCoordinator'
 import {
   closeImmersiveTrafficWorkbench,
   openImmersiveTrafficWorkbenchTool,
   openImmersiveTrafficBasket,
   openImmersiveTrafficProxySettings,
   resetImmersiveTrafficDockState,
+  showImmersiveTrafficHistory,
   syncImmersiveTrafficDockState,
   toggleImmersiveTrafficBasket,
   toggleImmersiveTrafficInterceptDrawer,
   toggleImmersiveTrafficProxySettings,
   useImmersiveTrafficDockState,
 } from './immersiveTrafficDockState'
+import type { ActiveProbeEntry, ActiveProbeEventPayload } from './trafficActiveProbeTypes'
 interface FilterRule {
   matchType: string
   condition: string
   relationship?: string
 }
 
+interface ScanFindingEventPayload {
+  vuln_id: string
+  vuln_type: string
+  severity: string
+  url: string
+  summary: string
+  timestamp: string
+}
+
 type WorkbenchTool = TrafficWorkbenchToolSession['tool']
 
 const { t } = useI18n()
+const toast = useToast()
 
 const proxyHistoryRef = ref<InstanceType<typeof TrafficHistoryWorkbench> | null>(null)
 const proxyConfigRef = ref<InstanceType<typeof ProxyConfiguration> | null>(null)
@@ -314,11 +359,15 @@ const workspaceStageRef = ref<HTMLElement | null>(null)
 const WORKBENCH_HEIGHT_STORAGE_KEY = 'sentinel:traffic-workbench-height:v1'
 const INTERCEPT_DRAWER_WIDTH_STORAGE_KEY = 'sentinel:traffic-workbench-intercept-width:v1'
 const SETTINGS_DRAWER_WIDTH_STORAGE_KEY = 'sentinel:traffic-workbench-settings-width:v1'
+const ACTIVE_PROBE_COLLAPSED_STORAGE_KEY = 'sentinel:traffic-active-probe-collapsed:v1'
 const WORKBENCH_MIN_HEIGHT = 300
 const INTERCEPT_DRAWER_DEFAULT_WIDTH = 416
 const INTERCEPT_DRAWER_MIN_WIDTH = 340
 const SETTINGS_DRAWER_DEFAULT_WIDTH = 544
 const SETTINGS_DRAWER_MIN_WIDTH = 420
+const ACTIVE_PROBE_COMPLETED_TTL_MS = 15000
+const ACTIVE_PROBE_RUNNING_TTL_MS = 120000
+const ACTIVE_PROBE_MAX_ITEMS = 6
 
 const pendingRepeaterRequest = ref<HttpExchangeRequest | undefined>(undefined)
 const pendingIntruderRequest = ref<HttpExchangeRequest | undefined>(undefined)
@@ -346,6 +395,12 @@ const drawerWidthResizeState = ref<{
 
 const { basketItems, addRequest, removeItem, clear } = useTrafficWorkbenchBasket()
 const { sessions, markSession } = useTrafficWorkbenchSessions()
+const activeProbeEntries = ref<ActiveProbeEntry[]>([])
+const activeProbePreviewRequests = ref<Record<string, ProxyRequest | undefined>>({})
+const activeProbePreviewLoadingId = ref<string | null>(null)
+const activeProbeCollapsed = ref(loadStoredBoolean(ACTIVE_PROBE_COLLAPSED_STORAGE_KEY, false))
+const activeProbePinnedRequestId = ref<string | null>(null)
+const findingToastIds = new Set<string>()
 
 const workbenchMetaMap: Record<
   WorkbenchTool,
@@ -365,6 +420,11 @@ const workbenchMetaMap: Record<
     title: t('trafficAnalysis.tabs.comparer', '对比器'),
     shortTitle: t('trafficAnalysis.tabs.comparer', '对比器'),
     description: '只在确认差异时临时展开，看完后立即回到主工作流。',
+  },
+  oast: {
+    title: t('trafficAnalysis.tabs.oast', 'OAST'),
+    shortTitle: t('trafficAnalysis.tabs.oast', 'OAST'),
+    description: '集中生成和跟踪 OAST token，不再分散在各个测试工具里。',
   },
 }
 
@@ -395,6 +455,13 @@ const toolChips = computed(() => [
     icon: 'fas fa-not-equal',
     count: sessions.value.comparer.count,
   },
+  {
+    tool: 'oast' as const,
+    label: t('trafficAnalysis.tabs.oast', 'OAST'),
+    shortLabel: t('trafficAnalysis.tabs.oast', 'OAST'),
+    icon: 'fas fa-satellite-dish',
+    count: sessions.value.oast.count,
+  },
 ])
 
 const workbenchDrawerStyle = computed(() => ({
@@ -406,6 +473,215 @@ const interceptDrawerStyle = computed(() =>
 const settingsDrawerStyle = computed(() =>
   viewportWidth.value <= 1024 ? {} : { width: `${settingsDrawerWidth.value}px` },
 )
+const activeProbeShellStyle = computed(() =>
+  immersiveDrillModeEnabled.value ? { right: '1.5rem', bottom: '1.5rem' } : { right: '1.5rem', bottom: '23rem' },
+)
+const activeProbeQueuedCount = computed(
+  () =>
+    activeProbeEntries.value.filter(
+      entry => ['queued', 'scheduled'].includes(entry.phase),
+    ).length,
+)
+const visibleActiveProbeEntries = computed(() => activeProbeEntries.value.slice(0, ACTIVE_PROBE_MAX_ITEMS))
+
+function normalizeActiveProbePayload(payload: unknown): ActiveProbeEventPayload | null {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const candidate = payload as Record<string, unknown>
+  const requestId = typeof candidate.request_id === 'string' ? candidate.request_id.trim() : ''
+  const phase = typeof candidate.phase === 'string' ? candidate.phase.trim() : ''
+  const url = typeof candidate.url === 'string' ? candidate.url.trim() : ''
+  if (!requestId || !phase || !url) {
+    return null
+  }
+
+  return {
+    plugin_id: typeof candidate.plugin_id === 'string' ? candidate.plugin_id : null,
+    traffic_request_id:
+      typeof candidate.traffic_request_id === 'string' ? candidate.traffic_request_id : null,
+    request_id: requestId,
+    phase,
+    method: typeof candidate.method === 'string' ? candidate.method : 'GET',
+    url,
+    probe_label: typeof candidate.probe_label === 'string' ? candidate.probe_label : null,
+    target_name: typeof candidate.target_name === 'string' ? candidate.target_name : null,
+    target_path: typeof candidate.target_path === 'string' ? candidate.target_path : null,
+    target_location: typeof candidate.target_location === 'string' ? candidate.target_location : null,
+    probe_value: typeof candidate.probe_value === 'string' ? candidate.probe_value : null,
+    technique: typeof candidate.technique === 'string' ? candidate.technique : null,
+    probe_class: typeof candidate.probe_class === 'string' ? candidate.probe_class : null,
+    probe_priority: typeof candidate.probe_priority === 'number' ? candidate.probe_priority : null,
+    cooldown_key: typeof candidate.cooldown_key === 'string' ? candidate.cooldown_key : null,
+    cooldown_wait_ms:
+      typeof candidate.cooldown_wait_ms === 'number' ? candidate.cooldown_wait_ms : null,
+    jitter_wait_ms: typeof candidate.jitter_wait_ms === 'number' ? candidate.jitter_wait_ms : null,
+    total_wait_ms: typeof candidate.total_wait_ms === 'number' ? candidate.total_wait_ms : null,
+    adaptive_penalty_ms:
+      typeof candidate.adaptive_penalty_ms === 'number' ? candidate.adaptive_penalty_ms : null,
+    status: typeof candidate.status === 'number' ? candidate.status : null,
+    error: typeof candidate.error === 'string' ? candidate.error : null,
+    reason: typeof candidate.reason === 'string' ? candidate.reason : null,
+    target_count: typeof candidate.target_count === 'number' ? candidate.target_count : null,
+    active_slots: typeof candidate.active_slots === 'number' ? candidate.active_slots : null,
+    max_concurrent_per_host:
+      typeof candidate.max_concurrent_per_host === 'number'
+        ? candidate.max_concurrent_per_host
+        : null,
+    queue_depth: typeof candidate.queue_depth === 'number' ? candidate.queue_depth : null,
+    response_elapsed_ms:
+      typeof candidate.response_elapsed_ms === 'number' ? candidate.response_elapsed_ms : null,
+    timestamp: typeof candidate.timestamp === 'string' ? candidate.timestamp : null,
+  }
+}
+
+function normalizeScanFindingPayload(payload: unknown): ScanFindingEventPayload | null {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const candidate = payload as Record<string, unknown>
+  const vulnId = typeof candidate.vuln_id === 'string' ? candidate.vuln_id.trim() : ''
+  const summary = typeof candidate.summary === 'string' ? candidate.summary.trim() : ''
+  const severity = typeof candidate.severity === 'string' ? candidate.severity.trim().toLowerCase() : ''
+  const url = typeof candidate.url === 'string' ? candidate.url.trim() : ''
+  const vulnType = typeof candidate.vuln_type === 'string' ? candidate.vuln_type.trim() : ''
+  const timestamp = typeof candidate.timestamp === 'string' ? candidate.timestamp : ''
+
+  if (!vulnId || !summary || !severity || !url) {
+    return null
+  }
+
+  return {
+    vuln_id: vulnId,
+    vuln_type: vulnType,
+    severity,
+    url,
+    summary,
+    timestamp,
+  }
+}
+
+function findingToastType(severity: string): 'error' | 'warning' | 'info' {
+  if (severity === 'critical' || severity === 'high') {
+    return 'error'
+  }
+  if (severity === 'medium') {
+    return 'warning'
+  }
+  return 'info'
+}
+
+function emitImmersiveFindingToast(finding: ScanFindingEventPayload) {
+  if (!immersiveDrillModeEnabled.value) {
+    return
+  }
+
+  if (findingToastIds.has(finding.vuln_id)) {
+    return
+  }
+  findingToastIds.add(finding.vuln_id)
+
+  const host = (() => {
+    try {
+      return new URL(finding.url).host
+    } catch {
+      return finding.url
+    }
+  })()
+
+  toast.show({
+    type: findingToastType(finding.severity),
+    duration: 6000,
+    message: `[${finding.severity.toUpperCase()}] 发现漏洞: ${finding.summary} @ ${host}`,
+  })
+}
+
+function pruneActiveProbeEntries() {
+  const now = Date.now()
+  activeProbeEntries.value = activeProbeEntries.value.filter(entry => {
+    if (entry.request_id === activeProbePinnedRequestId.value) {
+      return true
+    }
+
+    const ttl =
+      entry.phase === 'completed'
+      || entry.phase === 'failed'
+      || entry.phase === 'skipped'
+      || entry.phase === 'plugin_completed'
+      || entry.phase === 'plugin_failed'
+        ? ACTIVE_PROBE_COMPLETED_TTL_MS
+        : ACTIVE_PROBE_RUNNING_TTL_MS
+    return now - entry.lastUpdatedAt < ttl
+  })
+}
+
+function rememberActiveProbePreviewRequest(request: ProxyRequest) {
+  if (!request.traffic_request_id) {
+    return
+  }
+
+  activeProbePreviewRequests.value = {
+    ...activeProbePreviewRequests.value,
+    [request.traffic_request_id]: request,
+  }
+}
+
+function upsertActiveProbeEntry(payload: ActiveProbeEventPayload) {
+  const now = Date.now()
+  const nextEntry: ActiveProbeEntry = {
+    plugin_id: payload.plugin_id ?? null,
+    traffic_request_id: payload.traffic_request_id ?? null,
+    request_id: payload.request_id,
+    phase: payload.phase,
+    method: payload.method || 'GET',
+    url: payload.url || '',
+    probe_label: payload.probe_label ?? null,
+    target_name: payload.target_name ?? null,
+    target_path: payload.target_path ?? null,
+    target_location: payload.target_location ?? null,
+    probe_value: payload.probe_value ?? null,
+    technique: payload.technique ?? null,
+    probe_class: payload.probe_class ?? null,
+    probe_priority: payload.probe_priority ?? null,
+    cooldown_key: payload.cooldown_key ?? null,
+    cooldown_wait_ms: payload.cooldown_wait_ms ?? null,
+    jitter_wait_ms: payload.jitter_wait_ms ?? null,
+    total_wait_ms: payload.total_wait_ms ?? null,
+    adaptive_penalty_ms: payload.adaptive_penalty_ms ?? null,
+    status: payload.status ?? null,
+    error: payload.error ?? null,
+    reason: payload.reason ?? null,
+    target_count: payload.target_count ?? null,
+    active_slots: payload.active_slots ?? null,
+    max_concurrent_per_host: payload.max_concurrent_per_host ?? null,
+    queue_depth: payload.queue_depth ?? null,
+    response_elapsed_ms: payload.response_elapsed_ms ?? null,
+    timestamp: payload.timestamp ?? null,
+    startedAt: now,
+    lastUpdatedAt: now,
+  }
+
+  const existingIndex = activeProbeEntries.value.findIndex(entry => entry.request_id === payload.request_id)
+  if (existingIndex >= 0) {
+    const existing = activeProbeEntries.value[existingIndex]
+    activeProbeEntries.value.splice(existingIndex, 1)
+    activeProbeEntries.value.unshift({
+      ...existing,
+      ...nextEntry,
+      startedAt: existing.startedAt,
+    })
+  } else {
+    activeProbeEntries.value.unshift(nextEntry)
+  }
+
+  if (activeProbeEntries.value.length > ACTIVE_PROBE_MAX_ITEMS) {
+    activeProbeEntries.value = activeProbeEntries.value.slice(0, ACTIVE_PROBE_MAX_ITEMS)
+  }
+
+  pruneActiveProbeEntries()
+}
 
 function buildSource(
   kind: TrafficWorkbenchSource['kind'],
@@ -449,6 +725,19 @@ function loadStoredDrawerWidth(storageKey: string, fallback: number) {
   return Number.isFinite(stored) ? stored : fallback
 }
 
+function loadStoredBoolean(storageKey: string, fallback: boolean) {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+
+  const stored = window.localStorage.getItem(storageKey)
+  if (stored === null) {
+    return fallback
+  }
+
+  return stored === 'true'
+}
+
 function clampWorkbenchHeight(height: number) {
   const stageHeight = workspaceStageRef.value?.offsetHeight ?? window.innerHeight
   const maxHeight = Math.max(WORKBENCH_MIN_HEIGHT, stageHeight - 24)
@@ -471,6 +760,10 @@ function persistDrawerWidth(drawer: 'intercept' | 'settings') {
     drawer === 'intercept' ? INTERCEPT_DRAWER_WIDTH_STORAGE_KEY : SETTINGS_DRAWER_WIDTH_STORAGE_KEY,
     String(drawer === 'intercept' ? interceptDrawerWidth.value : settingsDrawerWidth.value),
   )
+}
+
+function persistActiveProbeCollapsed() {
+  window.localStorage.setItem(ACTIVE_PROBE_COLLAPSED_STORAGE_KEY, String(activeProbeCollapsed.value))
 }
 
 function applyWorkbenchHeight(height: number) {
@@ -761,13 +1054,14 @@ async function openHistoryRequestFromBasket(requestId: number) {
   })
 }
 
-function handleAddFilterRule(rule: FilterRule) {
+async function handleAddFilterRule(rule: FilterRule) {
+  openImmersiveTrafficProxySettings()
+  await nextTick()
   proxyConfigRef.value?.addRequestFilterRule(
     rule.matchType,
     rule.condition,
     rule.relationship || 'matches',
   )
-  openImmersiveTrafficProxySettings()
 }
 
 function handleFilterRuleAdded(rule: FilterRule) {
@@ -803,6 +1097,17 @@ async function openHistoryRequest(payload: TrafficContextCandidateEvidenceSelect
   )
 }
 
+async function openHistoryRequestFromOast(requestId: number) {
+  closeWorkbench()
+  await nextTick()
+  await openHistoryRequest({
+    requestId,
+    pane: 'request',
+    matchedLocations: [],
+    searchTerms: [],
+  })
+}
+
 function closeInterceptDrawer() {
   interceptDrawerOpen.value = false
 }
@@ -831,6 +1136,118 @@ function toggleProxySettingsDrawer() {
   toggleImmersiveTrafficProxySettings()
 }
 
+function handleWindowKeydown(event: KeyboardEvent) {
+  if (!immersiveDrillModeEnabled.value) {
+    return
+  }
+
+  if (event.defaultPrevented || event.isComposing || event.repeat) {
+    return
+  }
+
+  if (event.key !== 'Escape') {
+    return
+  }
+
+  if (!closeTopmostImmersiveTool()) {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function toggleActiveProbeCollapsed() {
+  activeProbeCollapsed.value = !activeProbeCollapsed.value
+  persistActiveProbeCollapsed()
+}
+
+function setActiveProbePinnedRequestId(requestId: string | null) {
+  activeProbePinnedRequestId.value = requestId
+  if (!requestId) {
+    pruneActiveProbeEntries()
+  }
+}
+
+async function ensureActiveProbePreview(trafficRequestId: string) {
+  if (!trafficRequestId || activeProbePreviewRequests.value[trafficRequestId]) {
+    return
+  }
+
+  activeProbePreviewLoadingId.value = trafficRequestId
+  try {
+    const request = await loadActiveProbeRequestByTrafficRequestId(trafficRequestId)
+    if (!request) {
+      return
+    }
+    rememberActiveProbePreviewRequest(request)
+  } catch (error) {
+    console.error(`Failed to load active probe preview for ${trafficRequestId}:`, error)
+  } finally {
+    if (activeProbePreviewLoadingId.value === trafficRequestId) {
+      activeProbePreviewLoadingId.value = null
+    }
+  }
+}
+
+async function loadActiveProbeRequestByTrafficRequestId(trafficRequestId: string): Promise<ProxyRequest | null> {
+  const listResponse = await invoke<any>('list_proxy_requests', {
+    limit: 200,
+    offset: 0,
+  })
+
+  const summary = listResponse?.success
+    ? (listResponse.data as ProxyRequest[]).find(
+        request => request.traffic_request_id === trafficRequestId,
+      )
+    : null
+
+  if (!summary) {
+    return null
+  }
+
+  const detailResponse = await invoke<any>('get_proxy_request', { id: summary.id })
+  if (!detailResponse?.success || !detailResponse.data) {
+    return null
+  }
+
+  return detailResponse.data as ProxyRequest
+}
+
+async function openHistoryRequestByTrafficRequestId(trafficRequestId: string) {
+  if (!trafficRequestId) {
+    return
+  }
+
+  const existing = activeProbePreviewRequests.value[trafficRequestId]
+  if (existing) {
+    await openHistoryRequestById(existing.id)
+    return
+  }
+
+  const request = await loadActiveProbeRequestByTrafficRequestId(trafficRequestId)
+  if (!request) {
+    return
+  }
+
+  rememberActiveProbePreviewRequest(request)
+  await openHistoryRequestById(request.id)
+}
+
+async function openHistoryRequestById(requestId: number) {
+  await openHistoryRequest({
+    requestId,
+    pane: 'request',
+    matchedLocations: [],
+    searchTerms: [],
+  })
+}
+
+let unlistenActiveProbe: UnlistenFn | null = null
+let unlistenProxyRequest: UnlistenFn | null = null
+let unlistenScanFinding: UnlistenFn | null = null
+let activeProbePruneTimer: ReturnType<typeof setInterval> | null = null
+
 defineExpose<TrafficAnalysisViewHandle>({
   sendToRepeater: handleSendToRepeaterFromHistory,
   sendToIntruder: handleSendToIntruderFromHistory,
@@ -840,8 +1257,43 @@ defineExpose<TrafficAnalysisViewHandle>({
 })
 
 onMounted(() => {
+  if (immersiveDrillModeEnabled.value) {
+    showImmersiveTrafficHistory()
+  }
+
   applyWorkbenchHeight(workbenchHeight.value)
   window.addEventListener('resize', handleWindowResize)
+  window.addEventListener('keydown', handleWindowKeydown)
+  void listen('plugin:active-probe', event => {
+    const payload = normalizeActiveProbePayload(event.payload)
+    if (!payload) {
+      return
+    }
+    upsertActiveProbeEntry(payload)
+  }).then(unlisten => {
+    unlistenActiveProbe = unlisten
+  })
+  void listen<ProxyRequest>('proxy:request', event => {
+    const request = event.payload
+    if (!request || typeof request !== 'object') {
+      return
+    }
+    rememberActiveProbePreviewRequest(request)
+  }).then(unlisten => {
+    unlistenProxyRequest = unlisten
+  })
+  void listen('scan:finding', event => {
+    const payload = normalizeScanFindingPayload(event.payload)
+    if (!payload) {
+      return
+    }
+    emitImmersiveFindingToast(payload)
+  }).then(unlisten => {
+    unlistenScanFinding = unlisten
+  })
+  activeProbePruneTimer = setInterval(() => {
+    pruneActiveProbeEntries()
+  }, 5000)
 })
 
 watchEffect(() => {
@@ -859,6 +1311,7 @@ watchEffect(() => {
     repeaterCount: sessions.value.repeater.count,
     intruderCount: sessions.value.intruder.count,
     comparerCount: sessions.value.comparer.count,
+    oastCount: sessions.value.oast.count,
     controlInterceptCount: controlInterceptCount.value,
     basketCount: basketItems.value.length,
   })
@@ -868,6 +1321,23 @@ onUnmounted(() => {
   stopWorkbenchResize()
   stopDrawerWidthResize()
   window.removeEventListener('resize', handleWindowResize)
+  window.removeEventListener('keydown', handleWindowKeydown)
+  if (activeProbePruneTimer) {
+    clearInterval(activeProbePruneTimer)
+    activeProbePruneTimer = null
+  }
+  if (unlistenActiveProbe) {
+    unlistenActiveProbe()
+    unlistenActiveProbe = null
+  }
+  if (unlistenProxyRequest) {
+    unlistenProxyRequest()
+    unlistenProxyRequest = null
+  }
+  if (unlistenScanFinding) {
+    unlistenScanFinding()
+    unlistenScanFinding = null
+  }
   resetImmersiveTrafficDockState()
 })
 </script>

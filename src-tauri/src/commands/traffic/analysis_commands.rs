@@ -632,12 +632,10 @@ pub async fn start_traffic_analysis(
     state: State<'_, TrafficAnalysisState>,
     config: Option<ProxyConfig>,
 ) -> Result<CommandResponse<u16>, String> {
-    // Multi-point license verification
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Ok(CommandResponse::err(
-            "License required for this feature".to_string(),
-        ));
+    if let Err(message) =
+        sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::TrafficAnalysis)
+    {
+        return Ok(CommandResponse::err(message));
     }
 
     match start_traffic_analysis_internal(&app, &state, config).await {

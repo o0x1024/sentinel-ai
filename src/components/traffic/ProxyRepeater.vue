@@ -84,6 +84,14 @@
           <i class="fas fa-stop"></i>
           <span v-if="!immersiveDrillModeEnabled">{{ $t('trafficAnalysis.repeater.contextMenu.cancel') }}</span>
         </button>
+        <button
+          @click="insertOastPayloadIntoCurrentRequest"
+          class="btn btn-outline btn-sm"
+          :disabled="creatingOastPayload"
+        >
+          <i :class="creatingOastPayload ? 'fas fa-spinner fa-spin' : 'fas fa-satellite-dish'"></i>
+          <span>{{ $t('trafficAnalysis.oast.insertPayload') }}</span>
+        </button>
         
         <div class="flex-1"></div>
         
@@ -192,7 +200,8 @@
       <!-- Request / Response Panels -->
       <div class="flex-1 flex overflow-hidden" :class="layoutMode === 'horizontal' ? 'flex-row' : 'flex-col'">
         <!-- Request Panel -->
-        <div 
+        <div
+          ref="requestPanelRef"
           class="request-panel flex flex-col overflow-hidden border-base-300"
           :class="layoutMode === 'horizontal' ? 'border-r' : 'border-b'"
           :style="layoutMode === 'horizontal' 
@@ -201,10 +210,10 @@
         >
           <!-- Request Header -->
           <div
-            class="flex items-center justify-between border-b border-base-300"
+            class="flex flex-wrap items-center gap-2 border-b border-base-300"
             :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS : 'bg-base-200 px-3 py-1'"
           >
-            <div class="flex items-center gap-2">
+            <div class="flex min-w-0 items-center gap-2">
               <span class="font-semibold text-sm">{{ $t('trafficAnalysis.repeater.contextMenu.request') }}</span>
               <button
                 v-if="!immersiveDrillModeEnabled"
@@ -212,18 +221,20 @@
                 type="button"
                 :disabled="!canCompareCurrentRequestVersions"
                 @click="compareCurrentRequestVersions"
+                :title="$t('trafficAnalysis.repeater.actions.compareRequestVersions')"
               >
                 <i class="fas fa-not-equal"></i>
-                {{ $t('trafficAnalysis.repeater.actions.compareRequestVersions') }}
+                <span v-if="!isRequestPaneCompact">{{ $t('trafficAnalysis.repeater.actions.compareRequestVersions') }}</span>
               </button>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="repeater-pane-header-controls ml-auto flex min-w-0 items-center gap-2">
               <TrafficMessageViewTabs
                 :model-value="currentTab.requestTab"
                 :tabs="requestViewTabs"
+                :compact="isRequestPaneCompact"
                 @update:model-value="currentTab.requestTab = $event as RepeaterTab['requestTab']"
               />
-              <TrafficMessageDisplayControls />
+              <TrafficMessageDisplayControls :compact="isRequestPaneCompact" />
             </div>
           </div>
 
@@ -240,8 +251,8 @@
                 @contextmenu="showContextMenu($event, 'request')"
                 message-type="request"
                 height="100%"
-                display-mode="pretty"
-                :state-key="`repeater:${currentTab.id}:request:pretty`"
+                :display-mode="resolveTrafficTextDisplayMode(currentTab.requestTab)"
+                :state-key="buildRepeaterRequestStateKey(currentTab.id, currentTab.requestTab)"
                 :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
                 :search-next-title="$t('trafficAnalysis.messageSearch.next')"
                 :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
@@ -263,8 +274,8 @@
                 @contextmenu="showContextMenu($event, 'request')"
                 message-type="request"
                 height="100%"
-                display-mode="raw"
-                :state-key="`repeater:${currentTab.id}:request:raw`"
+                :display-mode="resolveTrafficTextDisplayMode(currentTab.requestTab)"
+                :state-key="buildRepeaterRequestStateKey(currentTab.id, currentTab.requestTab)"
                 :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
                 :search-next-title="$t('trafficAnalysis.messageSearch.next')"
                 :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
@@ -279,7 +290,7 @@
             <template v-else>
               <HttpMessageSurface
                 ref="requestEditor"
-                :model-value="toHex(currentTab.rawRequest)"
+                :model-value="repeaterTextToHex(currentTab.rawRequest)"
                 :readonly="true"
                 custom-context-menu
                 show-search-bar
@@ -287,7 +298,7 @@
                 message-type="generic"
                 height="100%"
                 display-mode="raw"
-                :state-key="`repeater:${currentTab.id}:request:hex`"
+                :state-key="buildRepeaterRequestStateKey(currentTab.id, 'hex')"
                 :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
                 :search-next-title="$t('trafficAnalysis.messageSearch.next')"
                 :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
@@ -311,10 +322,10 @@
         ></div>
 
         <!-- Response Panel -->
-        <div class="response-panel flex-1 flex flex-col overflow-hidden min-h-0 min-w-0">
+        <div ref="responsePanelRef" class="response-panel flex-1 flex flex-col overflow-hidden min-h-0 min-w-0">
           <!-- Response Header -->
           <div
-            class="flex items-center justify-between gap-3 border-b border-base-300"
+            class="flex flex-wrap items-center gap-2 border-b border-base-300"
             :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS : 'bg-base-200 px-3 py-1'"
           >
             <div class="flex min-w-0 items-center gap-2">
@@ -325,9 +336,10 @@
                 type="button"
                 :disabled="!canCompareCurrentResponseVersions"
                 @click="compareCurrentResponseVersions"
+                :title="$t('trafficAnalysis.repeater.actions.compareResponseVersions')"
               >
                 <i class="fas fa-not-equal"></i>
-                {{ $t('trafficAnalysis.repeater.actions.compareResponseVersions') }}
+                <span v-if="!isResponsePaneCompact">{{ $t('trafficAnalysis.repeater.actions.compareResponseVersions') }}</span>
               </button>
               <template v-if="currentTab.response">
                 <span 
@@ -336,22 +348,28 @@
                 >
                   {{ currentTab.response.statusCode }}
                 </span>
+                <span
+                  v-if="currentResponseMeta"
+                  class="text-xs text-base-content/70"
+                  :title="currentResponseMeta"
+                >
+                  {{ currentResponseMeta }}
+                </span>
               </template>
-              <span
-                v-if="currentResponseMeta"
-                class="truncate text-xs text-base-content/70"
-                :title="currentResponseMeta"
-              >
-                {{ currentResponseMeta }}
-              </span>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="repeater-pane-header-controls ml-auto flex min-w-0 items-center gap-2">
               <TrafficMessageViewTabs
                 :model-value="currentTab.responseTab"
                 :tabs="responseViewTabs"
+                :compact="isResponsePaneCompact"
                 @update:model-value="currentTab.responseTab = $event as RepeaterTab['responseTab']"
               />
-              <TrafficMessageDisplayControls v-if="currentTab.responseTab !== 'render'" />
+              <TrafficMessageDisplayControls
+                v-if="currentTab.responseTab !== 'render'"
+                :mode-label="''"
+                :compact="isResponsePaneCompact"
+                :show-line-endings="false"
+              />
             </div>
           </div>
 
@@ -362,15 +380,15 @@
               <template v-if="currentTab.responseTab === 'pretty' || currentTab.responseTab === 'raw'">
                 <HttpMessageSurface
                   ref="responseEditor"
-                  :modelValue="currentTab.responseTab === 'pretty' ? formatPrettyResponse() : currentTab.rawResponse"
-                  :readonly="true"
+                  :modelValue="currentTab.responseTab === 'pretty' ? formatPrettyResponse() : currentDisplayedRawResponse"
+                  readonly
+                  message-type="response"
                   custom-context-menu
                   show-search-bar
                   @contextmenu="showContextMenu($event, 'response')"
-                  message-type="response"
                   height="100%"
-                  :display-mode="currentTab.responseTab === 'pretty' ? 'pretty' : 'raw'"
-                  :state-key="`repeater:${currentTab.id}:response:${currentTab.responseTab}`"
+                  :display-mode="resolveTrafficTextDisplayMode(currentTab.responseTab)"
+                  :state-key="buildRepeaterResponseStateKey(currentTab.id, currentTab.responseTab)"
                   :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
                   :search-next-title="$t('trafficAnalysis.messageSearch.next')"
                   :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
@@ -385,17 +403,14 @@
               
               <!-- Hex View -->
               <template v-else-if="currentTab.responseTab === 'hex'">
-                <HttpMessageSurface
+                <TrafficMessageReader
                   ref="responseEditor"
-                  :model-value="toHex(currentTab.rawResponse)"
-                  :readonly="true"
+                  :model-value="repeaterTextToHex(currentDisplayedRawResponse)"
                   custom-context-menu
                   show-search-bar
                   @contextmenu="showContextMenu($event, 'response')"
-                  message-type="generic"
                   height="100%"
-                  display-mode="raw"
-                  :state-key="`repeater:${currentTab.id}:response:hex`"
+                  :state-key="buildRepeaterResponseStateKey(currentTab.id, 'hex')"
                   :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
                   :search-next-title="$t('trafficAnalysis.messageSearch.next')"
                   :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
@@ -411,7 +426,7 @@
               <!-- Render View -->
               <TrafficResponseRenderPane
                 v-else-if="currentTab.responseTab === 'render'"
-                :body="currentTab.response?.bodyText || ''"
+                :body="currentDisplayedResponseBody"
                 :content-type="getCurrentResponseContentType()"
               />
             </template>
@@ -445,7 +460,9 @@ import { useI18n } from 'vue-i18n';
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { openTrafficAssistantPanel } from '@/services/trafficAssistantWorkspace'
 import { dialog } from '@/composables/useDialog';
+import { createTrafficOastToken } from '@/api/trafficOast'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
+import TrafficMessageReader from '@/components/traffic/TrafficMessageReader.vue'
 import TrafficMessageDisplayControls from '@/components/traffic/TrafficMessageDisplayControls.vue'
 import TrafficMessageViewTabs from '@/components/traffic/TrafficMessageViewTabs.vue'
 import TrafficResponseRenderPane from './TrafficResponseRenderPane.vue'
@@ -462,15 +479,13 @@ import {
   buildHttpReplayResponseFromCommandResult,
   type RawReplayCommandResult,
 } from './http/response'
-import type {
-  TrafficComparePayload,
-  TrafficComparerDraftRequestInput,
-} from './transfers'
-import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
+import type { TrafficComparePayload, TrafficComparerDraftRequestInput } from './transfers'
+import { getDefaultTrafficMessageViewTab, useTrafficDisplaySettings } from './trafficDisplaySettings'
 import { useTrafficSendTargets } from './trafficSendTargets'
 import { buildTrafficRequestContextMenuSections } from './trafficRequestContextMenuSupport'
 import {
   formatRepeaterBytes as formatBytes,
+  formatRepeaterResponseMeta,
   generateRepeaterId,
   getRepeaterStatusClass as getStatusClass,
 } from './proxyRepeaterUiSupport';
@@ -485,60 +500,68 @@ import {
 import {
   convertRepeaterPrettyRequestToRaw,
   formatRepeaterPrettyRequest,
-  normalizeRepeaterPrettyRequestLineEndings,
 } from './trafficRepeaterPrettyRequestSupport'
-import { getDisplayResponseBody } from './trafficResponsePreviewSupport'
+import {
+  buildTrafficDisplayedRawResponse,
+  resolveTrafficResponseBodyText,
+} from './trafficResponseDecodingSupport'
+import { useTrafficPaneCompactMode } from './useTrafficPaneCompactMode'
+import {
+  buildRepeaterCurlCommand,
+  buildRepeaterFullUrl,
+  parseRepeaterErrorMessage,
+  repeaterTextToHex,
+  syncRepeaterTabTargetFromRequest,
+} from './proxyRepeaterRequestSupport'
+import {
+  clearRepeaterTabsStorage,
+  REPEATER_STORAGE_KEY_LAYOUT,
+  REPEATER_STORAGE_KEY_LEFT_WIDTH,
+  REPEATER_STORAGE_KEY_TOP_HEIGHT,
+} from './proxyRepeaterStorageSupport'
+import { createRepeaterTab } from './proxyRepeaterTabSupport'
+import type {
+  ReplayCommandResponse,
+  RepeaterRequestTab,
+  RepeaterResponseTab,
+  RepeaterTab,
+} from './proxyRepeaterTypes'
+import {
+  buildRepeaterCompareLabels,
+  buildRepeaterRequestViewTabs,
+  buildRepeaterResponseViewTabs,
+} from './proxyRepeaterViewSupport'
+import {
+  buildRepeaterRequestStateKey,
+  buildRepeaterResponseStateKey,
+  resolveTrafficTextDisplayMode,
+} from './trafficMessagePresentationSupport'
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { enabledTargets } = useTrafficSendTargets()
-const requestViewTabs = computed(() => [
-  { value: 'pretty', label: t('trafficAnalysis.repeater.contextMenu.pretty') },
-  { value: 'raw', label: t('trafficAnalysis.repeater.contextMenu.raw') },
-  { value: 'hex', label: t('trafficAnalysis.repeater.contextMenu.hex') },
-])
-const responseViewTabs = computed(() => [
-  { value: 'pretty', label: t('trafficAnalysis.repeater.contextMenu.pretty') },
-  { value: 'raw', label: t('trafficAnalysis.repeater.contextMenu.raw') },
-  { value: 'hex', label: t('trafficAnalysis.repeater.contextMenu.hex') },
-  { value: 'render', label: t('trafficAnalysis.repeater.contextMenu.render') },
-])
+const { settings } = useTrafficDisplaySettings()
+const REQUEST_PANE_COMPACT_THRESHOLD = 640
+const RESPONSE_PANE_COMPACT_THRESHOLD = 760
+const {
+  panelRef: requestPanelRef,
+  isCompact: isRequestPaneCompact,
+} = useTrafficPaneCompactMode(REQUEST_PANE_COMPACT_THRESHOLD)
+const {
+  panelRef: responsePanelRef,
+  isCompact: isResponsePaneCompact,
+} = useTrafficPaneCompactMode(RESPONSE_PANE_COMPACT_THRESHOLD)
+const requestViewTabs = computed(() => [...buildRepeaterRequestViewTabs(t, locale.value)])
+const responseViewTabs = computed(() => [...buildRepeaterResponseViewTabs(t, locale.value)])
 const emit = defineEmits<{
   (e: 'sendToComparer', payload: TrafficComparePayload): void
   (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
   (e: 'sendToIntruder', request: HttpExchangeRequest): void
 }>()
 
-interface ReplayCommandResponse<T> {
-  success: boolean
-  data?: T
-  error?: string
-}
-
 // Props
 const props = defineProps<{
   initialRequest?: HttpExchangeRequest;
 }>();
-
-interface RepeaterTab {
-  id: string;
-  name: string;
-  targetHost: string;
-  targetPort: number;
-  useTls: boolean;
-  overrideSni: boolean;
-  sniHost: string;
-  initialRawRequest: string;
-  rawRequest: string;
-  prettyRequest: string;
-  lastCompletedRawResponse: string;
-  previousRawResponse: string;
-  rawResponse: string;
-  requestTab: 'pretty' | 'raw' | 'hex';
-  responseTab: 'pretty' | 'raw' | 'hex' | 'render';
-  response: HttpReplayResponse | null;
-  isSending: boolean; // 每个 tab 独立的发送状态
-  modified: boolean; // 标记是否有未保存的修改
-}
 
 // Refs
 const tabs = ref<RepeaterTab[]>([]);
@@ -546,7 +569,14 @@ const activeTabIndex = ref(0);
 const showTargetDialog = ref(false);
 const repeaterRoot = ref<HTMLElement | null>(null);
 const requestEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null);
-const responseEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null);
+const responseEditor = ref<{
+  focus?: () => void
+  focusSearch?: () => void
+  getContent?: () => string
+  getSelectionRange?: () => { from: number; to: number }
+  selectAll?: () => void
+  setSelection?: (from: number, to: number) => void
+} | null>(null);
 
 // 请求取消控制器映射（每个 tab 一个）
 const abortControllers = new Map<string, { cancelled: boolean }>();
@@ -563,25 +593,20 @@ const contextMenu = ref({
   height: 0,
   pane: 'request' as 'request' | 'response',
 });
+const creatingOastPayload = ref(false)
 
 // Layout
-const STORAGE_KEY_LAYOUT = 'proxyRepeater.layoutMode';
-const STORAGE_KEY_LEFT_WIDTH = 'proxyRepeater.leftPanelWidth';
-const STORAGE_KEY_TOP_HEIGHT = 'proxyRepeater.topPanelHeight';
-const STORAGE_KEY_TABS = 'proxyRepeater.tabs';
-
 const layoutMode = ref<'horizontal' | 'vertical'>(
-  (localStorage.getItem(STORAGE_KEY_LAYOUT) as 'horizontal' | 'vertical') || 'horizontal'
+  (localStorage.getItem(REPEATER_STORAGE_KEY_LAYOUT) as 'horizontal' | 'vertical') || 'horizontal'
 );
-const leftPanelWidth = ref(parseInt(localStorage.getItem(STORAGE_KEY_LEFT_WIDTH) || '600'));
-const topPanelHeight = ref(parseInt(localStorage.getItem(STORAGE_KEY_TOP_HEIGHT) || '350'));
+const leftPanelWidth = ref(parseInt(localStorage.getItem(REPEATER_STORAGE_KEY_LEFT_WIDTH) || '600'));
+const topPanelHeight = ref(parseInt(localStorage.getItem(REPEATER_STORAGE_KEY_TOP_HEIGHT) || '350'));
 
 let isResizing = false;
 let startX = 0;
 let startY = 0;
 let startWidth = 0;
 let startHeight = 0;
-let saveTimer: number | null = null;
 let hostDetectionTimer: number | null = null;
 let repeaterScrollState = { top: 0, left: 0 };
 
@@ -607,7 +632,27 @@ const currentRequestProtocol = computed(() => {
 })
 const currentResponseMeta = computed(() => {
   if (!currentTab.value?.response) return ''
-  return `${formatBytes(currentTab.value.rawResponse.length)} | ${currentTab.value.response.responseTimeMs} ms`
+  return formatRepeaterResponseMeta(
+    currentTab.value.response.rawText,
+    currentTab.value.response.responseTimeMs,
+  )
+})
+const currentDisplayedResponseBody = computed(() => {
+  if (!currentTab.value?.response) return ''
+
+  return resolveTrafficResponseBodyText(
+    currentTab.value.response.bodyText || '',
+    getCurrentResponseContentType(),
+    settings.value,
+    currentTab.value.response.bodyBytesBase64,
+  )
+})
+const currentDisplayedRawResponse = computed(() => {
+  if (!currentTab.value?.response) {
+    return currentTab.value?.rawResponse || ''
+  }
+
+  return buildTrafficDisplayedRawResponse(currentTab.value.response, settings.value)
 })
 
 // 向后兼容的 isSending（用于模板）
@@ -687,6 +732,16 @@ const repeaterContextMenuSections = computed(() =>
           },
         ]
       : [],
+    editorItems: contextMenu.value.pane === 'request'
+      ? [
+          {
+            key: 'insertOastPayload',
+            iconClass: 'fas fa-satellite-dish text-info',
+            labelKey: 'insertOastPayload',
+            onClick: insertOastPayloadIntoCurrentRequest,
+          },
+        ]
+      : [],
   }),
 )
 const canCompareCurrentRequestVersions = computed(() => canCompareRepeaterRequestVersions(currentTab.value ?? null));
@@ -694,70 +749,13 @@ const canCompareCurrentResponseVersions = computed(() => canCompareRepeaterRespo
 
 // Methods
 function createTab(request?: HttpExchangeRequest): RepeaterTab {
-  let targetHost = '';
-  let targetPort = 443;
-  let useTls = true;
-  let rawRequest = '';
-  
-  if (request?.absoluteUrl) {
-    try {
-      const urlObj = new URL(request.absoluteUrl);
-      targetHost = urlObj.hostname;
-      
-      // 安全的端口解析
-      const parsedPort = urlObj.port ? parseInt(urlObj.port, 10) : null;
-      if (parsedPort !== null && !isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
-        targetPort = parsedPort;
-      } else {
-        targetPort = urlObj.protocol === 'https:' ? 443 : 80;
-      }
-      
-      useTls = urlObj.protocol === 'https:';
-      
-      const path = request.request.target || (urlObj.pathname + urlObj.search);
-      rawRequest = `${request.request.method || 'GET'} ${path} ${request.request.versionPreference === 'AUTO' ? 'HTTP/1.1' : request.request.versionPreference}\r\n`;
-      rawRequest += `Host: ${urlObj.host}\r\n`;
-      
-      for (const header of request.request.headers || []) {
-        if (header.name.toLowerCase() !== 'host') {
-          rawRequest += `${header.name}: ${header.value}\r\n`;
-        }
-      }
-      rawRequest += '\r\n';
-      if (request.request.bodyText) {
-        rawRequest += request.request.bodyText;
-      }
-    } catch (error) {
-      console.error('Failed to parse URL:', error);
-      // 使用默认值
-      rawRequest = 'GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Sentinel-AI/1.0\r\nAccept: */*\r\n\r\n';
-    }
-  } else {
-    rawRequest = 'GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Sentinel-AI/1.0\r\nAccept: */*\r\n\r\n';
-  }
-  
-  const prettyRequest = normalizeRepeaterPrettyRequestLineEndings(rawRequest)
-
-  return {
-    id: generateRepeaterId(),
-    name: targetHost || `Request ${tabs.value.length + 1}`,
-    targetHost,
-    targetPort,
-    useTls,
-    overrideSni: false,
-    sniHost: '',
-    initialRawRequest: rawRequest,
-    rawRequest,
-    prettyRequest,
-    lastCompletedRawResponse: '',
-    previousRawResponse: '',
-    rawResponse: '',
-    requestTab: getDefaultTrafficMessageViewTab(),
-    responseTab: getDefaultTrafficMessageViewTab(),
-    response: null,
-    isSending: false,
-    modified: false,
-  };
+  return createRepeaterTab({
+    request,
+    fallbackNameIndex: tabs.value.length + 1,
+    generateId: generateRepeaterId,
+    defaultRequestTab: getDefaultTrafficMessageViewTab() as RepeaterRequestTab,
+    defaultResponseTab: getDefaultTrafficMessageViewTab() as RepeaterResponseTab,
+  })
 }
 
 function addTab() {
@@ -804,8 +802,6 @@ async function closeTab(index: number) {
     activeTabIndex.value = tabs.value.length - 1;
   }
   
-  // 保存到 localStorage
-  saveTabs();
 }
 
 function selectTab(index: number) {
@@ -861,7 +857,7 @@ async function sendRequest() {
       host: tab.targetHost,
       port: tab.targetPort || 443,
       useTls: tab.useTls,
-    })
+    }, tab.sourceRequestId)
     if (!exchangeRequest) {
       throw new Error('Invalid request')
     }
@@ -904,7 +900,7 @@ async function sendRequest() {
       targetTab.name = targetTab.targetHost;
       targetTab.modified = false;
     } else {
-      const errorMsg = parseErrorMessage(response.error);
+      const errorMsg = parseRepeaterErrorMessage(response.error, t);
       dialog.toast.error(errorMsg);
     }
   } catch (error: any) {
@@ -914,7 +910,7 @@ async function sendRequest() {
     if (!targetTab) return;
     
     console.error('Failed to send request:', error);
-    const errorMsg = parseErrorMessage(error);
+    const errorMsg = parseRepeaterErrorMessage(error, t);
     dialog.toast.error(errorMsg);
   } finally {
     const targetTab = tabs.value.find(t => t.id === tabId);
@@ -923,27 +919,6 @@ async function sendRequest() {
     }
     abortControllers.delete(tabId);
   }
-}
-
-// 解析错误信息
-function parseErrorMessage(error: any): string {
-  if (!error) return t('trafficAnalysis.repeater.messages.unknownError');
-  
-  const errorStr = String(error).toLowerCase();
-  
-  if (errorStr.includes('timeout')) {
-    return t('trafficAnalysis.repeater.messages.timeout');
-  }
-  if (errorStr.includes('connection refused') || errorStr.includes('econnrefused')) {
-    return t('trafficAnalysis.repeater.messages.connectionRefused');
-  }
-  if (errorStr.includes('network')) {
-    return t('trafficAnalysis.repeater.messages.networkError');
-  }
-  
-  // 返回原始错误信息（但限制长度）
-  const msg = String(error);
-  return msg.length > 100 ? msg.substring(0, 100) + '...' : msg;
 }
 
 function formatPrettyRequest(): string {
@@ -955,7 +930,7 @@ function onPrettyRequestUpdate(value: string) {
 
   currentTab.value.prettyRequest = value
   currentTab.value.rawRequest = convertRepeaterPrettyRequestToRaw(value)
-  autoDetectHostFromRequest(value);
+  syncRepeaterTabTargetFromRequest(currentTab.value, value);
   currentTab.value.modified = true;
 }
 
@@ -972,7 +947,12 @@ function formatPrettyResponse(): string {
   result += '\r\n';
   
   const contentType = responseHeaders['content-type'] || responseHeaders['Content-Type'] || '';
-  const displayBody = getDisplayResponseBody(resp.bodyText, contentType)
+  const displayBody = resolveTrafficResponseBodyText(
+    resp.bodyText || '',
+    contentType,
+    settings.value,
+    resp.bodyBytesBase64,
+  )
   if (contentType.includes('json')) {
     try {
       const json = JSON.parse(displayBody);
@@ -985,34 +965,6 @@ function formatPrettyResponse(): string {
   }
   
   return result;
-}
-
-function toHex(str: string): string {
-  if (!str) return '';
-
-  const lines: string[] = [];
-  let hex = '';
-  let ascii = '';
-  let lineCount = 0;
-
-  for (let index = 0; index < str.length; index += 1) {
-    const char = str.charCodeAt(index) & 0xff
-    hex += `${char.toString(16).padStart(2, '0')} `
-    ascii += char >= 32 && char < 127 ? String.fromCharCode(char) : '.'
-    lineCount += 1
-
-    if (lineCount === 16 || index === str.length - 1) {
-      if (lineCount < 16) {
-        hex += '   '.repeat(16 - lineCount)
-      }
-      lines.push(`${hex} ${ascii}`)
-      hex = ''
-      ascii = ''
-      lineCount = 0
-    }
-  }
-
-  return lines.join('\n')
 }
 
 function getCurrentResponseContentType(): string {
@@ -1077,6 +1029,7 @@ function contextMenuSendToNewTab() {
   }
   
   const newTab = createTab();
+  newTab.sourceRequestId = currentTab.value.sourceRequestId;
   newTab.targetHost = currentTab.value.targetHost;
   newTab.targetPort = currentTab.value.targetPort;
   newTab.useTls = currentTab.value.useTls;
@@ -1089,7 +1042,7 @@ function contextMenuSendToNewTab() {
 
 function contextMenuCopyUrl() {
   hideContextMenu();
-  const url = buildFullUrl();
+  const url = buildRepeaterFullUrl(currentTab.value);
   if (url) {
     navigator.clipboard.writeText(url)
       .then(() => dialog.toast.success(t('trafficAnalysis.repeater.messages.urlCopied')))
@@ -1104,7 +1057,71 @@ function buildCurrentRequestTransfer(): HttpExchangeRequest | null {
     host: currentTab.value.targetHost,
     port: currentTab.value.targetPort || (currentTab.value.useTls ? 443 : 80),
     useTls: currentTab.value.useTls,
-  })
+  }, currentTab.value.sourceRequestId)
+}
+
+function insertTextAtSelection(
+  content: string,
+  selection: { from: number; to: number } | undefined,
+  insert: string,
+) {
+  const from = Math.max(0, Math.min(selection?.from ?? content.length, content.length))
+  const to = Math.max(from, Math.min(selection?.to ?? from, content.length))
+  return {
+    content: `${content.slice(0, from)}${insert}${content.slice(to)}`,
+    selectionStart: from,
+    selectionEnd: from + insert.length,
+  }
+}
+
+async function insertOastPayloadIntoCurrentRequest() {
+  hideContextMenu()
+
+  if (!currentTab.value) {
+    return
+  }
+
+  if (currentTab.value.requestTab === 'hex') {
+    dialog.toast.warning(t('trafficAnalysis.oast.readOnlyMode'))
+    return
+  }
+
+  creatingOastPayload.value = true
+  try {
+    const record = await createTrafficOastToken({
+      label: currentTab.value.targetHost || undefined,
+      sourceTool: 'repeater',
+      sourceRequestId: currentTab.value.sourceRequestId,
+    })
+    const payloadText = record.httpsUrl || record.httpUrl || record.fqdn
+    const currentText = currentTab.value.requestTab === 'pretty'
+      ? currentTab.value.prettyRequest
+      : currentTab.value.rawRequest
+    const next = insertTextAtSelection(
+      currentText,
+      requestEditor.value?.getSelectionRange?.(),
+      payloadText,
+    )
+
+    if (currentTab.value.requestTab === 'pretty') {
+      currentTab.value.prettyRequest = next.content
+      currentTab.value.rawRequest = convertRepeaterPrettyRequestToRaw(next.content)
+    } else {
+      currentTab.value.rawRequest = next.content
+      currentTab.value.prettyRequest = formatRepeaterPrettyRequest(next.content)
+    }
+
+    currentTab.value.modified = true
+    await nextTick()
+    requestEditor.value?.setSelection?.(next.selectionStart, next.selectionEnd)
+    requestEditor.value?.focus?.()
+    dialog.toast.success(t('trafficAnalysis.oast.inserted'))
+  } catch (error) {
+    console.error('[ProxyRepeater] Failed to insert OAST payload:', error)
+    dialog.toast.error(String(error))
+  } finally {
+    creatingOastPayload.value = false
+  }
 }
 
 function contextMenuSendToComparer() {
@@ -1173,7 +1190,7 @@ function contextMenuCopyRequest() {
 
 function contextMenuCopyCurl() {
   hideContextMenu();
-  const curl = buildCurlCommand();
+  const curl = buildRepeaterCurlCommand(currentTab.value);
   if (curl) {
     navigator.clipboard.writeText(curl)
       .then(() => dialog.toast.success(t('trafficAnalysis.repeater.messages.curlCopied')))
@@ -1182,22 +1199,10 @@ function contextMenuCopyCurl() {
 }
 
 
-function buildRepeaterCompareLabels() {
-  return {
-    defaultName: t('trafficAnalysis.tabs.repeater'),
-    requestVersions: t('trafficAnalysis.repeater.compare.requestVersions'),
-    responseVersions: t('trafficAnalysis.repeater.compare.responseVersions'),
-    originalRequest: t('trafficAnalysis.repeater.compare.originalRequest'),
-    currentRequest: t('trafficAnalysis.repeater.compare.currentRequest'),
-    previousResponse: t('trafficAnalysis.repeater.compare.previousResponse'),
-    currentResponse: t('trafficAnalysis.repeater.compare.currentResponse'),
-  };
-}
-
 function compareCurrentRequestVersions() {
   if (!currentTab.value) return;
 
-  const payload = buildRepeaterRequestVersionComparePayload(currentTab.value, buildRepeaterCompareLabels());
+  const payload = buildRepeaterRequestVersionComparePayload(currentTab.value, buildRepeaterCompareLabels(t));
   if (!payload) {
     dialog.toast.warning(t('trafficAnalysis.repeater.messages.noRequestVersionsToCompare'));
     return;
@@ -1210,7 +1215,7 @@ function compareCurrentRequestVersions() {
 function compareCurrentResponseVersions() {
   if (!currentTab.value) return;
 
-  const payload = buildRepeaterResponseVersionComparePayload(currentTab.value, buildRepeaterCompareLabels());
+  const payload = buildRepeaterResponseVersionComparePayload(currentTab.value, buildRepeaterCompareLabels(t));
   if (!payload) {
     dialog.toast.warning(t('trafficAnalysis.repeater.messages.noResponseVersionsToCompare'));
     return;
@@ -1255,7 +1260,7 @@ async function sendRequestToAssistant() {
   }
   
   const requestBody = bodyLines.join('\n').trim();
-  const url = buildFullUrl();
+  const url = buildRepeaterFullUrl(currentTab.value);
   
   // 构建流量数据
   const trafficData = {
@@ -1281,198 +1286,6 @@ async function sendRequestToAssistant() {
 function contextMenuSendRequestToAssistant() {
   hideContextMenu();
   sendRequestToAssistant();
-}
-
-function buildFullUrl(): string {
-  if (!currentTab.value) return '';
-  
-  try {
-    const protocol = currentTab.value.useTls ? 'https' : 'http';
-    const host = currentTab.value.targetHost;
-    const port = currentTab.value.targetPort;
-    const defaultPort = currentTab.value.useTls ? 443 : 80;
-    const portStr = port !== defaultPort ? `:${port}` : '';
-    
-    // 从 rawRequest 提取路径
-    const firstLine = currentTab.value.rawRequest.split(/\r\n|\r|\n/)[0];
-    const match = firstLine.match(/^\w+\s+(\S+)/);
-    let path = match ? match[1] : '/';
-    
-    // 确保路径以 / 开头
-    if (!path.startsWith('/') && !path.startsWith('http')) {
-      path = '/' + path;
-    }
-    
-    // 如果路径已经是完整 URL，直接返回
-    if (path.startsWith('http://') || path.startsWith('https://')) {
-      return path;
-    }
-    
-    const url = `${protocol}://${host}${portStr}${path}`;
-    
-    // 验证 URL 格式
-    try {
-      new URL(url);
-      return url;
-    } catch {
-      console.warn('Invalid URL constructed:', url);
-      return url; // 仍然返回，但已记录警告
-    }
-  } catch (error) {
-    console.error('Error building URL:', error);
-    return '';
-  }
-}
-
-function buildCurlCommand(): string {
-  if (!currentTab.value) return '';
-  
-  const lines = currentTab.value.rawRequest.split(/\r\n|\r|\n/);
-  const firstLine = lines[0];
-  const methodMatch = firstLine.match(/^(\w+)\s+(\S+)/);
-  const method = methodMatch ? methodMatch[1] : 'GET';
-  
-  const url = buildFullUrl();
-  let curl = `curl -X ${method} '${url}'`;
-  
-  // 解析 headers
-  let inBody = false;
-  const bodyLines: string[] = [];
-  
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!inBody && line === '') {
-      inBody = true;
-      continue;
-    }
-    if (!inBody) {
-      const colonIndex = line.indexOf(':');
-      if (colonIndex > 0) {
-        const key = line.substring(0, colonIndex).trim();
-        const value = line.substring(colonIndex + 1).trim();
-        if (key.toLowerCase() !== 'host' && key.toLowerCase() !== 'content-length') {
-          curl += ` \\\n  -H '${key}: ${value}'`;
-        }
-      }
-    } else {
-      bodyLines.push(line);
-    }
-  }
-  
-  const body = bodyLines.join('\n').trim();
-  if (body) {
-    curl += ` \\\n  -d '${body.replace(/'/g, "'\\''")}'`;
-  }
-  
-  return curl;
-}
-
-// 数据持久化
-function saveTabs() {
-  try {
-    const tabsToSave = tabs.value.map(tab => ({
-      id: tab.id,
-      name: tab.name,
-      targetHost: tab.targetHost,
-      targetPort: tab.targetPort,
-      useTls: tab.useTls,
-      overrideSni: tab.overrideSni,
-      sniHost: tab.sniHost,
-      rawRequest: tab.rawRequest,
-      requestTab: tab.requestTab,
-      responseTab: tab.responseTab,
-      initialRawRequest: tab.initialRawRequest,
-      // 不保存响应数据和发送状态
-    }));
-    
-    localStorage.setItem(STORAGE_KEY_TABS, JSON.stringify(tabsToSave));
-  } catch (error) {
-    console.error('Failed to save tabs:', error);
-  }
-}
-
-function loadTabs() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY_TABS);
-    if (!saved) return;
-    
-    const tabsData = JSON.parse(saved);
-    if (!Array.isArray(tabsData) || tabsData.length === 0) return;
-    
-    tabs.value = tabsData.map(data => ({
-      ...data,
-      initialRawRequest: data.initialRawRequest || data.rawRequest,
-      prettyRequest: normalizeRepeaterPrettyRequestLineEndings(data.rawRequest),
-      lastCompletedRawResponse: '',
-      previousRawResponse: '',
-      rawResponse: '',
-      response: null,
-      isSending: false,
-      modified: false,
-    }));
-    
-    dialog.toast.success(t('trafficAnalysis.repeater.messages.tabRestored', { count: tabs.value.length }));
-  } catch (error) {
-    console.error('Failed to load tabs:', error);
-  }
-}
-
-// 自动检测并填充 Host 配置
-function autoDetectHostFromRequest(requestText: string) {
-  if (!currentTab.value || !requestText) return;
-  
-  // 解析请求文本，查找 Host 头
-  const lines = requestText.split(/\r\n|\r|\n/);
-  let hostValue = '';
-  
-  for (const line of lines) {
-    const trimmedLine = line.trim();
-    if (trimmedLine === '') break; // 到达 body 部分
-    
-    const colonIndex = line.indexOf(':');
-    if (colonIndex > 0) {
-      const key = line.substring(0, colonIndex).trim();
-      const value = line.substring(colonIndex + 1).trim();
-      
-      if (key.toLowerCase() === 'host') {
-        hostValue = value;
-        break;
-      }
-    }
-  }
-  
-  if (!hostValue) return;
-  
-  // 解析 Host 值，可能包含端口号
-  const hostPortMatch = hostValue.match(/^([^:]+)(?::(\d+))?$/);
-  if (!hostPortMatch) return;
-  
-  const hostname = hostPortMatch[1];
-  const port = hostPortMatch[2] ? parseInt(hostPortMatch[2]) : null;
-  
-  // 检查是否需要更新（避免不必要的更新）
-  const needsUpdate = !currentTab.value.targetHost || 
-                      currentTab.value.targetHost === 'example.com' ||
-                      currentTab.value.targetHost !== hostname;
-  
-  if (needsUpdate) {
-    currentTab.value.targetHost = hostname;
-    
-    // 根据端口号判断协议
-    if (port !== null) {
-      currentTab.value.targetPort = port;
-      currentTab.value.useTls = port === 443;
-    } else {
-      // 没有指定端口，默认使用 HTTPS/443
-      currentTab.value.targetPort = 443;
-      currentTab.value.useTls = true;
-    }
-    
-    // 更新 tab 名称
-    currentTab.value.name = hostname;
-    
-    console.log(`Auto-detected host: ${hostname}, port: ${currentTab.value.targetPort}, TLS: ${currentTab.value.useTls}`);
-  }
 }
 
 // Resize
@@ -1508,8 +1321,8 @@ function stopResize() {
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
   
-  localStorage.setItem(STORAGE_KEY_LEFT_WIDTH, String(leftPanelWidth.value));
-  localStorage.setItem(STORAGE_KEY_TOP_HEIGHT, String(topPanelHeight.value));
+  localStorage.setItem(REPEATER_STORAGE_KEY_LEFT_WIDTH, String(leftPanelWidth.value));
+  localStorage.setItem(REPEATER_STORAGE_KEY_TOP_HEIGHT, String(topPanelHeight.value));
 }
 
 // Expose
@@ -1545,26 +1358,14 @@ watch(() => props.initialRequest, (newRequest) => {
 }, { immediate: true });
 
 watch(layoutMode, (newMode) => {
-  localStorage.setItem(STORAGE_KEY_LAYOUT, newMode);
+  localStorage.setItem(REPEATER_STORAGE_KEY_LAYOUT, newMode);
 });
-
-// 监听 tabs 变化，自动保存（防抖）
-watch(tabs, () => {
-  if (saveTimer !== null) {
-    clearTimeout(saveTimer);
-  }
-  
-  saveTimer = window.setTimeout(() => {
-    saveTabs();
-    saveTimer = null;
-  }, 1000); // 1秒后保存
-}, { deep: true });
 
 // 监听 rawRequest 变化，自动检测 Host（使用防抖避免频繁触发）
 watch(() => currentTab.value?.rawRequest, (newRequest, oldRequest) => {
   if (newRequest && currentTab.value && newRequest !== oldRequest) {
     if (currentTab.value.requestTab !== 'pretty') {
-      currentTab.value.prettyRequest = normalizeRepeaterPrettyRequestLineEndings(newRequest)
+      currentTab.value.prettyRequest = formatRepeaterPrettyRequest(newRequest)
     }
 
     // 清除之前的定时器
@@ -1575,7 +1376,7 @@ watch(() => currentTab.value?.rawRequest, (newRequest, oldRequest) => {
     // 使用防抖，500ms 后执行检测
     hostDetectionTimer = window.setTimeout(() => {
       if (currentTab.value) {
-        autoDetectHostFromRequest(newRequest);
+        syncRepeaterTabTargetFromRequest(currentTab.value, newRequest);
       }
       hostDetectionTimer = null;
     }, 500);
@@ -1613,9 +1414,8 @@ function restoreRepeaterScrollState() {
 
 // Lifecycle
 onMounted(() => {
-  // 尝试从 localStorage 恢复 tabs
-  // loadTabs();
-  
+  clearRepeaterTabsStorage()
+
   // 如果没有恢复到任何 tab，创建一个新的
   if (tabs.value.length === 0 && !props.initialRequest) {
     addTab();
@@ -1654,14 +1454,7 @@ onUnmounted(() => {
     hostDetectionTimer = null;
   }
   
-  // 清理保存定时器
-  if (saveTimer !== null) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
-  
-  // 保存 tabs 到 localStorage
-  saveTabs();
+  clearRepeaterTabsStorage()
 });
 </script>
 
@@ -1670,6 +1463,12 @@ onUnmounted(() => {
 .response-panel {
   min-width: 300px;
   min-height: 200px;
+}
+
+.repeater-pane-header-controls {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 pre {

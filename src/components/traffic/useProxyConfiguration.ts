@@ -14,6 +14,8 @@ import {
   createDefaultProxyConfig,
   createDefaultProxyListener,
   createDefaultTrafficBehaviorSignalSettings,
+  createDefaultTrafficOastConfig,
+  createDefaultTrafficPluginRuntimeSettings,
   createDefaultRequestRules,
   createDefaultResponseRules,
   createDefaultTlsPassThroughRules,
@@ -27,6 +29,9 @@ import {
   type ProxyScopeRule,
   type TrafficBehaviorSignalMode,
   type TrafficBehaviorSignalSettings,
+  type TrafficOastConfig,
+  type TrafficOastTestResult,
+  type TrafficPluginRuntimeSettings,
   type TlsPassThroughRule,
   type UpstreamProxyConfig,
 } from './proxyConfigurationTypes'
@@ -97,6 +102,11 @@ export function useProxyConfiguration({
   const isSaving = ref(false)
   const saveTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
   const isInitialLoad = ref(true)
+  const trafficOastSaveTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
+  const suppressTrafficOastAutoSave = ref(false)
+  const lastSavedTrafficOastConfigSnapshot = ref('')
+  const trafficOastAutoSaveState = ref<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle')
+  const trafficOastLastSavedAt = ref<string | null>(null)
 
   const proxyConfig = ref(createDefaultProxyConfig())
   const requestBodySizeMB = ref(2)
@@ -111,6 +121,13 @@ export function useProxyConfiguration({
     createDefaultTrafficBehaviorSignalSettings(),
   )
   const lastSavedBehaviorSignalMode = ref<TrafficBehaviorSignalMode>('proxy_inferred')
+  const trafficOastConfig = ref<TrafficOastConfig>(createDefaultTrafficOastConfig())
+  const trafficPluginRuntimeSettings = ref<TrafficPluginRuntimeSettings>(
+    createDefaultTrafficPluginRuntimeSettings(),
+  )
+  const isSavingTrafficPluginRuntimeSettings = ref(false)
+  const testingTrafficOastConfig = ref(false)
+  const lastTrafficOastTestResult = ref<TrafficOastTestResult | null>(null)
 
   const proxyListeners = ref<ProxyListener[]>([createDefaultProxyListener()])
   const selectedListeners = ref<number[]>([])
@@ -156,6 +173,70 @@ export function useProxyConfiguration({
 
   const getRelationshipLabel = (value: string) => {
     return t(`trafficAnalysis.proxyConfiguration.relationships.${value}`, value)
+  }
+
+  const normalizeTrafficOastConfig = (config: TrafficOastConfig): TrafficOastConfig => ({
+    enabled: Boolean(config.enabled),
+    serverBaseUrl: config.serverBaseUrl.trim().replace(/\/+$/g, ''),
+    apiKey: config.apiKey.trim(),
+    pollIntervalSecs: Math.min(300, Math.max(5, Math.round(config.pollIntervalSecs || 5))),
+    requestTimeoutSecs: Math.min(60, Math.max(3, Math.round(config.requestTimeoutSecs || 3))),
+  })
+
+  const normalizeTrafficPluginRuntimeSettings = (
+    settings: TrafficPluginRuntimeSettings,
+  ): TrafficPluginRuntimeSettings => {
+    const jitterStart = Math.min(
+      30000,
+      Math.max(0, Math.round(settings.activeProbe.jitterRange[0] || 0)),
+    )
+    const jitterEnd = Math.min(
+      30000,
+      Math.max(0, Math.round(settings.activeProbe.jitterRange[1] || 0)),
+    )
+
+    return {
+      activeProbe: {
+        jitterRange: jitterStart <= jitterEnd ? [jitterStart, jitterEnd] : [jitterEnd, jitterStart],
+        minHostCooldownMs: Math.min(
+          60000,
+          Math.max(0, Math.round(settings.activeProbe.minHostCooldownMs || 0)),
+        ),
+        maxConcurrentPerHost: Math.min(
+          16,
+          Math.max(1, Math.round(settings.activeProbe.maxConcurrentPerHost || 1)),
+        ),
+        timeoutMs: Math.min(60000, Math.max(1000, Math.round(settings.activeProbe.timeoutMs || 1000))),
+      },
+    }
+  }
+
+  const buildTrafficOastConfigSnapshot = (config: TrafficOastConfig) => JSON.stringify(
+    normalizeTrafficOastConfig(config),
+  )
+
+  const applyLoadedTrafficOastConfig = (config: TrafficOastConfig) => {
+    suppressTrafficOastAutoSave.value = true
+    const normalized = normalizeTrafficOastConfig({
+      ...createDefaultTrafficOastConfig(),
+      ...config,
+    })
+    trafficOastConfig.value = normalized
+    lastSavedTrafficOastConfigSnapshot.value = JSON.stringify(normalized)
+    queueMicrotask(() => {
+      suppressTrafficOastAutoSave.value = false
+    })
+  }
+
+  const applyLoadedTrafficPluginRuntimeSettings = (settings: TrafficPluginRuntimeSettings) => {
+    trafficPluginRuntimeSettings.value = normalizeTrafficPluginRuntimeSettings({
+      ...createDefaultTrafficPluginRuntimeSettings(),
+      ...settings,
+      activeProbe: {
+        ...createDefaultTrafficPluginRuntimeSettings().activeProbe,
+        ...(settings.activeProbe || {}),
+      },
+    })
   }
 
   const upstreamProxy = ref<UpstreamProxyConfig | null>(null)
@@ -995,6 +1076,151 @@ export function useProxyConfiguration({
     }
   }
 
+  const saveTrafficPluginRuntimeSettings = async () => {
+    isSavingTrafficPluginRuntimeSettings.value = true
+    try {
+      const payload = normalizeTrafficPluginRuntimeSettings(trafficPluginRuntimeSettings.value)
+      const response = await invoke<CommandResponse<TrafficPluginRuntimeSettings>>(
+        'set_traffic_plugin_runtime_settings',
+        {
+          payload: {
+            settings: payload,
+          },
+        },
+      )
+
+      if (!response.success || !response.data) {
+        throw new Error(response.error || '保存失败')
+      }
+
+      applyLoadedTrafficPluginRuntimeSettings(response.data)
+      dialog.toast.success('已保存插件运行时设置')
+    } catch (error: any) {
+      console.error('[ProxyConfiguration] Failed to save traffic plugin runtime settings:', error)
+      dialog.toast.error(`保存配置失败: ${error}`)
+    } finally {
+      isSavingTrafficPluginRuntimeSettings.value = false
+    }
+  }
+
+  const resetTrafficPluginRuntimeSettings = async () => {
+    applyLoadedTrafficPluginRuntimeSettings(createDefaultTrafficPluginRuntimeSettings())
+    await saveTrafficPluginRuntimeSettings()
+  }
+
+  const applyTrafficPluginRuntimePreset = (
+    preset: 'local_fast' | 'balanced' | 'conservative',
+  ) => {
+    const presets: Record<'local_fast' | 'balanced' | 'conservative', TrafficPluginRuntimeSettings> = {
+      local_fast: {
+        activeProbe: {
+          jitterRange: [0, 50],
+          minHostCooldownMs: 200,
+          maxConcurrentPerHost: 3,
+          timeoutMs: 6000,
+        },
+      },
+      balanced: {
+        activeProbe: {
+          jitterRange: [100, 300],
+          minHostCooldownMs: 500,
+          maxConcurrentPerHost: 2,
+          timeoutMs: 8000,
+        },
+      },
+      conservative: {
+        activeProbe: {
+          jitterRange: [300, 800],
+          minHostCooldownMs: 1200,
+          maxConcurrentPerHost: 1,
+          timeoutMs: 12000,
+        },
+      },
+    }
+
+    applyLoadedTrafficPluginRuntimeSettings(presets[preset])
+  }
+
+  const saveTrafficOastConfig = async () => {
+    const requestConfig = normalizeTrafficOastConfig(trafficOastConfig.value)
+    const requestSnapshot = JSON.stringify(requestConfig)
+
+    try {
+      trafficOastAutoSaveState.value = 'saving'
+      const response = await invoke<CommandResponse<TrafficOastConfig>>('set_traffic_oast_config', {
+        payload: {
+          config: requestConfig,
+        },
+      })
+
+      if (!response.success || !response.data) {
+        throw new Error(response.error || '保存失败')
+      }
+
+      if (buildTrafficOastConfigSnapshot(trafficOastConfig.value) !== requestSnapshot) {
+        return
+      }
+
+      applyLoadedTrafficOastConfig(response.data)
+      trafficOastLastSavedAt.value = new Date().toISOString()
+      trafficOastAutoSaveState.value = 'saved'
+    } catch (error: any) {
+      if (buildTrafficOastConfigSnapshot(trafficOastConfig.value) !== requestSnapshot) {
+        return
+      }
+
+      trafficOastAutoSaveState.value = 'error'
+      console.error('[ProxyConfiguration] Failed to save traffic OAST config:', error)
+      dialog.toast.error(`保存 OAST 配置失败: ${error}`)
+    }
+  }
+
+  const debouncedSaveTrafficOastConfig = () => {
+    if (isInitialLoad.value || suppressTrafficOastAutoSave.value) {
+      return
+    }
+
+    if (trafficOastSaveTimeout.value) {
+      clearTimeout(trafficOastSaveTimeout.value)
+    }
+
+    trafficOastSaveTimeout.value = setTimeout(() => {
+      void saveTrafficOastConfig()
+    }, 1000)
+  }
+
+  const testTrafficOastConfig = async () => {
+    testingTrafficOastConfig.value = true
+    try {
+      const response = await invoke<CommandResponse<TrafficOastTestResult>>(
+        'test_traffic_oast_config_command',
+        {
+          payload: {
+            config: trafficOastConfig.value,
+          },
+        },
+      )
+
+      if (!response.success || !response.data) {
+        throw new Error(response.error || '测试失败')
+      }
+
+      lastTrafficOastTestResult.value = response.data
+      dialog.toast.success('OAST 服务连通性正常')
+    } catch (error: any) {
+      console.error('[ProxyConfiguration] Failed to test traffic OAST config:', error)
+      lastTrafficOastTestResult.value = {
+        reachable: false,
+        message: String(error),
+        generatedToken: null,
+        generatedFqdn: null,
+      }
+      dialog.toast.error(`OAST 测试失败: ${error}`)
+    } finally {
+      testingTrafficOastConfig.value = false
+    }
+  }
+
   const copyBrowserExtensionBridgeUrl = async () => {
     try {
       await navigator.clipboard.writeText(browserExtensionBridgeUrl.value)
@@ -1107,6 +1333,22 @@ export function useProxyConfiguration({
           '[ProxyConfiguration] Loaded traffic behavior signal settings:',
           behaviorSignalSettings.value,
         )
+      }
+
+      const trafficPluginRuntimeResponse = await invoke<CommandResponse<TrafficPluginRuntimeSettings>>(
+        'get_traffic_plugin_runtime_settings',
+      )
+      if (trafficPluginRuntimeResponse.success && trafficPluginRuntimeResponse.data) {
+        applyLoadedTrafficPluginRuntimeSettings(trafficPluginRuntimeResponse.data)
+      }
+
+      const trafficOastResponse = await invoke<CommandResponse<TrafficOastConfig>>(
+        'get_traffic_oast_config',
+      )
+      if (trafficOastResponse.success && trafficOastResponse.data) {
+        applyLoadedTrafficOastConfig(trafficOastResponse.data)
+        lastTrafficOastTestResult.value = null
+        trafficOastAutoSaveState.value = 'idle'
       }
 
       try {
@@ -1339,6 +1581,9 @@ export function useProxyConfiguration({
     if (saveTimeout.value) {
       clearTimeout(saveTimeout.value)
     }
+    if (trafficOastSaveTimeout.value) {
+      clearTimeout(trafficOastSaveTimeout.value)
+    }
   })
 
   watch(refreshTrigger, async () => {
@@ -1389,6 +1634,19 @@ export function useProxyConfiguration({
     syncFilterRulesToBackend()
   }, { deep: true })
 
+  watch(trafficOastConfig, () => {
+    if (isInitialLoad.value || suppressTrafficOastAutoSave.value) return
+
+    const snapshot = buildTrafficOastConfigSnapshot(trafficOastConfig.value)
+    if (snapshot === lastSavedTrafficOastConfigSnapshot.value) {
+      return
+    }
+
+    trafficOastAutoSaveState.value = 'dirty'
+    lastTrafficOastTestResult.value = null
+    debouncedSaveTrafficOastConfig()
+  }, { deep: true })
+
   return {
     isSaving,
     proxyConfig,
@@ -1401,6 +1659,13 @@ export function useProxyConfiguration({
     browserExtensionBundledWithApp,
     isCopyingBrowserExtension,
     behaviorSignalSettings,
+    trafficPluginRuntimeSettings,
+    isSavingTrafficPluginRuntimeSettings,
+    trafficOastConfig,
+    trafficOastAutoSaveState,
+    trafficOastLastSavedAt,
+    testingTrafficOastConfig,
+    lastTrafficOastTestResult,
     proxyListeners,
     selectedListeners,
     masterInterceptionEnabled,
@@ -1529,6 +1794,10 @@ export function useProxyConfiguration({
     saveProxyAutoStart,
     saveTrafficAnalysisPluginEnabled,
     saveTrafficBehaviorSignalSettings,
+    saveTrafficPluginRuntimeSettings,
+    applyTrafficPluginRuntimePreset,
+    resetTrafficPluginRuntimeSettings,
+    testTrafficOastConfig,
     copyBrowserExtensionBridgeUrl,
     copyBrowserExtensionDirectory,
     copyBrowserExtensionToDirectory,

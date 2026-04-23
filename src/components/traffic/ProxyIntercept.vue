@@ -301,13 +301,26 @@
           </div>
 
           <!-- Content Tabs -->
-          <div class="flex items-center justify-between border-b border-base-300 bg-base-200 px-3 py-1 flex-shrink-0">
-            <TrafficMessageViewTabs
-              :model-value="activeTab"
-              :tabs="interceptViewTabs"
-              @update:model-value="activeTab = $event as 'raw' | 'pretty' | 'hex'"
-            />
-            <TrafficMessageDisplayControls v-if="activeTab !== 'hex'" />
+          <div
+            ref="interceptContentHeaderRef"
+            class="flex flex-wrap items-center gap-2 border-b border-base-300 bg-base-200 px-3 py-1 flex-shrink-0"
+          >
+            <div class="min-w-0 overflow-x-auto">
+              <TrafficMessageViewTabs
+                :model-value="activeTab"
+                :tabs="interceptViewTabs"
+                :compact="isInterceptContentHeaderCompact"
+                @update:model-value="activeTab = $event as 'raw' | 'pretty' | 'hex'"
+              />
+            </div>
+            <div class="ml-auto min-w-0 overflow-x-auto">
+              <TrafficMessageDisplayControls
+                v-if="activeTab !== 'hex'"
+                :mode-label="''"
+                :compact="isInterceptContentHeaderCompact"
+                :show-line-endings="isEditable"
+              />
+            </div>
           </div>
 
           <!-- Content View -->
@@ -320,13 +333,25 @@
                 @contextmenu.capture.prevent="showCurrentItemContextMenu($event)"
               >
                 <HttpMessageSurface
+                  v-if="isEditable"
                   v-model="requestContent"
-                  :readonly="!isEditable"
                   custom-context-menu
                   :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
                   height="100%"
-                  display-mode="raw"
-                  :state-key="currentItem ? `intercept:${currentItem.type}:${currentItemIndex}:raw` : ''"
+                  :display-mode="resolveTrafficTextDisplayMode(activeTab)"
+                  :state-key="currentItem ? buildInterceptStateKey(currentItem.type, currentItemIndex, 'raw') : ''"
+                  :show-display-toolbar="false"
+                  @contextmenu="showCurrentItemContextMenu($event)"
+                />
+                <HttpMessageSurface
+                  v-else
+                  :model-value="requestContent"
+                  readonly
+                  :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
+                  custom-context-menu
+                  height="100%"
+                  :display-mode="resolveTrafficTextDisplayMode(activeTab)"
+                  :state-key="currentItem ? buildInterceptStateKey(currentItem.type, currentItemIndex, 'raw') : ''"
                   :show-display-toolbar="false"
                   @contextmenu="showCurrentItemContextMenu($event)"
                 />
@@ -339,13 +364,25 @@
                 @contextmenu.capture.prevent="showCurrentItemContextMenu($event)"
               >
                 <HttpMessageSurface
+                  v-if="isEditable"
                   v-model="prettyContent"
-                  :readonly="!isEditable"
                   custom-context-menu
                   :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
                   height="100%"
-                  display-mode="pretty"
-                  :state-key="currentItem ? `intercept:${currentItem.type}:${currentItemIndex}:pretty` : ''"
+                  :display-mode="resolveTrafficTextDisplayMode(activeTab)"
+                  :state-key="currentItem ? buildInterceptStateKey(currentItem.type, currentItemIndex, 'pretty') : ''"
+                  :show-display-toolbar="false"
+                  @contextmenu="showCurrentItemContextMenu($event)"
+                />
+                <HttpMessageSurface
+                  v-else
+                  :model-value="prettyContent"
+                  readonly
+                  :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
+                  custom-context-menu
+                  height="100%"
+                  :display-mode="resolveTrafficTextDisplayMode(activeTab)"
+                  :state-key="currentItem ? buildInterceptStateKey(currentItem.type, currentItemIndex, 'pretty') : ''"
                   :show-display-toolbar="false"
                   @contextmenu="showCurrentItemContextMenu($event)"
                 />
@@ -484,6 +521,7 @@ import { buildTrafficContextMenuSections } from './trafficContextMenuSectionSupp
 import { buildTrafficContextSubmenu } from './trafficContextSubmenuSupport'
 import { useTrafficSendTargets } from './trafficSendTargets'
 import { buildTrafficRequestSendMenuItems } from './trafficSendMenuSupport'
+import { useTrafficPaneCompactMode } from './useTrafficPaneCompactMode'
 import {
   convertInterceptedItemToProxyRequest as convertToProxyRequest,
   formatInterceptBody as formatBody,
@@ -505,15 +543,20 @@ import {
   type ProxyStatus,
 } from './proxyInterceptSupport';
 import type { HttpExchangeRequest } from './http/model'
-import { normalizeHttpVersionToken } from './http/version'
+import { buildInterceptItemText, buildInterceptResponseText, buildInterceptHexView, formatInterceptPrettyContent } from './proxyInterceptContentSupport'
+import { setupProxyInterceptEventListeners, refreshProxyInterceptStatus } from './proxyInterceptEventSupport'
+import { buildSavedInterceptFilterRule } from './proxyInterceptFilterSupport'
+import type { ContextMenuState, FilterRule, ProxyInterceptListenerCleanup } from './proxyInterceptTypes'
+import { buildInterceptViewTabs, createDefaultInterceptFilterRule } from './proxyInterceptViewSupport'
+import { buildInterceptStateKey, resolveTrafficTextDisplayMode } from './trafficMessagePresentationSupport'
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { enabledTargets } = useTrafficSendTargets()
-const interceptViewTabs = computed(() => [
-  { value: 'pretty', label: t('trafficAnalysis.intercept.tabs.pretty') },
-  { value: 'raw', label: t('trafficAnalysis.intercept.tabs.raw') },
-  { value: 'hex', label: t('trafficAnalysis.intercept.tabs.hex') },
-])
+const {
+  panelRef: interceptContentHeaderRef,
+  isCompact: isInterceptContentHeaderCompact,
+} = useTrafficPaneCompactMode(680)
+const interceptViewTabs = computed(() => buildInterceptViewTabs(t, locale.value))
 
 // 注入父组件的刷新触发器
 const refreshTrigger = inject<any>('refreshTrigger', ref(0));
@@ -559,15 +602,6 @@ const isEditable = ref(true); // 默认可编辑
 const isProcessing = ref(false);
 const requestContent = ref('');
 
-// Context menu state
-interface ContextMenuState {
-  visible: boolean;
-  x: number;
-  y: number;
-  item: InterceptedItem | null;
-  index: number;
-}
-
 const contextMenu = ref<ContextMenuState>({
   visible: false,
   x: 0,
@@ -576,23 +610,8 @@ const contextMenu = ref<ContextMenuState>({
   index: -1
 });
 
-// Filter dialog state
-interface FilterRule {
-  type: 'request' | 'response';
-  matchType: string;
-  relationship: string;
-  condition: string;
-  action: 'exclude' | 'include';
-}
-
 const filterDialogRef = ref<HTMLDialogElement | null>(null);
-const filterRule = ref<FilterRule>({
-  type: 'request',
-  matchType: 'domain',
-  relationship: 'matches',
-  condition: '',
-  action: 'exclude'
-});
+const filterRule = ref<FilterRule>(createDefaultInterceptFilterRule());
 
 // 合并的拦截队列（请求、响应、WebSocket）
 const interceptedItems = computed<InterceptedItem[]>(() => {
@@ -798,63 +817,21 @@ let startHeight = 0;
 
 // Pretty content (formatted) - writable computed
 const prettyContent = computed({
-  get: () => {
-    if (!requestContent.value) return '';
-    
-    const lines = requestContent.value.split('\n');
-    const result: string[] = [];
-    let inBody = false;
-    const bodyLines: string[] = [];
-    
-    for (const line of lines) {
-      if (!inBody) {
-        result.push(line);
-        // Empty line marks body start
-        if (line.trim() === '') {
-          inBody = true;
-        }
-      } else {
-        bodyLines.push(line);
-      }
-    }
-    
-    // Format body if present
-    if (bodyLines.length > 0) {
-      const body = bodyLines.join('\n');
-      const formattedBody = formatBody(body);
-      result.push(formattedBody);
-    }
-    
-    return result.join('\n');
-  },
+  get: () => formatInterceptPrettyContent(requestContent.value, formatBody),
   set: (value: string) => {
     requestContent.value = value;
   }
 });
 
-const hexView = computed(() => {
-  if (!requestContent.value) return '';
-  const bytes = new TextEncoder().encode(requestContent.value);
-  let hex = '';
-  for (let i = 0; i < bytes.length; i += 16) {
-    const offset = i.toString(16).padStart(8, '0');
-    const chunk = bytes.slice(i, i + 16);
-    const hexPart = Array.from(chunk)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join(' ');
-    const asciiPart = Array.from(chunk)
-      .map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.')
-      .join('');
-    hex += `${offset}  ${hexPart.padEnd(48, ' ')}  ${asciiPart}\n`;
-  }
-  return hex;
-});
+const hexView = computed(() => buildInterceptHexView(requestContent.value));
 
 // 事件监听器
-let unlistenProxyStatus: (() => void) | null = null;
-let unlistenInterceptRequest: (() => void) | null = null;
-let unlistenInterceptResponse: (() => void) | null = null;
-let unlistenInterceptWebSocket: (() => void) | null = null;
+let listenerCleanup: ProxyInterceptListenerCleanup = {
+  proxyStatus: null,
+  interceptRequest: null,
+  interceptResponse: null,
+  interceptWebSocket: null,
+};
 
 // 拖拽调整高度
 function startResize(event: MouseEvent) {
@@ -983,7 +960,7 @@ function contextMenuSendToComparer() {
     dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
   } else if (contextMenu.value.item?.type === 'response') {
     emit('sendDraftRequestToComparer', {
-      text: buildInterceptResponseText(contextMenu.value.item.data as InterceptedResponse),
+      text: buildInterceptResponseText(contextMenu.value.item.data as InterceptedResponse, interceptedRequests.value),
       messageType: 'response',
       label: t('trafficAnalysis.intercept.response'),
     })
@@ -1171,38 +1148,9 @@ async function addFilterByWsDirection() {
 async function saveFilterRule() {
   try {
     // Map matchType from dialog to ProxyConfiguration format
-    const matchTypeMap: Record<string, string> = {
-      'domain': 'domain_name',
-      'url': 'url',
-      'method': 'http_method',
-      'fileExt': 'file_extension',
-      'header': 'any_header',
-      'status': 'status_code',
-      'contentType': 'content_type_header'
-    };
-    
-    // Map relationship from dialog to ProxyConfiguration format
-    const relationshipMap: Record<string, string> = {
-      'matches': 'matches',
-      'notMatches': 'does_not_match',
-      'contains': 'matches',
-      'notContains': 'does_not_match'
-    };
-    
-    const mappedMatchType = matchTypeMap[filterRule.value.matchType] || filterRule.value.matchType;
-    const mappedRelationship = filterRule.value.action === 'exclude' 
-      ? 'does_not_match' 
-      : relationshipMap[filterRule.value.relationship] || filterRule.value.relationship;
-    
     await tauriEmit('intercept:add-filter-rule', {
       ruleType: filterRule.value.type,
-      rule: {
-        enabled: true,
-        operator: 'And',
-        matchType: mappedMatchType,
-        relationship: mappedRelationship,
-        condition: filterRule.value.condition
-      }
+      rule: buildSavedInterceptFilterRule(filterRule.value),
     });
     
     dialog.toast.success(t('trafficAnalysis.intercept.filterDialog.ruleAdded'));
@@ -1440,7 +1388,7 @@ function sendToComparer() {
 
   if (currentItem.value?.type === 'response') {
     emit('sendDraftRequestToComparer', {
-      text: buildInterceptResponseText(currentItem.value.data as InterceptedResponse),
+      text: buildInterceptResponseText(currentItem.value.data as InterceptedResponse, interceptedRequests.value),
       messageType: 'response',
       label: t('trafficAnalysis.intercept.response'),
     })
@@ -1448,53 +1396,12 @@ function sendToComparer() {
   }
 }
 
-function loadRequestContent(request: InterceptedRequest) {
-  let content = `${request.method} ${request.path} ${request.protocol}\n`;
-  for (const [key, value] of Object.entries(request.headers)) {
-    content += `${key}: ${value}\n`;
-  }
-  if (request.body) {
-    content += `\n${request.body}`;
-  }
-  requestContent.value = content;
-}
-
-function getInterceptResponseProtocol(response: InterceptedResponse) {
-  const matchingRequest = interceptedRequests.value.find((request) => request.id === response.request_id)
-  return normalizeHttpVersionToken(matchingRequest?.protocol)
-}
-
-function buildInterceptResponseText(response: InterceptedResponse) {
-  let content = `${getInterceptResponseProtocol(response)} ${response.status}\n`;
-  for (const [key, value] of Object.entries(response.headers)) {
-    content += `${key}: ${value}\n`;
-  }
-  if (response.body) {
-    content += `\n${response.body}`;
-  }
-  return content
-}
-
-function loadResponseContent(response: InterceptedResponse) {
-  requestContent.value = buildInterceptResponseText(response);
-}
-
-function loadWebSocketContent(msg: InterceptedWebSocketMessage) {
-  requestContent.value = msg.content || '';
-}
-
 // 加载当前项的内容
 function loadCurrentItemContent() {
   const item = currentItem.value;
   if (!item) return;
-  
-  if (item.type === 'request') {
-    loadRequestContent(item.data as InterceptedRequest);
-  } else if (item.type === 'response') {
-    loadResponseContent(item.data as InterceptedResponse);
-  } else if (item.type === 'websocket') {
-    loadWebSocketContent(item.data as InterceptedWebSocketMessage);
-  }
+
+  requestContent.value = buildInterceptItemText(item, interceptedRequests.value);
 }
 
 // 选择队列中的项
@@ -1601,76 +1508,48 @@ async function dropCurrentItem() {
 
 async function refreshStatus() {
   try {
-    const response = await invoke<any>('get_proxy_status');
-    if (response.success && response.data) {
-      proxyStatus.value = response.data;
-    }
-    
-    // 请求拦截状态
-    const interceptResponse = await invoke<any>('get_intercept_enabled');
-    if (interceptResponse.success) {
-      interceptEnabled.value = interceptResponse.data;
-    }
-    
-    // 响应拦截状态
-    const responseInterceptResponse = await invoke<any>('get_response_intercept_enabled');
-    if (responseInterceptResponse.success) {
-      responseInterceptEnabled.value = responseInterceptResponse.data;
-    }
-
-    // WebSocket 拦截状态
-    const wsInterceptResponse = await invoke<any>('get_websocket_intercept_enabled');
-    if (wsInterceptResponse.success) {
-      websocketInterceptEnabled.value = wsInterceptResponse.data;
-    }
+    const snapshot = await refreshProxyInterceptStatus(invoke);
+    if (snapshot.proxyStatus) proxyStatus.value = snapshot.proxyStatus;
+    if (typeof snapshot.interceptEnabled === 'boolean') interceptEnabled.value = snapshot.interceptEnabled;
+    if (typeof snapshot.responseInterceptEnabled === 'boolean') responseInterceptEnabled.value = snapshot.responseInterceptEnabled;
+    if (typeof snapshot.websocketInterceptEnabled === 'boolean') websocketInterceptEnabled.value = snapshot.websocketInterceptEnabled;
   } catch (error: any) {
     console.error('Failed to refresh proxy status:', error);
   }
 }
 
 async function setupEventListeners() {
-  // 监听代理状态事件
-  unlistenProxyStatus = await listen<ProxyStatus>('proxy:status', (event) => {
-    proxyStatus.value = event.payload;
-  });
-  
-  // 监听拦截请求事件
-  unlistenInterceptRequest = await listen<InterceptedRequest>('intercept:request', (event) => {
-    const request = event.payload;
-    interceptedRequests.value.push(request);
-    
-    // 如果是第一个项目，自动加载内容
-    if (interceptedItems.value.length === 1) {
-      currentItemIndex.value = 0;
-      currentItemType.value = 'request';
-      loadRequestContent(request);
-    }
-  });
-  
-  // 监听拦截响应事件
-  unlistenInterceptResponse = await listen<InterceptedResponse>('intercept:response', (event) => {
-    const response = event.payload;
-    interceptedResponses.value.push(response);
-    
-    if (interceptedItems.value.length === 1) {
-      currentItemIndex.value = 0;
-      currentItemType.value = 'response';
-      loadResponseContent(response);
-    }
-  });
-
-  // 监听拦截 WebSocket 事件
-  unlistenInterceptWebSocket = await listen<InterceptedWebSocketMessage>('proxy:intercept_websocket', (event) => {
-    const msg = event.payload;
-    console.log('[ProxyIntercept] Received intercept websocket:', msg);
-    interceptedWebsockets.value.push(msg);
-
-    if (interceptedItems.value.length === 1) {
-      currentItemIndex.value = 0;
-      currentItemType.value = 'websocket';
-      loadWebSocketContent(msg);
-    }
-  });
+  listenerCleanup = await setupProxyInterceptEventListeners({
+    listen,
+    onProxyStatus: (status) => {
+      proxyStatus.value = status
+    },
+    onInterceptRequest: (request) => {
+      interceptedRequests.value.push(request)
+      if (interceptedItems.value.length === 1) {
+        currentItemIndex.value = 0
+        currentItemType.value = 'request'
+        requestContent.value = buildInterceptItemText({ type: 'request', data: request }, interceptedRequests.value)
+      }
+    },
+    onInterceptResponse: (response) => {
+      interceptedResponses.value.push(response)
+      if (interceptedItems.value.length === 1) {
+        currentItemIndex.value = 0
+        currentItemType.value = 'response'
+        requestContent.value = buildInterceptItemText({ type: 'response', data: response }, interceptedRequests.value)
+      }
+    },
+    onInterceptWebSocket: (message) => {
+      console.log('[ProxyIntercept] Received intercept websocket:', message)
+      interceptedWebsockets.value.push(message)
+      if (interceptedItems.value.length === 1) {
+        currentItemIndex.value = 0
+        currentItemType.value = 'websocket'
+        requestContent.value = buildInterceptItemText({ type: 'websocket', data: message }, interceptedRequests.value)
+      }
+    },
+  })
 }
 
 // 监听当前项变化，自动加载内容
@@ -1695,10 +1574,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  if (unlistenProxyStatus) unlistenProxyStatus();
-  if (unlistenInterceptRequest) unlistenInterceptRequest();
-  if (unlistenInterceptResponse) unlistenInterceptResponse();
-  if (unlistenInterceptWebSocket) unlistenInterceptWebSocket();
+  listenerCleanup.proxyStatus?.();
+  listenerCleanup.interceptRequest?.();
+  listenerCleanup.interceptResponse?.();
+  listenerCleanup.interceptWebSocket?.();
   document.removeEventListener('mousemove', handleResize);
   document.removeEventListener('mouseup', stopResize);
 });

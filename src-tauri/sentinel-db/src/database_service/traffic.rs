@@ -67,6 +67,15 @@ fn smart_decompress(data: Option<String>, is_compressed: bool) -> Result<Option<
 }
 
 impl DatabaseService {
+    async fn sqlite_proxy_requests_has_protocol_column(pool: &sqlx::SqlitePool) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('proxy_requests') WHERE name = 'protocol'",
+        )
+        .fetch_one(pool)
+        .await?;
+        Ok(count > 0)
+    }
+
     /// Migrate old table names
 
     // ============================================================
@@ -1617,34 +1626,66 @@ impl DatabaseService {
                 Ok(row.0)
             }
             DatabasePool::SQLite(pool) => {
-                let row: (i64,) = sqlx::query_as(
-                    r#"
-                    INSERT INTO proxy_requests (
-                        url, host, scheme, http_version_observed, method, status_code,
-                        request_headers, request_body, response_headers, response_body,
-                        response_size, response_time, timestamp,
-                        request_body_compressed, response_body_compressed
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    RETURNING id
-                    "#,
-                )
-                .bind(&request.url)
-                .bind(&request.host)
-                .bind(&request.scheme)
-                .bind(&request.http_version_observed)
-                .bind(&request.method)
-                .bind(request.status_code)
-                .bind(&request.request_headers)
-                .bind(&request_body)
-                .bind(&request.response_headers)
-                .bind(&response_body)
-                .bind(request.response_size)
-                .bind(request.response_time)
-                .bind(request.timestamp)
-                .bind(request_compressed)
-                .bind(response_compressed)
-                .fetch_one(pool)
-                .await?;
+                let row: (i64,) = if Self::sqlite_proxy_requests_has_protocol_column(pool).await? {
+                    sqlx::query_as(
+                        r#"
+                        INSERT INTO proxy_requests (
+                            url, host, protocol, scheme, http_version_observed, method, status_code,
+                            request_headers, request_body, response_headers, response_body,
+                            response_size, response_time, timestamp,
+                            request_body_compressed, response_body_compressed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        RETURNING id
+                        "#,
+                    )
+                    .bind(&request.url)
+                    .bind(&request.host)
+                    .bind(&request.scheme)
+                    .bind(&request.scheme)
+                    .bind(&request.http_version_observed)
+                    .bind(&request.method)
+                    .bind(request.status_code)
+                    .bind(&request.request_headers)
+                    .bind(&request_body)
+                    .bind(&request.response_headers)
+                    .bind(&response_body)
+                    .bind(request.response_size)
+                    .bind(request.response_time)
+                    .bind(request.timestamp)
+                    .bind(request_compressed)
+                    .bind(response_compressed)
+                    .fetch_one(pool)
+                    .await?
+                } else {
+                    sqlx::query_as(
+                        r#"
+                        INSERT INTO proxy_requests (
+                            url, host, scheme, http_version_observed, method, status_code,
+                            request_headers, request_body, response_headers, response_body,
+                            response_size, response_time, timestamp,
+                            request_body_compressed, response_body_compressed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        RETURNING id
+                        "#,
+                    )
+                    .bind(&request.url)
+                    .bind(&request.host)
+                    .bind(&request.scheme)
+                    .bind(&request.http_version_observed)
+                    .bind(&request.method)
+                    .bind(request.status_code)
+                    .bind(&request.request_headers)
+                    .bind(&request_body)
+                    .bind(&request.response_headers)
+                    .bind(&response_body)
+                    .bind(request.response_size)
+                    .bind(request.response_time)
+                    .bind(request.timestamp)
+                    .bind(request_compressed)
+                    .bind(response_compressed)
+                    .fetch_one(pool)
+                    .await?
+                };
                 Ok(row.0)
             }
             DatabasePool::MySQL(pool) => {

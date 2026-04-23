@@ -6,6 +6,7 @@ use super::bounty_workflow_event_support::{
 use crate::commands::workflow_notification_support::{
     build_workflow_result_summary_event, emit_workflow_result_summary, summarize_workflow_results,
 };
+use crate::services::ensure_bug_bounty_access;
 use chrono::Utc;
 use sentinel_bounty::services::{
     CreateFindingInput, CreateProgramInput, CreateSubmissionInput, FindingService,
@@ -25,6 +26,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
+
+fn ensure_bounty_feature() -> Result<(), String> {
+    ensure_bug_bounty_access()
+}
 
 // ============================================================================
 // Request/Response Types
@@ -135,6 +140,8 @@ pub async fn bounty_create_program(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateProgramRequest,
 ) -> Result<BountyProgramRow, String> {
+    ensure_bounty_feature()?;
+
     let input = CreateProgramInput {
         name: request.name,
         organization: request.organization,
@@ -158,6 +165,8 @@ pub async fn bounty_get_program(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<BountyProgramRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_bounty_program(&id)
         .await
@@ -171,6 +180,8 @@ pub async fn bounty_update_program(
     id: String,
     request: UpdateProgramRequest,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     let input = UpdateProgramInput {
         name: request.name,
         organization: request.organization,
@@ -198,6 +209,8 @@ pub async fn bounty_delete_program(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     ProgramDbService::delete_program(db_service.inner().as_ref(), &id)
         .await
         .map_err(|e| e.to_string())
@@ -209,6 +222,8 @@ pub async fn bounty_list_programs(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<ProgramFilter>,
 ) -> Result<Vec<BountyProgramRow>, String> {
+    ensure_bounty_feature()?;
+
     let filter = filter.unwrap_or_default();
 
     db_service
@@ -231,6 +246,8 @@ pub async fn bounty_list_programs(
 pub async fn bounty_get_program_stats(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<ProgramStats, String> {
+    ensure_bounty_feature()?;
+
     let stats = db_service
         .get_bounty_program_stats_live()
         .await
@@ -257,6 +274,8 @@ pub async fn bounty_create_scope(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateScopeRequest,
 ) -> Result<ProgramScopeRow, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
 
     let scope = ProgramScopeRow {
@@ -295,6 +314,8 @@ pub async fn bounty_get_scope(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<ProgramScopeRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_program_scope(&id)
         .await
@@ -308,6 +329,8 @@ pub async fn bounty_update_scope(
     id: String,
     request: UpdateScopeRequest,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     let existing = db_service
         .get_program_scope(&id)
         .await
@@ -357,6 +380,8 @@ pub async fn bounty_delete_scope(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .delete_program_scope(&id)
         .await
@@ -369,6 +394,8 @@ pub async fn bounty_list_scopes(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<ScopeFilter>,
 ) -> Result<Vec<ProgramScopeRow>, String> {
+    ensure_bounty_feature()?;
+
     let filter = filter.unwrap_or_default();
 
     let program_id = filter
@@ -395,6 +422,8 @@ pub async fn bounty_validate_scope(
     program_id: String,
     target: String,
 ) -> Result<ScopeValidation, String> {
+    ensure_bounty_feature()?;
+
     let scopes = db_service
         .list_program_scopes(Some(&program_id), None)
         .await
@@ -514,6 +543,8 @@ pub async fn bounty_create_finding(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateFindingRequest,
 ) -> Result<BountyFindingRow, String> {
+    ensure_bounty_feature()?;
+
     let input = CreateFindingInput {
         program_id: request.program_id,
         scope_id: request.scope_id,
@@ -543,6 +574,8 @@ pub async fn bounty_get_finding(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<BountyFindingRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_bounty_finding(&id)
         .await
@@ -556,6 +589,8 @@ pub async fn bounty_update_finding(
     id: String,
     request: UpdateFindingRequest,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     let input = UpdateFindingInput {
         title: request.title,
         description: request.description,
@@ -584,6 +619,8 @@ pub async fn bounty_delete_finding(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .delete_bounty_finding(&id)
         .await
@@ -596,7 +633,22 @@ pub async fn bounty_batch_delete_findings(
     db_service: State<'_, Arc<DatabaseService>>,
     ids: Vec<String>,
 ) -> Result<u64, String> {
+    ensure_bounty_feature()?;
+
     FindingService::batch_delete_findings(db_service.inner().as_ref(), ids)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Delete all findings
+#[tauri::command]
+pub async fn bounty_delete_all_findings(
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<u64, String> {
+    ensure_bounty_feature()?;
+
+    db_service
+        .delete_all_bounty_findings()
         .await
         .map_err(|e| e.to_string())
 }
@@ -608,6 +660,8 @@ pub async fn bounty_batch_update_finding_status(
     ids: Vec<String>,
     status: String,
 ) -> Result<u64, String> {
+    ensure_bounty_feature()?;
+
     FindingService::batch_update_finding_status(db_service.inner().as_ref(), ids, status)
         .await
         .map_err(|e| e.to_string())
@@ -619,6 +673,8 @@ pub async fn bounty_list_findings(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<FindingFilter>,
 ) -> Result<Vec<BountyFindingRow>, String> {
+    ensure_bounty_feature()?;
+
     let filter = filter.unwrap_or_default();
 
     db_service
@@ -643,6 +699,8 @@ pub async fn bounty_count_findings(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<FindingFilter>,
 ) -> Result<i64, String> {
+    ensure_bounty_feature()?;
+
     let filter = filter.unwrap_or_default();
 
     db_service
@@ -667,6 +725,8 @@ pub async fn bounty_get_finding_stats(
     db_service: State<'_, Arc<DatabaseService>>,
     program_id: Option<String>,
 ) -> Result<BountyFindingStats, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_bounty_finding_stats(program_id.as_deref())
         .await
@@ -720,6 +780,8 @@ pub async fn bounty_create_evidence(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateEvidenceRequest,
 ) -> Result<BountyEvidenceRow, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
 
     let evidence = BountyEvidenceRow {
@@ -762,6 +824,8 @@ pub async fn bounty_get_evidence(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<BountyEvidenceRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_bounty_evidence(&id)
         .await
@@ -775,6 +839,8 @@ pub async fn bounty_update_evidence(
     id: String,
     request: UpdateEvidenceRequest,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     let existing = db_service
         .get_bounty_evidence(&id)
         .await
@@ -835,6 +901,8 @@ pub async fn bounty_delete_evidence(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .delete_bounty_evidence(&id)
         .await
@@ -847,6 +915,8 @@ pub async fn bounty_list_evidence(
     db_service: State<'_, Arc<DatabaseService>>,
     finding_id: String,
 ) -> Result<Vec<BountyEvidenceRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .list_bounty_evidence(&finding_id)
         .await
@@ -918,6 +988,8 @@ pub async fn bounty_create_submission(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateSubmissionRequest,
 ) -> Result<BountySubmissionRow, String> {
+    ensure_bounty_feature()?;
+
     let input = CreateSubmissionInput {
         program_id: request.program_id,
         finding_id: request.finding_id,
@@ -944,6 +1016,8 @@ pub async fn bounty_get_submission(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<BountySubmissionRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_bounty_submission(&id)
         .await
@@ -957,6 +1031,8 @@ pub async fn bounty_update_submission(
     id: String,
     request: UpdateSubmissionRequest,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     let input = UpdateSubmissionInput {
         platform_submission_id: request.platform_submission_id,
         title: request.title,
@@ -988,6 +1064,8 @@ pub async fn bounty_delete_submission(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .delete_bounty_submission(&id)
         .await
@@ -1000,6 +1078,8 @@ pub async fn bounty_batch_delete_submissions(
     db_service: State<'_, Arc<DatabaseService>>,
     ids: Vec<String>,
 ) -> Result<u64, String> {
+    ensure_bounty_feature()?;
+
     SubmissionDbService::batch_delete_submissions(db_service.inner().as_ref(), ids)
         .await
         .map_err(|e| e.to_string())
@@ -1012,6 +1092,8 @@ pub async fn bounty_batch_update_submission_status(
     ids: Vec<String>,
     status: String,
 ) -> Result<u64, String> {
+    ensure_bounty_feature()?;
+
     SubmissionDbService::batch_update_submission_status(db_service.inner().as_ref(), ids, status)
         .await
         .map_err(|e| e.to_string())
@@ -1023,6 +1105,8 @@ pub async fn bounty_list_submissions(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<SubmissionFilter>,
 ) -> Result<Vec<BountySubmissionRow>, String> {
+    ensure_bounty_feature()?;
+
     let filter = filter.unwrap_or_default();
 
     db_service
@@ -1046,6 +1130,8 @@ pub async fn bounty_count_submissions(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<SubmissionFilter>,
 ) -> Result<i64, String> {
+    ensure_bounty_feature()?;
+
     let filter = filter.unwrap_or_default();
 
     db_service
@@ -1069,6 +1155,8 @@ pub async fn bounty_get_submission_stats(
     db_service: State<'_, Arc<DatabaseService>>,
     program_id: Option<String>,
 ) -> Result<BountySubmissionStats, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_bounty_submission_stats(program_id.as_deref())
         .await
@@ -1130,6 +1218,8 @@ pub async fn bounty_create_change_event(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateChangeEventRequest,
 ) -> Result<BountyChangeEventRow, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
 
     // Calculate risk score based on severity and event type
@@ -1221,6 +1311,8 @@ pub async fn bounty_get_change_event(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<BountyChangeEventRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_bounty_change_event(&id)
         .await
@@ -1234,6 +1326,8 @@ pub async fn bounty_update_change_event(
     id: String,
     request: UpdateChangeEventRequest,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     let existing = db_service
         .get_bounty_change_event(&id)
         .await
@@ -1286,6 +1380,8 @@ pub async fn bounty_delete_change_event(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .delete_bounty_change_event(&id)
         .await
@@ -1298,6 +1394,8 @@ pub async fn bounty_list_change_events(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<ChangeEventFilter>,
 ) -> Result<Vec<BountyChangeEventRow>, String> {
+    ensure_bounty_feature()?;
+
     let filter = filter.unwrap_or_default();
 
     db_service
@@ -1320,6 +1418,8 @@ pub async fn bounty_get_change_event_stats(
     db_service: State<'_, Arc<DatabaseService>>,
     program_id: Option<String>,
 ) -> Result<BountyChangeEventStats, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_bounty_change_event_stats(program_id.as_deref())
         .await
@@ -1333,6 +1433,8 @@ pub async fn bounty_update_change_event_status(
     id: String,
     status: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     let resolved_at = if ["resolved", "ignored", "acknowledged"].contains(&status.as_str()) {
         Some(Utc::now().to_rfc3339())
     } else {
@@ -1352,6 +1454,8 @@ pub async fn bounty_add_generated_finding(
     event_id: String,
     finding_id: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .add_generated_finding_to_change_event(&event_id, &finding_id)
         .await
@@ -1381,6 +1485,8 @@ pub async fn bounty_import_traffic_finding(
     db_service: State<'_, Arc<DatabaseService>>,
     request: ImportTrafficFindingRequest,
 ) -> Result<ImportTrafficFindingResponse, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
 
     // Get traffic vulnerability with evidence
@@ -1544,6 +1650,8 @@ pub async fn bounty_batch_import_traffic_findings(
     program_id: String,
     scope_id: Option<String>,
 ) -> Result<Vec<ImportTrafficFindingResponse>, String> {
+    ensure_bounty_feature()?;
+
     let mut results = Vec::new();
 
     for vuln_id in traffic_vuln_ids {
@@ -1766,6 +1874,8 @@ pub async fn bounty_export_report(
     db_service: State<'_, Arc<DatabaseService>>,
     request: ExportReportRequest,
 ) -> Result<ExportReportResponse, String> {
+    ensure_bounty_feature()?;
+
     let mut findings_data: Vec<FindingExportData> = Vec::new();
 
     for finding_id in &request.finding_ids {
@@ -2341,6 +2451,8 @@ pub async fn bounty_create_workflow_template(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateWorkflowTemplateRequest,
 ) -> Result<BountyWorkflowTemplateRow, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
 
     let template = BountyWorkflowTemplateRow {
@@ -2378,6 +2490,8 @@ pub async fn bounty_get_workflow_template(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<BountyWorkflowTemplateRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .get_bounty_workflow_template(&id)
         .await
@@ -2391,6 +2505,8 @@ pub async fn bounty_list_workflow_templates(
     category: Option<String>,
     is_built_in: Option<bool>,
 ) -> Result<Vec<BountyWorkflowTemplateRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .list_bounty_workflow_templates(category.as_deref(), is_built_in)
         .await
@@ -2403,6 +2519,8 @@ pub async fn bounty_delete_workflow_template(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .delete_bounty_workflow_template(&id)
         .await
@@ -2416,6 +2534,8 @@ pub async fn bounty_update_workflow_template(
     id: String,
     request: CreateWorkflowTemplateRequest,
 ) -> Result<BountyWorkflowTemplateRow, String> {
+    ensure_bounty_feature()?;
+
     let existing = db_service
         .get_bounty_workflow_template(&id)
         .await
@@ -2463,6 +2583,8 @@ pub async fn bounty_run_workflow_template(
     program_id: Option<String>,
     inputs: serde_json::Value,
 ) -> Result<String, String> {
+    ensure_bounty_feature()?;
+
     run_workflow_template_with_inputs(
         app_handle,
         db_service.inner().clone(),
@@ -3194,6 +3316,8 @@ pub async fn bounty_create_workflow_binding(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateWorkflowBindingRequest,
 ) -> Result<BountyWorkflowBindingRow, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
 
     let binding = BountyWorkflowBindingRow {
@@ -3229,6 +3353,8 @@ pub async fn bounty_list_workflow_bindings(
     scope_id: Option<String>,
     is_enabled: Option<bool>,
 ) -> Result<Vec<BountyWorkflowBindingRow>, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .list_bounty_workflow_bindings(program_id.as_deref(), scope_id.as_deref(), is_enabled)
         .await
@@ -3241,6 +3367,8 @@ pub async fn bounty_delete_workflow_binding(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
     db_service
         .delete_bounty_workflow_binding(&id)
         .await
@@ -3252,6 +3380,8 @@ pub async fn bounty_delete_workflow_binding(
 pub async fn bounty_init_builtin_templates(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<BountyWorkflowTemplateRow>, String> {
+    ensure_bounty_feature()?;
+
     let builtins = build_builtin_workflow_templates();
     let existing = db_service
         .list_bounty_workflow_templates(None, None)
@@ -3316,6 +3446,8 @@ pub async fn bounty_sink_workflow_outputs(
     db_service: State<'_, Arc<DatabaseService>>,
     request: SinkWorkflowOutputRequest,
 ) -> Result<SinkWorkflowOutputResponse, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
     let mut findings_created = Vec::new();
     let mut evidence_created = Vec::new();
@@ -3680,6 +3812,8 @@ pub async fn bounty_create_asset(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateAssetRequest,
 ) -> Result<BountyAssetRow, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
     let (canonical_url, hostname, port, path, protocol) = canonicalize_url(&request.url);
 
@@ -3814,6 +3948,8 @@ pub async fn bounty_import_assets_from_scope(
     program_id: String,
     scope_id: String,
 ) -> Result<i32, String> {
+    ensure_bounty_feature()?;
+
     // Get scope
     let scope = db_service
         .get_program_scope(&scope_id)
@@ -4028,6 +4164,8 @@ pub async fn bounty_update_asset_fingerprint(
     db_service: State<'_, Arc<DatabaseService>>,
     request: UpdateAssetFingerprintRequest,
 ) -> Result<BountyAssetRow, String> {
+    ensure_bounty_feature()?;
+
     let mut asset = db_service
         .get_bounty_asset(&request.asset_id)
         .await
@@ -4140,6 +4278,8 @@ pub async fn bounty_add_asset_labels(
     db_service: State<'_, Arc<DatabaseService>>,
     request: AddAssetLabelsRequest,
 ) -> Result<BountyAssetRow, String> {
+    ensure_bounty_feature()?;
+
     let mut asset = db_service
         .get_bounty_asset(&request.asset_id)
         .await
@@ -4171,6 +4311,8 @@ pub async fn bounty_add_asset_labels(
 /// Get available high-value labels
 #[tauri::command]
 pub async fn bounty_get_high_value_labels() -> Result<Vec<String>, String> {
+    ensure_bounty_feature()?;
+
     Ok(HIGH_VALUE_LABELS.iter().map(|s| s.to_string()).collect())
 }
 
@@ -4181,6 +4323,8 @@ pub async fn bounty_get_assets_by_label(
     program_id: String,
     label: String,
 ) -> Result<Vec<BountyAssetRow>, String> {
+    ensure_bounty_feature()?;
+
     // Get all assets for program
     let assets = db_service
         .list_bounty_assets(
@@ -4221,6 +4365,8 @@ pub async fn bounty_get_assets_by_tech(
     program_id: String,
     tech_name: String,
 ) -> Result<Vec<BountyAssetRow>, String> {
+    ensure_bounty_feature()?;
+
     let assets = db_service
         .list_bounty_assets(
             Some(&program_id),
@@ -4323,6 +4469,8 @@ pub async fn bounty_recalculate_asset_priority(
     db_service: State<'_, Arc<DatabaseService>>,
     asset_id: String,
 ) -> Result<BountyAssetRow, String> {
+    ensure_bounty_feature()?;
+
     let mut asset = db_service
         .get_bounty_asset(&asset_id)
         .await
@@ -4365,6 +4513,8 @@ pub async fn bounty_recalculate_all_asset_priorities(
     db_service: State<'_, Arc<DatabaseService>>,
     program_id: String,
 ) -> Result<i32, String> {
+    ensure_bounty_feature()?;
+
     let assets = db_service
         .list_bounty_assets(
             Some(&program_id),
@@ -4432,6 +4582,8 @@ pub async fn bounty_get_priority_queue(
     program_id: String,
     limit: Option<i64>,
 ) -> Result<Vec<PriorityQueueItem>, String> {
+    ensure_bounty_feature()?;
+
     let assets = db_service
         .get_top_priority_assets(&program_id, limit.unwrap_or(20))
         .await
@@ -4537,6 +4689,8 @@ pub async fn bounty_add_submission_timeline_event(
     db_service: State<'_, Arc<DatabaseService>>,
     request: AddTimelineEventRequest,
 ) -> Result<BountySubmissionRow, String> {
+    ensure_bounty_feature()?;
+
     let mut submission = db_service
         .get_bounty_submission(&request.submission_id)
         .await
@@ -4594,6 +4748,8 @@ pub async fn bounty_get_submission_with_timeline(
     db_service: State<'_, Arc<DatabaseService>>,
     submission_id: String,
 ) -> Result<SubmissionWithTimeline, String> {
+    ensure_bounty_feature()?;
+
     let submission = db_service
         .get_bounty_submission(&submission_id)
         .await
@@ -4656,6 +4812,8 @@ pub async fn bounty_get_submissions_needing_followup(
     program_id: Option<String>,
     days_threshold: Option<i64>,
 ) -> Result<Vec<SubmissionWithTimeline>, String> {
+    ensure_bounty_feature()?;
+
     let submissions = db_service
         .list_bounty_submissions(
             program_id.as_deref(),
@@ -4754,6 +4912,8 @@ pub async fn bounty_schedule_retest(
     db_service: State<'_, Arc<DatabaseService>>,
     request: RetestRequest,
 ) -> Result<RetestResult, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
 
     // Verify submission and finding exist
@@ -4816,6 +4976,8 @@ pub async fn bounty_record_retest_result(
     is_fixed: bool,
     notes: Option<String>,
 ) -> Result<RetestResult, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
 
     let submission = db_service
@@ -4912,6 +5074,8 @@ pub struct ResolveStepInputsResponse {
 pub async fn bounty_resolve_step_inputs(
     request: ResolveStepInputsRequest,
 ) -> Result<ResolveStepInputsResponse, String> {
+    ensure_bounty_feature()?;
+
     use sentinel_bounty::services::{StepContext, WorkflowOrchestrator};
 
     let orchestrator = WorkflowOrchestrator::new();
@@ -5005,6 +5169,8 @@ pub struct ArtifactSummaryResponse {
 pub async fn bounty_process_step_output(
     request: ProcessStepOutputRequest,
 ) -> Result<ProcessStepOutputResponse, String> {
+    ensure_bounty_feature()?;
+
     use sentinel_bounty::services::{ArtifactType, StepContext, WorkflowOrchestrator};
 
     let orchestrator = WorkflowOrchestrator::new();
@@ -5093,6 +5259,8 @@ pub async fn bounty_sink_artifacts(
     db_service: State<'_, Arc<DatabaseService>>,
     request: SinkArtifactsRequest,
 ) -> Result<SinkArtifactsResponse, String> {
+    ensure_bounty_feature()?;
+
     let now = Utc::now().to_rfc3339();
     let mut response = SinkArtifactsResponse {
         findings_created: vec![],
@@ -5437,6 +5605,8 @@ pub struct StepRetryConfig {
 /// Get default retry configuration
 #[tauri::command]
 pub async fn bounty_get_default_retry_config() -> Result<StepRetryConfig, String> {
+    ensure_bounty_feature()?;
+
     Ok(StepRetryConfig {
         max_attempts: 3,
         initial_delay_ms: 1000,
@@ -5458,6 +5628,8 @@ pub struct RateLimiterStats {
 /// Get rate limiter statistics
 #[tauri::command]
 pub async fn bounty_get_rate_limiter_stats() -> Result<RateLimiterStats, String> {
+    ensure_bounty_feature()?;
+
     use sentinel_bounty::services::WorkflowOrchestrator;
 
     let orchestrator = WorkflowOrchestrator::new();
@@ -5505,6 +5677,8 @@ pub struct InputParamDef {
 /// Get plugin port definitions for data flow
 #[tauri::command]
 pub async fn bounty_get_plugin_ports(plugin_id: String) -> Result<Option<PluginPortInfo>, String> {
+    ensure_bounty_feature()?;
+
     use sentinel_bounty::services::PluginPortRegistry;
 
     let registry = PluginPortRegistry::new();
@@ -5563,6 +5737,8 @@ pub async fn bounty_get_plugin_ports(plugin_id: String) -> Result<Option<PluginP
 /// Get all registered plugin ports
 #[tauri::command]
 pub async fn bounty_list_plugin_ports() -> Result<Vec<PluginPortInfo>, String> {
+    ensure_bounty_feature()?;
+
     use sentinel_bounty::services::PluginPortRegistry;
 
     let registry = PluginPortRegistry::new();

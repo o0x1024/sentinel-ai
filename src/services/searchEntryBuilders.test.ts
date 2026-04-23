@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createBountyKnowledgeSearchEntries,
   createKnowledgeDocumentSearchEntries,
   createPluginSearchEntries,
   createScanTaskSearchEntries,
@@ -57,5 +58,20 @@ describe('searchEntryBuilders', () => {
     expect(document.keywords).toContain('Playbooks')
     expect(plugin.category).toBe('plugin')
     expect(plugin.keywords).toContain('PendingReview')
+  })
+
+  it('builds bounty knowledge search entries', () => {
+    const [entry] = createBountyKnowledgeSearchEntries([{
+      id: 'note-1',
+      title: 'OAuth redirect notes',
+      snippet: 'Check redirect_uri validation on mobile callback',
+      program_name: 'Acme',
+      tags_json: '["oauth","redirect"]',
+    }])
+
+    expect(entry.category).toBe('document')
+    expect(entry.query).toEqual({ tab: 'knowledge', knowledgeId: 'note-1' })
+    expect(entry.keywords).toContain('oauth')
+    expect(entry.keywords).toContain('Acme')
   })
 })

@@ -71,7 +71,7 @@ describe('immersiveTrafficDockState', () => {
     expect(basketOpen.value).toBe(false)
   })
 
-  it('keeps traffic drawers mutually exclusive', () => {
+  it('keeps traffic workbench and drawers open at the same time', () => {
     const {
       workbenchOpen,
       interceptDrawerOpen,
@@ -81,15 +81,15 @@ describe('immersiveTrafficDockState', () => {
 
     openImmersiveTrafficWorkbenchTool('repeater')
     toggleImmersiveTrafficInterceptDrawer()
-    expect(workbenchOpen.value).toBe(false)
+    expect(workbenchOpen.value).toBe(true)
     expect(interceptDrawerOpen.value).toBe(true)
 
     toggleImmersiveTrafficProxySettings()
-    expect(interceptDrawerOpen.value).toBe(false)
+    expect(interceptDrawerOpen.value).toBe(true)
     expect(proxySettingsOpen.value).toBe(true)
 
     toggleImmersiveTrafficBasket()
-    expect(proxySettingsOpen.value).toBe(false)
+    expect(proxySettingsOpen.value).toBe(true)
     expect(basketOpen.value).toBe(true)
   })
 })

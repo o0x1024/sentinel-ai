@@ -196,6 +196,10 @@ import { useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useNotificationCenter } from '@/composables/useNotificationCenter'
 import { useSecurityCenterActivity } from '@/composables/useSecurityCenterActivity'
+import {
+  getFeatureEntitlements,
+  useFeatureEntitlementsState,
+} from '@/services/featureEntitlements'
 
 interface SidebarBadgeItem {
   key: string
@@ -231,6 +235,7 @@ const {
   unreadWorkbenchCaseCount,
   unreadSecurityCenterCount,
 } = useSecurityCenterActivity()
+const entitlements = useFeatureEntitlementsState()
 const unreadActivityCount = computed(() => unreadMessageCount.value + unreadNotificationCount.value)
 const isSecurityCenterRoute = computed(() => {
   if (route.path.startsWith('/security-center')) {
@@ -288,51 +293,58 @@ const securityCenterBadgeClass = computed(() => {
 })
 
 // 主要功能菜单项
-const mainMenuItems = computed<SidebarMenuItem[]>(() => [
-  {
-    path: '/dashboard',
-    name: t('sidebar.dashboard', '仪表盘'),
-    icon: 'fas fa-home',
-    badge: null,
-    badgeClass: '',
-  },
-  {
-    path: '/security-center',
-    name: t('sidebar.securityCenter', '安全中心'),
-    icon: 'fas fa-shield-alt',
-    badge: securityCenterBadge.value,
-    badgeClass: securityCenterBadgeClass.value,
-    badges: securityCenterBadges.value,
-  },
-  {
-    path: '/traffic',
-    name: t('sidebar.traffic', '流量分析'),
-    icon: 'fas fa-satellite-dish',
-    badge: null,
-    badgeClass: 'badge-info',
-  },
-  {
-    path: '/ai-assistant',
-    name: t('sidebar.aiAssistant', 'AI助手'),
-    icon: 'fas fa-brain',
-    badge: null,
-    badgeClass: '',
-  },
-  {
-    path: '/workflow-studio',
-    name: t('sidebar.workflowStudio', '工作流'),
-    icon: 'fas fa-project-diagram',
-    badge: null,
-    badgeClass: '',
-  },
-  {
-    path: '/bug-bounty',
-    name: t('sidebar.bugBounty', '漏洞赏金'),
-    icon: 'fas fa-trophy',
-    badge: null,
-    badgeClass: '',
-  },
-])
+const mainMenuItems = computed<SidebarMenuItem[]>(() => {
+  const items: SidebarMenuItem[] = [
+    {
+      path: '/dashboard',
+      name: t('sidebar.dashboard', '仪表盘'),
+      icon: 'fas fa-home',
+      badge: null,
+      badgeClass: '',
+    },
+    {
+      path: '/security-center',
+      name: t('sidebar.securityCenter', '安全中心'),
+      icon: 'fas fa-shield-alt',
+      badge: securityCenterBadge.value,
+      badgeClass: securityCenterBadgeClass.value,
+      badges: securityCenterBadges.value,
+    },
+    {
+      path: '/traffic',
+      name: t('sidebar.traffic', '流量分析'),
+      icon: 'fas fa-satellite-dish',
+      badge: null,
+      badgeClass: 'badge-info',
+    },
+    {
+      path: '/ai-assistant',
+      name: t('sidebar.aiAssistant', 'AI助手'),
+      icon: 'fas fa-brain',
+      badge: null,
+      badgeClass: '',
+    },
+    {
+      path: '/workflow-studio',
+      name: t('sidebar.workflowStudio', '工作流'),
+      icon: 'fas fa-project-diagram',
+      badge: null,
+      badgeClass: '',
+    },
+  ]
+
+  if (entitlements.value.can_access_bug_bounty) {
+    items.push({
+      path: '/bug-bounty',
+      name: t('sidebar.bugBounty', '漏洞赏金'),
+      icon: 'fas fa-trophy',
+      badge: null,
+      badgeClass: '',
+    })
+  }
+
+  return items
+})
 
 // 工具与管理菜单项
 const toolMenuItems = computed(() => [
@@ -486,6 +498,7 @@ const loadPendingPlugins = async () => {
 
 // 模拟数据更新
 onMounted(() => {
+  void getFeatureEntitlements()
   // 加载任务统计信息
   loadTaskStats()
   // 加载待审核插件数量

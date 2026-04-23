@@ -125,8 +125,12 @@ export function buildFullUrl(rawRequest: string, target: IntruderTarget): string
 export function buildSourceRequestFromRawRequest(
   rawRequest: string,
   target: IntruderTarget,
+  sourceRequestId?: number | null,
 ): IntruderRequestInput | null {
-  return buildHttpExchangeRequestFromRawRequest(rawRequest, buildEndpointFromTarget(target))
+  const request = buildHttpExchangeRequestFromRawRequest(rawRequest, buildEndpointFromTarget(target))
+  if (!request) return null
+  request.sourceRequestId = sourceRequestId ?? null
+  return request
 }
 
 export function applyIntruderRequestSettings(

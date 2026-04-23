@@ -744,6 +744,7 @@ mod tests {
         HttpRequestRecord {
             id: 1,
             db_request_id: Some(101),
+            traffic_request_id: None,
             url: url.to_string(),
             host: "api.example.com".to_string(),
             scheme: "https".to_string(),

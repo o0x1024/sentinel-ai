@@ -188,68 +188,30 @@
               class="rounded-lg border border-base-300 bg-base-100 p-3"
             >
               <p class="text-xs font-semibold text-base-content/70 mb-2">{{ wb('verification.baselineExchange') }}</p>
-              <div class="space-y-2">
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="badge badge-outline">{{ getBaselineExchange(evidence)?.requestMethod || 'GET' }}</span>
-                  <span
-                    v-if="typeof getBaselineExchange(evidence)?.responseStatus === 'number'"
-                    :class="['badge badge-sm', (getBaselineExchange(evidence)?.responseStatus || 0) >= 400 ? 'badge-error' : 'badge-success']"
-                  >
-                    {{ getBaselineExchange(evidence)?.responseStatus }}
-                  </span>
-                </div>
-                <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ getBaselineExchange(evidence)?.requestUrl }}</pre>
-                <div v-if="getBaselineExchange(evidence)?.requestHeaders">
-                  <p class="text-xs text-base-content/60">{{ wb('verification.requestHeaders') }}</p>
-                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ formatExchangePayload(getBaselineExchange(evidence)?.requestHeaders) }}</pre>
-                </div>
-                <div v-if="getBaselineExchange(evidence)?.requestBody">
-                  <p class="text-xs text-base-content/60">{{ wb('verification.requestBody') }}</p>
-                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ getBaselineExchange(evidence)?.requestBody }}</pre>
-                </div>
-                <div v-if="getBaselineExchange(evidence)?.responseHeaders">
-                  <p class="text-xs text-base-content/60">{{ wb('verification.responseHeaders') }}</p>
-                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ formatExchangePayload(getBaselineExchange(evidence)?.responseHeaders) }}</pre>
-                </div>
-                <div v-if="getBaselineExchange(evidence)?.responseBody">
-                  <p class="text-xs text-base-content/60">{{ wb('verification.responseBody') }}</p>
-                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ getBaselineExchange(evidence)?.responseBody }}</pre>
-                </div>
-              </div>
+              <SecurityEvidenceRawExchangePanel
+                :exchange="getBaselineExchange(evidence)"
+                :fallback-url="evidence.url"
+                :evidence-snippet="evidence.evidence_snippet"
+                :state-key-prefix="`security-workbench:verification:${evidence.id}:baseline`"
+                :height="verificationExchangeHeight"
+                request-title="请求 Raw"
+                response-title="响应 Raw"
+              />
             </div>
             <div
               v-if="getReplayExchange(evidence)"
               class="rounded-lg border border-base-300 bg-base-100 p-3"
             >
               <p class="text-xs font-semibold text-base-content/70 mb-2">{{ wb('verification.replayExchange') }}</p>
-              <div class="space-y-2">
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="badge badge-outline">{{ getReplayExchange(evidence)?.requestMethod || 'GET' }}</span>
-                  <span
-                    v-if="typeof getReplayExchange(evidence)?.responseStatus === 'number'"
-                    :class="['badge badge-sm', (getReplayExchange(evidence)?.responseStatus || 0) >= 400 ? 'badge-error' : 'badge-success']"
-                  >
-                    {{ getReplayExchange(evidence)?.responseStatus }}
-                  </span>
-                </div>
-                <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ getReplayExchange(evidence)?.requestUrl }}</pre>
-                <div v-if="getReplayExchange(evidence)?.requestHeaders">
-                  <p class="text-xs text-base-content/60">{{ wb('verification.requestHeaders') }}</p>
-                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ formatExchangePayload(getReplayExchange(evidence)?.requestHeaders) }}</pre>
-                </div>
-                <div v-if="getReplayExchange(evidence)?.requestBody">
-                  <p class="text-xs text-base-content/60">{{ wb('verification.requestBody') }}</p>
-                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ getReplayExchange(evidence)?.requestBody }}</pre>
-                </div>
-                <div v-if="getReplayExchange(evidence)?.responseHeaders">
-                  <p class="text-xs text-base-content/60">{{ wb('verification.responseHeaders') }}</p>
-                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ formatExchangePayload(getReplayExchange(evidence)?.responseHeaders) }}</pre>
-                </div>
-                <div v-if="getReplayExchange(evidence)?.responseBody">
-                  <p class="text-xs text-base-content/60">{{ wb('verification.responseBody') }}</p>
-                  <pre class="bg-base-200 p-3 rounded text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-words">{{ getReplayExchange(evidence)?.responseBody }}</pre>
-                </div>
-              </div>
+              <SecurityEvidenceRawExchangePanel
+                :exchange="getReplayExchange(evidence)"
+                :fallback-url="evidence.url"
+                :evidence-snippet="evidence.evidence_snippet"
+                :state-key-prefix="`security-workbench:verification:${evidence.id}:replay`"
+                :height="verificationExchangeHeight"
+                request-title="请求 Raw"
+                response-title="响应 Raw"
+              />
             </div>
           </div>
         </div>
@@ -263,6 +225,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import SecurityEvidenceRawExchangePanel from './SecurityEvidenceRawExchangePanel.vue'
 import type {
   WorkbenchAssessmentSuggestion,
   WorkbenchCase,
@@ -281,7 +244,6 @@ import {
 } from './securityWorkbenchPresentation'
 import { wb } from './securityWorkbenchLocale'
 import {
-  formatWorkbenchRawPayload,
   getWorkbenchEvidenceSnippet,
   getWorkbenchVerificationBaselineExchange,
   getWorkbenchVerificationReplayExchange,
@@ -302,6 +264,7 @@ const verificationEvidence = computed(() =>
 )
 const assessmentSuggestion = computed(() => props.assessmentSuggestion)
 const runRefs = ref<Record<string, HTMLElement | null>>({})
+const verificationExchangeHeight = '18rem'
 
 const setRunRef = (runId: string) => (element: Element | null) => {
   runRefs.value[runId] = element instanceof HTMLElement ? element : null
@@ -389,6 +352,4 @@ const getBaselineExchange = (evidence: Evidence): WorkbenchEvidenceExchange | nu
 
 const getReplayExchange = (evidence: Evidence): WorkbenchEvidenceExchange | null =>
   getWorkbenchVerificationReplayExchange(evidence)
-
-const formatExchangePayload = (raw?: string | null) => formatWorkbenchRawPayload(raw)
 </script>

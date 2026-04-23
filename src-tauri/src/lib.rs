@@ -483,6 +483,28 @@ pub fn run() {
                     }
                 }
 
+                let plugin_runtime_settings = match db_service
+                    .load_proxy_config(
+                        crate::commands::traffic::runtime_settings_commands::TRAFFIC_PLUGIN_RUNTIME_SETTINGS_KEY,
+                    )
+                    .await
+                {
+                    Ok(Some(raw)) => serde_json::from_str::<sentinel_plugins::PluginRuntimeSettings>(
+                        &raw,
+                    )
+                    .map(|value| value.sanitized())
+                    .unwrap_or_default(),
+                    Ok(None) => sentinel_plugins::PluginRuntimeSettings::default(),
+                    Err(error) => {
+                        tracing::warn!(
+                            "Failed to load traffic plugin runtime settings during startup: {}",
+                            error
+                        );
+                        sentinel_plugins::PluginRuntimeSettings::default()
+                    }
+                };
+                sentinel_plugins::set_plugin_runtime_settings(plugin_runtime_settings);
+
                 if let Err(e) =
                     crate::services::builtin_bounty_plugins::initialize_builtin_bounty_resources(
                         &db_service,
@@ -701,6 +723,84 @@ pub fn run() {
                 ));
                 handle.manage(enrichment_service);
 
+                sentinel_tools::buildin_tools::plugin_authoring::register_plugin_authoring_executor(
+                    std::sync::Arc::new({
+                        let app_handle = handle.clone();
+                        move |args| {
+                            let app_handle = app_handle.clone();
+                            Box::pin(async move {
+                                let traffic_state = app_handle
+                                    .try_state::<TrafficAnalysisState>()
+                                    .ok_or_else(|| {
+                                        sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringError {
+                                            message: "TrafficAnalysisState not initialized".to_string(),
+                                        }
+                                    })?;
+                                let ai_manager = app_handle
+                                    .try_state::<Arc<AiServiceManager>>()
+                                    .ok_or_else(|| {
+                                        sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringError {
+                                            message: "AiServiceManager not initialized".to_string(),
+                                        }
+                                    })?;
+                                let runtime = app_handle
+                                    .try_state::<Arc<SystemAgentRuntime>>()
+                                    .ok_or_else(|| {
+                                        sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringError {
+                                            message: "SystemAgentRuntime not initialized".to_string(),
+                                        }
+                                    })?;
+
+                                let request = crate::services::PluginAuthoringRequest {
+                                    action: match args.action {
+                                        sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringAction::Generate => crate::services::PluginAuthoringAction::Generate,
+                                        sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringAction::Improve => crate::services::PluginAuthoringAction::Improve,
+                                        sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringAction::Validate => crate::services::PluginAuthoringAction::Validate,
+                                        sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringAction::Test => crate::services::PluginAuthoringAction::Test,
+                                        sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringAction::SaveDraft => crate::services::PluginAuthoringAction::SaveDraft,
+                                        sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringAction::Enable => crate::services::PluginAuthoringAction::Enable,
+                                    },
+                                    main_category: args.main_category,
+                                    category: args.category,
+                                    requirements: args.requirements,
+                                    existing_plugin_id: args.existing_plugin_id,
+                                    plugin_id: args.plugin_id,
+                                    name: args.name,
+                                    description: args.description,
+                                    author: args.author,
+                                    default_severity: args.default_severity,
+                                    monitor_type: args.monitor_type,
+                                    traffic_samples: args.traffic_samples,
+                                    code: args.code,
+                                    enable_after_test: args.enable_after_test,
+                                };
+
+                                let result = crate::services::execute_plugin_authoring(
+                                    &app_handle,
+                                    &traffic_state,
+                                    ai_manager.inner(),
+                                    runtime.inner(),
+                                    request,
+                                )
+                                .await
+                                .map_err(|error| {
+                                    sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringError {
+                                        message: error.to_string(),
+                                    }
+                                })?;
+
+                                Ok(
+                                    sentinel_tools::buildin_tools::plugin_authoring::PluginAuthoringOutput {
+                                        success: true,
+                                        data: serde_json::to_value(result).ok(),
+                                        error: None,
+                                    },
+                                )
+                            })
+                        }
+                    }),
+                );
+
                 // Initialize Tenth Man executor
                 crate::agents::tenth_man_executor::set_app_handle(handle.clone());
                 crate::agents::tenth_man_executor::init_tenth_man_executor();
@@ -756,6 +856,30 @@ pub fn run() {
                         handle_for_gateway,
                     ).await {
                         tracing::warn!("Failed to auto-start HTTP gateway: {}", e);
+                    }
+                });
+
+                // Auto-start monitor scheduler so enabled monitor tasks can run without visiting the UI.
+                let handle_for_monitor = handle.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                    match commands::monitor_start_scheduler(
+                        handle_for_monitor
+                            .state::<Arc<tokio::sync::RwLock<MonitorSchedulerState>>>(),
+                        handle_for_monitor.state::<Arc<DatabaseService>>(),
+                        handle_for_monitor.state::<Arc<sentinel_traffic::PluginManager>>(),
+                        handle_for_monitor.clone(),
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            tracing::info!("Monitor scheduler auto-started");
+                        }
+                        Err(error) if error.contains("Scheduler is already running") => {}
+                        Err(error) => {
+                            tracing::warn!("Failed to auto-start monitor scheduler: {}", error);
+                        }
                     }
                 });
 
@@ -1021,6 +1145,7 @@ pub fn run() {
             commands::bounty_delete_finding,
             commands::bounty_batch_update_finding_status,
             commands::bounty_batch_delete_findings,
+            commands::bounty_delete_all_findings,
             commands::bounty_list_findings,
             commands::bounty_count_findings,
             commands::bounty_get_finding_stats,
@@ -1040,6 +1165,14 @@ pub fn run() {
             commands::bounty_list_submissions,
             commands::bounty_count_submissions,
             commands::bounty_get_submission_stats,
+            // Bug Bounty Knowledge Base commands
+            commands::bounty_create_knowledge_note,
+            commands::bounty_get_knowledge_note,
+            commands::bounty_update_knowledge_note,
+            commands::bounty_delete_knowledge_note,
+            commands::bounty_list_knowledge_notes,
+            commands::bounty_search_knowledge_notes,
+            commands::bounty_get_knowledge_note_stats,
             // Bug Bounty Change Event commands
             commands::bounty_create_change_event,
             commands::bounty_get_change_event,
@@ -1307,6 +1440,7 @@ pub fn run() {
             traffic::export_findings_html,
             traffic::list_proxy_requests,
             traffic::get_proxy_request,
+            traffic::resolve_proxy_history_request_id_by_db_request_id,
             traffic::recommend_traffic_context_dictionary_candidates_command,
             traffic::preview_traffic_context_extraction_changes_command,
             traffic::clear_proxy_requests,
@@ -1340,8 +1474,18 @@ pub fn run() {
             traffic::copy_traffic_behavior_extension_to_directory,
             traffic::read_traffic_clipboard_text,
             traffic::set_traffic_behavior_signal_settings,
+            traffic::get_traffic_oast_config,
+            traffic::set_traffic_oast_config,
+            traffic::test_traffic_oast_config_command,
+            traffic::create_traffic_oast_token,
+            traffic::list_traffic_oast_records,
+            traffic::sync_traffic_oast_records,
+            traffic::delete_traffic_oast_record,
+            traffic::delete_traffic_oast_events_command,
             traffic::get_traffic_context_extraction_settings,
             traffic::set_traffic_context_extraction_settings,
+            traffic::get_traffic_plugin_runtime_settings,
+            traffic::set_traffic_plugin_runtime_settings,
             commands::security_workbench_list_cases,
             commands::security_workbench_get_or_create_case_for_finding,
             commands::security_workbench_get_case_detail,
@@ -1423,6 +1567,7 @@ pub fn run() {
             commands::plugin_review_commands::toggle_plugin_favorite,
             commands::plugin_review_commands::get_favorited_plugins,
             commands::plugin_review_commands::get_plugin_review_statistics,
+            commands::plugin_authoring_commands::plugin_authoring_execute,
             // Notifications
             commands::notifications::send_notification,
             commands::notifications::create_notification_rule,
@@ -1595,6 +1740,13 @@ pub fn run() {
             commands::license_commands::get_machine_id,
             commands::license_commands::get_machine_id_full,
             commands::license_commands::deactivate_license,
+            commands::license_commands::get_app_entitlements,
+            commands::license_commands::store_entitlement_token,
+            commands::license_commands::clear_entitlement_token,
+            commands::license_commands::get_entitlement_token_status,
+            commands::license_commands::get_entitlement_refresh_config,
+            commands::license_commands::save_entitlement_refresh_config,
+            commands::license_commands::refresh_entitlement_token,
             // Workflow commands
             sentinel_workflow::commands::start_workflow_run,
             sentinel_workflow::commands::stop_workflow_run,

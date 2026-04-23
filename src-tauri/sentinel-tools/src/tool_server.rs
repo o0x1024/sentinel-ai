@@ -12,9 +12,9 @@ use crate::buildin_tools::OcrTool;
 use crate::buildin_tools::SubdomainBruteTool;
 use crate::buildin_tools::{
     AskUserQuestionTool, BrowserTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
-    GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, RouteDiscoveryTool, SearchExploitTool,
-    ShellTool, SkillsTool, TenthManTool, ToolSearchArgs, ToolSearchOutput, ToolSearchTool,
-    WebSearchTool,
+    GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, PluginAuthoringTool, RouteDiscoveryTool,
+    SearchExploitTool, ShellTool, SkillsTool, TenthManTool, ToolSearchArgs, ToolSearchOutput,
+    ToolSearchTool, WebSearchTool,
 };
 #[cfg(feature = "db")]
 use crate::buildin_tools::{SopsTool, TasksTool};
@@ -877,6 +877,55 @@ impl ToolServer {
             .expect("Failed to build memory tool");
 
         self.registry.register(memory_def).await;
+
+        let plugin_authoring_def = DynamicToolBuilder::new(PluginAuthoringTool::NAME.to_string())
+            .description(PluginAuthoringTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::plugin_authoring::PluginAuthoringArgs
+                ))
+                .unwrap_or_default(),
+            )
+            .source(ToolSource::Builtin)
+            .category("plugin")
+            .tags(vec![
+                "plugin".to_string(),
+                "authoring".to_string(),
+                "generate".to_string(),
+                "draft".to_string(),
+                "enable".to_string(),
+            ])
+            .search_hint("generate, validate, test, save draft, or enable a Sentinel plugin")
+            .exposure("core")
+            .execution_policy(ToolExecutionPolicy {
+                read_only: false,
+                mutating: true,
+                concurrency_safe: false,
+                requires_permission: false,
+                supports_background: false,
+            })
+            .executor(|args| async move {
+                use crate::buildin_tools::plugin_authoring::{
+                    PluginAuthoringArgs, PluginAuthoringTool,
+                };
+                use rig::tool::Tool;
+
+                let tool_args: PluginAuthoringArgs = serde_json::from_value(args)
+                    .map_err(|error| format!("Invalid arguments: {error}"))?;
+
+                let tool = PluginAuthoringTool;
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|error| format!("Plugin authoring failed: {error}"))?;
+
+                serde_json::to_value(result)
+                    .map_err(|error| format!("Failed to serialize result: {error}"))
+            })
+            .build()
+            .expect("Failed to build plugin_authoring tool");
+
+        self.registry.register(plugin_authoring_def).await;
 
         // Register web_search tool
         let web_search_def = DynamicToolBuilder::new(WebSearchTool::NAME.to_string())

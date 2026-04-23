@@ -2,6 +2,7 @@ import type { HttpExchangeRequest, HttpHeaderEntry, HttpVersion } from '@/compon
 
 export type IntruderAttackType = 'sniper' | 'batteringRam' | 'pitchfork' | 'clusterBomb'
 export type IntruderPatternType = 'literal' | 'regex'
+export type IntruderRequestViewTab = 'pretty' | 'raw'
 
 export interface IntruderTarget {
   host: string
@@ -285,6 +286,11 @@ export interface IntruderAttackResult {
   responseTimeMs: number | null
   rawRequest: string
   rawResponse: string
+  responseVersionObserved?: Exclude<HttpVersion, 'AUTO'>
+  responseStatusText?: string
+  responseHeaders?: HttpHeaderEntry[]
+  responseBodyText?: string
+  responseBodyBytesBase64?: string
   redirectCount: number
   finalUrl: string
   redirectChain: IntruderRedirectHop[]

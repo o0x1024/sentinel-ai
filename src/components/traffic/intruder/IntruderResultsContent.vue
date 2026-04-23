@@ -178,9 +178,9 @@
             <div class="h-[calc(100%-2.5rem)]">
               <HttpMessageSurface
                 :model-value="selectedResult?.rawRequest || ''"
-                custom-context-menu
-                message-type="request"
                 readonly
+                message-type="request"
+                custom-context-menu
                 show-search-bar
                 display-mode="raw"
                 :state-key="selectedResult ? `intruder:request:${selectedResult.id}` : ''"
@@ -225,10 +225,10 @@
             </div>
             <div class="h-[calc(100%-2.5rem)]">
               <HttpMessageSurface
-                :model-value="selectedResult?.rawResponse || selectedResult?.error || ''"
-                custom-context-menu
-                message-type="response"
+                :model-value="selectedResultResponseText"
                 readonly
+                message-type="response"
+                custom-context-menu
                 show-search-bar
                 display-mode="raw"
                 :state-key="selectedResult ? `intruder:response:${selectedResult.id}` : ''"
@@ -297,6 +297,8 @@ import { dialog } from '@/composables/useDialog'
 import TrafficContextMenuSections from '@/components/traffic/TrafficContextMenuSections.vue'
 import { buildTrafficRequestActionMenuItems } from '@/components/traffic/trafficRequestActionMenuSupport'
 import { buildTrafficRequestContextMenuSections } from '@/components/traffic/trafficRequestContextMenuSupport'
+import { useTrafficDisplaySettings } from '@/components/traffic/trafficDisplaySettings'
+import { buildTrafficDisplayedRawResponse } from '@/components/traffic/trafficResponseDecodingSupport'
 import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
 import { buildTrafficRequestSendMenuItems } from '@/components/traffic/trafficSendMenuSupport'
 import {
@@ -352,6 +354,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { enabledTargets } = useTrafficSendTargets()
+const { settings } = useTrafficDisplaySettings()
 const activeView = ref<'results' | 'positions'>('results')
 const resultContextMenu = ref({
   visible: false,
@@ -390,6 +393,24 @@ const visibleResults = computed(() =>
   ),
 )
 const diffSummary = computed(() => buildIntruderDiffSummary(baselineResult.value, props.selectedResult))
+const selectedResultResponseText = computed(() => {
+  if (!props.selectedResult) {
+    return ''
+  }
+
+  if (props.selectedResult.responseHeaders?.length) {
+    return buildTrafficDisplayedRawResponse({
+      statusCode: props.selectedResult.statusCode ?? 0,
+      versionObserved: props.selectedResult.responseVersionObserved,
+      statusText: props.selectedResult.responseStatusText,
+      headers: props.selectedResult.responseHeaders,
+      bodyText: props.selectedResult.responseBodyText || '',
+      bodyBytesBase64: props.selectedResult.responseBodyBytesBase64,
+    }, settings.value)
+  }
+
+  return props.selectedResult.rawResponse || props.selectedResult.error || ''
+})
 const contextMenuResult = computed(() =>
   props.results.find((result) => result.id === resultContextMenu.value.resultId) ?? null,
 )

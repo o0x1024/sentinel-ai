@@ -9,6 +9,7 @@ use super::plugin_commands::{
 use super::TrafficAnalysisState;
 use crate::commands::command_response_support::CommandResponse;
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
+use crate::services::ensure_plugin_catalog_write_access;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorePluginInfo {
@@ -223,6 +224,8 @@ pub async fn install_store_plugin(
     state: State<'_, TrafficAnalysisState>,
     plugin: StorePluginInfo,
 ) -> Result<CommandResponse<String>, String> {
+    ensure_plugin_catalog_write_access()?;
+
     tracing::info!("Installing store plugin: {} ({})", plugin.name, plugin.id);
 
     let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
@@ -346,6 +349,8 @@ pub async fn update_store_plugin(
     state: State<'_, TrafficAnalysisState>,
     plugin: StorePluginInfo,
 ) -> Result<CommandResponse<String>, String> {
+    ensure_plugin_catalog_write_access()?;
+
     tracing::info!("Updating store plugin: {} ({})", plugin.name, plugin.id);
 
     let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));

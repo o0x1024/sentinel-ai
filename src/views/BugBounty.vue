@@ -75,6 +75,10 @@
         {{ t('bugBounty.tabs.findings') }}
         <span v-if="findingStats.total_findings > 0" class="badge badge-sm ml-2">{{ findingStats.total_findings }}</span>
       </a>
+      <a class="tab" :class="{ 'tab-active': activeTab === 'knowledge' }" @click="switchTab('knowledge')">
+        <i class="fas fa-note-sticky mr-2"></i>
+        {{ t('bugBounty.tabs.knowledge') }}
+      </a>
       <a class="tab" :class="{ 'tab-active': activeTab === 'submissions' }" @click="switchTab('submissions')">
         <i class="fas fa-paper-plane mr-2"></i>
         {{ t('bugBounty.tabs.submissions') }}
@@ -148,17 +152,26 @@
           :page-size="findingPageSize"
           :page-count="findingPageCount"
           :total="findingTotal"
+          :global-total="findingStats.total_findings"
           :has-next="findingHasNext"
           @create="showCreateFindingModal = true"
           @refresh="refreshFindingsData"
           @view="viewFinding"
           @delete="deleteFinding"
+          @delete-all="deleteAllFindings"
           @create-submission="createSubmissionFromFinding"
           @filter-change="onFindingFilterChange"
           @batch-update-status="batchUpdateFindingStatus"
           @batch-delete="batchDeleteFindings"
           @page-change="onFindingPageChange"
           @page-size-change="onFindingPageSizeChange"
+        />
+      </div>
+
+      <div v-if="mountedTabs.knowledge" v-show="activeTab === 'knowledge'" class="h-full overflow-auto">
+        <KnowledgeBasePanel
+          :programs="programs"
+          :selected-program="selectedProgram"
         />
       </div>
 
@@ -329,6 +342,7 @@ import {
   ApiInventoryPanel,
   ProgramsPanel, 
   FindingsPanel, 
+  KnowledgeBasePanel,
   SubmissionsPanel, 
   ChangeEventsPanel,
   ChangeEventDetailModal,
@@ -372,6 +386,7 @@ type BugBountyTab =
   | 'assets'
   | 'api-inventory'
   | 'findings'
+  | 'knowledge'
   | 'submissions'
   | 'statistics'
   | 'import-export'
@@ -386,6 +401,7 @@ const mountedTabs = ref<Record<BugBountyTab, boolean>>({
   assets: false,
   'api-inventory': false,
   findings: false,
+  knowledge: false,
   submissions: false,
   statistics: false,
   'import-export': false,
@@ -533,6 +549,7 @@ const isBugBountyTab = (value: string): value is BugBountyTab => {
     'assets',
     'api-inventory',
     'findings',
+    'knowledge',
     'submissions',
     'statistics',
     'import-export',
@@ -1166,6 +1183,23 @@ const batchDeleteFindings = async (ids: string[]) => {
     findingBatchActionVersion.value += 1
   } catch (error) {
     console.error('Batch delete failed:', error)
+    toast.error(t('bugBounty.errors.deleteFailed'))
+  } finally {
+    findingBatchActionLoading.value = false
+  }
+}
+
+const deleteAllFindings = async () => {
+  if (findingBatchActionLoading.value || findingStats.value.total_findings <= 0) return
+  if (!(await dialog.confirm(t('bugBounty.batch.confirmDeleteAll', { count: findingStats.value.total_findings })))) return
+  try {
+    findingBatchActionLoading.value = true
+    const successCount = await invoke<number>('bounty_delete_all_findings')
+    toast.success(t('bugBounty.batch.deleteAllSuccess', { count: successCount }))
+    await refreshFindingsData()
+    findingBatchActionVersion.value += 1
+  } catch (error) {
+    console.error('Delete all findings failed:', error)
     toast.error(t('bugBounty.errors.deleteFailed'))
   } finally {
     findingBatchActionLoading.value = false

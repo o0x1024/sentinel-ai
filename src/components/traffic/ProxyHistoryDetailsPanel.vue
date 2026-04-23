@@ -7,16 +7,16 @@
       <span class="loading loading-spinner loading-xs text-primary"></span>
       <span>{{ $t('trafficAnalysis.history.detailsPanel.loading') }}</span>
     </div>
-    <div class="flex flex-col overflow-hidden border-r border-base-300" :style="{ width: leftPanelWidth + 'px' }">
+    <div ref="requestPanelRef" class="flex flex-col overflow-hidden border-r border-base-300" :style="{ width: leftPanelWidth + 'px' }">
       <div
-        class="border-b border-base-300 flex items-center justify-between flex-shrink-0"
+        class="border-b border-base-300 flex flex-wrap items-center gap-2 flex-shrink-0"
         :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS : 'bg-base-200 px-4 py-2'"
       >
-        <div class="flex items-center gap-2">
+        <div class="flex min-w-0 items-center gap-2">
           <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.request') }}</h4>
           <div v-if="selectedRequest.was_edited" class="dropdown dropdown-bottom">
             <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
-              <span :class="requestViewMode === 'edited' ? 'text-warning' : ''">{{ requestViewMode === 'original' ? $t('trafficAnalysis.history.detailsPanel.originalRequest') : $t('trafficAnalysis.history.detailsPanel.editedRequest') }}</span>
+              <span :class="requestViewMode === 'edited' ? 'text-warning' : ''">{{ requestViewModeLabel }}</span>
               <i class="fas fa-chevron-down text-xs"></i>
             </label>
             <ul tabindex="0" class="dropdown-content z-[1] menu p-1 shadow-lg bg-base-100 rounded-box w-40 border border-base-300">
@@ -24,16 +24,21 @@
               <li><a :class="{ active: requestViewMode === 'edited' }" @click="$emit('update:requestViewMode', 'edited')"><span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedRequest') }}</span></a></li>
             </ul>
           </div>
-          <span v-if="!immersiveDrillModeEnabled" class="badge badge-xs badge-ghost" :title="$t('trafficAnalysis.history.detailsPanel.scheme')">{{ requestSchemeLabel }}</span>
-          <span v-if="!immersiveDrillModeEnabled" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ requestHttpVersion }}</span>
+          <span v-if="!immersiveDrillModeEnabled && !isRequestPaneCompact" class="badge badge-xs badge-ghost" :title="$t('trafficAnalysis.history.detailsPanel.scheme')">{{ requestSchemeLabel }}</span>
+          <span v-if="!immersiveDrillModeEnabled && !isRequestPaneCompact" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ requestHttpVersion }}</span>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto">
           <TrafficMessageViewTabs
             :model-value="requestTab"
             :tabs="requestViewTabs"
+            :compact="isRequestPaneCompact"
             @update:model-value="$emit('update:requestTab', $event as ProxyHistoryRequestTab)"
           />
-          <TrafficMessageDisplayControls />
+          <TrafficMessageDisplayControls
+            :mode-label="''"
+            :compact="isRequestPaneCompact"
+            :show-line-endings="false"
+          />
         </div>
       </div>
       <div
@@ -92,11 +97,11 @@
           ref="requestSurface"
           :model-value="requestContent"
           readonly
+          message-type="request"
           custom-context-menu
           show-search-bar
-          message-type="request"
-          :display-mode="requestTab"
-          :state-key="selectedRequest ? `history:request:${selectedRequest.id}:${requestTab}:${requestViewMode}` : ''"
+          :display-mode="resolveTrafficTextDisplayMode(requestTab)"
+          :state-key="buildHistoryRequestStateKey(selectedRequest?.id, requestTab, requestViewMode)"
           :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
           :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
           :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
@@ -108,16 +113,13 @@
           :show-display-toolbar="false"
           @contextmenu="showDetailContextMenu($event, 'request')"
         />
-        <HttpMessageSurface
+        <TrafficMessageReader
           v-else
           ref="requestSurface"
           :model-value="stringToHex(requestRawContent)"
-          readonly
           custom-context-menu
           show-search-bar
-          message-type="generic"
-          display-mode="raw"
-          :state-key="selectedRequest ? `history:request:${selectedRequest.id}:hex:${requestViewMode}` : ''"
+          :state-key="buildHistoryRequestStateKey(selectedRequest?.id, 'hex', requestViewMode)"
           :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
           :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
           :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
@@ -132,17 +134,17 @@
       </div>
     </div>
     <div class="w-1 bg-base-300 cursor-col-resize hover:bg-primary/50 transition-colors flex-shrink-0" @mousedown="startVerticalResize"></div>
-    <div class="flex-1 flex flex-col overflow-hidden min-w-0">
+    <div ref="responsePanelRef" class="flex-1 flex flex-col overflow-hidden min-w-0">
       <div
-        class="border-b border-base-300 flex items-center justify-between flex-shrink-0"
+        class="border-b border-base-300 flex flex-wrap items-center gap-2 flex-shrink-0"
         :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS : 'bg-base-200 px-4 py-2'"
       >
-        <div class="flex items-center gap-2">
+        <div class="flex min-w-0 items-center gap-2">
           <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.response') }}</h4>
           <span v-if="isResponseCompressed(selectedRequest)" class="badge badge-xs badge-info" title="响应已自动解压"><i class="fas fa-file-archive mr-1"></i>{{ $t('trafficAnalysis.history.detailsPanel.decompressed') }}</span>
           <div v-if="selectedRequest.was_edited && hasEditedResponse(selectedRequest)" class="dropdown dropdown-bottom">
             <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
-              <span :class="responseViewMode === 'edited' ? 'text-warning' : ''">{{ responseViewMode === 'original' ? $t('trafficAnalysis.history.detailsPanel.originalResponse') : $t('trafficAnalysis.history.detailsPanel.editedResponse') }}</span>
+              <span :class="responseViewMode === 'edited' ? 'text-warning' : ''">{{ responseViewModeLabel }}</span>
               <i class="fas fa-chevron-down text-xs"></i>
             </label>
             <ul tabindex="0" class="dropdown-content z-[1] menu p-1 shadow-lg bg-base-100 rounded-box w-40 border border-base-300">
@@ -150,33 +152,36 @@
               <li><a :class="{ active: responseViewMode === 'edited' }" @click="$emit('update:responseViewMode', 'edited')"><span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedResponse') }}</span></a></li>
             </ul>
           </div>
-          <span v-if="!immersiveDrillModeEnabled" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ responseHttpVersion }}</span>
+          <span v-if="!immersiveDrillModeEnabled && !isResponsePaneCompact" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ responseHttpVersion }}</span>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto">
           <TrafficMessageViewTabs
             :model-value="responseTab"
             :tabs="responseViewTabs"
+            :compact="isResponsePaneCompact"
             @update:model-value="$emit('update:responseTab', $event as ProxyHistoryResponseTab)"
           />
-          <TrafficMessageDisplayControls v-if="responseTab !== 'render'" />
+          <TrafficMessageDisplayControls
+            v-if="responseTab !== 'render'"
+            :mode-label="''"
+            :compact="isResponsePaneCompact"
+            :show-line-endings="false"
+          />
         </div>
       </div>
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'response')">
         <TrafficResponseRenderPane
           v-if="responseTab === 'render'"
-          :body="getResponseBody(selectedRequest, responseViewMode)"
+          :body="responseBodyText"
           :content-type="responseContentType"
         />
-        <HttpMessageSurface
+        <TrafficMessageReader
           v-else-if="responseTab === 'hex'"
           ref="responseSurface"
           :model-value="stringToHex(responseRawContent)"
-          readonly
           custom-context-menu
           show-search-bar
-          message-type="generic"
-          display-mode="raw"
-          :state-key="selectedRequest ? `history:response:${selectedRequest.id}:hex:${responseViewMode}` : ''"
+          :state-key="buildHistoryResponseStateKey(selectedRequest?.id, 'hex', responseViewMode)"
           :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
           :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
           :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
@@ -193,11 +198,11 @@
           ref="responseSurface"
           :model-value="responseContent"
           readonly
+          message-type="response"
           custom-context-menu
           show-search-bar
-          message-type="response"
-          :display-mode="responseTab === 'pretty' ? 'pretty' : 'raw'"
-          :state-key="selectedRequest ? `history:response:${selectedRequest.id}:${responseTab}:${responseViewMode}` : ''"
+          :display-mode="resolveTrafficTextDisplayMode(responseTab)"
+          :state-key="buildHistoryResponseStateKey(selectedRequest?.id, responseTab, responseViewMode)"
           :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
           :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
           :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
@@ -232,7 +237,6 @@ import {
   formatRequestRaw,
   formatResponse,
   formatResponseRaw,
-  getResponseBody,
   getResponseContentType,
   hasEditedResponse,
   isResponseCompressed,
@@ -245,14 +249,32 @@ import {
   type TrafficContextEvidenceHighlight,
   type TrafficContextEvidenceSource,
 } from './trafficContextEvidenceHighlightSupport'
+import TrafficMessageReader from '@/components/traffic/TrafficMessageReader.vue'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import TrafficMessageDisplayControls from '@/components/traffic/TrafficMessageDisplayControls.vue'
 import TrafficMessageViewTabs from '@/components/traffic/TrafficMessageViewTabs.vue'
 import TrafficResponseRenderPane from './TrafficResponseRenderPane.vue'
+import { useTrafficDisplaySettings } from './trafficDisplaySettings'
+import { resolveStoredTrafficResponseBodyText } from './trafficResponseDecodingSupport'
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { IMMERSIVE_TRAFFIC_PANE_HEADER_CLASS } from './immersiveTrafficUi'
+import {
+  buildHistoryRequestStateKey,
+  buildHistoryResponseStateKey,
+  resolveTrafficTextDisplayMode,
+} from './trafficMessagePresentationSupport'
 import type { ProxyHistoryRequestTab, ProxyHistoryResponseTab, ProxyHistoryViewMode, ProxyRequest } from './proxyHistoryTypes'
-const { t } = useI18n()
+import { useTrafficPaneCompactMode } from './useTrafficPaneCompactMode'
+const { t, locale } = useI18n()
+const { settings } = useTrafficDisplaySettings()
+const {
+  panelRef: requestPanelRef,
+  isCompact: isRequestPaneCompact,
+} = useTrafficPaneCompactMode(640)
+const {
+  panelRef: responsePanelRef,
+  isCompact: isResponsePaneCompact,
+} = useTrafficPaneCompactMode(760)
 const props = defineProps<{ selectedRequest: ProxyRequest | null; isLoadingSelectedRequest: boolean; leftPanelWidth: number; requestTab: ProxyHistoryRequestTab; responseTab: ProxyHistoryResponseTab; requestViewMode: ProxyHistoryViewMode; responseViewMode: ProxyHistoryViewMode; contextEvidencePane?: 'request' | 'response'; contextEvidenceMatchedLocations?: string[]; contextEvidenceSearchTerms?: string[]; showDetailContextMenu: (event: MouseEvent, pane: 'request' | 'response') => void; startVerticalResize: (event: MouseEvent) => void }>()
 const emit = defineEmits<{ 'update:requestTab': [value: ProxyHistoryRequestTab]; 'update:responseTab': [value: ProxyHistoryResponseTab]; 'update:requestViewMode': [value: ProxyHistoryViewMode]; 'update:responseViewMode': [value: ProxyHistoryViewMode] }>()
 const requestSurface = ref<{
@@ -267,16 +289,34 @@ const pendingEvidenceLocation = ref<string | null>(null)
 const pendingEvidenceSearchTerm = ref<string | null>(null)
 const lastAutoFocusedEvidenceKey = ref('')
 const requestViewTabs = computed(() => [
-  { value: 'pretty', label: t('trafficAnalysis.history.detailsPanel.tabs.pretty') },
-  { value: 'raw', label: t('trafficAnalysis.history.detailsPanel.tabs.raw') },
-  { value: 'hex', label: t('trafficAnalysis.history.detailsPanel.tabs.hex') },
+  { value: 'pretty', label: t('trafficAnalysis.history.detailsPanel.tabs.pretty'), shortLabel: locale.value.startsWith('zh') ? '格式' : 'Fmt' },
+  { value: 'raw', label: t('trafficAnalysis.history.detailsPanel.tabs.raw'), shortLabel: locale.value.startsWith('zh') ? '原始' : 'Raw' },
+  { value: 'hex', label: t('trafficAnalysis.history.detailsPanel.tabs.hex'), shortLabel: 'Hex' },
 ])
 const responseViewTabs = computed(() => [
-  { value: 'pretty', label: t('trafficAnalysis.history.detailsPanel.tabs.pretty') },
-  { value: 'raw', label: t('trafficAnalysis.history.detailsPanel.tabs.raw') },
-  { value: 'hex', label: t('trafficAnalysis.history.detailsPanel.tabs.hex') },
-  { value: 'render', label: t('trafficAnalysis.history.detailsPanel.tabs.render') },
+  { value: 'pretty', label: t('trafficAnalysis.history.detailsPanel.tabs.pretty'), shortLabel: locale.value.startsWith('zh') ? '格式' : 'Fmt' },
+  { value: 'raw', label: t('trafficAnalysis.history.detailsPanel.tabs.raw'), shortLabel: locale.value.startsWith('zh') ? '原始' : 'Raw' },
+  { value: 'hex', label: t('trafficAnalysis.history.detailsPanel.tabs.hex'), shortLabel: 'Hex' },
+  { value: 'render', label: t('trafficAnalysis.history.detailsPanel.tabs.render'), shortLabel: locale.value.startsWith('zh') ? '渲染' : 'View' },
 ])
+const requestViewModeLabel = computed(() => {
+  if (isRequestPaneCompact.value) {
+    if (props.requestViewMode === 'original') return locale.value.startsWith('zh') ? '原始' : 'Orig'
+    return locale.value.startsWith('zh') ? '编辑' : 'Edit'
+  }
+  return props.requestViewMode === 'original'
+    ? t('trafficAnalysis.history.detailsPanel.originalRequest')
+    : t('trafficAnalysis.history.detailsPanel.editedRequest')
+})
+const responseViewModeLabel = computed(() => {
+  if (isResponsePaneCompact.value) {
+    if (props.responseViewMode === 'original') return locale.value.startsWith('zh') ? '原始' : 'Orig'
+    return locale.value.startsWith('zh') ? '编辑' : 'Edit'
+  }
+  return props.responseViewMode === 'original'
+    ? t('trafficAnalysis.history.detailsPanel.originalResponse')
+    : t('trafficAnalysis.history.detailsPanel.editedResponse')
+})
 
 const requestRawContent = computed(() =>
   props.selectedRequest ? formatRequestRaw(props.selectedRequest, props.requestViewMode) : '',
@@ -284,11 +324,28 @@ const requestRawContent = computed(() =>
 const requestContent = computed(() =>
   props.selectedRequest ? formatRequest(props.selectedRequest, props.requestTab, props.requestViewMode) : '',
 )
+const responseBodyText = computed(() => {
+  if (!props.selectedRequest) return ''
+
+  const useEdited = props.responseViewMode === 'edited' && props.selectedRequest.was_edited
+  const headers = useEdited && props.selectedRequest.edited_response_headers
+    ? props.selectedRequest.edited_response_headers
+    : props.selectedRequest.response_headers
+  const body = useEdited && props.selectedRequest.edited_response_body
+    ? props.selectedRequest.edited_response_body
+    : props.selectedRequest.response_body
+
+  return resolveStoredTrafficResponseBodyText(body || '', headers, settings.value)
+})
 const responseRawContent = computed(() =>
-  props.selectedRequest ? formatResponseRaw(props.selectedRequest, props.responseViewMode) : '',
+  props.selectedRequest
+    ? formatResponseRaw(props.selectedRequest, props.responseViewMode, { bodyText: responseBodyText.value })
+    : '',
 )
 const responseContent = computed(() =>
-  props.selectedRequest ? formatResponse(props.selectedRequest, props.responseTab, props.responseViewMode) : '',
+  props.selectedRequest
+    ? formatResponse(props.selectedRequest, props.responseTab, props.responseViewMode, { bodyText: responseBodyText.value })
+    : '',
 )
 const responseContentType = computed(() =>
   props.selectedRequest ? getResponseContentType(props.selectedRequest, props.responseViewMode) : '',

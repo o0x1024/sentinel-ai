@@ -116,14 +116,14 @@ pub async fn execute_tool_server_tool(
     tool_name: String,
     args: serde_json::Value,
 ) -> Result<sentinel_tools::ToolResult, String> {
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
+    if let Err(message) =
+        sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::ToolExecution)
+    {
         return Ok(sentinel_tools::ToolResult {
             success: false,
             tool_name: tool_name.clone(),
             output: None,
-            error: Some("License required for tool execution".to_string()),
+            error: Some(message),
             execution_time_ms: 0,
         });
     }

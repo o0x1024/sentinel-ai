@@ -1,4 +1,7 @@
+use base64::{engine::general_purpose, Engine as _};
+use brotli::Decompressor;
 use bytes::Bytes;
+use encoding_rs::{Encoding, UTF_8};
 use flate2::read::{DeflateDecoder, GzDecoder};
 use http::{uri::Authority, Request, Uri, Version};
 use http_body_util::{BodyExt, Full};
@@ -42,6 +45,7 @@ pub struct RawReplayResult {
     pub status_text: String,
     pub headers: Vec<ReplayHeaderInput>,
     pub body_text: String,
+    pub body_bytes_base64: String,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +99,7 @@ struct ParsedRawResponse {
     status_code: u16,
     status_text: String,
     headers: Vec<(String, String)>,
+    #[allow(dead_code)]
     body_text: String,
     location: Option<String>,
     set_cookie_headers: Vec<String>,
@@ -108,6 +113,13 @@ struct RedirectCookie {
     path: String,
     secure: bool,
     host_only: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ReplayDisplayResponse {
+    raw_response: String,
+    body_text: String,
+    body_bytes_base64: String,
 }
 
 #[derive(Debug, Clone)]
@@ -244,7 +256,7 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
     )?;
     let mut cookie_jar = build_initial_cookie_jar(&current_request, &current_url);
     let mut redirect_chain = Vec::new();
-    let mut last_raw_response = String::new();
+    let mut last_display_response: Option<ReplayDisplayResponse> = None;
     let mut last_response_head: Option<ParsedRawResponse> = None;
 
     for redirect_index in 0..=config.max_redirects {
@@ -254,7 +266,7 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
             return Err("Total timeout exceeded".to_string());
         }
 
-        let (raw_response, used_http1_fallback) = execute_replay_request(
+        let (display_response, used_http1_fallback) = execute_replay_request(
             &current_request,
             &current_url,
             &cookie_jar,
@@ -262,8 +274,8 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
             remaining_timeout,
         )
         .await?;
-        let response_head = parse_raw_response(&raw_response);
-        last_raw_response = raw_response;
+        let response_head = parse_raw_response(&display_response.raw_response);
+        last_display_response = Some(display_response);
         last_response_head = response_head.clone();
 
         if used_http1_fallback {
@@ -315,7 +327,10 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
     }
 
     Ok(RawReplayResult {
-        raw_response: last_raw_response,
+        raw_response: last_display_response
+            .as_ref()
+            .map(|response| response.raw_response.clone())
+            .unwrap_or_default(),
         response_time_ms: start.elapsed().as_millis() as u64,
         final_url: current_url.to_string(),
         redirect_chain,
@@ -343,9 +358,13 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
                     .collect()
             })
             .unwrap_or_default(),
-        body_text: last_response_head
+        body_text: last_display_response
             .as_ref()
             .map(|response| response.body_text.clone())
+            .unwrap_or_default(),
+        body_bytes_base64: last_display_response
+            .as_ref()
+            .map(|response| response.body_bytes_base64.clone())
             .unwrap_or_default(),
     })
 }
@@ -356,7 +375,7 @@ async fn execute_replay_request(
     cookie_jar: &[RedirectCookie],
     endpoint: &ReplayEndpointInput,
     timeout: std::time::Duration,
-) -> Result<(String, bool), String> {
+) -> Result<(ReplayDisplayResponse, bool), String> {
     let transport = build_replay_transport_context(request, target_url, endpoint)?;
 
     if is_http2_protocol(&request.protocol) {
@@ -392,7 +411,7 @@ async fn execute_replay_request(
     )
     .await?;
 
-    Ok((decode_http_response(&response_buf), true))
+    Ok((decode_http_response_parts(&response_buf), true))
 }
 
 fn build_replay_transport_context(
@@ -508,7 +527,7 @@ async fn execute_single_http2_request(
     cookie_jar: &[RedirectCookie],
     transport: &ReplayTransportContext,
     timeout: std::time::Duration,
-) -> Result<String, String> {
+) -> Result<ReplayDisplayResponse, String> {
     let method = Method::from_bytes(request.method.as_bytes())
         .map_err(|error| format!("Unsupported HTTP method for HTTP/2 replay: {error}"))?;
     let request_uri = build_http2_request_uri(request, target_url, transport)?;
@@ -697,7 +716,9 @@ async fn connect_http2_stream(
     Ok(ReplayHttp2Stream::Tls(tls_stream))
 }
 
-async fn build_http2_raw_response(response: hyper::Response<Incoming>) -> Result<String, String> {
+async fn build_http2_raw_response(
+    response: hyper::Response<Incoming>,
+) -> Result<ReplayDisplayResponse, String> {
     let status = response.status();
     let reason = canonical_reason(status);
     let mut response_head = if reason.is_empty() {
@@ -721,7 +742,7 @@ async fn build_http2_raw_response(response: hyper::Response<Incoming>) -> Result
         .await
         .map_err(|error| format!("Failed to read HTTP/2 response body: {error}"))?;
 
-    Ok(build_display_response(
+    Ok(build_display_response_parts(
         &response_head,
         &body.to_bytes(),
         false,
@@ -1218,6 +1239,28 @@ fn parse_content_encodings(response_head: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn parse_charset_from_content_type(response_head: &str) -> Option<String> {
+    response_head
+        .lines()
+        .find(|line| line.to_lowercase().starts_with("content-type:"))
+        .and_then(|line| line.split_once(':').map(|(_, value)| value))
+        .and_then(|value| {
+            value.split(';').skip(1).find_map(|part| {
+                let (name, charset) = part.split_once('=')?;
+                if name.trim().eq_ignore_ascii_case("charset") {
+                    let normalized = charset.trim().trim_matches('"').trim_matches('\'');
+                    if normalized.is_empty() {
+                        None
+                    } else {
+                        Some(normalized.to_string())
+                    }
+                } else {
+                    None
+                }
+            })
+        })
+}
+
 fn decode_content_encoded_body(body_bytes: &[u8], encodings: &[String]) -> Vec<u8> {
     let mut decoded_body = body_bytes.to_vec();
 
@@ -1239,6 +1282,14 @@ fn decode_content_encoded_body(body_bytes: &[u8], encodings: &[String]) -> Vec<u
                     Err(_) => return body_bytes.to_vec(),
                 }
             }
+            "br" => {
+                let mut decoder = Decompressor::new(decoded_body.as_slice(), 4096);
+                let mut decoded = Vec::new();
+                match decoder.read_to_end(&mut decoded) {
+                    Ok(_) => decoded,
+                    Err(_) => return body_bytes.to_vec(),
+                }
+            }
             "identity" => decoded_body,
             _ => return body_bytes.to_vec(),
         };
@@ -1248,11 +1299,20 @@ fn decode_content_encoded_body(body_bytes: &[u8], encodings: &[String]) -> Vec<u
     decoded_body
 }
 
-fn build_display_response(
+fn decode_body_text(body_bytes: &[u8], response_head: &str) -> String {
+    let charset = parse_charset_from_content_type(response_head)
+        .and_then(|label| Encoding::for_label(label.as_bytes()))
+        .unwrap_or(UTF_8);
+
+    let (decoded, _, _) = charset.decode(body_bytes);
+    decoded.into_owned()
+}
+
+fn build_display_response_parts(
     response_head: &str,
     body_bytes: &[u8],
     decode_chunked_body: bool,
-) -> String {
+) -> ReplayDisplayResponse {
     let header_lower = response_head.to_lowercase();
     let body_bytes = if decode_chunked_body
         && header_lower
@@ -1266,24 +1326,44 @@ fn build_display_response(
 
     let decoded_body =
         decode_content_encoded_body(&body_bytes, &parse_content_encodings(response_head));
-    let mut result = response_head.to_string();
+    let body_text = decode_body_text(&decoded_body, response_head);
+    let mut raw_response = response_head.to_string();
     if response_head.ends_with("\r\n") {
-        result.push_str("\r\n");
+        raw_response.push_str("\r\n");
     } else {
-        result.push_str("\r\n\r\n");
+        raw_response.push_str("\r\n\r\n");
     }
-    result.push_str(&String::from_utf8_lossy(&decoded_body));
-    result
+    raw_response.push_str(&body_text);
+
+    ReplayDisplayResponse {
+        raw_response,
+        body_text,
+        body_bytes_base64: general_purpose::STANDARD.encode(decoded_body),
+    }
 }
 
-fn decode_http_response(response_buf: &[u8]) -> String {
+#[cfg(test)]
+fn build_display_response(
+    response_head: &str,
+    body_bytes: &[u8],
+    decode_chunked_body: bool,
+) -> String {
+    build_display_response_parts(response_head, body_bytes, decode_chunked_body).raw_response
+}
+
+fn decode_http_response_parts(response_buf: &[u8]) -> ReplayDisplayResponse {
     let header_end = response_buf
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .map(|offset| offset + 4);
 
     let Some(header_end) = header_end else {
-        return String::from_utf8_lossy(response_buf).to_string();
+        let raw_response = String::from_utf8_lossy(response_buf).to_string();
+        return ReplayDisplayResponse {
+            body_text: raw_response.clone(),
+            body_bytes_base64: general_purpose::STANDARD.encode(response_buf),
+            raw_response,
+        };
     };
 
     let header_bytes = &response_buf[..header_end];
@@ -1292,7 +1372,7 @@ fn decode_http_response(response_buf: &[u8]) -> String {
         .trim_end_matches("\r\n\r\n")
         .to_string();
 
-    build_display_response(&response_head, body_bytes, true)
+    build_display_response_parts(&response_head, body_bytes, true)
 }
 
 async fn read_http_response<S: AsyncRead + Unpin>(
@@ -1626,5 +1706,38 @@ mod tests {
         let parsed = parse_raw_response(&raw_response).unwrap();
 
         assert_eq!(parsed.body_text, "hello gzip");
+    }
+
+    #[test]
+    fn display_response_decodes_brotli_body() {
+        let payload = b"hello brotli";
+        let mut compressed = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut compressed, 4096, 5, 22);
+            writer.write_all(payload).unwrap();
+        }
+
+        let raw_response = build_display_response(
+            "HTTP/2 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Encoding: br\r\n",
+            &compressed,
+            false,
+        );
+        let parsed = parse_raw_response(&raw_response).unwrap();
+
+        assert_eq!(parsed.body_text, "hello brotli");
+    }
+
+    #[test]
+    fn display_response_decodes_non_utf8_charset_body() {
+        let body = [0xC4, 0xE3, 0xBA, 0xC3];
+
+        let raw_response = build_display_response(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=gbk\r\n",
+            &body,
+            false,
+        );
+        let parsed = parse_raw_response(&raw_response).unwrap();
+
+        assert_eq!(parsed.body_text, "你好");
     }
 }

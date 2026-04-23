@@ -347,14 +347,18 @@ impl DictionaryService {
                 params.push(category);
             }
             if let Some(is_builtin) = filter.is_builtin {
-                query.push_str(&format!(" AND is_builtin = ${}", param_idx));
-                param_idx += 1;
-                params.push(is_builtin.to_string());
+                query.push_str(if is_builtin {
+                    " AND is_builtin = TRUE"
+                } else {
+                    " AND is_builtin = FALSE"
+                });
             }
             if let Some(is_active) = filter.is_active {
-                query.push_str(&format!(" AND is_active = ${}", param_idx));
-                param_idx += 1;
-                params.push(is_active.to_string());
+                query.push_str(if is_active {
+                    " AND is_active = TRUE"
+                } else {
+                    " AND is_active = FALSE"
+                });
             }
             if let Some(search_term) = filter.search_term {
                 query.push_str(&format!(

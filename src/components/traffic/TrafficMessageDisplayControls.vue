@@ -1,6 +1,15 @@
 <template>
-  <div class="traffic-message-display-controls" role="toolbar" :aria-label="t('trafficAnalysis.httpEditor.toolbar.showLineEndings')">
+  <div
+    class="traffic-message-display-controls"
+    :class="{ compact }"
+    role="toolbar"
+    :aria-label="t('trafficAnalysis.httpEditor.toolbar.showLineEndings')"
+  >
+    <span v-if="modeLabel" class="traffic-display-mode-badge">
+      {{ modeLabel }}
+    </span>
     <button
+      v-if="showLineEndings"
       type="button"
       class="traffic-display-control-button"
       :class="{ active: settings.showLineEndings }"
@@ -10,6 +19,7 @@
       <span class="traffic-display-control-label">↵</span>
     </button>
     <button
+      v-if="showLineWrap"
       type="button"
       class="traffic-display-control-button"
       :class="{ active: settings.wrapLongLines }"
@@ -25,6 +35,18 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTrafficDisplaySettings } from './trafficDisplaySettings'
+
+withDefaults(defineProps<{
+  modeLabel?: string
+  showLineEndings?: boolean
+  showLineWrap?: boolean
+  compact?: boolean
+}>(), {
+  modeLabel: '',
+  showLineEndings: true,
+  showLineWrap: true,
+  compact: false,
+})
 
 const { t } = useI18n()
 const { settings } = useTrafficDisplaySettings()
@@ -46,7 +68,30 @@ const lineWrapToggleTitle = computed(() => (
 .traffic-message-display-controls {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 0.125rem;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.traffic-message-display-controls.compact {
+  gap: 0.1rem;
+}
+
+.traffic-display-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 1.65rem;
+  padding: 0 0.55rem;
+  border: 1px solid oklch(var(--b3));
+  border-radius: 999px;
+  background: oklch(var(--b2) / 0.55);
+  color: oklch(var(--bc) / 0.72);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .traffic-display-control-button {

@@ -14,7 +14,8 @@ import DialogPlugin from './composables/useDialog' // 导入对话框插件
 import ToastPlugin from './composables/useToast' // 导入Toast插件
 import { open as openExternal } from '@tauri-apps/plugin-shell'
 import { resolveStandaloneBootstrapRoute } from './router/standalone'
-import { applyTheme } from './views/settingsUiSupport'
+import { getFeatureEntitlements } from './services/featureEntitlements'
+import { applyFontSize, applyTheme, applyUIScale, migrateLegacyAppearanceSettings } from './views/settingsUiSupport'
 
 // 启动时应用已保存的通用设置（主题/字体/语言）
 const applyStartupSettings = () => {
@@ -22,7 +23,12 @@ const applyStartupSettings = () => {
     const saved = localStorage.getItem('sentinel-settings')
     if (!saved) return
     const parsed = JSON.parse(saved)
+    const migrated = migrateLegacyAppearanceSettings(parsed)
     const general = parsed?.general || {}
+
+    if (migrated) {
+      localStorage.setItem('sentinel-settings', JSON.stringify(parsed))
+    }
 
     // 主题
     if (general.theme) {
@@ -31,8 +37,12 @@ const applyStartupSettings = () => {
 
     // 字体大小
     if (typeof general.fontSize === 'number') {
-      document.documentElement.style.fontSize = `${general.fontSize}px`
-      document.documentElement.style.setProperty('--font-size-base', `${general.fontSize}px`)
+      applyFontSize(general.fontSize)
+    }
+
+    // 界面缩放
+    if (typeof general.uiScale === 'number') {
+      applyUIScale(general.uiScale)
     }
 
     // 语言
@@ -179,7 +189,7 @@ const routes = [
     path: '/bug-bounty',
     name: 'BugBounty',
     component: BugBounty,
-    meta: { title: '漏洞赏金' },
+    meta: { title: '漏洞赏金', requiredEntitlement: 'bugBounty' },
   },
   {
     path: '/cyberchef',
@@ -221,7 +231,7 @@ const routes = [
     path: '/notifications',
     name: 'NotificationManagement',
     component: NotificationManagement,
-    meta: { title: '通知中心' },
+    meta: { title: '通知规则' },
   },
 ]
 
@@ -234,10 +244,18 @@ const router = createRouter({
 const activeTimers = new Set<string>()
 
 // 修复路由守卫中的计时器重复问题
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async (to, _from, next) => {
   // 设置页面标题
   if (to.meta?.title) {
     document.title = `${to.meta.title} - Sentinel AI`
+  }
+
+  if (to.meta?.requiredEntitlement === 'bugBounty') {
+    const entitlements = await getFeatureEntitlements()
+    if (!entitlements.can_access_bug_bounty) {
+      next('/dashboard')
+      return
+    }
   }
 
   // 开始路由性能监控

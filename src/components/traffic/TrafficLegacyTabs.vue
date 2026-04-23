@@ -6,126 +6,140 @@
   >
     <!-- Tab 切换 -->
     <div
-      class="tabs tabs-boxed bg-base-200 flex-shrink-0"
-      :class="[
-        immersiveDrillModeEnabled ? 'tabs-sm rounded-2xl px-1 py-1' : '',
-        activeTab === 'proxyhistory' ? 'mb-2' : 'mb-4',
-      ]"
-      role="tablist"
-      :aria-label="$t('trafficAnalysis.ariaLabels.trafficAnalysisTabs')"
+      class="flex min-w-0 items-center gap-2"
+      :class="activeTab === 'proxyhistory' ? 'mb-2' : 'mb-4'"
     >
+      <div class="min-w-0 flex-1 overflow-x-auto">
+        <div
+          class="tabs tabs-boxed bg-base-200 flex-nowrap min-w-max flex-shrink-0"
+          :class="immersiveDrillModeEnabled ? 'tabs-sm rounded-2xl px-1 py-1' : ''"
+          role="tablist"
+          :aria-label="$t('trafficAnalysis.ariaLabels.trafficAnalysisTabs')"
+        >
+          <button
+            v-if="isTabVisible('control')"
+            type="button"
+            class="tab"
+            role="tab"
+            :aria-selected="activeTab === 'control'"
+            :class="{
+              'tab-active': activeTab === 'control',
+              'text-error border border-error/40 bg-error/10':
+                activeTab !== 'control' && controlInterceptCount > 0,
+              'control-tab-pulse': controlTabPulse,
+            }"
+            @click="activeTab = 'control'"
+          >
+            <i class="fas fa-sliders-h mr-2"></i>
+            {{ $t('trafficAnalysis.tabs.control') }}
+            <span v-if="controlInterceptCount > 0" class="badge badge-xs badge-error ml-1">{{
+              controlInterceptCount
+            }}</span>
+          </button>
+          <button
+            v-if="isTabVisible('proxyhistory')"
+            type="button"
+            class="tab"
+            role="tab"
+            :aria-selected="activeTab === 'proxyhistory'"
+            :class="{ 'tab-active': activeTab === 'proxyhistory' }"
+            @click="activeTab = 'proxyhistory'"
+          >
+            <i class="fas fa-history mr-2"></i>
+            {{ $t('trafficAnalysis.tabs.history') }}
+          </button>
+          <button
+            v-if="isTabVisible('repeater')"
+            type="button"
+            class="tab"
+            role="tab"
+            :aria-selected="activeTab === 'repeater'"
+            :class="{ 'tab-active': activeTab === 'repeater' }"
+            @click="activeTab = 'repeater'"
+          >
+            <i class="fas fa-redo mr-2"></i>
+            {{ $t('trafficAnalysis.tabs.repeater') }}
+            <span v-if="repeaterCount > 0" class="badge badge-xs badge-primary ml-1">{{
+              repeaterCount
+            }}</span>
+          </button>
+          <button
+            v-if="isTabVisible('comparer')"
+            type="button"
+            class="tab"
+            role="tab"
+            :aria-selected="activeTab === 'comparer'"
+            :class="{ 'tab-active': activeTab === 'comparer' }"
+            @click="activeTab = 'comparer'"
+          >
+            <i class="fas fa-not-equal mr-2"></i>
+            {{ $t('trafficAnalysis.tabs.comparer') }}
+            <span v-if="comparerCount > 0" class="badge badge-xs badge-accent ml-1">{{
+              comparerCount
+            }}</span>
+          </button>
+          <button
+            v-if="isTabVisible('intruder')"
+            type="button"
+            class="tab"
+            role="tab"
+            :aria-selected="activeTab === 'intruder'"
+            :class="{ 'tab-active': activeTab === 'intruder' }"
+            @click="activeTab = 'intruder'"
+          >
+            <i class="fas fa-crosshairs mr-2"></i>
+            {{ $t('trafficAnalysis.tabs.intruder') }}
+            <span v-if="intruderCount > 0" class="badge badge-xs badge-secondary ml-1">{{
+              intruderCount
+            }}</span>
+          </button>
+          <button
+            v-if="isTabVisible('oast')"
+            type="button"
+            class="tab"
+            role="tab"
+            :aria-selected="activeTab === 'oast'"
+            :class="{ 'tab-active': activeTab === 'oast' }"
+            @click="activeTab = 'oast'"
+          >
+            <i class="fas fa-satellite-dish mr-2"></i>
+            {{ $t('trafficAnalysis.tabs.oast', 'OAST') }}
+          </button>
+          <button
+            v-if="isTabVisible('proxifier')"
+            type="button"
+            class="tab"
+            role="tab"
+            :aria-selected="activeTab === 'proxifier'"
+            :class="{ 'tab-active': activeTab === 'proxifier' }"
+            @click="activeTab = 'proxifier'"
+          >
+            <i class="fas fa-network-wired mr-2"></i>
+            {{ $t('trafficAnalysis.tabs.proxifier') }}
+          </button>
+          <button
+            v-if="isTabVisible('capture')"
+            type="button"
+            class="tab"
+            role="tab"
+            :aria-selected="activeTab === 'capture'"
+            :class="{ 'tab-active': activeTab === 'capture' }"
+            @click="activeTab = 'capture'"
+          >
+            <i class="fas fa-broadcast-tower mr-2"></i>
+            {{ $t('trafficAnalysis.tabs.capture') }}
+          </button>
+        </div>
+      </div>
+
       <button
-        v-if="isTabVisible('control')"
         type="button"
-        class="tab"
-        role="tab"
-        :aria-selected="activeTab === 'control'"
-        :class="{
-          'tab-active': activeTab === 'control',
-          'text-error border border-error/40 bg-error/10':
-            activeTab !== 'control' && controlInterceptCount > 0,
-          'control-tab-pulse': controlTabPulse,
-        }"
-        @click="activeTab = 'control'"
+        class="btn btn-sm btn-square shrink-0 rounded-xl border border-base-300/80 bg-base-100/80 hover:bg-base-100"
+        :aria-label="$t('trafficAnalysis.tabs.proxyConfig')"
+        :title="$t('trafficAnalysis.tabs.proxyConfig')"
+        @click="openProxyConfigDialog"
       >
-        <i class="fas fa-sliders-h mr-2"></i>
-        {{ $t('trafficAnalysis.tabs.control') }}
-        <span v-if="controlInterceptCount > 0" class="badge badge-xs badge-error ml-1">{{
-          controlInterceptCount
-        }}</span>
-      </button>
-      <button
-        v-if="isTabVisible('proxyhistory')"
-        type="button"
-        class="tab"
-        role="tab"
-        :aria-selected="activeTab === 'proxyhistory'"
-        :class="{ 'tab-active': activeTab === 'proxyhistory' }"
-        @click="activeTab = 'proxyhistory'"
-      >
-        <i class="fas fa-history mr-2"></i>
-        {{ $t('trafficAnalysis.tabs.history') }}
-      </button>
-      <button
-        v-if="isTabVisible('repeater')"
-        type="button"
-        class="tab"
-        role="tab"
-        :aria-selected="activeTab === 'repeater'"
-        :class="{ 'tab-active': activeTab === 'repeater' }"
-        @click="activeTab = 'repeater'"
-      >
-        <i class="fas fa-redo mr-2"></i>
-        {{ $t('trafficAnalysis.tabs.repeater') }}
-        <span v-if="repeaterCount > 0" class="badge badge-xs badge-primary ml-1">{{
-          repeaterCount
-        }}</span>
-      </button>
-      <button
-        v-if="isTabVisible('comparer')"
-        type="button"
-        class="tab"
-        role="tab"
-        :aria-selected="activeTab === 'comparer'"
-        :class="{ 'tab-active': activeTab === 'comparer' }"
-        @click="activeTab = 'comparer'"
-      >
-        <i class="fas fa-not-equal mr-2"></i>
-        {{ $t('trafficAnalysis.tabs.comparer') }}
-        <span v-if="comparerCount > 0" class="badge badge-xs badge-accent ml-1">{{
-          comparerCount
-        }}</span>
-      </button>
-      <button
-        v-if="isTabVisible('intruder')"
-        type="button"
-        class="tab"
-        role="tab"
-        :aria-selected="activeTab === 'intruder'"
-        :class="{ 'tab-active': activeTab === 'intruder' }"
-        @click="activeTab = 'intruder'"
-      >
-        <i class="fas fa-crosshairs mr-2"></i>
-        {{ $t('trafficAnalysis.tabs.intruder') }}
-        <span v-if="intruderCount > 0" class="badge badge-xs badge-secondary ml-1">{{
-          intruderCount
-        }}</span>
-      </button>
-      <button
-        v-if="isTabVisible('proxifier')"
-        type="button"
-        class="tab"
-        role="tab"
-        :aria-selected="activeTab === 'proxifier'"
-        :class="{ 'tab-active': activeTab === 'proxifier' }"
-        @click="activeTab = 'proxifier'"
-      >
-        <i class="fas fa-network-wired mr-2"></i>
-        {{ $t('trafficAnalysis.tabs.proxifier') }}
-      </button>
-      <button
-        v-if="isTabVisible('capture')"
-        type="button"
-        class="tab"
-        role="tab"
-        :aria-selected="activeTab === 'capture'"
-        :class="{ 'tab-active': activeTab === 'capture' }"
-        @click="activeTab = 'capture'"
-      >
-        <i class="fas fa-broadcast-tower mr-2"></i>
-        {{ $t('trafficAnalysis.tabs.capture') }}
-      </button>
-      <button
-        v-if="isTabVisible('proxyconfig')"
-        type="button"
-        class="tab"
-        role="tab"
-        :aria-selected="activeTab === 'proxyconfig'"
-        :class="{ 'tab-active': activeTab === 'proxyconfig' }"
-        @click="activeTab = 'proxyconfig'"
-      >
-        <i class="fas fa-cog mr-2"></i>
-        {{ $t('trafficAnalysis.tabs.proxyConfig') }}
+        <i class="fas fa-cog"></i>
       </button>
     </div>
 
@@ -179,6 +193,13 @@
         @sendDraftRequestToComparer="handleSendDraftRequestToComparer"
         class="h-full absolute inset-0 overflow-auto"
       />
+      <TrafficOastPanel
+        v-if="isTabVisible('oast')"
+        v-show="activeTab === 'oast'"
+        class="h-full absolute inset-0 overflow-auto"
+        @openConfig="openProxyConfigDialog"
+        @openSourceRequest="openHistoryRequestFromOast"
+      />
       <ProxifierPanel
         v-if="isTabVisible('proxifier')"
         v-show="activeTab === 'proxifier'"
@@ -189,14 +210,45 @@
         v-show="activeTab === 'capture'"
         class="h-full absolute inset-0"
       />
-      <ProxyConfiguration
-        v-if="isTabVisible('proxyconfig')"
-        ref="proxyConfigRef"
-        v-show="activeTab === 'proxyconfig'"
-        @filterRuleAdded="handleFilterRuleAdded"
-        class="h-full absolute inset-0 overflow-auto"
-      />
     </div>
+
+    <AppModal
+      :open="proxyConfigDialogOpen"
+      box-class="traffic-proxy-config-modal-box"
+      resizable
+      resize-storage-key="traffic-proxy-config-modal-size"
+      :min-width="1040"
+      :min-height="720"
+      @close="closeProxyConfigDialog"
+    >
+      <div class="flex h-full min-h-0 flex-col overflow-hidden">
+        <div class="border-b border-base-300/70 px-6 py-4">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+
+              <h3 class="mt-1 text-xl font-semibold text-base-content">
+                {{ $t('trafficAnalysis.tabs.proxyConfig') }}
+              </h3>
+            </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-ghost rounded-2xl"
+              @click="closeProxyConfigDialog"
+            >
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="min-h-0 flex-1 bg-base-200/35 p-4">
+          <ProxyConfiguration
+            ref="proxyConfigRef"
+            @filterRuleAdded="handleFilterRuleAdded"
+            class="h-full min-h-0"
+          />
+        </div>
+      </div>
+    </AppModal>
   </div>
 </template>
 
@@ -219,6 +271,8 @@ import ProxyIntruder from './ProxyIntruder.vue'
 import ProxyConfiguration from './ProxyConfiguration.vue'
 import ProxifierPanel from './ProxifierPanel.vue'
 import PacketCapture from './PacketCapture.vue'
+import TrafficOastPanel from './TrafficOastPanel.vue'
+import AppModal from '@/components/AppModal.vue'
 import {
   type TrafficComparerDraftRequestInput,
   type TrafficComparePayload,
@@ -235,9 +289,9 @@ type TrafficTab =
   | 'repeater'
   | 'comparer'
   | 'intruder'
+  | 'oast'
   | 'proxifier'
   | 'capture'
-  | 'proxyconfig'
 
 const allTrafficTabs: TrafficTab[] = [
   'control',
@@ -245,9 +299,9 @@ const allTrafficTabs: TrafficTab[] = [
   'repeater',
   'comparer',
   'intruder',
+  'oast',
   'proxifier',
   'capture',
-  'proxyconfig',
 ]
 
 const activeTab = ref<TrafficTab>('proxyhistory')
@@ -257,6 +311,7 @@ const comparerRef = ref<InstanceType<typeof ProxyComparer> | null>(null)
 const intruderRef = ref<InstanceType<typeof ProxyIntruder> | null>(null)
 const proxyConfigRef = ref<InstanceType<typeof ProxyConfiguration> | null>(null)
 const proxyHistoryRef = ref<InstanceType<typeof ProxyHistory> | null>(null)
+const proxyConfigDialogOpen = ref(false)
 const pendingRepeaterRequest = ref<HttpExchangeRequest | undefined>(undefined)
 const pendingIntruderRequest = ref<HttpExchangeRequest | undefined>(undefined)
 const repeaterCount = ref(0)
@@ -305,6 +360,21 @@ const restoreLegacyTabsScrollState = () => {
 defineOptions({
   name: 'TrafficLegacyTabs',
 })
+
+async function ensureProxyConfigDialogOpen() {
+  if (!proxyConfigDialogOpen.value) {
+    proxyConfigDialogOpen.value = true
+    await nextTick()
+  }
+}
+
+function openProxyConfigDialog() {
+  proxyConfigDialogOpen.value = true
+}
+
+function closeProxyConfigDialog() {
+  proxyConfigDialogOpen.value = false
+}
 
 // 处理发送到 Repeater 的请求
 function handleSendToRepeater(request: HttpExchangeRequest) {
@@ -367,19 +437,15 @@ interface FilterRule {
   relationship?: string
 }
 
-function handleAddFilterRule(rule: FilterRule) {
+async function handleAddFilterRule(rule: FilterRule) {
   console.log('[TrafficAnalysis] Adding filter rule:', rule)
 
-  if (proxyConfigRef.value) {
-    proxyConfigRef.value.addRequestFilterRule(
-      rule.matchType,
-      rule.condition,
-      rule.relationship || 'matches'
-    )
-    // Don't switch to proxy config tab, stay on current tab
-  } else {
-    console.error('[TrafficAnalysis] ProxyConfiguration ref not available')
-  }
+  await ensureProxyConfigDialogOpen()
+  proxyConfigRef.value?.addRequestFilterRule(
+    rule.matchType,
+    rule.condition,
+    rule.relationship || 'matches',
+  )
 }
 
 // 处理过滤规则添加完成事件
@@ -396,7 +462,7 @@ function handleFilterRuleAdded(rule: FilterRule) {
 }
 
 async function handleOpenResponseInterceptionSettings() {
-  ensureVisibleTrafficTab('proxyconfig')
+  await ensureProxyConfigDialogOpen()
   await nextTick()
   await proxyConfigRef.value?.openResponseInterceptionRules?.()
 }
@@ -433,6 +499,15 @@ async function openHistoryRequest(payload: TrafficContextCandidateEvidenceSelect
     payload.pane || 'request',
     payload.searchTerms || []
   )
+}
+
+async function openHistoryRequestFromOast(requestId: number) {
+  await openHistoryRequest({
+    requestId,
+    pane: 'request',
+    matchedLocations: [],
+    searchTerms: [],
+  })
 }
 
 // 监听 Tab 切换，清除待处理请求

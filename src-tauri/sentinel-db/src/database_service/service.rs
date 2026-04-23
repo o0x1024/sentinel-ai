@@ -1312,6 +1312,16 @@ impl DatabaseService {
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS bounty_knowledge_notes (
+                id TEXT PRIMARY KEY,
+                program_id TEXT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                tags_json TEXT,
+                metadata_json TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#,
             r#"CREATE TABLE IF NOT EXISTS system_agent_profiles (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -1418,6 +1428,16 @@ impl DatabaseService {
         .await?;
         self.execute_runtime_ddl(
             runtime,
+            "CREATE INDEX IF NOT EXISTS idx_bounty_knowledge_notes_program ON bounty_knowledge_notes(program_id)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_bounty_knowledge_notes_updated ON bounty_knowledge_notes(updated_at DESC)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
             "ALTER TABLE ai_roles ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'",
         )
         .await
@@ -1483,6 +1503,22 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_system_agent_runs_started_at ON system_agent_runs(started_at)",
         )
         .await?;
+
+        if let DatabasePool::SQLite(_) = runtime {
+            self.execute_runtime_ddl(
+                runtime,
+                r#"CREATE VIRTUAL TABLE IF NOT EXISTS bounty_knowledge_notes_fts USING fts5(
+                    note_id UNINDEXED,
+                    title,
+                    content,
+                    tags,
+                    program_name,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                )"#,
+            )
+            .await?;
+        }
+
         SurfaceGraphMigration::apply_runtime(runtime).await?;
 
         Ok(())

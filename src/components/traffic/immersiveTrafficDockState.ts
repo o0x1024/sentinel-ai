@@ -1,11 +1,7 @@
 import { ref } from 'vue'
-import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
-import {
-  closeOtherImmersiveTools,
-  registerImmersiveToolCloser,
-} from '@/services/immersiveToolCoordinator'
+import { registerImmersiveToolCloser } from '@/services/immersiveToolCoordinator'
 
-export type ImmersiveTrafficWorkbenchTool = 'repeater' | 'intruder' | 'comparer'
+export type ImmersiveTrafficWorkbenchTool = 'repeater' | 'intruder' | 'comparer' | 'oast'
 
 const workbenchOpen = ref(false)
 const activeWorkbenchTool = ref<ImmersiveTrafficWorkbenchTool>('repeater')
@@ -16,6 +12,7 @@ const basketOpen = ref(false)
 const repeaterCount = ref(0)
 const intruderCount = ref(0)
 const comparerCount = ref(0)
+const oastCount = ref(0)
 const controlInterceptCount = ref(0)
 const basketCount = ref(0)
 
@@ -29,21 +26,15 @@ export function useImmersiveTrafficDockState() {
     repeaterCount,
     intruderCount,
     comparerCount,
+    oastCount,
     controlInterceptCount,
     basketCount,
   }
 }
 
 export function openImmersiveTrafficWorkbenchTool(tool: ImmersiveTrafficWorkbenchTool) {
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('traffic-workbench')
-  }
-
   activeWorkbenchTool.value = tool
   workbenchOpen.value = true
-  interceptDrawerOpen.value = false
-  proxySettingsOpen.value = false
-  basketOpen.value = false
 }
 
 export function toggleImmersiveTrafficWorkbenchTool(tool: ImmersiveTrafficWorkbenchTool) {
@@ -77,14 +68,7 @@ export function toggleImmersiveTrafficInterceptDrawer() {
 }
 
 export function openImmersiveTrafficInterceptDrawer() {
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('traffic-control')
-  }
-
-  workbenchOpen.value = false
   interceptDrawerOpen.value = true
-  proxySettingsOpen.value = false
-  basketOpen.value = false
 }
 
 export function toggleImmersiveTrafficBasket() {
@@ -97,13 +81,6 @@ export function toggleImmersiveTrafficBasket() {
 }
 
 export function openImmersiveTrafficBasket() {
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('traffic-basket')
-  }
-
-  workbenchOpen.value = false
-  interceptDrawerOpen.value = false
-  proxySettingsOpen.value = false
   basketOpen.value = true
 }
 
@@ -117,14 +94,7 @@ export function toggleImmersiveTrafficProxySettings() {
 }
 
 export function openImmersiveTrafficProxySettings() {
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('traffic-settings')
-  }
-
-  workbenchOpen.value = false
-  interceptDrawerOpen.value = false
   proxySettingsOpen.value = true
-  basketOpen.value = false
 }
 
 export function syncImmersiveTrafficDockState(payload: {
@@ -136,6 +106,7 @@ export function syncImmersiveTrafficDockState(payload: {
   repeaterCount: number
   intruderCount: number
   comparerCount: number
+  oastCount: number
   controlInterceptCount: number
   basketCount: number
 }) {
@@ -147,6 +118,7 @@ export function syncImmersiveTrafficDockState(payload: {
   repeaterCount.value = payload.repeaterCount
   intruderCount.value = payload.intruderCount
   comparerCount.value = payload.comparerCount
+  oastCount.value = payload.oastCount
   controlInterceptCount.value = payload.controlInterceptCount
   basketCount.value = payload.basketCount
 }
@@ -160,6 +132,7 @@ export function resetImmersiveTrafficDockState() {
   repeaterCount.value = 0
   intruderCount.value = 0
   comparerCount.value = 0
+  oastCount.value = 0
   controlInterceptCount.value = 0
   basketCount.value = 0
 }

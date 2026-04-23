@@ -1,5 +1,5 @@
 export default {
-    title: '通知中心',
+    title: '通知规则',
 
     // 按钮和操作
     newNotification: '新建通知',
@@ -118,7 +118,7 @@ export default {
         removeItem: '删除',
         openTarget: '打开详情',
         viewAll: '查看全部',
-        manageRules: '通知中心',
+        manageRules: '通知规则',
         sourceFilter: '来源筛选',
         allSources: '全部来源',
         unreadOnly: '仅看未读',
@@ -144,6 +144,8 @@ export default {
         monitorCompletedWithAssetsAndFindings: '监控任务“{name}”执行完成，新增 {assets} 个资产并发现 {findings} 条漏洞',
         monitorStopped: '监控任务“{name}”已停止',
         monitorFailed: '监控任务“{name}”执行失败',
+        monitorFailureTitle: '资产监控异常',
+        monitorPluginFailed: '监控任务“{task}”中的插件“{plugin}”执行失败：{reason}',
         aiAssistantTitle: 'AI 助手回复完成',
         aiAssistantCompletedMessage: '会话 {id} 已生成新的助手回复',
         aiAssistantFailedTitle: 'AI 助手执行结束',
@@ -173,7 +175,7 @@ export default {
         sourceDescriptions: {
             ai_assistant: '助手回复完成、失败或中止时提醒',
             workflow: '普通工作流执行完成或异常时提醒',
-            monitor: '监控调度完成并发现资产或漏洞时提醒',
+            monitor: '监控调度完成、停止或插件执行失败时提醒',
             bug_bounty_workflow: '自动化流程产生资产或漏洞结果时提醒',
         },
         levels: {

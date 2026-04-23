@@ -61,6 +61,14 @@ pub struct ScanPipeline {
 }
 
 impl ScanPipeline {
+    fn format_plugin_ids(executors: &[(String, Arc<PluginExecutor>)]) -> String {
+        executors
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
     /// 创建新的扫描流水线
     pub fn new(task_rx: mpsc::UnboundedReceiver<ScanTask>, finding_tx: FindingSender) -> Self {
         Self {
@@ -264,18 +272,12 @@ impl ScanPipeline {
         let plugins = self.plugin_executors.read().await;
         if plugins.is_empty() {
             // 暂无插件，仅记录历史，不进行流量分析
-            debug!(
-                "No traffic plugins enabled, skipping request scan but keeping context for history: {}",
-                req_ctx.url
+            info!(
+                "No traffic plugins loaded for request scan: request_id={}, method={}, url={}",
+                req_ctx.id, req_ctx.method, req_ctx.url
             );
             return;
         }
-
-        debug!(
-            "Processing request: {} - {} plugins enabled",
-            req_ctx.url,
-            plugins.len()
-        );
 
         // 扇出分发到每个插件
         // 获取插件执行器列表
@@ -284,6 +286,15 @@ impl ScanPipeline {
             .map(|(id, exec)| (id.clone(), exec.clone()))
             .collect();
         drop(plugins);
+
+        info!(
+            "Dispatching request scan: request_id={}, method={}, url={}, plugin_count={}, plugins={}",
+            req_ctx.id,
+            req_ctx.method,
+            req_ctx.url,
+            executors.len(),
+            Self::format_plugin_ids(&executors)
+        );
 
         // 构造 http 事务（仅请求）
         let transaction = HttpTransaction {
@@ -358,7 +369,10 @@ impl ScanPipeline {
                         }
                     }
 
-                    match executor.scan_transaction(tx_clone).await {
+                    match executor
+                        .scan_transaction_with_sink(tx_clone, Some(finding_tx.clone()))
+                        .await
+                    {
                         Ok(findings) => {
                             if !findings.is_empty() {
                                 debug!(
@@ -451,12 +465,21 @@ impl ScanPipeline {
             // 清理请求缓存
             let mut cache = self.request_cache.write().await;
             cache.remove(&resp_ctx.request_id);
+            info!(
+                "No traffic plugins loaded for response scan: request_id={}, method={}, url={}, status={}",
+                resp_ctx.request_id, req_ctx.method, req_ctx.url, resp_ctx.status
+            );
             return;
         }
 
-        debug!(
-            "Processing response for request_id: {}",
-            resp_ctx.request_id
+        info!(
+            "Dispatching response scan: request_id={}, method={}, url={}, status={}, plugin_count={}, plugins={}",
+            resp_ctx.request_id,
+            req_ctx.method,
+            req_ctx.url,
+            resp_ctx.status,
+            executors.len(),
+            Self::format_plugin_ids(&executors)
         );
 
         // 构造完整事务
@@ -530,7 +553,10 @@ impl ScanPipeline {
                         }
                     }
 
-                    match executor.scan_transaction(tx_clone).await {
+                    match executor
+                        .scan_transaction_with_sink(tx_clone, Some(finding_tx.clone()))
+                        .await
+                    {
                         Ok(findings) => {
                             if !findings.is_empty() {
                                 debug!(
@@ -726,7 +752,7 @@ impl ScanPipeline {
     ) -> Result<usize> {
         use crate::types::PluginMetadata;
 
-        info!("Loading enabled plugins from database...");
+        info!("Loading enabled traffic plugins from database...");
 
         // 查询所有启用的流量分析插件（过滤掉 agent 工具插件）
         let rows = db_service
@@ -735,6 +761,17 @@ impl ScanPipeline {
             .map_err(|e| {
                 TrafficError::Database(format!("Failed to query enabled plugins: {}", e))
             })?;
+
+        let row_ids = rows
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        info!(
+            "Enabled traffic plugin rows fetched: count={}, ids={}",
+            rows.len(),
+            row_ids
+        );
 
         let mut loaded_count = 0;
         let mut executors = self.plugin_executors.write().await;
@@ -1279,6 +1316,7 @@ impl ScanPipeline {
             let record = HttpRequestRecord {
                 id: 0,
                 db_request_id: None,
+                traffic_request_id: Some(req_ctx.id.clone()),
                 url: req_ctx.url.clone(),
                 host,
                 scheme,

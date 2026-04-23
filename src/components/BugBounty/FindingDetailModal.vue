@@ -87,7 +87,15 @@
             <div class="form-control">
               <label class="label"><span class="label-text font-medium">{{ t('bugBounty.form.affectedUrl') }}</span></label>
               <div class="bg-base-200 rounded-lg px-4 py-2 break-all">
-                <code v-if="finding?.affected_url" class="text-sm">{{ finding.affected_url }}</code>
+                <a
+                  v-if="finding?.affected_url"
+                  :href="finding.affected_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="cursor-pointer hover:underline"
+                >
+                  <code class="text-sm">{{ finding.affected_url }}</code>
+                </a>
                 <span v-else class="text-base-content/50">-</span>
               </div>
             </div>

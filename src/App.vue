@@ -18,20 +18,46 @@ import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
 import { isGlobalSearchShortcut, requestGlobalSearchOpen } from './services/globalSearchFocus'
 import {
+  refreshFeatureEntitlements,
+  useFeatureEntitlementsState,
+} from './services/featureEntitlements'
+import {
+  getEntitlementTokenStatus,
+  getEntitlementTokenIssueMessage,
+  isEntitlementTokenExpiringSoon,
+  refreshEntitlementTokenStatus,
+} from './services/entitlementToken'
+import { refreshEntitlementTokenFromServer } from './services/entitlementRefresh'
+import {
+  canAttemptEntitlementAutoRefresh,
+  formatDurationLabel,
+  getEntitlementRefreshCooldownSeconds,
+  markEntitlementRefreshAttempt,
+  markEntitlementRefreshFailure,
+  markEntitlementRefreshSuccess,
+  useEntitlementRefreshRuntimeState,
+} from './services/entitlementRefreshState'
+import {
   immersiveDrillModeEnabled,
   toggleImmersiveDrillMode,
 } from './services/immersiveDrillMode'
 import { showImmersiveTrafficHistory } from './components/traffic/immersiveTrafficDockState'
 import { closeTrafficAssistant } from './services/trafficAssistantWorkspace'
 import { applyTheme } from './views/settingsUiSupport'
+import { useToast } from './composables/useToast'
 
 const router = useRouter()
 const route = useRoute()
+const toast = useToast()
+const entitlements = useFeatureEntitlementsState()
+const entitlementRefreshRuntime = useEntitlementRefreshRuntimeState()
 const isStandaloneRoute = computed(() => Boolean(route.meta?.standalone))
 const mainContentRef = ref<HTMLElement | null>(null)
+const licenseActivationRef = ref<InstanceType<typeof LicenseActivation> | null>(null)
 const routeScrollPositions = new Map<string, number>()
-// License activation state
-const isLicensed = ref(true) // Default to true, check on mount
+let entitlementReminderTimer: number | null = null
+let entitlementPollTimer: number | null = null
+let hasShownEntitlementReminder = false
 
 // 初始化i18n
 const { t, locale } = useI18n()
@@ -141,19 +167,115 @@ const setupAIChatShortcut = () => {
 
 
 
-// Check license status
-async function checkLicenseStatus() {
-  try {
-    const info = await invoke<{ is_licensed: boolean; needs_activation: boolean }>('get_license_info')
-    isLicensed.value = info.is_licensed
-  } catch (e) {
-    console.error('Failed to check license:', e)
-    isLicensed.value = true // Fallback to licensed on error
+async function onLicenseActivated() {
+  await refreshFeatureEntitlements()
+  await refreshEntitlementTokenStatus()
+  hasShownEntitlementReminder = false
+  await maybeNotifyEntitlementAttention()
+}
+
+const maybeNotifyEntitlementAttention = async () => {
+  const tokenStatus = await getEntitlementTokenStatus()
+
+  if (
+    !entitlements.value.has_local_license ||
+    entitlements.value.access_source === 'debug' ||
+    hasShownEntitlementReminder
+  ) {
+    return
+  }
+
+  if (!tokenStatus.valid) {
+    hasShownEntitlementReminder = true
+    const issue = getEntitlementTokenIssueMessage(tokenStatus)
+    const cooldown = getEntitlementRefreshCooldownSeconds()
+    const suffix =
+      cooldown > 0 ? `；自动重试将在${formatDurationLabel(cooldown)}` : ''
+    toast.warning(`当前已激活本地 license，但${issue}，高价值功能仍受限${suffix}。`, 4200)
+    return
+  }
+
+  if (isEntitlementTokenExpiringSoon(tokenStatus)) {
+    hasShownEntitlementReminder = true
+    toast.info('entitlement token 即将过期，建议尽快同步新 token。', 4200)
   }
 }
 
-function onLicenseActivated() {
-  isLicensed.value = true
+const maybeAutoRefreshEntitlementToken = async () => {
+  const tokenStatus = await getEntitlementTokenStatus()
+
+  if (
+    !entitlements.value.has_local_license ||
+    entitlements.value.access_source === 'debug'
+  ) {
+    return
+  }
+
+  if (!canAttemptEntitlementAutoRefresh()) {
+    return
+  }
+
+  const needsRefresh =
+    !tokenStatus.valid || isEntitlementTokenExpiringSoon(tokenStatus, 6 * 60 * 60)
+
+  if (!needsRefresh) {
+    return
+  }
+
+  try {
+    markEntitlementRefreshAttempt()
+    const result = await refreshEntitlementTokenFromServer()
+    if (result.success) {
+      markEntitlementRefreshSuccess()
+      await refreshFeatureEntitlements()
+      await refreshEntitlementTokenStatus()
+      hasShownEntitlementReminder = false
+      return
+    }
+
+    if (result.configured) {
+      markEntitlementRefreshFailure({
+        message: result.message,
+        errorCode: result.error_code,
+        retryAfterSecs: result.retry_after_secs,
+      })
+      if (entitlementRefreshRuntime.value.consecutive_failures <= 1 || result.error_code === 'customer_revoked') {
+        const cooldown = getEntitlementRefreshCooldownSeconds()
+        const suffix =
+          cooldown > 0 ? `；下次自动重试${formatDurationLabel(cooldown)}` : ''
+        toast.warning(`entitlement token 自动刷新失败：${result.message}${suffix}`, 4200)
+      }
+    }
+  } catch (error) {
+    console.error('Failed to auto refresh entitlement token:', error)
+    markEntitlementRefreshFailure({
+      message: String(error),
+      errorCode: 'auto_refresh_exception',
+      retryAfterSecs: 300,
+    })
+  }
+}
+
+const scheduleEntitlementReminder = () => {
+  if (entitlementReminderTimer) {
+    window.clearTimeout(entitlementReminderTimer)
+  }
+
+  entitlementReminderTimer = window.setTimeout(() => {
+    void maybeNotifyEntitlementAttention()
+  }, 1200)
+}
+
+const scheduleEntitlementPolling = () => {
+  if (entitlementPollTimer) {
+    window.clearInterval(entitlementPollTimer)
+  }
+
+  entitlementPollTimer = window.setInterval(async () => {
+    await maybeAutoRefreshEntitlementToken()
+    await refreshFeatureEntitlements()
+    await refreshEntitlementTokenStatus()
+  }, 5 * 60 * 1000)
 }
 
 // Shell Permission Handling is now done inline in ShellToolResult component
@@ -162,8 +284,11 @@ function onLicenseActivated() {
 onMounted(async () => {
   setLanguage((locale.value.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en')
 
-  // Check license first
-  await checkLicenseStatus()
+  await refreshFeatureEntitlements()
+  await refreshEntitlementTokenStatus()
+  await maybeAutoRefreshEntitlementToken()
+  scheduleEntitlementReminder()
+  scheduleEntitlementPolling()
 
   // 只有在根路径时才重定向，避免路由冲突
   if (router.currentRoute.value.path === '/' && !isStandaloneRoute.value) {
@@ -191,6 +316,14 @@ onUnmounted(() => {
   saveMainScrollPosition(route.fullPath)
   window.removeEventListener('keydown', handleKeyDown)
   document.removeEventListener('click', handleClickOutside)
+  if (entitlementReminderTimer) {
+    window.clearTimeout(entitlementReminderTimer)
+    entitlementReminderTimer = null
+  }
+  if (entitlementPollTimer) {
+    window.clearInterval(entitlementPollTimer)
+    entitlementPollTimer = null
+  }
 })
 
 watch(
@@ -204,6 +337,34 @@ watch(
     requestAnimationFrame(() => {
       restoreMainScrollPosition(newRouteKey)
     })
+  },
+)
+
+watch(
+  () => [
+    entitlements.value.has_local_license,
+    entitlements.value.has_valid_entitlement_token,
+    entitlements.value.access_source,
+    entitlements.value.entitlement_expires_at,
+    entitlementRefreshRuntime.value.last_error_code,
+    entitlementRefreshRuntime.value.next_retry_at,
+  ],
+  () => {
+    if (!entitlements.value.has_local_license) {
+      hasShownEntitlementReminder = false
+      return
+    }
+
+    if (entitlements.value.access_source === 'debug') {
+      hasShownEntitlementReminder = false
+      return
+    }
+
+    if (entitlements.value.has_valid_entitlement_token) {
+      hasShownEntitlementReminder = false
+    }
+
+    scheduleEntitlementReminder()
   },
 )
 
@@ -254,20 +415,6 @@ const availableThemes = [
   { code: 'corporate', name: t('settings.themes.corporate'), icon: 'fa-building' },
 ]
 
-// 字体大小和界面缩放
-const fontSize = ref('normal')
-const uiScale = ref(100)
-
-// 计算应用的样式类
-const appClasses = computed(() => {
-  const classes = []
-
-  // 添加字体大小类
-  classes.push(`font-size-${fontSize.value}`)
-
-  return classes.join(' ')
-})
-
 const shouldShowNavbar = computed(
   () => !isStandaloneRoute.value && !immersiveDrillModeEnabled.value,
 )
@@ -284,16 +431,6 @@ const handleNavbarImmersiveDrillModeToggle = () => {
 
   toggleImmersiveDrillMode()
 }
-
-// 计算应用的内联样式
-const appStyles = computed(() => {
-  return {
-    transform: `scale(${uiScale.value / 100})`,
-    transformOrigin: 'top left',
-    width: uiScale.value !== 100 ? `${10000 / uiScale.value}%` : '100%',
-    height: uiScale.value !== 100 ? `${10000 / uiScale.value}%` : '100%'
-  }
-})
 
 const appShellStyle = computed(() => ({
   '--app-navbar-height': shouldShowNavbar.value ? '4rem' : '0px',
@@ -325,65 +462,11 @@ watch(
   },
   { immediate: true },
 )
-
-// 从localStorage加载设置
-onMounted(() => {
-  const savedSettings = localStorage.getItem('sentinel-settings')
-  if (savedSettings) {
-    try {
-      const settings: any = JSON.parse(savedSettings)
-      fontSize.value = settings.system?.fontSize || 'normal'
-      uiScale.value = settings.system?.uiScale || 100
-    } catch (error) {
-      console.error(t('settings.saveFailed'), error)
-    }
-  }
-})
-
-// 监听设置变化并保存
-watch([fontSize, uiScale], () => {
-  const savedSettings = localStorage.getItem('sentinel-settings')
-  let settings: any = {}
-
-  if (savedSettings) {
-    try {
-      settings = JSON.parse(savedSettings)
-    } catch (error) {
-      console.error(t('settings.saveFailed'), error)
-    }
-  }
-
-  if (!settings.system) {
-    settings.system = {}
-  }
-
-  settings.system.fontSize = fontSize.value
-  settings.system.uiScale = uiScale.value
-
-  localStorage.setItem('sentinel-settings', JSON.stringify(settings))
-})
-
-// 暴露给全局使用
-declare global {
-  interface Window {
-    updateFontSize: (newSize: string) => void
-    updateUIScale: (newScale: number) => void
-  }
-}
-
-window.updateFontSize = (newSize: string) => {
-  fontSize.value = newSize
-}
-
-window.updateUIScale = (newScale: number) => {
-  uiScale.value = newScale
-}
 </script>
 
 <template>
   <div id="app" class="h-screen bg-base-100 overflow-hidden" :style="appShellStyle">
-    <!-- License Activation Dialog -->
-    <LicenseActivation v-if="!isLicensed" @activated="onLicenseActivated" />
+    <LicenseActivation ref="licenseActivationRef" @activated="onLicenseActivated" />
     <GlobalSearchPalette v-if="!isStandaloneRoute" />
 
     <template v-if="!isStandaloneRoute">
@@ -395,7 +478,7 @@ window.updateUIScale = (newScale: number) => {
         @switch-language="switchLanguage"
       />
 
-      <div :class="appClasses" :style="[appStyles, appViewportStyle]" class="flex">
+      <div :style="appViewportStyle" class="flex">
         <Sidebar
           v-if="shouldShowSidebar"
           :collapsed="sidebarCollapsed"
@@ -483,23 +566,6 @@ body {
   margin: 0;
   padding: 0;
   font-family: var(--app-font-sans);
-}
-
-/* 字体大小设置 - 现在基于系统设置 */
-.font-size-small {
-  font-size: calc(var(--font-size-base, 14px) * 0.875);
-}
-
-.font-size-normal {
-  font-size: var(--font-size-base, 14px);
-}
-
-.font-size-large {
-  font-size: calc(var(--font-size-base, 14px) * 1.125);
-}
-
-.font-size-xlarge {
-  font-size: calc(var(--font-size-base, 14px) * 1.25);
 }
 
 /* 活动路由样式 */

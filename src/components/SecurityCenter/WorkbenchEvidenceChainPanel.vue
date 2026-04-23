@@ -88,6 +88,7 @@
             <SecurityEvidenceRawExchangePanel
               :exchange="getWorkbenchEvidenceExchange(evidence)"
               :fallback-url="evidence.url"
+              :evidence-snippet="evidence.evidence_snippet"
               :state-key-prefix="`security-workbench:evidence:${evidence.id}:request`"
               :height="rawPanelHeight"
               :show-response="false"
@@ -106,6 +107,7 @@
             <SecurityEvidenceRawExchangePanel
               :exchange="getWorkbenchEvidenceExchange(evidence)"
               :fallback-url="evidence.url"
+              :evidence-snippet="evidence.evidence_snippet"
               :state-key-prefix="`security-workbench:evidence:${evidence.id}:response`"
               :height="rawPanelHeight"
               :show-request="false"

@@ -7,6 +7,7 @@ export type TrafficWorkbenchSourceKind =
   | 'repeater'
   | 'intruder'
   | 'comparer'
+  | 'oast'
 
 export interface TrafficWorkbenchSource {
   kind: TrafficWorkbenchSourceKind
@@ -33,7 +34,7 @@ export interface TrafficWorkbenchBasketCandidateInput {
 }
 
 export interface TrafficWorkbenchToolSession {
-  tool: 'repeater' | 'intruder' | 'comparer'
+  tool: 'repeater' | 'intruder' | 'comparer' | 'oast'
   title: string
   source: TrafficWorkbenchSource | null
   updatedAt: number

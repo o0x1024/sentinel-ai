@@ -17,3 +17,11 @@ export function formatRepeaterBytes(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
 }
+
+export function measureRepeaterTextBytes(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+export function formatRepeaterResponseMeta(responseText: string, responseTimeMs: number): string {
+  return `${responseTimeMs} ms | ${formatRepeaterBytes(measureRepeaterTextBytes(responseText))}`;
+}

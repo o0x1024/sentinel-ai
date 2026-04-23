@@ -1459,6 +1459,22 @@ impl DatabaseService {
         .execute(pool)
         .await?;
 
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_knowledge_notes (
+                id TEXT PRIMARY KEY,
+                program_id TEXT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                tags_json TEXT,
+                metadata_json TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE SET NULL
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
         // Bounty workflow templates (built-in for bug bounty)
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bounty_workflow_templates (
@@ -1541,6 +1557,8 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_canonical_url ON bounty_assets(canonical_url)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_fingerprint ON bounty_assets(fingerprint)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_priority ON bounty_assets(priority_score DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_knowledge_notes_program ON bounty_knowledge_notes(program_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_knowledge_notes_updated ON bounty_knowledge_notes(updated_at DESC)",
         ];
 
         for index_sql in bounty_indices {

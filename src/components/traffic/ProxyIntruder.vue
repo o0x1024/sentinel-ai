@@ -90,10 +90,13 @@
         <div class="min-w-0 flex-1">
           <IntruderRequestEditor
             :request-text="currentWorkspace.requestText"
+            :request-view-tab="currentWorkspace.requestViewTab"
             :target-url="buildTargetUrl(currentWorkspace.target)"
+            :source-request-id="currentWorkspace.sourceRequestId"
             :update-host-header="currentWorkspace.attackOptions.updateHostHeader"
             :positions="currentWorkspace.positions"
             @update:request-text="updateRequestText(currentWorkspace.id, $event)"
+            @update:request-view-tab="updateRequestViewTab(currentWorkspace.id, $event)"
             @update:target-url="updateTargetUrl(currentWorkspace.id, $event)"
             @update:update-host-header="updateAttackOption(currentWorkspace.id, 'updateHostHeader', $event)"
             @auto-mark="autoMarkPositions(currentWorkspace.id)"
@@ -227,7 +230,10 @@ import {
   ensureRawRequestTerminator,
   extractTargetFromRequest,
 } from './intruder/http'
-import type { RawReplayCommandResult } from './http/response'
+import {
+  buildHttpReplayResponseFromCommandResult,
+  type RawReplayCommandResult,
+} from './http/response'
 import { queueComparerTransfer, queueRepeaterTransfer } from './transfers'
 import type { TrafficComparePayload } from './transfers'
 import {
@@ -285,6 +291,7 @@ import type {
   IntruderPayloadSet,
   IntruderPosition,
   IntruderRequestInput,
+  IntruderRequestViewTab,
   IntruderResourcePool,
   IntruderResultFilter,
   IntruderResultSort,
@@ -300,7 +307,9 @@ interface ReplayCommandResponse<T> {
 interface IntruderWorkspace {
   id: string
   name: string
+  sourceRequestId: number | null
   requestText: string
+  requestViewTab: IntruderRequestViewTab
   target: IntruderTarget
   positions: IntruderPosition[]
   attackType: IntruderAttackType
@@ -585,7 +594,9 @@ function createWorkspace(source?: IntruderRequestInput): IntruderWorkspace {
   return {
     id: createIntruderId('intruder-workspace'),
     name: target.host || `${t('trafficAnalysis.intruder.labels.attack')} ${workspaces.value.length + 1}`,
+    sourceRequestId: source?.sourceRequestId ?? null,
     requestText,
+    requestViewTab: source?.preferredRequestView === 'pretty' ? 'pretty' : 'raw',
     target,
     positions,
     attackType: 'sniper',
@@ -615,7 +626,9 @@ function serializeWorkspaces() {
     workspaces: workspaces.value.map((workspace) => ({
       id: workspace.id,
       name: workspace.name,
+      sourceRequestId: workspace.sourceRequestId,
       requestText: workspace.requestText,
+      requestViewTab: workspace.requestViewTab,
       target: workspace.target,
       positions: workspace.positions,
       attackType: workspace.attackType,
@@ -652,7 +665,9 @@ function restorePersistedWorkspaces() {
     workspaces.value = persisted.workspaces.map((workspace, index) => ({
       id: workspace.id || createIntruderId('intruder-workspace'),
       name: workspace.name || `${t('trafficAnalysis.intruder.labels.attack')} ${index + 1}`,
+      sourceRequestId: workspace.sourceRequestId ?? null,
       requestText: workspace.requestText || createRawRequestFromSource(),
+      requestViewTab: workspace.requestViewTab === 'pretty' ? 'pretty' : 'raw',
       target: workspace.target || extractTargetFromRequest(workspace.requestText || ''),
       positions: workspace.positions || extractIntruderPositions(workspace.requestText || ''),
       attackType: workspace.attackType || 'sniper',
@@ -849,6 +864,13 @@ function updateRequestText(workspaceId: string, value: string) {
   applyDerivedWorkspaceState(workspace)
 }
 
+function updateRequestViewTab(workspaceId: string, value: IntruderRequestViewTab) {
+  const workspace = findWorkspace(workspaceId)
+  if (!workspace) return
+
+  workspace.requestViewTab = value
+}
+
 function sendWorkspaceRequestToRepeater(workspaceId: string) {
   const workspace = findWorkspace(workspaceId)
   if (!workspace) return
@@ -858,6 +880,7 @@ function sendWorkspaceRequestToRepeater(workspaceId: string) {
     dialog.toast.warning(t('trafficAnalysis.repeater.messages.invalidRequestForIntruder'))
     return
   }
+  request.sourceRequestId = workspace.sourceRequestId
 
   emit('sendToRepeater', request)
   dialog.toast.success(t('trafficAnalysis.history.messages.sentToRepeater'))
@@ -872,6 +895,7 @@ function sendWorkspaceRequestToComparer(workspaceId: string) {
     dialog.toast.warning(t('trafficAnalysis.repeater.messages.invalidRequestForComparer'))
     return
   }
+  request.sourceRequestId = workspace.sourceRequestId
 
   emit('sendDraftRequestToComparer', {
     request,
@@ -1328,6 +1352,7 @@ function sendSelectedResultToRepeater(workspaceId: string, resultId?: string) {
     dialog.toast.warning(t('trafficAnalysis.intruder.messages.invalidStoredRequest'))
     return
   }
+  request.sourceRequestId = workspace.sourceRequestId
 
   emit('sendToRepeater', request)
   queueRepeaterTransfer(request)
@@ -1644,6 +1669,7 @@ async function executeAttackRequest(
       if (!exchangeRequest) {
         throw new Error('Invalid request')
       }
+      exchangeRequest.sourceRequestId = workspace.sourceRequestId
 
       const response = await invoke<ReplayCommandResponse<RawReplayCommandResult>>('replay_raw_request', {
         endpoint: exchangeRequest.endpoint,
@@ -1658,6 +1684,7 @@ async function executeAttackRequest(
         throw new Error(parseReplayError(response.error))
       }
 
+      const replayResponse = buildHttpReplayResponseFromCommandResult(response.data)
       const responseText = response.data.body_text || ''
       const payloadReflectionCount = evaluateIntruderPayloadReflections(
         response.data.raw_response,
@@ -1679,6 +1706,11 @@ async function executeAttackRequest(
         responseTimeMs: response.data.response_time_ms,
         rawRequest: workspace.attackOptions.storeRequests ? preparedRequest : '',
         rawResponse: workspace.attackOptions.storeResponses ? response.data.raw_response : '',
+        responseVersionObserved: replayResponse.versionObserved,
+        responseStatusText: replayResponse.statusText,
+        responseHeaders: replayResponse.headers,
+        responseBodyText: replayResponse.bodyText,
+        responseBodyBytesBase64: replayResponse.bodyBytesBase64,
         redirectCount: response.data.redirect_chain?.length ?? 0,
         finalUrl: response.data.final_url || buildTargetUrl(workspace.target),
         redirectChain: (response.data.redirect_chain || []).map((hop) => ({
@@ -1845,6 +1877,8 @@ async function startAttack() {
             responseTimeMs: null,
             rawRequest: updatedWorkspace.attackOptions.storeRequests ? ensureRawRequestTerminator(candidate.requestText) : '',
             rawResponse: '',
+            responseHeaders: [],
+            responseBodyText: '',
             redirectCount: 0,
             finalUrl: buildTargetUrl(updatedWorkspace.target),
             redirectChain: [],

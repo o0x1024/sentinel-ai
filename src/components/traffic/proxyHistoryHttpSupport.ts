@@ -22,6 +22,8 @@ export const buildHttpExchangeRequestFromHistory = (
   return {
     endpoint,
     absoluteUrl: request.url,
+    sourceRequestId: request.db_request_id ?? null,
+    preferredRequestView: 'pretty',
     request: {
       method: request.method,
       target: `${parsedUrl.pathname}${parsedUrl.search}`,

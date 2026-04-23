@@ -116,6 +116,7 @@
         </button>
         <button
           class="btn btn-sm btn-error"
+          v-if="canDeletePlugins"
           :disabled="selectedPluginIds.length === 0 || pluginBatchProcessing"
           @click="$emit('batchDeleteSelected')"
         >
@@ -285,12 +286,22 @@
                 </button>
 
                 <!-- View/Edit Code -->
-                <button class="btn btn-sm btn-info" :disabled="pluginBatchProcessing" @click="$emit('viewCode', plugin)">
+                <button
+                  v-if="canViewPluginCode"
+                  class="btn btn-sm btn-info"
+                  :disabled="pluginBatchProcessing"
+                  @click="$emit('viewCode', plugin)"
+                >
                   <i class="fas fa-code mr-1"></i>
                 </button>
 
                 <!-- Delete -->
-                <button class="btn btn-sm btn-error" :disabled="pluginBatchProcessing" @click="$emit('deletePlugin', plugin)">
+                <button
+                  v-if="canDeletePlugins"
+                  class="btn btn-sm btn-error"
+                  :disabled="pluginBatchProcessing"
+                  @click="$emit('deletePlugin', plugin)"
+                >
                   <i class="fas fa-trash"></i>
                 </button>
               </div>
@@ -365,6 +376,8 @@ const props = defineProps<{
   isPluginFavorited: (plugin: PluginRecord) => boolean
   isTrafficPluginType: (plugin: PluginRecord) => boolean
   isAgentPluginType: (plugin: PluginRecord) => boolean
+  canDeletePlugins: boolean
+  canViewPluginCode: boolean
 }>()
 
 const emit = defineEmits<{

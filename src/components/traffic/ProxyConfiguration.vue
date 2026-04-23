@@ -1,23 +1,58 @@
 <template>
-  <div class="space-y-4">
-    <div class="overflow-x-auto">
-      <div class="tabs tabs-boxed bg-base-200 p-1 min-w-max">
+  <div class="proxy-configuration-layout flex h-full min-h-0 gap-3">
+    <aside class="proxy-configuration-sidebar flex min-h-0 w-[13rem] shrink-0 flex-col rounded-[24px] border border-base-300/80 bg-base-100/95 p-2.5 shadow-sm">
+      <div class="px-2 pb-3">
+
+        <h2 class="mt-1 text-lg font-semibold text-base-content">
+          代理配置
+        </h2>
+        <p class="mt-1 text-xs leading-5 text-base-content/60">
+          左侧切换配置域，右侧集中编辑当前配置。
+        </p>
+      </div>
+
+      <div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1 pb-3">
         <button
           v-for="tab in settingsTabs"
           :key="tab.id"
           type="button"
-          class="tab tab-lg gap-2"
-          :class="{ 'tab-active': activeSettingsTab === tab.id }"
+          class="proxy-settings-tab"
+          :class="{ 'proxy-settings-tab-active': activeSettingsTab === tab.id }"
           @click="activeSettingsTab = tab.id"
         >
-          <i :class="tab.icon"></i>
-          <span>{{ tab.label }}</span>
+          <div class="flex items-center gap-3">
+            <span class="proxy-settings-tab-icon">
+              <i :class="tab.icon"></i>
+            </span>
+            <div class="min-w-0 text-left">
+              <div class="truncate text-sm font-semibold">
+                {{ tab.label }}
+              </div>
+              <div class="mt-1 text-xs text-base-content/55">
+                {{ tab.description }}
+              </div>
+            </div>
+          </div>
         </button>
       </div>
-    </div>
+
+      <div class="rounded-[20px] border border-base-300/80 bg-base-200/60 p-3">
+        <button class="btn btn-outline btn-sm w-full justify-start" @click="resetToDefaults">
+          <i class="fas fa-undo mr-2"></i>
+          {{ $t('trafficAnalysis.proxyConfiguration.resetToDefaults') }}
+        </button>
+        <div v-if="isSaving" class="mt-3 flex items-center gap-2 text-sm text-base-content/70">
+          <i class="fas fa-spinner fa-spin"></i>
+          <span>{{ $t('trafficAnalysis.proxyConfiguration.saving') }}</span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="min-h-0 min-w-0 flex-1 overflow-y-auto pr-1">
+      <div class="proxy-settings-grid" :class="activeSettingsGridClass">
 
     <!-- Proxy Listeners Section -->
-    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" class="proxy-settings-card proxy-settings-card-wide card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-network-wired mr-2"></i>
@@ -266,7 +301,7 @@
     </AppDialog>
 
     <!-- Traffic Analysis Settings -->
-    <div v-if="activeSettingsTab === 'analysis'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'analysis'" class="proxy-settings-card proxy-settings-card-analysis-main card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-chart-line mr-2"></i>
@@ -306,6 +341,135 @@
               <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.enableTrafficAnalysisPluginDesc') }}</p>
             </div>
           </label>
+        </div>
+
+        <div class="mt-4 rounded-lg border border-base-300 p-4 space-y-4">
+          <div>
+            <h3 class="font-medium">
+              {{ $t('trafficAnalysis.proxyConfiguration.pluginRuntimeTitle') }}
+            </h3>
+            <p class="text-xs text-base-content/60 mt-1">
+              {{ $t('trafficAnalysis.proxyConfiguration.pluginRuntimeDesc') }}
+            </p>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="form-control">
+              <span class="label-text text-xs">
+                {{ $t('trafficAnalysis.proxyConfiguration.activeProbeMinHostCooldownMs') }}
+              </span>
+              <input
+                v-model.number="trafficPluginRuntimeSettings.activeProbe.minHostCooldownMs"
+                type="number"
+                min="0"
+                max="60000"
+                class="input input-bordered"
+              />
+            </label>
+
+            <label class="form-control">
+              <span class="label-text text-xs">
+                {{ $t('trafficAnalysis.proxyConfiguration.activeProbeTimeoutMs') }}
+              </span>
+              <input
+                v-model.number="trafficPluginRuntimeSettings.activeProbe.timeoutMs"
+                type="number"
+                min="1000"
+                max="60000"
+                class="input input-bordered"
+              />
+            </label>
+
+            <label class="form-control">
+              <span class="label-text text-xs">
+                {{ $t('trafficAnalysis.proxyConfiguration.activeProbeMaxConcurrentPerHost') }}
+              </span>
+              <input
+                v-model.number="trafficPluginRuntimeSettings.activeProbe.maxConcurrentPerHost"
+                type="number"
+                min="1"
+                max="16"
+                class="input input-bordered"
+              />
+            </label>
+
+            <label class="form-control">
+              <span class="label-text text-xs">
+                {{ $t('trafficAnalysis.proxyConfiguration.activeProbeJitterMinMs') }}
+              </span>
+              <input
+                v-model.number="trafficPluginRuntimeSettings.activeProbe.jitterRange[0]"
+                type="number"
+                min="0"
+                max="30000"
+                class="input input-bordered"
+              />
+            </label>
+
+            <label class="form-control">
+              <span class="label-text text-xs">
+                {{ $t('trafficAnalysis.proxyConfiguration.activeProbeJitterMaxMs') }}
+              </span>
+              <input
+                v-model.number="trafficPluginRuntimeSettings.activeProbe.jitterRange[1]"
+                type="number"
+                min="0"
+                max="30000"
+                class="input input-bordered"
+              />
+            </label>
+          </div>
+
+          <p class="text-xs text-base-content/60">
+            {{ $t('trafficAnalysis.proxyConfiguration.pluginRuntimeActiveProbeHint') }}
+          </p>
+
+          <div class="flex flex-wrap gap-2">
+            <button
+              class="btn btn-xs btn-outline"
+              type="button"
+              :disabled="isSavingTrafficPluginRuntimeSettings"
+              @click="applyTrafficPluginRuntimePreset('local_fast')"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.activeProbePresetLocalFast') }}
+            </button>
+            <button
+              class="btn btn-xs btn-outline"
+              type="button"
+              :disabled="isSavingTrafficPluginRuntimeSettings"
+              @click="applyTrafficPluginRuntimePreset('balanced')"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.activeProbePresetBalanced') }}
+            </button>
+            <button
+              class="btn btn-xs btn-outline"
+              type="button"
+              :disabled="isSavingTrafficPluginRuntimeSettings"
+              @click="applyTrafficPluginRuntimePreset('conservative')"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.activeProbePresetConservative') }}
+            </button>
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <button
+              class="btn btn-sm btn-primary"
+              type="button"
+              :disabled="isSavingTrafficPluginRuntimeSettings"
+              @click="saveTrafficPluginRuntimeSettings"
+            >
+              <i :class="isSavingTrafficPluginRuntimeSettings ? 'fas fa-spinner fa-spin' : 'fas fa-save'"></i>
+              <span>{{ $t('trafficAnalysis.proxyConfiguration.save') }}</span>
+            </button>
+            <button
+              class="btn btn-sm btn-outline"
+              type="button"
+              :disabled="isSavingTrafficPluginRuntimeSettings"
+              @click="resetTrafficPluginRuntimeSettings"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.resetToDefaults') }}
+            </button>
+          </div>
         </div>
 
         <div class="mt-4">
@@ -414,11 +578,139 @@
             </div>
           </label>
         </div>
+
+        <div class="mt-4 rounded-lg border border-base-300 p-4 space-y-4">
+          <div>
+            <h3 class="font-medium">
+              {{ $t('trafficAnalysis.proxyConfiguration.oastTitle') }}
+            </h3>
+            <p class="text-xs text-base-content/60 mt-1">
+              {{ $t('trafficAnalysis.proxyConfiguration.oastDesc') }}
+            </p>
+          </div>
+
+          <label class="label cursor-pointer justify-start gap-3 py-0">
+            <input
+              v-model="trafficOastConfig.enabled"
+              type="checkbox"
+              class="checkbox checkbox-primary"
+            />
+            <div>
+              <span class="label-text font-medium">
+                {{ $t('trafficAnalysis.proxyConfiguration.oastEnabled') }}
+              </span>
+              <p class="text-xs text-base-content/60 mt-1">
+                {{ $t('trafficAnalysis.proxyConfiguration.oastEnabledDesc') }}
+              </p>
+            </div>
+          </label>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="form-control md:col-span-2">
+              <span class="label-text text-xs">
+                {{ $t('trafficAnalysis.proxyConfiguration.oastServerBaseUrl') }}
+              </span>
+              <input
+                v-model.trim="trafficOastConfig.serverBaseUrl"
+                type="text"
+                class="input input-bordered"
+                :placeholder="$t('trafficAnalysis.proxyConfiguration.oastServerBaseUrlPlaceholder')"
+              />
+            </label>
+
+            <label class="form-control md:col-span-2">
+              <span class="label-text text-xs">
+                {{ $t('trafficAnalysis.proxyConfiguration.oastApiKey') }}
+              </span>
+              <input
+                v-model.trim="trafficOastConfig.apiKey"
+                type="password"
+                class="input input-bordered"
+                :placeholder="$t('trafficAnalysis.proxyConfiguration.oastApiKeyPlaceholder')"
+              />
+              <span class="label-text-alt mt-1 text-xs text-base-content/60">
+                {{ $t('trafficAnalysis.proxyConfiguration.oastApiKeyDesc') }}
+              </span>
+            </label>
+
+            <label class="form-control">
+              <span class="label-text text-xs">
+                {{ $t('trafficAnalysis.proxyConfiguration.oastPollIntervalSecs') }}
+              </span>
+              <input
+                v-model.number="trafficOastConfig.pollIntervalSecs"
+                type="number"
+                min="5"
+                max="300"
+                class="input input-bordered"
+              />
+            </label>
+
+            <label class="form-control">
+              <span class="label-text text-xs">
+                {{ $t('trafficAnalysis.proxyConfiguration.oastRequestTimeoutSecs') }}
+              </span>
+              <input
+                v-model.number="trafficOastConfig.requestTimeoutSecs"
+                type="number"
+                min="3"
+                max="60"
+                class="input input-bordered"
+              />
+            </label>
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <button
+              class="btn btn-sm btn-outline"
+              type="button"
+              :disabled="testingTrafficOastConfig"
+              @click="testTrafficOastConfig"
+            >
+              <i :class="testingTrafficOastConfig ? 'fas fa-spinner fa-spin' : 'fas fa-plug'"></i>
+              <span>{{ $t('trafficAnalysis.proxyConfiguration.oastTestConnection') }}</span>
+            </button>
+          </div>
+          <div class="space-y-1">
+            <p class="text-xs text-base-content/60">
+              {{ $t('trafficAnalysis.proxyConfiguration.oastAutoSaveHint') }}
+            </p>
+            <p class="flex items-center gap-2 text-xs" :class="trafficOastAutoSaveStatusClass">
+              <i :class="trafficOastAutoSaveStatusIcon"></i>
+              <span>{{ trafficOastAutoSaveStatusText }}</span>
+            </p>
+          </div>
+
+          <div
+            v-if="lastTrafficOastTestResult"
+            class="rounded-lg border px-3 py-3 text-sm"
+            :class="lastTrafficOastTestResult.reachable ? 'border-success/30 bg-success/10' : 'border-error/30 bg-error/10'"
+          >
+            <div class="font-medium">
+              {{
+                lastTrafficOastTestResult.reachable
+                  ? $t('trafficAnalysis.proxyConfiguration.oastTestSuccess')
+                  : $t('trafficAnalysis.proxyConfiguration.oastTestFailed')
+              }}
+            </div>
+            <p class="mt-1 break-all text-xs text-base-content/80">
+              {{ lastTrafficOastTestResult.message }}
+            </p>
+            <p v-if="lastTrafficOastTestResult.generatedToken" class="mt-2 text-xs">
+              {{ $t('trafficAnalysis.proxyConfiguration.oastGeneratedToken') }}:
+              <code class="font-mono">{{ lastTrafficOastTestResult.generatedToken }}</code>
+            </p>
+            <p v-if="lastTrafficOastTestResult.generatedFqdn" class="mt-1 text-xs">
+              {{ $t('trafficAnalysis.proxyConfiguration.oastGeneratedFqdn') }}:
+              <code class="font-mono">{{ lastTrafficOastTestResult.generatedFqdn }}</code>
+            </p>
+          </div>
+        </div>
       </div>
     </div>
 
     <!-- Request Interception Rules -->
-    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" class="proxy-settings-card card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-filter mr-2"></i>
@@ -541,7 +833,7 @@
     </div>
 
     <!-- Response Interception Rules -->
-    <div v-if="activeSettingsTab === 'listeners'" ref="responseInterceptionRulesRef" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" ref="responseInterceptionRulesRef" class="proxy-settings-card card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-reply mr-2"></i>
@@ -723,7 +1015,7 @@
     </AppDialog>
 
     <!-- upstream proxy servers -->
-    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="proxy-settings-card card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-server mr-2"></i>
@@ -802,7 +1094,7 @@
       </div>
     </div>
     <!-- WebSocket Interception -->
-    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" class="proxy-settings-card proxy-settings-card-compact card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-exchange-alt mr-2"></i>
@@ -838,7 +1130,7 @@
     </div>
 
     <!-- Response Modification Rules -->
-    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="proxy-settings-card proxy-settings-card-compact card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-edit mr-2"></i>
@@ -895,7 +1187,7 @@
     </div>
 
     <!-- Match and Replace Rules -->
-    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="proxy-settings-card proxy-settings-card-wide card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-search-plus mr-2"></i>
@@ -1303,7 +1595,7 @@
     </AppDialog>
 
     <!-- TLS Pass Through -->
-    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="proxy-settings-card card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-lock mr-2"></i>
@@ -1393,7 +1685,7 @@
     </div>
 
     <!-- Proxy History Logging -->
-    <div v-if="activeSettingsTab === 'analysis'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'analysis'" class="proxy-settings-card proxy-settings-card-compact card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-history mr-2"></i>
@@ -1448,7 +1740,7 @@
     </div>
 
     <!-- Default Proxy Interception State -->
-    <div v-if="activeSettingsTab === 'listeners'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'listeners'" class="proxy-settings-card proxy-settings-card-compact card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-power-off mr-2"></i>
@@ -1503,7 +1795,7 @@
     </div>
 
     <!-- Miscellaneous Settings -->
-    <div v-if="activeSettingsTab === 'advanced'" class="card bg-base-100 shadow-xl">
+    <div v-if="activeSettingsTab === 'advanced'" class="proxy-settings-card proxy-settings-card-compact card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-cogs mr-2"></i>
@@ -1601,21 +1893,9 @@
         </div>
       </div>
     </div>
-
-
-    <!-- Reset Button -->
-    <div class="flex justify-end gap-2">
-      <button class="btn btn-outline" @click="resetToDefaults">
-        <i class="fas fa-undo mr-2"></i>
-        {{ $t('trafficAnalysis.proxyConfiguration.resetToDefaults') }}
-      </button>
-      <div v-if="isSaving" class="flex items-center gap-2 text-sm text-base-content/70">
-        <i class="fas fa-spinner fa-spin"></i>
-        <span>{{ $t('trafficAnalysis.proxyConfiguration.saving') }}</span>
+        <TrafficDisplaySettingsPanel v-if="activeSettingsTab === 'display'" />
       </div>
     </div>
-
-    <TrafficDisplaySettingsPanel v-if="activeSettingsTab === 'display'" />
   </div>
 </template>
 
@@ -1634,31 +1914,52 @@ type SettingsTab = {
   id: SettingsTabId
   label: string
   icon: string
+  description: string
 }
 
 const activeSettingsTab = ref<SettingsTabId>('listeners')
 const responseInterceptionRulesRef = ref<HTMLElement | null>(null)
+
+const activeSettingsGridClass = computed(() => {
+  if (activeSettingsTab.value === 'listeners') {
+    return 'proxy-settings-grid-listeners'
+  }
+
+  if (activeSettingsTab.value === 'analysis') {
+    return 'proxy-settings-grid-analysis'
+  }
+
+  if (activeSettingsTab.value === 'advanced') {
+    return 'proxy-settings-grid-advanced'
+  }
+
+  return 'proxy-settings-grid-display'
+})
 
 const settingsTabs = computed<SettingsTab[]>(() => [
   {
     id: 'listeners',
     label: t('trafficAnalysis.proxyConfiguration.settingsTabListeners'),
     icon: 'fas fa-network-wired',
+    description: '监听器、证书与拦截规则',
   },
   {
     id: 'analysis',
     label: t('trafficAnalysis.proxyConfiguration.settingsTabAnalysis'),
     icon: 'fas fa-chart-line',
+    description: '扫描范围、行为信号与 OAST',
   },
   {
     id: 'display',
     label: t('trafficAnalysis.proxyConfiguration.settingsTabDisplay'),
     icon: 'fas fa-font',
+    description: '消息展示、编码与发送入口',
   },
   {
     id: 'advanced',
     label: t('trafficAnalysis.proxyConfiguration.settingsTabAdvanced'),
     icon: 'fas fa-cogs',
+    description: '上游代理、替换规则与高级选项',
   },
 ])
 
@@ -1679,6 +1980,13 @@ const {
   browserExtensionBundledWithApp,
   isCopyingBrowserExtension,
   behaviorSignalSettings,
+  trafficPluginRuntimeSettings,
+  isSavingTrafficPluginRuntimeSettings,
+  trafficOastConfig,
+  trafficOastAutoSaveState,
+  trafficOastLastSavedAt,
+  testingTrafficOastConfig,
+  lastTrafficOastTestResult,
   proxyListeners,
   selectedListeners,
   masterInterceptionEnabled,
@@ -1807,6 +2115,10 @@ const {
   saveProxyAutoStart,
   saveTrafficAnalysisPluginEnabled,
   saveTrafficBehaviorSignalSettings,
+  saveTrafficPluginRuntimeSettings,
+  applyTrafficPluginRuntimePreset,
+  resetTrafficPluginRuntimeSettings,
+  testTrafficOastConfig,
   copyBrowserExtensionBridgeUrl,
   copyBrowserExtensionDirectory,
   copyBrowserExtensionToDirectory,
@@ -1816,6 +2128,62 @@ const {
 } = useProxyConfiguration({
   t,
   emitFilterRuleAdded: rule => emit('filterRuleAdded', rule),
+})
+
+const formatTrafficOastSavedTime = (value: string | null) => {
+  if (!value) {
+    return ''
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleTimeString()
+}
+
+const trafficOastAutoSaveStatusText = computed(() => {
+  switch (trafficOastAutoSaveState.value) {
+    case 'dirty':
+      return t('trafficAnalysis.proxyConfiguration.oastAutoSavePending')
+    case 'saving':
+      return t('trafficAnalysis.proxyConfiguration.oastAutoSaveSaving')
+    case 'saved':
+      return t('trafficAnalysis.proxyConfiguration.oastAutoSaveSavedAt', {
+        time: formatTrafficOastSavedTime(trafficOastLastSavedAt.value),
+      })
+    case 'error':
+      return t('trafficAnalysis.proxyConfiguration.oastAutoSaveFailed')
+    default:
+      return t('trafficAnalysis.proxyConfiguration.oastAutoSaveSaved')
+  }
+})
+
+const trafficOastAutoSaveStatusClass = computed(() => {
+  switch (trafficOastAutoSaveState.value) {
+    case 'saving':
+      return 'text-info'
+    case 'saved':
+      return 'text-success'
+    case 'error':
+      return 'text-error'
+    default:
+      return 'text-base-content/55'
+  }
+})
+
+const trafficOastAutoSaveStatusIcon = computed(() => {
+  switch (trafficOastAutoSaveState.value) {
+    case 'saving':
+      return 'fas fa-spinner fa-spin'
+    case 'saved':
+      return 'fas fa-check-circle'
+    case 'error':
+      return 'fas fa-circle-exclamation'
+    default:
+      return 'fas fa-clock'
+  }
 })
 
 defineExpose({
@@ -1832,6 +2200,126 @@ defineExpose({
 </script>
 
 <style scoped>
+.proxy-settings-grid {
+  display: grid;
+  gap: 0.875rem;
+}
+
+.proxy-settings-grid > * {
+  min-width: 0;
+}
+
+.proxy-settings-card {
+  min-height: 0;
+}
+
+.proxy-settings-card :deep(.card-body) {
+  padding: 1rem 1rem 1.05rem;
+}
+
+.proxy-settings-card :deep(.card-title) {
+  margin-bottom: 0.4rem;
+}
+
+.proxy-settings-card :deep(.form-control .label) {
+  min-height: 0;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+
+.proxy-settings-card :deep(.table th) {
+  white-space: nowrap;
+}
+
+.proxy-settings-card :deep(.btn.btn-sm) {
+  min-height: 2.1rem;
+}
+
+.proxy-settings-grid-display {
+  display: block;
+}
+
+.proxy-settings-grid-listeners,
+.proxy-settings-grid-analysis,
+.proxy-settings-grid-advanced {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.proxy-settings-grid-listeners > .proxy-settings-card-wide {
+  grid-column: 1 / -1;
+}
+
+.proxy-settings-grid-listeners > .proxy-settings-card {
+  grid-column: span 6;
+}
+
+.proxy-settings-grid-listeners > .proxy-settings-card-compact {
+  grid-column: span 3;
+}
+
+.proxy-settings-grid-analysis > .proxy-settings-card-analysis-main {
+  grid-column: 1 / span 8;
+}
+
+.proxy-settings-grid-analysis > .proxy-settings-card-compact {
+  grid-column: span 4;
+}
+
+.proxy-settings-grid-advanced > .proxy-settings-card-wide {
+  grid-column: 1 / -1;
+}
+
+.proxy-settings-grid-advanced > .proxy-settings-card {
+  grid-column: span 6;
+}
+
+.proxy-settings-grid-advanced > .proxy-settings-card-compact {
+  grid-column: span 4;
+}
+
+.proxy-settings-tab {
+  width: 100%;
+  border-radius: 1.25rem;
+  border: 1px solid hsl(var(--b3) / 0.9);
+  background: hsl(var(--b1) / 0.85);
+  padding: 0.85rem 0.9rem;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.proxy-settings-tab:hover {
+  border-color: hsl(var(--p) / 0.3);
+  background: hsl(var(--b1));
+  transform: translateX(2px);
+}
+
+.proxy-settings-tab-active {
+  border-color: hsl(var(--p) / 0.5);
+  background:
+    linear-gradient(135deg, hsl(var(--p) / 0.12), transparent 62%),
+    hsl(var(--b1));
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+}
+
+.proxy-settings-tab-icon {
+  display: inline-flex;
+  height: 2.25rem;
+  width: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.9rem;
+  background: hsl(var(--b2));
+  color: hsl(var(--bc) / 0.75);
+}
+
+.proxy-settings-tab-active .proxy-settings-tab-icon {
+  background: hsl(var(--p) / 0.14);
+  color: hsl(var(--p));
+}
+
 .table th {
   background-color: hsl(var(--b2));
   font-weight: 600;
@@ -1843,5 +2331,37 @@ defineExpose({
 
 .font-mono {
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+@media (max-width: 1440px) {
+  .proxy-settings-grid-analysis > .proxy-settings-card-analysis-main,
+  .proxy-settings-grid-analysis > .proxy-settings-card-compact,
+  .proxy-settings-grid-listeners > .proxy-settings-card,
+  .proxy-settings-grid-listeners > .proxy-settings-card-compact,
+  .proxy-settings-grid-advanced > .proxy-settings-card,
+  .proxy-settings-grid-advanced > .proxy-settings-card-compact {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 960px) {
+  .proxy-configuration-layout {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .proxy-configuration-sidebar {
+    width: 100%;
+    padding: 0.75rem;
+  }
+
+  .proxy-settings-grid-listeners > .proxy-settings-card,
+  .proxy-settings-grid-listeners > .proxy-settings-card-compact,
+  .proxy-settings-grid-analysis > .proxy-settings-card-analysis-main,
+  .proxy-settings-grid-analysis > .proxy-settings-card-compact,
+  .proxy-settings-grid-advanced > .proxy-settings-card,
+  .proxy-settings-grid-advanced > .proxy-settings-card-compact {
+    grid-column: 1 / -1;
+  }
 }
 </style>

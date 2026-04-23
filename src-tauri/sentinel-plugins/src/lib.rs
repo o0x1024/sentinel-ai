@@ -29,6 +29,7 @@ mod network_scan;
 pub mod plugin;
 pub mod plugin_engine;
 pub mod plugin_ops;
+pub mod runtime_config;
 mod runtime_events;
 mod service_probe;
 mod service_probe_engine;
@@ -48,6 +49,10 @@ pub use plugin::{
 };
 pub use plugin_engine::PluginEngine;
 pub use plugin_ops::{sentinel_plugin_ext, PluginContext};
+pub use runtime_config::{
+    get_plugin_runtime_settings, set_plugin_runtime_settings, ActiveProbeRuntimeSettings,
+    PluginRuntimeSettings,
+};
 pub use runtime_events::register_app_handle;
 pub use types::*;
 

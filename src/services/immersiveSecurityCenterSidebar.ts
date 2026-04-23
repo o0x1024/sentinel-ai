@@ -1,13 +1,9 @@
 import { readonly, ref } from 'vue'
-import { immersiveDrillModeEnabled } from './immersiveDrillMode'
 import {
   clearImmersiveToolMinimized,
   markImmersiveToolMinimized,
 } from './immersiveMinimizedToolTray'
-import {
-  closeOtherImmersiveTools,
-  registerImmersiveToolCloser,
-} from './immersiveToolCoordinator'
+import { registerImmersiveToolCloser } from './immersiveToolCoordinator'
 
 const immersiveSecurityCenterSidebarOpenState = ref(false)
 const immersiveSecurityCenterSidebarMinimizedState = ref(false)
@@ -18,10 +14,6 @@ export const immersiveSecurityCenterSidebarMinimized = readonly(immersiveSecurit
 export const immersiveSecurityCenterReturnPath = readonly(immersiveSecurityCenterReturnPathState)
 
 export function openImmersiveSecurityCenterSidebar(returnPath?: string | null) {
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('security-center')
-  }
-
   immersiveSecurityCenterSidebarOpenState.value = true
   immersiveSecurityCenterSidebarMinimizedState.value = false
   clearImmersiveToolMinimized('security-center')
@@ -58,20 +50,12 @@ export function restoreImmersiveSecurityCenterSidebar() {
     return
   }
 
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('security-center')
-  }
-
   immersiveSecurityCenterSidebarOpenState.value = true
   immersiveSecurityCenterSidebarMinimizedState.value = false
   clearImmersiveToolMinimized('security-center')
 }
 
 export function toggleImmersiveSecurityCenterSidebar() {
-  if (!immersiveSecurityCenterSidebarOpenState.value && immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('security-center')
-  }
-
   immersiveSecurityCenterSidebarOpenState.value = !immersiveSecurityCenterSidebarOpenState.value
   immersiveSecurityCenterSidebarMinimizedState.value = false
   if (immersiveSecurityCenterSidebarOpenState.value) {

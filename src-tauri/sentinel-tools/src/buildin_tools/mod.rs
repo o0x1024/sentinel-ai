@@ -13,6 +13,7 @@ pub mod lsp;
 pub mod memory;
 #[cfg(feature = "ocr")]
 pub mod ocr;
+pub mod plugin_authoring;
 pub mod route_discovery;
 pub mod search_exploit;
 pub mod shell;
@@ -45,6 +46,7 @@ pub use lsp::LspTool;
 pub use memory::MemoryManagerTool;
 #[cfg(feature = "ocr")]
 pub use ocr::OcrTool;
+pub use plugin_authoring::PluginAuthoringTool;
 pub use route_discovery::RouteDiscoveryTool;
 pub use search_exploit::SearchExploitTool;
 pub use shell::ShellTool;
@@ -84,6 +86,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(RouteDiscoveryTool);
     toolset.add_tool(SearchExploitTool);
     toolset.add_tool(MemoryManagerTool);
+    toolset.add_tool(PluginAuthoringTool);
     #[cfg(feature = "ocr")]
     toolset.add_tool(OcrTool);
     toolset.add_tool(SkillsTool);
@@ -127,6 +130,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(RouteDiscoveryTool),
         Box::new(SearchExploitTool),
         Box::new(MemoryManagerTool),
+        Box::new(PluginAuthoringTool),
         #[cfg(feature = "ocr")]
         Box::new(OcrTool),
         Box::new(SkillsTool),

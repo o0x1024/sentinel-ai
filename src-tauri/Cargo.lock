@@ -9129,10 +9129,12 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "brotli 6.0.0",
  "bytes",
  "chrono",
  "deno_ast",
  "dirs 5.0.1",
+ "encoding_rs",
  "flate2",
  "futures",
  "http 1.4.0",
@@ -9290,6 +9292,7 @@ name = "sentinel-license"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "base64 0.22.1",
  "blake3",
  "core-foundation 0.10.1",
@@ -9302,9 +9305,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sqlx",
  "sysinfo 0.32.1",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
+ "tracing-subscriber",
  "windows 0.58.0",
  "winreg 0.55.0",
 ]

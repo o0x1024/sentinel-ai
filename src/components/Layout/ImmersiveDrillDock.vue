@@ -27,6 +27,9 @@
 
     <div
       ref="panelRef"
+      role="toolbar"
+      aria-orientation="vertical"
+      :aria-label="title"
       class="flex flex-col items-center gap-1.5 rounded-[1.6rem] border border-base-300/70 bg-base-100/92 px-1.5 py-2.5 shadow-2xl backdrop-blur-xl"
       :class="[
         dragState.isDragging ? 'select-none shadow-primary/10' : '',
@@ -38,9 +41,11 @@
         type="button"
         class="drag-handle group relative flex h-9 w-9 cursor-grab items-center justify-center rounded-xl bg-primary/12 text-primary transition-all duration-200 hover:bg-primary/18 hover:shadow-lg hover:shadow-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 active:cursor-grabbing active:scale-[0.98]"
         :title="title"
-        :aria-label="title"
+        :aria-label="toolbarDragHandleLabel"
+        :aria-keyshortcuts="toolbarDragHandleShortcuts"
         data-toolbar-focusable
         @pointerdown="startDrag"
+        @keydown.stop.prevent="handleToolbarHandleKeydown"
       >
         <span class="drag-grip" aria-hidden="true">
           <span v-for="index in 6" :key="`drag-grip-${index}`" class="drag-grip-dot"></span>
@@ -92,6 +97,8 @@
         </span>
       </button>
     </div>
+
+    <p class="sr-only" aria-live="polite" aria-atomic="true">{{ toolbarAnnouncement }}</p>
   </aside>
 </template>
 
@@ -112,7 +119,10 @@ import {
   openTrafficAssistantPanel,
   trafficAssistantVisible,
 } from '@/services/trafficAssistantWorkspace'
-import { closeAllImmersiveTools } from '@/services/immersiveToolCoordinator'
+import {
+  closeAllImmersiveTools,
+  closeTopmostImmersiveTool,
+} from '@/services/immersiveToolCoordinator'
 import {
   openImmersiveTrafficWorkbenchTool,
   showImmersiveTrafficHistory,
@@ -123,6 +133,11 @@ import {
   useImmersiveTrafficDockState,
   type ImmersiveTrafficWorkbenchTool,
 } from '@/components/traffic/immersiveTrafficDockState'
+import {
+  buildImmersiveFloatingPositionAnnouncement,
+  describeImmersiveFloatingDockSide,
+} from './immersiveFloatingA11y'
+import { useImmersiveAnnouncement } from './useImmersiveAnnouncement'
 
 interface TrafficWorkbenchToolbarItem {
   id: string
@@ -136,6 +151,7 @@ interface TrafficWorkbenchToolbarItem {
 }
 
 const { t } = useI18n()
+const { announcement: toolbarAnnouncement, announce: announceToolbar } = useImmersiveAnnouncement()
 const route = useRoute()
 const router = useRouter()
 const toolbarRef = ref<HTMLElement | null>(null)
@@ -149,12 +165,15 @@ const {
   repeaterCount,
   intruderCount,
   comparerCount,
+  oastCount,
   controlInterceptCount,
   basketCount,
 } = useImmersiveTrafficDockState()
 
 const title = computed(() => t('common.immersiveDrillMode', '沉浸式挖洞模式'))
 const exitLabel = computed(() => t('common.exitImmersiveDrillMode', '退出挖洞模式'))
+const toolbarDragHandleShortcuts =
+  'ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight Home End PageUp PageDown'
 
 const TOOLBAR_POSITION_STORAGE_KEY = 'sentinel:immersive-drill-toolbar-position:v1'
 const TOOLBAR_VIEWPORT_MARGIN = 14
@@ -162,6 +181,8 @@ const TOOLBAR_DOCK_OFFSET = 2
 const TOOLBAR_SNAP_THRESHOLD = 20
 const TOOLBAR_PEEK_WIDTH = 8
 const TOOLBAR_MAGNETIC_THRESHOLD = 88
+const TOOLBAR_KEYBOARD_STEP = 18
+const TOOLBAR_KEYBOARD_FAST_STEP = 54
 
 interface ToolbarPosition {
   x: number
@@ -205,6 +226,10 @@ const snapPreviewStyle = computed(() => ({
   top: `${position.y}px`,
   height: `${panelRef.value?.offsetHeight ?? 260}px`,
 }))
+const toolbarDockDescription = computed(() => describeImmersiveFloatingDockSide(dockState.side))
+const toolbarDragHandleLabel = computed(
+  () => `${title.value}。${toolbarDockDescription.value}。按方向键移动，按 Shift 加速，按 Home 吸附左侧，按 End 吸附右侧。`,
+)
 
 const tooltipDockClass = computed(() =>
   dockState.side === 'left'
@@ -326,6 +351,15 @@ const trafficWorkbenchItems = computed<TrafficWorkbenchToolbarItem[]>(() => [
     onClick: () => activateTrafficTool('comparer'),
   },
   {
+    id: 'oast',
+    label: t('trafficAnalysis.tabs.oast', 'OAST'),
+    icon: 'fas fa-satellite-dish',
+    active: workbenchOpen.value && activeWorkbenchTool.value === 'oast',
+    count: oastCount.value,
+    badgeClass: 'toolbar-badge-primary',
+    onClick: () => activateTrafficTool('oast'),
+  },
+  {
     id: 'assistant',
     label: t('trafficAnalysis.aiWorkspace.launcherTitle', 'AI 助手'),
     icon: 'fas fa-robot',
@@ -378,6 +412,10 @@ const exitImmersiveMode = () => {
   closeAllImmersiveTools()
   clearImmersiveSecurityCenterReturnPath()
   setImmersiveDrillModeEnabled(false)
+}
+
+const announceToolbarPosition = () => {
+  announceToolbar(buildImmersiveFloatingPositionAnnouncement(title.value, dockState.side, position))
 }
 
 function buildToolbarTransform() {
@@ -458,6 +496,7 @@ const persistPosition = () => {
     TOOLBAR_POSITION_STORAGE_KEY,
     JSON.stringify({ x: position.x, y: position.y, side: dockState.side }),
   )
+  window.dispatchEvent(new CustomEvent('immersive-drill-dock-position-changed'))
 }
 
 const resolveDockSide = (x: number, threshold = TOOLBAR_SNAP_THRESHOLD): ToolbarDockSide => {
@@ -551,6 +590,7 @@ const stopDrag = (pointerId?: number) => {
   dockState.hovering = false
   applySnapToEdge()
   persistPosition()
+  announceToolbarPosition()
 }
 
 const handleResize = () => {
@@ -559,6 +599,51 @@ const handleResize = () => {
   position.y = next.y
   applySnapToEdge()
   persistPosition()
+}
+
+const nudgeToolbarPosition = (deltaX: number, deltaY: number) => {
+  if (dragState.isDragging) {
+    stopDrag()
+  }
+
+  dockState.side = null
+  const next = clampPosition(position.x + deltaX, position.y + deltaY)
+  position.x = applyMagneticAttraction(next.x)
+  position.y = next.y
+  applySnapToEdge()
+  persistPosition()
+  announceToolbarPosition()
+}
+
+const dockToolbarToSide = (side: Exclude<ToolbarDockSide, null>) => {
+  if (dragState.isDragging) {
+    stopDrag()
+  }
+
+  dockState.side = side
+  const next = clampPosition(getDockedX(side), position.y)
+  position.x = next.x
+  position.y = next.y
+  applySnapToEdge()
+  persistPosition()
+  announceToolbarPosition()
+}
+
+const moveToolbarVertically = (direction: 'top' | 'bottom') => {
+  if (dragState.isDragging) {
+    stopDrag()
+  }
+
+  const targetY =
+    direction === 'top'
+      ? TOOLBAR_VIEWPORT_MARGIN
+      : window.innerHeight - getPanelHeight() - TOOLBAR_VIEWPORT_MARGIN
+  const next = clampPosition(position.x, targetY)
+  position.x = next.x
+  position.y = next.y
+  applySnapToEdge()
+  persistPosition()
+  announceToolbarPosition()
 }
 
 const startDrag = (event: PointerEvent) => {
@@ -613,12 +698,76 @@ const handleToolbarKeydown = (event: KeyboardEvent) => {
   event.preventDefault()
 }
 
+const handleToolbarHandleKeydown = (event: KeyboardEvent) => {
+  const step = event.shiftKey ? TOOLBAR_KEYBOARD_FAST_STEP : TOOLBAR_KEYBOARD_STEP
+
+  if (event.key === 'ArrowUp') {
+    nudgeToolbarPosition(0, -step)
+    return
+  }
+
+  if (event.key === 'ArrowDown') {
+    nudgeToolbarPosition(0, step)
+    return
+  }
+
+  if (event.key === 'ArrowLeft') {
+    nudgeToolbarPosition(-step, 0)
+    return
+  }
+
+  if (event.key === 'ArrowRight') {
+    nudgeToolbarPosition(step, 0)
+    return
+  }
+
+  if (event.key === 'Home') {
+    dockToolbarToSide('left')
+    return
+  }
+
+  if (event.key === 'End') {
+    dockToolbarToSide('right')
+    return
+  }
+
+  if (event.key === 'PageUp') {
+    moveToolbarVertically('top')
+    return
+  }
+
+  if (event.key === 'PageDown') {
+    moveToolbarVertically('bottom')
+  }
+}
+
+const handleWindowKeydown = (event: KeyboardEvent) => {
+  if (event.defaultPrevented || event.isComposing || event.repeat) {
+    return
+  }
+
+  if (event.key !== 'Escape') {
+    return
+  }
+
+  if (closeTopmostImmersiveTool()) {
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  exitImmersiveMode()
+}
+
 onMounted(() => {
   loadInitialPosition()
   window.addEventListener('pointermove', handlePointerMove, { passive: true })
   window.addEventListener('pointerup', handlePointerUp)
   window.addEventListener('pointercancel', handlePointerCancel)
   window.addEventListener('resize', handleResize)
+  window.addEventListener('keydown', handleWindowKeydown)
 })
 
 onBeforeUnmount(() => {
@@ -629,6 +778,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', handlePointerUp)
   window.removeEventListener('pointercancel', handlePointerCancel)
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('keydown', handleWindowKeydown)
 })
 </script>
 

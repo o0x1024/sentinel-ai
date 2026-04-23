@@ -21,7 +21,8 @@ enum Scenario {
     PossibleBehavior,
     ValidationError,
     WafBlock,
-    DynamicBaseline,
+    JsonArraySecondElementOnly,
+    JsonSameFieldDifferentPaths,
 }
 
 struct TestServer {
@@ -161,7 +162,9 @@ async fn read_http_request(stream: &mut TcpStream) -> Option<ParsedRequest> {
                         headers.insert(name.trim().to_lowercase(), value.trim().to_string());
                     }
                 }
-                let body = String::from_utf8_lossy(&buffer[body_start..body_start + content_length]).to_string();
+                let body =
+                    String::from_utf8_lossy(&buffer[body_start..body_start + content_length])
+                        .to_string();
                 return Some(ParsedRequest {
                     method,
                     path,
@@ -182,14 +185,7 @@ fn response_for_request(scenario: Scenario, request: &ParsedRequest) -> Response
 
     match scenario {
         Scenario::ConfirmedSqlError => {
-            if probe_header == "sql_injection_detector:baseline" {
-                return ResponseTemplate {
-                    status: 200,
-                    content_type: "text/html",
-                    body: "<html><title>Items</title><body>Item 1</body></html>".to_string(),
-                };
-            }
-            if probe_header == "sql_injection_detector" && request.path.contains("%27") {
+            if probe_header.starts_with("sql_injection_detector") && request.path.contains("%27") {
                 return ResponseTemplate {
                     status: 500,
                     content_type: "text/html",
@@ -203,14 +199,7 @@ fn response_for_request(scenario: Scenario, request: &ParsedRequest) -> Response
             }
         }
         Scenario::PossibleBehavior => {
-            if probe_header == "sql_injection_detector:baseline" {
-                return ResponseTemplate {
-                    status: 200,
-                    content_type: "text/html",
-                    body: "<html><title>Catalog</title><body>Normal listing</body></html>".to_string(),
-                };
-            }
-            if probe_header == "sql_injection_detector" && request.path.contains("%27") {
+            if probe_header.starts_with("sql_injection_detector") && request.path.contains("%27") {
                 return ResponseTemplate {
                     status: 500,
                     content_type: "text/html",
@@ -224,7 +213,10 @@ fn response_for_request(scenario: Scenario, request: &ParsedRequest) -> Response
             }
         }
         Scenario::ValidationError => {
-            if probe_header == "sql_injection_detector" && request.method == "POST" && request.body.contains("alice'") {
+            if probe_header.starts_with("sql_injection_detector")
+                && request.method == "POST"
+                && request.body.contains("alice'")
+            {
                 return ResponseTemplate {
                     status: 422,
                     content_type: "application/json",
@@ -238,7 +230,7 @@ fn response_for_request(scenario: Scenario, request: &ParsedRequest) -> Response
             }
         }
         Scenario::WafBlock => {
-            if probe_header == "sql_injection_detector" && request.path.contains("%27") {
+            if probe_header.starts_with("sql_injection_detector") && request.path.contains("%27") {
                 return ResponseTemplate {
                     status: 403,
                     content_type: "text/html",
@@ -251,14 +243,46 @@ fn response_for_request(scenario: Scenario, request: &ParsedRequest) -> Response
                 body: "<html><title>Search</title><body>Result ok</body></html>".to_string(),
             }
         }
-        Scenario::DynamicBaseline => ResponseTemplate {
-            status: 200,
-            content_type: "text/html",
-            body: format!(
-                "<html><title>Dynamic</title><body>{}</body></html>",
-                "X".repeat(180)
-            ),
-        },
+        Scenario::JsonArraySecondElementOnly => {
+            if probe_header.starts_with("sql_injection_detector")
+                && request.method == "POST"
+                && request.body.contains(r#""second'"#)
+            {
+                return ResponseTemplate {
+                    status: 500,
+                    content_type: "application/json",
+                    body: r#"{"error":"You have an error in your SQL syntax"}"#.to_string(),
+                };
+            }
+            ResponseTemplate {
+                status: 200,
+                content_type: "application/json",
+                body: r#"{"ok":true}"#.to_string(),
+            }
+        }
+        Scenario::JsonSameFieldDifferentPaths => {
+            if probe_header.starts_with("sql_injection_detector") && request.method == "POST" {
+                let first_path_hit = request
+                    .body
+                    .contains(r#""primary":{"property_name":"utm_source'""#);
+                let second_path_hit = request
+                    .body
+                    .contains(r#""secondary":{"property_name":"utm_source'""#);
+
+                if first_path_hit || second_path_hit {
+                    return ResponseTemplate {
+                        status: 500,
+                        content_type: "application/json",
+                        body: r#"{"error":"DB::Exception"}"#.to_string(),
+                    };
+                }
+            }
+            ResponseTemplate {
+                status: 200,
+                content_type: "application/json",
+                body: r#"{"ok":true}"#.to_string(),
+            }
+        }
     }
 }
 
@@ -337,13 +361,34 @@ async fn sql_injection_detector_confirms_explicit_sql_errors() {
         Some("text/html"),
     );
 
-    let findings = engine.scan_transaction(&transaction).await.expect("scan ok");
+    let findings = engine
+        .scan_transaction(&transaction)
+        .await
+        .expect("scan ok");
     assert_eq!(findings.len(), 1);
     let finding = &findings[0];
     assert_eq!(finding.title, "Confirmed SQL Error Disclosure");
     assert_eq!(finding.severity, Severity::High);
     assert_eq!(finding.confidence, Confidence::High);
     assert!(finding.evidence.contains("sql_error="));
+    assert!(finding.url.contains("%27"));
+    assert_eq!(finding.method, "GET");
+    assert!(finding
+        .request_headers
+        .as_deref()
+        .unwrap_or_default()
+        .contains("\"x-sentinel-active-probe\""));
+    assert_eq!(finding.response_status, Some(500));
+    assert!(finding
+        .response_headers
+        .as_deref()
+        .unwrap_or_default()
+        .contains("\"content-type\""));
+    assert!(finding
+        .response_body
+        .as_deref()
+        .unwrap_or_default()
+        .contains("You have an error in your SQL syntax"));
 
     server.shutdown().await;
 }
@@ -369,7 +414,10 @@ async fn sql_injection_detector_discards_validation_failures() {
         Some("application/json"),
     );
 
-    let findings = engine.scan_transaction(&transaction).await.expect("scan ok");
+    let findings = engine
+        .scan_transaction(&transaction)
+        .await
+        .expect("scan ok");
     assert!(findings.is_empty());
 
     server.shutdown().await;
@@ -397,14 +445,23 @@ async fn sql_injection_detector_reports_possible_behavior_changes() {
         Some("text/html"),
     );
 
-    let findings = engine.scan_transaction(&transaction).await.expect("scan ok");
+    let findings = engine
+        .scan_transaction(&transaction)
+        .await
+        .expect("scan ok");
     assert_eq!(findings.len(), 1);
     let finding = &findings[0];
     assert_eq!(finding.title, "Possible SQL Injection Behavior");
     assert_eq!(finding.severity, Severity::Medium);
     assert_eq!(finding.confidence, Confidence::Medium);
-    assert!(finding.evidence.contains("baseline_status=200"));
+    assert!(finding.evidence.contains("reference_status=200"));
     assert!(finding.evidence.contains("probe_status=500"));
+    assert_eq!(finding.response_status, Some(500));
+    assert!(finding
+        .response_body
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Unexpected application failure"));
 
     server.shutdown().await;
 }
@@ -431,7 +488,10 @@ async fn sql_injection_detector_discards_waf_block_pages() {
         Some("text/html"),
     );
 
-    let findings = engine.scan_transaction(&transaction).await.expect("scan ok");
+    let findings = engine
+        .scan_transaction(&transaction)
+        .await
+        .expect("scan ok");
     assert!(findings.is_empty());
 
     server.shutdown().await;
@@ -458,36 +518,94 @@ async fn sql_injection_detector_ignores_non_string_json_fields() {
         Some("application/json"),
     );
 
-    let findings = engine.scan_transaction(&transaction).await.expect("scan ok");
+    let findings = engine
+        .scan_transaction(&transaction)
+        .await
+        .expect("scan ok");
     assert!(findings.is_empty());
 
     server.shutdown().await;
 }
 
 #[tokio::test]
-async fn sql_injection_detector_skips_unstable_baselines() {
-    let server = spawn_test_server(Scenario::DynamicBaseline).await;
+async fn sql_injection_detector_only_scans_first_json_array_element() {
+    let server = spawn_test_server(Scenario::JsonArraySecondElementOnly).await;
     let mut engine = create_engine();
     engine
         .load_plugin_with_metadata(SQLI_PLUGIN_CODE, plugin_metadata())
         .await
         .expect("load plugin");
 
-    let mut query_params = HashMap::new();
-    query_params.insert("id".to_string(), "1".to_string());
+    let body = br#"{"items":["first","second"]}"#.to_vec();
     let transaction = create_transaction(
-        "GET",
-        format!("{}/items?id=1", server.base_url),
-        query_params,
-        vec![],
-        None,
+        "POST",
+        format!("{}/profile", server.base_url),
+        HashMap::new(),
+        body,
+        Some("application/json"),
         200,
-        "<html><title>Items</title><body>stable</body></html>",
-        Some("text/html"),
+        r#"{"ok":true}"#,
+        Some("application/json"),
     );
 
-    let findings = engine.scan_transaction(&transaction).await.expect("scan ok");
+    let findings = engine
+        .scan_transaction(&transaction)
+        .await
+        .expect("scan ok");
     assert!(findings.is_empty());
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn sql_injection_detector_distinguishes_same_field_name_across_json_paths() {
+    let server = spawn_test_server(Scenario::JsonSameFieldDifferentPaths).await;
+    let mut engine = create_engine();
+    engine
+        .load_plugin_with_metadata(SQLI_PLUGIN_CODE, plugin_metadata())
+        .await
+        .expect("load plugin");
+
+    let body = br#"{
+        "primary":{"property_name":"utm_source"},
+        "secondary":{"property_name":"utm_source"}
+    }"#
+    .to_vec();
+    let transaction = create_transaction(
+        "POST",
+        format!("{}/profile", server.base_url),
+        HashMap::new(),
+        body,
+        Some("application/json"),
+        200,
+        r#"{"ok":true}"#,
+        Some("application/json"),
+    );
+
+    let findings = engine
+        .scan_transaction(&transaction)
+        .await
+        .expect("scan ok");
+
+    assert_eq!(
+        findings.len(),
+        2,
+        "expected two distinct findings for two JSON paths"
+    );
+
+    let mut locations = findings
+        .iter()
+        .map(|finding| finding.location.clone())
+        .collect::<Vec<_>>();
+    locations.sort();
+
+    assert_eq!(
+        locations,
+        vec![
+            "param:body:primary.property_name".to_string(),
+            "param:body:secondary.property_name".to_string(),
+        ]
+    );
 
     server.shutdown().await;
 }

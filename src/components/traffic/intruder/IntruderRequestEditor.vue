@@ -27,6 +27,24 @@
 
     <div class="flex flex-wrap items-center gap-2 border-b border-base-300 bg-base-200 px-4 py-2">
       <span class="text-sm font-medium text-base-content/70">{{ $t('trafficAnalysis.intruder.sections.positions') }}</span>
+      <div class="ml-2 inline-flex items-center gap-1 rounded-full border border-base-300/80 bg-base-100 p-1">
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs rounded-full px-3"
+          :class="props.requestViewTab === 'pretty' ? 'btn-active' : ''"
+          @click="$emit('update:requestViewTab', 'pretty')"
+        >
+          Pretty
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs rounded-full px-3"
+          :class="props.requestViewTab === 'raw' ? 'btn-active' : ''"
+          @click="$emit('update:requestViewTab', 'raw')"
+        >
+          Raw
+        </button>
+      </div>
       <button class="btn btn-sm btn-ghost" type="button" @click="markSelection">
         {{ $t('trafficAnalysis.intruder.actions.addPositionSymbol') }}
       </button>
@@ -35,6 +53,10 @@
       </button>
       <button class="btn btn-sm btn-ghost" type="button" @click="$emit('autoMark')">
         {{ $t('trafficAnalysis.intruder.actions.autoMark') }}
+      </button>
+      <button class="btn btn-sm btn-ghost" type="button" :disabled="creatingOastPayload" @click="insertOastPayload">
+        <i :class="creatingOastPayload ? 'fas fa-spinner fa-spin' : 'fas fa-satellite-dish'"></i>
+        {{ $t('trafficAnalysis.oast.insertPayload') }}
       </button>
       <div class="ml-auto flex items-center gap-3 text-xs text-base-content/70">
         <span>{{ positions.length }} {{ $t('trafficAnalysis.intruder.labels.detectedPositions') }}</span>
@@ -45,14 +67,14 @@
     <div class="min-h-0 flex-1" @contextmenu.capture.prevent="showContextMenu($event)">
       <HttpMessageSurface
         ref="requestEditor"
-        :model-value="requestText"
+        :model-value="displayRequestText"
         custom-context-menu
         show-search-bar
         message-type="request"
         marker-mode="intruder"
         height="100%"
-        display-mode="raw"
-        :state-key="`intruder:editor:${targetUrl || 'default'}`"
+        :display-mode="props.requestViewTab"
+        :state-key="`intruder:editor:${targetUrl || 'default'}:${props.requestViewTab}`"
         :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
         :search-next-title="$t('trafficAnalysis.messageSearch.next')"
         :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
@@ -61,7 +83,7 @@
         :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
         :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
         :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
-        @update:model-value="$emit('update:requestText', $event)"
+        @update:model-value="handleRequestEditorUpdate"
         @contextmenu="showContextMenu($event)"
       />
     </div>
@@ -89,13 +111,15 @@
 import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
+import { createTrafficOastToken } from '@/api/trafficOast'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import TrafficContextMenuSections from '@/components/traffic/TrafficContextMenuSections.vue'
 import { buildTrafficRequestActionMenuItems } from '@/components/traffic/trafficRequestActionMenuSupport'
 import { buildTrafficRequestContextMenuSections } from '@/components/traffic/trafficRequestContextMenuSupport'
 import { buildTrafficRequestSendMenuItems } from '@/components/traffic/trafficSendMenuSupport'
 import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
-import type { IntruderPosition } from './types'
+import { convertRepeaterPrettyRequestToRaw, formatRepeaterPrettyRequest } from '@/components/traffic/trafficRepeaterPrettyRequestSupport'
+import type { IntruderPosition, IntruderRequestViewTab } from './types'
 import { buildFullUrl, buildSourceRequestFromRawRequest, extractTargetFromRequest } from './http'
 import { wrapSelectionWithMarkers } from './intruderMarkers'
 
@@ -104,13 +128,16 @@ const { enabledTargets } = useTrafficSendTargets()
 
 const props = defineProps<{
   requestText: string
+  requestViewTab: IntruderRequestViewTab
   targetUrl: string
+  sourceRequestId: number | null
   updateHostHeader: boolean
   positions: IntruderPosition[]
 }>()
 
 const emit = defineEmits<{
   (e: 'update:requestText', value: string): void
+  (e: 'update:requestViewTab', value: IntruderRequestViewTab): void
   (e: 'update:targetUrl', value: string): void
   (e: 'update:updateHostHeader', value: boolean): void
   (e: 'autoMark'): void
@@ -120,6 +147,7 @@ const emit = defineEmits<{
 }>()
 
 const requestEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null)
+const creatingOastPayload = ref(false)
 const contextMenu = ref({
   visible: false,
   x: 0,
@@ -130,8 +158,15 @@ const requestLengthLabel = computed(() => {
   const length = props.requestText.length
   return `${t('trafficAnalysis.intruder.labels.length')}: ${length}`
 })
+const displayRequestText = computed(() =>
+  props.requestViewTab === 'pretty'
+    ? formatRepeaterPrettyRequest(props.requestText)
+    : props.requestText,
+)
 const currentTarget = computed(() => extractTargetFromRequest(props.requestText, props.targetUrl))
-const currentRequest = computed(() => buildSourceRequestFromRawRequest(props.requestText, currentTarget.value))
+const currentRequest = computed(() =>
+  buildSourceRequestFromRawRequest(props.requestText, currentTarget.value, props.sourceRequestId),
+)
 const currentUrl = computed(() => buildFullUrl(props.requestText, currentTarget.value))
 const sendMenuItems = computed(() =>
   buildTrafficRequestSendMenuItems({
@@ -167,7 +202,20 @@ const contextMenuSections = computed(() =>
   }),
 )
 
+function handleRequestEditorUpdate(value: string) {
+  emit(
+    'update:requestText',
+    props.requestViewTab === 'pretty' ? convertRepeaterPrettyRequestToRaw(value) : value,
+  )
+}
+
 async function markSelection() {
+  if (props.requestViewTab === 'pretty') {
+    emit('update:requestViewTab', 'raw')
+    dialog.toast.info('Pretty 视图仅用于阅读，请切到 Raw 后标记位置。')
+    return
+  }
+
   const selection = requestEditor.value?.getSelectionRange()
   if (!selection || selection.from === selection.to) {
     dialog.toast.info(t('trafficAnalysis.intruder.messages.selectTextFirst'))
@@ -184,6 +232,52 @@ async function markSelection() {
     requestEditor.value?.setSelection?.(start + 1, end + 1)
     requestEditor.value?.focus?.()
   })
+}
+
+function insertTextAtSelection(
+  content: string,
+  selection: { from: number; to: number } | undefined,
+  insert: string,
+) {
+  const from = Math.max(0, Math.min(selection?.from ?? content.length, content.length))
+  const to = Math.max(from, Math.min(selection?.to ?? from, content.length))
+  return {
+    content: `${content.slice(0, from)}${insert}${content.slice(to)}`,
+    selectionStart: from,
+    selectionEnd: from + insert.length,
+  }
+}
+
+async function insertOastPayload() {
+  if (props.requestViewTab === 'pretty') {
+    emit('update:requestViewTab', 'raw')
+    dialog.toast.info('Pretty 视图仅用于阅读，请切到 Raw 后插入载荷。')
+    return
+  }
+
+  creatingOastPayload.value = true
+  try {
+    const record = await createTrafficOastToken({
+      label: currentTarget.value.host || undefined,
+      sourceTool: 'intruder',
+      sourceRequestId: props.sourceRequestId,
+    })
+    const next = insertTextAtSelection(
+      props.requestText,
+      requestEditor.value?.getSelectionRange?.(),
+      record.httpsUrl || record.httpUrl || record.fqdn,
+    )
+    emit('update:requestText', next.content)
+    await nextTick()
+    requestEditor.value?.setSelection?.(next.selectionStart, next.selectionEnd)
+    requestEditor.value?.focus?.()
+    dialog.toast.success(t('trafficAnalysis.oast.inserted'))
+  } catch (error) {
+    console.error('[IntruderRequestEditor] Failed to insert OAST payload:', error)
+    dialog.toast.error(String(error))
+  } finally {
+    creatingOastPayload.value = false
+  }
 }
 
 function hideContextMenu() {

@@ -41,6 +41,8 @@ describe('proxyHistoryHttpSupport', () => {
       port: 443,
     })
     expect(exchange.absoluteUrl).toBe('https://example.com/products?id=7')
+    expect(exchange.sourceRequestId).toBeNull()
+    expect(exchange.preferredRequestView).toBe('pretty')
     expect(exchange.request).toMatchObject({
       method: 'POST',
       target: '/products?id=7',

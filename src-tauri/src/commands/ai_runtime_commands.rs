@@ -635,10 +635,7 @@ pub async fn agent_execute(
     app_handle: AppHandle,
     ai_manager: Arc<AiServiceManager>,
 ) -> Result<String, String> {
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Err("License required for this feature".to_string());
-    }
+    sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::AiRuntime)?;
 
     let config = config.unwrap_or(AgentExecuteConfig {
         conversation_id: None,

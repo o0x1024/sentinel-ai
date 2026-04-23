@@ -1,103 +1,39 @@
-import { defineComponent, h, ref } from 'vue'
+import { ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ProxyRepeater from './ProxyRepeater.vue'
-import type { HttpExchangeRequest } from './http/model'
 import type { RawReplayCommandResult } from './http/response'
+import {
+  AppDialogStub,
+  createHttpMessageSurfaceStub,
+  createTrafficMessageViewTabsStub,
+  TrafficMessageReaderStub,
+} from './trafficMessageViewTestStubs'
+import {
+  expectNoTrafficReaders,
+  expectReadonlyHttpSurface,
+  expectTrafficReaderCount,
+} from './trafficMessageViewTestAssertions'
+import { createTrafficMessageViewTestGlobal } from './trafficMessageViewTestMount'
+import { createInitialHttpExchangeRequest, createReplayResult } from './trafficMessageViewTestData'
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
-  }),
-}))
-
-vi.mock('@/composables/useDialog', () => ({
-  dialog: {
-    confirm: vi.fn().mockResolvedValue(true),
-    toast: {
-      success: vi.fn(),
-      error: vi.fn(),
-      warning: vi.fn(),
-      info: vi.fn(),
-    },
-  },
-}))
-
-const HttpMessageSurfaceStub = defineComponent({
-  name: 'HttpMessageSurface',
-  props: {
-    modelValue: {
-      type: String,
-      default: '',
-    },
-    showSearchBar: {
-      type: Boolean,
-      default: false,
-    },
-    stateKey: {
-      type: String,
-      default: '',
-    },
-  },
-  setup(props) {
-    const searchValue = ref('')
-
-    return () => h('div', { class: 'http-message-surface-stub', 'data-state-key': props.stateKey }, [
-      props.showSearchBar && props.stateKey.includes(':response:')
-        ? h('input', {
-            'data-testid': 'response-search',
-            value: searchValue.value,
-            onInput: (event: Event) => {
-              searchValue.value = (event.target as HTMLInputElement).value
-            },
-          })
-        : null,
-      h(
-        'div',
-        {
-          'data-testid': props.stateKey.includes(':response:') ? 'response-content' : 'request-content',
-        },
-        props.modelValue,
-      ),
-    ])
-  },
+vi.mock('vue-i18n', async () => {
+  const { createVueI18nMock } = await import('./trafficMessageViewTestMocks')
+  return createVueI18nMock('zh-CN')
 })
 
-function createReplayResult(bodyText: string, rawResponse: string): RawReplayCommandResult {
-  return {
-    raw_response: rawResponse,
-    response_time_ms: 120,
-    final_url: 'https://example.com/api/test',
-    redirect_chain: [],
-    status_code: 200,
-    version_observed: 'HTTP/1.1',
-    status_text: 'OK',
-    headers: [
-      { name: 'Content-Type', value: 'text/plain' },
-    ],
-    body_text: bodyText,
-  }
-}
+vi.mock('@/composables/useDialog', async () => {
+  const { createDialogConfirmAndToastMock } = await import('./trafficMessageViewTestMocks')
+  return createDialogConfirmAndToastMock()
+})
 
-function createInitialRequest(): HttpExchangeRequest {
-  return {
-    endpoint: {
-      scheme: 'https',
-      host: 'example.com',
-      port: 443,
-    },
-    absoluteUrl: 'https://example.com/api/test',
-    request: {
-      method: 'GET',
-      target: '/api/test',
-      versionPreference: 'HTTP/1.1',
-      headers: [
-        { name: 'Host', value: 'example.com' },
-      ],
-      bodyText: '',
-    },
-  }
-}
+vi.mock('./useTrafficPaneCompactMode', async () => {
+  const { createTrafficPaneCompactModeMock } = await import('./trafficMessageViewTestMocks')
+  return createTrafficPaneCompactModeMock()
+})
+
+const HttpMessageSurfaceStub = createHttpMessageSurfaceStub({ responseSearchTestId: 'response-search' })
+const TrafficMessageViewTabsStub = createTrafficMessageViewTabsStub('traffic-tab')
 
 describe('ProxyRepeater', () => {
   beforeEach(() => {
@@ -123,26 +59,18 @@ describe('ProxyRepeater', () => {
 
     const wrapper = mount(ProxyRepeater, {
       props: {
-        initialRequest: createInitialRequest(),
+        initialRequest: createInitialHttpExchangeRequest(),
       },
-      global: {
-        components: {
-          AppDialog: defineComponent({
-            name: 'AppDialog',
-            setup(_, { slots }) {
-              return () => h('div', slots.default?.())
-            },
-          }),
-        },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
         stubs: {
-          HttpMessageSurface: HttpMessageSurfaceStub,
           TrafficResponseRenderPane: true,
           TrafficContextMenuSections: true,
         },
-        mocks: {
-          $t: (key: string, fallback?: string) => fallback ?? key,
-        },
-      },
+      }),
       attachTo: document.body,
     })
 
@@ -175,5 +103,64 @@ describe('ProxyRepeater', () => {
     expect(wrapper.get('[data-testid="response-content"]').text()).toContain('second body')
 
     wrapper.unmount()
+  })
+
+  it('renders repeater responses with HttpMessageSurface for pretty/raw and TrafficMessageReader for hex', async () => {
+    global.testUtils.mockInvoke.mockResolvedValueOnce({
+      success: true,
+      data: createReplayResult('response body', 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nresponse body'),
+    })
+
+    const wrapper = mount(ProxyRepeater, {
+      props: {
+        initialRequest: createInitialHttpExchangeRequest(),
+      },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await wrapper.get('button.btn-primary.btn-sm').trigger('click')
+    await flushPromises()
+
+    const responseSurface = wrapper.findAll('.http-message-surface-stub').find(node =>
+      node.attributes('data-state-key')?.includes(':response:'),
+    )
+    expect(responseSurface).toBeTruthy()
+    expect(wrapper.text()).toContain('120 ms | 58 B')
+    expectReadonlyHttpSurface(wrapper, { mode: 'pretty', stateKeyIncludes: ':response:' })
+    expectNoTrafficReaders(wrapper)
+
+    const responseTabs = wrapper.findAll('.traffic-message-view-tabs-stub')[1]
+    expect(responseTabs).toBeTruthy()
+
+    const rawButton = responseTabs!.find('[data-testid="traffic-tab-raw"]')
+    await rawButton.trigger('click')
+    await flushPromises()
+
+    const rawSurface = wrapper.findAll('.http-message-surface-stub').find(node =>
+      node.attributes('data-state-key')?.includes(':response:raw'),
+    )
+    expect(rawSurface).toBeTruthy()
+    expectReadonlyHttpSurface(wrapper, { mode: 'raw', stateKeyIncludes: ':response:raw' })
+    expectNoTrafficReaders(wrapper)
+
+    const hexButton = responseTabs!.find('[data-testid="traffic-tab-hex"]')
+    await hexButton.trigger('click')
+    await flushPromises()
+
+    const readers = wrapper.findAll('[data-testid="traffic-reader"]')
+    expectTrafficReaderCount(wrapper, 1)
+    expect(readers[0]?.attributes('data-state-key')).toContain(':response:hex')
+    expect(wrapper.findAll('.http-message-surface-stub').find(node =>
+      node.attributes('data-state-key')?.includes(':response:'),
+    )).toBeFalsy()
   })
 })

@@ -23,6 +23,8 @@ pub struct HttpRequestRecord {
     pub id: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub db_request_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traffic_request_id: Option<String>,
     pub url: String,
     pub host: String,
     pub scheme: String,
@@ -68,6 +70,8 @@ pub struct HttpRequestSummary {
     pub id: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub db_request_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traffic_request_id: Option<String>,
     pub url: String,
     pub host: String,
     pub scheme: String,
@@ -417,6 +421,15 @@ impl ProxyHistoryCache {
     pub async fn get_http_request_by_id(&self, id: i64) -> Option<HttpRequestRecord> {
         let requests = self.http_requests.read().await;
         requests.iter().find(|request| request.id == id).cloned()
+    }
+
+    /// 根据数据库 ID 获取 HTTP 请求
+    pub async fn get_http_request_by_db_id(&self, db_request_id: i64) -> Option<HttpRequestRecord> {
+        let requests = self.http_requests.read().await;
+        requests
+            .iter()
+            .find(|request| request.db_request_id == Some(db_request_id))
+            .cloned()
     }
 
     /// 统计 HTTP 请求数量
@@ -877,6 +890,7 @@ impl From<&HttpRequestRecord> for HttpRequestSummary {
         Self {
             id: record.id,
             db_request_id: record.db_request_id,
+            traffic_request_id: record.traffic_request_id.clone(),
             url: record.url.clone(),
             host: record.host.clone(),
             scheme: record.scheme.clone(),

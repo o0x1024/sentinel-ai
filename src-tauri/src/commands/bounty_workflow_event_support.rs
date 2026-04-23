@@ -1,4 +1,5 @@
 use super::bounty_commands::{execute_workflow_steps, WorkflowStepDefinition};
+use crate::services::ensure_bug_bounty_access;
 use chrono::Utc;
 use sentinel_db::{
     BountyChangeEventRow, BountyChangeEventWorkflowRunRow, Database, DatabaseService,
@@ -258,6 +259,8 @@ pub async fn bounty_run_workflow_template_for_event(
     template_id: String,
     event_id: String,
 ) -> Result<String, String> {
+    ensure_bug_bounty_access()?;
+
     let event = db_service
         .get_bounty_change_event(&event_id)
         .await
@@ -293,6 +296,8 @@ pub async fn bounty_list_change_event_workflow_runs(
     db_service: State<'_, Arc<DatabaseService>>,
     event_id: String,
 ) -> Result<Vec<BountyChangeEventWorkflowRunRow>, String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .list_bounty_change_event_workflow_runs(&event_id)
         .await
@@ -306,6 +311,8 @@ pub async fn bounty_retry_change_event_workflow_run(
     plugin_manager: State<'_, Arc<PluginManager>>,
     execution_id: String,
 ) -> Result<String, String> {
+    ensure_bug_bounty_access()?;
+
     let run = db_service
         .get_bounty_change_event_workflow_run_by_execution_id(&execution_id)
         .await
@@ -357,6 +364,8 @@ pub async fn bounty_get_triggered_workflows(
     db_service: State<'_, Arc<DatabaseService>>,
     event_id: String,
 ) -> Result<Vec<WorkflowTriggerResult>, String> {
+    ensure_bug_bounty_access()?;
+
     bounty_get_triggered_workflows_internal(db_service.inner(), &event_id).await
 }
 
@@ -367,6 +376,8 @@ pub async fn bounty_trigger_workflows_for_event(
     plugin_manager: State<'_, Arc<PluginManager>>,
     event_id: String,
 ) -> Result<Vec<String>, String> {
+    ensure_bug_bounty_access()?;
+
     bounty_trigger_workflows_for_event_internal(
         app_handle,
         db_service.inner().clone(),

@@ -60,6 +60,18 @@ interface MonitorTaskSummaryPayload {
   message?: string | null
 }
 
+interface MonitorPluginFailurePayload {
+  task_id?: string
+  task_name?: string
+  program_id?: string
+  execution_mode?: string
+  plugin_id?: string
+  plugin_label?: string
+  error?: string | null
+  started_at?: string
+  created_at?: string
+}
+
 type PushNotificationInput = Omit<AppNotificationItem, 'id' | 'read' | 'createdAt'> & {
   id?: string
   createdAt?: string
@@ -558,9 +570,11 @@ function formatMonitorNotification(payload: MonitorTaskSummaryPayload): PushNoti
     category: 'notification',
     source: 'monitor',
     level: status === 'failed' ? 'error' : status === 'stopped' ? 'warning' : 'success',
-    title: t('notifications.center.monitorTitle'),
+    title: status === 'failed'
+      ? t('notifications.center.monitorFailureTitle')
+      : t('notifications.center.monitorTitle'),
     message,
-    icon: findingsCreated > 0 ? 'fas fa-bug' : 'fas fa-radar',
+    icon: status === 'failed' ? 'fas fa-triangle-exclamation' : findingsCreated > 0 ? 'fas fa-bug' : 'fas fa-radar',
     route: {
       path: '/bug-bounty',
       query: {
@@ -573,6 +587,44 @@ function formatMonitorNotification(payload: MonitorTaskSummaryPayload): PushNoti
       imported_assets: importedAssets,
       findings_created: findingsCreated,
       findings_updated: findingsUpdated,
+    },
+  }
+}
+
+function formatMonitorPluginFailureNotification(payload: MonitorPluginFailurePayload): PushNotificationInput {
+  const t = getTranslator()
+  const taskId = String(payload.task_id || '').trim()
+  const taskName = String(payload.task_name || '').trim() || t('notifications.center.monitorFallbackTask')
+  const pluginLabel = String(payload.plugin_label || payload.plugin_id || '').trim() || 'plugin'
+  const error = truncateText(
+    toPlainText(payload.error || t('notifications.center.monitorFailed', { name: taskName })),
+    200,
+  )
+
+  return {
+    eventKey: `monitor-plugin:${taskId}:${pluginLabel}:${payload.started_at || payload.created_at || error}`,
+    category: 'notification',
+    source: 'monitor',
+    level: 'error',
+    title: t('notifications.center.monitorFailureTitle'),
+    message: t('notifications.center.monitorPluginFailed', {
+      task: taskName,
+      plugin: pluginLabel,
+      reason: error,
+    }),
+    icon: 'fas fa-triangle-exclamation',
+    route: {
+      path: '/bug-bounty',
+      query: {
+        tab: 'monitor',
+      },
+    },
+    metadata: {
+      task_id: taskId,
+      plugin_id: String(payload.plugin_id || '').trim(),
+      plugin_label: pluginLabel,
+      error,
+      execution_mode: String(payload.execution_mode || '').trim(),
     },
   }
 }
@@ -663,6 +715,15 @@ async function initializeNotificationCenter(router?: Router) {
       const taskId = String(event.payload?.task_id || '').trim()
       if (!taskId) return
       pushNotification(formatMonitorNotification(event.payload || {}))
+    }),
+  )
+
+  unlisteners.push(
+    await listen<MonitorPluginFailurePayload>('monitor:plugin-failed', (event) => {
+      const taskId = String(event.payload?.task_id || '').trim()
+      const pluginId = String(event.payload?.plugin_id || '').trim()
+      if (!taskId || !pluginId) return
+      pushNotification(formatMonitorPluginFailureNotification(event.payload || {}))
     }),
   )
 

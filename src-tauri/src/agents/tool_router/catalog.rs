@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use sentinel_tools::buildin_tools::{
     AskUserQuestionTool, BrowserTool, CloseAgentTool, FileEditTool, FileReadTool, FileWriteTool,
     GlobTool, GrepTool, HttpRequestTool, ListAgentsTool, LspTool, MemoryManagerTool, OcrTool,
-    RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool,
-    TenthManTool, ToolSearchTool, WaitAgentsTool, WebSearchTool,
+    PluginAuthoringTool, RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool,
+    SpawnAgentTool, TasksTool, TenthManTool, ToolSearchTool, WaitAgentsTool, WebSearchTool,
 };
 use sentinel_tools::terminal::server::TerminalServer;
 
@@ -27,6 +27,25 @@ pub fn build_default_tools() -> Vec<ToolMetadata> {
             cost_estimate: ToolCost::Low,
             always_available: true,
             exposure: ToolExposure::Always,
+        },
+        ToolMetadata {
+            id: PluginAuthoringTool::NAME.to_string(),
+            name: PluginAuthoringTool::NAME.to_string(),
+            description: PluginAuthoringTool::DESCRIPTION.to_string(),
+            category: ToolCategory::Plugin,
+            tags: vec![
+                "plugin".to_string(),
+                "authoring".to_string(),
+                "generate".to_string(),
+                "draft".to_string(),
+                "enable".to_string(),
+            ],
+            search_hint: Some(
+                "generate, improve, validate, test, draft, or enable a Sentinel plugin".to_string(),
+            ),
+            cost_estimate: ToolCost::High,
+            always_available: true,
+            exposure: ToolExposure::Core,
         },
         ToolMetadata {
             id: ToolSearchTool::NAME.to_string(),

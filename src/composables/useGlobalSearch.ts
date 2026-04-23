@@ -2,13 +2,16 @@ import { computed, unref, type ComputedRef, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Finding } from '@/components/SecurityCenter/vulnerabilityFindingTypes'
 import type { GlobalSearchEntry } from '@/services/globalSearch'
+import { useFeatureEntitlementsState } from '@/services/featureEntitlements'
 import { searchGlobalEntries } from '@/services/globalSearch'
 import {
+  createBountyKnowledgeSearchEntries,
   createKnowledgeDocumentSearchEntries,
   createPluginSearchEntries,
   createScanTaskSearchEntries,
   createWorkflowDefinitionSearchEntries,
   createWorkflowRunSearchEntries,
+  type SearchBountyKnowledgeItem,
   type SearchKnowledgeDocumentItem,
   type SearchPluginItem,
   type SearchScanTaskItem,
@@ -286,17 +289,26 @@ export function useGlobalSearch(options?: {
   workflowDefinitions?: SearchEntrySource<SearchWorkflowDefinitionItem[]>
   workflowRuns?: SearchEntrySource<SearchWorkflowRunItem[]>
   knowledgeDocuments?: SearchEntrySource<SearchKnowledgeDocumentItem[]>
+  bountyKnowledgeNotes?: SearchEntrySource<SearchBountyKnowledgeItem[]>
   plugins?: SearchEntrySource<SearchPluginItem[]>
 }) {
   const { t } = useI18n()
+  const entitlements = useFeatureEntitlementsState()
   const entries = computed(() => {
     const staticEntries = createGlobalSearchEntries((key, fallback) => t(key, fallback))
+      .filter(entry => {
+        if (entry.path === '/bug-bounty' && !entitlements.value.can_access_bug_bounty) {
+          return false
+        }
+        return true
+      })
     const notifications = createNotificationSearchEntries(unref(options?.notifications) || [])
     const findings = createFindingSearchEntries(unref(options?.findings) || [])
     const scanTasks = createScanTaskSearchEntries(unref(options?.scanTasks) || [])
     const workflowDefinitions = createWorkflowDefinitionSearchEntries(unref(options?.workflowDefinitions) || [])
     const workflowRuns = createWorkflowRunSearchEntries(unref(options?.workflowRuns) || [])
     const knowledgeDocuments = createKnowledgeDocumentSearchEntries(unref(options?.knowledgeDocuments) || [])
+    const bountyKnowledgeNotes = createBountyKnowledgeSearchEntries(unref(options?.bountyKnowledgeNotes) || [])
     const plugins = createPluginSearchEntries(unref(options?.plugins) || [])
     return [
       ...staticEntries,
@@ -306,6 +318,7 @@ export function useGlobalSearch(options?: {
       ...workflowDefinitions,
       ...workflowRuns,
       ...knowledgeDocuments,
+      ...bountyKnowledgeNotes,
       ...plugins,
     ]
   })

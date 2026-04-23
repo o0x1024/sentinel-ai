@@ -3,15 +3,11 @@ import {
   claimAssistantPresentationTarget,
   releaseAssistantPresentationTarget,
 } from './assistantPresentation'
-import { immersiveDrillModeEnabled } from './immersiveDrillMode'
 import {
   clearImmersiveToolMinimized,
   markImmersiveToolMinimized,
 } from './immersiveMinimizedToolTray'
-import {
-  closeOtherImmersiveTools,
-  registerImmersiveToolCloser,
-} from './immersiveToolCoordinator'
+import { registerImmersiveToolCloser } from './immersiveToolCoordinator'
 
 export type TrafficAssistantDisplayMode = 'panel' | 'immersive'
 
@@ -25,10 +21,6 @@ export const trafficAssistantDisplayMode = readonly(trafficAssistantDisplayModeS
 export const trafficAssistantVisible = computed(() => trafficAssistantOpenState.value)
 
 export function openTrafficAssistantPanel() {
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('traffic-assistant')
-  }
-
   trafficAssistantOpenState.value = true
   trafficAssistantMinimizedState.value = false
   clearImmersiveToolMinimized('traffic-assistant')
@@ -37,10 +29,6 @@ export function openTrafficAssistantPanel() {
 }
 
 export function openTrafficAssistantImmersive() {
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('traffic-assistant')
-  }
-
   trafficAssistantOpenState.value = true
   trafficAssistantMinimizedState.value = false
   clearImmersiveToolMinimized('traffic-assistant')
@@ -49,10 +37,6 @@ export function openTrafficAssistantImmersive() {
 }
 
 export function setTrafficAssistantDisplayMode(mode: TrafficAssistantDisplayMode) {
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('traffic-assistant')
-  }
-
   trafficAssistantOpenState.value = true
   trafficAssistantMinimizedState.value = false
   clearImmersiveToolMinimized('traffic-assistant')
@@ -74,10 +58,6 @@ export function minimizeTrafficAssistant() {
 export function restoreTrafficAssistant() {
   if (!trafficAssistantMinimizedState.value && !trafficAssistantOpenState.value) {
     return
-  }
-
-  if (immersiveDrillModeEnabled.value) {
-    closeOtherImmersiveTools('traffic-assistant')
   }
 
   trafficAssistantOpenState.value = true

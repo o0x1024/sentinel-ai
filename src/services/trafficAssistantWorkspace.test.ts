@@ -85,7 +85,7 @@ describe('trafficAssistantWorkspace', () => {
     expect(activeAssistantPresentationTarget.value).toBe('page')
   })
 
-  it('closes other immersive tools before opening in drill mode', () => {
+  it('keeps other immersive tools open when the assistant opens in drill mode', () => {
     const { workbenchOpen } = useImmersiveTrafficDockState()
 
     setImmersiveDrillModeEnabled(true)
@@ -95,8 +95,8 @@ describe('trafficAssistantWorkspace', () => {
     openTrafficAssistantPanel()
 
     expect(trafficAssistantOpen.value).toBe(true)
-    expect(workbenchOpen.value).toBe(false)
-    expect(immersiveSecurityCenterSidebarOpen.value).toBe(false)
+    expect(workbenchOpen.value).toBe(true)
+    expect(immersiveSecurityCenterSidebarOpen.value).toBe(true)
   })
 
   it('does not clear minimized tools when another immersive tool opens', () => {

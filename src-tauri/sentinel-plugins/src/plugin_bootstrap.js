@@ -53,6 +53,13 @@ import { DOMException } from 'ext:deno_web/01_dom_exception.js'
 import { BroadcastChannel } from 'ext:deno_web/01_broadcast_channel.js'
 import { CompressionStream, DecompressionStream } from 'ext:deno_web/14_compression.js'
 import { performance, Performance, PerformanceEntry, PerformanceMark, PerformanceMeasure } from 'ext:deno_web/15_performance.js'
+import {
+  buildActiveProbeMetadata,
+  emitActiveProbeEvent,
+  normalizeActiveProbeOptions,
+  reportActiveProbeOutcome,
+  scheduleActiveProbe,
+} from 'ext:sentinel_plugin_ext/active_probe_runtime.js'
 
 // deno_net
 import * as net from 'ext:deno_net/01_net.js'
@@ -68,6 +75,20 @@ import { crypto, Crypto, SubtleCrypto } from 'ext:deno_crypto/00_crypto.js'
 globalThis.Sentinel = {
   log: (level, message) => {
     Deno.core.ops.op_plugin_log(level, message)
+  },
+
+  emitFinding: finding => {
+    return Deno.core.ops.op_emit_finding(finding)
+  },
+
+  emitActiveProbe: payload => {
+    return Deno.core.ops.op_emit_active_probe_event(payload)
+  },
+
+  Runtime: {
+    getSettings: () => {
+      return Deno.core.ops.op_get_plugin_runtime_settings()
+    },
   },
 
   TLS: {
@@ -580,109 +601,41 @@ globalThis.Deno.makeTempFile = async function(options = {}) {
 // Deno.core (already available, but ensure it's exposed)
 globalThis.Deno.core = globalThis.Deno.core || Deno.core
 
-const ACTIVE_PROBE_DEFAULTS = {
-  jitterRange: [300, 1000],
-  minHostCooldownMs: 1000,
-}
-
-const activeProbeHostQueues = new Map()
-const activeProbeHostLastRun = new Map()
-
-function clampPositiveInteger(value, fallback) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0
-    ? Math.trunc(value)
-    : fallback
-}
-
-function normalizeActiveProbeOptions(url, init = {}) {
-  const source =
-    init.activeProbe && typeof init.activeProbe === 'object'
-      ? init.activeProbe
-      : init.activeProbe
-        ? {}
-        : null
-
-  if (!source) {
+async function serializeFetchBody(body) {
+  if (body === null || body === undefined) {
     return null
   }
 
-  let key = 'global'
-  try {
-    key = source.cooldownKey || init.cooldownKey || new URL(String(url)).host || 'global'
-  } catch {
-    key = source.cooldownKey || init.cooldownKey || 'global'
+  if (typeof body === 'string') {
+    return { kind: 'text', text: body }
   }
 
-  const rawRange =
-    source.jitterRange || init.jitterRange || ACTIVE_PROBE_DEFAULTS.jitterRange
-  const normalizedRange = Array.isArray(rawRange) && rawRange.length === 2
-    ? [
-        clampPositiveInteger(rawRange[0], ACTIVE_PROBE_DEFAULTS.jitterRange[0]),
-        clampPositiveInteger(rawRange[1], ACTIVE_PROBE_DEFAULTS.jitterRange[1]),
-      ]
-    : [...ACTIVE_PROBE_DEFAULTS.jitterRange]
-  const jitterMin = Math.min(normalizedRange[0], normalizedRange[1])
-  const jitterMax = Math.max(normalizedRange[0], normalizedRange[1])
-
-  return {
-    key,
-    jitterRange: [jitterMin, jitterMax],
-    minHostCooldownMs: clampPositiveInteger(
-      source.minHostCooldownMs ?? init.minHostCooldownMs,
-      ACTIVE_PROBE_DEFAULTS.minHostCooldownMs,
-    ),
+  if (body instanceof URLSearchParams) {
+    return { kind: 'text', text: body.toString() }
   }
+
+  if (body instanceof Uint8Array) {
+    return { kind: 'bytes', bytes: Array.from(body) }
+  }
+
+  if (body instanceof ArrayBuffer) {
+    return { kind: 'bytes', bytes: Array.from(new Uint8Array(body)) }
+  }
+
+  if (body instanceof Blob) {
+    return { kind: 'bytes', bytes: Array.from(new Uint8Array(await body.arrayBuffer())) }
+  }
+
+  throw new TypeError(`Unsupported fetch body type: ${Object.prototype.toString.call(body)}`)
 }
 
-function randomIntInclusive(min, max) {
-  if (max <= min) {
-    return min
-  }
-  return Math.floor(Math.random() * (max - min + 1)) + min
-}
-
-async function scheduleActiveProbe(url, init, task) {
-  const options = normalizeActiveProbeOptions(url, init)
-  if (!options) {
-    return await task()
-  }
-
-  const previous = activeProbeHostQueues.get(options.key) || Promise.resolve()
-  const runPromise = previous.catch(() => {}).then(async () => {
-    const lastRun = activeProbeHostLastRun.get(options.key) || 0
-    const cooldownWait = Math.max(
-      0,
-      options.minHostCooldownMs - (Date.now() - lastRun),
-    )
-    const jitterWait = randomIntInclusive(
-      options.jitterRange[0],
-      options.jitterRange[1],
-    )
-
-    if (cooldownWait + jitterWait > 0) {
-      await globalThis.sleep(cooldownWait + jitterWait)
-    }
-
-    activeProbeHostLastRun.set(options.key, Date.now())
-    return await task()
-  })
-
-  const queuedPromise = runPromise.finally(() => {
-    if (activeProbeHostQueues.get(options.key) === queuedPromise) {
-      activeProbeHostQueues.delete(options.key)
-    }
-  })
-
-  activeProbeHostQueues.set(options.key, queuedPromise)
-
-  return await runPromise
-}
 
 // Fetch polyfill (custom op based) with enhanced features for security testing
 globalThis.fetch = async function (input, init = {}) {
   const url = typeof input === 'string' ? input : input.url
   const method = init.method || (input.method || 'GET')
   const signal = init.signal || input.signal || null
+  const activeProbeOptions = normalizeActiveProbeOptions(url, init)
   const headers = {}
 
   if (init.headers) {
@@ -695,8 +648,8 @@ globalThis.fetch = async function (input, init = {}) {
     }
   }
 
-  const body = init.body || null
-  const timeout = init.timeout || 30000
+  const body = await serializeFetchBody(init.body)
+  const timeout = init.timeout || (activeProbeOptions ? activeProbeOptions.timeoutMs : 30000)
   const redirect = init.redirect || 'follow'
   const maxRedirects =
     typeof init.maxRedirects === 'number' && Number.isFinite(init.maxRedirects)
@@ -710,6 +663,10 @@ globalThis.fetch = async function (input, init = {}) {
     typeof crypto?.randomUUID === 'function'
       ? crypto.randomUUID()
       : `fetch_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  const activeProbeMetadata =
+    activeProbeOptions
+      ? buildActiveProbeMetadata(url, method, headers, requestId, init)
+      : null
 
   if (signal?.aborted) {
     throw new DOMException('The operation was aborted.', 'AbortError')
@@ -735,18 +692,42 @@ globalThis.fetch = async function (input, init = {}) {
 
   let result
   try {
-    result = await scheduleActiveProbe(url, init, async () => {
-      return await Deno.core.ops.op_fetch(url, {
-        method,
-        headers,
-        body,
-        timeout,
-        redirect,
-        max_redirects: maxRedirects,
-        max_body_bytes: maxBodyBytes,
-        request_id: requestId,
-      })
-    })
+    try {
+      result = await scheduleActiveProbe(url, init, async schedulingState => {
+        const responseStartedAt = Date.now()
+        const fetchResult = await Deno.core.ops.op_fetch(url, {
+          method,
+          headers,
+          body,
+          timeout,
+          redirect,
+          max_redirects: maxRedirects,
+          max_body_bytes: maxBodyBytes,
+          request_id: requestId,
+        })
+        return {
+          ...fetchResult,
+          __activeProbeSchedulingState: schedulingState || null,
+          __responseElapsedMs: Date.now() - responseStartedAt,
+        }
+      }, activeProbeMetadata)
+    } catch (error) {
+      if (activeProbeOptions) {
+        reportActiveProbeOutcome(activeProbeOptions, {
+          error: String(error),
+        })
+      }
+      if (activeProbeMetadata) {
+        emitActiveProbeEvent({
+          ...activeProbeMetadata,
+          phase: 'failed',
+          error: String(error),
+          probe_class: activeProbeOptions?.probeClass,
+          probe_priority: activeProbeOptions?.priority,
+        })
+      }
+      throw error
+    }
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
     if (signal) {
@@ -754,7 +735,28 @@ globalThis.fetch = async function (input, init = {}) {
     }
   }
 
+  const schedulingState = result.__activeProbeSchedulingState || null
+  const responseElapsedMs =
+    typeof result.__responseElapsedMs === 'number' ? result.__responseElapsedMs : undefined
+
   if (!result.success) {
+    if (activeProbeOptions) {
+      reportActiveProbeOutcome(activeProbeOptions, {
+        status: result.status,
+        error: result.error || 'Fetch failed',
+        responseElapsedMs,
+      })
+    }
+    if (activeProbeMetadata) {
+      emitActiveProbeEvent({
+        ...activeProbeMetadata,
+        phase: 'failed',
+        ...(schedulingState || {}),
+        status: result.status || undefined,
+        error: result.error || 'Fetch failed',
+        response_elapsed_ms: responseElapsedMs,
+      })
+    }
     if (didTimeout || /timeout/i.test(result.error || '')) {
       throw new Error(`Timeout after ${timeout}ms`)
     }
@@ -762,6 +764,22 @@ globalThis.fetch = async function (input, init = {}) {
       throw new DOMException('The operation was aborted.', 'AbortError')
     }
     throw new Error(result.error || 'Fetch failed')
+  }
+
+  if (activeProbeOptions) {
+    reportActiveProbeOutcome(activeProbeOptions, {
+      status: result.status,
+      responseElapsedMs,
+    })
+  }
+  if (activeProbeMetadata) {
+    emitActiveProbeEvent({
+      ...activeProbeMetadata,
+      phase: 'completed',
+      ...(schedulingState || {}),
+      status: result.status,
+      response_elapsed_ms: responseElapsedMs,
+    })
   }
 
   return {

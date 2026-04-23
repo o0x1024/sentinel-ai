@@ -1,3 +1,4 @@
+use crate::services::ensure_bug_bounty_access;
 use chrono::Utc;
 use sentinel_db::DatabaseService;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,8 @@ pub async fn bounty_update_workflow_binding(
     id: String,
     request: UpdateWorkflowBindingRequest,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     let mut binding = db_service
         .get_bounty_workflow_binding(&id)
         .await

@@ -24,6 +24,8 @@ export interface HttpRequestDraft {
 export interface HttpExchangeRequest {
   endpoint: HttpEndpoint
   absoluteUrl: string
+  sourceRequestId?: number | null
+  preferredRequestView?: 'pretty' | 'raw'
   request: HttpRequestDraft
 }
 
@@ -33,6 +35,7 @@ export interface HttpReplayResponse {
   statusText?: string
   headers: HttpHeaderEntry[]
   bodyText: string
+  bodyBytesBase64?: string
   rawText: string
   responseTimeMs: number
 }

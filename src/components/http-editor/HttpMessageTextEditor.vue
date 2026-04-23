@@ -117,19 +117,27 @@ import {
   watch,
 } from 'vue'
 import { EditorState, Compartment } from '@codemirror/state'
-import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view'
+import { EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, indentWithTab, history, undo, redo } from '@codemirror/commands'
 import { SearchQuery, findNext, findPrevious, getSearchQuery, search, setSearchQuery } from '@codemirror/search'
 import { useI18n } from 'vue-i18n'
 import { getHttpCodeThemeExtensions, isDarkHttpEditorTheme } from './httpEditorTheme'
 import { computeMinimalTextChange } from './httpEditorContentSync'
 import { createLineEndingIndicatorExtension, getDetectedLineEndingLabel } from './httpEditorDisplayExtensions'
+import { createSearchHighlightExtension } from './httpEditorSearchHighlight'
 import { getHttpEditorLanguageExtensions, getHttpLanguageSignature } from './httpEditorHttpMode'
-import { shouldHighlightTrafficMessageSyntax, useTrafficDisplaySettings, type TrafficMessageType } from '@/components/traffic/trafficDisplaySettings'
+import { useHttpEditorSyntaxWarmup } from './useHttpEditorSyntaxWarmup'
+import {
+  shouldHighlightTrafficMessageSyntax,
+  TRAFFIC_MESSAGE_TEXT_LINE_HEIGHT,
+  useTrafficDisplaySettings,
+  type TrafficMessageType,
+} from '@/components/traffic/trafficDisplaySettings'
 import { getIntruderMarkerEditorExtensions } from '@/components/traffic/intruder/intruderMarkerEditorExtension'
 
 const scrollStateCache = new Map<string, { top: number; left: number }>()
 const MAX_SCROLL_STATE_CACHE_SIZE = 100
+const HTTP_EDITOR_SCROLL_STATE_STORAGE_PREFIX = 'sentinel:http-editor-scroll:'
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -194,6 +202,9 @@ let currentMarkerSignature = ''
 let currentReadonlyAccessibilitySignature = ''
 let currentSearchExtensionSignature = ''
 let contextMenuListenerAttached = false
+let pendingScrollRestoreState: { top: number; left: number } | null = null
+let pendingScrollRestoreFrames = 0
+let pendingScrollRestoreAnimationFrame: number | null = null
 const editorThemeMode = ref<'burp-light' | 'burp-dark'>(isDarkHttpEditorTheme() ? 'burp-dark' : 'burp-light')
 const readOnlyCompartment = new Compartment()
 const editableCompartment = new Compartment()
@@ -204,11 +215,13 @@ const themeCompartment = new Compartment()
 const markerCompartment = new Compartment()
 const readonlyAccessibilityCompartment = new Compartment()
 const searchCompartment = new Compartment()
+const searchHighlightCompartment = new Compartment()
 const { t } = useI18n()
 const { settings } = useTrafficDisplaySettings()
 const editorStyle = computed(() => ({
   '--traffic-editor-font-size': `${settings.value.fontSize}px`,
   '--traffic-editor-font-family': settings.value.fontFamily,
+  '--traffic-editor-line-height': String(TRAFFIC_MESSAGE_TEXT_LINE_HEIGHT),
 }))
 const lineEndingToggleTitle = computed(() => (
   settings.value.showLineEndings
@@ -220,6 +233,16 @@ const lineWrapToggleTitle = computed(() => (
     ? t('trafficAnalysis.httpEditor.toolbar.disableLineWrap')
     : t('trafficAnalysis.httpEditor.toolbar.enableLineWrap')
 ))
+const {
+  forceVisibleSyntaxHighlight,
+  cancelPendingSyntaxForce,
+  observeEditorContainer,
+  disconnectEditorResizeObserver,
+} = useHttpEditorSyntaxWarmup({
+  getEditorView: () => editorView,
+  getEditorContainer: () => editorContainer.value,
+  getMessageType: () => props.messageType,
+})
 const hasInvalidSearchQuery = computed(() => {
   if (!searchQuery.value || !props.showSearchBar) return false
   return !buildSearchQuery().valid
@@ -289,6 +312,14 @@ function getMarkerExtensions() {
 
 function getSearchExtensions() {
   return props.showSearchBar ? [search()] : []
+}
+
+function getSearchHighlightExtensions() {
+  if (!props.showSearchBar) {
+    return []
+  }
+
+  return createSearchHighlightExtension(buildSearchQuery())
 }
 
 function getReadonlyAccessibilityExtensions() {
@@ -363,11 +394,15 @@ function getBaseExtensions() {
   ])
   const baseEditorExtensions = [
     lineNumbers(),
-    drawSelection(),
     highlightSpecialChars(),
-    highlightActiveLineGutter(),
-    highlightActiveLine(),
   ]
+
+  if (!props.readonly) {
+    baseEditorExtensions.push(
+      highlightActiveLineGutter(),
+      highlightActiveLine(),
+    )
+  }
 
   return [
     sharedKeymap,
@@ -400,17 +435,34 @@ function updateContextMenuBinding() {
 function saveScrollStateForKey(stateKey: string) {
   if (!stateKey || !editorView) return
   const scroller = editorView.scrollDOM
+  if (
+    !scroller.isConnected
+    || scroller.clientHeight <= 0
+    || scroller.scrollHeight <= 0
+  ) {
+    return
+  }
+  const scrollState = {
+    top: scroller.scrollTop,
+    left: scroller.scrollLeft,
+  }
   if (scrollStateCache.has(stateKey)) {
     scrollStateCache.delete(stateKey)
   }
-  scrollStateCache.set(stateKey, {
-    top: scroller.scrollTop,
-    left: scroller.scrollLeft,
-  })
+  scrollStateCache.set(stateKey, scrollState)
   while (scrollStateCache.size > MAX_SCROLL_STATE_CACHE_SIZE) {
     const oldestKey = scrollStateCache.keys().next().value
     if (!oldestKey) break
     scrollStateCache.delete(oldestKey)
+  }
+
+  try {
+    window.sessionStorage.setItem(
+      `${HTTP_EDITOR_SCROLL_STATE_STORAGE_PREFIX}${stateKey}`,
+      JSON.stringify(scrollState),
+    )
+  } catch {
+    // Ignore storage quota or privacy-mode failures and keep in-memory fallback.
   }
 }
 
@@ -420,17 +472,97 @@ function saveScrollState() {
 
 function restoreScrollState() {
   if (!props.stateKey || !editorView) return
-  const state = scrollStateCache.get(props.stateKey)
+  const state = scrollStateCache.get(props.stateKey) ?? loadPersistedScrollState(props.stateKey)
   if (!state) return
   const scroller = editorView.scrollDOM
   scroller.scrollTop = state.top
   scroller.scrollLeft = state.left
 }
 
-function restoreScrollStateOnNextFrame() {
-  requestAnimationFrame(() => {
-    restoreScrollState()
-  })
+function loadPersistedScrollState(stateKey: string) {
+  try {
+    const persisted = window.sessionStorage.getItem(`${HTTP_EDITOR_SCROLL_STATE_STORAGE_PREFIX}${stateKey}`)
+    if (!persisted) return null
+    const parsed = JSON.parse(persisted)
+    if (!Number.isFinite(parsed?.top) || !Number.isFinite(parsed?.left)) {
+      return null
+    }
+    const state = {
+      top: parsed.top,
+      left: parsed.left,
+    }
+    scrollStateCache.set(stateKey, state)
+    return state
+  } catch {
+    return null
+  }
+}
+
+function restoreScrollStateWithRetries(retries = 4) {
+  if (!props.stateKey) {
+    return
+  }
+
+  const state = scrollStateCache.get(props.stateKey) ?? loadPersistedScrollState(props.stateKey)
+  if (!state) {
+    return
+  }
+
+  pendingScrollRestoreState = state
+  pendingScrollRestoreFrames = Math.max(retries, 1)
+
+  if (pendingScrollRestoreAnimationFrame !== null) {
+    cancelAnimationFrame(pendingScrollRestoreAnimationFrame)
+  }
+
+  const applyPendingScrollRestore = () => {
+    if (!editorView || !pendingScrollRestoreState) {
+      pendingScrollRestoreAnimationFrame = null
+      return
+    }
+
+    const scroller = editorView.scrollDOM
+    scroller.scrollTop = pendingScrollRestoreState.top
+    scroller.scrollLeft = pendingScrollRestoreState.left
+
+    pendingScrollRestoreFrames -= 1
+    if (pendingScrollRestoreFrames <= 0) {
+      pendingScrollRestoreAnimationFrame = null
+      pendingScrollRestoreState = null
+      return
+    }
+
+    pendingScrollRestoreAnimationFrame = requestAnimationFrame(applyPendingScrollRestore)
+  }
+
+  pendingScrollRestoreAnimationFrame = requestAnimationFrame(applyPendingScrollRestore)
+}
+
+function cancelPendingScrollRestore() {
+  if (pendingScrollRestoreAnimationFrame !== null) {
+    cancelAnimationFrame(pendingScrollRestoreAnimationFrame)
+    pendingScrollRestoreAnimationFrame = null
+  }
+  pendingScrollRestoreState = null
+  pendingScrollRestoreFrames = 0
+}
+
+function destroyEditorView() {
+  if (!editorView) {
+    return
+  }
+
+  cancelPendingScrollRestore()
+  cancelPendingSyntaxForce()
+
+  saveScrollState()
+  if (contextMenuListenerAttached) {
+    editorView.dom.removeEventListener('contextmenu', handleEditorContextMenu, { capture: true })
+    contextMenuListenerAttached = false
+  }
+  editorView.scrollDOM.removeEventListener('scroll', saveScrollState)
+  editorView.destroy()
+  editorView = null
 }
 
 function buildSearchQuery() {
@@ -488,7 +620,10 @@ function applySearchState(navigateToMatch = false) {
   if (!editorView || !props.showSearchBar) return
   const query = buildSearchQuery()
   editorView.dispatch({
-    effects: setSearchQuery.of(query),
+    effects: [
+      setSearchQuery.of(query),
+      searchHighlightCompartment.reconfigure(getSearchHighlightExtensions()),
+    ],
   })
   if (navigateToMatch && query.search && query.valid) {
     findNext(editorView)
@@ -554,13 +689,7 @@ function initEditor() {
       head: editorView.state.selection.main.head,
     }
     previousFocused = editorView.hasFocus
-    saveScrollState()
-    if (props.customContextMenu) {
-      editorView.dom.removeEventListener('contextmenu', handleEditorContextMenu, { capture: true })
-    }
-    editorView.scrollDOM.removeEventListener('scroll', saveScrollState)
-    editorView.destroy()
-    editorView = null
+    destroyEditorView()
   }
 
   editorContainer.value.innerHTML = ''
@@ -577,6 +706,7 @@ function initEditor() {
     extensions: [
       ...getBaseExtensions(),
       searchCompartment.of(getSearchExtensions()),
+      searchHighlightCompartment.of(getSearchHighlightExtensions()),
       languageCompartment.of(getLanguageExtensions(initialContent)),
       themeCompartment.of(getThemeExtensions()),
       markerCompartment.of(getMarkerExtensions()),
@@ -609,6 +739,7 @@ function initEditor() {
     parent: editorContainer.value,
   })
 
+  forceVisibleSyntaxHighlight(8)
   updateContextMenuBinding()
   editorView.scrollDOM.addEventListener('scroll', saveScrollState, { passive: true })
   requestAnimationFrame(() => {
@@ -644,6 +775,7 @@ function syncContentAndLanguage(content: string) {
   if (!minimalChange) {
     if (effects.length) {
       editorView.dispatch({ effects })
+      forceVisibleSyntaxHighlight()
     }
     return
   }
@@ -652,6 +784,7 @@ function syncContentAndLanguage(content: string) {
     changes: minimalChange,
     effects,
   })
+  forceVisibleSyntaxHighlight()
 }
 
 function updateReadonly(readonly: boolean) {
@@ -669,6 +802,7 @@ function updateLineWrap(enabled: boolean) {
   editorView.dispatch({
     effects: lineWrapCompartment.reconfigure(enabled ? EditorView.lineWrapping : []),
   })
+  forceVisibleSyntaxHighlight()
 }
 
 function updateLineEndings(enabled: boolean) {
@@ -691,6 +825,7 @@ function updateTheme() {
   editorView.dispatch({
     effects: themeCompartment.reconfigure(getThemeExtensions()),
   })
+  forceVisibleSyntaxHighlight()
 }
 
 function updateMarker() {
@@ -719,7 +854,10 @@ function updateSearchExtension() {
   if (nextSignature === currentSearchExtensionSignature) return
   currentSearchExtensionSignature = nextSignature
   editorView.dispatch({
-    effects: searchCompartment.reconfigure(getSearchExtensions()),
+    effects: [
+      searchCompartment.reconfigure(getSearchExtensions()),
+      searchHighlightCompartment.reconfigure(getSearchHighlightExtensions()),
+    ],
   })
   if (!props.showSearchBar) {
     totalSearchMatches.value = 0
@@ -798,9 +936,7 @@ watch(() => props.stateKey, (newKey, oldKey) => {
     saveScrollStateForKey(oldKey)
   }
 
-  requestAnimationFrame(() => {
-    restoreScrollState()
-  })
+  restoreScrollStateWithRetries(24)
 })
 
 watch(() => props.showSearchBar, () => {
@@ -839,6 +975,7 @@ let themeObserver: MutationObserver | null = null
 onMounted(async () => {
   await nextTick()
   initEditor()
+  observeEditorContainer()
 
   themeObserver = new MutationObserver(() => {
     updateTheme()
@@ -854,23 +991,15 @@ onDeactivated(() => {
 })
 
 onActivated(() => {
-  restoreScrollStateOnNextFrame()
+  restoreScrollStateWithRetries(24)
 })
 
 onUnmounted(() => {
-  saveScrollState()
-  if (editorView) {
-    if (contextMenuListenerAttached) {
-      editorView.dom.removeEventListener('contextmenu', handleEditorContextMenu, { capture: true })
-    }
-    editorView.scrollDOM.removeEventListener('scroll', saveScrollState)
-    editorView.destroy()
-    editorView = null
-    contextMenuListenerAttached = false
-  }
+  destroyEditorView()
   if (themeObserver) {
     themeObserver.disconnect()
   }
+  disconnectEditorResizeObserver()
 })
 </script>
 
@@ -952,9 +1081,35 @@ onUnmounted(() => {
   gap: 0.25rem;
 }
 
+.http-code-editor.readonly-mode .editor-search-bar {
+  gap: 0.375rem;
+  padding: 0.3rem 0.4rem;
+}
+
+.http-code-editor.readonly-mode .editor-search-actions {
+  gap: 0.2rem;
+}
+
+.http-code-editor.readonly-mode .editor-search-bar :deep(.input.input-sm) {
+  min-height: 1.8rem;
+  height: 1.8rem;
+  padding-inline: 0.55rem;
+}
+
+.http-code-editor.readonly-mode .editor-search-bar :deep(.btn.btn-xs) {
+  min-height: 1.7rem;
+  height: 1.7rem;
+  padding-inline: 0.45rem;
+}
+
+.http-code-editor.readonly-mode .editor-search-bar :deep(.btn.btn-xs i) {
+  font-size: 0.72rem;
+}
+
 :deep(.cm-editor) {
   height: 100%;
   font-size: var(--traffic-editor-font-size, 13px);
+  line-height: var(--traffic-editor-line-height, 1.3);
   font-variant-ligatures: none;
 }
 
@@ -966,6 +1121,12 @@ onUnmounted(() => {
 
 :deep(.cm-content) {
   user-select: text;
+  line-height: var(--traffic-editor-line-height, 1.3);
+}
+
+:deep(.cm-gutterElement) {
+  line-height: var(--traffic-editor-line-height, 1.3);
+  padding-right: 0.65rem;
 }
 
 :deep(.cm-line) {
@@ -979,10 +1140,6 @@ onUnmounted(() => {
 :deep(.cm-gutters) {
   min-width: 3rem;
   user-select: none;
-}
-
-:deep(.cm-gutterElement) {
-  padding-right: 0.65rem;
 }
 
 :deep(.cm-lineNumbers .cm-gutterElement) {
@@ -1000,11 +1157,6 @@ onUnmounted(() => {
 :deep(.cm-editor) {
   cursor: text;
   user-select: text;
-}
-
-:deep(.cm-selectionLayer .cm-selectionBackground) {
-  background-color: var(--traffic-selection-bg, #cfe3ff) !important;
-  border-radius: 0;
 }
 
 :deep(.cm-content ::selection) {
@@ -1049,6 +1201,19 @@ onUnmounted(() => {
   background: linear-gradient(180deg, #fafafa 0%, #f3f3f3 100%);
 }
 
+.http-code-editor.burp-light.readonly-mode .editor-search-bar {
+  border-top-color: #e6e6e6;
+  background: linear-gradient(180deg, #f8f8f8 0%, #f2f2f2 100%);
+}
+
+.http-code-editor.burp-light.readonly-mode .editor-search-bar :deep(.input) {
+  box-shadow: none;
+}
+
+.http-code-editor.burp-light.readonly-mode .editor-search-bar :deep(.btn) {
+  box-shadow: none;
+}
+
 .http-code-editor.burp-dark {
   border-color: #30363d;
   background: #1f2329;
@@ -1070,6 +1235,15 @@ onUnmounted(() => {
 .http-code-editor.burp-dark .editor-topbar {
   border-bottom: 1px solid #30363d;
   background: linear-gradient(180deg, #22272e 0%, #1b2026 100%);
+}
+
+.http-code-editor.burp-dark.readonly-mode .editor-search-bar {
+  border-top-color: #2b3138;
+  background: linear-gradient(180deg, #1c2128 0%, #171b20 100%);
+}
+
+.http-code-editor.burp-dark.readonly-mode .editor-search-bar :deep(.input) {
+  background: #1f252c;
 }
 
 .http-code-editor.burp-dark .editor-search-bar :deep(.input) {

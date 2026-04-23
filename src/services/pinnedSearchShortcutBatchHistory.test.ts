@@ -130,22 +130,23 @@ describe('pinnedSearchShortcutBatchHistory', () => {
   })
 
   it('infers operation type for legacy entries without structured metadata', () => {
+    const now = getFixedNow()
     const entries = prunePinnedSearchShortcutBatchHistoryEntries([
       {
         id: 'legacy-remove',
         title: '批量取消固定',
         summary: '移除 2 项',
-        createdAt: getFixedNow(),
+        createdAt: now,
         previousSnapshots: [],
       } as any,
       {
         id: 'legacy-tag-remove',
         title: '批量移除标签',
         summary: '移除标签 #巡检 到 2 项',
-        createdAt: getFixedNow(),
+        createdAt: now,
         previousSnapshots: [],
       } as any,
-    ])
+    ], now)
 
     expect(entries.map(entry => entry.operationType)).toEqual(['remove', 'tag-remove'])
   })

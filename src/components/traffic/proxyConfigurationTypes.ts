@@ -36,6 +36,83 @@ export interface TrafficBehaviorSignalSettings {
   browserExtensionLastSeenAt: string | null
 }
 
+export interface TrafficOastConfig {
+  enabled: boolean
+  serverBaseUrl: string
+  apiKey: string
+  pollIntervalSecs: number
+  requestTimeoutSecs: number
+}
+
+export interface TrafficPluginActiveProbeSettings {
+  jitterRange: [number, number]
+  minHostCooldownMs: number
+  maxConcurrentPerHost: number
+  timeoutMs: number
+}
+
+export interface TrafficPluginRuntimeSettings {
+  activeProbe: TrafficPluginActiveProbeSettings
+}
+
+export interface TrafficOastTestResult {
+  reachable: boolean
+  message: string
+  generatedToken: string | null
+  generatedFqdn: string | null
+}
+
+export interface TrafficOastEvent {
+  time: string
+  host: string
+  method: string
+  url: string
+  path: string
+  query: unknown
+  userAgent: string
+  referer: string
+  ip: string
+  ray: string
+  colo: string
+  country: string
+  asn: number | null
+}
+
+export interface TrafficOastEventKey {
+  time: string
+  method: string
+  url: string
+  ip: string
+}
+
+export interface TrafficOastRecord {
+  token: string
+  fqdn: string
+  httpUrl: string
+  httpsUrl: string
+  createdAt: string
+  label: string
+  sourceTool: string
+  sourceRequestId: number | null
+  hitCount: number
+  lastHitAt: string | null
+  lastSyncAt: string | null
+  events: TrafficOastEvent[]
+}
+
+export interface DeleteTrafficOastRecordResult {
+  token: string
+  remoteDeletedAll: boolean
+  localRemoved: boolean
+}
+
+export interface DeleteTrafficOastEventsResult {
+  token: string
+  deletedCount: number
+  remainingEventCount: number
+  record: TrafficOastRecord
+}
+
 export interface TrafficContextExtractionSettings {
   principalKeys: string[]
   resourceKeyHints: string[]
@@ -183,6 +260,27 @@ export function createDefaultTrafficBehaviorSignalSettings(): TrafficBehaviorSig
     mode: 'proxy_inferred',
     browserExtensionConnected: false,
     browserExtensionLastSeenAt: null,
+  }
+}
+
+export function createDefaultTrafficOastConfig(): TrafficOastConfig {
+  return {
+    enabled: false,
+    serverBaseUrl: '',
+    apiKey: '',
+    pollIntervalSecs: 15,
+    requestTimeoutSecs: 10,
+  }
+}
+
+export function createDefaultTrafficPluginRuntimeSettings(): TrafficPluginRuntimeSettings {
+  return {
+    activeProbe: {
+      jitterRange: [300, 1000],
+      minHostCooldownMs: 1000,
+      maxConcurrentPerHost: 2,
+      timeoutMs: 8000,
+    },
   }
 }
 

@@ -9,6 +9,7 @@
 
 mod anti_debug;
 mod crypto;
+mod entitlement_token;
 mod integrity;
 mod machine_id;
 mod obfuscate;
@@ -17,6 +18,11 @@ mod validator;
 
 pub use anti_debug::is_debugger_present;
 pub use crypto::{generate_keypair, sign_license, KeyPair, LicenseKey};
+pub use entitlement_token::{
+    clear_entitlement_token, get_entitlement_token_status, get_valid_entitlement_claims,
+    sign_entitlement_token, store_entitlement_token, EntitlementClaims, EntitlementTokenStatus,
+    SignedEntitlementToken,
+};
 pub use integrity::{
     function_checksum, is_integrity_ok, verify_function_checksum, verify_integrity,
 };
@@ -30,9 +36,68 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 static LICENSE_VALID: AtomicBool = AtomicBool::new(false);
 static VALIDATION_TOKEN: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LicensedFeature {
+    AiRuntime,
+    BugBounty,
+    PluginCatalogRead,
+    PluginCatalogWrite,
+    PluginCatalogDelete,
+    Rag,
+    ToolExecution,
+    TrafficAnalysis,
+    WorkflowExecution,
+}
+
+impl LicensedFeature {
+    pub fn display_name(self) -> &'static str {
+        match self {
+            LicensedFeature::AiRuntime => "AI runtime",
+            LicensedFeature::BugBounty => "bug bounty",
+            LicensedFeature::PluginCatalogRead => "plugin access",
+            LicensedFeature::PluginCatalogWrite => "plugin catalog management",
+            LicensedFeature::PluginCatalogDelete => "plugin deletion",
+            LicensedFeature::Rag => "RAG",
+            LicensedFeature::ToolExecution => "tool execution",
+            LicensedFeature::TrafficAnalysis => "traffic analysis",
+            LicensedFeature::WorkflowExecution => "workflow execution",
+        }
+    }
+
+    pub fn entitlement_feature_id(self) -> Option<&'static str> {
+        match self {
+            LicensedFeature::AiRuntime => Some("ai_runtime"),
+            LicensedFeature::BugBounty => Some("bug_bounty"),
+            LicensedFeature::PluginCatalogRead => Some("plugin_catalog_access"),
+            LicensedFeature::PluginCatalogWrite => Some("plugin_catalog_write"),
+            LicensedFeature::PluginCatalogDelete => Some("plugin_catalog_delete"),
+            LicensedFeature::Rag
+            | LicensedFeature::ToolExecution
+            | LicensedFeature::TrafficAnalysis
+            | LicensedFeature::WorkflowExecution => None,
+        }
+    }
+
+    pub fn requires_entitlement_token(self) -> bool {
+        self.entitlement_feature_id().is_some()
+    }
+
+    pub fn license_denial_message(self) -> String {
+        format!("License required for {}", self.display_name())
+    }
+
+    pub fn entitlement_denial_message(self) -> String {
+        format!(
+            "Valid entitlement token required for {}",
+            self.display_name()
+        )
+    }
+}
+
 /// Hardcoded switch: controls whether license enforcement is enabled.
-/// Default is `false`, so activation is not required even in release mode.
-pub const LICENSE_ENFORCEMENT_ENABLED: bool = false;
+/// Keep this enabled so release builds require activation.
+/// Debug builds still bypass enforcement via `debug_assertions`.
+pub const LICENSE_ENFORCEMENT_ENABLED: bool = true;
 
 /// Whether license enforcement is enabled.
 #[inline]
@@ -106,6 +171,46 @@ pub fn is_licensed() -> bool {
 
         LICENSE_VALID.load(Ordering::SeqCst) && stored_token == expected_token
     }
+}
+
+#[inline]
+pub fn ensure_feature_access(feature: LicensedFeature) -> Result<(), String> {
+    if cfg!(debug_assertions) || !is_enforcement_enabled() {
+        return Ok(());
+    }
+
+    if !is_licensed() {
+        return Err(feature.license_denial_message());
+    }
+
+    if feature.requires_entitlement_token()
+        && !has_valid_entitlement_for(feature.entitlement_feature_id().unwrap_or_default())
+    {
+        return Err(feature.entitlement_denial_message());
+    }
+
+    Ok(())
+}
+
+#[inline]
+pub fn has_feature_access(feature: LicensedFeature) -> bool {
+    ensure_feature_access(feature).is_ok()
+}
+
+#[inline]
+pub fn has_valid_entitlement_for(feature_id: &str) -> bool {
+    if cfg!(debug_assertions) || !is_enforcement_enabled() {
+        return true;
+    }
+
+    let feature_id = feature_id.trim();
+    if feature_id.is_empty() {
+        return false;
+    }
+
+    get_valid_entitlement_claims().is_some_and(|claims| {
+        claims.tier.eq_ignore_ascii_case("pro") || claims.has_feature(feature_id)
+    })
 }
 
 /// Require license for critical operations (returns derived key for obfuscation)

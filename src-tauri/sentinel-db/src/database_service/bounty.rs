@@ -1843,6 +1843,35 @@ impl DatabaseService {
         }
     }
 
+    /// Delete all bounty findings
+    pub async fn delete_all_bounty_findings(&self) -> Result<u64> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let result = sqlx::query("DELETE FROM bounty_findings")
+                    .execute(pool)
+                    .await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::MySQL(pool) => {
+                let result = sqlx::query("DELETE FROM bounty_findings")
+                    .execute(pool)
+                    .await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::PostgreSQL(_) => {
+                let result = sqlx::query("DELETE FROM bounty_findings")
+                    .execute(self.get_pool()?)
+                    .await?;
+                Ok(result.rows_affected())
+            }
+        }
+    }
+
     /// Batch update bounty finding status
     pub async fn batch_update_bounty_finding_status(
         &self,

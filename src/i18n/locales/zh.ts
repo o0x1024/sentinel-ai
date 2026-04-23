@@ -245,6 +245,7 @@ export default {
     favorited: '已收藏',
     favorite: '收藏插件',
     unfavorite: '取消收藏',
+    clearFilters: '清除筛选',
     copyPlugin: '复制插件',
     showing: '显示',
     of: '共',
@@ -265,6 +266,8 @@ export default {
 
     categories: {
       all: '全部',
+      traffic: '流量分析',
+      agent: 'Agent',
       trafficAnalysis: '流量分析插件',
       agents: 'Agent插件',
       intruder: 'Intruder插件',

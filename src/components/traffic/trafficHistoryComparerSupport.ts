@@ -46,6 +46,8 @@ function buildRequestTransferRequest(request: ProxyRequest, viewMode: 'original'
   return {
     endpoint,
     absoluteUrl: url,
+    sourceRequestId: request.db_request_id ?? null,
+    preferredRequestView: 'pretty',
     request: {
       method,
       target,

@@ -18,7 +18,11 @@ use tracing::{debug, info};
 
 /// Commands sent to the plugin executor thread
 enum PluginCommand {
-    ScanTransaction(Box<HttpTransaction>, oneshot::Sender<Result<Vec<Finding>>>),
+    ScanTransaction(
+        Box<HttpTransaction>,
+        Option<mpsc::UnboundedSender<Finding>>,
+        oneshot::Sender<Result<Vec<Finding>>>,
+    ),
     ExecuteAgent(
         serde_json::Value,
         oneshot::Sender<Result<(Vec<Finding>, Option<serde_json::Value>)>>,
@@ -196,7 +200,7 @@ impl PluginExecutor {
                         }
 
                         match cmd {
-                            PluginCommand::ScanTransaction(boxed_txn, reply) => {
+                            PluginCommand::ScanTransaction(boxed_txn, finding_sink, reply) => {
                                 let txn = *boxed_txn;
                                 // Check if restart threshold reached (for monitoring only)
                                 let current_count =
@@ -209,7 +213,7 @@ impl PluginExecutor {
                                 }
 
                                 // Execute scan
-                                let res = engine.scan_transaction(&txn).await;
+                                let res = engine.scan_transaction_with_sink(&txn, finding_sink).await;
                                 current_instance_executions.fetch_add(1, Ordering::Relaxed);
                                 total_executions.fetch_add(1, Ordering::Relaxed);
                                 let _ = reply.send(res);
@@ -286,12 +290,21 @@ impl PluginExecutor {
 
     /// Execute scan transaction
     pub async fn scan_transaction(&self, transaction: HttpTransaction) -> Result<Vec<Finding>> {
+        self.scan_transaction_with_sink(transaction, None).await
+    }
+
+    pub async fn scan_transaction_with_sink(
+        &self,
+        transaction: HttpTransaction,
+        finding_sink: Option<mpsc::UnboundedSender<Finding>>,
+    ) -> Result<Vec<Finding>> {
         let sender = self.sender.read().await;
         let (reply_tx, reply_rx) = oneshot::channel();
 
         sender
             .send(PluginCommand::ScanTransaction(
                 Box::new(transaction),
+                finding_sink,
                 reply_tx,
             ))
             .await
@@ -487,6 +500,7 @@ mod tests {
             default_severity: Severity::Info,
             tags: vec![],
             description: None,
+            monitor_type: None,
             target_asset_types: vec![],
         }
     }
@@ -504,6 +518,26 @@ export function scan_transaction(transaction) {
         severity: "info",
         confidence: "high"
     });
+}
+"#
+        .to_string()
+    }
+
+    fn create_streaming_test_code() -> String {
+        r#"
+export async function scan_transaction(transaction) {
+    Sentinel.emitFinding({
+        vuln_type: "test",
+        title: "Streamed Finding",
+        description: "Streamed before scan completion",
+        evidence: "streamed",
+        param_name: "id",
+        severity: "info",
+        confidence: "high"
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return [];
 }
 "#
         .to_string()
@@ -591,5 +625,36 @@ export function scan_transaction(transaction) {
         assert_eq!(stats_after.restart_count, 1);
 
         executor.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_scan_transaction_streams_findings_before_completion() {
+        let metadata = create_test_metadata();
+        let code = create_streaming_test_code();
+        let executor = PluginExecutor::new(metadata, code, 1000).unwrap();
+        let txn = create_test_transaction();
+        let (finding_tx, mut finding_rx) = mpsc::unbounded_channel();
+
+        let scan_task = tokio::spawn(async move {
+            let findings = executor
+                .scan_transaction_with_sink(txn, Some(finding_tx))
+                .await
+                .expect("scan ok");
+            executor.shutdown().await.expect("shutdown ok");
+            findings
+        });
+
+        let streamed =
+            tokio::time::timeout(std::time::Duration::from_millis(150), finding_rx.recv())
+                .await
+                .expect("finding should arrive before scan completes")
+                .expect("streamed finding");
+        assert_eq!(streamed.title, "Streamed Finding");
+
+        let findings = scan_task.await.expect("join ok");
+        assert!(
+            findings.is_empty(),
+            "streamed findings should not be returned again"
+        );
     }
 }

@@ -5,17 +5,25 @@
       <p class="text-base-content/70 mt-2">{{ $t('plugins.description', '管理和配置安全测试插件') }}</p>
     </div>
 
+    <div v-if="isFreeTier" class="alert alert-warning mb-6">
+      <i class="fas fa-lock"></i>
+      <span>
+        免费版不支持新增、上传、安装、更新、删除或审核插件；当前仅开放固定插件：
+        <span class="font-mono">{{ freeTierPluginSummary }}</span>
+      </span>
+    </div>
+
     <!-- Operation Bar -->
     <div class="flex gap-2 mb-6 flex-wrap">
-      <button class="btn btn-primary" @click="openCreateDialog">
+      <button class="btn btn-primary" :disabled="!canAddPlugins" @click="openCreateDialog">
         <i class="fas fa-plus mr-2"></i>
         {{ $t('plugins.newPlugin', '新增插件') }}
       </button>
-      <button class="btn btn-secondary" @click="openUploadDialog">
+      <button class="btn btn-secondary" :disabled="!canAddPlugins" @click="openUploadDialog">
         <i class="fas fa-upload mr-2"></i>
         {{ $t('plugins.uploadPlugin', '上传插件') }}
       </button>
-      <button class="btn btn-accent" @click="openAIGenerateDialog">
+      <button class="btn btn-accent" :disabled="!canAddPlugins" @click="openAIGenerateDialog">
         <i class="fas fa-magic mr-2"></i>
         {{ $t('plugins.aiGenerate', 'AI生成插件') }}
       </button>
@@ -37,7 +45,12 @@
       </button>
 
       <!-- Plugin Review Tab -->
-      <button class="tab" :class="{ 'tab-active': selectedCategory === 'review' }" @click="selectedCategory = 'review'">
+      <button
+        v-if="canReviewPlugins"
+        class="tab"
+        :class="{ 'tab-active': selectedCategory === 'review' }"
+        @click="selectedCategory = 'review'"
+      >
         <i class="fas fa-check-double mr-2"></i>
         {{ $t('plugins.pluginReview', '插件审核') }}
         <span v-if="reviewStats.pending > 0" class="ml-2 badge badge-sm badge-warning">
@@ -61,13 +74,15 @@
           ref="pluginStoreSectionRef"
           :installed-plugin-ids="installedPluginIds"
           :installed-plugins="installedPlugins"
+          :can-install-plugins="canInstallPlugins"
+          :restriction-message="pluginRestrictionMessage"
           @plugin-installed="onPluginInstalled"
           @plugin-updated="onPluginUpdated"
         />
 
         <!-- Plugin Review Section -->
         <PluginReviewSection
-          v-else-if="selectedCategory === 'review'"
+          v-else-if="selectedCategory === 'review' && canReviewPlugins"
           :review-stats="reviewStats"
           :status-filter="reviewStatusFilter"
           :search-text="reviewSearchText"
@@ -126,6 +141,8 @@
           :is-plugin-favorited="isPluginFavorited"
           :is-traffic-plugin-type="isTrafficPluginType"
           :is-agent-plugin-type="isAgentPluginType"
+          :can-delete-plugins="canDeletePlugins"
+          :can-view-plugin-code="canEditPlugins"
           @update:plugin-view-mode="pluginViewMode = $event"
           @update:search-text="pluginSearchText = $event"
           @update:main-category="selectedMainCategory = $event"
@@ -230,6 +247,10 @@ import {
   validateAiGeneratedPluginCode,
 } from '@/components/PluginManagement/aiGeneratedPluginGate'
 import { usePluginEditorStore } from '@/stores/pluginEditor'
+import {
+  getFeatureEntitlements,
+  useFeatureEntitlementsState,
+} from '@/services/featureEntitlements'
 import type {
   PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult,
   CommandResponse, BatchToggleResult, NewPluginMetadata, AdvancedForm
@@ -238,6 +259,7 @@ import { trafficCategories, agentsCategories, mainCategories, intruderCategories
 
 const { t } = useI18n()
 const pluginEditorStore = usePluginEditorStore()
+const entitlements = useFeatureEntitlementsState()
 
 defineOptions({
   name: 'Plugin'
@@ -281,6 +303,20 @@ const selectedTag = ref('')
 const selectedPluginIds = ref<string[]>([])
 const batchToggling = ref(false)
 const pluginBatchDeleting = ref(false)
+
+const isFreeTier = computed(() => entitlements.value.tier !== 'pro')
+const canAddPlugins = computed(() => entitlements.value.can_add_plugins)
+const canEditPlugins = computed(() => entitlements.value.can_edit_plugins)
+const canDeletePlugins = computed(() => entitlements.value.can_delete_plugins)
+const canInstallPlugins = computed(() => entitlements.value.can_install_plugins)
+const canReviewPlugins = computed(() => entitlements.value.can_review_plugins)
+const allowedPluginIds = computed(() => new Set(entitlements.value.allowed_plugin_ids))
+const freeTierPluginSummary = computed(() => entitlements.value.allowed_plugin_ids.join(', '))
+const pluginRestrictionMessage = computed(() => (
+  isFreeTier.value
+    ? `免费版仅允许使用固定插件：${freeTierPluginSummary.value}`
+    : ''
+))
 
 // Upload State
 const selectedFile = ref<File | null>(null)
@@ -372,6 +408,14 @@ const normalizePluginRecord = (plugin: PluginRecord): PluginRecord => ({
   },
 })
 
+const isPluginVisibleForCurrentTier = (plugin: PluginRecord): boolean => {
+  if (!isFreeTier.value) {
+    return true
+  }
+
+  return allowedPluginIds.value.has(plugin.metadata.id)
+}
+
 const availableMainCategories = computed(() => {
   const available = new Set(
     plugins.value
@@ -400,7 +444,7 @@ const matchesSelectedCategory = (plugin: PluginRecord, category: string): boolea
 }
 
 const baseFilteredPlugins = computed(() => {
-  let filtered = plugins.value
+  let filtered = plugins.value.filter(isPluginVisibleForCurrentTier)
 
   if (selectedCategory.value !== 'all') {
     filtered = filtered.filter(plugin => matchesSelectedCategory(plugin, selectedCategory.value))
@@ -481,10 +525,14 @@ const sortedRuns = computed(() => {
 const isAdvancedAgent = computed(() => ['agent', 'intruder'].includes(advancedPlugin.value?.metadata?.main_category || ''))
 
 // Installed plugin IDs for store section
-const installedPluginIds = computed(() => plugins.value.map(p => p.metadata.id))
+const installedPluginIds = computed(() => (
+  plugins.value
+    .filter(isPluginVisibleForCurrentTier)
+    .map(p => p.metadata.id)
+))
 
 // Installed plugins with version info for store section
-const installedPlugins = computed(() => plugins.value.map(p => ({
+const installedPlugins = computed(() => plugins.value.filter(isPluginVisibleForCurrentTier).map(p => ({
   id: p.metadata.id,
   version: p.metadata.version
 })))
@@ -557,8 +605,9 @@ const getCategoryIcon = (category: string): string => {
 }
 
 const getCategoryCount = (category: string): number => {
-  if (category === 'all') return plugins.value.length
-  return plugins.value.filter(plugin => matchesSelectedCategory(plugin, category)).length
+  const visiblePlugins = plugins.value.filter(isPluginVisibleForCurrentTier)
+  if (category === 'all') return visiblePlugins.length
+  return visiblePlugins.filter(plugin => matchesSelectedCategory(plugin, category)).length
 }
 
 const getReviewStatusText = (status: string): string => {
@@ -1074,6 +1123,10 @@ const saveReviewEdit = async () => {
 
 // Upload methods
 const openUploadDialog = () => {
+  if (!canAddPlugins.value) {
+    showToast(pluginRestrictionMessage.value, 'warning')
+    return
+  }
   uploadError.value = ''
   selectedFile.value = null
   pluginDialogsRef.value?.showUploadDialog()
@@ -1092,6 +1145,10 @@ const handleFileSelect = (event: Event) => {
 }
 
 const uploadPlugin = async () => {
+  if (!canAddPlugins.value) {
+    showToast(pluginRestrictionMessage.value, 'warning')
+    return
+  }
   if (!selectedFile.value) return
   uploading.value = true
   uploadError.value = ''
@@ -1117,6 +1174,10 @@ const uploadPlugin = async () => {
 
 // Delete methods
 const confirmDeletePlugin = (plugin: PluginRecord) => {
+  if (!canDeletePlugins.value) {
+    showToast(pluginRestrictionMessage.value, 'warning')
+    return
+  }
   deletingPlugin.value = plugin
   pluginDialogsRef.value?.showDeleteDialog()
 }
@@ -1126,6 +1187,10 @@ const closeDeleteDialog = () => {
 }
 
 const deletePlugin = async () => {
+  if (!canDeletePlugins.value) {
+    showToast(pluginRestrictionMessage.value, 'warning')
+    return
+  }
   if (!deletingPlugin.value) return
   deleting.value = true
   try {
@@ -1146,6 +1211,10 @@ const deletePlugin = async () => {
 
 // AI Generate methods
 const openAIGenerateDialog = () => {
+  if (!canAddPlugins.value) {
+    showToast(pluginRestrictionMessage.value, 'warning')
+    return
+  }
   aiPrompt.value = ''
   aiGenerateError.value = ''
   aiPluginType.value = 'traffic'
@@ -1346,10 +1415,18 @@ const generatePluginWithAI = async () => {
 
 // Code Editor methods
 const openCreateDialog = async () => {
+  if (!canAddPlugins.value) {
+    showToast(pluginRestrictionMessage.value, 'warning')
+    return
+  }
   pluginEditorStore.openEditor()
 }
 
 const viewPluginCode = async (plugin: PluginRecord) => {
+  if (!canEditPlugins.value) {
+    showToast(pluginRestrictionMessage.value, 'warning')
+    return
+  }
   try {
     const response = await invoke<CommandResponse<string>>('get_plugin_code', { pluginId: plugin.metadata.id })
     if (response.success) {
@@ -1610,14 +1687,23 @@ watch(selectedCategory, async (newValue) => {
   }
 })
 
+watch(canReviewPlugins, (allowed) => {
+  if (!allowed && selectedCategory.value === 'review') {
+    selectedCategory.value = 'all'
+  }
+}, { immediate: true })
+
 watch(filteredPlugins, () => {
   syncSelectedPluginIds()
 })
 
 // Lifecycle
 onMounted(async () => {
+  await getFeatureEntitlements()
   await refreshPlugins()
-  await refreshReviewPlugins()
+  if (canReviewPlugins.value) {
+    await refreshReviewPlugins()
+  }
   await setupEventListeners()
 })
 

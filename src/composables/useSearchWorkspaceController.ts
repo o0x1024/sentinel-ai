@@ -5,6 +5,7 @@ import { useNotificationCenter } from '@/composables/useNotificationCenter'
 import { useToast } from '@/composables/useToast'
 import { useGlobalSearch } from '@/composables/useGlobalSearch'
 import { useSearchFindings } from '@/composables/useSearchFindings'
+import { useSearchBountyKnowledge } from '@/composables/useSearchBountyKnowledge'
 import { useSearchKnowledgeDocuments } from '@/composables/useSearchKnowledgeDocuments'
 import { useSearchPlugins } from '@/composables/useSearchPlugins'
 import { useSearchScanTasks } from '@/composables/useSearchScanTasks'
@@ -80,6 +81,7 @@ export function useSearchWorkspaceController(options: UseSearchWorkspaceControll
   const { actions } = useCommandPaletteActions(options.router)
   const { items: notificationCenterItems, initializeNotificationCenter } = useNotificationCenter()
   const { findings: searchFindings, initializeSearchFindings } = useSearchFindings()
+  const { bountyKnowledgeNotes, initializeSearchBountyKnowledge } = useSearchBountyKnowledge(options.query, { limit: 16 })
   const { scanTasks, initializeSearchScanTasks } = useSearchScanTasks()
   const { workflowDefinitions, workflowRuns, initializeSearchWorkflowIndex } = useSearchWorkflowIndex()
   const { knowledgeDocuments, initializeSearchKnowledgeDocuments } = useSearchKnowledgeDocuments()
@@ -91,6 +93,7 @@ export function useSearchWorkspaceController(options: UseSearchWorkspaceControll
     workflowDefinitions,
     workflowRuns,
     knowledgeDocuments,
+    bountyKnowledgeNotes,
     plugins,
   })
 
@@ -167,6 +170,7 @@ export function useSearchWorkspaceController(options: UseSearchWorkspaceControll
     await Promise.all([
       initializeNotificationCenter(options.router),
       initializeSearchFindings(),
+      initializeSearchBountyKnowledge(),
       initializeSearchScanTasks(),
       initializeSearchWorkflowIndex(),
       initializeSearchKnowledgeDocuments(),

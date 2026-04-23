@@ -28,6 +28,13 @@ const createDefaultSessions = (): Record<WorkbenchTool, TrafficWorkbenchToolSess
     updatedAt: 0,
     count: 0,
   },
+  oast: {
+    tool: 'oast',
+    title: 'OAST',
+    source: null,
+    updatedAt: 0,
+    count: 0,
+  },
 })
 
 export const useTrafficWorkbenchSessions = () => {

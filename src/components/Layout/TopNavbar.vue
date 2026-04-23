@@ -166,6 +166,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
 import { usePageTour, type TourStep } from '@/composables/usePageTour'
 import { useGlobalSearch } from '@/composables/useGlobalSearch'
+import { useSearchBountyKnowledge } from '@/composables/useSearchBountyKnowledge'
 import { useSearchFindings } from '@/composables/useSearchFindings'
 import { useNotificationCenter } from '@/composables/useNotificationCenter'
 import { buildHelpCenterWindowUrl, HELP_CENTER_WINDOW_LABEL } from '@/router/standalone'
@@ -203,10 +204,6 @@ const {
   clearCategory,
 } = useNotificationCenter()
 const { findings: searchFindings, initializeSearchFindings } = useSearchFindings()
-const { search } = useGlobalSearch({
-  notifications: notificationCenterItems,
-  findings: searchFindings,
-})
 
 // 搜索相关
 const searchQuery = ref('')
@@ -216,6 +213,12 @@ const searchInputRef = ref<HTMLInputElement | null>(null)
 const isSearchFocused = ref(false)
 const highlightedSearchIndex = ref(0)
 const trimmedSearchQuery = computed(() => searchQuery.value.trim())
+const { bountyKnowledgeNotes, initializeSearchBountyKnowledge } = useSearchBountyKnowledge(searchQuery, { limit: 8 })
+const { search } = useGlobalSearch({
+  notifications: notificationCenterItems,
+  findings: searchFindings,
+  bountyKnowledgeNotes,
+})
 const searchResults = computed(() => search(trimmedSearchQuery.value, 6))
 const showSearchResults = computed(
   () =>
@@ -606,8 +609,11 @@ const startPageTour = () => {
 onMounted(async () => {
   document.addEventListener('mousedown', handleDocumentPointerDown)
   window.addEventListener(GLOBAL_SEARCH_FOCUS_EVENT, handleGlobalSearchFocus)
-  await initializeSearchFindings()
-  await initializeNotificationCenter(router)
+  await Promise.all([
+    initializeSearchFindings(),
+    initializeSearchBountyKnowledge(),
+    initializeNotificationCenter(router),
+  ])
 })
 
 onUnmounted(() => {

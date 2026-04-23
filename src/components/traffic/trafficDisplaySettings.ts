@@ -19,6 +19,8 @@ export interface TrafficDisplaySettings {
   specificCharset: string
 }
 
+export const TRAFFIC_MESSAGE_TEXT_LINE_HEIGHT = 1.20
+
 interface TrafficFontOption {
   label: string
   value: string

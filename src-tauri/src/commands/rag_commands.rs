@@ -29,6 +29,10 @@ static GLOBAL_RAG_SERVICE: OnceLock<Arc<RwLock<Option<Arc<AppRagService>>>>> = O
 /// RAG服务重载状态
 static RAG_SERVICE_RELOADING: OnceLock<Arc<tokio::sync::RwLock<bool>>> = OnceLock::new();
 
+fn ensure_rag_feature_access() -> Result<(), String> {
+    sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::Rag)
+}
+
 fn get_reloading_flag() -> Arc<tokio::sync::RwLock<bool>> {
     RAG_SERVICE_RELOADING
         .get_or_init(|| Arc::new(tokio::sync::RwLock::new(false)))
@@ -344,11 +348,7 @@ pub async fn rag_ingest_source(
 ) -> Result<IngestResponse, String> {
     info!("开始导入数据源: {}", file_path);
 
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Err("License required for RAG feature".to_string());
-    }
+    ensure_rag_feature_access()?;
 
     let request = IngestRequest {
         file_path: file_path.clone(),
@@ -403,11 +403,7 @@ pub async fn rag_batch_ingest_sources(
 ) -> Result<BatchIngestResponse, String> {
     info!("开始批量导入 {} 个文件", file_paths.len());
 
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Err("License required for RAG feature".to_string());
-    }
+    ensure_rag_feature_access()?;
 
     let batch_id = uuid::Uuid::new_v4().to_string();
     let total = file_paths.len();
@@ -551,11 +547,7 @@ pub async fn rag_ingest_text(
 ) -> Result<IngestResponse, String> {
     info!("开始导入手动输入文本: {}", title);
 
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Err("License required for RAG feature".to_string());
-    }
+    ensure_rag_feature_access()?;
 
     if content.trim().is_empty() {
         return Err("文本内容不能为空".to_string());
@@ -608,11 +600,7 @@ pub async fn rag_clear_collection(
 ) -> Result<bool, String> {
     info!("清空RAG集合: {}", collection_id);
 
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Err("License required for RAG feature".to_string());
-    }
+    ensure_rag_feature_access()?;
 
     let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
     rag_service
@@ -763,11 +751,7 @@ pub async fn create_rag_collection(
 ) -> Result<bool, String> {
     info!("创建RAG集合: {}", name);
 
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Err("License required for RAG feature".to_string());
-    }
+    ensure_rag_feature_access()?;
 
     let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
 
@@ -791,11 +775,7 @@ pub async fn query_rag(
         }
     }
 
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Err("License required for RAG feature".to_string());
-    }
+    ensure_rag_feature_access()?;
 
     let service = get_or_init_rag_service(database.inner().clone()).await?;
 
@@ -811,11 +791,7 @@ pub async fn delete_rag_collection(
     database: State<'_, Arc<DatabaseService>>,
     collection_id: String,
 ) -> Result<bool, String> {
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Err("License required for RAG feature".to_string());
-    }
+    ensure_rag_feature_access()?;
 
     let service = get_or_init_rag_service(database.inner().clone()).await?;
 

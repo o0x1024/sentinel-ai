@@ -75,7 +75,7 @@
               display-mode="raw"
               height="100%"
               :placeholder="$t('trafficAnalysis.comparer.draft.leftPlaceholder')"
-              state-key="comparer:draft:left"
+              :state-key="buildComparerDraftStateKey('left')"
               :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
               :search-next-title="$t('trafficAnalysis.messageSearch.next')"
               :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
@@ -102,7 +102,7 @@
               display-mode="raw"
               height="100%"
               :placeholder="$t('trafficAnalysis.comparer.draft.rightPlaceholder')"
-              state-key="comparer:draft:right"
+              :state-key="buildComparerDraftStateKey('right')"
               :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
               :search-next-title="$t('trafficAnalysis.messageSearch.next')"
               :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
@@ -124,6 +124,7 @@
       @contextmenu.capture.prevent="showContextMenu($event)"
     >
       <div
+        ref="compareToolbarRef"
         class="flex flex-wrap items-center gap-2 border-b border-base-300"
         :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2.5 py-1.5 backdrop-blur-sm' : 'bg-base-200 px-3 py-2'"
       >
@@ -133,22 +134,39 @@
         <span v-if="pinnedBaseline" :class="[IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS, 'badge-accent']">
           {{ $t('trafficAnalysis.comparer.badges.pinnedBaseline', { label: pinnedBaselineLabel }) }}
         </span>
-        <div class="tabs tabs-boxed tabs-xs bg-base-300">
+        <div class="tabs tabs-boxed tabs-xs bg-base-300 overflow-x-auto">
           <button
             type="button"
             :class="['tab tab-xs', viewMode === 'pretty' ? 'tab-active' : '']"
             @click="viewMode = 'pretty'"
           >
-            {{ $t('trafficAnalysis.comparer.tabs.pretty') }}
+            {{ isCompareToolbarCompact ? comparePrettyTabShortLabel : $t('trafficAnalysis.comparer.tabs.pretty') }}
           </button>
           <button
             type="button"
             :class="['tab tab-xs', viewMode === 'raw' ? 'tab-active' : '']"
             @click="viewMode = 'raw'"
           >
-            {{ $t('trafficAnalysis.comparer.tabs.raw') }}
+            {{ isCompareToolbarCompact ? compareRawTabShortLabel : $t('trafficAnalysis.comparer.tabs.raw') }}
           </button>
         </div>
+        <div class="tabs tabs-boxed tabs-xs bg-base-300 overflow-x-auto">
+          <button
+            type="button"
+            :class="['tab tab-xs', compareRenderMode === 'diff' ? 'tab-active' : '']"
+            @click="compareRenderMode = 'diff'"
+          >
+            {{ isCompareToolbarCompact ? compareDiffModeShortLabel : $t('trafficAnalysis.comparer.viewModes.diff') }}
+          </button>
+          <button
+            type="button"
+            :class="['tab tab-xs', compareRenderMode === 'plain' ? 'tab-active' : '']"
+            @click="compareRenderMode = 'plain'"
+          >
+            {{ isCompareToolbarCompact ? comparePlainModeShortLabel : $t('trafficAnalysis.comparer.viewModes.plain') }}
+          </button>
+        </div>
+        <TrafficMessageDisplayControls :compact="isCompareToolbarCompact" :show-line-endings="false" />
         <button
           v-if="!immersiveDrillModeEnabled"
           v-for="item in comparerToolbarActionMenuItems"
@@ -156,20 +174,22 @@
           class="btn btn-ghost btn-xs"
           type="button"
           :disabled="item.disabled"
+          :title="$t(`trafficAnalysis.comparer.actions.${item.labelKey}`)"
           @click="item.onClick"
         >
           <i :class="item.iconClass.replace(' text-secondary', '').replace(' text-info', '').replace(' text-warning', '').replace(' text-primary', '')"></i>
-          {{ $t(`trafficAnalysis.comparer.actions.${item.labelKey}`) }}
+          <span v-if="!isCompareToolbarCompact">{{ $t(`trafficAnalysis.comparer.actions.${item.labelKey}`) }}</span>
         </button>
         <div class="flex-1"></div>
         <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ currentItem.leftLabel }}: {{ displayedLeftText.length }}</span>
         <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ currentItem.rightLabel }}: {{ displayedRightText.length }}</span>
-        <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ $t('trafficAnalysis.comparer.labels.changedLines') }}: {{ diffSummary.changedLines }}</span>
-        <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ $t('trafficAnalysis.comparer.labels.similarity') }}: {{ diffSummary.similarity }}%</span>
+        <span v-if="!isCompareToolbarCompact" :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ $t('trafficAnalysis.comparer.labels.changedLines') }}: {{ diffSummary.changedLines }}</span>
+        <span v-if="!isCompareToolbarCompact" :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ $t('trafficAnalysis.comparer.labels.similarity') }}: {{ diffSummary.similarity }}%</span>
       </div>
 
       <div class="min-h-0 flex-1" :class="immersiveDrillModeEnabled ? 'p-2' : 'p-4'" @contextmenu.capture.prevent="showContextMenu($event)">
         <CodeDiffViewer
+          v-if="compareRenderMode === 'diff'"
           :left-text="displayedLeftText"
           :right-text="displayedRightText"
           :message-type="diffMessageType"
@@ -186,6 +206,62 @@
           :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
           @contextmenu="showContextMenu($event)"
         />
+        <div v-else class="grid h-full min-h-0 gap-px rounded-lg border border-base-300 bg-base-300 md:grid-cols-2">
+          <div class="flex min-h-0 flex-col bg-base-100" @contextmenu.capture.prevent="showContextMenu($event)">
+            <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
+              {{ currentItem.leftLabel }}
+            </div>
+            <div class="min-h-0 flex-1">
+              <HttpMessageSurface
+                :model-value="displayedLeftText"
+                readonly
+                custom-context-menu
+                show-search-bar
+                :message-type="leftMeta.messageType"
+                :display-mode="viewMode"
+                height="100%"
+                :state-key="buildComparerPlainStateKey('left', viewMode)"
+                :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                :show-display-toolbar="false"
+                @contextmenu="showContextMenu($event)"
+              />
+            </div>
+          </div>
+          <div class="flex min-h-0 flex-col bg-base-100" @contextmenu.capture.prevent="showContextMenu($event)">
+            <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
+              {{ currentItem.rightLabel }}
+            </div>
+            <div class="min-h-0 flex-1">
+              <HttpMessageSurface
+                :model-value="displayedRightText"
+                readonly
+                custom-context-menu
+                show-search-bar
+                :message-type="rightMeta.messageType"
+                :display-mode="viewMode"
+                height="100%"
+                :state-key="buildComparerPlainStateKey('right', viewMode)"
+                :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                :show-display-toolbar="false"
+                @contextmenu="showContextMenu($event)"
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       <div
@@ -211,6 +287,8 @@
 import { computed, ref } from 'vue'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import CodeDiffViewer from '@/components/traffic/CodeDiffViewer.vue'
+import { buildComparerDraftStateKey, buildComparerPlainStateKey } from './trafficMessagePresentationSupport'
+import TrafficMessageDisplayControls from '@/components/traffic/TrafficMessageDisplayControls.vue'
 import { useI18n } from 'vue-i18n'
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { dialog } from '@/composables/useDialog'
@@ -236,6 +314,7 @@ import {
   resolveComparerMeta,
   resolveComparerSideMeta,
 } from './trafficComparerFormattingSupport'
+import { formatRepeaterPrettyRequest } from './trafficRepeaterPrettyRequestSupport'
 import {
   buildComparerDraftPayload,
   canBuildComparerDraftPayload,
@@ -243,6 +322,7 @@ import {
   type ComparerDraft,
 } from './trafficComparerDraftSupport'
 import type { HttpExchangeRequest } from './http/model'
+import { useTrafficPaneCompactMode } from './useTrafficPaneCompactMode'
 
 interface CompareItem extends TrafficComparePayload {
   id: string
@@ -258,11 +338,16 @@ const emit = defineEmits<{
   (e: 'sendToRepeater', request: HttpExchangeRequest): void
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { enabledTargets } = useTrafficSendTargets()
+const {
+  panelRef: compareToolbarRef,
+  isCompact: isCompareToolbarCompact,
+} = useTrafficPaneCompactMode(920)
 const items = ref<CompareItem[]>([])
 const activeItemId = ref<string | null>(null)
 const viewMode = ref<TrafficMessageViewTab>('pretty')
+const compareRenderMode = ref<'diff' | 'plain'>('diff')
 const pinnedBaseline = ref<PinnedBaseline | null>(null)
 const showDraftComposer = ref(true)
 const draftSequence = ref(1)
@@ -293,6 +378,10 @@ const compareKindLabel = computed(() =>
 const compareMessageTypeLabel = computed(() =>
   t(`trafficAnalysis.comparer.badges.messageType.${diffMessageType.value}`),
 )
+const comparePrettyTabShortLabel = computed(() => locale.value.startsWith('zh') ? '格式' : 'Fmt')
+const compareRawTabShortLabel = computed(() => locale.value.startsWith('zh') ? '原始' : 'Raw')
+const compareDiffModeShortLabel = computed(() => locale.value.startsWith('zh') ? '差异' : 'Diff')
+const comparePlainModeShortLabel = computed(() => 'Plain')
 const pinnedBaselineLabel = computed(() => pinnedBaseline.value?.label ?? '')
 const displayedLeftText = computed(() => formatComparerText(currentItem.value?.leftText ?? '', viewMode.value))
 const displayedRightText = computed(() => formatComparerText(currentItem.value?.rightText ?? '', viewMode.value))
@@ -548,8 +637,12 @@ function setDraftSideText(side: 'left' | 'right', text: string, label?: string) 
 function addDraftRequest(input: TrafficComparerDraftRequestInput) {
   showDraftComposer.value = true
 
-  const rawRequest = input.text ?? (input.request ? createRawRequestFromSource(input.request) : '')
-  if (!rawRequest.trim()) {
+  const baseRequestText = input.text ?? (input.request ? createRawRequestFromSource(input.request) : '')
+  const requestText = input.request?.preferredRequestView === 'pretty'
+    ? formatRepeaterPrettyRequest(baseRequestText)
+    : baseRequestText
+
+  if (!requestText.trim()) {
     return
   }
   const requestedSide = input.side ?? 'auto'
@@ -570,7 +663,7 @@ function addDraftRequest(input: TrafficComparerDraftRequestInput) {
     draft.value.name = input.name.trim()
   }
 
-  setDraftSideText(targetSide, rawRequest, input.label)
+  setDraftSideText(targetSide, requestText, input.label)
 }
 
 function swapCurrentItem() {

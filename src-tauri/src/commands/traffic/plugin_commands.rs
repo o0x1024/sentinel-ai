@@ -8,6 +8,10 @@ use super::analysis_state_support::{resolve_plugin_registry_id, TrafficAnalysisS
 use crate::commands::command_response_support::CommandResponse;
 use crate::commands::monitor_config_support::infer_monitor_type_for_plugin;
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
+use crate::services::{
+    ensure_plugin_allowed_for_current_tier, ensure_plugin_catalog_write_access,
+    ensure_plugin_delete_access, filter_plugins_for_current_tier,
+};
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
 pub(crate) async fn refresh_active_agent_plugin_tools(
@@ -254,6 +258,8 @@ pub async fn enable_plugin(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let db = state.get_db_service();
 
     let (main_category, _) = match db.get_plugin_summary(&plugin_id).await {
@@ -325,6 +331,8 @@ pub async fn disable_plugin(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let db = state.get_db_service();
 
     let (main_category, _) = match db.get_plugin_summary(&plugin_id).await {
@@ -394,7 +402,9 @@ pub async fn disable_plugin(
 pub async fn list_plugins(
     state: State<'_, TrafficAnalysisState>,
 ) -> Result<CommandResponse<Vec<PluginRecord>>, String> {
-    let plugins = state.list_plugins_internal().await?;
+    let plugins = filter_plugins_for_current_tier(state.list_plugins_internal().await?, |plugin| {
+        plugin.metadata.id.as_str()
+    });
     Ok(CommandResponse::ok(plugins))
 }
 
@@ -617,6 +627,11 @@ pub async fn batch_enable_plugins(
     let mut failed_ids: Vec<String> = Vec::new();
 
     for plugin_id in plugin_ids.iter() {
+        if ensure_plugin_allowed_for_current_tier(plugin_id).is_err() {
+            failed_ids.push(plugin_id.clone());
+            continue;
+        }
+
         if db.update_plugin_enabled(plugin_id, true).await.is_err() {
             failed_ids.push(plugin_id.clone());
             continue;
@@ -668,6 +683,11 @@ pub async fn batch_disable_plugins(
     let mut failed_ids: Vec<String> = Vec::new();
 
     for plugin_id in plugin_ids.iter() {
+        if ensure_plugin_allowed_for_current_tier(plugin_id).is_err() {
+            failed_ids.push(plugin_id.clone());
+            continue;
+        }
+
         if db.update_plugin_enabled(plugin_id, false).await.is_err() {
             failed_ids.push(plugin_id.clone());
             continue;
@@ -714,6 +734,8 @@ pub async fn create_plugin_in_db(
     metadata: serde_json::Value,
     plugin_code: String,
 ) -> Result<CommandResponse<String>, String> {
+    ensure_plugin_catalog_write_access()?;
+
     let db = state.get_db_service();
 
     let plugin: sentinel_traffic::PluginMetadata =
@@ -961,6 +983,8 @@ pub async fn get_plugin_code(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<Option<String>>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let db = state.get_db_service();
 
     let code = db
@@ -976,6 +1000,8 @@ pub async fn get_plugin_by_id(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<Option<serde_json::Value>>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let db = state.get_db_service();
 
     let plugin = db
@@ -991,6 +1017,8 @@ pub async fn test_plugin(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<TestPluginResult>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let db = state.get_db_service();
 
     let plugin_record = db
@@ -1156,6 +1184,8 @@ pub async fn test_plugin_advanced(
     runs: Option<u32>,
     concurrency: Option<u32>,
 ) -> Result<CommandResponse<AdvancedTestResult>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let runs = runs.unwrap_or(1).max(1);
     let concurrency = concurrency.unwrap_or(1).max(1);
     let db = state.get_db_service();
@@ -1358,10 +1388,12 @@ pub async fn test_agent_plugin(
     plugin_id: String,
     inputs: Option<serde_json::Value>,
 ) -> Result<CommandResponse<AgentTestResult>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let db = state.get_db_service();
 
-    let (main_category, _) = match db.get_plugin_summary(&plugin_id).await {
-        Ok(Some(info)) => info,
+    let plugin_record = match db.get_plugin_from_registry(&plugin_id).await {
+        Ok(Some(record)) => record,
         Ok(None) => {
             return Ok(CommandResponse::ok(AgentTestResult {
                 success: false,
@@ -1374,10 +1406,13 @@ pub async fn test_agent_plugin(
         Err(e) => return Err(format!("Failed to query plugin: {}", e)),
     };
 
-    if main_category != "agent" {
+    if !matches!(
+        plugin_record.metadata.main_category.as_str(),
+        "agent" | "intruder"
+    ) {
         return Ok(CommandResponse::ok(AgentTestResult {
             success: false,
-            message: Some("该插件不是 Agent 工具类型，请使用流量分析测试入口".to_string()),
+            message: Some("该插件不是执行型插件，请使用流量分析测试入口".to_string()),
             output: None,
             execution_time_ms: 0,
             error: Some("WrongPluginType".to_string()),
@@ -1402,105 +1437,31 @@ pub async fn test_agent_plugin(
         }
     };
 
-    let name = db
-        .get_plugin_name(&plugin_id)
+    let severity = crate::services::parse_plugin_severity(
+        &format!("{:?}", plugin_record.metadata.default_severity).to_lowercase(),
+    )
+    .map_err(|e| format!("Failed to parse plugin severity: {}", e))?;
+    let metadata = crate::services::build_plugin_metadata(
+        plugin_record.metadata.id.clone(),
+        plugin_record.metadata.name.clone(),
+        plugin_record.metadata.main_category.clone(),
+        plugin_record.metadata.category.clone(),
+        plugin_record.metadata.description.clone(),
+        plugin_record.metadata.monitor_type.clone(),
+        severity,
+    );
+
+    let result = crate::services::test_plugin_code(metadata, code, inputs)
         .await
-        .map_err(|e| format!("Failed to query plugin name: {}", e))?
-        .unwrap_or_else(|| plugin_id.clone());
+        .map_err(|e| format!("Plugin test failed: {}", e))?;
 
-    let ctx = sentinel_tools::plugin_adapter::PluginContext {
-        plugin_id: plugin_id.clone(),
-        name: name.clone(),
-        code: code.clone(),
-    };
-    sentinel_tools::plugin_adapter::register_plugin_context(ctx).await;
-
-    let inputs = inputs.unwrap_or(serde_json::json!({}));
-    let start = std::time::Instant::now();
-    let name_for_result = name.clone();
-
-    let result = tokio::task::spawn_blocking(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("Failed to create runtime: {}", e))?;
-
-        let local = tokio::task::LocalSet::new();
-        local.block_on(&rt, async {
-            let metadata = sentinel_plugins::PluginMetadata {
-                id: plugin_id.clone(),
-                name: name.clone(),
-                version: "1.0.0".to_string(),
-                author: None,
-                main_category: "agent".to_string(),
-                category: "tool".to_string(),
-                monitor_type: None,
-                default_severity: sentinel_plugins::Severity::Medium,
-                tags: vec![],
-                description: Some(format!("Agent tool plugin: {}", name)),
-                target_asset_types: Vec::new(),
-            };
-
-            let executor = sentinel_plugins::PluginExecutor::new(metadata, code, 1000)
-                .map_err(|e| format!("Failed to create plugin executor: {}", e))?;
-
-            let (findings, result) = executor
-                .execute_agent(&inputs)
-                .await
-                .map_err(|e| format!("Plugin execution failed: {}", e))?;
-
-            let output = if let Some(r) = result {
-                r
-            } else if !findings.is_empty() {
-                let findings_json: Vec<serde_json::Value> = findings
-                    .into_iter()
-                    .map(|f| {
-                        serde_json::json!({
-                            "id": f.id,
-                            "vuln_type": f.vuln_type,
-                            "severity": format!("{:?}", f.severity).to_lowercase(),
-                            "title": f.title,
-                            "description": f.description,
-                        })
-                    })
-                    .collect();
-                serde_json::json!({
-                    "findings": findings_json,
-                    "findings_count": findings_json.len()
-                })
-            } else {
-                serde_json::json!({
-                    "message": "Plugin executed successfully with no output"
-                })
-            };
-
-            Ok::<serde_json::Value, String>(output)
-        })
-    })
-    .await
-    .map_err(|e| format!("Task failed: {}", e))?;
-
-    let execution_time_ms = start.elapsed().as_millis();
-
-    match result {
-        Ok(output) => Ok(CommandResponse::ok(AgentTestResult {
-            success: true,
-            message: Some(format!(
-                "插件 '{}' 执行成功 ({}ms)",
-                name_for_result, execution_time_ms
-            )),
-            output: Some(output),
-            execution_time_ms,
-            error: None,
-        })),
-        Err(e) => Ok(CommandResponse::ok(AgentTestResult {
-            success: false,
-            message: Some(format!("插件执行失败: {}", e)),
-            output: None,
-            execution_time_ms,
-            error: Some(e),
-        })),
-    }
+    Ok(CommandResponse::ok(AgentTestResult {
+        success: result.success,
+        message: result.message,
+        output: result.output,
+        execution_time_ms: result.execution_time_ms,
+        error: result.error,
+    }))
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1508,6 +1469,8 @@ pub async fn get_plugin_input_schema(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<serde_json::Value>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let db = state.get_db_service();
     let resolved_plugin_id = resolve_plugin_registry_id(db.as_ref(), &plugin_id)
         .await?
@@ -1561,6 +1524,8 @@ pub async fn get_plugin_output_schema(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<serde_json::Value>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let db = state.get_db_service();
     let plugin_record = db
         .get_plugin_from_registry(&plugin_id)
@@ -1630,6 +1595,9 @@ pub async fn delete_plugin(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
+    ensure_plugin_delete_access()?;
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
     let db = state.get_db_service();
     let plugin_name = db
         .get_plugin_name(&plugin_id)

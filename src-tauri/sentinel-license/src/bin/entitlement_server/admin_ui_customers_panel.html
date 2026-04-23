@@ -1,0 +1,105 @@
+        <section class="card panel-body view-panel" data-section-panel="customers" hidden>
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Customers</div>
+              <h2>客户与授权</h2>
+            </div>
+            <div class="toolbar">
+              <span id="customerDirtyPill" class="pill warn" hidden>未保存修改</span>
+              <input id="customerSearchInput" placeholder="搜索 customer / license / tier" />
+              <button class="secondary" id="refreshCustomersBtn">刷新客户</button>
+            </div>
+          </div>
+
+          <div class="grid-3 stack-14">
+            <div>
+              <label class="muted">Customer ID</label>
+              <input id="customerId" placeholder="acme-security" />
+              <div id="customerIdError" class="field-error"></div>
+            </div>
+            <div>
+              <label class="muted">License ID</label>
+              <input id="customerLicenseId" placeholder="lic_acme_prod_001" />
+              <div id="customerLicenseIdError" class="field-error"></div>
+            </div>
+            <div>
+              <label class="muted">Tier</label>
+              <select id="customerTier">
+                <option value="pro">pro</option>
+                <option value="viewer">viewer</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid-3 stack-14">
+            <div>
+              <label class="muted">Device Limit</label>
+              <input id="customerDeviceLimit" type="number" min="1" max="64" value="3" />
+              <div id="customerDeviceLimitError" class="field-error"></div>
+            </div>
+            <div>
+              <label class="muted">TTL Seconds</label>
+              <input id="customerTtlSeconds" type="number" min="300" placeholder="43200" />
+              <div id="customerTtlSecondsError" class="field-error"></div>
+            </div>
+            <div>
+              <label class="muted">Revoked</label>
+              <select id="customerRevoked">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid-2 stack-14">
+            <div>
+              <label class="muted">Feature IDs</label>
+              <textarea id="customerFeatureIds" placeholder="每行一个 feature id"></textarea>
+            </div>
+            <div>
+              <label class="muted">Allowed Machine IDs</label>
+              <textarea id="customerAllowedMachineIds" placeholder="每行一个 64 位 machine_id"></textarea>
+              <div id="customerAllowedMachineIdsError" class="field-error"></div>
+            </div>
+          </div>
+
+          <div class="grid-2 stack-14">
+            <div>
+              <label class="muted">Refresh API Key</label>
+              <input id="customerRefreshApiKey" type="password" placeholder="留空表示不修改" />
+              <div id="customerRefreshApiKeyError" class="field-error"></div>
+            </div>
+            <div>
+              <label class="muted">Refresh Key Control</label>
+              <select id="customerRefreshKeyMode">
+                <option value="preserve">保留现有 key</option>
+                <option value="set">更新为上面的 key</option>
+                <option value="clear">清除客户级 key</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="toolbar section-toolbar">
+            <button id="saveCustomerBtn">创建 / 更新客户</button>
+            <button class="ghost" id="resetCustomerFormBtn">重置表单</button>
+          </div>
+
+          <div id="customerStatus" class="status-box">客户表单就绪。</div>
+
+          <div class="table-wrap stack-18-top">
+            <table>
+              <thead>
+                <tr>
+                  <th>Customer</th>
+                  <th>License</th>
+                  <th>Tier</th>
+                  <th>Devices</th>
+                  <th>Refresh</th>
+                  <th>Last Activity</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="customersTableBody"></tbody>
+            </table>
+          </div>
+        </section>

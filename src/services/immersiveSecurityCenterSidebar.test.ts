@@ -67,7 +67,7 @@ describe('immersiveSecurityCenterSidebar', () => {
     expect(immersiveMinimizedToolOrder.value).toEqual([])
   })
 
-  it('closes other immersive tools when opened in drill mode', () => {
+  it('keeps other immersive tools open when the security center opens in drill mode', () => {
     const { workbenchOpen } = useImmersiveTrafficDockState()
 
     setImmersiveDrillModeEnabled(true)
@@ -77,8 +77,8 @@ describe('immersiveSecurityCenterSidebar', () => {
     openImmersiveSecurityCenterSidebar('/traffic')
 
     expect(immersiveSecurityCenterSidebarOpen.value).toBe(true)
-    expect(workbenchOpen.value).toBe(false)
-    expect(trafficAssistantOpen.value).toBe(false)
+    expect(workbenchOpen.value).toBe(true)
+    expect(trafficAssistantOpen.value).toBe(true)
   })
 
   it('keeps a minimized security center in the tray when another tool opens', () => {

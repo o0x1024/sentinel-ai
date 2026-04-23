@@ -46,6 +46,21 @@ export interface SearchKnowledgeDocumentItem {
   summary?: string
 }
 
+export interface SearchBountyKnowledgeItem {
+  id: string
+  title?: string
+  content?: string
+  snippet?: string
+  summary?: string
+  program_id?: string | null
+  programId?: string | null
+  program_name?: string | null
+  programName?: string | null
+  tags_json?: string | null
+  updated_at?: string
+  updatedAt?: string
+}
+
 export interface SearchPluginItem {
   plugin_id: string
   plugin_name?: string
@@ -192,6 +207,64 @@ export function createKnowledgeDocumentSearchEntries(items: SearchKnowledgeDocum
           'rag',
           '知识库',
           '文档',
+        ]),
+      }
+    })
+}
+
+function normalizeJsonTags(tags?: string | null) {
+  if (!tags) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(tags)
+    return Array.isArray(parsed) ? normalizeKeywords(parsed) : []
+  } catch {
+    return normalizeKeywords(tags.split(/[,\s]+/g))
+  }
+}
+
+function stripSnippetMarkup(value?: string) {
+  return String(value || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+export function createBountyKnowledgeSearchEntries(items: SearchBountyKnowledgeItem[]): GlobalSearchEntry[] {
+  return items
+    .slice(0, 24)
+    .filter(item => item?.id)
+    .map(item => {
+      const title = item.title?.trim() || `赏金笔记 ${item.id}`
+      const programName = item.program_name?.trim() || item.programName?.trim() || '未绑定项目'
+      const description = stripSnippetMarkup(item.snippet) || item.summary?.trim() || item.content?.trim() || programName
+
+      return {
+        id: `bounty-knowledge:${item.id}`,
+        title,
+        description,
+        path: '/bug-bounty',
+        query: {
+          tab: 'knowledge',
+          knowledgeId: item.id,
+        },
+        icon: 'fas fa-note-sticky',
+        category: 'document',
+        keywords: normalizeKeywords([
+          item.id,
+          title,
+          description,
+          item.program_id,
+          item.programId,
+          programName,
+          item.updated_at,
+          item.updatedAt,
+          ...normalizeJsonTags(item.tags_json),
+          'bug bounty',
+          'knowledge',
+          'notes',
+          '漏洞赏金',
+          '知识库',
+          '笔记',
         ]),
       }
     })

@@ -1,0 +1,67 @@
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 28, 23, 0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+}
+
+.confirm-overlay.open {
+  display: flex;
+}
+
+.confirm-dialog {
+  width: min(520px, 100%);
+  padding: 24px;
+}
+
+.confirm-title {
+  margin-top: 8px;
+}
+
+.confirm-copy {
+  margin: 12px 0 18px;
+  color: var(--muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.toast-stack {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 50;
+  width: min(360px, calc(100vw - 40px));
+}
+
+.toast {
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(32, 86, 63, 0.12);
+  background: rgba(255, 250, 241, 0.96);
+  box-shadow: var(--shadow);
+  line-height: 1.5;
+}
+
+.toast.success {
+  border-color: rgba(42, 106, 61, 0.18);
+  color: var(--good);
+}
+
+.toast.error {
+  border-color: rgba(159, 47, 47, 0.18);
+  color: var(--danger);
+}

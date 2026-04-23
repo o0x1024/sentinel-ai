@@ -44,6 +44,11 @@
       </button>
     </div>
 
+    <div v-if="restrictionMessage" class="alert alert-warning mb-4">
+      <i class="fas fa-lock"></i>
+      <span>{{ restrictionMessage }}</span>
+    </div>
+
     <!-- Loading State -->
     <div v-if="loading && storePlugins.length === 0" class="flex justify-center py-12">
       <span class="loading loading-spinner loading-lg text-primary"></span>
@@ -139,13 +144,13 @@
           <!-- Actions -->
           <div class="card-actions justify-end mt-3">
             <button v-if="!isInstalled(plugin.id)" class="btn btn-sm btn-primary"
-              :disabled="installing === plugin.id" @click="installPlugin(plugin)">
+              :disabled="installing === plugin.id || !canInstallPlugins" @click="installPlugin(plugin)">
               <span v-if="installing === plugin.id" class="loading loading-spinner loading-xs"></span>
               <i v-else class="fas fa-download mr-1"></i>
               {{ $t('plugins.store.install') }}
             </button>
             <button v-else-if="hasUpdate(plugin)" class="btn btn-sm btn-warning"
-              :disabled="updating === plugin.id" @click="updatePlugin(plugin)">
+              :disabled="updating === plugin.id || !canInstallPlugins" @click="updatePlugin(plugin)">
               <span v-if="updating === plugin.id" class="loading loading-spinner loading-xs"></span>
               <i v-else class="fas fa-sync-alt mr-1"></i>
               {{ $t('plugins.store.update', '更新') }}
@@ -215,13 +220,13 @@
           <!-- Actions -->
           <div class="flex items-center gap-2 flex-shrink-0">
             <button v-if="!isInstalled(plugin.id)" class="btn btn-sm btn-primary"
-              :disabled="installing === plugin.id" @click="installPlugin(plugin)">
+              :disabled="installing === plugin.id || !canInstallPlugins" @click="installPlugin(plugin)">
               <span v-if="installing === plugin.id" class="loading loading-spinner loading-xs"></span>
               <i v-else class="fas fa-download"></i>
               <span class="hidden sm:inline ml-1">{{ $t('plugins.store.install') }}</span>
             </button>
             <button v-else-if="hasUpdate(plugin)" class="btn btn-sm btn-warning"
-              :disabled="updating === plugin.id" @click="updatePlugin(plugin)">
+              :disabled="updating === plugin.id || !canInstallPlugins" @click="updatePlugin(plugin)">
               <span v-if="updating === plugin.id" class="loading loading-spinner loading-xs"></span>
               <i v-else class="fas fa-sync-alt"></i>
               <span class="hidden sm:inline ml-1">{{ $t('plugins.store.update', '更新') }}</span>
@@ -299,13 +304,13 @@
 
         <div class="modal-action">
           <button v-if="selectedPlugin && !isInstalled(selectedPlugin.id)" class="btn btn-primary"
-            :disabled="installing === selectedPlugin.id" @click="installPlugin(selectedPlugin)">
+            :disabled="installing === selectedPlugin.id || !canInstallPlugins" @click="installPlugin(selectedPlugin)">
             <span v-if="installing === selectedPlugin.id" class="loading loading-spinner loading-xs"></span>
             <i v-else class="fas fa-download mr-1"></i>
             {{ $t('plugins.store.install') }}
           </button>
           <button v-else-if="selectedPlugin && hasUpdate(selectedPlugin)" class="btn btn-warning"
-            :disabled="updating === selectedPlugin.id" @click="updatePlugin(selectedPlugin)">
+            :disabled="updating === selectedPlugin.id || !canInstallPlugins" @click="updatePlugin(selectedPlugin)">
             <span v-if="updating === selectedPlugin.id" class="loading loading-spinner loading-xs"></span>
             <i v-else class="fas fa-sync-alt mr-1"></i>
             {{ $t('plugins.store.update', '更新') }}
@@ -364,6 +369,8 @@ interface InstalledPlugin {
 const props = defineProps<{
   installedPluginIds: string[]
   installedPlugins?: InstalledPlugin[]
+  canInstallPlugins: boolean
+  restrictionMessage?: string
 }>()
 
 const emit = defineEmits<{
@@ -497,12 +504,12 @@ const getSeverityClass = (severity: string): string => {
   return classes[severity] || 'badge-ghost'
 }
 
-const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
   const toast = document.createElement('div')
   toast.className = 'toast toast-top toast-end z-50'
   toast.style.top = '5rem'
-  const alertClass = { success: 'alert-success', error: 'alert-error', info: 'alert-info' }[type]
-  const icon = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle' }[type]
+  const alertClass = { success: 'alert-success', error: 'alert-error', info: 'alert-info', warning: 'alert-warning' }[type]
+  const icon = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' }[type]
   toast.innerHTML = `<div class="alert ${alertClass} shadow-lg"><i class="fas ${icon}"></i><span>${message}</span></div>`
   document.body.appendChild(toast)
   setTimeout(() => toast.remove(), 3000)
@@ -573,6 +580,11 @@ const refreshStore = async (forceRefresh = false) => {
 }
 
 const installPlugin = async (plugin: StorePlugin) => {
+  if (!props.canInstallPlugins) {
+    showToast(props.restrictionMessage || '当前套餐不支持安装插件', 'warning')
+    return
+  }
+
   installing.value = plugin.id
   
   try {
@@ -607,6 +619,11 @@ const installPlugin = async (plugin: StorePlugin) => {
 }
 
 const updatePlugin = async (plugin: StorePlugin) => {
+  if (!props.canInstallPlugins) {
+    showToast(props.restrictionMessage || '当前套餐不支持更新插件', 'warning')
+    return
+  }
+
   updating.value = plugin.id
   
   try {

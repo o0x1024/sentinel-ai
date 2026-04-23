@@ -10,7 +10,8 @@
 //! 基于 deno_core 0.373.0 + deno_web 0.254.0
 
 use crate::error::{PluginError, Result};
-use crate::plugin_ops::{sentinel_plugin_ext, PluginContext};
+use crate::plugin_ops::{sentinel_plugin_ext, ActiveProbeEvent, PluginContext};
+use crate::runtime_events::emit_active_probe_event;
 use crate::types::{Finding, PluginMetadata};
 #[cfg(feature = "plugin-ts-transpile")]
 use deno_ast::{
@@ -28,6 +29,7 @@ use deno_permissions::{PermissionsContainer, RuntimePermissionDescriptorParser};
 
 use deno_error::JsErrorBox;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -153,6 +155,14 @@ fn sanitize_plugin_source(source: &str) -> String {
     }
 
     content_lines.join("\n").trim().to_string()
+}
+
+fn dedupe_findings(findings: Vec<Finding>) -> Vec<Finding> {
+    let mut seen = HashSet::new();
+    findings
+        .into_iter()
+        .filter(|finding| seen.insert(finding.calculate_signature()))
+        .collect()
 }
 
 impl ModuleLoader for PluginModuleLoader {
@@ -511,6 +521,13 @@ if (typeof get_metadata === 'function') {
             PluginError::Load(format!("Module evaluation error {}: {:?}", plugin_id, e))
         })?;
 
+        {
+            let op_state = self.runtime.op_state();
+            let op_state_borrow = op_state.borrow();
+            let plugin_ctx = op_state_borrow.borrow::<PluginContext>().clone();
+            plugin_ctx.set_plugin_id(Some(plugin_id.clone()));
+        }
+
         debug!(
             "Loaded ESM/TS plugin: {} v{}",
             metadata.name, metadata.version
@@ -529,6 +546,61 @@ if (typeof get_metadata === 'function') {
         &mut self,
         transaction: &crate::types::HttpTransaction,
     ) -> Result<Vec<Finding>> {
+        self.scan_transaction_with_sink(transaction, None).await
+    }
+
+    pub async fn scan_transaction_with_sink(
+        &mut self,
+        transaction: &crate::types::HttpTransaction,
+        finding_sink: Option<tokio::sync::mpsc::UnboundedSender<Finding>>,
+    ) -> Result<Vec<Finding>> {
+        let plugin_id = self
+            .metadata
+            .as_ref()
+            .map(|metadata| metadata.id.clone())
+            .unwrap_or_else(|| "unknown-plugin".to_string());
+
+        {
+            let op_state = self.runtime.op_state();
+            let op_state_borrow = op_state.borrow();
+            let plugin_ctx = op_state_borrow.borrow::<PluginContext>().clone();
+            let _ = plugin_ctx.take_findings();
+            let _ = plugin_ctx.take_last_result();
+            plugin_ctx.set_finding_sink(finding_sink.clone());
+            plugin_ctx.set_traffic_request_id(Some(transaction.request.id.clone()));
+        }
+
+        emit_active_probe_event(&ActiveProbeEvent {
+            plugin_id: Some(plugin_id.clone()),
+            traffic_request_id: Some(transaction.request.id.clone()),
+            request_id: format!("{}:plugin_invoked", transaction.request.id),
+            phase: "plugin_invoked".to_string(),
+            method: transaction.request.method.clone(),
+            url: transaction.request.url.clone(),
+            probe_label: Some(plugin_id.clone()),
+            target_name: None,
+            target_path: None,
+            target_location: None,
+            probe_value: None,
+            technique: None,
+            probe_class: None,
+            probe_priority: None,
+            cooldown_key: None,
+            cooldown_wait_ms: None,
+            jitter_wait_ms: None,
+            total_wait_ms: None,
+            adaptive_penalty_ms: None,
+            status: None,
+            error: None,
+            reason: None,
+            target_count: None,
+            active_slots: None,
+            max_concurrent_per_host: None,
+            queue_depth: None,
+            response_elapsed_ms: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
         let combined = serde_json::to_value(transaction).map_err(|e| {
             PluginError::Execution(format!("Failed to serialize transaction: {}", e))
         })?;
@@ -538,21 +610,59 @@ if (typeof get_metadata === 'function') {
             .call_plugin_function("scan_transaction", &combined)
             .await;
 
+        {
+            let op_state = self.runtime.op_state();
+            let op_state_borrow = op_state.borrow();
+            let plugin_ctx = op_state_borrow.borrow::<PluginContext>().clone();
+            plugin_ctx.set_finding_sink(None);
+            plugin_ctx.set_traffic_request_id(None);
+        }
+
         if let Err(e) = result {
+            emit_active_probe_event(&ActiveProbeEvent {
+                plugin_id: Some(plugin_id),
+                traffic_request_id: Some(transaction.request.id.clone()),
+                request_id: format!("{}:plugin_failed", transaction.request.id),
+                phase: "plugin_failed".to_string(),
+                method: transaction.request.method.clone(),
+                url: transaction.request.url.clone(),
+                probe_label: Some("scan_transaction".to_string()),
+                target_name: None,
+                target_path: None,
+                target_location: None,
+                probe_value: None,
+                technique: None,
+                probe_class: None,
+                probe_priority: None,
+                cooldown_key: None,
+                cooldown_wait_ms: None,
+                jitter_wait_ms: None,
+                total_wait_ms: None,
+                adaptive_penalty_ms: None,
+                status: None,
+                error: Some(e.to_string()),
+                reason: None,
+                target_count: None,
+                active_slots: None,
+                max_concurrent_per_host: None,
+                queue_depth: None,
+                response_elapsed_ms: None,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            });
             debug!("Plugin execution failed or function not found: {}", e);
             return Ok(vec![]);
         }
 
         // 从 op_plugin_return 获取返回值
-        let raw_result = {
+        let (raw_result, emitted_findings) = {
             let op_state = self.runtime.op_state();
             let op_state_borrow = op_state.borrow();
             let plugin_ctx = op_state_borrow.borrow::<PluginContext>();
-            plugin_ctx.take_last_result()
+            (plugin_ctx.take_last_result(), plugin_ctx.take_findings())
         };
 
         // 直接将返回值解析为 Finding 数组
-        let findings: Vec<Finding> = if let Some(val) = raw_result {
+        let mut findings: Vec<Finding> = if let Some(val) = raw_result {
             // 尝试将返回值转换为 JsFinding 数组,然后转换为 Finding 数组
             if let Ok(js_findings) =
                 serde_json::from_value::<Vec<crate::plugin_ops::JsFinding>>(val)
@@ -565,6 +675,55 @@ if (typeof get_metadata === 'function') {
         } else {
             vec![]
         };
+
+        findings = if finding_sink.is_some() {
+            let emitted_signatures = emitted_findings
+                .iter()
+                .map(Finding::calculate_signature)
+                .collect::<HashSet<_>>();
+
+            dedupe_findings(
+                findings
+                    .into_iter()
+                    .filter(|finding| !emitted_signatures.contains(&finding.calculate_signature()))
+                    .collect(),
+            )
+        } else {
+            let mut combined = emitted_findings;
+            combined.extend(findings);
+            dedupe_findings(combined)
+        };
+
+        emit_active_probe_event(&ActiveProbeEvent {
+            plugin_id: Some(plugin_id),
+            traffic_request_id: Some(transaction.request.id.clone()),
+            request_id: format!("{}:plugin_completed", transaction.request.id),
+            phase: "plugin_completed".to_string(),
+            method: transaction.request.method.clone(),
+            url: transaction.request.url.clone(),
+            probe_label: Some("scan_transaction".to_string()),
+            target_name: None,
+            target_path: None,
+            target_location: None,
+            probe_value: None,
+            technique: None,
+            probe_class: None,
+            probe_priority: None,
+            cooldown_key: None,
+            cooldown_wait_ms: None,
+            jitter_wait_ms: None,
+            total_wait_ms: None,
+            adaptive_penalty_ms: None,
+            status: None,
+            error: None,
+            reason: None,
+            target_count: Some(findings.len() as u32),
+            active_slots: None,
+            max_concurrent_per_host: None,
+            queue_depth: None,
+            response_elapsed_ms: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
 
         Ok(findings)
     }

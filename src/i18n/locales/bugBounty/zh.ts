@@ -36,6 +36,7 @@ export default {
     assets: '资产管理',
     apiInventory: 'API清单',
     findings: '发现管理',
+    knowledge: '知识库',
     submissions: '提交记录',
     statistics: '数据统计',
     importExport: '导入/导出',
@@ -110,6 +111,50 @@ export default {
     empty: '暂无发现记录',
   },
 
+  knowledge: {
+    title: '漏洞赏金知识库',
+    description: '记录挖洞笔记、观察结论和临时备注，可不绑定项目，也可挂到具体项目下。',
+    newNote: '新建笔记',
+    editNote: '编辑笔记',
+    untitled: '未命名笔记',
+    unboundProgram: '未绑定项目',
+    empty: '暂无知识笔记',
+    emptyHint: '先记下目标特征、踩坑记录、复现片段和排查结论，后续搜索会更快。',
+    searchPlaceholder: '搜索标题、内容、标签或项目',
+    editorHint: '用它沉淀项目规则、漏洞链路、绕过思路和平台备注。',
+    notFound: '笔记不存在或已被删除',
+    savedCreated: '知识笔记已创建',
+    savedUpdated: '知识笔记已更新',
+    deleted: '知识笔记已删除',
+    confirmDelete: '确定要删除这条知识笔记吗？',
+    validation: {
+      required: '标题和内容不能为空',
+    },
+    filters: {
+      all: '全部笔记',
+      currentProgram: '当前项目',
+      unbound: '仅未绑定',
+    },
+    stats: {
+      total: '总笔记数',
+      bound: '已绑定项目',
+      unbound: '未绑定项目',
+    },
+    fields: {
+      title: '标题',
+      titlePlaceholder: '例如：Acme OAuth 授权链路观察',
+      program: '绑定项目',
+      tags: '标签',
+      tagsPlaceholder: '例如：oauth, redirect, ssrf',
+      content: '正文',
+      contentPlaceholder: '记录规则、入口、复现片段、失败尝试、旁路思路和关键备注...',
+    },
+    tips: {
+      search: '搜索框会在 SQLite FTS5 索引上查标题、正文、标签和项目名。',
+      binding: '未绑定项目的笔记适合记录通用技巧、平台规则和跨项目观察。',
+    },
+  },
+
   submissions: {
     title: '提交记录列表',
     empty: '暂无提交记录',
@@ -125,7 +170,8 @@ export default {
     scopeList: '范围列表',
     addScope: '添加范围',
     backfillDomainScopes: '从域名资产回填范围',
-    backfillNoop: '未新增范围。当前共有 {assets} 条域名资产，提取到 {roots} 个根域，范围可能已存在。',
+    backfillNoop:
+      '未新增范围。当前共有 {assets} 条域名资产，提取到 {roots} 个根域，范围可能已存在。',
     noScopes: '暂无范围定义，添加 In Scope 和 Out of Scope 规则',
     noFindings: '该项目暂无发现记录',
     noDescription: '暂无描述',
@@ -291,14 +337,17 @@ export default {
     selectionSummary: '已选 {selected} 条，当前页 {page} 条，筛选结果共 {total} 条',
     updateStatus: '更新状态',
     delete: '删除',
+    deleteAll: '删除全部',
     selectCurrentPage: '选择当前页',
     selectAllFiltered: '选择当前筛选结果',
     itemsSelected: '条记录已选中',
     totalReward: '总奖励',
     confirmUpdateStatus: '确定要更新 {count} 条记录的状态吗？',
     confirmDelete: '确定要删除 {count} 条记录吗？此操作不可撤销。',
+    confirmDeleteAll: '确定要删除全部 {count} 条发现吗？此操作不可撤销。',
     updateSuccess: '已成功更新 {count} 条记录',
     deleteSuccess: '已成功删除 {count} 条记录',
+    deleteAllSuccess: '已成功删除全部 {count} 条发现',
   },
 
   importExport: {
@@ -434,6 +483,7 @@ export default {
   errors: {
     loadFailed: '加载失败',
     createFailed: '创建失败',
+    saveFailed: '保存失败',
     updateFailed: '更新失败',
     deleteFailed: '删除失败',
     backfillDomainScopesFailed: '从域名资产回填范围失败',
@@ -874,7 +924,21 @@ export default {
     pluginsLoadFailed: '加载插件列表失败，使用默认插件列表',
     serviceProbeEngine: '服务识别引擎',
     serviceProbeEngineNative: 'Native',
-    serviceProbeEngineHint: 'service_monitor / service_probe 默认使用内置 Rust Native 引擎做服务识别。',
+    serviceProbeEngineHint:
+      'service_monitor / service_probe 默认使用内置 Rust Native 引擎做服务识别。',
+    subdomainBruteDictionarySection: '子域名字典配置',
+    subdomainBruteDictionarySource: '基础字典',
+    subdomainBruteFollowDefaultDictionary: '跟随默认子域名字典',
+    subdomainBruteDefaultDictionaryTag: '默认',
+    subdomainBruteDictionaryPickerHint:
+      '可直接选择任意子域名字典；若不手动选择，则跟随当前默认字典：{name}',
+    subdomainBruteDictionaryPickerHintNoDefault:
+      '可直接选择任意子域名字典；若不手动选择，则退回到内置字典。',
+    subdomainBruteInlineDictionary: '额外子域名前缀',
+    subdomainBruteInlineDictionaryPlaceholder: '每行一个前缀，例如：\nadmin\nvpn\nstaging',
+    subdomainBruteInlineDictionaryHint:
+      '这些前缀会和所选字典一起参与爆破；未选择字典时会与默认子域名字典合并。',
+    subdomainBruteDictionaryLoadFailed: '加载子域名字典失败',
   },
 
   surface: {
@@ -946,7 +1010,8 @@ export default {
         currentType: '当前筛选类型（{type}）',
         apiAssets: 'API 资产',
         format: '导出格式',
-        scopeHint: '导出会继承当前资产清单中的项目、状态、搜索等筛选条件；导出类型会在此基础上进一步收敛。',
+        scopeHint:
+          '导出会继承当前资产清单中的项目、状态、搜索等筛选条件；导出类型会在此基础上进一步收敛。',
         submit: '开始导出',
         empty: '当前条件下没有可导出的资产。',
         success: '已导出 {count} 条资产',
@@ -973,7 +1038,8 @@ export default {
         success: '已导入 {count} 条资产',
         successWithScopes: '已导入 {count} 条资产，并新增 {scopes} 条范围',
         partialSuccess: '已导入 {created} 条资产，跳过 {skipped} 条重复资产',
-        partialSuccessWithScopes: '已导入 {created} 条资产，跳过 {skipped} 条重复资产，并新增 {scopes} 条范围',
+        partialSuccessWithScopes:
+          '已导入 {created} 条资产，跳过 {skipped} 条重复资产，并新增 {scopes} 条范围',
         scopeOnlySuccess: '没有新增资产，但已补充 {scopes} 条范围',
         noop: '没有新增资产，已跳过 {count} 条重复资产',
         failed: '手动导入资产失败',

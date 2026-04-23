@@ -13,6 +13,10 @@ import type {
   ProxyRequest,
 } from './proxyHistoryTypes'
 
+interface ResponseFormattingOptions {
+  bodyText?: string
+}
+
 export const formatBytes = (bytes: number) => {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -280,6 +284,7 @@ export const formatResponse = (
   request: ProxyRequest,
   tab: ProxyHistoryResponseTab | string,
   viewMode: ProxyHistoryViewMode = 'edited',
+  options: ResponseFormattingOptions = {},
 ): string => {
   if (tab === 'hex') {
     return stringToHex(formatResponseRaw(request, viewMode))
@@ -296,27 +301,28 @@ export const formatResponse = (
   let result = `${getStartLineHttpVersion(request)} ${statusCode} ${getHarStatusText(statusCode)}\n`
   result += formatHeaderBlock(headers)
 
-  if (storedBody) {
+  const displayBody = options.bodyText ?? (storedBody ? getDisplayResponseBody(storedBody, getResponseContentType(request, viewMode)) : storedBody)
+
+  if (displayBody) {
     result += '\n'
     const contentType = getResponseContentType(request, viewMode)
-    const body = getDisplayResponseBody(storedBody, contentType)
-    const bodyFormat = detectHttpBodyLanguage(body, contentType)
+    const bodyFormat = detectHttpBodyLanguage(displayBody, contentType)
 
     if (isImageResponseContentType(contentType)) {
-      result += body
+      result += displayBody
     } else if (bodyFormat === 'json') {
       try {
-        result += JSON.stringify(JSON.parse(body), null, 2)
+        result += JSON.stringify(JSON.parse(displayBody), null, 2)
       } catch {
-        result += body
+        result += displayBody
       }
     } else if (bodyFormat === 'html' || bodyFormat === 'xml' || bodyFormat === 'text') {
-      result += body
+      result += displayBody
     } else {
-      const bodySize = new Blob([body]).size
+      const bodySize = new Blob([displayBody]).size
       result += `[Binary data - ${formatBytes(bodySize)}]\n`
       result += `Content-Type: ${contentType}\n`
-      result += `\nFirst 200 characters:\n${body.substring(0, 200)}...`
+      result += `\nFirst 200 characters:\n${displayBody.substring(0, 200)}...`
     }
   }
 
@@ -339,13 +345,14 @@ export const isResponseCompressed = (request: ProxyRequest): boolean => {
 export const formatResponseRaw = (
   request: ProxyRequest,
   viewMode: ProxyHistoryViewMode = 'edited',
+  options: ResponseFormattingOptions = {},
 ): string => {
   const useEdited = viewMode === 'edited' && request.was_edited
   const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code
   const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
   const storedBody = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
   const contentType = getResponseContentType(request, viewMode)
-  const body = storedBody ? getDisplayResponseBody(storedBody, contentType) : storedBody
+  const body = options.bodyText ?? (storedBody ? getDisplayResponseBody(storedBody, contentType) : storedBody)
 
   let result = `${getStartLineHttpVersion(request)} ${statusCode} ${getHarStatusText(statusCode)}\n`
   result += formatHeaderBlock(headers)

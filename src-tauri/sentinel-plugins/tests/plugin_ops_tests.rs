@@ -7,7 +7,7 @@
  * 3. Severity/Confidence 解析
  */
 use sentinel_plugins::{
-    plugin_ops::{JsFinding, PluginContext},
+    plugin_ops::{JsFinding, JsRequest, JsResponse, PluginContext},
     types::{Confidence, Finding, Severity},
 };
 
@@ -85,6 +85,56 @@ fn test_js_finding_to_finding_conversion() {
     assert_eq!(finding.method, "POST");
     assert!(finding.location.contains("username"));
     assert!(!finding.id.is_empty(), "ID should be auto-generated");
+}
+
+#[test]
+fn test_js_finding_maps_raw_request_and_response_evidence() {
+    let js_finding = JsFinding {
+        vuln_type: "sqli".to_string(),
+        severity: "high".to_string(),
+        confidence: "high".to_string(),
+        url: "http://example.com/items?id=1".to_string(),
+        method: "GET".to_string(),
+        param_name: "id".to_string(),
+        param_value: "1".to_string(),
+        evidence: "sql_error=You have an error in your SQL syntax".to_string(),
+        description: "Explicit SQL error disclosure".to_string(),
+        title: "Confirmed SQL Error Disclosure".to_string(),
+        request: Some(JsRequest {
+            method: "GET".to_string(),
+            url: "http://example.com/items?id=1%27".to_string(),
+            headers: r#"[{"name":"Host","value":"example.com"},{"name":"X-Test","value":"1"}]"#
+                .to_string(),
+            body: String::new(),
+        }),
+        response: Some(JsResponse {
+            status: 500,
+            headers: r#"[{"name":"Content-Type","value":"text/html"}]"#.to_string(),
+            body: "<html>sql syntax error</html>".to_string(),
+        }),
+        cwe: "CWE-89".to_string(),
+        owasp: "A03:2021".to_string(),
+        remediation: "Use prepared statements".to_string(),
+    };
+
+    let finding: Finding = js_finding.into();
+
+    assert_eq!(finding.url, "http://example.com/items?id=1%27");
+    assert_eq!(finding.method, "GET");
+    assert_eq!(
+        finding.request_headers.as_deref(),
+        Some(r#"[{"name":"Host","value":"example.com"},{"name":"X-Test","value":"1"}]"#)
+    );
+    assert_eq!(finding.request_body, None);
+    assert_eq!(finding.response_status, Some(500));
+    assert_eq!(
+        finding.response_headers.as_deref(),
+        Some(r#"[{"name":"Content-Type","value":"text/html"}]"#)
+    );
+    assert_eq!(
+        finding.response_body.as_deref(),
+        Some("<html>sql syntax error</html>")
+    );
 }
 
 #[test]

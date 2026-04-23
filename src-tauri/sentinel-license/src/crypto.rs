@@ -135,8 +135,25 @@ pub fn verify_license(
     }
 }
 
+pub fn sign_detached_payload(payload: &[u8], signing_key: &SigningKey) -> String {
+    BASE64.encode(signing_key.sign(payload).to_bytes())
+}
+
+pub fn verify_detached_payload(
+    payload: &[u8],
+    signature_bytes: &[u8; 64],
+) -> Result<bool, CryptoError> {
+    let public_key = get_embedded_public_key()?;
+    let signature = Signature::from_bytes(signature_bytes);
+
+    match public_key.verify(payload, &signature) {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
 /// Get the embedded public key
-fn get_embedded_public_key() -> Result<VerifyingKey, CryptoError> {
+pub(crate) fn get_embedded_public_key() -> Result<VerifyingKey, CryptoError> {
     // In production, this would decode the actual embedded key
     if EMBEDDED_PUBLIC_KEY == "REPLACE_WITH_YOUR_PUBLIC_KEY_BASE64" {
         // For development/testing, return error

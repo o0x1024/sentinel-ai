@@ -24,7 +24,7 @@ export default {
   notifications: 'Notifications',
   notificationCenter: 'Message Center',
   agentManagement: 'Agent Management',
-  notificationRules: 'Notification Center',
+  notificationRules: 'Notification Rules',
   bugBounty: 'BBounty',
 
   // Sidebar section titles

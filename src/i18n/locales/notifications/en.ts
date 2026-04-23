@@ -1,5 +1,5 @@
 export default {
-    title: 'Notification Center',
+    title: 'Notification Rules',
 
     // Buttons and actions
     newNotification: 'New Notification',
@@ -118,7 +118,7 @@ export default {
         removeItem: 'Remove',
         openTarget: 'Open details',
         viewAll: 'View all',
-        manageRules: 'Notification Center',
+        manageRules: 'Notification Rules',
         sourceFilter: 'Source',
         allSources: 'All sources',
         unreadOnly: 'Unread only',
@@ -144,6 +144,8 @@ export default {
         monitorCompletedWithAssetsAndFindings: 'Monitor task "{name}" completed with {assets} new assets and {findings} new findings',
         monitorStopped: 'Monitor task "{name}" stopped',
         monitorFailed: 'Monitor task "{name}" failed',
+        monitorFailureTitle: 'Asset monitor failed',
+        monitorPluginFailed: 'Plugin "{plugin}" in monitor task "{task}" failed: {reason}',
         aiAssistantTitle: 'AI assistant reply ready',
         aiAssistantCompletedMessage: 'Conversation {id} has a new assistant reply',
         aiAssistantFailedTitle: 'AI assistant execution ended',
@@ -173,7 +175,7 @@ export default {
         sourceDescriptions: {
             ai_assistant: 'Alert when assistant replies finish, fail, or are cancelled',
             workflow: 'Alert when regular workflow runs complete or error',
-            monitor: 'Alert when monitor schedules finish and discover new assets or findings',
+            monitor: 'Alert when monitor schedules complete, stop, or a plugin execution fails',
             bug_bounty_workflow: 'Alert when automation runs produce asset or finding results',
         },
         levels: {

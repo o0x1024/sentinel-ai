@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
@@ -22,6 +23,8 @@ use x509_parser::parse_x509_certificate;
 use crate::dictionary_runtime;
 use crate::monitor_progress::{emit_plugin_monitor_progress, PluginMonitorProgressRequest};
 use crate::network_scan::op_scan_ports;
+use crate::runtime_config::get_plugin_runtime_settings;
+use crate::runtime_events::emit_active_probe_event;
 use crate::service_probe::op_get_service_probe_capabilities;
 use crate::service_probe_runtime::op_probe_services;
 use crate::types::{Confidence, Finding, Severity};
@@ -31,6 +34,9 @@ use crate::types::{Confidence, Finding, Severity};
 pub struct PluginContext {
     pub findings: Arc<Mutex<Vec<Finding>>>,
     pub last_result: Arc<Mutex<Option<serde_json::Value>>>,
+    pub plugin_id: Arc<Mutex<Option<String>>>,
+    pub traffic_request_id: Arc<Mutex<Option<String>>>,
+    pub finding_sink: Arc<Mutex<Option<mpsc::UnboundedSender<Finding>>>>,
 }
 
 impl PluginContext {
@@ -38,6 +44,9 @@ impl PluginContext {
         Self {
             findings: Arc::new(Mutex::new(Vec::new())),
             last_result: Arc::new(Mutex::new(None)),
+            plugin_id: Arc::new(Mutex::new(None)),
+            traffic_request_id: Arc::new(Mutex::new(None)),
+            finding_sink: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -49,6 +58,47 @@ impl PluginContext {
     pub fn take_last_result(&self) -> Option<serde_json::Value> {
         let mut last = self.last_result.lock().unwrap();
         std::mem::take(&mut *last)
+    }
+
+    pub fn set_plugin_id(&self, plugin_id: Option<String>) {
+        let mut current = self.plugin_id.lock().unwrap();
+        *current = plugin_id;
+    }
+
+    pub fn plugin_id(&self) -> Option<String> {
+        self.plugin_id.lock().unwrap().clone()
+    }
+
+    pub fn set_traffic_request_id(&self, request_id: Option<String>) {
+        let mut current = self.traffic_request_id.lock().unwrap();
+        *current = request_id;
+    }
+
+    pub fn traffic_request_id(&self) -> Option<String> {
+        self.traffic_request_id.lock().unwrap().clone()
+    }
+
+    pub fn set_finding_sink(&self, finding_sink: Option<mpsc::UnboundedSender<Finding>>) {
+        let mut current = self.finding_sink.lock().unwrap();
+        *current = finding_sink;
+    }
+
+    pub fn emit_finding(&self, finding: Finding) -> bool {
+        if let Some(sink) = self.finding_sink.lock().unwrap().clone() {
+            match sink.send(finding.clone()) {
+                Ok(_) => {
+                    let mut findings = self.findings.lock().unwrap();
+                    findings.push(finding);
+                    return true;
+                }
+                Err(error) => {
+                    warn!("Failed to stream finding to traffic pipeline: {}", error);
+                    return false;
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -94,18 +144,29 @@ pub struct JsRequest {
     pub method: String,
     #[serde(default)]
     pub url: String,
+    #[serde(default)]
+    pub headers: String,
+    #[serde(default)]
+    pub body: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsResponse {
     #[serde(default)]
     pub status: u16,
+    #[serde(default)]
+    pub headers: String,
+    #[serde(default)]
+    pub body: String,
 }
 
 impl From<JsFinding> for Finding {
     fn from(js: JsFinding) -> Self {
+        let request_ref = js.request.as_ref();
+        let response_ref = js.response.as_ref();
+
         // 从 request 对象或顶层获取 url 和 method
-        let url = if let Some(ref req) = js.request {
+        let url = if let Some(req) = request_ref {
             if !req.url.is_empty() {
                 req.url.clone()
             } else {
@@ -115,7 +176,7 @@ impl From<JsFinding> for Finding {
             js.url.clone()
         };
 
-        let method = if let Some(ref req) = js.request {
+        let method = if let Some(req) = request_ref {
             if !req.method.is_empty() {
                 req.method.clone()
             } else {
@@ -161,6 +222,18 @@ impl From<JsFinding> for Finding {
             String::new()
         };
 
+        let request_headers =
+            request_ref.and_then(|req| normalize_optional_string(req.headers.clone()));
+        let request_body = request_ref.and_then(|req| normalize_optional_string(req.body.clone()));
+        let response_status = response_ref
+            .map(|resp| resp.status)
+            .filter(|status| *status > 0)
+            .map(i32::from);
+        let response_headers =
+            response_ref.and_then(|resp| normalize_optional_string(resp.headers.clone()));
+        let response_body =
+            response_ref.and_then(|resp| normalize_optional_string(resp.body.clone()));
+
         Finding {
             id: uuid::Uuid::new_v4().to_string(),
             plugin_id: String::new(), // 将在 PluginEngine 中设置
@@ -193,13 +266,20 @@ impl From<JsFinding> for Finding {
                 Some(js.remediation)
             },
             created_at: chrono::Utc::now(),
-            // 这些字段将在扫描流水线中填充（从 RequestContext/ResponseContext）
-            request_headers: None,
-            request_body: None,
-            response_status: None,
-            response_headers: None,
-            response_body: None,
+            request_headers,
+            request_body,
+            response_status,
+            response_headers,
+            response_body,
         }
+    }
+}
+
+fn normalize_optional_string(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -231,6 +311,7 @@ extension!(
     sentinel_plugin_ext,
     ops = [
         op_plugin_log,
+        op_emit_finding,
         op_plugin_return,
         op_fetch,
         op_abort_fetch,
@@ -240,6 +321,8 @@ extension!(
         op_probe_services,
         op_get_service_probe_capabilities,
         op_report_monitor_progress,
+        op_emit_active_probe_event,
+        op_get_plugin_runtime_settings,
         // File system operations
         op_read_text_file,
         op_write_text_file,
@@ -261,7 +344,7 @@ extension!(
         op_parse_js,
     ],
     esm_entry_point = "ext:sentinel_plugin_ext/plugin_bootstrap.js",
-    esm = [ dir "src", "plugin_bootstrap.js" ],
+    esm = [ dir "src", "plugin_bootstrap.js", "active_probe_runtime.js" ],
     state = |state| {
         state.put(PluginContext::new());
     }
@@ -284,6 +367,20 @@ fn op_plugin_log(#[string] level: String, #[string] message: String) {
 }
 
 #[op2]
+fn op_emit_finding(state: &mut OpState, #[serde] finding: JsFinding) -> bool {
+    let ctx = state.borrow::<PluginContext>().clone();
+    let mut finding: Finding = finding.into();
+
+    if finding.plugin_id.is_empty() {
+        finding.plugin_id = ctx
+            .plugin_id()
+            .unwrap_or_else(|| "unknown-plugin".to_string());
+    }
+
+    ctx.emit_finding(finding)
+}
+
+#[op2]
 fn op_plugin_return(state: &mut OpState, #[serde] value: serde_json::Value) -> bool {
     let ctx = state.borrow::<PluginContext>().clone();
     let mut last = ctx.last_result.lock().unwrap();
@@ -301,7 +398,67 @@ fn op_report_monitor_progress(#[serde] request: PluginMonitorProgressRequest) ->
     true
 }
 
+#[op2]
+fn op_emit_active_probe_event(
+    state: &mut OpState,
+    #[serde] update: ActiveProbeRuntimeUpdate,
+) -> bool {
+    if update.request_id.trim().is_empty()
+        || update.phase.trim().is_empty()
+        || update.url.trim().is_empty()
+    {
+        return false;
+    }
+
+    let ctx = state.borrow::<PluginContext>().clone();
+    let payload = ActiveProbeEvent {
+        plugin_id: ctx.plugin_id(),
+        traffic_request_id: ctx.traffic_request_id(),
+        request_id: update.request_id,
+        phase: update.phase,
+        method: update.method,
+        url: update.url,
+        probe_label: update.probe_label,
+        target_name: update.target_name,
+        target_path: update.target_path,
+        target_location: update.target_location,
+        probe_value: update.probe_value,
+        technique: update.technique,
+        probe_class: update.probe_class,
+        probe_priority: update.probe_priority,
+        cooldown_key: update.cooldown_key,
+        cooldown_wait_ms: update.cooldown_wait_ms,
+        jitter_wait_ms: update.jitter_wait_ms,
+        total_wait_ms: update.total_wait_ms,
+        adaptive_penalty_ms: update.adaptive_penalty_ms,
+        status: update.status,
+        error: update.error,
+        reason: update.reason,
+        target_count: update.target_count,
+        active_slots: update.active_slots,
+        max_concurrent_per_host: update.max_concurrent_per_host,
+        queue_depth: update.queue_depth,
+        response_elapsed_ms: update.response_elapsed_ms,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+    emit_active_probe_event(&payload);
+    true
+}
+
+#[op2]
+#[serde]
+fn op_get_plugin_runtime_settings() -> crate::runtime_config::PluginRuntimeSettings {
+    get_plugin_runtime_settings()
+}
+
 /// Fetch request options from JavaScript
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FetchBody {
+    Text { text: String },
+    Bytes { bytes: Vec<u8> },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchOptions {
     #[serde(default)]
@@ -309,7 +466,7 @@ pub struct FetchOptions {
     #[serde(default)]
     pub headers: std::collections::HashMap<String, String>,
     #[serde(default)]
-    pub body: Option<String>,
+    pub body: Option<FetchBody>,
     #[serde(default)]
     pub timeout: Option<u64>, // timeout in milliseconds
     #[serde(default)]
@@ -333,6 +490,92 @@ pub struct FetchResponse {
     pub redirected: bool,
     pub final_url: String,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveProbeRuntimeUpdate {
+    #[serde(default)]
+    pub request_id: String,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub method: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub probe_label: Option<String>,
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub target_path: Option<String>,
+    #[serde(default)]
+    pub target_location: Option<String>,
+    #[serde(default)]
+    pub probe_value: Option<String>,
+    #[serde(default)]
+    pub technique: Option<String>,
+    #[serde(default)]
+    pub probe_class: Option<String>,
+    #[serde(default)]
+    pub probe_priority: Option<i32>,
+    #[serde(default)]
+    pub cooldown_key: Option<String>,
+    #[serde(default)]
+    pub cooldown_wait_ms: Option<u64>,
+    #[serde(default)]
+    pub jitter_wait_ms: Option<u64>,
+    #[serde(default)]
+    pub total_wait_ms: Option<u64>,
+    #[serde(default)]
+    pub adaptive_penalty_ms: Option<u64>,
+    #[serde(default)]
+    pub status: Option<u16>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub target_count: Option<u32>,
+    #[serde(default)]
+    pub active_slots: Option<u32>,
+    #[serde(default)]
+    pub max_concurrent_per_host: Option<u32>,
+    #[serde(default)]
+    pub queue_depth: Option<u32>,
+    #[serde(default)]
+    pub response_elapsed_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveProbeEvent {
+    pub plugin_id: Option<String>,
+    pub traffic_request_id: Option<String>,
+    pub request_id: String,
+    pub phase: String,
+    pub method: String,
+    pub url: String,
+    pub probe_label: Option<String>,
+    pub target_name: Option<String>,
+    pub target_path: Option<String>,
+    pub target_location: Option<String>,
+    pub probe_value: Option<String>,
+    pub technique: Option<String>,
+    pub probe_class: Option<String>,
+    pub probe_priority: Option<i32>,
+    pub cooldown_key: Option<String>,
+    pub cooldown_wait_ms: Option<u64>,
+    pub jitter_wait_ms: Option<u64>,
+    pub total_wait_ms: Option<u64>,
+    pub adaptive_penalty_ms: Option<u64>,
+    pub status: Option<u16>,
+    pub error: Option<String>,
+    pub reason: Option<String>,
+    pub target_count: Option<u32>,
+    pub active_slots: Option<u32>,
+    pub max_concurrent_per_host: Option<u32>,
+    pub queue_depth: Option<u32>,
+    pub response_elapsed_ms: Option<u64>,
+    pub timestamp: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -524,7 +767,10 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
         req_builder = req_builder.timeout(Duration::from_millis(timeout_ms));
 
         if let Some(body) = opts.body {
-            req_builder = req_builder.body(body);
+            req_builder = match body {
+                FetchBody::Text { text } => req_builder.body(text),
+                FetchBody::Bytes { bytes } => req_builder.body(bytes),
+            };
         }
 
         let response = match req_builder.send().await {

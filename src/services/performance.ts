@@ -142,23 +142,12 @@ class PerformanceService {
     
     try {
       performance.mark(`route-end-${routePath}`);
-      
-      // 检查起始标记是否存在
-      const marks = performance.getEntriesByName(`route-start-${routePath}`, 'mark');
-      
-      if (marks.length > 0) {
-        // 起始标记存在，创建测量
-        performance.measure(
-          `route-${routePath}`,
-          `route-start-${routePath}`,
-          `route-end-${routePath}`
-        );
-      } else {
-        // 起始标记不存在，只记录时间差
-        console.debug(`Route start mark not found for ${routePath}, using time difference: ${this.metrics.routeChangeTime}ms`);
-      }
+      performance.measure(
+        `route-${routePath}`,
+        `route-start-${routePath}`,
+        `route-end-${routePath}`
+      );
     } catch (error) {
-      // 如果测量失败，只记录警告但不影响功能
       console.warn('Failed to measure route performance:', error);
     }
   }
@@ -224,6 +213,7 @@ class PerformanceService {
    * 获取当前性能指标
    */
   getMetrics(): Partial<PerformanceMetrics> {
+    this.collectInitialMetrics();
     return { ...this.metrics };
   }
 

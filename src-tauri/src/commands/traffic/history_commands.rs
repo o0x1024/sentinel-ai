@@ -47,6 +47,62 @@ pub async fn get_proxy_request(
     Ok(CommandResponse::ok(request))
 }
 
+/// 根据数据库请求 ID 解析当前历史缓存里的请求 ID，不存在则从数据库加载到缓存
+#[tauri::command]
+pub async fn resolve_proxy_history_request_id_by_db_request_id(
+    state: State<'_, TrafficAnalysisState>,
+    db_request_id: i64,
+) -> Result<CommandResponse<Option<i64>>, String> {
+    if db_request_id <= 0 {
+        return Ok(CommandResponse::ok(None));
+    }
+
+    let cache = state.get_history_cache();
+    if let Some(record) = cache.get_http_request_by_db_id(db_request_id).await {
+        return Ok(CommandResponse::ok(Some(record.id)));
+    }
+
+    let db = state.get_db_service();
+    let Some(db_record) = db
+        .get_proxy_request_by_id(db_request_id)
+        .await
+        .map_err(|e| format!("Failed to load proxy request from database: {}", e))?
+    else {
+        return Ok(CommandResponse::ok(None));
+    };
+
+    let history_request_id = cache
+        .add_http_request(sentinel_traffic::HttpRequestRecord {
+            id: 0,
+            db_request_id: db_record.id,
+            traffic_request_id: None,
+            url: db_record.url,
+            host: db_record.host,
+            scheme: db_record.scheme,
+            http_version_observed: db_record.http_version_observed,
+            method: db_record.method,
+            status_code: db_record.status_code,
+            request_headers: db_record.request_headers,
+            request_body: db_record.request_body,
+            response_headers: db_record.response_headers,
+            response_body: db_record.response_body,
+            response_size: db_record.response_size,
+            response_time: db_record.response_time,
+            timestamp: db_record.timestamp,
+            was_edited: false,
+            edited_method: None,
+            edited_url: None,
+            edited_request_headers: None,
+            edited_request_body: None,
+            edited_response_headers: None,
+            edited_response_body: None,
+            edited_status_code: None,
+        })
+        .await;
+
+    Ok(CommandResponse::ok(Some(history_request_id)))
+}
+
 /// 清空代理请求历史（清空内存缓存）
 #[tauri::command]
 pub async fn clear_proxy_requests(
@@ -166,6 +222,7 @@ pub async fn load_history_from_database(
         let record = sentinel_traffic::HttpRequestRecord {
             id: db_record.id.unwrap_or(0),
             db_request_id: db_record.id,
+            traffic_request_id: None,
             url: db_record.url,
             host: db_record.host,
             scheme: db_record.scheme,

@@ -86,9 +86,6 @@ export const createDefaultSettings = () => ({
     uiScale: 100,
   },
   system: {
-    theme: 'dark',
-    fontSize: 'normal',
-    uiScale: 100,
     autoStart: false,
     minimizeToTray: true,
   },

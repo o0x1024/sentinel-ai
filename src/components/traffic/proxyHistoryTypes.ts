@@ -1,5 +1,7 @@
 export interface ProxyRequest {
   id: number
+  db_request_id?: number | null
+  traffic_request_id?: string | null
   url: string
   host: string
   scheme: string

@@ -6,6 +6,14 @@ import {
 import { setLanguage as applyI18nLanguage } from '@/i18n'
 
 const DARK_THEMES = new Set(['dark', 'synthwave', 'halloween', 'forest', 'black', 'luxury', 'dracula'])
+const DEFAULT_FONT_SIZE = 16
+const DEFAULT_UI_SCALE = 100
+const LEGACY_FONT_SIZE_MAP: Record<string, number> = {
+  small: 12,
+  normal: 16,
+  large: 18,
+  xlarge: 20,
+}
 const THEME_MEDIA_QUERY = typeof window !== 'undefined'
   ? window.matchMedia('(prefers-color-scheme: dark)')
   : null
@@ -81,17 +89,79 @@ export const applyTheme = (theme: string, settings: any) => {
   syncResolvedTheme()
 }
 
+const normalizeFontSize = (fontSize: unknown): number => {
+  if (typeof fontSize === 'number' && Number.isFinite(fontSize)) {
+    return Math.min(20, Math.max(12, Math.round(fontSize)))
+  }
+  if (typeof fontSize === 'string') {
+    const mapped = LEGACY_FONT_SIZE_MAP[fontSize.trim().toLowerCase()]
+    if (mapped) {
+      return mapped
+    }
+  }
+  return DEFAULT_FONT_SIZE
+}
+
+const normalizeUiScale = (scale: unknown): number => {
+  if (typeof scale === 'number' && Number.isFinite(scale)) {
+    return Math.min(200, Math.max(50, Math.round(scale)))
+  }
+  return DEFAULT_UI_SCALE
+}
+
+const syncRootTypography = () => {
+  const rootElement = document.documentElement
+  const baseFontSize = rootElement.style.getPropertyValue('--font-size-base') || `${DEFAULT_FONT_SIZE}px`
+  const uiScale = rootElement.style.getPropertyValue('--ui-scale') || '1'
+
+  rootElement.style.setProperty('--font-size-base', baseFontSize)
+  rootElement.style.setProperty('--ui-scale', uiScale)
+  rootElement.style.fontSize = 'calc(var(--font-size-base, 16px) * var(--ui-scale, 1))'
+}
+
+export const migrateLegacyAppearanceSettings = (settings: any): boolean => {
+  if (!settings || typeof settings !== 'object') {
+    return false
+  }
+
+  let changed = false
+
+  if (!settings.general || typeof settings.general !== 'object') {
+    settings.general = {}
+    changed = true
+  }
+
+  const resolvedFontSize = normalizeFontSize(settings.general.fontSize ?? settings.system?.fontSize)
+  const resolvedUiScale = normalizeUiScale(settings.general.uiScale ?? settings.system?.uiScale)
+
+  if (settings.general.fontSize !== resolvedFontSize) {
+    settings.general.fontSize = resolvedFontSize
+    changed = true
+  }
+
+  if (settings.general.uiScale !== resolvedUiScale) {
+    settings.general.uiScale = resolvedUiScale
+    changed = true
+  }
+
+  if (settings.system && typeof settings.system === 'object') {
+    if ('fontSize' in settings.system) {
+      delete settings.system.fontSize
+      changed = true
+    }
+    if ('uiScale' in settings.system) {
+      delete settings.system.uiScale
+      changed = true
+    }
+  }
+
+  return changed
+}
+
 export const applyFontSize = (fontSize: number) => {
   const rootElement = document.documentElement
-  rootElement.style.fontSize = `${fontSize}px`
-  rootElement.style.setProperty('--font-size-base', `${fontSize}px`)
-
-  if (window.updateFontSize) {
-    const sizeMap: Record<number, string> = {
-      12: 'small', 14: 'normal', 16: 'normal', 18: 'large', 20: 'large',
-    }
-    window.updateFontSize(sizeMap[fontSize] || 'normal')
-  }
+  rootElement.style.setProperty('--font-size-base', `${normalizeFontSize(fontSize)}px`)
+  syncRootTypography()
 }
 
 export const applyLanguage = (language: string, locale: { value: string }) => {
@@ -118,21 +188,12 @@ export const applyLanguage = (language: string, locale: { value: string }) => {
 
 export const applyUIScale = (scale: number) => {
   const rootElement = document.documentElement
-  const scaleValue = scale / 100
+  const scaleValue = normalizeUiScale(scale) / 100
 
   rootElement.style.setProperty('--ui-scale', scaleValue.toString())
-  rootElement.style.transform = `scale(${scaleValue})`
-  rootElement.style.transformOrigin = 'top left'
-
-  if (scale !== 100) {
-    rootElement.style.width = `${10000 / scale}%`
-    rootElement.style.height = `${10000 / scale}%`
-  } else {
-    rootElement.style.width = '100%'
-    rootElement.style.height = '100%'
-  }
-
-  if (window.updateUIScale) {
-    window.updateUIScale(scale)
-  }
+  rootElement.style.removeProperty('transform')
+  rootElement.style.removeProperty('transform-origin')
+  rootElement.style.removeProperty('width')
+  rootElement.style.removeProperty('height')
+  syncRootTypography()
 }

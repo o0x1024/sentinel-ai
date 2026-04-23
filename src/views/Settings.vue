@@ -160,7 +160,15 @@ import { emitAiConfigUpdated } from '@/services/aiConfigEvents'
 import { inferModelSupportsVision } from '@/services/aiModelCapabilities'
 import { applyDatabaseTypeDefaults } from './settingsDatabaseSupport'
 import { createSettingsSecurityActions } from './settingsSecuritySupport'
-import { applyFontSize, applyLanguage, applyTheme, applyUIScale, clampOutputStorageThreshold, normalizeCloseAction } from './settingsUiSupport'
+import {
+  applyFontSize,
+  applyLanguage,
+  applyTheme,
+  applyUIScale,
+  clampOutputStorageThreshold,
+  migrateLegacyAppearanceSettings,
+  normalizeCloseAction,
+} from './settingsUiSupport'
 
 const { t, locale } = useI18n()
 
@@ -378,6 +386,7 @@ const loadSettings = async () => {
     if (savedSettings) {
       try {
         const parsed = JSON.parse(savedSettings)
+        const migrated = migrateLegacyAppearanceSettings(parsed)
         console.log('Loading saved settings:', parsed)
         
         // 深度合并保存的设置到默认设置
@@ -399,6 +408,9 @@ const loadSettings = async () => {
         }
         if (parsed.security) {
           Object.assign(settings.value.security, parsed.security)
+        }
+        if (migrated) {
+          localStorage.setItem('sentinel-settings', JSON.stringify(parsed))
         }
       } catch (e) {
         console.warn('Failed to parse saved settings:', e)

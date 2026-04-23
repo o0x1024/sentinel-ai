@@ -244,6 +244,7 @@ export default {
     favorited: 'Favorited',
     favorite: 'Favorite Plugin',
     unfavorite: 'Unfavorite',
+    clearFilters: 'Clear Filters',
     copyPlugin: 'Copy Plugin',
     showing: 'Showing',
     of: 'of',
@@ -264,6 +265,8 @@ export default {
 
     categories: {
       all: 'All',
+      traffic: 'Traffic',
+      agent: 'Agent',
       trafficAnalysis: 'Traffic Analysis Plugins',
       agents: 'Agent Tool Plugins',
       intruder: 'Intruder Plugins',

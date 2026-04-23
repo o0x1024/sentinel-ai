@@ -12,9 +12,6 @@ use sentinel_plugins::{
     PluginMonitorProgressUpdate,
 };
 use serde::{Deserialize, Serialize};
-
-const DEFAULT_DICTIONARY_LIMIT: i32 = 10_000;
-const MAX_DICTIONARY_LIMIT: i32 = 100_000;
 const FALLBACK_DICTIONARY: &[&str] = &[
     "www",
     "mail",
@@ -53,7 +50,7 @@ pub struct SubdomainBruteArgs {
     /// Optional shared dictionary identifier from the runtime dictionary registry.
     #[serde(default)]
     pub dictionary_id: Option<String>,
-    /// Inline subdomain prefixes. Used together with the runtime dictionary when provided.
+    /// Inline subdomain prefixes. Merged with the selected/default runtime dictionary when available.
     #[serde(default)]
     pub dictionary: Vec<String>,
     /// Custom DNS resolvers in host:port form.
@@ -95,9 +92,6 @@ pub struct SubdomainBruteArgs {
     /// Previous snapshots used to compute change events.
     #[serde(default)]
     pub previous_snapshots: HashMap<String, SubdomainSnapshot>,
-    /// Maximum number of dictionary entries to use from the merged dictionary.
-    #[serde(default = "default_dictionary_limit")]
-    pub dictionary_limit: i32,
     #[schemars(skip)]
     #[serde(default, alias = "__monitorExecution")]
     pub monitor_progress: Option<MonitorProgressContext>,
@@ -274,8 +268,7 @@ impl Tool for SubdomainBruteTool {
             Some(true),
         );
 
-        let dictionary_limit = args.dictionary_limit.clamp(1, MAX_DICTIONARY_LIMIT);
-        let (dictionary, dictionary_source) = load_dictionary_words(&args, dictionary_limit).await;
+        let (dictionary, dictionary_source) = load_dictionary_words(&args).await;
         if dictionary.is_empty() {
             return Err(SubdomainBruteError::InvalidArgs(
                 "dictionary is empty after normalization".to_string(),
@@ -627,10 +620,6 @@ fn default_bandwidth_limit() -> Option<String> {
     Some("3M".to_string())
 }
 
-fn default_dictionary_limit() -> i32 {
-    DEFAULT_DICTIONARY_LIMIT
-}
-
 fn normalize_input_targets(args: &SubdomainBruteArgs) -> Vec<String> {
     let mut candidates = args.targets.clone();
     if let Some(domain) = &args.domain {
@@ -701,34 +690,17 @@ fn reduce_to_root_targets(mut domains: Vec<String>) -> Vec<String> {
     selected
 }
 
-async fn load_dictionary_words(
-    args: &SubdomainBruteArgs,
-    dictionary_limit: i32,
-) -> (Vec<String>, String) {
-    if !args.dictionary.is_empty() {
-        return (
-            unique_sorted(
-                args.dictionary
-                    .iter()
-                    .map(|item| item.trim().to_lowercase())
-                    .filter(|item| !item.is_empty())
-                    .collect(),
-            ),
-            "inline".to_string(),
-        );
-    }
+async fn load_dictionary_words(args: &SubdomainBruteArgs) -> (Vec<String>, String) {
+    let inline_words = normalize_inline_dictionary_words(&args.dictionary);
 
     if let Some(dictionary_id) = args.dictionary_id.as_ref().map(|item| item.trim()) {
         if !dictionary_id.is_empty() {
-            if let Ok(words) = dictionary_runtime::get_dictionary_words(
-                dictionary_id.to_string(),
-                Some(dictionary_limit),
-            )
-            .await
+            if let Ok(words) =
+                dictionary_runtime::get_dictionary_words(dictionary_id.to_string(), None).await
             {
                 let normalized = unique_sorted(words);
                 if !normalized.is_empty() {
-                    return (normalized, dictionary_id.to_string());
+                    return merge_dictionary_words(normalized, inline_words, dictionary_id);
                 }
             }
         }
@@ -739,41 +711,59 @@ async fn load_dictionary_words(
     {
         let trimmed = default_id.trim();
         if !trimmed.is_empty() {
-            if let Ok(words) = dictionary_runtime::get_dictionary_words(
-                trimmed.to_string(),
-                Some(dictionary_limit),
-            )
-            .await
+            if let Ok(words) =
+                dictionary_runtime::get_dictionary_words(trimmed.to_string(), None).await
             {
                 let normalized = unique_sorted(words);
                 if !normalized.is_empty() {
-                    return (normalized, trimmed.to_string());
+                    return merge_dictionary_words(normalized, inline_words, trimmed);
                 }
             }
         }
     }
 
-    if let Ok(words) = dictionary_runtime::get_dictionary_words(
-        "builtin_subdomain_common".to_string(),
-        Some(dictionary_limit),
-    )
-    .await
+    if let Ok(words) =
+        dictionary_runtime::get_dictionary_words("builtin_subdomain_common".to_string(), None).await
     {
         let normalized = unique_sorted(words);
         if !normalized.is_empty() {
-            return (normalized, "builtin_subdomain_common".to_string());
+            return merge_dictionary_words(normalized, inline_words, "builtin_subdomain_common");
         }
     }
 
-    (
-        unique_sorted(
-            FALLBACK_DICTIONARY
-                .iter()
-                .map(|item| (*item).to_string())
-                .collect(),
-        ),
-        "fallback_builtin".to_string(),
-    )
+    let fallback_words = unique_sorted(
+        FALLBACK_DICTIONARY
+            .iter()
+            .map(|item| (*item).to_string())
+            .collect(),
+    );
+    if !fallback_words.is_empty() {
+        return merge_dictionary_words(fallback_words, inline_words, "fallback_builtin");
+    }
+
+    if !inline_words.is_empty() {
+        return (inline_words, "inline".to_string());
+    }
+
+    (Vec::new(), "empty".to_string())
+}
+
+fn normalize_inline_dictionary_words(words: &[String]) -> Vec<String> {
+    unique_sorted(words.to_vec())
+}
+
+fn merge_dictionary_words(
+    base_words: Vec<String>,
+    inline_words: Vec<String>,
+    base_source: &str,
+) -> (Vec<String>, String) {
+    if inline_words.is_empty() {
+        return (base_words, base_source.to_string());
+    }
+
+    let mut merged = base_words;
+    merged.extend(inline_words);
+    (unique_sorted(merged), format!("{base_source}+inline"))
 }
 
 fn unique_sorted(values: Vec<String>) -> Vec<String> {
@@ -1065,7 +1055,6 @@ mod tests {
             raw_records: false,
             device: None,
             previous_snapshots: HashMap::new(),
-            dictionary_limit: default_dictionary_limit(),
             monitor_progress: None,
         }
     }
@@ -1121,5 +1110,32 @@ mod tests {
         assert_eq!(config.query_types.len(), 2);
         assert!(matches!(config.query_types[0], QueryType::Aaaa));
         assert!(matches!(config.query_types[1], QueryType::Txt));
+    }
+
+    #[test]
+    fn normalize_inline_dictionary_words_deduplicates_and_normalizes() {
+        let words = normalize_inline_dictionary_words(&[
+            " WWW ".to_string(),
+            "api".to_string(),
+            "www".to_string(),
+            "".to_string(),
+        ]);
+
+        assert_eq!(words, vec!["api".to_string(), "www".to_string()]);
+    }
+
+    #[test]
+    fn merge_dictionary_words_combines_base_and_inline_entries() {
+        let (words, source) = merge_dictionary_words(
+            vec!["www".to_string(), "mail".to_string()],
+            vec!["api".to_string(), "www".to_string()],
+            "builtin_subdomain_common",
+        );
+
+        assert_eq!(
+            words,
+            vec!["api".to_string(), "mail".to_string(), "www".to_string()]
+        );
+        assert_eq!(source, "builtin_subdomain_common+inline");
     }
 }

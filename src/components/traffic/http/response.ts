@@ -19,6 +19,7 @@ export interface RawReplayCommandResult {
   status_text?: string | null
   headers: HttpHeaderEntry[]
   body_text: string
+  body_bytes_base64?: string
 }
 
 export function getHttpStatusText(statusCode: number): string {
@@ -62,6 +63,7 @@ export function buildHttpReplayResponseFromCommandResult(
     statusText: result.status_text || getHttpStatusText(result.status_code),
     headers: normalizeHeaderEntries(result.headers || []),
     bodyText: result.body_text || '',
+    bodyBytesBase64: result.body_bytes_base64 || undefined,
     rawText: result.raw_response,
     responseTimeMs: result.response_time_ms,
   }

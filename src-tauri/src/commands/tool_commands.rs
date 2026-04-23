@@ -11,9 +11,9 @@ use tokio::sync::RwLock;
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
     AskUserQuestionTool, BrowserTool, CloseAgentTool, FileEditTool, FileReadTool, FileWriteTool,
-    GlobTool, GrepTool, HttpRequestTool, ListAgentsTool, LspTool, OcrTool, RouteDiscoveryTool,
-    SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool, TenthManTool,
-    ToolSearchTool, WaitAgentsTool,
+    GlobTool, GrepTool, HttpRequestTool, ListAgentsTool, LspTool, OcrTool, PluginAuthoringTool,
+    RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool,
+    TenthManTool, ToolSearchTool, WaitAgentsTool,
 };
 use sentinel_tools::get_tool_server;
 use sentinel_tools::terminal::server::TerminalServer;
@@ -77,6 +77,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(WaitAgentsTool::NAME.to_string(), true);
     map.insert(ListAgentsTool::NAME.to_string(), true);
     map.insert(CloseAgentTool::NAME.to_string(), true);
+    map.insert(PluginAuthoringTool::NAME.to_string(), true);
     RwLock::new(map)
 });
 
@@ -127,13 +128,13 @@ pub async fn unified_execute_tool(
 ) -> Result<ToolExecutionResult, String> {
     let start = std::time::Instant::now();
 
-    // License check for tool execution
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
+    if let Err(message) =
+        sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::ToolExecution)
+    {
         return Ok(ToolExecutionResult {
             success: false,
             output: None,
-            error: Some("License required for tool execution".to_string()),
+            error: Some(message),
             execution_time_ms: start.elapsed().as_millis() as u64,
         });
     }

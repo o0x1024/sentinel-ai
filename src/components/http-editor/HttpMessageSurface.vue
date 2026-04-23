@@ -1,30 +1,6 @@
 <template>
   <div class="http-message-surface" :style="surfaceStyle">
     <HttpMessageTextEditor
-      v-if="readonly"
-      ref="surfaceEditor"
-      :model-value="modelValue"
-      readonly
-      :custom-context-menu="customContextMenu"
-      :message-type="messageType"
-      :height="height"
-      :display-mode="displayMode"
-      :state-key="stateKey"
-      :marker-mode="markerMode"
-      :show-search-bar="showSearchBar"
-      :search-placeholder="searchPlaceholder"
-      :search-next-title="searchNextTitle"
-      :search-previous-title="searchPreviousTitle"
-      :search-case-sensitive-title="searchCaseSensitiveTitle"
-      :search-regexp-title="searchRegexpTitle"
-      :search-clear-title="searchClearTitle"
-      :search-no-matches-text="searchNoMatchesText"
-      :search-invalid-regexp-text="searchInvalidRegexpText"
-      :show-display-toolbar="showDisplayToolbar"
-      @contextmenu="emit('contextmenu', $event)"
-    />
-    <HttpMessageTextEditor
-      v-else
       ref="surfaceEditor"
       :model-value="modelValue"
       :readonly="readonly"
@@ -46,7 +22,7 @@
       :search-no-matches-text="searchNoMatchesText"
       :search-invalid-regexp-text="searchInvalidRegexpText"
       :show-display-toolbar="showDisplayToolbar"
-      @update:model-value="emit('update:modelValue', $event)"
+      @update:model-value="handleModelValueUpdate"
       @contextmenu="emit('contextmenu', $event)"
     />
   </div>
@@ -120,6 +96,11 @@ const surfaceEditor = ref<{
 const surfaceStyle = computed(() => ({
   height: props.height,
 }))
+
+function handleModelValueUpdate(value: string) {
+  if (props.readonly) return
+  emit('update:modelValue', value)
+}
 
 defineExpose({
   focus: () => surfaceEditor.value?.focus?.(),

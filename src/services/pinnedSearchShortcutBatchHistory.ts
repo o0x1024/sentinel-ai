@@ -33,12 +33,16 @@ function inferBatchHistoryOperationType(
     return entry.operationType
   }
 
-  if (String(entry.title || '').includes('取消固定')) {
-    return 'remove'
+  const title = String(entry.title || '')
+  const summary = String(entry.summary || '')
+  const combinedText = `${title} ${summary}`
+
+  if (combinedText.includes('移除标签')) {
+    return 'tag-remove'
   }
 
-  if (String(entry.summary || '').includes('移除标签')) {
-    return 'tag-remove'
+  if (String(entry.title || '').includes('取消固定')) {
+    return 'remove'
   }
 
   return 'tag-add'

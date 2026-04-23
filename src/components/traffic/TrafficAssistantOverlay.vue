@@ -93,6 +93,8 @@ import {
   claimAssistantPresentationTarget,
   releaseAssistantPresentationTarget,
 } from '@/services/assistantPresentation'
+import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
+import { closeTopmostImmersiveTool } from '@/services/immersiveToolCoordinator'
 import {
   closeTrafficAssistant,
   minimizeTrafficAssistant,
@@ -241,6 +243,34 @@ function toggleMode() {
   openTrafficAssistantImmersive()
 }
 
+function handleWindowKeydown(event: KeyboardEvent) {
+  if (!isOpen.value) {
+    return
+  }
+
+  if (event.defaultPrevented || event.isComposing || event.repeat) {
+    return
+  }
+
+  if (event.key !== 'Escape') {
+    return
+  }
+
+  if (immersiveDrillModeEnabled.value) {
+    if (!closeTopmostImmersiveTool()) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  closeTrafficAssistant()
+}
+
 watch(isOpen, (open) => {
   if (open) {
     claimTrafficAssistant()
@@ -275,6 +305,7 @@ onMounted(() => {
   }
 
   window.addEventListener('resize', updateOverlayWidth)
+  window.addEventListener('keydown', handleWindowKeydown)
 })
 onActivated(claimTrafficAssistant)
 onDeactivated(() => {
@@ -291,6 +322,7 @@ onUnmounted(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
   window.removeEventListener('resize', updateOverlayWidth)
+  window.removeEventListener('keydown', handleWindowKeydown)
 })
 </script>
 

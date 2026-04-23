@@ -1587,15 +1587,17 @@ impl HttpHandler for TrafficProxyHandler {
     }
 
     async fn handle_request(&mut self, ctx: &HttpContext, req: Request<Body>) -> RequestOrResponse {
-        if Self::is_internal_request(&req) {
+        let req = if Self::is_internal_request(&req) {
             let normalized_req = Self::normalize_internal_request_uri(req);
             debug!(
-                "Bypassing capture pipeline for internal request: {} {}",
+                "Capturing internal request for history only: {} {}",
                 normalized_req.method(),
                 normalized_req.uri()
             );
-            return RequestOrResponse::Request(normalized_req);
-        }
+            normalized_req
+        } else {
+            req
+        };
 
         let method = req.method().clone();
         let uri = req.uri().clone();

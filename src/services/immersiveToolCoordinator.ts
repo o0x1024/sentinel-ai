@@ -17,6 +17,15 @@ const immersiveToolEntries = new Map<
   }
 >()
 
+const immersiveToolLayerOrder: ImmersiveToolCoordinatorId[] = [
+  'traffic-settings',
+  'security-center',
+  'traffic-basket',
+  'traffic-assistant',
+  'traffic-control',
+  'traffic-workbench',
+]
+
 export function registerImmersiveToolCloser(
   id: ImmersiveToolCoordinatorId,
   closer: ImmersiveToolCloser,
@@ -28,22 +37,32 @@ export function registerImmersiveToolCloser(
   })
 }
 
-export function closeOtherImmersiveTools(activeId: ImmersiveToolCoordinatorId) {
-  immersiveToolEntries.forEach((entry, id) => {
-    if (id === activeId) {
-      return
-    }
-
-    if (!entry.isBlocking()) {
-      return
-    }
-
-    entry.close()
-  })
-}
-
 export function closeAllImmersiveTools() {
   immersiveToolEntries.forEach(entry => {
     entry.close()
   })
+}
+
+export function closeTopmostImmersiveTool() {
+  for (const id of immersiveToolLayerOrder) {
+    const entry = immersiveToolEntries.get(id)
+    if (!entry || !entry.isBlocking()) {
+      continue
+    }
+
+    entry.close()
+    return true
+  }
+
+  return false
+}
+
+export function hasOpenImmersiveTools() {
+  for (const entry of immersiveToolEntries.values()) {
+    if (entry.isBlocking()) {
+      return true
+    }
+  }
+
+  return false
 }

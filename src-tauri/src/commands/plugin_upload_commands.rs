@@ -8,6 +8,7 @@ use crate::commands::traffic::{
     refresh_active_agent_plugin_tools, resolved_store_plugin_monitor_type, TrafficAnalysisState,
 };
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
+use crate::services::ensure_plugin_catalog_write_access;
 
 #[tauri::command]
 pub async fn upload_plugin(
@@ -16,6 +17,8 @@ pub async fn upload_plugin(
     filename: String,
     content: String,
 ) -> Result<CommandResponse<String>, String> {
+    ensure_plugin_catalog_write_access()?;
+
     let parsed = parse_uploaded_plugin(&filename, &content)?;
     let db = state.get_db_service();
     let existing_plugin = db

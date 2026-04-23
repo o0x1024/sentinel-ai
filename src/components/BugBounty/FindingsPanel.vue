@@ -31,9 +31,9 @@
               <option value="duplicate">{{ t('bugBounty.status.duplicate') }}</option>
               <option value="fixed">{{ t('bugBounty.status.fixed') }}</option>
             </select>
-            <input 
-              v-model="filter.search" 
-              type="text" 
+            <input
+              v-model="filter.search"
+              type="text"
               class="input input-sm input-bordered w-48"
               :placeholder="t('bugBounty.search')"
               :disabled="loading || selectionLoading || batchActionLoading"
@@ -63,13 +63,20 @@
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <button
-              class="btn btn-sm btn-outline"
-              :disabled="loading || selectionLoading || batchActionLoading || total === 0 || allFilteredSelected"
-              @click="selectAllFiltered"
+              class="btn btn-sm btn-error btn-outline"
+              :disabled="selectedIds.length === 0 || loading || selectionLoading || batchActionLoading"
+              @click="batchDelete"
             >
-              <span v-if="selectionLoading" class="loading loading-spinner loading-xs"></span>
-              <i v-else class="fas fa-layer-group mr-2"></i>
-              {{ t('bugBounty.batch.selectAllFiltered') }}
+              <i class="fas fa-trash mr-2"></i>
+              {{ t('bugBounty.batch.delete') }}
+            </button>
+            <button
+              class="btn btn-sm btn-error btn-outline"
+              :disabled="selectedIds.length === 0 || loading || batchActionLoading || globalTotal <= 0"
+              @click="$emit('delete-all')"
+            >
+              <i class="fas fa-trash-can mr-2"></i>
+              {{ t('bugBounty.batch.deleteAll') }}
             </button>
             <div class="dropdown dropdown-end">
               <button
@@ -88,21 +95,13 @@
                 <li><a @click="batchUpdateStatus('fixed')">{{ t('bugBounty.status.fixed') }}</a></li>
               </ul>
             </div>
-            <button
-              class="btn btn-sm btn-error btn-outline"
-              :disabled="selectedIds.length === 0 || loading || selectionLoading || batchActionLoading"
-              @click="batchDelete"
-            >
-              <i class="fas fa-trash mr-2"></i>
-              {{ t('bugBounty.batch.delete') }}
-            </button>
           </div>
         </div>
-        
+
         <div v-if="loading" class="flex justify-center py-8">
           <span class="loading loading-spinner loading-lg"></span>
         </div>
-        
+
         <div v-else-if="findings.length === 0" class="text-center py-8">
           <i class="fas fa-bug text-4xl text-base-content/30 mb-4"></i>
           <p class="text-base-content/70">{{ t('bugBounty.findings.empty') }}</p>
@@ -110,14 +109,14 @@
             {{ t('bugBounty.createFirstFinding') }}
           </button>
         </div>
-        
+
         <div v-else class="overflow-x-auto">
           <table class="table table-zebra">
             <thead>
               <tr>
                 <th class="w-10">
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     class="checkbox checkbox-sm"
                     :checked="isAllSelected"
                     :indeterminate="isPartialSelected"
@@ -137,8 +136,8 @@
             <tbody>
               <tr v-for="finding in findings" :key="finding.id" class="hover" :class="{ 'bg-primary/10': isSelected(finding.id) }">
                 <td>
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     class="checkbox checkbox-sm"
                     :checked="isSelected(finding.id)"
                     :disabled="loading || selectionLoading || batchActionLoading"
@@ -148,7 +147,14 @@
                 <td>
                   <div class="font-medium">{{ finding.title }}</div>
                   <div v-if="finding.affected_url" class="text-xs text-base-content/60 truncate max-w-xs">
-                    {{ finding.affected_url }}
+                    <a
+                      :href="finding.affected_url"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="cursor-pointer hover:underline"
+                    >
+                      {{ finding.affected_url }}
+                    </a>
                   </div>
                 </td>
                 <td>
@@ -257,6 +263,7 @@ const props = defineProps<{
   pageSize: number
   pageCount: number
   total: number
+  globalTotal: number
   hasNext: boolean
 }>()
 
@@ -269,6 +276,7 @@ const emit = defineEmits<{
   (e: 'filter-change', filter: any): void
   (e: 'batch-update-status', ids: string[], status: string): void
   (e: 'batch-delete', ids: string[]): void
+  (e: 'delete-all'): void
   (e: 'page-change', page: number): void
   (e: 'page-size-change', size: number): void
 }>()
@@ -317,9 +325,6 @@ const isPartialSelected = computed(() => {
   return selectedOnPage > 0 && selectedOnPage < props.findings.length
 })
 const hasBatchSelection = computed(() => selectedIds.value.length > 0)
-const allFilteredSelected = computed(() => props.total > 0 && selectedIds.value.length >= props.total)
-
-// Methods
 const isSelected = (id: string) => selectedIds.value.includes(id)
 
 const onFilterChange = () => {
@@ -351,23 +356,6 @@ const toggleSelectAll = () => {
 
 const clearSelection = () => {
   selectedIds.value = []
-}
-
-const selectAllFiltered = async () => {
-  if (props.total === 0 || allFilteredSelected.value || props.batchActionLoading) return
-
-  try {
-    selectionLoading.value = true
-    const rows = await invoke<any[]>('bounty_list_findings', {
-      filter: buildFindingFilter(false),
-    })
-    selectedIds.value = rows.map(row => row.id)
-  } catch (error) {
-    console.error('Failed to load findings for batch selection:', error)
-    toast.error(t('bugBounty.errors.loadFailed'))
-  } finally {
-    selectionLoading.value = false
-  }
 }
 
 const batchUpdateStatus = (status: string) => {
@@ -418,14 +406,14 @@ const onPageSizeChange = () => {
 
 watch(
   () => props.page,
-  (value) => {
+  value => {
     pageInput.value = String(value)
   },
 )
 
 watch(
   () => props.pageSize,
-  (value) => {
+  value => {
     localPageSize.value = value
   },
 )

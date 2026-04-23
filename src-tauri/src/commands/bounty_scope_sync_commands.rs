@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::services::ensure_bug_bounty_access;
 use sentinel_db::{DatabaseService, SurfaceAssetFilter};
 use serde::Serialize;
 use tauri::State;
@@ -18,6 +19,8 @@ pub async fn bounty_backfill_domain_scopes_from_assets(
     db_service: State<'_, Arc<DatabaseService>>,
     program_id: String,
 ) -> Result<BountyDomainScopeBackfillResult, String> {
+    ensure_bug_bounty_access()?;
+
     let program_id = program_id.trim();
     if program_id.is_empty() {
         return Err("Program is required".to_string());

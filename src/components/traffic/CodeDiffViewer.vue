@@ -81,7 +81,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { EditorView } from 'codemirror'
 import { EditorState } from '@codemirror/state'
 import { MergeView } from '@codemirror/merge'
-import { drawSelection, highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view'
+import { highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view'
 import { SearchQuery, findNext, findPrevious, getSearchQuery, search, setSearchQuery } from '@codemirror/search'
 import {
   getHttpCodeThemeExtensions,
@@ -285,7 +285,6 @@ function getReadonlyExtensions(content: string) {
   const highlightEnabled = shouldHighlightTrafficMessageSyntax(props.messageType)
   return [
     lineNumbers(),
-    drawSelection(),
     highlightActiveLineGutter(),
     createSearchKeymap(),
     search(),
@@ -294,7 +293,7 @@ function getReadonlyExtensions(content: string) {
     diffTheme,
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
-    EditorView.lineWrapping,
+    ...(settings.value.wrapLongLines ? [EditorView.lineWrapping] : []),
   ]
 }
 
@@ -472,7 +471,12 @@ watch(
 )
 
 watch(
-  () => [props.messageType, settings.value.highlightRequestSyntax, settings.value.highlightResponseSyntax],
+  () => [
+    props.messageType,
+    settings.value.highlightRequestSyntax,
+    settings.value.highlightResponseSyntax,
+    settings.value.wrapLongLines,
+  ],
   () => {
     initMergeView()
   },
@@ -521,6 +525,29 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 0.25rem;
+}
+
+.editor-search-bar :deep(.input.input-sm) {
+  min-height: 1.8rem;
+  height: 1.8rem;
+  padding-inline: 0.55rem;
+  box-shadow: none;
+}
+
+.editor-search-bar :deep(.btn.btn-xs) {
+  min-height: 1.7rem;
+  height: 1.7rem;
+  padding-inline: 0.45rem;
+  box-shadow: none;
+}
+
+.editor-search-bar :deep(.btn.btn-xs i) {
+  font-size: 0.72rem;
+}
+
+.editor-search-bar :deep(.badge.badge-sm) {
+  min-height: 1.45rem;
+  padding-inline: 0.45rem;
 }
 
 :deep(.cm-mergeView) {

@@ -67,6 +67,7 @@ import {
   immersiveSecurityCenterSidebarOpen,
   minimizeImmersiveSecurityCenterSidebar,
 } from '@/services/immersiveSecurityCenterSidebar'
+import { closeTopmostImmersiveTool } from '@/services/immersiveToolCoordinator'
 import {
   clampImmersiveSecurityCenterWidth,
   persistImmersiveSecurityCenterWidth,
@@ -206,6 +207,27 @@ function handleMinimize() {
   minimizeImmersiveSecurityCenterSidebar()
 }
 
+function handleWindowKeydown(event: KeyboardEvent) {
+  if (!showWorkspace.value) {
+    return
+  }
+
+  if (event.defaultPrevented || event.isComposing || event.repeat) {
+    return
+  }
+
+  if (event.key !== 'Escape') {
+    return
+  }
+
+  if (!closeTopmostImmersiveTool()) {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+}
+
 watch(showWorkspace, open => {
   if (open) {
     updateOverlayWidth()
@@ -240,6 +262,7 @@ onMounted(() => {
   }
 
   window.addEventListener('resize', updateOverlayWidth)
+  window.addEventListener('keydown', handleWindowKeydown)
 })
 
 onUnmounted(() => {
@@ -251,6 +274,7 @@ onUnmounted(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
   window.removeEventListener('resize', updateOverlayWidth)
+  window.removeEventListener('keydown', handleWindowKeydown)
 })
 
 function resolveTabFromRoute(): 'workbench' | 'vulnerabilities' {
@@ -262,7 +286,7 @@ function resolveTabFromRoute(): 'workbench' | 'vulnerabilities' {
     return 'vulnerabilities'
   }
 
-  return 'workbench'
+  return 'vulnerabilities'
 }
 </script>
 

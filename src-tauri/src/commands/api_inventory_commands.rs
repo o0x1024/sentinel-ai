@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::services::ensure_bug_bounty_access;
 use sentinel_db::{DatabaseService, SurfaceObservationRow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -406,6 +407,8 @@ pub async fn bounty_list_api_inventory_targets(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<ApiInventoryListFilter>,
 ) -> Result<ApiInventoryListResponse, String> {
+    ensure_bug_bounty_access()?;
+
     let filter = filter.unwrap_or_default();
     let observations = db_service
         .list_surface_observations_filtered(
@@ -445,6 +448,8 @@ pub async fn bounty_get_api_inventory_target(
     program_id: Option<String>,
     base_url: String,
 ) -> Result<Option<ApiInventoryTargetDetail>, String> {
+    ensure_bug_bounty_access()?;
+
     let observations = db_service
         .list_surface_observations_filtered(
             program_id.as_deref(),
@@ -471,6 +476,8 @@ pub async fn bounty_batch_delete_api_inventory_targets(
     db_service: State<'_, Arc<DatabaseService>>,
     targets: Vec<ApiInventoryDeleteTarget>,
 ) -> Result<usize, String> {
+    ensure_bug_bounty_access()?;
+
     let delete_targets: Vec<(String, String)> = targets
         .into_iter()
         .map(|target| (target.program_id, target.base_url))
@@ -491,6 +498,8 @@ pub async fn bounty_list_api_inventory_target_keys(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<ApiInventoryListFilter>,
 ) -> Result<Vec<ApiInventoryDeleteTarget>, String> {
+    ensure_bug_bounty_access()?;
+
     let filter = filter.unwrap_or_default();
     let observations = db_service
         .list_surface_observations_filtered(

@@ -3,6 +3,7 @@ pub mod ai;
 pub mod asset;
 pub mod bounty;
 pub mod bounty_event_workflow_runs;
+pub mod bounty_knowledge;
 pub mod bounty_queries;
 
 pub mod cache;
@@ -55,6 +56,8 @@ pub use asset::*;
 pub use bounty::*;
 #[allow(unused_imports)]
 pub use bounty_event_workflow_runs::*;
+#[allow(unused_imports)]
+pub use bounty_knowledge::*;
 #[allow(unused_imports)]
 pub use bounty_queries::*;
 #[allow(unused_imports)]

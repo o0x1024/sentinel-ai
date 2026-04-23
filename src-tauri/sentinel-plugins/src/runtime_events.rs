@@ -3,6 +3,7 @@ use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, Runtime};
 
 pub const MONITOR_TASK_PROGRESS_EVENT: &str = "monitor:task-progress";
+pub const ACTIVE_PROBE_EVENT: &str = "plugin:active-probe";
 
 type RuntimeEmitter = Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>;
 
@@ -22,6 +23,17 @@ where
     if let Some(handle) = APP_HANDLE.get() {
         if let Ok(payload) = serde_json::to_value(payload) {
             handle(MONITOR_TASK_PROGRESS_EVENT, payload);
+        }
+    }
+}
+
+pub fn emit_active_probe_event<T>(payload: &T)
+where
+    T: Serialize,
+{
+    if let Some(handle) = APP_HANDLE.get() {
+        if let Ok(payload) = serde_json::to_value(payload) {
+            handle(ACTIVE_PROBE_EVENT, payload);
         }
     }
 }

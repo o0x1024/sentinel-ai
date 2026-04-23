@@ -7,7 +7,8 @@ use crate::commands::monitor_config_support::{
 use crate::commands::monitor_execution_heartbeat_support::start_monitor_execution_heartbeat;
 use crate::commands::monitor_finding_support::import_monitor_findings_from_output;
 use crate::commands::monitor_notification_support::{
-    build_monitor_task_summary_event, emit_monitor_task_summary,
+    build_monitor_plugin_failure_event, build_monitor_task_summary_event,
+    emit_monitor_plugin_failure, emit_monitor_task_summary, normalize_monitor_error_message,
 };
 use crate::commands::monitor_plugin_output_support::{
     extract_plugin_failure, extract_service_probe_engine_used,
@@ -294,6 +295,26 @@ async fn load_tasks_from_db(
     Ok(())
 }
 
+async fn ensure_monitor_scheduler_initialized(
+    state: &Arc<RwLock<MonitorSchedulerState>>,
+    db_service: &Arc<DatabaseService>,
+) -> Result<(), String> {
+    {
+        let state_read = state.read().await;
+        if state_read.initialized {
+            return Ok(());
+        }
+    }
+
+    let mut state_write = state.write().await;
+    if !state_write.initialized {
+        load_tasks_from_db(&state_write.scheduler, db_service).await?;
+        state_write.initialized = true;
+    }
+
+    Ok(())
+}
+
 // ============================================================================
 // Scheduler Control Commands
 // ============================================================================
@@ -306,22 +327,9 @@ pub async fn monitor_start_scheduler(
     plugin_manager: State<'_, Arc<sentinel_traffic::PluginManager>>,
     app: AppHandle,
 ) -> Result<bool, String> {
-    // Ensure tasks are loaded
-    {
-        let state_read = state.read().await;
-        if !state_read.initialized {
-            drop(state_read);
-            let mut state_write = state.write().await;
-            if !state_write.initialized {
-                load_tasks_from_db(&state_write.scheduler, &db_service).await?;
-                state_write.initialized = true;
-            }
-        }
-    }
+    ensure_monitor_scheduler_initialized(state.inner(), db_service.inner()).await?;
 
     let state_guard = state.read().await;
-    // Start scheduler if not running (logic from start() handles check)
-    state_guard.scheduler.start().await?;
     let scheduler = state_guard.scheduler.clone();
     let running_task_ids = state_guard.running_task_ids.clone();
     let cancel_requested_task_ids = state_guard.cancel_requested_task_ids.clone();
@@ -623,6 +631,12 @@ pub async fn monitor_start_scheduler(
                         heartbeat.stop().await;
 
                         if !result.success {
+                            let failure_reason = normalize_monitor_error_message(
+                                result
+                                    .error
+                                    .as_deref()
+                                    .unwrap_or("monitor plugin execution failed"),
+                            );
                             tracing::error!(
                                 "Plugin {} failed: {:?}",
                                 configured_plugin_label,
@@ -635,6 +649,19 @@ pub async fn monitor_start_scheduler(
                                 plugin_started_at.elapsed().as_millis()
                             );
                             completed_steps = index + 1;
+                            emit_monitor_plugin_failure(
+                                &app_handle,
+                                &build_monitor_plugin_failure_event(
+                                    &task.id,
+                                    &task.name,
+                                    &task.program_id,
+                                    "scheduler",
+                                    &plugin.plugin_id,
+                                    configured_plugin_label.as_str(),
+                                    failure_reason.as_str(),
+                                    &execution_started_at,
+                                ),
+                            );
                             emit_monitor_task_progress(
                                 &app_handle,
                                 &build_monitor_task_progress_event(
@@ -647,7 +674,10 @@ pub async fn monitor_start_scheduler(
                                     Some(index + 1),
                                     plugin_targets.len(),
                                     total_imported,
-                                    Some(format!("Plugin {} failed", configured_plugin_label)),
+                                    Some(format!(
+                                        "Plugin {} failed: {}",
+                                        configured_plugin_label, failure_reason
+                                    )),
                                     &execution_started_at,
                                 ),
                             );
@@ -663,7 +693,10 @@ pub async fn monitor_start_scheduler(
                                     Some(plugin_started_at.elapsed().as_millis() as u64),
                                     0,
                                     total_imported,
-                                    format!("Plugin {} failed", configured_plugin_label),
+                                    format!(
+                                        "Plugin {} failed: {}",
+                                        configured_plugin_label, failure_reason
+                                    ),
                                 ),
                             );
                             continue;
@@ -675,6 +708,8 @@ pub async fn monitor_start_scheduler(
                                 monitor_plugin_runtime_label(&plugin, Some(output));
                             effective_plugin_label = runtime_plugin_label.clone();
                             if let Some(plugin_error) = extract_plugin_failure(output) {
+                                let failure_reason =
+                                    normalize_monitor_error_message(plugin_error.as_str());
                                 tracing::error!(
                                     "Plugin {} returned failure output for task {}: {}",
                                     runtime_plugin_label,
@@ -682,6 +717,19 @@ pub async fn monitor_start_scheduler(
                                     plugin_error
                                 );
                                 completed_steps = index + 1;
+                                emit_monitor_plugin_failure(
+                                    &app_handle,
+                                    &build_monitor_plugin_failure_event(
+                                        &task.id,
+                                        &task.name,
+                                        &task.program_id,
+                                        "scheduler",
+                                        &plugin.plugin_id,
+                                        runtime_plugin_label.as_str(),
+                                        failure_reason.as_str(),
+                                        &execution_started_at,
+                                    ),
+                                );
                                 emit_monitor_task_progress(
                                     &app_handle,
                                     &build_monitor_task_progress_event(
@@ -696,7 +744,7 @@ pub async fn monitor_start_scheduler(
                                         total_imported,
                                         Some(format!(
                                             "Plugin {} returned failure: {}",
-                                            runtime_plugin_label, plugin_error
+                                            runtime_plugin_label, failure_reason
                                         )),
                                         &execution_started_at,
                                     ),
@@ -715,7 +763,7 @@ pub async fn monitor_start_scheduler(
                                         total_imported,
                                         format!(
                                             "Plugin {} returned failure: {}",
-                                            runtime_plugin_label, plugin_error
+                                            runtime_plugin_label, failure_reason
                                         ),
                                     ),
                                 );
@@ -1455,7 +1503,11 @@ pub async fn monitor_start_scheduler(
         })
         .await;
 
-    // scheduler.start().await?; // Removed as it was already called above
+    if scheduler.is_running().await {
+        return Ok(true);
+    }
+
+    scheduler.start().await?;
 
     // Emit scheduler started event
     let _ = app.emit("monitor:scheduler-started", ());
@@ -2087,6 +2139,12 @@ pub async fn monitor_trigger_task(
             heartbeat.stop().await;
 
             if !result.success {
+                let failure_reason = normalize_monitor_error_message(
+                    result
+                        .error
+                        .as_deref()
+                        .unwrap_or("monitor plugin execution failed"),
+                );
                 tracing::error!(
                     "Plugin {} failed: {:?}",
                     configured_plugin_label,
@@ -2099,6 +2157,19 @@ pub async fn monitor_trigger_task(
                     plugin_started_at.elapsed().as_millis()
                 );
                 completed_steps = index + 1;
+                emit_monitor_plugin_failure(
+                    &app_clone,
+                    &build_monitor_plugin_failure_event(
+                        &task_clone.id,
+                        &task_clone.name,
+                        &task_clone.program_id,
+                        "manual_trigger",
+                        &plugin.plugin_id,
+                        configured_plugin_label.as_str(),
+                        failure_reason.as_str(),
+                        &execution_started_at,
+                    ),
+                );
                 emit_monitor_task_progress(
                     &app_clone,
                     &build_monitor_task_progress_event(
@@ -2111,7 +2182,10 @@ pub async fn monitor_trigger_task(
                         Some(index + 1),
                         plugin_targets.len(),
                         total_imported,
-                        Some(format!("Plugin {} failed", configured_plugin_label)),
+                        Some(format!(
+                            "Plugin {} failed: {}",
+                            configured_plugin_label, failure_reason
+                        )),
                         &execution_started_at,
                     ),
                 );
@@ -2127,7 +2201,10 @@ pub async fn monitor_trigger_task(
                         Some(plugin_started_at.elapsed().as_millis() as u64),
                         0,
                         total_imported,
-                        format!("Plugin {} failed", configured_plugin_label),
+                        format!(
+                            "Plugin {} failed: {}",
+                            configured_plugin_label, failure_reason
+                        ),
                     ),
                 );
                 continue;
@@ -2155,6 +2232,7 @@ pub async fn monitor_trigger_task(
                 let runtime_plugin_label = monitor_plugin_runtime_label(plugin, Some(output));
                 effective_plugin_label = runtime_plugin_label.clone();
                 if let Some(plugin_error) = extract_plugin_failure(output) {
+                    let failure_reason = normalize_monitor_error_message(plugin_error.as_str());
                     tracing::error!(
                         "Plugin {} returned failure output for task {}: {}",
                         runtime_plugin_label,
@@ -2162,6 +2240,19 @@ pub async fn monitor_trigger_task(
                         plugin_error
                     );
                     completed_steps = index + 1;
+                    emit_monitor_plugin_failure(
+                        &app_clone,
+                        &build_monitor_plugin_failure_event(
+                            &task_clone.id,
+                            &task_clone.name,
+                            &task_clone.program_id,
+                            "manual_trigger",
+                            &plugin.plugin_id,
+                            runtime_plugin_label.as_str(),
+                            failure_reason.as_str(),
+                            &execution_started_at,
+                        ),
+                    );
                     emit_monitor_task_progress(
                         &app_clone,
                         &build_monitor_task_progress_event(
@@ -2176,7 +2267,7 @@ pub async fn monitor_trigger_task(
                             total_imported,
                             Some(format!(
                                 "Plugin {} returned failure: {}",
-                                runtime_plugin_label, plugin_error
+                                runtime_plugin_label, failure_reason
                             )),
                             &execution_started_at,
                         ),
@@ -2195,7 +2286,7 @@ pub async fn monitor_trigger_task(
                             total_imported,
                             format!(
                                 "Plugin {} returned failure: {}",
-                                runtime_plugin_label, plugin_error
+                                runtime_plugin_label, failure_reason
                             ),
                         ),
                     );

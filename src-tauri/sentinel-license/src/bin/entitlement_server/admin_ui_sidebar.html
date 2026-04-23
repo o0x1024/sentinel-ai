@@ -1,0 +1,46 @@
+      <aside class="card sidebar">
+        <div class="sidebar-top">
+          <div class="eyebrow">Sentinel License Ops</div>
+          <h1>Entitlement Control Room</h1>
+          <p class="sidebar-copy">
+            左侧目录负责切换运营动作，右侧详情区承载具体授权、审计、设备和管理员操作。
+          </p>
+        </div>
+
+        <div class="sidebar-block">
+          <div class="sidebar-label">管理员会话</div>
+          <input id="tokenInput" type="password" placeholder="输入管理员 API key" />
+          <div class="toolbar">
+            <button id="saveTokenBtn">保存会话</button>
+            <button class="secondary" id="verifyTokenBtn">验证并刷新</button>
+            <button class="ghost" id="clearTokenBtn">清除</button>
+          </div>
+          <div id="authStatus" class="status-box">尚未验证管理员会话。</div>
+        </div>
+
+        <nav class="sidebar-nav">
+          <button class="sidebar-link active" data-section-nav="overview">运行概况</button>
+          <button class="sidebar-link" data-section-nav="customers">客户与授权</button>
+          <button class="sidebar-link" data-section-nav="audit">审计日志</button>
+          <button class="sidebar-link" data-section-nav="devices">客户详情与设备</button>
+          <button class="sidebar-link" data-section-nav="admins">管理员账号</button>
+        </nav>
+
+        <div class="sidebar-block">
+          <div class="sidebar-label">当前上下文</div>
+          <div class="sidebar-context">
+            <div class="context-row">
+              <span class="muted">当前模块</span>
+              <strong id="sidebarSectionLabel">运行概况</strong>
+            </div>
+            <div class="context-row">
+              <span class="muted">当前客户</span>
+              <strong id="sidebarCustomerLabel">未选择客户</strong>
+            </div>
+          </div>
+          <div class="toolbar sidebar-toolbar">
+            <button class="secondary" id="sidebarNewCustomerBtn">新建客户</button>
+            <button class="ghost" id="sidebarNewAdminBtn">新建管理员</button>
+          </div>
+        </div>
+      </aside>

@@ -36,6 +36,7 @@ export default {
     assets: 'Assets',
     apiInventory: 'API Inventory',
     findings: 'Findings',
+    knowledge: 'Knowledge Base',
     submissions: 'Submissions',
     statistics: 'Statistics',
     importExport: 'Import/Export',
@@ -70,7 +71,8 @@ export default {
     clearFilters: 'Clear Filters',
     moreFilters: 'More Filters',
     hideMoreFilters: 'Hide Filters',
-    confirmDeleteTarget: 'Delete the API inventory for target {target}? This action cannot be undone.',
+    confirmDeleteTarget:
+      'Delete the API inventory for target {target}? This action cannot be undone.',
     changedOnly: 'Changed Only',
     withGraphql: 'GraphQL Only',
     withOpenapi: 'OpenAPI Only',
@@ -110,6 +112,55 @@ export default {
     empty: 'No findings yet',
   },
 
+  knowledge: {
+    title: 'Bug Bounty Knowledge Base',
+    description:
+      'Capture hunting notes, conclusions, and ad hoc remarks. Notes can stay unbound or be attached to a specific program.',
+    newNote: 'New Note',
+    editNote: 'Edit Note',
+    untitled: 'Untitled Note',
+    unboundProgram: 'Unbound',
+    empty: 'No knowledge notes yet',
+    emptyHint:
+      'Start recording target characteristics, dead ends, repro fragments, and conclusions for faster recall later.',
+    searchPlaceholder: 'Search title, content, tags, or program',
+    editorHint: 'Use this space for program rules, attack paths, bypass ideas, and platform notes.',
+    notFound: 'The note was not found or has already been deleted',
+    savedCreated: 'Knowledge note created',
+    savedUpdated: 'Knowledge note updated',
+    deleted: 'Knowledge note deleted',
+    confirmDelete: 'Delete this knowledge note?',
+    validation: {
+      required: 'Title and content are required',
+    },
+    filters: {
+      all: 'All Notes',
+      currentProgram: 'Current Program',
+      unbound: 'Unbound Only',
+    },
+    stats: {
+      total: 'Total Notes',
+      bound: 'Bound to Program',
+      unbound: 'Unbound',
+    },
+    fields: {
+      title: 'Title',
+      titlePlaceholder: 'e.g. Acme OAuth redirect observations',
+      program: 'Program',
+      tags: 'Tags',
+      tagsPlaceholder: 'e.g. oauth, redirect, ssrf',
+      content: 'Content',
+      contentPlaceholder:
+        'Record rules, entry points, repro fragments, failed attempts, bypass ideas, and key remarks...',
+    },
+    tips: {
+      search:
+        'The search box queries a SQLite FTS5 index across title, content, tags, and program name.',
+      binding:
+        'Unbound notes work well for generic techniques, platform rules, and cross-program observations.',
+    },
+  },
+
   submissions: {
     title: 'Submissions List',
     empty: 'No submissions yet',
@@ -125,7 +176,8 @@ export default {
     scopeList: 'Scope List',
     addScope: 'Add Scope',
     backfillDomainScopes: 'Backfill Scopes from Domain Assets',
-    backfillNoop: 'No new scopes were added. {assets} domain assets produced {roots} root domains, and matching scopes may already exist.',
+    backfillNoop:
+      'No new scopes were added. {assets} domain assets produced {roots} root domains, and matching scopes may already exist.',
     noScopes: 'No scopes defined yet. Add In Scope and Out of Scope rules.',
     noFindings: 'No findings for this program yet',
     noDescription: 'No description',
@@ -291,14 +343,18 @@ export default {
     selectionSummary: '{selected} selected, {page} on this page, {total} total in scope',
     updateStatus: 'Update Status',
     delete: 'Delete',
+    deleteAll: 'Delete All',
     selectCurrentPage: 'Select Current Page',
     selectAllFiltered: 'Select All Filtered',
     itemsSelected: 'items selected',
     totalReward: 'Total Reward',
     confirmUpdateStatus: 'Are you sure you want to update the status of {count} records?',
     confirmDelete: 'Are you sure you want to delete {count} records? This action cannot be undone.',
+    confirmDeleteAll:
+      'Are you sure you want to delete all {count} findings? This action cannot be undone.',
     updateSuccess: 'Successfully updated {count} records',
     deleteSuccess: 'Successfully deleted {count} records',
+    deleteAllSuccess: 'Successfully deleted all {count} findings',
   },
 
   importExport: {
@@ -374,7 +430,7 @@ export default {
     reported: 'Reported',
     duplicate: 'Duplicate',
     fixed: 'Fixed',
-    wontfix: 'Won\'t Fix',
+    wontfix: "Won't Fix",
   },
 
   form: {
@@ -400,7 +456,8 @@ export default {
     affectedEndpoint: 'Affected Endpoint',
     affectedParameter: 'Affected Parameter',
     findingDescriptionPlaceholder: 'Describe the vulnerability details, trigger conditions, etc.',
-    submissionDescriptionPlaceholder: 'Describe the vulnerability in detail for vendor to reproduce',
+    submissionDescriptionPlaceholder:
+      'Describe the vulnerability in detail for vendor to reproduce',
     impact: 'Impact',
     impactPlaceholder: 'Describe the potential impact of this vulnerability',
     remediationPlaceholder: 'Describe recommended fixes for this vulnerability',
@@ -434,6 +491,7 @@ export default {
   errors: {
     loadFailed: 'Failed to load',
     createFailed: 'Failed to create',
+    saveFailed: 'Failed to save',
     updateFailed: 'Failed to update',
     deleteFailed: 'Failed to delete',
     backfillDomainScopesFailed: 'Failed to backfill scopes from domain assets',
@@ -464,7 +522,8 @@ export default {
     affectedScopePlaceholder: 'e.g., *.example.com',
     changeDetails: 'Change Details',
     autoTriggerWorkflow: 'Auto-trigger workflow when this event is detected',
-    autoTriggerHint: 'If enabled, system will automatically execute bound workflows for deeper analysis',
+    autoTriggerHint:
+      'If enabled, system will automatically execute bound workflows for deeper analysis',
     detectionMethods: {
       manual: 'Manual',
       automated: 'Automated',
@@ -721,7 +780,8 @@ export default {
     createDefault: 'Create Default Tasks',
     createDefaultTasks: 'Create Default Monitor Tasks',
     discoverAssets: 'Discover Assets',
-    discoverAssetsHint: 'Execute plugins to discover new assets and optionally import them to the project',
+    discoverAssetsHint:
+      'Execute plugins to discover new assets and optionally import them to the project',
     pluginRequirements: 'Plugin Input Requirements',
     required: 'Required',
     default: 'Default',
@@ -873,12 +933,28 @@ export default {
     pluginsLoadFailed: 'Failed to load plugin list, using default plugins',
     serviceProbeEngine: 'Service Probe Engine',
     serviceProbeEngineNative: 'Native',
-    serviceProbeEngineHint: 'service_monitor and service_probe use the built-in Rust native engine for service identification.',
+    serviceProbeEngineHint:
+      'service_monitor and service_probe use the built-in Rust native engine for service identification.',
+    subdomainBruteDictionarySection: 'Subdomain Dictionary Settings',
+    subdomainBruteDictionarySource: 'Base Dictionary',
+    subdomainBruteFollowDefaultDictionary: 'Follow Default Subdomain Dictionary',
+    subdomainBruteDefaultDictionaryTag: 'Default',
+    subdomainBruteDictionaryPickerHint:
+      'You can choose any subdomain dictionary directly. If none is selected, the current default dictionary is used: {name}',
+    subdomainBruteDictionaryPickerHintNoDefault:
+      'You can choose any subdomain dictionary directly. If none is selected, the built-in dictionary is used.',
+    subdomainBruteInlineDictionary: 'Extra Subdomain Prefixes',
+    subdomainBruteInlineDictionaryPlaceholder:
+      'One prefix per line, for example:\nadmin\nvpn\nstaging',
+    subdomainBruteInlineDictionaryHint:
+      'These prefixes are merged with the selected dictionary. When no dictionary is selected, they are merged with the default subdomain dictionary.',
+    subdomainBruteDictionaryLoadFailed: 'Failed to load subdomain dictionaries',
   },
 
   surface: {
     title: 'ASM + Surface Graph',
-    description: 'Program-level surface graph with overview, inventory, topology, relations, and discovery runs.',
+    description:
+      'Program-level surface graph with overview, inventory, topology, relations, and discovery runs.',
     allPrograms: 'All Programs',
     refresh: 'Refresh',
     tabs: {
@@ -938,14 +1014,16 @@ export default {
       },
       export: {
         title: 'Export Assets',
-        description: 'Export assets using the current program, status, search, and service filters, then narrow the export further by asset type.',
+        description:
+          'Export assets using the current program, status, search, and service filters, then narrow the export further by asset type.',
         program: 'Current Program',
         assetType: 'Export Type',
         allAssets: 'All Assets',
         currentType: 'Current filtered type ({type})',
         apiAssets: 'API Assets',
         format: 'Export Format',
-        scopeHint: 'The export inherits the current inventory filters such as program, status, and search. The export type is applied on top of those filters.',
+        scopeHint:
+          'The export inherits the current inventory filters such as program, status, and search. The export type is applied on top of those filters.',
         submit: 'Export',
         empty: 'No assets matched the current export conditions.',
         success: '{count} assets exported',
@@ -953,7 +1031,8 @@ export default {
       },
       import: {
         title: 'Manual Asset Import',
-        description: 'Paste one asset per line and import them into the inventory with the selected type.',
+        description:
+          'Paste one asset per line and import them into the inventory with the selected type.',
         program: 'Program',
         programPlaceholder: 'Select a program',
         assetType: 'Asset Type',
@@ -972,7 +1051,8 @@ export default {
         success: '{count} assets imported',
         successWithScopes: '{count} assets imported and {scopes} scopes added',
         partialSuccess: '{created} assets imported, {skipped} duplicates skipped',
-        partialSuccessWithScopes: '{created} assets imported, {skipped} duplicates skipped, and {scopes} scopes added',
+        partialSuccessWithScopes:
+          '{created} assets imported, {skipped} duplicates skipped, and {scopes} scopes added',
         scopeOnlySuccess: 'No new assets imported, but {scopes} scopes were added',
         noop: 'No new assets imported, {count} duplicates skipped',
         failed: 'Failed to manually import assets',
@@ -1025,7 +1105,8 @@ export default {
       },
     },
     topology: {
-      description: 'Shows full graph counts with paginated relation lists and a graphical topology for the current node page.',
+      description:
+        'Shows full graph counts with paginated relation lists and a graphical topology for the current node page.',
       nodesTitle: 'Topology Nodes',
       edgesTitle: 'Topology Edges',
       emptyNodes: 'No topology nodes yet.',
@@ -1038,8 +1119,10 @@ export default {
       pageSummary: 'Showing nodes {start}-{end} / {total}',
       edgePageSummary: 'Showing relations {start}-{end} / {count}, total relations {total}',
       edgeScope: 'Relations for current node page: {count} / total {total}',
-      listHint: 'List view supports expandable node summaries and paginated relations for the current node page.',
-      graphHint: 'Graph view renders the current node page and the relations between those visible nodes.',
+      listHint:
+        'List view supports expandable node summaries and paginated relations for the current node page.',
+      graphHint:
+        'Graph view renders the current node page and the relations between those visible nodes.',
       graphTitle: 'Graph Topology',
       expand: 'Expand',
       collapse: 'Collapse',
@@ -1081,7 +1164,8 @@ export default {
     types: {
       title: 'Asset Types',
       empty: 'No grouped asset type data yet.',
-      description: 'View normalized fingerprint categories and drill into the assets behind each group.',
+      description:
+        'View normalized fingerprint categories and drill into the assets behind each group.',
       classifiedTotal: 'Classified Assets',
       products: 'Products',
       noProducts: 'No product buckets yet.',
