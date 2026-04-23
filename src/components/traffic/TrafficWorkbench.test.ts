@@ -6,6 +6,7 @@ import {
   openImmersiveTrafficWorkbenchTool,
   resetImmersiveTrafficDockState,
   toggleImmersiveTrafficProxySettings,
+  toggleImmersiveTrafficPluginsPanel,
   toggleImmersiveTrafficBasket,
   toggleImmersiveTrafficInterceptDrawer,
   useImmersiveTrafficDockState,
@@ -47,9 +48,11 @@ describe('TrafficWorkbench', () => {
     setImmersiveDrillModeEnabled(true)
     openImmersiveTrafficWorkbenchTool('intruder')
     toggleImmersiveTrafficProxySettings()
+    toggleImmersiveTrafficPluginsPanel()
 
     const dockState = useImmersiveTrafficDockState()
     expect(dockState.proxySettingsOpen.value).toBe(true)
+    expect(dockState.trafficPluginsOpen.value).toBe(true)
 
     const wrapper = shallowMount(TrafficWorkbench, {
       global: {
@@ -69,6 +72,7 @@ describe('TrafficWorkbench', () => {
     expect(dockState.workbenchOpen.value).toBe(false)
     expect(dockState.interceptDrawerOpen.value).toBe(false)
     expect(dockState.proxySettingsOpen.value).toBe(false)
+    expect(dockState.trafficPluginsOpen.value).toBe(false)
     expect(dockState.basketOpen.value).toBe(false)
 
     wrapper.unmount()
@@ -96,6 +100,14 @@ describe('TrafficWorkbench', () => {
     toggleImmersiveTrafficInterceptDrawer()
     toggleImmersiveTrafficBasket()
     toggleImmersiveTrafficProxySettings()
+    toggleImmersiveTrafficPluginsPanel()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    expect(dockState.trafficPluginsOpen.value).toBe(false)
+    expect(dockState.proxySettingsOpen.value).toBe(true)
+    expect(dockState.basketOpen.value).toBe(true)
+    expect(dockState.interceptDrawerOpen.value).toBe(true)
+    expect(dockState.workbenchOpen.value).toBe(true)
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     expect(dockState.proxySettingsOpen.value).toBe(false)

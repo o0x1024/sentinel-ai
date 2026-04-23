@@ -7,6 +7,7 @@ const workbenchOpen = ref(false)
 const activeWorkbenchTool = ref<ImmersiveTrafficWorkbenchTool>('repeater')
 const interceptDrawerOpen = ref(false)
 const proxySettingsOpen = ref(false)
+const trafficPluginsOpen = ref(false)
 const basketOpen = ref(false)
 
 const repeaterCount = ref(0)
@@ -22,6 +23,7 @@ export function useImmersiveTrafficDockState() {
     activeWorkbenchTool,
     interceptDrawerOpen,
     proxySettingsOpen,
+    trafficPluginsOpen,
     basketOpen,
     repeaterCount,
     intruderCount,
@@ -55,6 +57,7 @@ export function showImmersiveTrafficHistory() {
   workbenchOpen.value = false
   interceptDrawerOpen.value = false
   proxySettingsOpen.value = false
+  trafficPluginsOpen.value = false
   basketOpen.value = false
 }
 
@@ -97,11 +100,25 @@ export function openImmersiveTrafficProxySettings() {
   proxySettingsOpen.value = true
 }
 
+export function toggleImmersiveTrafficPluginsPanel() {
+  if (trafficPluginsOpen.value) {
+    trafficPluginsOpen.value = false
+    return
+  }
+
+  openImmersiveTrafficPluginsPanel()
+}
+
+export function openImmersiveTrafficPluginsPanel() {
+  trafficPluginsOpen.value = true
+}
+
 export function syncImmersiveTrafficDockState(payload: {
   workbenchOpen: boolean
   activeWorkbenchTool: ImmersiveTrafficWorkbenchTool
   interceptDrawerOpen: boolean
   proxySettingsOpen: boolean
+  trafficPluginsOpen: boolean
   basketOpen: boolean
   repeaterCount: number
   intruderCount: number
@@ -114,6 +131,7 @@ export function syncImmersiveTrafficDockState(payload: {
   activeWorkbenchTool.value = payload.activeWorkbenchTool
   interceptDrawerOpen.value = payload.interceptDrawerOpen
   proxySettingsOpen.value = payload.proxySettingsOpen
+  trafficPluginsOpen.value = payload.trafficPluginsOpen
   basketOpen.value = payload.basketOpen
   repeaterCount.value = payload.repeaterCount
   intruderCount.value = payload.intruderCount
@@ -128,6 +146,7 @@ export function resetImmersiveTrafficDockState() {
   activeWorkbenchTool.value = 'repeater'
   interceptDrawerOpen.value = false
   proxySettingsOpen.value = false
+  trafficPluginsOpen.value = false
   basketOpen.value = false
   repeaterCount.value = 0
   intruderCount.value = 0
@@ -144,6 +163,9 @@ registerImmersiveToolCloser('traffic-control', () => {
 registerImmersiveToolCloser('traffic-basket', () => {
   basketOpen.value = false
 }, () => basketOpen.value)
+registerImmersiveToolCloser('traffic-plugins', () => {
+  trafficPluginsOpen.value = false
+}, () => trafficPluginsOpen.value)
 registerImmersiveToolCloser('traffic-settings', () => {
   proxySettingsOpen.value = false
 }, () => proxySettingsOpen.value)

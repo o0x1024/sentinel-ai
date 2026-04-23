@@ -251,6 +251,9 @@
                   <div v-for="(plugin, idx) in taskForm.config.ip_plugins" :key="`ip-${idx}`" class="card bg-base-100 p-3">
                     <div class="flex items-start gap-2">
                       <div class="flex-1 space-y-2">
+                        <div class="text-xs text-base-content/60">
+                          目标资产应为域名，监控的是域名解析结果中的 IP 变化。
+                        </div>
                         <div class="form-control">
                           <label class="label py-1">
                             <span class="label-text-alt">{{ t('bugBounty.monitor.primaryPlugin') }}</span>
@@ -289,76 +292,6 @@
                       </div>
 
                       <button class="btn btn-xs btn-ghost text-error" @click="removePluginConfig('ip', idx)">
-                        <i class="fas fa-trash"></i>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Content Monitoring -->
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_content_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-file-alt mr-2"></i>
-                      {{ t('bugBounty.monitor.contentMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_content_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('content')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
-
-                <div v-if="taskForm.config.enable_content_monitoring && taskForm.config.content_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
-
-                <div v-if="taskForm.config.enable_content_monitoring && taskForm.config.content_plugins.length > 0" class="space-y-2 ml-6">
-                  <div v-for="(plugin, idx) in taskForm.config.content_plugins" :key="`content-${idx}`" class="card bg-base-100 p-3">
-                    <div class="flex items-start gap-2">
-                      <div class="flex-1 space-y-2">
-                        <div class="form-control">
-                          <label class="label py-1">
-                            <span class="label-text-alt">{{ t('bugBounty.monitor.primaryPlugin') }}</span>
-                          </label>
-                          <select v-model="plugin.plugin_id" class="select select-sm select-bordered" @focus="refreshAvailablePluginsOnDropdownOpen" @change="handleServicePluginChanged(plugin)">
-                            <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
-                            <option v-for="p in getPluginsByType('content')" :key="p.id" :value="p.id">
-                              {{ p.name }}
-                            </option>
-                          </select>
-                        </div>
-
-                        <MonitorTargetAssetSelector v-model="plugin.target_asset_types" :allowed-values="getAllowedTargetAssetTypes('content', plugin.plugin_id)" />
-
-                        <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
-                          <label class="label py-1">
-                            <span class="label-text-alt">{{ t('bugBounty.monitor.fallbackPlugins') }}</span>
-                          </label>
-                          <div v-for="(fallback, fIdx) in plugin.fallback_plugins" :key="`content-fb-${idx}-${fIdx}`" class="flex gap-1">
-                            <select v-model="plugin.fallback_plugins[fIdx]" class="select select-xs select-bordered flex-1" @focus="refreshAvailablePluginsOnDropdownOpen">
-                              <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
-                              <option v-for="p in getPluginsByType('content')" :key="p.id" :value="p.id">
-                                {{ p.name }}
-                              </option>
-                            </select>
-                            <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('content', idx, Number(fIdx))">
-                              <i class="fas fa-times"></i>
-                            </button>
-                          </div>
-                        </div>
-
-                        <button class="btn btn-xs btn-ghost" @click="addFallbackPlugin('content', idx)">
-                          <i class="fas fa-plus mr-1"></i>
-                          {{ t('bugBounty.monitor.addFallback') }}
-                        </button>
-                      </div>
-
-                      <button class="btn btn-xs btn-ghost text-error" @click="removePluginConfig('content', idx)">
                         <i class="fas fa-trash"></i>
                       </button>
                     </div>
@@ -730,6 +663,76 @@
                 </div>
               </div>
 
+              <!-- Content Monitoring -->
+              <div class="card bg-base-200 p-4 mb-3">
+                <div class="flex items-center justify-between mb-2">
+                  <label class="label cursor-pointer gap-2">
+                    <input type="checkbox" v-model="taskForm.config.enable_content_monitoring" class="checkbox checkbox-primary" />
+                    <span class="label-text font-semibold">
+                      <i class="fas fa-file-alt mr-2"></i>
+                      {{ t('bugBounty.monitor.contentMonitoring') }}
+                    </span>
+                  </label>
+                  <button v-if="taskForm.config.enable_content_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('content')">
+                    <i class="fas fa-plus mr-1"></i>
+                    {{ t('bugBounty.monitor.addPlugin') }}
+                  </button>
+                </div>
+
+                <div v-if="taskForm.config.enable_content_monitoring && taskForm.config.content_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
+                  <i class="fas fa-info-circle mr-1"></i>
+                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
+                </div>
+
+                <div v-if="taskForm.config.enable_content_monitoring && taskForm.config.content_plugins.length > 0" class="space-y-2 ml-6">
+                  <div v-for="(plugin, idx) in taskForm.config.content_plugins" :key="`content-${idx}`" class="card bg-base-100 p-3">
+                    <div class="flex items-start gap-2">
+                      <div class="flex-1 space-y-2">
+                        <div class="form-control">
+                          <label class="label py-1">
+                            <span class="label-text-alt">{{ t('bugBounty.monitor.primaryPlugin') }}</span>
+                          </label>
+                          <select v-model="plugin.plugin_id" class="select select-sm select-bordered" @focus="refreshAvailablePluginsOnDropdownOpen" @change="handleServicePluginChanged(plugin)">
+                            <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                            <option v-for="p in getPluginsByType('content')" :key="p.id" :value="p.id">
+                              {{ p.name }}
+                            </option>
+                          </select>
+                        </div>
+
+                        <MonitorTargetAssetSelector v-model="plugin.target_asset_types" :allowed-values="getAllowedTargetAssetTypes('content', plugin.plugin_id)" />
+
+                        <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
+                          <label class="label py-1">
+                            <span class="label-text-alt">{{ t('bugBounty.monitor.fallbackPlugins') }}</span>
+                          </label>
+                          <div v-for="(fallback, fIdx) in plugin.fallback_plugins" :key="`content-fb-${idx}-${fIdx}`" class="flex gap-1">
+                            <select v-model="plugin.fallback_plugins[fIdx]" class="select select-xs select-bordered flex-1" @focus="refreshAvailablePluginsOnDropdownOpen">
+                              <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                              <option v-for="p in getPluginsByType('content')" :key="p.id" :value="p.id">
+                                {{ p.name }}
+                              </option>
+                            </select>
+                            <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('content', idx, Number(fIdx))">
+                              <i class="fas fa-times"></i>
+                            </button>
+                          </div>
+                        </div>
+
+                        <button class="btn btn-xs btn-ghost" @click="addFallbackPlugin('content', idx)">
+                          <i class="fas fa-plus mr-1"></i>
+                          {{ t('bugBounty.monitor.addFallback') }}
+                        </button>
+                      </div>
+
+                      <button class="btn btn-xs btn-ghost text-error" @click="removePluginConfig('content', idx)">
+                        <i class="fas fa-trash"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- Vulnerability Monitoring -->
               <div class="card bg-base-200 p-4 mb-3">
                 <div class="flex items-center justify-between mb-2">
@@ -1025,7 +1028,13 @@ const normalizeTargetAssetTypes = (value: unknown) =>
         .filter(Boolean)
     )
   )
-const ALL_MONITOR_TARGET_ASSET_TYPES = ['web', 'domain', 'host', 'ip', 'service']
+const DOMAIN_HIERARCHY_TARGET_ASSET_TYPES = [
+  'domain_root',
+  'domain_level_1',
+  'domain_level_2',
+  'domain_level_3_plus',
+]
+const ALL_MONITOR_TARGET_ASSET_TYPES = ['web', 'domain', ...DOMAIN_HIERARCHY_TARGET_ASSET_TYPES, 'host', 'ip', 'service']
 
 const inferDefaultTargetAssetTypes = (pluginId: string): string[] => {
   const normalizedPluginId = String(pluginId || '')
@@ -1066,15 +1075,19 @@ const inferDefaultTargetAssetTypes = (pluginId: string): string[] => {
 const inferAllowedTargetAssetTypes = (monitorType: string, pluginId: string): string[] => {
   const inferred = inferDefaultTargetAssetTypes(pluginId)
   if (inferred.length > 0) {
+    if (monitorType === 'dns' && inferred.includes('domain')) {
+      return ['domain', ...DOMAIN_HIERARCHY_TARGET_ASSET_TYPES]
+    }
     return inferred
   }
 
   switch (monitorType) {
     case 'dns':
-      return ['domain']
+      return ['domain', ...DOMAIN_HIERARCHY_TARGET_ASSET_TYPES]
     case 'cert':
       return ['domain', 'service']
     case 'ip':
+      return ['domain']
     case 'port':
       return ['ip']
     case 'service':

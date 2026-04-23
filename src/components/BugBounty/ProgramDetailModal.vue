@@ -67,6 +67,15 @@
             <div class="flex items-center gap-2">
               <button
                 class="btn btn-sm btn-outline"
+                :disabled="syncingAssetDomainHierarchy"
+                @click="backfillAssetDomainHierarchy"
+              >
+                <span v-if="syncingAssetDomainHierarchy" class="loading loading-spinner loading-xs mr-2"></span>
+                <i v-else class="fas fa-sitemap mr-2"></i>
+                {{ t('bugBounty.programDetail.backfillAssetHierarchy') }}
+              </button>
+              <button
+                class="btn btn-sm btn-outline"
                 :disabled="syncingDomainScopes"
                 @click="backfillDomainScopes"
               >
@@ -334,6 +343,7 @@ const emit = defineEmits<{
 const activeTab = ref('scopes')
 const loadingScopes = ref(false)
 const creatingSope = ref(false)
+const syncingAssetDomainHierarchy = ref(false)
 const syncingDomainScopes = ref(false)
 const showCreateScopeModal = ref(false)
 
@@ -442,6 +452,40 @@ const backfillDomainScopes = async () => {
     toast.error(t('bugBounty.errors.backfillDomainScopesFailed'))
   } finally {
     syncingDomainScopes.value = false
+  }
+}
+
+const backfillAssetDomainHierarchy = async () => {
+  if (!props.program?.id) return
+
+  try {
+    syncingAssetDomainHierarchy.value = true
+    const result = await invoke<{ domain_assets: number; root_domains: number; updated_assets: number }>(
+      'bounty_backfill_domain_asset_hierarchy',
+      { programId: props.program.id },
+    )
+
+    if (result.updated_assets > 0) {
+      toast.success(
+        t('bugBounty.success.assetHierarchyBackfilled', {
+          updated: result.updated_assets,
+          roots: result.root_domains,
+        }),
+      )
+      return
+    }
+
+    toast.warning(
+      t('bugBounty.programDetail.backfillAssetHierarchyNoop', {
+        assets: result.domain_assets,
+        roots: result.root_domains,
+      }),
+    )
+  } catch (error) {
+    console.error('Failed to backfill domain asset hierarchy:', error)
+    toast.error(t('bugBounty.errors.backfillAssetHierarchyFailed'))
+  } finally {
+    syncingAssetDomainHierarchy.value = false
   }
 }
 

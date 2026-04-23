@@ -8,9 +8,12 @@
 use deno_core::{extension, op2, OpState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use std::time::Instant;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -25,6 +28,10 @@ use crate::monitor_progress::{emit_plugin_monitor_progress, PluginMonitorProgres
 use crate::network_scan::op_scan_ports;
 use crate::runtime_config::get_plugin_runtime_settings;
 use crate::runtime_events::emit_active_probe_event;
+use crate::{
+    cancel_active_probe, complete_active_probe, enqueue_active_probe, fail_active_probe,
+    mark_active_probe_running, ActiveProbeRequest,
+};
 use crate::service_probe::op_get_service_probe_capabilities;
 use crate::service_probe_runtime::op_probe_services;
 use crate::types::{Confidence, Finding, Severity};
@@ -477,6 +484,8 @@ pub struct FetchOptions {
     pub max_body_bytes: Option<usize>,
     #[serde(default)]
     pub request_id: Option<String>,
+    #[serde(default)]
+    pub active_probe: Option<ActiveProbeFetchOptions>,
 }
 
 /// Fetch response to JavaScript
@@ -490,6 +499,34 @@ pub struct FetchResponse {
     pub redirected: bool,
     pub final_url: String,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveProbeFetchOptions {
+    #[serde(default)]
+    pub probe_label: Option<String>,
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub target_path: Option<String>,
+    #[serde(default)]
+    pub target_location: Option<String>,
+    #[serde(default)]
+    pub probe_value: Option<String>,
+    #[serde(default)]
+    pub technique: Option<String>,
+    #[serde(default)]
+    pub probe_class: Option<String>,
+    #[serde(default)]
+    pub probe_priority: Option<i32>,
+    #[serde(default)]
+    pub cooldown_key: Option<String>,
+    #[serde(default)]
+    pub jitter_range: Option<[u64; 2]>,
+    #[serde(default)]
+    pub min_host_cooldown_ms: Option<u64>,
+    #[serde(default)]
+    pub max_concurrent_per_host: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -696,7 +733,11 @@ fn op_abort_fetch(#[string] request_id: String) -> bool {
 /// Op: HTTP fetch (网络请求)
 #[op2(async)]
 #[serde]
-async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>) -> FetchResponse {
+async fn op_fetch(
+    state: Rc<RefCell<OpState>>,
+    #[string] url: String,
+    #[serde] options: Option<FetchOptions>,
+) -> FetchResponse {
     // info!("[Plugin] Fetching URL: {}", url);
 
     let opts = options.unwrap_or_else(|| FetchOptions {
@@ -708,6 +749,7 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
         max_redirects: Some(10),
         max_body_bytes: None,
         request_id: None,
+        active_probe: None,
     });
 
     let method = opts.method.to_uppercase();
@@ -720,7 +762,13 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string);
+        .map(str::to_string)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let active_probe = opts.active_probe.clone();
+    let plugin_ctx = {
+        let op_state = state.borrow();
+        op_state.borrow::<PluginContext>().clone()
+    };
     let client = match get_fetch_client(follow_redirects, max_redirects).await {
         Ok(c) => c,
         Err(e) => {
@@ -739,43 +787,17 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
 
     let (abort_tx, mut abort_rx) = oneshot::channel::<()>();
     let mut local_abort_tx = Some(abort_tx);
-    if let Some(id) = request_id.as_ref() {
-        if let Some(previous) = fetch_abort_cache()
-            .lock()
-            .unwrap()
-            .insert(id.clone(), local_abort_tx.take().unwrap())
-        {
-            let _ = previous.send(());
-        }
+    if let Some(previous) = fetch_abort_cache()
+        .lock()
+        .unwrap()
+        .insert(request_id.clone(), local_abort_tx.take().unwrap())
+    {
+        let _ = previous.send(());
     }
 
-    let request_future = async {
-        let mut req_builder = match method.as_str() {
-            "GET" => client.get(&url),
-            "POST" => client.post(&url),
-            "PUT" => client.put(&url),
-            "DELETE" => client.delete(&url),
-            "PATCH" => client.patch(&url),
-            "HEAD" => client.head(&url),
-            _ => client.get(&url),
-        };
-
-        for (key, value) in opts.headers {
-            req_builder = req_builder.header(&key, &value);
-        }
-
-        req_builder = req_builder.timeout(Duration::from_millis(timeout_ms));
-
-        if let Some(body) = opts.body {
-            req_builder = match body {
-                FetchBody::Text { text } => req_builder.body(text),
-                FetchBody::Bytes { bytes } => req_builder.body(bytes),
-            };
-        }
-
-        let response = match req_builder.send().await {
-            Ok(r) => r,
-            Err(e) => {
+    let response = async {
+        let active_probe_request = if let Some(active_probe) = active_probe {
+            let Some(traffic_request_id) = plugin_ctx.traffic_request_id() else {
                 return FetchResponse {
                     success: false,
                     status: 0,
@@ -784,70 +806,226 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
                     ok: false,
                     redirected: false,
                     final_url: url.clone(),
-                    error: Some(format!("HTTP request failed: {}", e)),
+                    error: Some(
+                        "activeProbe is only available in traffic scan context".to_string(),
+                    ),
                 };
+            };
+
+            Some(ActiveProbeRequest {
+                plugin_id: plugin_ctx
+                    .plugin_id()
+                    .unwrap_or_else(|| "unknown-plugin".to_string()),
+                traffic_request_id,
+                request_id: request_id.clone(),
+                method: method.clone(),
+                url: url.clone(),
+                probe_label: active_probe.probe_label,
+                target_name: active_probe.target_name,
+                target_path: active_probe.target_path,
+                target_location: active_probe.target_location,
+                probe_value: active_probe.probe_value,
+                technique: active_probe.technique,
+                probe_class: active_probe
+                    .probe_class
+                    .unwrap_or_else(|| "fast".to_string()),
+                probe_priority: active_probe.probe_priority.unwrap_or(0),
+                cooldown_key: active_probe
+                    .cooldown_key
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| url.clone()),
+                jitter_range: active_probe.jitter_range.unwrap_or([0, 0]),
+                min_host_cooldown_ms: active_probe.min_host_cooldown_ms.unwrap_or(0),
+                max_concurrent_per_host: active_probe.max_concurrent_per_host.unwrap_or(1),
+            })
+        } else {
+            None
+        };
+
+        if let Some(active_probe_request) = active_probe_request.as_ref() {
+            let dispatch_rx = enqueue_active_probe(active_probe_request.clone());
+            let grant = tokio::select! {
+                dispatch_result = dispatch_rx => match dispatch_result {
+                    Ok(grant) => grant,
+                    Err(_) => {
+                        return FetchResponse {
+                            success: false,
+                            status: 0,
+                            headers: std::collections::HashMap::new(),
+                            body: String::new(),
+                            ok: false,
+                            redirected: false,
+                            final_url: url.clone(),
+                            error: Some("Active probe scheduler dropped dispatch grant".to_string()),
+                        };
+                    }
+                },
+                _ = &mut abort_rx => {
+                    cancel_active_probe(&request_id, Some("aborted while queued".to_string()));
+                    return FetchResponse {
+                        success: false,
+                        status: 0,
+                        headers: std::collections::HashMap::new(),
+                        body: String::new(),
+                        ok: false,
+                        redirected: false,
+                        final_url: url.clone(),
+                        error: Some("HTTP request aborted".to_string()),
+                    };
+                }
+            };
+
+            if grant.total_wait_ms > 0 {
+                let wait = tokio::time::sleep(Duration::from_millis(grant.total_wait_ms));
+                tokio::pin!(wait);
+                tokio::select! {
+                    _ = &mut wait => {}
+                    _ = &mut abort_rx => {
+                        cancel_active_probe(&request_id, Some("aborted while scheduled".to_string()));
+                        return FetchResponse {
+                            success: false,
+                            status: 0,
+                            headers: std::collections::HashMap::new(),
+                            body: String::new(),
+                            ok: false,
+                            redirected: false,
+                            final_url: url.clone(),
+                            error: Some("HTTP request aborted".to_string()),
+                        };
+                    }
+                }
+            }
+
+            mark_active_probe_running(&request_id);
+        }
+
+        let request_started_at = Instant::now();
+        let request_future = async {
+            let mut req_builder = match method.as_str() {
+                "GET" => client.get(&url),
+                "POST" => client.post(&url),
+                "PUT" => client.put(&url),
+                "DELETE" => client.delete(&url),
+                "PATCH" => client.patch(&url),
+                "HEAD" => client.head(&url),
+                _ => client.get(&url),
+            };
+
+            for (key, value) in opts.headers {
+                req_builder = req_builder.header(&key, &value);
+            }
+
+            req_builder = req_builder.timeout(Duration::from_millis(timeout_ms));
+
+            if let Some(body) = opts.body {
+                req_builder = match body {
+                    FetchBody::Text { text } => req_builder.body(text),
+                    FetchBody::Bytes { bytes } => req_builder.body(bytes),
+                };
+            }
+
+            let response = match req_builder.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    return FetchResponse {
+                        success: false,
+                        status: 0,
+                        headers: std::collections::HashMap::new(),
+                        body: String::new(),
+                        ok: false,
+                        redirected: false,
+                        final_url: url.clone(),
+                        error: Some(format!("HTTP request failed: {}", e)),
+                    };
+                }
+            };
+
+            let status = response.status().as_u16();
+            let ok = response.status().is_success();
+            let final_url = response.url().to_string();
+            let redirected = final_url != url;
+
+            let mut headers = std::collections::HashMap::new();
+            for (key, value) in response.headers() {
+                if let Ok(v) = value.to_str() {
+                    headers.insert(key.to_string(), v.to_string());
+                }
+            }
+
+            let body = match read_response_body(response, max_body_bytes).await {
+                Ok(b) => b,
+                Err(e) => {
+                    return FetchResponse {
+                        success: false,
+                        status,
+                        headers,
+                        body: String::new(),
+                        ok: false,
+                        redirected,
+                        final_url,
+                        error: Some(format!("Failed to read response body: {}", e)),
+                    };
+                }
+            };
+
+            debug!("[Plugin] Fetch completed: {} (status: {})", url, status);
+
+            FetchResponse {
+                success: true,
+                status,
+                headers,
+                body,
+                ok,
+                redirected,
+                final_url,
+                error: None,
             }
         };
 
-        let status = response.status().as_u16();
-        let ok = response.status().is_success();
-        let final_url = response.url().to_string();
-        let redirected = final_url != url;
-
-        let mut headers = std::collections::HashMap::new();
-        for (key, value) in response.headers() {
-            if let Ok(v) = value.to_str() {
-                headers.insert(key.to_string(), v.to_string());
-            }
-        }
-
-        let body = match read_response_body(response, max_body_bytes).await {
-            Ok(b) => b,
-            Err(e) => {
-                return FetchResponse {
-                    success: false,
-                    status,
-                    headers,
-                    body: String::new(),
-                    ok: false,
-                    redirected,
-                    final_url,
-                    error: Some(format!("Failed to read response body: {}", e)),
-                };
+        let response = tokio::select! {
+            result = request_future => result,
+            _ = &mut abort_rx => FetchResponse {
+                success: false,
+                status: 0,
+                headers: std::collections::HashMap::new(),
+                body: String::new(),
+                ok: false,
+                redirected: false,
+                final_url: url.clone(),
+                error: Some("HTTP request aborted".to_string()),
             }
         };
 
-        debug!("[Plugin] Fetch completed: {} (status: {})", url, status);
-
-        FetchResponse {
-            success: true,
-            status,
-            headers,
-            body,
-            ok,
-            redirected,
-            final_url,
-            error: None,
+        if active_probe_request.is_some() {
+            let response_elapsed_ms = Some(request_started_at.elapsed().as_millis() as u64);
+            if response.success {
+                complete_active_probe(&request_id, Some(response.status), response_elapsed_ms);
+            } else if response
+                .error
+                .as_deref()
+                .map(|error| error.eq_ignore_ascii_case("HTTP request aborted"))
+                .unwrap_or(false)
+            {
+                cancel_active_probe(&request_id, Some("aborted while running".to_string()));
+            } else {
+                fail_active_probe(
+                    &request_id,
+                    if response.status > 0 {
+                        Some(response.status)
+                    } else {
+                        None
+                    },
+                    response.error.clone(),
+                    response_elapsed_ms,
+                );
+            }
         }
-    };
 
-    let response = tokio::select! {
-        result = request_future => result,
-        _ = &mut abort_rx => FetchResponse {
-            success: false,
-            status: 0,
-            headers: std::collections::HashMap::new(),
-            body: String::new(),
-            ok: false,
-            redirected: false,
-            final_url: url.clone(),
-            error: Some("HTTP request aborted".to_string()),
-        }
-    };
-
-    if let Some(id) = request_id {
-        fetch_abort_cache().lock().unwrap().remove(&id);
+        response
     }
+    .await;
+
+    fetch_abort_cache().lock().unwrap().remove(&request_id);
     drop(local_abort_tx);
 
     response

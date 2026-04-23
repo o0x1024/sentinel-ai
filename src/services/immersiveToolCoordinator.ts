@@ -3,6 +3,7 @@ export type ImmersiveToolCoordinatorId =
   | 'traffic-workbench'
   | 'traffic-control'
   | 'traffic-basket'
+  | 'traffic-plugins'
   | 'traffic-settings'
   | 'security-center'
 
@@ -18,6 +19,7 @@ const immersiveToolEntries = new Map<
 >()
 
 const immersiveToolLayerOrder: ImmersiveToolCoordinatorId[] = [
+  'traffic-plugins',
   'traffic-settings',
   'security-center',
   'traffic-basket',

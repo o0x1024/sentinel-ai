@@ -129,6 +129,7 @@ import {
   toggleImmersiveTrafficWorkbenchTool,
   toggleImmersiveTrafficBasket,
   toggleImmersiveTrafficInterceptDrawer,
+  toggleImmersiveTrafficPluginsPanel,
   toggleImmersiveTrafficProxySettings,
   useImmersiveTrafficDockState,
   type ImmersiveTrafficWorkbenchTool,
@@ -161,6 +162,7 @@ const {
   activeWorkbenchTool,
   interceptDrawerOpen,
   proxySettingsOpen,
+  trafficPluginsOpen,
   basketOpen,
   repeaterCount,
   intruderCount,
@@ -296,6 +298,16 @@ const toggleTrafficAssistant = () => {
   openTrafficAssistantPanel()
 }
 
+const toggleTrafficPlugins = () => {
+  if (route.path !== '/traffic') {
+    void router.push('/traffic')
+    toggleImmersiveTrafficPluginsPanel()
+    return
+  }
+
+  toggleImmersiveTrafficPluginsPanel()
+}
+
 const trafficWorkbenchItems = computed<TrafficWorkbenchToolbarItem[]>(() => [
   {
     id: 'security-center',
@@ -358,6 +370,14 @@ const trafficWorkbenchItems = computed<TrafficWorkbenchToolbarItem[]>(() => [
     count: oastCount.value,
     badgeClass: 'toolbar-badge-primary',
     onClick: () => activateTrafficTool('oast'),
+  },
+  {
+    id: 'traffic-plugins',
+    label: t('trafficAnalysis.immersivePlugins.title', '流量分析插件'),
+    icon: 'fas fa-puzzle-piece',
+    active: trafficPluginsOpen.value,
+    count: 0,
+    onClick: toggleTrafficPlugins,
   },
   {
     id: 'assistant',

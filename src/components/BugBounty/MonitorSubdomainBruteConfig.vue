@@ -36,7 +36,7 @@
       </label>
       <textarea
         v-model="inlineDictionaryText"
-        class="textarea textarea-bordered textarea-sm min-h-28"
+        class="textarea textarea-bordered textarea-sm min-h-28 leading-4"
         spellcheck="false"
         :placeholder="t('bugBounty.monitor.subdomainBruteInlineDictionaryPlaceholder')"
       />

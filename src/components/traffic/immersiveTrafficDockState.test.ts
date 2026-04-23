@@ -4,6 +4,7 @@ import {
   openImmersiveTrafficWorkbenchTool,
   toggleImmersiveTrafficBasket,
   toggleImmersiveTrafficInterceptDrawer,
+  toggleImmersiveTrafficPluginsPanel,
   toggleImmersiveTrafficProxySettings,
   resetImmersiveTrafficDockState,
   showImmersiveTrafficHistory,
@@ -55,12 +56,14 @@ describe('immersiveTrafficDockState', () => {
       workbenchOpen,
       interceptDrawerOpen,
       proxySettingsOpen,
+      trafficPluginsOpen,
       basketOpen,
     } = useImmersiveTrafficDockState()
 
     openImmersiveTrafficWorkbenchTool('repeater')
     toggleImmersiveTrafficInterceptDrawer()
     toggleImmersiveTrafficProxySettings()
+    toggleImmersiveTrafficPluginsPanel()
     toggleImmersiveTrafficBasket()
 
     showImmersiveTrafficHistory()
@@ -68,6 +71,7 @@ describe('immersiveTrafficDockState', () => {
     expect(workbenchOpen.value).toBe(false)
     expect(interceptDrawerOpen.value).toBe(false)
     expect(proxySettingsOpen.value).toBe(false)
+    expect(trafficPluginsOpen.value).toBe(false)
     expect(basketOpen.value).toBe(false)
   })
 
@@ -76,6 +80,7 @@ describe('immersiveTrafficDockState', () => {
       workbenchOpen,
       interceptDrawerOpen,
       proxySettingsOpen,
+      trafficPluginsOpen,
       basketOpen,
     } = useImmersiveTrafficDockState()
 
@@ -88,8 +93,22 @@ describe('immersiveTrafficDockState', () => {
     expect(interceptDrawerOpen.value).toBe(true)
     expect(proxySettingsOpen.value).toBe(true)
 
-    toggleImmersiveTrafficBasket()
+    toggleImmersiveTrafficPluginsPanel()
     expect(proxySettingsOpen.value).toBe(true)
+    expect(trafficPluginsOpen.value).toBe(true)
+
+    toggleImmersiveTrafficBasket()
+    expect(trafficPluginsOpen.value).toBe(true)
     expect(basketOpen.value).toBe(true)
+  })
+
+  it('toggles the traffic plugin panel independently', () => {
+    const { trafficPluginsOpen } = useImmersiveTrafficDockState()
+
+    toggleImmersiveTrafficPluginsPanel()
+    expect(trafficPluginsOpen.value).toBe(true)
+
+    toggleImmersiveTrafficPluginsPanel()
+    expect(trafficPluginsOpen.value).toBe(false)
   })
 })

@@ -1,3 +1,4 @@
+pub mod active_probe_commands;
 pub mod analysis_commands;
 pub(crate) mod analysis_state_support;
 pub mod behavior_commands;
@@ -18,6 +19,7 @@ pub(crate) mod replay_support;
 pub mod runtime_settings_commands;
 pub mod store_commands;
 
+pub use active_probe_commands::*;
 pub use analysis_commands::*;
 pub use analysis_state_support::{InterceptedRequest, InterceptedResponse, TrafficAnalysisState};
 pub use behavior_commands::*;

@@ -35,6 +35,8 @@ const props = withDefaults(defineProps<{
   resizeStorageKey?: string
   minWidth?: number
   minHeight?: number
+  defaultWidth?: number | null
+  defaultHeight?: number | null
 }>(), {
   boxClass: '',
   topAligned: false,
@@ -42,6 +44,8 @@ const props = withDefaults(defineProps<{
   resizeStorageKey: '',
   minWidth: 640,
   minHeight: 360,
+  defaultWidth: null,
+  defaultHeight: null,
 })
 
 defineEmits<{
@@ -156,6 +160,21 @@ function restoreSize() {
   }
 }
 
+function applyDefaultSize() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  if (!props.defaultWidth && !props.defaultHeight) {
+    return
+  }
+
+  const fallbackWidth = props.defaultWidth ?? props.minWidth
+  const fallbackHeight = props.defaultHeight ?? props.minHeight
+  manualSize.value = clampSize(fallbackWidth, fallbackHeight)
+  updateManualSizeRatio(manualSize.value)
+}
+
 function handleResize(event: MouseEvent) {
   if (!resizeState.value) {
     return
@@ -215,7 +234,12 @@ watch(
     }
 
     if (open) {
+      manualSize.value = null
+      manualSizeRatio.value = null
       restoreSize()
+      if (!manualSize.value) {
+        applyDefaultSize()
+      }
       window.addEventListener('resize', handleWindowResize)
       return
     }
@@ -243,6 +267,24 @@ onUnmounted(() => {
   max-width: min(84vw, 1360px) !important;
   height: min(88vh, 960px) !important;
   max-height: min(88vh, 960px) !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.modal-box.traffic-plugin-modal-box {
+  width: min(96vw, 1150px) !important;
+  max-width: min(96vw, 1150px) !important;
+  height: min(84vh, 980px) !important;
+  max-height: min(84vh, 980px) !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.modal-box.active-probe-preview-modal-box {
+  width: min(96vw, 1190px) !important;
+  max-width: min(96vw, 1190px) !important;
+  height: min(86vh, 980px) !important;
+  max-height: min(86vh, 980px) !important;
   padding: 0 !important;
   overflow: hidden;
 }

@@ -117,6 +117,23 @@ struct ActiveProbeSchedulerState {
     sequence: u64,
 }
 
+#[derive(Debug)]
+struct WaiterEntryUpdate {
+    request_id: String,
+    active_slots: u32,
+    max_concurrent_per_host: u32,
+    adaptive_penalty_ms: u64,
+    queue_depth: u32,
+}
+
+#[derive(Debug)]
+struct ScheduledWaiter {
+    request_id: String,
+    grant: ActiveProbeDispatchGrant,
+    scheduled_at: String,
+    sender: Option<oneshot::Sender<ActiveProbeDispatchGrant>>,
+}
+
 static ACTIVE_PROBE_SCHEDULER: OnceLock<Mutex<ActiveProbeSchedulerState>> = OnceLock::new();
 
 fn scheduler_state() -> &'static Mutex<ActiveProbeSchedulerState> {
@@ -141,7 +158,8 @@ fn jitter_ms(range: [u64; 2]) -> u64 {
     }
 
     let span = upper - lower + 1;
-    lower + (rand::random::<u64>() % span)
+    let seed = Utc::now().timestamp_nanos_opt().unwrap_or_default().unsigned_abs();
+    lower + (seed % span)
 }
 
 fn sort_waiters(group: &mut ActiveProbeGroupState) {
@@ -155,10 +173,10 @@ fn sort_waiters(group: &mut ActiveProbeGroupState) {
 
 fn effective_concurrency(request: &ActiveProbeRequest) -> u32 {
     if request.probe_class == "slow" {
-        return 1;
+        1
+    } else {
+        request.max_concurrent_per_host.max(1)
     }
-
-    request.max_concurrent_per_host.max(1)
 }
 
 fn effective_cooldown_ms(request: &ActiveProbeRequest, adaptive_penalty_ms: u64) -> u64 {
@@ -171,7 +189,11 @@ fn effective_cooldown_ms(request: &ActiveProbeRequest, adaptive_penalty_ms: u64)
         }
 }
 
-fn build_entry(request: &ActiveProbeRequest, adaptive_penalty_ms: u64, queue_depth: u32) -> ActiveProbeQueueEntry {
+fn build_entry(
+    request: &ActiveProbeRequest,
+    adaptive_penalty_ms: u64,
+    queue_depth: u32,
+) -> ActiveProbeQueueEntry {
     let now = now_rfc3339();
     ActiveProbeQueueEntry {
         plugin_id: request.plugin_id.clone(),
@@ -218,34 +240,54 @@ fn emit_entries(entries: Vec<ActiveProbeQueueEntry>) {
     }
 }
 
+fn waiter_entry_updates(group: &mut ActiveProbeGroupState) -> Vec<WaiterEntryUpdate> {
+    sort_waiters(group);
+    group.waiters
+        .iter()
+        .enumerate()
+        .map(|(index, waiter)| WaiterEntryUpdate {
+            request_id: waiter.request.request_id.clone(),
+            active_slots: group.active_slots,
+            max_concurrent_per_host: effective_concurrency(&waiter.request),
+            adaptive_penalty_ms: group.adaptive_penalty_ms,
+            queue_depth: index as u32,
+        })
+        .collect()
+}
+
+fn apply_waiter_updates_locked(
+    state: &mut ActiveProbeSchedulerState,
+    updates: Vec<WaiterEntryUpdate>,
+) -> Vec<ActiveProbeQueueEntry> {
+    let mut entries = Vec::new();
+    for update in updates {
+        let Some(entry) = state.entries.get_mut(&update.request_id) else {
+            continue;
+        };
+        if entry.phase != ActiveProbeQueuePhase::Queued {
+            continue;
+        }
+        entry.active_slots = update.active_slots;
+        entry.max_concurrent_per_host = update.max_concurrent_per_host;
+        entry.adaptive_penalty_ms = update.adaptive_penalty_ms;
+        entry.queue_depth = update.queue_depth;
+        entry.updated_at = now_rfc3339();
+        entries.push(entry.clone());
+    }
+    entries
+}
+
 fn refresh_waiter_entries_locked(
     state: &mut ActiveProbeSchedulerState,
     cooldown_key: &str,
 ) -> Vec<ActiveProbeQueueEntry> {
-    let mut updates = Vec::new();
-    let Some(group) = state.groups.get_mut(cooldown_key) else {
-        return updates;
-    };
-
-    sort_waiters(group);
-    for (index, waiter) in group.waiters.iter().enumerate() {
-        let Some(entry) = state.entries.get_mut(&waiter.request.request_id) else {
-            continue;
+    let updates = {
+        let Some(group) = state.groups.get_mut(cooldown_key) else {
+            return Vec::new();
         };
-
-        if entry.phase != ActiveProbeQueuePhase::Queued {
-            continue;
-        }
-
-        entry.queue_depth = index as u32;
-        entry.active_slots = group.active_slots;
-        entry.max_concurrent_per_host = effective_concurrency(&waiter.request);
-        entry.adaptive_penalty_ms = group.adaptive_penalty_ms;
-        entry.updated_at = now_rfc3339();
-        updates.push(entry.clone());
-    }
-
-    updates
+        waiter_entry_updates(group)
+    };
+    apply_waiter_updates_locked(state, updates)
 }
 
 fn prune_recent_locked(state: &mut ActiveProbeSchedulerState) {
@@ -272,7 +314,11 @@ fn prune_recent_locked(state: &mut ActiveProbeSchedulerState) {
 }
 
 fn enqueue_recent_locked(state: &mut ActiveProbeSchedulerState, request_id: &str) {
-    if let Some(position) = state.recent_ids.iter().position(|existing| existing == request_id) {
+    if let Some(position) = state
+        .recent_ids
+        .iter()
+        .position(|existing| existing == request_id)
+    {
         state.recent_ids.remove(position);
     }
     state.recent_ids.push_front(request_id.to_string());
@@ -283,15 +329,13 @@ fn promote_waiters_locked(
     state: &mut ActiveProbeSchedulerState,
     cooldown_key: &str,
 ) -> Vec<ActiveProbeQueueEntry> {
-    let mut updates = Vec::new();
-    let mut grants = Vec::new();
-
-    {
+    let (scheduled_waiters, trailing_waiter_updates) = {
         let Some(group) = state.groups.get_mut(cooldown_key) else {
-            return updates;
+            return Vec::new();
         };
 
         sort_waiters(group);
+        let mut scheduled_waiters = Vec::new();
         loop {
             let Some(next_waiter) = group.waiters.first() else {
                 break;
@@ -312,9 +356,7 @@ fn promote_waiters_locked(
                 .num_milliseconds()
                 .max(0) as u64;
             let total_wait_ms = cooldown_wait_ms + jitter_wait_ms;
-            let scheduled_at = now_rfc3339();
-            let dispatch_at = now
-                + chrono::Duration::milliseconds(total_wait_ms as i64);
+            let dispatch_at = now + chrono::Duration::milliseconds(total_wait_ms as i64);
 
             group.active_slots += 1;
             group.next_dispatch_at = Some(
@@ -324,44 +366,53 @@ fn promote_waiters_locked(
                     ),
             );
 
-            let grant = ActiveProbeDispatchGrant {
-                active_slots: group.active_slots,
-                max_concurrent_per_host,
-                queue_depth: 0,
-                cooldown_wait_ms,
-                jitter_wait_ms,
-                total_wait_ms,
-                adaptive_penalty_ms,
-            };
+            scheduled_waiters.push(ScheduledWaiter {
+                request_id: waiter.request.request_id.clone(),
+                grant: ActiveProbeDispatchGrant {
+                    active_slots: group.active_slots,
+                    max_concurrent_per_host,
+                    queue_depth: 0,
+                    cooldown_wait_ms,
+                    jitter_wait_ms,
+                    total_wait_ms,
+                    adaptive_penalty_ms,
+                },
+                scheduled_at: now_rfc3339(),
+                sender: waiter.sender.take(),
+            });
+        }
 
-            if let Some(entry) = state.entries.get_mut(&waiter.request.request_id) {
-                entry.phase = ActiveProbeQueuePhase::Scheduled;
-                entry.active_slots = grant.active_slots;
-                entry.max_concurrent_per_host = grant.max_concurrent_per_host;
-                entry.queue_depth = grant.queue_depth;
-                entry.cooldown_wait_ms = Some(grant.cooldown_wait_ms);
-                entry.jitter_wait_ms = Some(grant.jitter_wait_ms);
-                entry.total_wait_ms = Some(grant.total_wait_ms);
-                entry.adaptive_penalty_ms = adaptive_penalty_ms;
-                entry.scheduled_at = Some(scheduled_at.clone());
-                entry.updated_at = scheduled_at;
-                updates.push(entry.clone());
-            }
+        let trailing_waiter_updates = waiter_entry_updates(group);
+        (scheduled_waiters, trailing_waiter_updates)
+    };
 
-            grants.push((waiter.sender.take(), grant));
-            sort_waiters(group);
+    let mut entries = Vec::new();
+    for scheduled in &scheduled_waiters {
+        let Some(entry) = state.entries.get_mut(&scheduled.request_id) else {
+            continue;
+        };
+        entry.phase = ActiveProbeQueuePhase::Scheduled;
+        entry.active_slots = scheduled.grant.active_slots;
+        entry.max_concurrent_per_host = scheduled.grant.max_concurrent_per_host;
+        entry.queue_depth = scheduled.grant.queue_depth;
+        entry.cooldown_wait_ms = Some(scheduled.grant.cooldown_wait_ms);
+        entry.jitter_wait_ms = Some(scheduled.grant.jitter_wait_ms);
+        entry.total_wait_ms = Some(scheduled.grant.total_wait_ms);
+        entry.adaptive_penalty_ms = scheduled.grant.adaptive_penalty_ms;
+        entry.scheduled_at = Some(scheduled.scheduled_at.clone());
+        entry.updated_at = scheduled.scheduled_at.clone();
+        entries.push(entry.clone());
+    }
+
+    entries.extend(apply_waiter_updates_locked(state, trailing_waiter_updates));
+
+    for scheduled in scheduled_waiters {
+        if let Some(sender) = scheduled.sender {
+            let _ = sender.send(scheduled.grant);
         }
     }
 
-    updates.extend(refresh_waiter_entries_locked(state, cooldown_key));
-
-    for (sender, grant) in grants {
-        if let Some(sender) = sender {
-            let _ = sender.send(grant);
-        }
-    }
-
-    updates
+    entries
 }
 
 pub fn enqueue_active_probe(
@@ -377,24 +428,18 @@ pub fn enqueue_active_probe(
         .get(&request.cooldown_key)
         .map(|group| group.adaptive_penalty_ms)
         .unwrap_or(0);
-    let entry = build_entry(
-        &request,
-        adaptive_penalty_ms,
-        state
-            .groups
-            .get(&request.cooldown_key)
-            .map(|group| group.waiters.len() as u32)
-            .unwrap_or(0),
-    );
+    let queue_depth = state
+        .groups
+        .get(&request.cooldown_key)
+        .map(|group| group.waiters.len() as u32)
+        .unwrap_or(0);
+    let entry = build_entry(&request, adaptive_penalty_ms, queue_depth);
     state.entries.insert(request.request_id.clone(), entry.clone());
 
     let sequence = state.sequence;
     state.sequence += 1;
 
-    let group = state
-        .groups
-        .entry(request.cooldown_key.clone())
-        .or_default();
+    let group = state.groups.entry(request.cooldown_key.clone()).or_default();
     group.waiters.push(QueuedWaiter {
         request: request.clone(),
         sequence,
@@ -417,14 +462,22 @@ pub fn mark_active_probe_running(request_id: &str) -> Option<ActiveProbeQueueEnt
     let entry = state.entries.get_mut(request_id)?;
     entry.phase = ActiveProbeQueuePhase::Running;
     entry.dispatch_started_at = Some(now_rfc3339());
-    entry.updated_at = entry.dispatch_started_at.clone().unwrap_or_else(now_rfc3339);
+    entry.updated_at = entry
+        .dispatch_started_at
+        .clone()
+        .unwrap_or_else(now_rfc3339);
     let entry = entry.clone();
     drop(state);
     emit_entry(&entry);
     Some(entry)
 }
 
-fn adjust_penalty(group: &mut ActiveProbeGroupState, status: Option<u16>, error: Option<&str>, response_elapsed_ms: Option<u64>) {
+fn adjust_penalty(
+    group: &mut ActiveProbeGroupState,
+    status: Option<u16>,
+    error: Option<&str>,
+    response_elapsed_ms: Option<u64>,
+) {
     let status = status.unwrap_or_default();
     let error_text = error.unwrap_or("").to_ascii_lowercase();
     let elapsed = response_elapsed_ms.unwrap_or_default();
@@ -450,7 +503,7 @@ fn adjust_penalty(group: &mut ActiveProbeGroupState, status: Option<u16>, error:
         return;
     }
 
-    group.adaptive_penalty_ms = group.adaptive_penalty_ms / 2;
+    group.adaptive_penalty_ms /= 2;
 }
 
 fn finalize_active_probe(
@@ -465,14 +518,23 @@ fn finalize_active_probe(
         .expect("active probe scheduler poisoned");
     let cooldown_key = state.entries.get(request_id)?.cooldown_key.clone();
 
-    let mut updates = Vec::new();
     {
-      let group = state.groups.get_mut(&cooldown_key)?;
-      group.active_slots = group.active_slots.saturating_sub(1);
-      adjust_penalty(group, status, error.as_deref(), response_elapsed_ms);
+        let group = state.groups.get_mut(&cooldown_key)?;
+        group.active_slots = group.active_slots.saturating_sub(1);
+        adjust_penalty(group, status, error.as_deref(), response_elapsed_ms);
     }
 
     let final_entry = {
+        let active_slots = state
+            .groups
+            .get(&cooldown_key)
+            .map(|group| group.active_slots)
+            .unwrap_or(0);
+        let adaptive_penalty_ms = state
+            .groups
+            .get(&cooldown_key)
+            .map(|group| group.adaptive_penalty_ms)
+            .unwrap_or(0);
         let entry = state.entries.get_mut(request_id)?;
         let now = now_rfc3339();
         entry.phase = phase;
@@ -481,27 +543,22 @@ fn finalize_active_probe(
         entry.response_elapsed_ms = response_elapsed_ms;
         entry.finished_at = Some(now.clone());
         entry.updated_at = now;
-        entry.active_slots = state
-            .groups
-            .get(&cooldown_key)
-            .map(|group| group.active_slots)
-            .unwrap_or(0);
-        entry.adaptive_penalty_ms = state
-            .groups
-            .get(&cooldown_key)
-            .map(|group| group.adaptive_penalty_ms)
-            .unwrap_or(0);
+        entry.active_slots = active_slots;
+        entry.adaptive_penalty_ms = adaptive_penalty_ms;
         entry.clone()
     };
 
     enqueue_recent_locked(&mut state, request_id);
-    updates.push(final_entry.clone());
+    let mut updates = vec![final_entry.clone()];
     updates.extend(refresh_waiter_entries_locked(&mut state, &cooldown_key));
     updates.extend(promote_waiters_locked(&mut state, &cooldown_key));
-    if let Some(group) = state.groups.get(&cooldown_key) {
-        if group.active_slots == 0 && group.waiters.is_empty() {
-            state.groups.remove(&cooldown_key);
-        }
+    if state
+        .groups
+        .get(&cooldown_key)
+        .map(|group| group.active_slots == 0 && group.waiters.is_empty())
+        .unwrap_or(false)
+    {
+        state.groups.remove(&cooldown_key);
     }
     drop(state);
 
@@ -542,56 +599,74 @@ pub fn cancel_active_probe(request_id: &str, reason: Option<String>) -> Option<A
     let mut state = scheduler_state()
         .lock()
         .expect("active probe scheduler poisoned");
-    let entry = state.entries.get(request_id)?.clone();
-    let cooldown_key = entry.cooldown_key.clone();
-    let mut updates = Vec::new();
-    let mut removed_waiter = false;
+    let existing = state.entries.get(request_id)?.clone();
+    let cooldown_key = existing.cooldown_key.clone();
 
-    if let Some(group) = state.groups.get_mut(&cooldown_key) {
+    let removed_from_waiters = {
+        let Some(group) = state.groups.get_mut(&cooldown_key) else {
+            return None;
+        };
+
         if let Some(index) = group
             .waiters
             .iter()
             .position(|waiter| waiter.request.request_id == request_id)
         {
             group.waiters.remove(index);
-            removed_waiter = true;
-        } else if matches!(
-            entry.phase,
-            ActiveProbeQueuePhase::Scheduled | ActiveProbeQueuePhase::Running
-        ) {
-            group.active_slots = group.active_slots.saturating_sub(1);
+            true
+        } else {
+            if matches!(
+                existing.phase,
+                ActiveProbeQueuePhase::Scheduled | ActiveProbeQueuePhase::Running
+            ) {
+                group.active_slots = group.active_slots.saturating_sub(1);
+            }
+            false
         }
-    }
+    };
 
-    {
+    let final_entry = {
+        let active_slots = state
+            .groups
+            .get(&cooldown_key)
+            .map(|group| group.active_slots)
+            .unwrap_or(0);
         let entry = state.entries.get_mut(request_id)?;
         let now = now_rfc3339();
         entry.phase = ActiveProbeQueuePhase::Cancelled;
         entry.reason = reason;
         entry.finished_at = Some(now.clone());
         entry.updated_at = now;
-        entry.active_slots = state
-            .groups
-            .get(&cooldown_key)
-            .map(|group| group.active_slots)
-            .unwrap_or(0);
-        updates.push(entry.clone());
-    }
+        entry.active_slots = active_slots;
+        entry.clone()
+    };
 
     enqueue_recent_locked(&mut state, request_id);
-    if removed_waiter {
+    let mut updates = vec![final_entry.clone()];
+    if removed_from_waiters {
         updates.extend(refresh_waiter_entries_locked(&mut state, &cooldown_key));
     }
     updates.extend(promote_waiters_locked(&mut state, &cooldown_key));
-    if let Some(group) = state.groups.get(&cooldown_key) {
-        if group.active_slots == 0 && group.waiters.is_empty() {
-            state.groups.remove(&cooldown_key);
-        }
+    if state
+        .groups
+        .get(&cooldown_key)
+        .map(|group| group.active_slots == 0 && group.waiters.is_empty())
+        .unwrap_or(false)
+    {
+        state.groups.remove(&cooldown_key);
     }
     drop(state);
 
-    emit_entries(updates.clone());
-    updates.into_iter().find(|item| item.request_id == request_id)
+    emit_entries(updates);
+    Some(final_entry)
+}
+
+fn pending_phase_rank(phase: ActiveProbeQueuePhase) -> u8 {
+    match phase {
+        ActiveProbeQueuePhase::Scheduled => 0,
+        ActiveProbeQueuePhase::Queued => 1,
+        _ => 9,
+    }
 }
 
 pub fn get_active_probe_queue_snapshot() -> ActiveProbeQueueSnapshot {
@@ -611,9 +686,13 @@ pub fn get_active_probe_queue_snapshot() -> ActiveProbeQueueSnapshot {
         .cloned()
         .collect::<Vec<_>>();
     pending.sort_by(|left, right| {
-        left.queue_depth
-            .cmp(&right.queue_depth)
-            .then_with(|| parse_time_or_min(Some(left.updated_at.as_str())).cmp(&parse_time_or_min(Some(right.updated_at.as_str()))))
+        pending_phase_rank(left.phase)
+            .cmp(&pending_phase_rank(right.phase))
+            .then_with(|| left.queue_depth.cmp(&right.queue_depth))
+            .then_with(|| {
+                parse_time_or_min(Some(left.queued_at.as_str()))
+                    .cmp(&parse_time_or_min(Some(right.queued_at.as_str())))
+            })
     });
 
     let mut running = state
@@ -623,8 +702,8 @@ pub fn get_active_probe_queue_snapshot() -> ActiveProbeQueueSnapshot {
         .cloned()
         .collect::<Vec<_>>();
     running.sort_by(|left, right| {
-        parse_time_or_min(Some(right.updated_at.as_str()))
-            .cmp(&parse_time_or_min(Some(left.updated_at.as_str())))
+        parse_time_or_min(right.dispatch_started_at.as_deref())
+            .cmp(&parse_time_or_min(left.dispatch_started_at.as_deref()))
     });
 
     let recent = state
@@ -638,6 +717,14 @@ pub fn get_active_probe_queue_snapshot() -> ActiveProbeQueueSnapshot {
         running,
         recent,
     }
+}
+
+#[cfg(test)]
+fn reset_active_probe_scheduler_for_tests() {
+    let mut state = scheduler_state()
+        .lock()
+        .expect("active probe scheduler poisoned");
+    *state = ActiveProbeSchedulerState::default();
 }
 
 #[cfg(test)]
@@ -668,6 +755,8 @@ mod tests {
 
     #[tokio::test]
     async fn scheduler_respects_priority_and_snapshot() {
+        reset_active_probe_scheduler_for_tests();
+
         let first_rx = enqueue_active_probe(build_request("req-1", 10));
         let second_rx = enqueue_active_probe(build_request("req-2", 100));
 

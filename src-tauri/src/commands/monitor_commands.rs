@@ -1057,6 +1057,8 @@ pub async fn monitor_start_scheduler(
                                         whois_data_json: None,
                                         is_wildcard: None,
                                         parent_domain: None,
+                                        root_domain: None,
+                                        subdomain_level: None,
                                         http_status: None,
                                         response_time_ms: None,
                                         content_length: None,
@@ -1285,6 +1287,14 @@ pub async fn monitor_start_scheduler(
                                                 .and_then(|a| a.get("parent_domain"))
                                                 .and_then(|s| s.as_str())
                                                 .map(|s| s.to_string()),
+                                            root_domain: attrs
+                                                .and_then(|a| a.get("root_domain"))
+                                                .and_then(|s| s.as_str())
+                                                .map(|s| s.to_string()),
+                                            subdomain_level: attrs
+                                                .and_then(|a| a.get("subdomain_level"))
+                                                .and_then(|v| v.as_i64())
+                                                .map(|value| value as i32),
 
                                             // Web
                                             http_status: attrs
@@ -2574,6 +2584,8 @@ pub async fn monitor_trigger_task(
                                 whois_data_json: None,
                                 is_wildcard: None,
                                 parent_domain: None,
+                                root_domain: None,
+                                subdomain_level: None,
                                 http_status: None,
                                 response_time_ms: None,
                                 content_length: None,
@@ -2785,6 +2797,8 @@ pub async fn monitor_trigger_task(
                             whois_data_json: None,
                             is_wildcard: None,
                             parent_domain: None,
+                            root_domain: None,
+                            subdomain_level: None,
                             http_status: None,
                             response_time_ms: None,
                             content_length: None,
@@ -2918,6 +2932,8 @@ pub async fn monitor_trigger_task(
                             whois_data_json: None,
                             is_wildcard: None,
                             parent_domain: None,
+                            root_domain: None,
+                            subdomain_level: None,
                             http_status: None,
                             response_time_ms: None,
                             content_length: None,
@@ -3074,6 +3090,8 @@ pub async fn monitor_trigger_task(
                             whois_data_json: None,
                             is_wildcard: None,
                             parent_domain: None,
+                            root_domain: None,
+                            subdomain_level: None,
                             http_status: None,
                             response_time_ms: None,
                             content_length: None,
@@ -3231,6 +3249,8 @@ pub async fn monitor_trigger_task(
                             whois_data_json: None,
                             is_wildcard: None,
                             parent_domain: None,
+                            root_domain: None,
+                            subdomain_level: None,
                             http_status: result_item
                                 .get("statusCode")
                                 .and_then(|v| v.as_i64())
@@ -3907,6 +3927,8 @@ pub async fn monitor_discover_and_import_assets(
                         whois_data_json: None,
                         is_wildcard: None,
                         parent_domain: None,
+                        root_domain: None,
+                        subdomain_level: None,
                         http_status: None,
                         response_time_ms: None,
                         content_length: None,
@@ -4131,6 +4153,8 @@ pub async fn monitor_discover_and_import_assets(
                         whois_data_json: None,
                         is_wildcard: None,
                         parent_domain: None,
+                        root_domain: None,
+                        subdomain_level: None,
                         http_status: None,
                         response_time_ms: None,
                         content_length: None,
@@ -4317,6 +4341,8 @@ pub async fn monitor_discover_and_import_assets(
                                 None
                             }
                         }),
+                        root_domain: None,
+                        subdomain_level: None,
                         http_status,
                         response_time_ms: url_value
                             .get("response_time")
@@ -4518,6 +4544,8 @@ pub async fn monitor_discover_and_import_assets(
                         whois_data_json: None,
                         is_wildcard: Some(cert_subject.starts_with("*.")),
                         parent_domain: None,
+                        root_domain: None,
+                        subdomain_level: None,
                         http_status: None,
                         response_time_ms: None,
                         content_length: None,
@@ -4711,6 +4739,8 @@ pub async fn monitor_discover_and_import_assets(
                         whois_data_json: None,
                         is_wildcard: None,
                         parent_domain: None,
+                        root_domain: None,
+                        subdomain_level: None,
                         http_status: None,
                         response_time_ms: None,
                         content_length: None,

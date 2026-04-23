@@ -5,8 +5,8 @@ use std::sync::Arc;
 use chrono::Utc;
 use sentinel_bounty::services::{MonitorPluginConfig, MonitorTask};
 use sentinel_db::{
-    Database, DatabaseService, ProgramScopeRow, SurfaceAssetFilter, SurfaceAssetRow,
-    SurfaceDiscoveryRunRow, SurfaceObservationRow,
+    derive_domain_hierarchy, Database, DatabaseService, ProgramScopeRow, SurfaceAssetFilter,
+    SurfaceAssetRow, SurfaceDiscoveryRunRow, SurfaceObservationRow,
 };
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -343,10 +343,59 @@ fn normalize_monitor_target_asset_type(value: &str) -> Option<&'static str> {
     match value.trim().to_lowercase().as_str() {
         "url" | "web" | "website" => Some("web"),
         "domain" | "wildcard" => Some("domain"),
+        "domain_root" | "root_domain" => Some("domain_root"),
+        "domain_level_1" | "subdomain_level_1" | "first_level_subdomain" => Some("domain_level_1"),
+        "domain_level_2" | "subdomain_level_2" | "second_level_subdomain" => Some("domain_level_2"),
+        "domain_level_3_plus" | "subdomain_level_3_plus" | "third_level_subdomain" => {
+            Some("domain_level_3_plus")
+        }
         "host" | "hostname" => Some("host"),
         "ip" | "ip_address" => Some("ip"),
         "service" | "port" | "endpoint" => Some("service"),
         _ => None,
+    }
+}
+
+fn requested_domain_target_types(requested_asset_types: &HashSet<String>) -> bool {
+    requested_asset_types.contains("domain")
+        || requested_asset_types.contains("domain_root")
+        || requested_asset_types.contains("domain_level_1")
+        || requested_asset_types.contains("domain_level_2")
+        || requested_asset_types.contains("domain_level_3_plus")
+}
+
+fn requested_domain_hierarchy_matches(
+    requested_asset_types: &HashSet<String>,
+    value: &str,
+    root_domain: Option<&str>,
+    subdomain_level: Option<i32>,
+) -> bool {
+    if !requested_domain_target_types(requested_asset_types) {
+        return false;
+    }
+
+    if requested_asset_types.contains("domain") {
+        return true;
+    }
+
+    let derived = derive_domain_hierarchy(value);
+    let effective_root_domain = root_domain
+        .filter(|candidate| !candidate.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| derived.as_ref().map(|item| item.root_domain.clone()));
+    let effective_subdomain_level =
+        subdomain_level.or_else(|| derived.as_ref().map(|item| item.subdomain_level));
+
+    if effective_root_domain.is_none() || effective_subdomain_level.is_none() {
+        return false;
+    }
+
+    match effective_subdomain_level.unwrap_or_default() {
+        0 => requested_asset_types.contains("domain_root"),
+        1 => requested_asset_types.contains("domain_level_1"),
+        2 => requested_asset_types.contains("domain_level_2"),
+        level if level >= 3 => requested_asset_types.contains("domain_level_3_plus"),
+        _ => false,
     }
 }
 
@@ -593,6 +642,7 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
 
     let mut seen = HashSet::new();
     let mut resolved = MonitorResolvedTargets::default();
+    let mut surface_domain_assets = Vec::new();
     let mut surface_service_assets = Vec::new();
     for scope in scopes {
         match scope.target_type.as_str() {
@@ -602,7 +652,14 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                 &scope.target,
                 json!({ "type": "web", "value": scope.target, "source": "scope" }),
             ),
-            "wildcard" | "domain" if requested_asset_types.contains("domain") => {
+            "wildcard" | "domain"
+                if requested_domain_hierarchy_matches(
+                    &requested_asset_types,
+                    &scope.target,
+                    None,
+                    None,
+                ) =>
+            {
                 push_unique_resolved_target(
                     &mut resolved,
                     &mut seen,
@@ -658,7 +715,7 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
             }
 
             let should_include = match asset.asset_type.as_str() {
-                "domain" => requested_asset_types.contains("domain"),
+                "domain" => false,
                 "host" => requested_asset_types.contains("host"),
                 "ip" => requested_asset_types.contains("ip"),
                 _ => false,
@@ -675,6 +732,11 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                         "asset_id": &asset.id,
                     }),
                 );
+            }
+
+            if asset.asset_type == "domain" && requested_domain_target_types(&requested_asset_types)
+            {
+                surface_domain_assets.push(asset.clone());
             }
 
             if requested_asset_types.contains("service")
@@ -705,6 +767,49 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
         },
     )
     .await?;
+
+    if requested_domain_target_types(&requested_asset_types) && !surface_domain_assets.is_empty() {
+        let typed_details_by_id = db_service
+            .list_surface_typed_details_map(&surface_domain_assets)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        for asset in &surface_domain_assets {
+            let details = typed_details_by_id
+                .get(&asset.id)
+                .and_then(Value::as_object);
+            let root_domain = details
+                .and_then(|item| item.get("root_domain"))
+                .and_then(Value::as_str);
+            let subdomain_level = details
+                .and_then(|item| item.get("subdomain_level"))
+                .and_then(Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok());
+
+            if !requested_domain_hierarchy_matches(
+                &requested_asset_types,
+                &asset.asset_name,
+                root_domain,
+                subdomain_level,
+            ) {
+                continue;
+            }
+
+            push_unique_resolved_target(
+                &mut resolved,
+                &mut seen,
+                &asset.asset_name,
+                json!({
+                    "type": "domain",
+                    "value": &asset.asset_name,
+                    "source": "surface_asset",
+                    "asset_id": &asset.id,
+                    "root_domain": root_domain,
+                    "subdomain_level": subdomain_level,
+                }),
+            );
+        }
+    }
 
     if requested_asset_types.contains("service")
         && (http_prober_mode || https_service_targets_only)
@@ -771,7 +876,13 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
 
             let should_include = match asset.asset_type.as_str() {
                 "domain" => {
-                    requested_asset_types.contains("domain") && asset.is_wildcard != Some(true)
+                    asset.is_wildcard != Some(true)
+                        && requested_domain_hierarchy_matches(
+                            &requested_asset_types,
+                            &asset.canonical_url,
+                            asset.root_domain.as_deref(),
+                            asset.subdomain_level,
+                        )
                 }
                 "url" | "website" | "web" => requested_asset_types.contains("web"),
                 "host" => requested_asset_types.contains("host"),

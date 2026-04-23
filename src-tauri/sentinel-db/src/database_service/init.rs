@@ -1403,6 +1403,8 @@ impl DatabaseService {
                 whois_data_json TEXT,
                 is_wildcard BOOLEAN,
                 parent_domain TEXT,
+                root_domain TEXT,
+                subdomain_level INTEGER,
                 
                 -- Web/URL Attributes
                 http_status INTEGER,
@@ -1555,6 +1557,8 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_scope ON bounty_assets(scope_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_hostname ON bounty_assets(hostname)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_canonical_url ON bounty_assets(canonical_url)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_root_domain ON bounty_assets(root_domain)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_subdomain_level ON bounty_assets(subdomain_level)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_fingerprint ON bounty_assets(fingerprint)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_priority ON bounty_assets(priority_score DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_knowledge_notes_program ON bounty_knowledge_notes(program_id)",

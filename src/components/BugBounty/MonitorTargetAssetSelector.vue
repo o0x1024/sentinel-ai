@@ -4,7 +4,7 @@
       <span class="label-text-alt">目标资产类型</span>
       <span class="label-text-alt text-base-content/50">留空使用插件默认</span>
     </label>
-    <div class="grid grid-cols-2 gap-2 sm:grid-cols-5">
+    <div class="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
       <label
         v-for="option in visibleOptions"
         :key="option.value"
@@ -28,6 +28,10 @@ import { computed } from 'vue'
 const TARGET_ASSET_OPTIONS = [
   { value: 'web', label: '网站' },
   { value: 'domain', label: '域名' },
+  { value: 'domain_root', label: '根' },
+  { value: 'domain_level_1', label: '一级' },
+  { value: 'domain_level_2', label: '二级' },
+  { value: 'domain_level_3_plus', label: '三级及以上' },
   { value: 'host', label: '主机' },
   { value: 'ip', label: 'IP' },
   { value: 'service', label: '服务端点' },

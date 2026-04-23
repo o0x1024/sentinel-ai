@@ -25,6 +25,7 @@ import {
 import {
   openImmersiveTrafficWorkbenchTool,
   resetImmersiveTrafficDockState,
+  toggleImmersiveTrafficPluginsPanel,
   useImmersiveTrafficDockState,
 } from '@/components/traffic/immersiveTrafficDockState'
 
@@ -131,6 +132,29 @@ describe('ImmersiveDrillDock', () => {
     wrapper.unmount()
   })
 
+  it('opens the traffic plugin panel from the immersive toolbar', async () => {
+    const router = createTestRouter()
+    await router.push('/traffic')
+    await router.isReady()
+
+    const wrapper = mount(ImmersiveDrillDock, {
+      global: {
+        plugins: [router],
+      },
+      attachTo: document.body,
+    })
+
+    await nextTick()
+
+    await wrapper.get('button[aria-label="流量分析插件"]').trigger('click')
+    await nextTick()
+
+    const { trafficPluginsOpen } = useImmersiveTrafficDockState()
+    expect(trafficPluginsOpen.value).toBe(true)
+
+    wrapper.unmount()
+  })
+
   it('exits immersive drill mode when Escape is pressed with no immersive windows open', async () => {
     const router = createTestRouter()
     await router.push('/traffic')
@@ -172,8 +196,17 @@ describe('ImmersiveDrillDock', () => {
     openImmersiveTrafficWorkbenchTool('repeater')
     openTrafficAssistantPanel()
     openImmersiveSecurityCenterSidebar('/traffic')
+    toggleImmersiveTrafficPluginsPanel()
 
-    const { workbenchOpen } = useImmersiveTrafficDockState()
+    const { workbenchOpen, trafficPluginsOpen } = useImmersiveTrafficDockState()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(trafficPluginsOpen.value).toBe(false)
+    expect(immersiveSecurityCenterSidebarOpen.value).toBe(true)
+    expect(trafficAssistantOpen.value).toBe(true)
+    expect(workbenchOpen.value).toBe(true)
+    expect(immersiveDrillModeEnabled.value).toBe(true)
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await nextTick()

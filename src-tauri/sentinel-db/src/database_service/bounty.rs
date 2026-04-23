@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tracing::info;
 
+use super::bounty_domain_support::populate_bounty_asset_domain_fields;
 use super::service::DatabaseService;
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::sqlx_compat::PgRow;
@@ -368,6 +369,8 @@ fn row_to_bounty_asset(row: PgRow) -> BountyAssetRow {
         whois_data_json: row.get("whois_data_json"),
         is_wildcard: row.get("is_wildcard"),
         parent_domain: row.get("parent_domain"),
+        root_domain: row.get("root_domain"),
+        subdomain_level: row.get("subdomain_level"),
         http_status: row.get("http_status"),
         response_time_ms: row.get("response_time_ms"),
         content_length: row.get("content_length"),
@@ -5012,6 +5015,8 @@ pub struct BountyAssetRow {
     pub whois_data_json: Option<String>,   // WHOIS data
     pub is_wildcard: Option<bool>,         // Is wildcard domain
     pub parent_domain: Option<String>,     // Parent domain
+    pub root_domain: Option<String>,       // Registrable root domain
+    pub subdomain_level: Option<i32>,      // 0=root, 1=first-level subdomain
 
     // Web/URL Attributes
     pub http_status: Option<i32>,        // HTTP status code
@@ -5078,6 +5083,9 @@ impl DatabaseService {
 
     /// Create a bounty asset
     pub async fn create_bounty_asset(&self, asset: &BountyAssetRow) -> Result<()> {
+        let mut asset = asset.clone();
+        populate_bounty_asset_domain_fields(&mut asset);
+
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -5093,7 +5101,8 @@ impl DatabaseService {
                     is_cloud, cloud_provider, service_name, service_version, service_product, banner,
                     transport_protocol, cpe, domain_registrar, registration_date, expiration_date,
                     nameservers_json, mx_records_json, txt_records_json, whois_data_json,
-                    is_wildcard, parent_domain, http_status, response_time_ms, content_length,
+                    is_wildcard, parent_domain, root_domain, subdomain_level,
+                    http_status, response_time_ms, content_length,
                     content_type, title, favicon_hash, headers_json, waf_detected, cdn_detected,
                     screenshot_path, body_hash, certificate_id, ssl_enabled, certificate_subject,
                     certificate_issuer, certificate_valid_from, certificate_valid_to, certificate_san_json,
@@ -5172,6 +5181,8 @@ impl DatabaseService {
                         .bind(&asset.whois_data_json)
                         .bind(asset.is_wildcard)
                         .bind(&asset.parent_domain)
+                        .bind(&asset.root_domain)
+                        .bind(asset.subdomain_level)
                         .bind(asset.http_status)
                         .bind(asset.response_time_ms)
                         .bind(asset.content_length)
@@ -5264,6 +5275,8 @@ impl DatabaseService {
                         .bind(&asset.whois_data_json)
                         .bind(asset.is_wildcard)
                         .bind(&asset.parent_domain)
+                        .bind(&asset.root_domain)
+                        .bind(asset.subdomain_level)
                         .bind(asset.http_status)
                         .bind(asset.response_time_ms)
                         .bind(asset.content_length)
@@ -5372,6 +5385,8 @@ impl DatabaseService {
             .bind(&asset.whois_data_json)
             .bind(asset.is_wildcard)
             .bind(&asset.parent_domain)
+            .bind(&asset.root_domain)
+            .bind(asset.subdomain_level)
             .bind(asset.http_status)
             .bind(asset.response_time_ms)
             .bind(asset.content_length)
@@ -5597,6 +5612,11 @@ impl DatabaseService {
                                 .unwrap_or_default()
                                 .to_lowercase()
                                 .contains(&needle)
+                            || a.root_domain
+                                .as_deref()
+                                .unwrap_or_default()
+                                .to_lowercase()
+                                .contains(&needle)
                             || a.title
                                 .as_deref()
                                 .unwrap_or_default()
@@ -5675,11 +5695,13 @@ impl DatabaseService {
                 let p2 = params.len() + 2;
                 let p3 = params.len() + 3;
                 let p4 = params.len() + 4;
+                let p5 = params.len() + 5;
                 query.push_str(&format!(
-                    " AND (hostname ILIKE ${} OR canonical_url ILIKE ${} OR service_name ILIKE ${} OR title ILIKE ${})",
-                    p1, p2, p3, p4
+                    " AND (hostname ILIKE ${} OR canonical_url ILIKE ${} OR service_name ILIKE ${} OR title ILIKE ${} OR root_domain ILIKE ${})",
+                    p1, p2, p3, p4, p5
                 ));
                 let search_pattern = format!("%{}%", search);
+                params.push(search_pattern.clone());
                 params.push(search_pattern.clone());
                 params.push(search_pattern.clone());
                 params.push(search_pattern.clone());
@@ -5721,6 +5743,9 @@ impl DatabaseService {
 
     /// Update a bounty asset
     pub async fn update_bounty_asset(&self, asset: &BountyAssetRow) -> Result<bool> {
+        let mut asset = asset.clone();
+        populate_bounty_asset_domain_fields(&mut asset);
+
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -5738,7 +5763,8 @@ impl DatabaseService {
                     is_cloud = ?, cloud_provider = ?, service_name = ?, service_version = ?, service_product = ?, banner = ?,
                     transport_protocol = ?, cpe = ?, domain_registrar = ?, registration_date = ?, expiration_date = ?,
                     nameservers_json = ?, mx_records_json = ?, txt_records_json = ?, whois_data_json = ?,
-                    is_wildcard = ?, parent_domain = ?, http_status = ?, response_time_ms = ?, content_length = ?,
+                    is_wildcard = ?, parent_domain = ?, root_domain = ?, subdomain_level = ?,
+                    http_status = ?, response_time_ms = ?, content_length = ?,
                     content_type = ?, title = ?, favicon_hash = ?, headers_json = ?, waf_detected = ?, cdn_detected = ?,
                     screenshot_path = ?, body_hash = ?, certificate_id = ?, ssl_enabled = ?, certificate_subject = ?,
                     certificate_issuer = ?, certificate_valid_from = ?, certificate_valid_to = ?, certificate_san_json = ?,
@@ -5798,6 +5824,8 @@ impl DatabaseService {
                         .bind(&asset.whois_data_json)
                         .bind(asset.is_wildcard)
                         .bind(&asset.parent_domain)
+                        .bind(&asset.root_domain)
+                        .bind(asset.subdomain_level)
                         .bind(asset.http_status)
                         .bind(asset.response_time_ms)
                         .bind(asset.content_length)
@@ -5888,6 +5916,8 @@ impl DatabaseService {
                         .bind(&asset.whois_data_json)
                         .bind(asset.is_wildcard)
                         .bind(&asset.parent_domain)
+                        .bind(&asset.root_domain)
+                        .bind(asset.subdomain_level)
                         .bind(asset.http_status)
                         .bind(asset.response_time_ms)
                         .bind(asset.content_length)
@@ -5944,15 +5974,16 @@ impl DatabaseService {
                 is_cloud = $32, cloud_provider = $33, service_name = $34, service_version = $35, service_product = $36, banner = $37,
                 transport_protocol = $38, cpe = $39, domain_registrar = $40, registration_date = $41, expiration_date = $42,
                 nameservers_json = $43, mx_records_json = $44, txt_records_json = $45, whois_data_json = $46,
-                is_wildcard = $47, parent_domain = $48, http_status = $49, response_time_ms = $50, content_length = $51,
-                content_type = $52, title = $53, favicon_hash = $54, headers_json = $55, waf_detected = $56, cdn_detected = $57,
-                screenshot_path = $58, body_hash = $59, certificate_id = $60, ssl_enabled = $61, certificate_subject = $62,
-                certificate_issuer = $63, certificate_valid_from = $64, certificate_valid_to = $65, certificate_san_json = $66,
-                exposure_level = $67, attack_surface_score = $68, vulnerability_count = $69, cvss_max_score = $70,
-                exploit_available = $71, asset_category = $72, asset_owner = $73, business_unit = $74, criticality = $75,
-                discovery_method = $76, data_sources_json = $77, confidence_score = $78, monitoring_enabled = $79,
-                scan_frequency = $80, last_scan_type = $81, parent_asset_id = $82, related_assets_json = $83
-            WHERE id = $84"#,
+                is_wildcard = $47, parent_domain = $48, root_domain = $49, subdomain_level = $50,
+                http_status = $51, response_time_ms = $52, content_length = $53,
+                content_type = $54, title = $55, favicon_hash = $56, headers_json = $57, waf_detected = $58, cdn_detected = $59,
+                screenshot_path = $60, body_hash = $61, certificate_id = $62, ssl_enabled = $63, certificate_subject = $64,
+                certificate_issuer = $65, certificate_valid_from = $66, certificate_valid_to = $67, certificate_san_json = $68,
+                exposure_level = $69, attack_surface_score = $70, vulnerability_count = $71, cvss_max_score = $72,
+                exploit_available = $73, asset_category = $74, asset_owner = $75, business_unit = $76, criticality = $77,
+                discovery_method = $78, data_sources_json = $79, confidence_score = $80, monitoring_enabled = $81,
+                scan_frequency = $82, last_scan_type = $83, parent_asset_id = $84, related_assets_json = $85
+            WHERE id = $86"#,
         )
         .bind(&asset.scope_id)
         .bind(&asset.asset_type)
@@ -6004,6 +6035,8 @@ impl DatabaseService {
         .bind(&asset.whois_data_json)
         .bind(asset.is_wildcard)
         .bind(&asset.parent_domain)
+        .bind(&asset.root_domain)
+        .bind(asset.subdomain_level)
         .bind(asset.http_status)
         .bind(asset.response_time_ms)
         .bind(asset.content_length)

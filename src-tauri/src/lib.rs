@@ -1137,6 +1137,7 @@ pub fn run() {
             commands::bounty_delete_scope,
             commands::bounty_list_scopes,
             commands::bounty_backfill_domain_scopes_from_assets,
+            commands::bounty_backfill_domain_asset_hierarchy,
             commands::bounty_validate_scope,
             // Bug Bounty Finding commands
             commands::bounty_create_finding,
@@ -1486,6 +1487,7 @@ pub fn run() {
             traffic::set_traffic_context_extraction_settings,
             traffic::get_traffic_plugin_runtime_settings,
             traffic::set_traffic_plugin_runtime_settings,
+            traffic::get_active_probe_queue_snapshot,
             commands::security_workbench_list_cases,
             commands::security_workbench_get_or_create_case_for_finding,
             commands::security_workbench_get_case_detail,

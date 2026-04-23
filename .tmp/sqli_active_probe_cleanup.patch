@@ -1,0 +1,82 @@
+diff --git a/plugins/traffic/sql_injection_detector.ts b/plugins/traffic/sql_injection_detector.ts
+--- a/plugins/traffic/sql_injection_detector.ts
++++ b/plugins/traffic/sql_injection_detector.ts
+@@ -168,7 +168,6 @@ type PluginGlobals = typeof globalThis & {
+ declare const Sentinel: {
+   log: (level: string, message: string) => void;
+   emitFinding?: (finding: Record<string, unknown>) => boolean;
+-  emitActiveProbe?: (payload: Record<string, unknown>) => boolean;
+ };
+ 
+ declare global {
+@@ -489,23 +488,6 @@ function truncate(value: string, maxLength = 220): string {
+   return `${value.slice(0, maxLength)}...`;
+ }
+ 
+-function emitProbeLifecycle(
+-  request: RequestContext,
+-  phase: string,
+-  extras: Record<string, unknown> = {},
+-): void {
+-  try {
+-    Sentinel.emitActiveProbe?.({
+-      request_id: `${request.id}:${phase}`,
+-      phase,
+-      method: request.method,
+-      url: request.url,
+-      probe_label: "sql_injection_detector",
+-      ...extras,
+-    });
+-  } catch (error) {
+-    Sentinel.log("debug", `Failed to emit SQL injection detector lifecycle event: ${String(error)}`);
+-  }
+-}
+-
+ function decodeMaybe(value: string): string {
+   try {
+     return decodeURIComponent(value.replace(/\+/g, "%20"));
+@@ -1835,16 +1817,10 @@ export async function scan_transaction(transaction: HttpTransaction): Promise<any
+   const findings: any[] = [];
+   const { request, response } = transaction;
+ 
+-  if (!ENABLE_ERROR_BASED_TESTS && !ENABLE_BOOLEAN_BLIND_TESTS && !ENABLE_TIME_BLIND_TESTS) {
+-    emitProbeLifecycle(request, "skipped", {
+-      reason: "all_techniques_disabled",
+-    });
++  if (!ENABLE_ERROR_BASED_TESTS && !ENABLE_BOOLEAN_BLIND_TESTS && !ENABLE_TIME_BLIND_TESTS) {
+     return findings;
+   }
+ 
+-  if (!response) {
+-    emitProbeLifecycle(request, "skipped", {
+-      reason: "no_response",
+-    });
++  if (!response) {
+     return findings;
+   }
+ 
+@@ -1852,11 +1828,6 @@ export async function scan_transaction(transaction: HttpTransaction): Promise<any
+   if (!isSafeReplayCandidate(request)) {
+-    emitProbeLifecycle(request, "skipped", {
+-      reason: "unsafe_request",
+-    });
+     return findings;
+   }
+ 
+@@ -1865,14 +1836,8 @@ export async function scan_transaction(transaction: HttpTransaction): Promise<any
+ 
+   const targets = prioritizeMutationTargets(extractMutationTargets(request));
+   if (targets.length === 0) {
+-    emitProbeLifecycle(request, "skipped", {
+-      reason: "no_targets",
+-    });
+     return findings;
+   }
+ 
+   Sentinel.log("info", `SQL injection detector actively replaying ${targets.length} parameter(s) for ${request.url}`);
+-  emitProbeLifecycle(request, "scan_started", {
+-    target_count: targets.length,
+-  });
+   const replayBudget = createReplayBudget();
+ 
+   for (const target of targets) {

@@ -55,10 +55,7 @@ import { CompressionStream, DecompressionStream } from 'ext:deno_web/14_compress
 import { performance, Performance, PerformanceEntry, PerformanceMark, PerformanceMeasure } from 'ext:deno_web/15_performance.js'
 import {
   buildActiveProbeMetadata,
-  emitActiveProbeEvent,
   normalizeActiveProbeOptions,
-  reportActiveProbeOutcome,
-  scheduleActiveProbe,
 } from 'ext:sentinel_plugin_ext/active_probe_runtime.js'
 
 // deno_net
@@ -663,10 +660,15 @@ globalThis.fetch = async function (input, init = {}) {
     typeof crypto?.randomUUID === 'function'
       ? crypto.randomUUID()
       : `fetch_${Date.now()}_${Math.random().toString(36).slice(2)}`
-  const activeProbeMetadata =
-    activeProbeOptions
-      ? buildActiveProbeMetadata(url, method, headers, requestId, init)
-      : null
+  const activeProbeMetadata = activeProbeOptions
+    ? buildActiveProbeMetadata(url, method, headers, requestId, init)
+    : null
+  const activeProbePayload = activeProbeOptions
+    ? {
+        ...activeProbeOptions,
+        ...activeProbeMetadata,
+      }
+    : null
 
   if (signal?.aborted) {
     throw new DOMException('The operation was aborted.', 'AbortError')
@@ -692,42 +694,17 @@ globalThis.fetch = async function (input, init = {}) {
 
   let result
   try {
-    try {
-      result = await scheduleActiveProbe(url, init, async schedulingState => {
-        const responseStartedAt = Date.now()
-        const fetchResult = await Deno.core.ops.op_fetch(url, {
-          method,
-          headers,
-          body,
-          timeout,
-          redirect,
-          max_redirects: maxRedirects,
-          max_body_bytes: maxBodyBytes,
-          request_id: requestId,
-        })
-        return {
-          ...fetchResult,
-          __activeProbeSchedulingState: schedulingState || null,
-          __responseElapsedMs: Date.now() - responseStartedAt,
-        }
-      }, activeProbeMetadata)
-    } catch (error) {
-      if (activeProbeOptions) {
-        reportActiveProbeOutcome(activeProbeOptions, {
-          error: String(error),
-        })
-      }
-      if (activeProbeMetadata) {
-        emitActiveProbeEvent({
-          ...activeProbeMetadata,
-          phase: 'failed',
-          error: String(error),
-          probe_class: activeProbeOptions?.probeClass,
-          probe_priority: activeProbeOptions?.priority,
-        })
-      }
-      throw error
-    }
+    result = await Deno.core.ops.op_fetch(url, {
+      method,
+      headers,
+      body,
+      timeout,
+      redirect,
+      max_redirects: maxRedirects,
+      max_body_bytes: maxBodyBytes,
+      request_id: requestId,
+      active_probe: activeProbePayload,
+    })
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
     if (signal) {
@@ -735,28 +712,7 @@ globalThis.fetch = async function (input, init = {}) {
     }
   }
 
-  const schedulingState = result.__activeProbeSchedulingState || null
-  const responseElapsedMs =
-    typeof result.__responseElapsedMs === 'number' ? result.__responseElapsedMs : undefined
-
   if (!result.success) {
-    if (activeProbeOptions) {
-      reportActiveProbeOutcome(activeProbeOptions, {
-        status: result.status,
-        error: result.error || 'Fetch failed',
-        responseElapsedMs,
-      })
-    }
-    if (activeProbeMetadata) {
-      emitActiveProbeEvent({
-        ...activeProbeMetadata,
-        phase: 'failed',
-        ...(schedulingState || {}),
-        status: result.status || undefined,
-        error: result.error || 'Fetch failed',
-        response_elapsed_ms: responseElapsedMs,
-      })
-    }
     if (didTimeout || /timeout/i.test(result.error || '')) {
       throw new Error(`Timeout after ${timeout}ms`)
     }
@@ -764,22 +720,6 @@ globalThis.fetch = async function (input, init = {}) {
       throw new DOMException('The operation was aborted.', 'AbortError')
     }
     throw new Error(result.error || 'Fetch failed')
-  }
-
-  if (activeProbeOptions) {
-    reportActiveProbeOutcome(activeProbeOptions, {
-      status: result.status,
-      responseElapsedMs,
-    })
-  }
-  if (activeProbeMetadata) {
-    emitActiveProbeEvent({
-      ...activeProbeMetadata,
-      phase: 'completed',
-      ...(schedulingState || {}),
-      status: result.status,
-      response_elapsed_ms: responseElapsedMs,
-    })
   }
 
   return {

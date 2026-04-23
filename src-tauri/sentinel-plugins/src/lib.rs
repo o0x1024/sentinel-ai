@@ -21,6 +21,7 @@
 //! - `plugins/plugin-types.d.ts` - TypeScript 类型定义
 //! - `plugins/README.md` - 开发指南
 
+pub mod active_probe_scheduler;
 pub mod dictionary_runtime;
 pub mod error;
 pub mod executor;
@@ -42,6 +43,11 @@ pub use error::{PluginError, Result};
 pub use executor::{ExecutorStats, PluginExecutor};
 pub use monitor_progress::{
     emit_plugin_monitor_progress, MonitorProgressContext, PluginMonitorProgressUpdate,
+};
+pub use active_probe_scheduler::{
+    cancel_active_probe, complete_active_probe, enqueue_active_probe, fail_active_probe,
+    get_active_probe_queue_snapshot, mark_active_probe_running, ActiveProbeDispatchGrant,
+    ActiveProbeQueueEntry, ActiveProbeQueuePhase, ActiveProbeQueueSnapshot, ActiveProbeRequest,
 };
 pub use plugin::{
     get_input_schema_from_code, get_output_schema_from_code, PluginManager, PluginRecord,

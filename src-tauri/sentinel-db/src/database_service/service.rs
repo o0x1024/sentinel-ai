@@ -1477,6 +1477,8 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_vuln_id ON traffic_evidence(vuln_id)",
         )
         .await?;
+        self.ensure_runtime_bounty_asset_domain_schema(runtime)
+            .await?;
         self.ensure_runtime_proxy_request_schema(runtime).await?;
         self.execute_runtime_ddl(
             runtime,
@@ -1585,6 +1587,50 @@ impl DatabaseService {
         self.execute_runtime_ddl(
             runtime,
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)",
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn ensure_runtime_bounty_asset_domain_schema(
+        &self,
+        runtime: &DatabasePool,
+    ) -> Result<()> {
+        let existing_columns = self
+            .runtime_table_columns(runtime, "bounty_assets")
+            .await?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if existing_columns.is_empty() {
+            return Ok(());
+        }
+
+        let required_columns = [
+            (
+                "root_domain",
+                "ALTER TABLE bounty_assets ADD COLUMN root_domain TEXT",
+            ),
+            (
+                "subdomain_level",
+                "ALTER TABLE bounty_assets ADD COLUMN subdomain_level INTEGER",
+            ),
+        ];
+        for (column, ddl) in required_columns {
+            if existing_columns.contains(column) {
+                continue;
+            }
+            self.execute_runtime_ddl(runtime, ddl).await?;
+        }
+
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_root_domain ON bounty_assets(root_domain)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_subdomain_level ON bounty_assets(subdomain_level)",
         )
         .await?;
 

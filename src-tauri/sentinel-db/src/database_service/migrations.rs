@@ -42,6 +42,8 @@ impl AsmEnhancementMigration {
         Self::add_column_if_not_exists(pool, "bounty_assets", "whois_data_json", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "is_wildcard", "BOOLEAN").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "parent_domain", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "root_domain", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "subdomain_level", "INTEGER").await?;
 
         // Add Web/URL Attributes
         Self::add_column_if_not_exists(pool, "bounty_assets", "http_status", "INTEGER").await?;
@@ -119,6 +121,8 @@ impl AsmEnhancementMigration {
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_asn ON bounty_assets(asn)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_country ON bounty_assets(country)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_service_name ON bounty_assets(service_name)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_root_domain ON bounty_assets(root_domain)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_subdomain_level ON bounty_assets(subdomain_level)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_exposure_level ON bounty_assets(exposure_level)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_criticality ON bounty_assets(criticality)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_parent_asset_id ON bounty_assets(parent_asset_id)",

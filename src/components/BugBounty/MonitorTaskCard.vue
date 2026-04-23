@@ -186,20 +186,14 @@
         <span v-if="task.config.enable_ip_monitoring" class="badge badge-outline badge-xs">
           <i class="fas fa-diagram-project mr-1"></i>{{ t('bugBounty.monitor.ip') }}
         </span>
-        <span v-if="task.config.enable_cert_monitoring" class="badge badge-outline badge-xs">
-          <i class="fas fa-certificate mr-1"></i>{{ t('bugBounty.monitor.cert') }}
-        </span>
-        <span v-if="task.config.enable_content_monitoring" class="badge badge-outline badge-xs">
-          <i class="fas fa-file-alt mr-1"></i>{{ t('bugBounty.monitor.content') }}
-        </span>
-        <span v-if="task.config.enable_api_monitoring" class="badge badge-outline badge-xs">
-          <i class="fas fa-plug mr-1"></i>{{ t('bugBounty.monitor.api') }}
-        </span>
         <span v-if="task.config.enable_port_monitoring" class="badge badge-outline badge-xs">
           <i class="fas fa-network-wired mr-1"></i>{{ t('bugBounty.monitor.port') }}
         </span>
         <span v-if="task.config.enable_service_monitoring" class="badge badge-outline badge-xs">
           <i class="fas fa-server mr-1"></i>{{ t('bugBounty.monitor.service') }}
+        </span>
+        <span v-if="task.config.enable_cert_monitoring" class="badge badge-outline badge-xs">
+          <i class="fas fa-certificate mr-1"></i>{{ t('bugBounty.monitor.cert') }}
         </span>
         <span
           v-for="engine in serviceProbeEngineBadges"
@@ -210,6 +204,12 @@
         </span>
         <span v-if="task.config.enable_web_monitoring" class="badge badge-outline badge-xs">
           <i class="fas fa-globe mr-1"></i>{{ t('bugBounty.monitor.web') }}
+        </span>
+        <span v-if="task.config.enable_api_monitoring" class="badge badge-outline badge-xs">
+          <i class="fas fa-plug mr-1"></i>{{ t('bugBounty.monitor.api') }}
+        </span>
+        <span v-if="task.config.enable_content_monitoring" class="badge badge-outline badge-xs">
+          <i class="fas fa-file-alt mr-1"></i>{{ t('bugBounty.monitor.content') }}
         </span>
         <span v-if="task.config.enable_risk_monitoring" class="badge badge-outline badge-xs">
           <i class="fas fa-shield-alt mr-1"></i>{{ t('bugBounty.monitor.vuln') }}

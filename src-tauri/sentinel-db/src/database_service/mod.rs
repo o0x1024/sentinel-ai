@@ -2,6 +2,7 @@ pub mod agent;
 pub mod ai;
 pub mod asset;
 pub mod bounty;
+pub mod bounty_domain_support;
 pub mod bounty_event_workflow_runs;
 pub mod bounty_knowledge;
 pub mod bounty_queries;
@@ -54,6 +55,8 @@ pub use ai::*;
 pub use asset::*;
 #[allow(unused_imports)]
 pub use bounty::*;
+#[allow(unused_imports)]
+pub use bounty_domain_support::*;
 #[allow(unused_imports)]
 pub use bounty_event_workflow_runs::*;
 #[allow(unused_imports)]

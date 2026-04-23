@@ -630,6 +630,12 @@ const inventoryColumns = computed(() => {
     domain: [
       { key: 'name', label: t('bugBounty.surface.columns.name'), valueKey: 'asset_name', mono: true },
       { key: 'root_domain', label: t('bugBounty.surface.inventory.fields.rootDomain'), detailKey: 'root_domain' },
+      {
+        key: 'subdomain_level',
+        label: t('bugBounty.surface.inventory.fields.subdomainLevel'),
+        detailKey: 'subdomain_level',
+        formatter: 'domainLevel',
+      },
       { key: 'record_type', label: t('bugBounty.surface.inventory.fields.recordType'), detailKey: 'record_type' },
       { key: 'record_value', label: t('bugBounty.surface.inventory.fields.recordValue'), detailKey: 'record_value', mono: true },
       { key: 'registrar', label: t('bugBounty.surface.inventory.fields.registrar'), detailKey: 'registrar' },
@@ -888,6 +894,7 @@ const formatInventoryValue = (item: any, column: any) => {
 
   if (raw === null || raw === undefined || raw === '') return '-'
   if (column.formatter === 'time') return formatTime(String(raw))
+  if (column.formatter === 'domainLevel') return formatDomainLevel(raw)
   if (Array.isArray(raw)) return raw.join(', ')
   if (typeof raw === 'object') return JSON.stringify(raw)
   return String(raw)
@@ -1269,6 +1276,15 @@ const formatAssetType = (value?: string) => {
   const key = `bugBounty.surface.assetTypes.${value}`
   const translated = t(key)
   return translated === key ? value : translated
+}
+
+const formatDomainLevel = (value: unknown) => {
+  const level = Number(value)
+  if (!Number.isInteger(level) || level < 0) return '-'
+  if (level === 0) return t('bugBounty.surface.inventory.domainLevels.root')
+  if (level === 1) return t('bugBounty.surface.inventory.domainLevels.level1')
+  if (level === 2) return t('bugBounty.surface.inventory.domainLevels.level2')
+  return t('bugBounty.surface.inventory.domainLevels.level3Plus')
 }
 
 watch(
