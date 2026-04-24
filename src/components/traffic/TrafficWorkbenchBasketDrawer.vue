@@ -12,7 +12,7 @@
           请求篮子
         </h3>
         <p class="mt-1 text-xs text-base-content/60">
-          先收集高价值请求，再批量送入重放器或爆破器。
+          先收集高价值请求，再批量发送到重放器或爆破器。
         </p>
       </div>
       <button type="button" class="btn btn-xs btn-ghost rounded-2xl" @click="$emit('close')">
@@ -21,13 +21,13 @@
     </div>
 
     <div v-if="items.length > 0" class="flex flex-wrap items-center gap-2 border-b border-base-300/70 px-4 py-3">
-      <button type="button" class="btn btn-xs btn-primary" @click="$emit('sendAllToRepeater')">
+      <button type="button" class="btn btn-xs btn-primary" @click="$emit('createDraftsForAll')">
         <i class="fas fa-redo mr-1"></i>
-        全部发到重放器
+        全部发送到重放器
       </button>
-      <button type="button" class="btn btn-xs btn-outline" @click="$emit('sendAllToIntruder')">
+      <button type="button" class="btn btn-xs btn-outline" @click="$emit('createAttackWorkspacesForAll')">
         <i class="fas fa-crosshairs mr-1"></i>
-        全部发到爆破器
+        全部发送到爆破器
       </button>
       <button type="button" class="btn btn-xs btn-ghost text-error" @click="$emit('clear')">
         <i class="fas fa-trash mr-1"></i>
@@ -83,18 +83,18 @@
             <button
               type="button"
               class="btn btn-xs btn-primary"
-              @click="$emit('sendToRepeater', item.id)"
+              @click="$emit('createDraft', item.id)"
             >
               <i class="fas fa-redo mr-1"></i>
-              重放
+              重放器
             </button>
             <button
               type="button"
               class="btn btn-xs btn-outline"
-              @click="$emit('sendToIntruder', item.id)"
+              @click="$emit('createAttackWorkspace', item.id)"
             >
               <i class="fas fa-crosshairs mr-1"></i>
-              爆破
+              爆破器
             </button>
             <button
               v-if="item.requestId"
@@ -124,10 +124,10 @@ defineEmits<{
   close: []
   clear: []
   remove: [id: string]
-  sendToRepeater: [id: string]
-  sendToIntruder: [id: string]
-  sendAllToRepeater: []
-  sendAllToIntruder: []
+  createDraft: [id: string]
+  createAttackWorkspace: [id: string]
+  createDraftsForAll: []
+  createAttackWorkspacesForAll: []
   openHistoryRequest: [requestId: number]
 }>()
 </script>

@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type {
-  DeleteTrafficOastEventsResult,
+  HideTrafficOastEventsResult,
   DeleteTrafficOastRecordResult,
   TrafficOastConfig,
   TrafficOastEventKey,
@@ -72,12 +72,12 @@ export async function deleteTrafficOastRecord(token: string): Promise<DeleteTraf
   return response.data
 }
 
-export async function deleteTrafficOastEvents(
+export async function hideTrafficOastEvents(
   token: string,
   eventKeys: TrafficOastEventKey[],
-): Promise<DeleteTrafficOastEventsResult> {
-  const response = await invoke<{ success: boolean; data?: DeleteTrafficOastEventsResult; error?: string }>(
-    'delete_traffic_oast_events_command',
+): Promise<HideTrafficOastEventsResult> {
+  const response = await invoke<{ success: boolean; data?: HideTrafficOastEventsResult; error?: string }>(
+    'hide_traffic_oast_events_command',
     {
       payload: {
         token,
@@ -86,7 +86,7 @@ export async function deleteTrafficOastEvents(
     },
   )
   if (!response.success || !response.data) {
-    throw new Error(response.error || 'Failed to delete OAST events')
+    throw new Error(response.error || 'Failed to hide OAST events')
   }
   return response.data
 }

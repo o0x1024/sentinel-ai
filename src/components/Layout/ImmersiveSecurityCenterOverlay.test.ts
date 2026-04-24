@@ -32,8 +32,9 @@ vi.mock('@/components/SecurityCenter/SecurityCenterImmersiveSidebar.vue', () => 
 vi.mock('@/views/SecurityCenter.vue', () => ({
   default: defineComponent({
     name: 'SecurityCenter',
-    setup() {
-      return () => h('div', 'security-center')
+    inheritAttrs: false,
+    setup(_, { attrs }) {
+      return () => h('div', { ...attrs, class: ['security-center', attrs.class] }, 'security-center')
     },
   }),
 }))
@@ -100,6 +101,29 @@ describe('ImmersiveSecurityCenterOverlay', () => {
     await nextTick()
 
     expect(immersiveSecurityCenterSidebarOpen.value).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('renders the workspace body with a shrinkable content column', async () => {
+    const router = createTestRouter()
+    await router.push('/traffic')
+    await router.isReady()
+
+    openImmersiveSecurityCenterSidebar('/traffic')
+
+    const wrapper = mount(ImmersiveSecurityCenterOverlay, {
+      global: {
+        plugins: [router],
+      },
+      attachTo: document.body,
+    })
+
+    await nextTick()
+
+    const contentColumn = wrapper.find('.min-w-0.flex.flex-1.flex-col.overflow-hidden')
+    expect(contentColumn.exists()).toBe(true)
+    expect(wrapper.find('.security-center.min-h-0.flex-1').exists()).toBe(true)
 
     wrapper.unmount()
   })

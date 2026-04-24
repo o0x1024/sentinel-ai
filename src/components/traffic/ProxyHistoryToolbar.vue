@@ -60,7 +60,7 @@
         <button class="btn btn-xs btn-ghost" @click="clearSelection"><i class="fas fa-times mr-1"></i>{{ $t('trafficAnalysis.history.clearSelection') }}</button>
         <div class="dropdown dropdown-end">
           <label tabindex="0" class="btn btn-xs btn-ghost">
-            <i class="fas fa-not-equal mr-1"></i>{{ $t('trafficAnalysis.history.sendToComparer') }}
+            <i class="fas fa-not-equal mr-1"></i>{{ $t('trafficAnalysis.history.openCompare') }}
           </label>
           <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-56 mt-1">
             <li><a @click="sendSelectedRequestVersionsToComparer">{{ $t('trafficAnalysis.history.batchCompare.requestVersions') }}</a></li>

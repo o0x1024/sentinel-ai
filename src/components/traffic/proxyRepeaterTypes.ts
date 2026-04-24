@@ -11,6 +11,8 @@ export type RepeaterResponseTab = 'pretty' | 'raw' | 'hex' | 'render'
 
 export interface RepeaterTab {
   id: string
+  draftId: string | null
+  mode: 'preview' | 'draft'
   name: string
   sourceRequestId: number | null
   targetHost: string
@@ -29,10 +31,23 @@ export interface RepeaterTab {
   response: HttpReplayResponse | null
   isSending: boolean
   modified: boolean
+  userEdited: boolean
+}
+
+export interface RepeaterActiveTabState {
+  mode: RepeaterTab['mode'] | null
+  draftId: string | null
+  sourceRequestId: number | null
+}
+
+export interface RepeaterTabStats {
+  editedTabCount: number
 }
 
 export interface RepeaterSavedTab {
   id: string
+  draftId: string | null
+  mode: 'preview' | 'draft'
   name: string
   sourceRequestId: number | null
   targetHost: string

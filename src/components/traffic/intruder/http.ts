@@ -84,29 +84,36 @@ function buildEndpointFromTarget(target: IntruderTarget): HttpEndpoint {
 export function extractTargetFromRequest(rawRequest: string, fallbackUrl?: string): IntruderTarget {
   const parsed = parseStructuredRawHttpRequest(rawRequest)
   const hostHeader = findHeaderValue(parsed?.headers ?? [], 'host')
-
-  if (hostHeader) {
-    const [host, portText] = hostHeader.split(':')
-    const port = portText ? Number.parseInt(portText, 10) : 443
-
-    return {
-      host,
-      port: Number.isFinite(port) ? port : 443,
-      useTls: !portText || port === 443,
-    }
-  }
+  let fallbackTarget: IntruderTarget | null = null
 
   if (fallbackUrl) {
     try {
       const url = new URL(fallbackUrl)
-      return {
+      fallbackTarget = {
         host: url.hostname,
         port: url.port ? Number.parseInt(url.port, 10) : url.protocol === 'https:' ? 443 : 80,
         useTls: url.protocol === 'https:',
       }
     } catch {
-      return { host: '', port: 443, useTls: true }
+      fallbackTarget = null
     }
+  }
+
+  if (hostHeader) {
+    const [host, portText] = hostHeader.split(':')
+    const fallbackPort = fallbackTarget?.useTls ? 443 : 80
+    const port = portText ? Number.parseInt(portText, 10) : (fallbackTarget?.port ?? fallbackPort)
+    const normalizedPort = Number.isFinite(port) ? port : (fallbackTarget?.port ?? fallbackPort)
+
+    return {
+      host,
+      port: normalizedPort,
+      useTls: fallbackTarget?.useTls ?? (!portText || normalizedPort === 443),
+    }
+  }
+
+  if (fallbackTarget) {
+    return fallbackTarget
   }
 
   return { host: '', port: 443, useTls: true }

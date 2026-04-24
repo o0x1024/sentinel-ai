@@ -133,12 +133,24 @@ impl MonitorScheduler {
         *self.is_running.read().await
     }
 
+    async fn rearm_enabled_tasks_from_now(&self) {
+        let mut tasks = self.tasks.write().await;
+        for task in tasks.values_mut() {
+            if task.enabled {
+                task.calculate_next_run();
+            }
+        }
+    }
+
     /// Start the monitoring scheduler
     pub async fn start(&self) -> Result<(), String> {
         let mut running = self.is_running.write().await;
         if *running {
             return Err("Scheduler is already running".to_string());
         }
+
+        self.rearm_enabled_tasks_from_now().await;
+
         *running = true;
         drop(running);
 
@@ -502,5 +514,33 @@ mod tests {
         let task = scheduler.get_task(&task_id).await.unwrap();
         assert!(!task.enabled);
         assert!(task.next_run_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_start_rearms_expired_enabled_tasks() {
+        let scheduler = MonitorScheduler::new();
+
+        let task = MonitorTask::new("prog-1".to_string(), "Test Monitor".to_string(), 3600);
+        let task_id = task.id.clone();
+
+        scheduler.add_task(task).await.unwrap();
+        scheduler
+            .update_task(&task_id, |task| {
+                task.next_run_at = Some(Utc::now() - chrono::Duration::seconds(5));
+            })
+            .await
+            .unwrap();
+
+        scheduler.start().await.unwrap();
+
+        let task = scheduler.get_task(&task_id).await.unwrap();
+        let next_run_at = task.next_run_at.expect("enabled task should have next_run_at");
+        let seconds_until_next = (next_run_at - Utc::now()).num_seconds();
+
+        assert_eq!(task.run_count, 0);
+        assert!(seconds_until_next > 3500);
+        assert!(seconds_until_next <= 3600);
+
+        scheduler.stop().await.unwrap();
     }
 }

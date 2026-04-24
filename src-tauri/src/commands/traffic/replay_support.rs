@@ -46,6 +46,8 @@ pub struct RawReplayResult {
     pub headers: Vec<ReplayHeaderInput>,
     pub body_text: String,
     pub body_bytes_base64: String,
+    pub history_request_id: Option<i64>,
+    pub db_request_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -366,6 +368,8 @@ pub async fn replay_raw_request(config: RawReplayConfig) -> Result<RawReplayResu
             .as_ref()
             .map(|response| response.body_bytes_base64.clone())
             .unwrap_or_default(),
+        history_request_id: None,
+        db_request_id: None,
     })
 }
 

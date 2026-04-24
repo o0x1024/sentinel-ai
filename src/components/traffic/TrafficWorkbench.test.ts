@@ -1,6 +1,7 @@
 import { shallowMount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import TrafficWorkbench from './TrafficWorkbench.vue'
 import {
   openImmersiveTrafficWorkbenchTool,
@@ -37,6 +38,38 @@ describe('TrafficWorkbench', () => {
     window.localStorage.clear()
     resetImmersiveTrafficDockState()
     setImmersiveDrillModeEnabled(false)
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'load_traffic_draft_store') {
+        return {
+          success: true,
+          data: {
+            activeDraftId: null,
+            drafts: [],
+          },
+        } as never
+      }
+      if (command === 'load_attack_workspace_store') {
+        return {
+          success: true,
+          data: {
+            activeWorkspaceId: null,
+            workspaces: [],
+          },
+        } as never
+      }
+      if (command === 'load_replay_run_store') {
+        return {
+          success: true,
+          data: {
+            replayRuns: [],
+          },
+        } as never
+      }
+      return {
+        success: true,
+        data: null,
+      } as never
+    })
   })
 
   afterEach(() => {

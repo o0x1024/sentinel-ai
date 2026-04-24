@@ -9,6 +9,7 @@
 //! - disable_plugin: 禁用插件
 //! - list_plugins: 列出所有插件
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -37,7 +38,7 @@ use super::finding_support::TrafficFindingView;
 use super::intercept_commands::InterceptFilterRules;
 use super::replay_support::{
     replay_raw_request as replay_raw_request_impl, RawReplayConfig, RawReplayResult,
-    ReplayEndpointInput, ReplayRequestInput,
+    ReplayEndpointInput, ReplayHeaderInput, ReplayRequestInput,
 };
 
 pub use super::analysis_state_support::{
@@ -47,6 +48,10 @@ pub use super::analysis_state_support::{
 fn build_proxy_request_record(record: &HttpRequestRecord) -> sentinel_db::ProxyRequestRecord {
     sentinel_db::ProxyRequestRecord {
         id: None,
+        origin_kind: record.origin_kind.clone(),
+        origin_ref_id: record.origin_ref_id.clone(),
+        parent_request_id: record.parent_request_id,
+        source_draft_revision_id: record.source_draft_revision_id.clone(),
         url: record.url.clone(),
         host: record.host.clone(),
         scheme: record.scheme.clone(),
@@ -96,6 +101,161 @@ async fn ensure_history_record_has_db_request_id(
     }
 
     record
+}
+
+fn build_request_url(endpoint: &ReplayEndpointInput, target: &str) -> String {
+    let normalized_target = if target.starts_with("http://") || target.starts_with("https://") {
+        return target.to_string();
+    } else if target.starts_with('/') {
+        target.to_string()
+    } else {
+        format!("/{}", target)
+    };
+
+    let default_port = match endpoint.scheme.as_str() {
+        "https" => 443,
+        _ => 80,
+    };
+    let authority = if endpoint.port == default_port {
+        endpoint.host.clone()
+    } else {
+        format!("{}:{}", endpoint.host, endpoint.port)
+    };
+
+    format!("{}://{}{}", endpoint.scheme, authority, normalized_target)
+}
+
+fn build_headers_text(headers: &[ReplayHeaderInput]) -> Option<String> {
+    if headers.is_empty() {
+        return None;
+    }
+
+    Some(
+        headers
+            .iter()
+            .map(|header| format!("{}: {}", header.name, header.value))
+            .collect::<Vec<_>>()
+            .join("\r\n"),
+    )
+}
+
+fn split_raw_response(raw_response: &str, fallback_body: &str) -> (Option<String>, Option<String>) {
+    for separator in ["\r\n\r\n", "\n\n"] {
+        if let Some(index) = raw_response.find(separator) {
+            let header_part = raw_response[..index].trim_end().to_string();
+            let body = raw_response[index + separator.len()..].to_string();
+            return (
+                if header_part.is_empty() {
+                    None
+                } else {
+                    Some(header_part)
+                },
+                Some(body),
+            );
+        }
+    }
+
+    let body = if fallback_body.is_empty() {
+        None
+    } else {
+        Some(fallback_body.to_string())
+    };
+    (Some(raw_response.to_string()), body)
+}
+
+async fn persist_replay_result_to_history(
+    state: &TrafficAnalysisState,
+    endpoint: &ReplayEndpointInput,
+    request: &ReplayRequestInput,
+    result: &RawReplayResult,
+    origin_kind: Option<String>,
+    origin_ref_id: Option<String>,
+    parent_request_id: Option<i64>,
+    source_draft_revision_id: Option<String>,
+) -> (Option<i64>, Option<i64>) {
+    let cache = state.get_history_cache();
+    let db = state.get_db_service();
+    let (response_headers, response_body) =
+        split_raw_response(&result.raw_response, &result.body_text);
+    let request_url = build_request_url(endpoint, &request.target);
+    let request_headers = build_headers_text(&request.headers);
+    let request_body = if request.body_text.is_empty() {
+        None
+    } else {
+        Some(request.body_text.clone())
+    };
+    let timestamp = Utc::now();
+
+    let history_request_id = cache
+        .add_http_request(HttpRequestRecord {
+            id: 0,
+            db_request_id: None,
+            traffic_request_id: None,
+            origin_kind: origin_kind.clone(),
+            origin_ref_id: origin_ref_id.clone(),
+            parent_request_id,
+            source_draft_revision_id: source_draft_revision_id.clone(),
+            url: request_url.clone(),
+            host: endpoint.host.clone(),
+            scheme: endpoint.scheme.clone(),
+            http_version_observed: result.version_observed.clone(),
+            method: request.method.clone(),
+            status_code: i32::from(result.status_code),
+            request_headers: request_headers.clone(),
+            request_body: request_body.clone(),
+            response_headers: response_headers.clone(),
+            response_body: response_body.clone(),
+            response_size: result.raw_response.len() as i64,
+            response_time: result.response_time_ms as i64,
+            timestamp,
+            was_edited: false,
+            edited_request_headers: None,
+            edited_request_body: None,
+            edited_method: None,
+            edited_url: None,
+            edited_response_headers: None,
+            edited_response_body: None,
+            edited_status_code: None,
+        })
+        .await;
+
+    let db_record = sentinel_db::ProxyRequestRecord {
+        id: None,
+        origin_kind,
+        origin_ref_id,
+        parent_request_id,
+        source_draft_revision_id,
+        url: request_url,
+        host: endpoint.host.clone(),
+        scheme: endpoint.scheme.clone(),
+        http_version_observed: result.version_observed.clone(),
+        method: request.method.clone(),
+        status_code: i32::from(result.status_code),
+        request_headers,
+        request_body,
+        response_headers,
+        response_body,
+        response_size: result.raw_response.len() as i64,
+        response_time: result.response_time_ms as i64,
+        timestamp,
+        request_body_compressed: false,
+        response_body_compressed: false,
+    };
+
+    match db.insert_proxy_request(&db_record).await {
+        Ok(db_request_id) => {
+            cache.set_http_request_db_id(history_request_id, db_request_id).await;
+            (Some(history_request_id), Some(db_request_id))
+        }
+        Err(error) => {
+            tracing::warn!(
+                "Failed to persist replay result to database for history request {}: {}",
+                history_request_id,
+                error
+            );
+            (Some(history_request_id), None)
+        }
+    }
 }
 
 /// 内部启动函数（可在内部和外部复用）
@@ -981,14 +1141,21 @@ pub async fn replay_request(
 /// 重放 Raw 请求（通过 TCP socket 直接发送原始字节）
 #[tauri::command]
 pub async fn replay_raw_request(
+    state: State<'_, TrafficAnalysisState>,
     endpoint: ReplayEndpointInput,
     request: ReplayRequestInput,
     timeout_secs: Option<u64>,
     follow_redirects: Option<bool>,
     max_redirects: Option<usize>,
     process_cookies_in_redirects: Option<bool>,
+    origin_kind: Option<String>,
+    origin_ref_id: Option<String>,
+    parent_request_id: Option<i64>,
+    source_draft_revision_id: Option<String>,
 ) -> Result<CommandResponse<RawReplayResult>, String> {
-    let result = replay_raw_request_impl(RawReplayConfig {
+    let replay_endpoint = endpoint.clone();
+    let replay_request = request.clone();
+    let mut result = replay_raw_request_impl(RawReplayConfig {
         endpoint,
         request,
         timeout_secs,
@@ -997,6 +1164,20 @@ pub async fn replay_raw_request(
         process_cookies_in_redirects: process_cookies_in_redirects.unwrap_or(true),
     })
     .await?;
+
+    let (history_request_id, db_request_id) = persist_replay_result_to_history(
+        &state,
+        &replay_endpoint,
+        &replay_request,
+        &result,
+        origin_kind,
+        origin_ref_id,
+        parent_request_id,
+        source_draft_revision_id,
+    )
+    .await;
+    result.history_request_id = history_request_id;
+    result.db_request_id = db_request_id;
 
     Ok(CommandResponse::ok(result))
 }

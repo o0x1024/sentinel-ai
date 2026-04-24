@@ -28,6 +28,7 @@ pub mod terminal;
 mod terminal_output;
 mod tool_search_runtime;
 pub mod tool_server;
+pub mod tool_timeout;
 pub mod workflow_adapter;
 
 pub use batch_progress_manager::*;
@@ -44,6 +45,7 @@ pub use output_storage::*;
 pub use plugin_adapter::*;
 pub use terminal::*;
 pub use tool_server::*;
+pub use tool_timeout::*;
 pub use workflow_adapter::*;
 
 // ToolExecutionConfig removed - now using output_storage::get_storage_threshold() instead

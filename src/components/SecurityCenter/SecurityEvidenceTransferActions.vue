@@ -9,13 +9,13 @@
       class="dropdown-content menu z-[70] mt-2 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
     >
       <li>
-        <button @click.stop="sendRequest('repeater')">
-          {{ messages.sendToRepeater }}
+        <button @click.stop="sendRequest('draft')">
+          {{ messages.createDraft }}
         </button>
       </li>
       <li>
-        <button @click.stop="sendRequest('intruder')">
-          {{ messages.sendToIntruder }}
+        <button @click.stop="sendRequest('attackWorkspace')">
+          {{ messages.createAttackWorkspace }}
         </button>
       </li>
     </ul>
@@ -28,7 +28,7 @@ import { useRouter } from 'vue-router'
 import { dialog } from '@/composables/useDialog'
 import {
   buildHttpExchangeRequestFromSecurityEvidence,
-  openSecurityEvidenceInTrafficTool,
+  openSecurityEvidenceInTrafficWorkbench,
   type SecurityEvidenceTransferMessages,
   type SecurityEvidenceTransferTarget,
 } from './securityEvidenceTransferSupport'
@@ -76,14 +76,14 @@ const sendRequest = async (target: SecurityEvidenceTransferTarget) => {
   closeDropdown()
 
   try {
-    const handled = await openSecurityEvidenceInTrafficTool(router, props.evidence, target)
+    const handled = await openSecurityEvidenceInTrafficWorkbench(router, props.evidence, target)
     if (!handled) {
       dialog.toast.warning(props.messages.noTransferableRequest)
       return
     }
 
     dialog.toast.success(
-      target === 'repeater' ? props.messages.sentToRepeater : props.messages.sentToIntruder
+      target === 'draft' ? props.messages.draftCreated : props.messages.attackWorkspaceCreated
     )
   } catch (error) {
     console.error('Failed to send security evidence request:', error)

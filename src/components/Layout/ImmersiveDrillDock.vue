@@ -164,6 +164,7 @@ const {
   proxySettingsOpen,
   trafficPluginsOpen,
   basketOpen,
+  captureCount,
   repeaterCount,
   intruderCount,
   comparerCount,
@@ -334,6 +335,15 @@ const trafficWorkbenchItems = computed<TrafficWorkbenchToolbarItem[]>(() => [
       clearImmersiveSecurityCenterReturnPath()
       showImmersiveTrafficHistory()
     },
+  },
+  {
+    id: 'capture',
+    label: t('trafficAnalysis.tabs.capture', '抓包'),
+    icon: 'fas fa-wave-square',
+    active: workbenchOpen.value && activeWorkbenchTool.value === 'capture',
+    count: captureCount.value,
+    badgeClass: 'toolbar-badge-primary',
+    onClick: () => activateTrafficTool('capture'),
   },
   {
     id: 'repeater',

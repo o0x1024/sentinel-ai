@@ -69,10 +69,10 @@ type Params = {
   keepDetailsOpenOnRepeatSelect?: boolean
   hideContextMenu?: () => void
   hideDetailContextMenu?: () => void
-  emitSendToRepeater: (request: HttpExchangeRequest) => void
-  emitSendToIntruder: (request: HttpExchangeRequest) => void
-  emitSendDraftRequestToComparer: (payload: TrafficComparerDraftRequestInput) => void
-  emitSendToComparer: (payload: TrafficComparePayload) => void
+  emitCreateDraft: (request: HttpExchangeRequest) => void
+  emitCreateAttackWorkspace: (request: HttpExchangeRequest) => void
+  emitOpenDraftCompare: (payload: TrafficComparerDraftRequestInput) => void
+  emitOpenCompare: (payload: TrafficComparePayload) => void
   emitSendToAssistant: (requests: ProxyRequest[]) => void
   emitAddFilterRule: (rule: { matchType: string; condition: string; relationship?: string }) => void
   fetchRequestDetails: (requestId: number) => Promise<ProxyRequest | null>
@@ -204,14 +204,14 @@ export const useProxyHistoryActions = (params: Params) => {
     hideDetailContextMenu()
     const request = await resolveRequestDetails(params.selectedRequest.value)
     if (!request) return
-    params.emitSendToRepeater(buildHttpExchangeRequestFromHistory(request))
+    params.emitCreateDraft(buildHttpExchangeRequestFromHistory(request))
   }
 
   const detailSendToIntruder = async () => {
     hideDetailContextMenu()
     const request = await resolveRequestDetails(params.selectedRequest.value)
     if (!request) return
-    params.emitSendToIntruder(buildHttpExchangeRequestFromHistory(request))
+    params.emitCreateAttackWorkspace(buildHttpExchangeRequestFromHistory(request))
   }
 
   const detailSendToComparer = async () => {
@@ -220,7 +220,7 @@ export const useProxyHistoryActions = (params: Params) => {
     if (!request) return
 
     if (params.detailContextMenu.value.pane === 'response') {
-      params.emitSendDraftRequestToComparer({
+      params.emitOpenDraftCompare({
         text: formatResponseRaw(request, params.responseViewMode.value),
         name: request.host || request.url,
         label: params.t('trafficAnalysis.history.detailsPanel.response'),
@@ -228,7 +228,7 @@ export const useProxyHistoryActions = (params: Params) => {
       return
     }
 
-    params.emitSendDraftRequestToComparer({
+    params.emitOpenDraftCompare({
       request: buildHttpExchangeRequestFromHistory(request),
       name: request.host || request.url,
       label: params.t('trafficAnalysis.history.detailsPanel.request'),
@@ -244,8 +244,8 @@ export const useProxyHistoryActions = (params: Params) => {
       dialog.toast.warning(params.t('trafficAnalysis.history.messages.noEditedRequestVersion'))
       return
     }
-    params.emitSendToComparer(payload)
-    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentToComparer'))
+    params.emitOpenCompare(payload)
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.compareOpened'))
   }
 
   const detailCompareResponseVersions = async () => {
@@ -257,8 +257,8 @@ export const useProxyHistoryActions = (params: Params) => {
       dialog.toast.warning(params.t('trafficAnalysis.history.messages.noEditedResponseVersion'))
       return
     }
-    params.emitSendToComparer(payload)
-    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentToComparer'))
+    params.emitOpenCompare(payload)
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.compareOpened'))
   }
 
   const detailCopyUrl = () => {
@@ -288,24 +288,24 @@ export const useProxyHistoryActions = (params: Params) => {
       .catch(() => dialog.toast.error('复制失败'))
   }
 
-  const sendToRepeater = async () => {
+  const createDraft = async () => {
     const request = await resolveRequestDetails(params.contextMenu.value.request)
     if (!request) return
-    params.emitSendToRepeater(buildHttpExchangeRequestFromHistory(request))
+    params.emitCreateDraft(buildHttpExchangeRequestFromHistory(request))
     hideContextMenu()
   }
 
-  const sendToIntruder = async () => {
+  const createAttackWorkspace = async () => {
     const request = await resolveRequestDetails(params.contextMenu.value.request)
     if (!request) return
-    params.emitSendToIntruder(buildHttpExchangeRequestFromHistory(request))
+    params.emitCreateAttackWorkspace(buildHttpExchangeRequestFromHistory(request))
     hideContextMenu()
   }
 
-  const sendToComparer = async () => {
+  const openDraftCompare = async () => {
     const request = await resolveRequestDetails(params.contextMenu.value.request)
     if (!request) return
-    params.emitSendDraftRequestToComparer({
+    params.emitOpenDraftCompare({
       request: buildHttpExchangeRequestFromHistory(request),
       name: request.host || request.url,
       label: params.t('trafficAnalysis.history.detailsPanel.request'),
@@ -322,8 +322,8 @@ export const useProxyHistoryActions = (params: Params) => {
       hideContextMenu()
       return
     }
-    params.emitSendToComparer(payload)
-    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentToComparer'))
+    params.emitOpenCompare(payload)
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.compareOpened'))
     hideContextMenu()
   }
 
@@ -336,8 +336,8 @@ export const useProxyHistoryActions = (params: Params) => {
       hideContextMenu()
       return
     }
-    params.emitSendToComparer(payload)
-    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentToComparer'))
+    params.emitOpenCompare(payload)
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.compareOpened'))
     hideContextMenu()
   }
 
@@ -501,7 +501,7 @@ export const useProxyHistoryActions = (params: Params) => {
       return
     }
 
-    payloads.forEach((payload) => params.emitSendToComparer(payload))
+    payloads.forEach((payload) => params.emitOpenCompare(payload))
     dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToComparer', { count: payloads.length }))
     clearSelection()
     params.isMultiSelectMode.value = false
@@ -524,7 +524,7 @@ export const useProxyHistoryActions = (params: Params) => {
       return
     }
 
-    payloads.forEach((payload) => params.emitSendToComparer(payload))
+    payloads.forEach((payload) => params.emitOpenCompare(payload))
     dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToComparer', { count: payloads.length }))
     clearSelection()
     params.isMultiSelectMode.value = false
@@ -759,9 +759,9 @@ export const useProxyHistoryActions = (params: Params) => {
     sendSelectedRequestVersionsToComparer,
     sendSelectedResponseVersionsToComparer,
     sendSelectedToAssistant,
-    sendToComparer,
-    sendToIntruder,
-    sendToRepeater,
+    openDraftCompare,
+    createAttackWorkspace,
+    createDraft,
     showContextMenu,
     showDetailContextMenu,
     toggleMultiSelectMode,

@@ -2,27 +2,23 @@
   <div class="space-y-3">
     <div>
       <p class="text-sm font-semibold text-info mb-2">Agent 判定摘要</p>
-      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{
-        evidence.evidence_snippet
-      }}</pre>
+      <SecurityEvidenceSnippetBlock :snippet="evidence.evidence_snippet" />
     </div>
     <div v-if="agentMeta">
       <p class="text-sm font-semibold text-base-content/70 mb-2">事件元信息</p>
-      <pre class="bg-base-300 p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap break-words">{{
-        formatStructuredValue(agentMeta)
-      }}</pre>
+      <SecurityEvidenceStructuredDataBlock :data="agentMeta" />
     </div>
     <div v-if="contextPayload">
       <p class="text-sm font-semibold text-primary mb-2">触发上下文</p>
-      <pre
-        class="bg-base-300 p-3 rounded text-xs overflow-x-auto max-h-80 whitespace-pre-wrap break-words"
-      >{{ formatStructuredValue(contextPayload) }}</pre>
+      <SecurityEvidenceStructuredDataBlock :data="contextPayload" />
     </div>
     <div v-if="contextExtractionSummary" class="space-y-2">
       <p class="text-sm font-semibold text-primary mb-2">上下文抽取命中</p>
       <div class="bg-base-300 p-3 rounded-lg space-y-3 text-sm">
         <div class="flex flex-wrap items-center gap-2">
-          <span class="badge badge-info badge-sm">动作 {{ contextExtractionSummary.actionKind }}</span>
+          <span class="badge badge-info badge-sm"
+            >动作 {{ contextExtractionSummary.actionKind }}</span
+          >
           <span class="badge badge-outline badge-sm">
             {{ contextExtractionSummary.actionSource }}
           </span>
@@ -172,9 +168,7 @@
             浏览器扩展已参与
           </span>
         </div>
-        <p class="text-xs opacity-80 whitespace-pre-wrap break-words">
-          {{ behaviorSummary.summary }}
-        </p>
+        <SecurityEvidenceTextBlock :text="behaviorSummary.summary" size="xs" />
         <div v-if="behaviorSummary.steps.length" class="text-xs">
           <p class="font-semibold mb-1">行为步骤</p>
           <ul class="list-disc list-inside space-y-1">
@@ -184,7 +178,11 @@
         <div v-if="behaviorSummary.intentHints.length" class="text-xs">
           <p class="font-semibold mb-1">意图提示</p>
           <div class="flex flex-wrap gap-1">
-            <span v-for="hint in behaviorSummary.intentHints" :key="hint" class="badge badge-outline badge-xs">
+            <span
+              v-for="hint in behaviorSummary.intentHints"
+              :key="hint"
+              class="badge badge-outline badge-xs"
+            >
               {{ hint }}
             </span>
           </div>
@@ -195,13 +193,11 @@
         >
           <div v-if="behaviorSummary.lastPageTitle">
             <p class="font-semibold mb-1">最后页面标题</p>
-            <p class="whitespace-pre-wrap break-words opacity-80">
-              {{ behaviorSummary.lastPageTitle }}
-            </p>
+            <SecurityEvidenceTextBlock :text="behaviorSummary.lastPageTitle" size="xs" />
           </div>
           <div v-if="behaviorSummary.lastPageUrl">
             <p class="font-semibold mb-1">最后页面 URL</p>
-            <p class="whitespace-pre-wrap break-all opacity-80">{{ behaviorSummary.lastPageUrl }}</p>
+            <SecurityEvidenceTextBlock :text="behaviorSummary.lastPageUrl" mono size="xs" />
           </div>
         </div>
       </div>
@@ -209,7 +205,11 @@
     <div v-if="skillEntries.length > 0">
       <p class="text-sm font-semibold text-accent mb-2">命中 Skills</p>
       <div class="space-y-2">
-        <div v-for="skill in skillEntries" :key="skill.id" class="bg-base-300 p-3 rounded-lg space-y-2">
+        <div
+          v-for="skill in skillEntries"
+          :key="skill.id"
+          class="bg-base-300 p-3 rounded-lg space-y-2"
+        >
           <div class="flex flex-wrap items-center gap-2">
             <span class="badge badge-accent badge-sm">{{ skill.id }}</span>
             <span v-if="typeof skill.score === 'number'" class="badge badge-outline badge-sm">
@@ -217,9 +217,7 @@
             </span>
           </div>
           <p class="text-sm font-medium">{{ skill.description || skill.name || skill.id }}</p>
-          <p v-if="skill.whenToUse" class="text-xs opacity-70 whitespace-pre-wrap break-words">
-            {{ skill.whenToUse }}
-          </p>
+          <SecurityEvidenceTextBlock v-if="skill.whenToUse" :text="skill.whenToUse" size="xs" />
           <div v-if="Array.isArray(skill.reasons) && skill.reasons.length > 0" class="text-xs">
             <p class="font-semibold mb-1">推荐理由</p>
             <ul class="list-disc list-inside space-y-1">
@@ -228,9 +226,7 @@
           </div>
           <div v-if="skill.guidance" class="text-xs">
             <p class="font-semibold mb-1">Skill 指导</p>
-            <pre
-              class="bg-base-200 p-2 rounded whitespace-pre-wrap break-words overflow-x-auto max-h-40"
-            >{{ skill.guidance }}</pre>
+            <SecurityEvidenceTextBlock :text="skill.guidance" mono size="xs" />
           </div>
         </div>
       </div>
@@ -243,14 +239,10 @@
             <span class="badge badge-info badge-sm">{{ sop.id }}</span>
             <span class="text-sm font-medium">{{ sop.name || sop.id }}</span>
           </div>
-          <p v-if="sop.description" class="text-xs opacity-80 whitespace-pre-wrap break-words">
-            {{ sop.description }}
-          </p>
+          <SecurityEvidenceTextBlock v-if="sop.description" :text="sop.description" size="xs" />
           <div v-if="sop.procedure" class="text-xs">
             <p class="font-semibold mb-1">SOP 步骤</p>
-            <pre
-              class="bg-base-200 p-2 rounded whitespace-pre-wrap break-words overflow-x-auto max-h-40"
-            >{{ sop.procedure }}</pre>
+            <SecurityEvidenceTextBlock :text="sop.procedure" mono size="xs" />
           </div>
         </div>
       </div>
@@ -269,23 +261,20 @@
               {{ invariant.severity }}
             </span>
           </div>
-          <p class="text-sm whitespace-pre-wrap break-words">
-            {{ invariant.summary || formatStructuredValue(invariant) }}
-          </p>
+          <SecurityEvidenceTextBlock
+            :text="invariant.summary || JSON.stringify(invariant, null, 2)"
+            size="sm"
+          />
         </div>
       </div>
     </div>
     <div v-if="processGraph">
       <p class="text-sm font-semibold text-secondary mb-2">过程图摘要</p>
-      <pre
-        class="bg-base-300 p-3 rounded text-xs overflow-x-auto max-h-80 whitespace-pre-wrap break-words"
-      >{{ formatStructuredValue(processGraph) }}</pre>
+      <SecurityEvidenceStructuredDataBlock :data="processGraph" />
     </div>
     <div v-if="agentOutput">
       <p class="text-sm font-semibold text-secondary mb-2">Agent 输出</p>
-      <pre
-        class="bg-base-300 p-3 rounded text-xs overflow-x-auto max-h-80 whitespace-pre-wrap break-words"
-      >{{ formatStructuredValue(agentOutput) }}</pre>
+      <SecurityEvidenceStructuredDataBlock :data="agentOutput" />
     </div>
     <div class="text-xs opacity-70">
       <span>记录时间: {{ formatTime(evidence.timestamp) }}</span>
@@ -295,6 +284,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import SecurityEvidenceSnippetBlock from './SecurityEvidenceSnippetBlock.vue'
+import SecurityEvidenceStructuredDataBlock from './SecurityEvidenceStructuredDataBlock.vue'
+import SecurityEvidenceTextBlock from './SecurityEvidenceTextBlock.vue'
 import {
   formatContextExtractionEntry,
   formatSemanticActionEntry,
@@ -304,7 +296,6 @@ import {
   semanticConfidenceBadgeClass,
 } from '../system-agent/systemAgentTrafficSummaries'
 import {
-  formatStructuredValue,
   getContextBehaviorSummaryFromPayload,
   getContextInvariantEntriesFromPayload,
   getContextProcessGraphFromPayload,
@@ -332,7 +323,9 @@ const agentOutput = computed(() => parseStructuredPayload(props.evidence.respons
 const contextExtractionSummary = computed(() =>
   getContextExtractionSummaryFromPayload(contextPayload.value)
 )
-const semanticSummary = computed(() => getSemanticAbstractionSummaryFromPayload(contextPayload.value))
+const semanticSummary = computed(() =>
+  getSemanticAbstractionSummaryFromPayload(contextPayload.value)
+)
 const behaviorSummary = computed(() => getContextBehaviorSummaryFromPayload(contextPayload.value))
 const skillEntries = computed(() => getContextSkillEntriesFromPayload(contextPayload.value))
 const sopEntries = computed(() => getContextSopEntriesFromPayload(contextPayload.value))

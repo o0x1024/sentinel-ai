@@ -6,7 +6,7 @@ import type {
   IntruderPosition,
 } from './types'
 import { applyPayloadProcessingRules } from './payloadProcessing'
-import { expandPayloadSet } from './payloads'
+import { countPayloadSet, expandPayloadSet } from './payloads'
 import {
   INTRUDER_PRIMARY_MARKER,
   clearIntruderMarkers,
@@ -103,28 +103,20 @@ export function estimateAttackCount(
   payloadSets: IntruderPayloadSet[],
 ): number {
   if (!positionCount) {
-    return payloadSets[0] ? expandPayloadSet(payloadSets[0]).length : 0
+    return payloadSets[0] ? countPayloadSet(payloadSets[0]) : 0
   }
 
-  const payloadLists = payloadSets.map((payloadSet) => expandPayloadSet(payloadSet))
+  const payloadCounts = payloadSets.map((payloadSet) => countPayloadSet(payloadSet))
 
   if (attackType === 'sniper') {
-    return positionCount * (payloadLists[0]?.length ?? 0)
+    return positionCount * (payloadCounts[0] ?? 0)
   }
 
   if (attackType === 'batteringRam') {
-    return payloadLists[0]?.length ?? 0
+    return payloadCounts[0] ?? 0
   }
 
-  if (attackType === 'pitchfork') {
-    const relevant = payloadLists.slice(0, positionCount)
-    if (!relevant.length || relevant.some((payloads) => payloads.length === 0)) return 0
-    return Math.min(...relevant.map((payloads) => payloads.length))
-  }
-
-  const relevant = payloadLists.slice(0, positionCount)
-  if (!relevant.length || relevant.some((payloads) => payloads.length === 0)) return 0
-  return relevant.reduce((total, payloads) => total * payloads.length, 1)
+  return estimateAttackCountFromLengths(attackType, positionCount, payloadCounts)
 }
 
 export function autoMarkIntruderPositions(rawRequest: string): string {
@@ -222,12 +214,20 @@ export async function buildIntruderAttackPlan(options: {
       ) {
         return payloadResolver(payloadSet, payloadContext)
       }
+      if (payloadSet.payloadType === 'bruteForcer') {
+        return expandPayloadSet(payloadSet, maxRequests)
+      }
       return expandPayloadSet(payloadSet)
     }),
   )
   const { segments, tokens } = splitIntruderTemplate(template)
   const requests: IntruderAttackPlan['requests'] = []
-  const totalGenerated = estimateAttackCountFromPayloadLists(attackType, positions.length, payloadLists)
+  const totalGenerated = estimateAttackCountFromResolvedPayloads(
+    attackType,
+    positions.length,
+    payloadSets,
+    payloadLists,
+  )
   let truncated = false
 
   const pushRequest = (values: string[], payloadValues: string[]) => {
@@ -366,24 +366,61 @@ function estimateAttackCountFromPayloadLists(
   positionCount: number,
   payloadLists: string[][],
 ): number {
+  return estimateAttackCountFromLengths(
+    attackType,
+    positionCount,
+    payloadLists.map((payloads) => payloads.length),
+  )
+}
+
+function estimateAttackCountFromResolvedPayloads(
+  attackType: IntruderAttackType,
+  positionCount: number,
+  payloadSets: IntruderPayloadSet[],
+  payloadLists: string[][],
+): number {
+  return estimateAttackCountFromLengths(
+    attackType,
+    positionCount,
+    payloadSets.map((payloadSet, index) =>
+      payloadSet.payloadType === 'extensionGenerated' || payloadSet.payloadType === 'appDictionary'
+        ? payloadLists[index]?.length ?? 0
+        : countPayloadSet(payloadSet),
+    ),
+  )
+}
+
+function estimateAttackCountFromLengths(
+  attackType: IntruderAttackType,
+  positionCount: number,
+  payloadCounts: number[],
+): number {
   if (!positionCount) {
-    return payloadLists[0]?.length ?? 0
+    return payloadCounts[0] ?? 0
   }
 
   if (attackType === 'sniper') {
-    return positionCount * (payloadLists[0]?.length ?? 0)
+    return positionCount * (payloadCounts[0] ?? 0)
   }
 
   if (attackType === 'batteringRam') {
-    return payloadLists[0]?.length ?? 0
+    return payloadCounts[0] ?? 0
   }
 
-  const relevant = payloadLists.slice(0, positionCount)
-  if (!relevant.length || relevant.some((payloads) => payloads.length === 0)) return 0
+  const relevant = payloadCounts.slice(0, positionCount)
+  if (!relevant.length || relevant.some((count) => count === 0)) return 0
 
   if (attackType === 'pitchfork') {
-    return Math.min(...relevant.map((payloads) => payloads.length))
+    return Math.min(...relevant)
   }
 
-  return relevant.reduce((total, payloads) => total * payloads.length, 1)
+  let total = 1
+  for (const count of relevant) {
+    total *= count
+    if (!Number.isSafeInteger(total)) {
+      return Number.MAX_SAFE_INTEGER
+    }
+  }
+
+  return total
 }

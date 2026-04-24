@@ -16,6 +16,16 @@
       <button
         type="button"
         class="btn btn-xs"
+        :class="hasActiveFilters ? 'btn-primary' : 'btn-ghost'"
+        @click="openFilterDialog"
+      >
+        <i class="fas fa-filter mr-1"></i>
+        {{ $t('trafficAnalysis.history.filters') }}
+      </button>
+
+      <button
+        type="button"
+        class="btn btn-xs"
         :class="isMultiSelectMode ? 'btn-primary' : 'btn-ghost'"
         @click="toggleMultiSelectMode"
       >
@@ -28,31 +38,46 @@
           <i class="fas fa-check-double mr-1"></i>
           {{ $t('trafficAnalysis.history.selectAll') }}
         </button>
-        <button type="button" class="btn btn-xs btn-ghost" @click="clearSelection">
-          <i class="fas fa-times mr-1"></i>
-          {{ $t('trafficAnalysis.history.clearSelection') }}
-        </button>
-        <button
-          type="button"
-          class="btn btn-xs btn-outline"
-          :disabled="selectedCount === 0"
-          @click="addSelectedToBasket"
-        >
-          <i class="fas fa-basket-shopping mr-1"></i>
-          加入篮子
-        </button>
+        <div class="dropdown dropdown-end">
+          <label
+            tabindex="0"
+            class="btn btn-xs btn-ghost"
+            :class="{ 'btn-disabled pointer-events-none opacity-50': selectedCount === 0 }"
+          >
+            <i class="fas fa-download mr-1"></i>
+            {{ $t('trafficAnalysis.history.export.export') }}
+          </label>
+          <ul tabindex="0" class="dropdown-content z-[1] menu mt-1 w-52 rounded-box bg-base-100 p-2 shadow">
+            <li><a @click="exportSelectedToFile('request')">{{ $t('trafficAnalysis.history.export.requests') }}</a></li>
+            <li><a @click="exportSelectedToFile('response')">{{ $t('trafficAnalysis.history.export.responses') }}</a></li>
+            <li><a @click="exportAsHar">HAR</a></li>
+          </ul>
+        </div>
+        <div class="dropdown dropdown-end">
+          <label
+            tabindex="0"
+            class="btn btn-xs btn-ghost"
+            :class="{ 'btn-disabled pointer-events-none opacity-50': filteredCount === 0 && selectedCount === 0 }"
+          >
+            <i class="fas fa-wand-magic-sparkles mr-1"></i>
+            词典候选
+          </label>
+          <ul tabindex="0" class="dropdown-content z-[1] menu mt-1 w-56 rounded-box bg-base-100 p-2 shadow">
+            <li>
+              <a :class="{ 'pointer-events-none opacity-50': filteredCount === 0 }" @click="generateCandidatesFromFiltered">
+                基于当前过滤结果
+              </a>
+            </li>
+            <li>
+              <a :class="{ 'pointer-events-none opacity-50': selectedCount === 0 }" @click="generateCandidatesFromSelection">
+                基于当前多选记录
+              </a>
+            </li>
+          </ul>
+        </div>
       </template>
 
       <div class="min-w-0 flex-1"></div>
-
-      <div class="flex items-center gap-2 text-xs text-base-content/60">
-        <span class="rounded-full bg-base-200 px-2 py-1">
-          已筛选 {{ filteredCount }}
-        </span>
-        <span class="rounded-full bg-base-200 px-2 py-1">
-          篮子 {{ basketCount }}
-        </span>
-      </div>
 
       <button type="button" class="btn btn-xs btn-ghost" @click="refreshRequests">
         <i class="fas fa-sync-alt mr-1"></i>
@@ -71,14 +96,17 @@ import type { ProxyHistoryProtocolFilter } from './proxyHistoryTypes'
 
 defineProps<{
   protocolFilter: ProxyHistoryProtocolFilter
+  hasActiveFilters: boolean
   isMultiSelectMode: boolean
   selectedCount: number
   filteredCount: number
-  basketCount: number
+  openFilterDialog: () => void
   toggleMultiSelectMode: () => void
   selectAllVisible: () => void
-  clearSelection: () => void
-  addSelectedToBasket: () => void
+  exportSelectedToFile: (type: 'request' | 'response') => void
+  exportAsHar: () => void
+  generateCandidatesFromFiltered: () => void
+  generateCandidatesFromSelection: () => void
   refreshRequests: () => void
   clearHistory: () => void
 }>()

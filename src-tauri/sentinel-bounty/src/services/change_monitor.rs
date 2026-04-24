@@ -4,9 +4,41 @@
 
 use crate::models::{ChangeEvent, ChangeEventType, ChangeSeverity, CreateChangeEventRequest};
 use chrono::Utc;
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+fn normalize_monitor_plugin_id(value: &str) -> String {
+    value
+        .trim()
+        .replace("plugin__service_fingerprinter", "plugin__service_probe")
+        .replace("service_fingerprinter", "service_probe")
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum MonitorPluginConfigOrId {
+    Config(MonitorPluginConfig),
+    PluginId(String),
+}
+
+fn deserialize_monitor_fallback_plugins<'de, D>(
+    deserializer: D,
+) -> Result<Vec<MonitorPluginConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let values = Vec::<MonitorPluginConfigOrId>::deserialize(deserializer)?;
+
+    Ok(values
+        .into_iter()
+        .map(|value| match value {
+            MonitorPluginConfigOrId::Config(config) => config,
+            MonitorPluginConfigOrId::PluginId(plugin_id) => MonitorPluginConfig::new(plugin_id),
+        })
+        .collect())
+}
 
 /// Plugin configuration for a monitor type
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -14,8 +46,8 @@ pub struct MonitorPluginConfig {
     /// Primary plugin ID to use
     pub plugin_id: String,
     /// Fallback plugin IDs if primary fails
-    #[serde(default)]
-    pub fallback_plugins: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_monitor_fallback_plugins")]
+    pub fallback_plugins: Vec<MonitorPluginConfig>,
     /// Custom plugin parameters
     #[serde(default)]
     pub plugin_params: serde_json::Value,
@@ -26,36 +58,45 @@ pub struct MonitorPluginConfig {
 
 impl MonitorPluginConfig {
     pub fn new(plugin_id: String) -> Self {
+        let normalized_plugin_id = normalize_monitor_plugin_id(&plugin_id);
         let target_asset_types = default_target_asset_types_for_plugin(&plugin_id)
             .into_iter()
             .map(str::to_string)
             .collect();
         Self {
-            plugin_id,
+            plugin_id: normalized_plugin_id,
             fallback_plugins: Vec::new(),
             plugin_params: serde_json::Value::Null,
             target_asset_types,
         }
     }
 
-    pub fn with_fallbacks(plugin_id: String, fallbacks: Vec<String>) -> Self {
-        let target_asset_types = default_target_asset_types_for_plugin(&plugin_id)
-            .into_iter()
-            .map(str::to_string)
-            .collect();
-        Self {
-            plugin_id,
-            fallback_plugins: fallbacks,
-            plugin_params: serde_json::Value::Null,
-            target_asset_types,
-        }
+    pub fn with_fallbacks(plugin_id: String, fallbacks: Vec<MonitorPluginConfig>) -> Self {
+        let mut plugin = Self::new(plugin_id);
+        plugin.fallback_plugins = fallbacks;
+        plugin
     }
 
     /// Get all plugin IDs in order (primary + fallbacks)
     pub fn all_plugins(&self) -> Vec<String> {
         let mut plugins = vec![self.plugin_id.clone()];
-        plugins.extend(self.fallback_plugins.clone());
+        for fallback in &self.fallback_plugins {
+            plugins.extend(fallback.all_plugins());
+        }
         plugins
+    }
+
+    pub fn execution_chain(&self) -> Vec<MonitorPluginConfig> {
+        let mut chain = vec![MonitorPluginConfig {
+            plugin_id: self.plugin_id.clone(),
+            fallback_plugins: Vec::new(),
+            plugin_params: self.plugin_params.clone(),
+            target_asset_types: self.target_asset_types.clone(),
+        }];
+        for fallback in &self.fallback_plugins {
+            chain.extend(fallback.execution_chain());
+        }
+        chain
     }
 
     pub fn resolved_target_asset_types(
@@ -87,6 +128,11 @@ impl MonitorPluginConfig {
 }
 
 fn ensure_service_probe_engine_default(plugin: &mut MonitorPluginConfig) {
+    plugin.plugin_id = normalize_monitor_plugin_id(&plugin.plugin_id);
+    for fallback in &mut plugin.fallback_plugins {
+        ensure_service_probe_engine_default(fallback);
+    }
+
     let normalized_plugin_id = plugin
         .plugin_id
         .strip_prefix("plugin__")
@@ -119,7 +165,10 @@ fn ensure_service_probe_engine_default(plugin: &mut MonitorPluginConfig) {
 }
 
 fn default_target_asset_types_for_plugin(plugin_id: &str) -> Vec<&'static str> {
-    let normalized = plugin_id.strip_prefix("plugin__").unwrap_or(plugin_id);
+    let normalized_plugin_id = normalize_monitor_plugin_id(plugin_id);
+    let normalized = normalized_plugin_id
+        .strip_prefix("plugin__")
+        .unwrap_or(&normalized_plugin_id);
     match normalized {
         "http_prober" => vec!["web", "domain", "service"],
         "sensitive_file_scanner"
@@ -137,6 +186,39 @@ fn default_target_asset_types_for_plugin(plugin_id: &str) -> Vec<&'static str> {
         "cidr_mapper" => vec!["ip"],
         _ => vec![],
     }
+}
+
+fn normalize_dns_monitor_target_asset_types(values: &[String]) -> Vec<String> {
+    values
+        .iter()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| {
+            matches!(
+                value.as_str(),
+                "domain"
+                    | "domain_root"
+                    | "root_domain"
+                    | "domain_level_1"
+                    | "subdomain_level_1"
+                    | "first_level_subdomain"
+                    | "domain_level_2"
+                    | "subdomain_level_2"
+                    | "second_level_subdomain"
+                    | "domain_level_3_plus"
+                    | "subdomain_level_3_plus"
+                    | "third_level_subdomain"
+            )
+        })
+        .map(|value| match value.as_str() {
+            "root_domain" => "domain_root".to_string(),
+            "subdomain_level_1" | "first_level_subdomain" => "domain_level_1".to_string(),
+            "subdomain_level_2" | "second_level_subdomain" => "domain_level_2".to_string(),
+            "subdomain_level_3_plus" | "third_level_subdomain" => {
+                "domain_level_3_plus".to_string()
+            }
+            _ => value,
+        })
+        .collect()
 }
 
 /// Change monitor configuration
@@ -235,7 +317,7 @@ impl Default for ChangeMonitorConfig {
             enable_service_monitoring: true,
             service_plugins: vec![MonitorPluginConfig::with_fallbacks(
                 "service_monitor".to_string(),
-                vec!["service_probe".to_string()],
+                vec![MonitorPluginConfig::new("service_probe".to_string())],
             )],
 
             enable_web_monitoring: true,
@@ -332,6 +414,7 @@ impl ChangeMonitorConfig {
         let mut normalized_dns_plugins = Vec::new();
 
         for mut plugin in self.dns_plugins.drain(..) {
+            plugin.plugin_id = normalize_monitor_plugin_id(&plugin.plugin_id);
             if plugin.plugin_id == "dns_resolver" {
                 migrated_ip_plugins.push(plugin);
                 continue;
@@ -340,11 +423,13 @@ impl ChangeMonitorConfig {
             let (ip_fallbacks, retained_fallbacks): (Vec<_>, Vec<_>) = plugin
                 .fallback_plugins
                 .into_iter()
-                .partition(|fallback| fallback == "dns_resolver");
+                .partition(|fallback| fallback.plugin_id == "dns_resolver");
             plugin.fallback_plugins = retained_fallbacks;
 
             if !ip_fallbacks.is_empty() {
-                migrated_ip_plugins.push(MonitorPluginConfig::new("dns_resolver".to_string()));
+                let mut ip_plugin = MonitorPluginConfig::new("dns_resolver".to_string());
+                ip_plugin.fallback_plugins = ip_fallbacks;
+                migrated_ip_plugins.push(ip_plugin);
             }
 
             normalized_dns_plugins.push(plugin);
@@ -368,7 +453,14 @@ impl ChangeMonitorConfig {
                 continue;
             }
 
-            plugin.target_asset_types = vec!["domain".to_string()];
+            let normalized_target_types =
+                normalize_dns_monitor_target_asset_types(&plugin.target_asset_types);
+
+            if normalized_target_types.is_empty() {
+                plugin.target_asset_types = vec!["domain".to_string()];
+            } else {
+                plugin.target_asset_types = normalized_target_types;
+            }
         }
 
         if !self.ip_plugins.is_empty() {
@@ -391,9 +483,7 @@ impl ChangeMonitorConfig {
         let mut normalized_port_plugins = Vec::new();
 
         for mut plugin in self.port_plugins.drain(..) {
-            if plugin.plugin_id == "service_fingerprinter" {
-                plugin.plugin_id = "service_probe".to_string();
-            }
+            plugin.plugin_id = normalize_monitor_plugin_id(&plugin.plugin_id);
             if matches!(
                 plugin.plugin_id.as_str(),
                 "service_monitor" | "service_probe"
@@ -405,7 +495,7 @@ impl ChangeMonitorConfig {
             let (service_fallbacks, retained_fallbacks): (Vec<_>, Vec<_>) =
                 plugin.fallback_plugins.into_iter().partition(|fallback| {
                     matches!(
-                        fallback.as_str(),
+                        normalize_monitor_plugin_id(&fallback.plugin_id).as_str(),
                         "service_monitor" | "service_probe" | "service_fingerprinter"
                     )
                 });
@@ -417,7 +507,7 @@ impl ChangeMonitorConfig {
 
                 let preferred_primary = if service_fallbacks
                     .iter()
-                    .any(|fallback| fallback == PRIMARY_SERVICE_MONITOR)
+                    .any(|fallback| normalize_monitor_plugin_id(&fallback.plugin_id) == PRIMARY_SERVICE_MONITOR)
                 {
                     PRIMARY_SERVICE_MONITOR
                 } else {
@@ -425,14 +515,11 @@ impl ChangeMonitorConfig {
                 };
                 let fallback_plugins = service_fallbacks
                     .into_iter()
-                    .map(|fallback| {
-                        if fallback == "service_fingerprinter" {
-                            "service_probe".to_string()
-                        } else {
-                            fallback
-                        }
+                    .map(|mut fallback| {
+                        fallback.plugin_id = normalize_monitor_plugin_id(&fallback.plugin_id);
+                        fallback
                     })
-                    .filter(|fallback| fallback != preferred_primary)
+                    .filter(|fallback| fallback.plugin_id != preferred_primary)
                     .collect();
 
                 let mut service_plugin = MonitorPluginConfig::new(preferred_primary.to_string());
@@ -454,20 +541,6 @@ impl ChangeMonitorConfig {
         }
 
         for plugin in &mut self.service_plugins {
-            if plugin.plugin_id == "service_fingerprinter" {
-                plugin.plugin_id = "service_probe".to_string();
-            }
-            plugin.fallback_plugins = plugin
-                .fallback_plugins
-                .iter()
-                .map(|fallback| {
-                    if fallback == "service_fingerprinter" {
-                        "service_probe".to_string()
-                    } else {
-                        fallback.clone()
-                    }
-                })
-                .collect();
             ensure_service_probe_engine_default(plugin);
         }
 

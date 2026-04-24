@@ -18,7 +18,7 @@
         @select-tab="handleSelectTab"
       />
 
-      <div class="min-w-0 flex-1 overflow-hidden rounded-[28px] border border-base-300/70 bg-base-100">
+      <div class="min-w-0 flex flex-1 flex-col overflow-hidden rounded-[28px] border border-base-300/70 bg-base-100">
         <div class="flex items-start justify-between gap-3 border-b border-base-300/70 bg-base-200/70 px-4 py-3">
           <div>
             <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/80">
@@ -48,7 +48,7 @@
           </div>
         </div>
 
-        <SecurityCenter class="h-full overflow-auto" :immersive-active-tab="activeTab" />
+        <SecurityCenter class="min-h-0 flex-1" :immersive-active-tab="activeTab" />
       </div>
     </section>
   </div>

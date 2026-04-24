@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultIntruderDictionaryPayloadConfig } from './intruderAppDictionaryPayloads'
-import { expandPayloadSet } from './payloads'
+import { countPayloadSet, expandPayloadSet } from './payloads'
 import type { IntruderPayloadSet } from './types'
 
 function createPayloadSet(overrides: Partial<IntruderPayloadSet> = {}): IntruderPayloadSet {
@@ -16,6 +16,9 @@ function createPayloadSet(overrides: Partial<IntruderPayloadSet> = {}): Intruder
     pluginPresetName: '',
     pluginConfig: '{}',
     filePath: '',
+    bruteForceCharacterSet: 'abcdefghijklmnopqrstuvwxyz0123456789',
+    bruteForceMinLength: 4,
+    bruteForceMaxLength: 4,
     characterList: '',
     substitutionSource: '',
     substitutionRules: '',
@@ -37,6 +40,32 @@ function createPayloadSet(overrides: Partial<IntruderPayloadSet> = {}): Intruder
 }
 
 describe('intruder payload expansion', () => {
+  it('expands brute forcer payloads across a length range', () => {
+    const payloadSet = createPayloadSet({
+      payloadType: 'bruteForcer',
+      bruteForceCharacterSet: 'ab',
+      bruteForceMinLength: 1,
+      bruteForceMaxLength: 2,
+    })
+
+    expect(countPayloadSet(payloadSet)).toBe(6)
+    expect(expandPayloadSet(payloadSet)).toEqual(['a', 'b', 'aa', 'ab', 'ba', 'bb'])
+  })
+
+  it('limits brute forcer payload expansion when requested', () => {
+    const values = expandPayloadSet(
+      createPayloadSet({
+        payloadType: 'bruteForcer',
+        bruteForceCharacterSet: 'ab',
+        bruteForceMinLength: 1,
+        bruteForceMaxLength: 3,
+      }),
+      4,
+    )
+
+    expect(values).toEqual(['a', 'b', 'aa', 'ab'])
+  })
+
   it('expands number payloads', () => {
     const values = expandPayloadSet(
       createPayloadSet({

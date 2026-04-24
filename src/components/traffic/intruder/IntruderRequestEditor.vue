@@ -142,8 +142,8 @@ const emit = defineEmits<{
   (e: 'update:updateHostHeader', value: boolean): void
   (e: 'autoMark'): void
   (e: 'clearMarkers'): void
-  (e: 'sendToRepeater'): void
-  (e: 'sendDraftRequestToComparer'): void
+  (e: 'createDraft'): void
+  (e: 'openDraftCompare'): void
 }>()
 
 const requestEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null)
@@ -171,10 +171,10 @@ const currentUrl = computed(() => buildFullUrl(props.requestText, currentTarget.
 const sendMenuItems = computed(() =>
   buildTrafficRequestSendMenuItems({
     enabledTargets: enabledTargets.value,
-    supportedTargets: ['repeater', 'comparer'],
+    supportedTargets: ['draft', 'compare'],
     actions: {
-      repeater: currentRequest.value ? () => emit('sendToRepeater') : undefined,
-      comparer: currentRequest.value ? () => emit('sendDraftRequestToComparer') : undefined,
+      draft: currentRequest.value ? () => emit('createDraft') : undefined,
+      compare: currentRequest.value ? () => emit('openDraftCompare') : undefined,
     },
   }),
 )
@@ -209,21 +209,130 @@ function handleRequestEditorUpdate(value: string) {
   )
 }
 
-async function markSelection() {
-  if (props.requestViewTab === 'pretty') {
-    emit('update:requestViewTab', 'raw')
-    dialog.toast.info('Pretty 视图仅用于阅读，请切到 Raw 后标记位置。')
-    return
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+}
+
+function mapNormalizedOffsetToOriginalOffset(content: string, normalizedOffset: number): number {
+  if (normalizedOffset <= 0) return 0
+
+  let originalOffset = 0
+  let traversed = 0
+  while (originalOffset < content.length && traversed < normalizedOffset) {
+    if (content[originalOffset] === '\r') {
+      originalOffset += 1
+      continue
+    }
+
+    originalOffset += 1
+    traversed += 1
   }
 
+  return originalOffset
+}
+
+function scoreContextMatch(rawText: string, candidateStart: number, candidateEnd: number, beforeText: string, afterText: string): number {
+  let score = 0
+
+  if (beforeText) {
+    const beforeWindow = rawText.slice(Math.max(0, candidateStart - beforeText.length), candidateStart)
+    let matched = 0
+    while (
+      matched < beforeText.length
+      && matched < beforeWindow.length
+      && beforeWindow[beforeWindow.length - 1 - matched] === beforeText[beforeText.length - 1 - matched]
+    ) {
+      matched += 1
+    }
+    score += matched
+  }
+
+  if (afterText) {
+    const afterWindow = rawText.slice(candidateEnd, candidateEnd + afterText.length)
+    let matched = 0
+    while (
+      matched < afterText.length
+      && matched < afterWindow.length
+      && afterWindow[matched] === afterText[matched]
+    ) {
+      matched += 1
+    }
+    score += matched
+  }
+
+  return score
+}
+
+function resolvePrettySelectionInRaw(selection: { from: number; to: number }) {
+  const prettyText = displayRequestText.value
+  const rawTextNormalized = normalizeLineEndings(props.requestText)
+  const start = Math.min(selection.from, selection.to)
+  const end = Math.max(selection.from, selection.to)
+  const selectedText = prettyText.slice(start, end)
+
+  if (!selectedText) {
+    return null
+  }
+
+  if (rawTextNormalized.slice(start, end) === selectedText) {
+    return {
+      from: mapNormalizedOffsetToOriginalOffset(props.requestText, start),
+      to: mapNormalizedOffsetToOriginalOffset(props.requestText, end),
+    }
+  }
+
+  const beforeText = prettyText.slice(Math.max(0, start - 32), start)
+  const afterText = prettyText.slice(end, Math.min(prettyText.length, end + 32))
+  const candidates: Array<{ from: number; to: number; score: number }> = []
+
+  let searchIndex = rawTextNormalized.indexOf(selectedText)
+  while (searchIndex !== -1) {
+    const candidateEnd = searchIndex + selectedText.length
+    candidates.push({
+      from: searchIndex,
+      to: candidateEnd,
+      score: scoreContextMatch(rawTextNormalized, searchIndex, candidateEnd, beforeText, afterText),
+    })
+    searchIndex = rawTextNormalized.indexOf(selectedText, searchIndex + 1)
+  }
+
+  if (!candidates.length) {
+    return null
+  }
+
+  candidates.sort((left, right) => right.score - left.score)
+  const bestCandidate = candidates[0]
+
+  return {
+    from: mapNormalizedOffsetToOriginalOffset(props.requestText, bestCandidate.from),
+    to: mapNormalizedOffsetToOriginalOffset(props.requestText, bestCandidate.to),
+  }
+}
+
+function resolveSelectionForRawOperation(selection: { from: number; to: number }) {
+  return props.requestViewTab === 'pretty'
+    ? resolvePrettySelectionInRaw(selection)
+    : selection
+}
+
+async function markSelection() {
   const selection = requestEditor.value?.getSelectionRange()
   if (!selection || selection.from === selection.to) {
     dialog.toast.info(t('trafficAnalysis.intruder.messages.selectTextFirst'))
     return
   }
 
-  const start = Math.min(selection.from, selection.to)
-  const end = Math.max(selection.from, selection.to)
+  const resolvedSelection = resolveSelectionForRawOperation(selection)
+  if (!resolvedSelection || resolvedSelection.from === resolvedSelection.to) {
+    return
+  }
+
+  if (props.requestViewTab === 'pretty') {
+    emit('update:requestViewTab', 'raw')
+  }
+
+  const start = Math.min(resolvedSelection.from, resolvedSelection.to)
+  const end = Math.max(resolvedSelection.from, resolvedSelection.to)
   const wrapped = wrapSelectionWithMarkers(props.requestText, start, end)
   emit('update:requestText', wrapped)
 
@@ -249,10 +358,11 @@ function insertTextAtSelection(
 }
 
 async function insertOastPayload() {
+  const selection = requestEditor.value?.getSelectionRange()
+  const resolvedSelection = selection ? resolveSelectionForRawOperation(selection) : undefined
+
   if (props.requestViewTab === 'pretty') {
     emit('update:requestViewTab', 'raw')
-    dialog.toast.info('Pretty 视图仅用于阅读，请切到 Raw 后插入载荷。')
-    return
   }
 
   creatingOastPayload.value = true
@@ -264,7 +374,7 @@ async function insertOastPayload() {
     })
     const next = insertTextAtSelection(
       props.requestText,
-      requestEditor.value?.getSelectionRange?.(),
+      resolvedSelection,
       record.httpsUrl || record.httpUrl || record.fqdn,
     )
     emit('update:requestText', next.content)

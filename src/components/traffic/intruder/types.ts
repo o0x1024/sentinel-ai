@@ -20,6 +20,7 @@ export interface IntruderPosition {
 
 export type IntruderPayloadType =
   | 'simpleList'
+  | 'bruteForcer'
   | 'appDictionary'
   | 'extensionGenerated'
   | 'numbers'
@@ -55,6 +56,9 @@ export interface IntruderPayloadSet {
   pluginPresetName: string
   pluginConfig: string
   filePath: string
+  bruteForceCharacterSet: string
+  bruteForceMinLength: number
+  bruteForceMaxLength: number
   characterList: string
   substitutionSource: string
   substitutionRules: string
@@ -299,23 +303,4 @@ export interface IntruderAttackResult {
   grepMatches: Record<string, number>
   grepExtracts: Record<string, string>
   error?: string
-}
-
-export interface IntruderResultsWindowState {
-  workspaceId: string
-  workspaceName: string
-  target: IntruderTarget
-  requestText: string
-  positions: IntruderPosition[]
-  results: IntruderAttackResult[]
-  selectedResultId: string | null
-  progress: IntruderAttackProgress
-  isRunning: boolean
-  captureFilter: IntruderResultFilter
-  viewFilter: IntruderResultFilter
-  sort: IntruderResultSort
-  grepMatchRules: IntruderGrepMatchRule[]
-  grepExtractRules: IntruderGrepExtractRule[]
-  grepPayloadSettings: IntruderGrepPayloadSettings
-  visibleColumns: string[]
 }

@@ -1,13 +1,6 @@
 <template>
   <div ref="trafficRouteRoot" class="relative h-full min-h-0">
-    <TrafficWorkbench
-      v-if="immersiveDrillModeEnabled"
-      ref="trafficViewRef"
-    />
-    <TrafficLegacyTabs
-      v-else
-      ref="trafficViewRef"
-    />
+    <TrafficWorkbench ref="trafficViewRef" />
     <TrafficAssistantOverlay />
   </div>
 </template>
@@ -23,20 +16,13 @@ import {
   provide,
   ref,
 } from 'vue'
-import TrafficLegacyTabs from '@/components/traffic/TrafficLegacyTabs.vue'
 import TrafficAssistantOverlay from '@/components/traffic/TrafficAssistantOverlay.vue'
 import TrafficWorkbench from '@/components/traffic/TrafficWorkbench.vue'
 import type { HttpExchangeRequest } from '@/components/traffic/http/model'
 import type { TrafficAnalysisViewHandle } from '@/components/traffic/trafficAnalysisViewTypes'
 import type { TrafficContextCandidateEvidenceSelection } from '@/components/traffic/trafficContextCandidateTypes'
-import {
-  COMPARER_TRANSFER_STORAGE_KEY,
-  INTRUDER_TRANSFER_STORAGE_KEY,
-  parseTransferEnvelope,
-  REPEATER_TRANSFER_STORAGE_KEY,
-  type TrafficComparePayload,
-} from '@/components/traffic/transfers'
-import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
+import type { TrafficComparePayload } from '@/components/traffic/transfers'
+import { useTrafficLaunchQueueStore } from '@/components/traffic/workbench/stores/useTrafficLaunchQueueStore'
 
 defineOptions({
   name: 'TrafficAnalysis',
@@ -48,6 +34,7 @@ const OPEN_TRAFFIC_HISTORY_REQUEST_STORAGE_KEY = 'traffic-history:pending-open-r
 const refreshTrigger = ref(0)
 const trafficViewRef = ref<TrafficAnalysisViewHandle | null>(null)
 const trafficRouteRoot = ref<HTMLElement | null>(null)
+const trafficLaunchQueue = useTrafficLaunchQueueStore()
 
 let unlistenOpenHistoryRequest: UnlistenFn | null = null
 let lastOpenedHistoryRequestKey: string | null = null
@@ -200,79 +187,34 @@ function restoreTrafficScrollStateAfterLayout() {
   })
 }
 
-async function forwardToRepeater(request: HttpExchangeRequest) {
+async function createDraftFromRequest(request: HttpExchangeRequest) {
   const view = await getTrafficViewHandle()
-  view?.sendToRepeater(request)
+  view?.createDraftFromRequest(request)
 }
 
-async function forwardToIntruder(request: HttpExchangeRequest) {
+async function createAttackWorkspaceFromRequest(request: HttpExchangeRequest) {
   const view = await getTrafficViewHandle()
-  view?.sendToIntruder(request)
+  view?.createAttackWorkspaceFromRequest(request)
 }
 
-async function forwardToComparer(payload: TrafficComparePayload) {
+async function openCompare(payload: TrafficComparePayload) {
   const view = await getTrafficViewHandle()
-  view?.sendToComparer(payload)
-}
-
-function handleTransferStorage(event: StorageEvent) {
-  if (event.key === REPEATER_TRANSFER_STORAGE_KEY) {
-    const envelope = parseTransferEnvelope<HttpExchangeRequest>(event.newValue)
-    if (!envelope) {
-      return
-    }
-
-    void forwardToRepeater(envelope.payload)
-    window.localStorage.removeItem(REPEATER_TRANSFER_STORAGE_KEY)
-    return
-  }
-
-  if (event.key === INTRUDER_TRANSFER_STORAGE_KEY) {
-    const envelope = parseTransferEnvelope<HttpExchangeRequest>(event.newValue)
-    if (!envelope) {
-      return
-    }
-
-    void forwardToIntruder(envelope.payload)
-    window.localStorage.removeItem(INTRUDER_TRANSFER_STORAGE_KEY)
-    return
-  }
-
-  if (event.key === COMPARER_TRANSFER_STORAGE_KEY) {
-    const envelope = parseTransferEnvelope<TrafficComparePayload>(event.newValue)
-    if (!envelope) {
-      return
-    }
-
-    void forwardToComparer(envelope.payload)
-    window.localStorage.removeItem(COMPARER_TRANSFER_STORAGE_KEY)
-  }
-}
-
-function consumePendingTransfer<T>(storageKey: string) {
-  const envelope = parseTransferEnvelope<T>(window.localStorage.getItem(storageKey))
-  if (!envelope) {
-    return null
-  }
-
-  window.localStorage.removeItem(storageKey)
-  return envelope
+  view?.openCompare(payload)
 }
 
 async function processPendingTransfers() {
-  const pendingRepeater = consumePendingTransfer<HttpExchangeRequest>(REPEATER_TRANSFER_STORAGE_KEY)
-  if (pendingRepeater) {
-    await forwardToRepeater(pendingRepeater.payload)
+  const pending = trafficLaunchQueue.consumeLaunchQueue()
+
+  for (const request of pending.draftRequests) {
+    await createDraftFromRequest(request)
   }
 
-  const pendingIntruder = consumePendingTransfer<HttpExchangeRequest>(INTRUDER_TRANSFER_STORAGE_KEY)
-  if (pendingIntruder) {
-    await forwardToIntruder(pendingIntruder.payload)
+  for (const request of pending.attackWorkspaceRequests) {
+    await createAttackWorkspaceFromRequest(request)
   }
 
-  const pendingComparer = consumePendingTransfer<TrafficComparePayload>(COMPARER_TRANSFER_STORAGE_KEY)
-  if (pendingComparer) {
-    await forwardToComparer(pendingComparer.payload)
+  for (const payload of pending.comparePayloads) {
+    await openCompare(payload)
   }
 }
 
@@ -295,7 +237,6 @@ async function openHistoryRequest(payload: TrafficContextCandidateEvidenceSelect
 }
 
 onMounted(async () => {
-  window.addEventListener('storage', handleTransferStorage)
   await processPendingTransfers()
   restoreTrafficScrollStateAfterLayout()
 
@@ -338,7 +279,6 @@ onDeactivated(() => {
 
 onUnmounted(() => {
   saveTrafficScrollState()
-  window.removeEventListener('storage', handleTransferStorage)
   unlistenOpenHistoryRequest?.()
   unlistenOpenHistoryRequest = null
 })

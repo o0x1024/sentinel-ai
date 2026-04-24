@@ -13,10 +13,20 @@
           <span
             :class="['badge', getWorkbenchConfidenceBadgeClass(assessmentSuggestion.confidence)]"
           >
-            {{ wb('overview.confidence', { value: getWorkbenchConfidenceLabel(assessmentSuggestion.confidence) }) }}
+            {{
+              wb('overview.confidence', {
+                value: getWorkbenchConfidenceLabel(assessmentSuggestion.confidence),
+              })
+            }}
           </span>
-          <span :class="['badge', getWorkbenchStatusBadgeClass(assessmentSuggestion.suggestedStatus)]">
-            {{ wb('overview.suggestedStatus', { value: getWorkbenchStatusLabel(assessmentSuggestion.suggestedStatus) }) }}
+          <span
+            :class="['badge', getWorkbenchStatusBadgeClass(assessmentSuggestion.suggestedStatus)]"
+          >
+            {{
+              wb('overview.suggestedStatus', {
+                value: getWorkbenchStatusLabel(assessmentSuggestion.suggestedStatus),
+              })
+            }}
           </span>
         </div>
       </div>
@@ -40,7 +50,11 @@
         <button class="btn btn-sm btn-info" @click="applySuggestionAndSave">
           {{ wb('overview.applyAndSave') }}
         </button>
-        <button class="btn btn-sm btn-secondary" :disabled="syncingFinding" @click="syncFindingWithSuggestion">
+        <button
+          class="btn btn-sm btn-secondary"
+          :disabled="syncingFinding"
+          @click="syncFindingWithSuggestion"
+        >
           {{ wb('overview.syncWithSuggestion') }}
         </button>
       </div>
@@ -89,14 +103,24 @@
             </span>
           </div>
           <div class="flex flex-wrap gap-2">
-            <span :class="['badge badge-outline', agent.autoMode ? 'badge-success' : 'badge-ghost']">
-              {{ wb('overview.autoMode') }}: {{ agent.autoMode ? wb('overview.enabled') : wb('overview.disabled') }}
+            <span
+              :class="['badge badge-outline', agent.autoMode ? 'badge-success' : 'badge-ghost']"
+            >
+              {{ wb('overview.autoMode') }}:
+              {{ agent.autoMode ? wb('overview.enabled') : wb('overview.disabled') }}
             </span>
-            <span :class="['badge badge-outline', agent.allowActiveReplay ? 'badge-warning' : 'badge-ghost']">
-              {{ wb('overview.activeReplay') }}: {{ agent.allowActiveReplay ? wb('overview.enabled') : wb('overview.disabled') }}
+            <span
+              :class="[
+                'badge badge-outline',
+                agent.allowActiveReplay ? 'badge-warning' : 'badge-ghost',
+              ]"
+            >
+              {{ wb('overview.activeReplay') }}:
+              {{ agent.allowActiveReplay ? wb('overview.enabled') : wb('overview.disabled') }}
             </span>
             <span :class="['badge badge-outline', agent.shadowMode ? 'badge-info' : 'badge-ghost']">
-              {{ wb('overview.shadowMode') }}: {{ agent.shadowMode ? wb('overview.enabled') : wb('overview.disabled') }}
+              {{ wb('overview.shadowMode') }}:
+              {{ agent.shadowMode ? wb('overview.enabled') : wb('overview.disabled') }}
             </span>
             <span class="badge badge-outline">
               {{ wb('overview.scopeHosts') }}: {{ agent.scopeHosts.length }}
@@ -109,7 +133,9 @@
     <div class="rounded-lg border border-base-300 bg-base-100 p-4 space-y-3">
       <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
         <label class="form-control">
-          <span class="label-text text-xs text-base-content/60 mb-1">{{ wb('overview.caseStatus') }}</span>
+          <span class="label-text text-xs text-base-content/60 mb-1">{{
+            wb('overview.caseStatus')
+          }}</span>
           <select v-model="statusDraft" class="select select-bordered select-sm">
             <option value="new">{{ wb('status.new') }}</option>
             <option value="investigating">{{ wb('status.investigating') }}</option>
@@ -120,7 +146,9 @@
           </select>
         </label>
         <label class="form-control">
-          <span class="label-text text-xs text-base-content/60 mb-1">{{ wb('overview.priority') }}</span>
+          <span class="label-text text-xs text-base-content/60 mb-1">{{
+            wb('overview.priority')
+          }}</span>
           <select v-model="priorityDraft" class="select select-bordered select-sm">
             <option value="low">{{ wb('priority.low') }}</option>
             <option value="medium">{{ wb('priority.medium') }}</option>
@@ -140,9 +168,11 @@
             <div class="flex flex-wrap gap-2">
               <span class="badge badge-outline">{{ caseItem.finding.vulnType }}</span>
               <span class="badge badge-ghost">{{ caseItem.finding.pluginId }}</span>
-              <span class="badge badge-info">{{ getWorkbenchConfidenceLabel(caseItem.finding.confidence) }}</span>
+              <span class="badge badge-info">{{
+                getWorkbenchConfidenceLabel(caseItem.finding.confidence)
+              }}</span>
             </div>
-            <p class="text-sm whitespace-pre-wrap break-words">{{ findingDescription }}</p>
+            <SecurityEvidenceTextBlock :text="findingDescription" size="sm" />
           </div>
         </div>
         <div>
@@ -153,9 +183,17 @@
             :placeholder="wb('overview.conclusionPlaceholder')"
           />
           <div class="mt-3 flex flex-wrap gap-2">
-            <button class="btn btn-sm btn-outline" @click="saveMetadata">{{ wb('overview.saveCaseInfo') }}</button>
-            <button class="btn btn-sm btn-primary" @click="saveConclusion">{{ wb('overview.saveConclusion') }}</button>
-            <button class="btn btn-sm btn-secondary" :disabled="syncingFinding" @click="syncFinding">
+            <button class="btn btn-sm btn-outline" @click="saveMetadata">
+              {{ wb('overview.saveCaseInfo') }}
+            </button>
+            <button class="btn btn-sm btn-primary" @click="saveConclusion">
+              {{ wb('overview.saveConclusion') }}
+            </button>
+            <button
+              class="btn btn-sm btn-secondary"
+              :disabled="syncingFinding"
+              @click="syncFinding"
+            >
               <span v-if="syncingFinding" class="loading loading-spinner loading-xs mr-1"></span>
               {{ wb('overview.syncToFinding') }}
             </button>
@@ -168,6 +206,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import SecurityEvidenceTextBlock from './SecurityEvidenceTextBlock.vue'
 import type {
   WorkbenchAssessmentSuggestion,
   WorkbenchCase,
@@ -196,10 +235,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'save-conclusion': [value: string]
-  'save-metadata': [patch: {
-    status: WorkbenchCaseStatus
-    priority: 'low' | 'medium' | 'high'
-  }]
+  'save-metadata': [
+    patch: {
+      status: WorkbenchCaseStatus
+      priority: 'low' | 'medium' | 'high'
+    },
+  ]
   'sync-finding': []
   'sync-finding-with-suggestion': []
 }>()
@@ -219,7 +260,7 @@ watch(
     statusDraft.value = value.status
     priorityDraft.value = value.priority
   },
-  { deep: true },
+  { deep: true }
 )
 
 const saveConclusion = () => {

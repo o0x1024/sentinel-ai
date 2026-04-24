@@ -6,7 +6,9 @@
           <p class="text-sm font-semibold">{{ wb('analysis.behaviorTitle') }}</p>
           <p class="text-xs text-base-content/60">{{ wb('analysis.behaviorSummary') }}</p>
         </div>
-        <span class="badge badge-outline">{{ wb('analysis.behaviorCount', { count: analysis.behaviorSteps.length }) }}</span>
+        <span class="badge badge-outline">{{
+          wb('analysis.behaviorCount', { count: analysis.behaviorSteps.length })
+        }}</span>
       </div>
 
       <div v-if="analysis.behaviorSteps.length > 0" class="space-y-3">
@@ -20,10 +22,12 @@
               <span class="badge badge-outline">{{ getBehaviorStepLabel(step.stepKind) }}</span>
               <span class="badge badge-ghost">{{ step.method }}</span>
             </div>
-            <span class="text-xs text-base-content/60">{{ formatWorkbenchTime(step.timestamp) }}</span>
+            <span class="text-xs text-base-content/60">{{
+              formatWorkbenchTime(step.timestamp)
+            }}</span>
           </div>
-          <p class="mt-2 font-mono text-xs break-all text-base-content/70">{{ step.url }}</p>
-          <p class="mt-2 text-xs text-base-content/60">{{ step.reason }}</p>
+          <SecurityEvidenceTextBlock class="mt-2" :text="step.url" mono size="xs" />
+          <SecurityEvidenceTextBlock class="mt-2" :text="step.reason" size="xs" />
         </div>
       </div>
       <p v-else class="text-sm text-base-content/60">{{ wb('analysis.behaviorEmpty') }}</p>
@@ -35,7 +39,9 @@
           <p class="text-sm font-semibold">{{ wb('analysis.objectPoolTitle') }}</p>
           <p class="text-xs text-base-content/60">{{ wb('analysis.objectPoolSummary') }}</p>
         </div>
-        <span class="badge badge-outline">{{ wb('analysis.objectPoolCount', { count: analysis.objectPool.length }) }}</span>
+        <span class="badge badge-outline">{{
+          wb('analysis.objectPoolCount', { count: analysis.objectPool.length })
+        }}</span>
       </div>
 
       <div v-if="analysis.objectPool.length > 0" class="space-y-3">
@@ -51,7 +57,12 @@
               {{ wb(`priority.${group.confidence}`) }}
             </span>
             <span class="text-xs text-base-content/60">
-              {{ wb('analysis.objectPoolMeta', { evidenceCount: group.evidenceCount, referenceCount: group.referenceCount }) }}
+              {{
+                wb('analysis.objectPoolMeta', {
+                  evidenceCount: group.evidenceCount,
+                  referenceCount: group.referenceCount,
+                })
+              }}
             </span>
           </div>
           <div class="mt-3 flex flex-wrap gap-2">
@@ -62,10 +73,7 @@
             >
               {{ value }}
             </span>
-            <span
-              v-if="group.uniqueValues.length > 8"
-              class="badge badge-ghost"
-            >
+            <span v-if="group.uniqueValues.length > 8" class="badge badge-ghost">
               {{ wb('analysis.moreValues', { count: group.uniqueValues.length - 8 }) }}
             </span>
           </div>
@@ -82,7 +90,9 @@
           <p class="text-sm font-semibold">{{ wb('analysis.suggestionsTitle') }}</p>
           <p class="text-xs text-base-content/60">{{ wb('analysis.suggestionsSummary') }}</p>
         </div>
-        <span class="badge badge-outline">{{ wb('analysis.suggestionsCount', { count: analysis.suggestions.length }) }}</span>
+        <span class="badge badge-outline">{{
+          wb('analysis.suggestionsCount', { count: analysis.suggestions.length })
+        }}</span>
       </div>
 
       <div v-if="analysis.suggestions.length > 0" class="space-y-3">
@@ -92,11 +102,17 @@
           class="rounded-lg bg-base-200/70 p-3"
         >
           <div class="flex flex-wrap items-center gap-2">
-            <span class="badge badge-secondary">{{ getSuggestionStrategyLabel(item.strategy) }}</span>
+            <span class="badge badge-secondary">{{
+              getSuggestionStrategyLabel(item.strategy)
+            }}</span>
             <span
               :class="[
                 'badge',
-                item.severity === 'high' ? 'badge-error' : item.severity === 'medium' ? 'badge-warning' : 'badge-ghost',
+                item.severity === 'high'
+                  ? 'badge-error'
+                  : item.severity === 'medium'
+                    ? 'badge-warning'
+                    : 'badge-ghost',
               ]"
             >
               {{ wb(`priority.${item.severity}`) }}
@@ -104,14 +120,10 @@
             <span class="badge badge-outline">{{ item.targetField }}</span>
           </div>
           <p class="mt-2 font-medium">{{ item.title }}</p>
-          <p class="mt-1 text-sm text-base-content/70">{{ item.summary }}</p>
-          <p class="mt-2 text-xs text-base-content/60">{{ item.why }}</p>
+          <SecurityEvidenceTextBlock class="mt-1" :text="item.summary" size="sm" />
+          <SecurityEvidenceTextBlock class="mt-2" :text="item.why" size="xs" />
           <div class="mt-3 flex flex-wrap gap-2">
-            <span
-              v-for="value in item.candidateValues"
-              :key="value"
-              class="badge badge-primary"
-            >
+            <span v-for="value in item.candidateValues" :key="value" class="badge badge-primary">
               {{ value }}
             </span>
           </div>
@@ -126,6 +138,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import SecurityEvidenceTextBlock from './SecurityEvidenceTextBlock.vue'
 import type { WorkbenchCase } from './securityWorkbenchTypes'
 import { formatWorkbenchTime } from './securityWorkbenchPresentation'
 import { wb } from './securityWorkbenchLocale'

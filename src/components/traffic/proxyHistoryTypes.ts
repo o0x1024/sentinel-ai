@@ -1,7 +1,13 @@
+import type { ProxyScopeRule } from './proxyConfigurationTypes'
+
 export interface ProxyRequest {
   id: number
   db_request_id?: number | null
   traffic_request_id?: string | null
+  origin_kind?: string | null
+  origin_ref_id?: string | null
+  parent_request_id?: number | null
+  source_draft_revision_id?: string | null
   url: string
   host: string
   scheme: string
@@ -126,6 +132,10 @@ export interface ProxyHistoryFilterCache {
   searchTerm: string
   showExts: Set<string> | null
   hideExts: Set<string> | null
+  scopeRules: {
+    includeRules: ProxyScopeRule[]
+    excludeRules: ProxyScopeRule[]
+  } | null
 }
 
 export type ProxyHistoryViewMode = 'original' | 'edited'

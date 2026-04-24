@@ -302,7 +302,6 @@ import { buildComparerActionMenuItems } from './trafficComparerActionMenuSupport
 import { buildTrafficContextMenuSections } from './trafficContextMenuSectionSupport'
 import { useTrafficSendTargets } from './trafficSendTargets'
 import {
-  queueRepeaterTransfer,
   type TrafficComparerDraftRequestInput,
   type TrafficComparePayload,
 } from './transfers'
@@ -335,7 +334,7 @@ interface PinnedBaseline {
 }
 
 const emit = defineEmits<{
-  (e: 'sendToRepeater', request: HttpExchangeRequest): void
+  (e: 'createDraft', request: HttpExchangeRequest): void
 }>()
 
 const { t, locale } = useI18n()
@@ -404,8 +403,8 @@ const comparerActionMenuItems = computed(() =>
     },
     visible: {
       clearPinnedBaseline: !!pinnedBaseline.value,
-      sendLeftToRepeater: enabledTargets.value.repeater,
-      sendRightToRepeater: enabledTargets.value.repeater,
+      sendLeftToRepeater: enabledTargets.value.draft,
+      sendRightToRepeater: enabledTargets.value.draft,
     },
     enabled: {
       sendLeftToRepeater: canSendLeftToRepeater.value,
@@ -765,10 +764,9 @@ function sendSideToRepeater(side: 'left' | 'right') {
     return
   }
 
-  emit('sendToRepeater', request)
-  queueRepeaterTransfer(request)
+  emit('createDraft', request)
   dialog.toast.success(
-    t('trafficAnalysis.comparer.messages.sentToRepeater', {
+    t('trafficAnalysis.comparer.messages.draftCreated', {
       label: side === 'left' ? item.leftLabel : item.rightLabel,
     }),
   )

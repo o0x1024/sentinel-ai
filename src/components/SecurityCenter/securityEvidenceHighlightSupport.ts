@@ -14,6 +14,8 @@ export interface SecurityEvidenceSnippetFields {
 const REQUEST_TERM_KEYS = new Set(['probe', 'probe_value', 'payload', 'poc'])
 const RESPONSE_TERM_KEYS = new Set(['sql_error', 'match', 'matched', 'matched_value', 'indicator'])
 
+import { parseSecurityEvidenceSnippetFields } from './securityEvidenceSnippetSupport'
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -23,45 +25,8 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function normalizeEvidenceValue(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) return ''
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"'))
-    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1).trim()
-  }
-  return trimmed
-}
-
 function uniqueTerms(terms: string[]): string[] {
   return [...new Set(terms.map(term => term.trim()).filter(Boolean))]
-}
-
-function parseEvidenceSnippetFields(evidenceSnippet?: string | null): Record<string, string> {
-  if (!evidenceSnippet) {
-    return {}
-  }
-
-  const fields: Record<string, string> = {}
-
-  for (const segment of evidenceSnippet.split('|')) {
-    const separatorIndex = segment.indexOf('=')
-    if (separatorIndex === -1) {
-      continue
-    }
-
-    const key = segment.slice(0, separatorIndex).trim().toLowerCase()
-    const value = normalizeEvidenceValue(segment.slice(separatorIndex + 1))
-    if (!key || !value) {
-      continue
-    }
-
-    fields[key] = value
-  }
-
-  return fields
 }
 
 function collectMatchRanges(content: string, terms: string[]) {
@@ -83,7 +48,9 @@ function collectMatchRanges(content: string, terms: string[]) {
         start: matchIndex,
         end: matchIndex + lowerTerm.length,
       }
-      const overlaps = ranges.some(range => nextRange.start < range.end && nextRange.end > range.start)
+      const overlaps = ranges.some(
+        range => nextRange.start < range.end && nextRange.end > range.start
+      )
       if (!overlaps) {
         ranges.push(nextRange)
       }
@@ -97,7 +64,7 @@ function collectMatchRanges(content: string, terms: string[]) {
 function renderHighlightedHtml(
   content: string,
   terms: string[],
-  tone: 'request' | 'response',
+  tone: 'request' | 'response'
 ): string {
   if (!content) return ''
 
@@ -119,10 +86,12 @@ function renderHighlightedHtml(
   return html
 }
 
-export function extractSecurityEvidenceHighlightBuckets(evidenceSnippet?: string | null): EvidenceHighlightBuckets {
+export function extractSecurityEvidenceHighlightBuckets(
+  evidenceSnippet?: string | null
+): EvidenceHighlightBuckets {
   const requestTerms: string[] = []
   const responseTerms: string[] = []
-  const fields = parseEvidenceSnippetFields(evidenceSnippet)
+  const fields = parseSecurityEvidenceSnippetFields(evidenceSnippet)
 
   for (const [key, value] of Object.entries(fields)) {
     if (REQUEST_TERM_KEYS.has(key)) {
@@ -142,9 +111,9 @@ export function extractSecurityEvidenceHighlightBuckets(evidenceSnippet?: string
 }
 
 export function extractSecurityEvidenceSnippetFields(
-  evidenceSnippet?: string | null,
+  evidenceSnippet?: string | null
 ): SecurityEvidenceSnippetFields {
-  const fields = parseEvidenceSnippetFields(evidenceSnippet)
+  const fields = parseSecurityEvidenceSnippetFields(evidenceSnippet)
 
   return {
     location: fields.location,
@@ -157,7 +126,7 @@ export function extractSecurityEvidenceSnippetFields(
 
 export function buildSecurityEvidenceRequestHtml(
   rawRequest: string,
-  evidenceSnippet?: string | null,
+  evidenceSnippet?: string | null
 ): string {
   const { requestTerms } = extractSecurityEvidenceHighlightBuckets(evidenceSnippet)
   return renderHighlightedHtml(rawRequest, requestTerms, 'request')
@@ -165,7 +134,7 @@ export function buildSecurityEvidenceRequestHtml(
 
 export function buildSecurityEvidenceResponseHtml(
   rawResponse: string,
-  evidenceSnippet?: string | null,
+  evidenceSnippet?: string | null
 ): string {
   const { responseTerms } = extractSecurityEvidenceHighlightBuckets(evidenceSnippet)
   return renderHighlightedHtml(rawResponse, responseTerms, 'response')

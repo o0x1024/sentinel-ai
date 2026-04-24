@@ -1,10 +1,12 @@
 use std::collections::{BTreeSet, HashMap};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use rig::tool::Tool;
 use rsubdomain::{
-    BruteForceProgress, BruteForceProgressPhase, DnsRecord, DnsResolveResult, ProgressCallback,
-    QueryType, SubdomainBruteConfig, SubdomainBruteEngine, SubdomainResult, VerifyResult,
+    BruteForceProgress, BruteForceProgressPhase, DnsRecord, DnsResolveResult, PacketTransport,
+    ProgressCallback, QueryType, SubdomainBruteConfig, SubdomainBruteEngine, SubdomainResult,
+    VerifyResult,
 };
 use schemars::JsonSchema;
 use sentinel_plugins::{
@@ -53,7 +55,7 @@ pub struct SubdomainBruteArgs {
     /// Inline subdomain prefixes. Merged with the selected/default runtime dictionary when available.
     #[serde(default)]
     pub dictionary: Vec<String>,
-    /// Custom DNS resolvers in host:port form.
+    /// Custom DNS resolvers as IP or IP:port values. Ports are ignored and only the IP is used.
     #[serde(default)]
     pub resolvers: Vec<String>,
     /// Skip wildcard domains to reduce noisy matches.
@@ -68,6 +70,9 @@ pub struct SubdomainBruteArgs {
     /// Maximum DNS retries per query.
     #[serde(default = "default_max_retries")]
     pub max_retries: u8,
+    /// DNS response timeout in seconds before a query is retried.
+    #[serde(default = "default_dns_timeout_seconds")]
+    pub dns_timeout_seconds: u64,
     /// Maximum wait time in seconds for the brute force round to finish.
     #[serde(default = "default_max_wait_seconds")]
     pub max_wait_seconds: u64,
@@ -89,6 +94,9 @@ pub struct SubdomainBruteArgs {
     /// Optional network device passed through to rsubdomain.
     #[serde(default)]
     pub device: Option<String>,
+    /// Packet transport mode. `ethernet` is the default high-performance path.
+    #[serde(default = "default_transport")]
+    pub transport: SubdomainTransportInput,
     /// Previous snapshots used to compute change events.
     #[serde(default)]
     pub previous_snapshots: HashMap<String, SubdomainSnapshot>,
@@ -113,6 +121,23 @@ pub enum SubdomainQueryTypeInput {
     Mx,
     Ns,
     Txt,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SubdomainTransportInput {
+    #[default]
+    Ethernet,
+    Udp,
+}
+
+impl From<SubdomainTransportInput> for PacketTransport {
+    fn from(value: SubdomainTransportInput) -> Self {
+        match value {
+            SubdomainTransportInput::Ethernet => PacketTransport::Ethernet,
+            SubdomainTransportInput::Udp => PacketTransport::Udp,
+        }
+    }
 }
 
 impl From<SubdomainQueryTypeInput> for QueryType {
@@ -149,6 +174,7 @@ pub struct SubdomainBruteData {
 pub struct SubdomainBruteSummary {
     pub total_targets: usize,
     pub dictionary_size: usize,
+    pub estimated_queries: usize,
     pub total_discovered: usize,
     pub domains_with_results: usize,
     pub alive_domains: usize,
@@ -160,7 +186,7 @@ pub struct SubdomainBruteSummary {
 pub struct SubdomainBruteResultEntry {
     pub root_domain: String,
     pub domain: String,
-    pub ip: String,
+    pub record_value: String,
     pub record_type: String,
     pub verified: Option<VerifiedDomain>,
     pub dns_records: Option<ResolvedDnsRecords>,
@@ -290,15 +316,17 @@ impl Tool for SubdomainBruteTool {
             Some(false),
         );
 
+        let estimated_queries = estimate_total_queries(&targets, &dictionary, &args.query_types);
         let config = build_brute_config(&args, &targets, &dictionary);
         emit_subdomain_progress(
             args.monitor_progress.as_ref(),
             2,
             4,
             Some(format!(
-                "Brute forcing {} target(s) with {} candidate subdomains",
+                "Brute forcing {} target(s) with {} candidate subdomains across {} DNS queries",
                 targets.len(),
-                dictionary.len()
+                dictionary.len(),
+                estimated_queries
             )),
             targets.first().cloned(),
             Some("bruteforcing".to_string()),
@@ -368,7 +396,7 @@ impl Tool for SubdomainBruteTool {
             .map(|result| SubdomainBruteResultEntry {
                 root_domain: match_root_domain(&targets, &result.domain),
                 domain: result.domain.clone(),
-                ip: result.ip.clone(),
+                record_value: result.value.clone(),
                 record_type: result.record_type.clone(),
                 verified: result.verified.as_ref().map(convert_verified_domain),
                 dns_records: result.dns_records.as_ref().map(convert_dns_records),
@@ -404,6 +432,7 @@ impl Tool for SubdomainBruteTool {
                 summary: SubdomainBruteSummary {
                     total_targets: targets.len(),
                     dictionary_size: dictionary.len(),
+                    estimated_queries,
                     total_discovered: raw_results.len(),
                     domains_with_results: grouped
                         .values()
@@ -480,28 +509,39 @@ fn build_brute_config(
 
     SubdomainBruteConfig {
         domains: targets.to_vec(),
-        resolvers: args
-            .resolvers
-            .iter()
-            .map(|item| item.trim().to_string())
-            .filter(|item| !item.is_empty())
-            .collect(),
+        resolvers: normalize_resolvers(&args.resolvers),
         dictionary_file: None,
         dictionary: Some(dictionary.to_vec()),
         skip_wildcard: args.skip_wildcard,
         bandwidth_limit: args.bandwidth_limit.clone(),
         verify_mode: args.verify_mode,
         max_retries: args.max_retries,
+        dns_timeout_seconds: args.dns_timeout_seconds,
         max_wait_seconds: args.max_wait_seconds,
         verify_timeout_seconds: args.verify_timeout_seconds,
         verify_concurrency: args.verify_concurrency.max(1),
         resolve_records: args.resolve_records,
+        cdn_detect: true,
+        cdn_collapse: true,
         query_types,
         silent: true,
         raw_records: args.raw_records,
         device: args.device.clone(),
+        transport: args.transport.into(),
         progress_callback: build_progress_callback(args.monitor_progress.as_ref()),
     }
+}
+
+fn estimate_total_queries(
+    targets: &[String],
+    dictionary: &[String],
+    query_types: &[SubdomainQueryTypeInput],
+) -> usize {
+    let query_type_count = query_types.len().max(1);
+    targets
+        .len()
+        .saturating_mul(dictionary.len())
+        .saturating_mul(query_type_count)
 }
 
 fn build_progress_callback(context: Option<&MonitorProgressContext>) -> Option<ProgressCallback> {
@@ -604,8 +644,12 @@ fn default_max_retries() -> u8 {
     5
 }
 
+fn default_dns_timeout_seconds() -> u64 {
+    10
+}
+
 fn default_max_wait_seconds() -> u64 {
-    300
+    10
 }
 
 fn default_verify_timeout_seconds() -> u64 {
@@ -618,6 +662,10 @@ fn default_verify_concurrency() -> usize {
 
 fn default_bandwidth_limit() -> Option<String> {
     Some("3M".to_string())
+}
+
+fn default_transport() -> SubdomainTransportInput {
+    SubdomainTransportInput::Ethernet
 }
 
 fn normalize_input_targets(args: &SubdomainBruteArgs) -> Vec<String> {
@@ -775,6 +823,28 @@ fn unique_sorted(values: Vec<String>) -> Vec<String> {
         }
     }
     set.into_iter().collect()
+}
+
+fn normalize_resolvers(values: &[String]) -> Vec<String> {
+    let mut normalized = BTreeSet::new();
+
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Ok(ip) = trimmed.parse::<IpAddr>() {
+            normalized.insert(ip.to_string());
+            continue;
+        }
+
+        if let Ok(socket) = trimmed.parse::<SocketAddr>() {
+            normalized.insert(socket.ip().to_string());
+        }
+    }
+
+    normalized.into_iter().collect()
 }
 
 fn group_subdomains_by_root(
@@ -965,7 +1035,7 @@ fn build_surface_artifacts(
             }
         }
 
-        let ip_value = result.ip.trim();
+        let ip_value = result.record_value.trim();
         if !ip_value.is_empty() && ip_value.parse::<std::net::IpAddr>().is_ok() {
             if ips.insert(ip_value.to_string()) {
                 ip_items.push(serde_json::json!({
@@ -995,12 +1065,12 @@ fn build_surface_artifacts(
             "asset_key": result.domain,
             "evidence_type": "subdomain_bruteforce",
             "title": format!("Dictionary brute force discovery: {}", result.domain),
-            "content_json": {
-                "root_domain": result.root_domain,
-                "ip": result.ip,
-                "record_type": result.record_type,
-                "verified": result.verified,
-                "dns_records": result.dns_records,
+                "content_json": {
+                    "root_domain": result.root_domain,
+                    "record_value": result.record_value,
+                    "record_type": result.record_type,
+                    "verified": result.verified,
+                    "dns_records": result.dns_records,
             },
             "source": "subdomain_brute",
         }));
@@ -1047,6 +1117,7 @@ mod tests {
             bandwidth_limit: default_bandwidth_limit(),
             verify_mode: false,
             max_retries: default_max_retries(),
+            dns_timeout_seconds: default_dns_timeout_seconds(),
             max_wait_seconds: default_max_wait_seconds(),
             verify_timeout_seconds: default_verify_timeout_seconds(),
             verify_concurrency: default_verify_concurrency(),
@@ -1054,6 +1125,7 @@ mod tests {
             query_types: Vec::new(),
             raw_records: false,
             device: None,
+            transport: default_transport(),
             previous_snapshots: HashMap::new(),
             monitor_progress: None,
         }
@@ -1094,6 +1166,10 @@ mod tests {
 
         assert_eq!(config.domains, vec!["example.com".to_string()]);
         assert_eq!(config.dictionary, Some(vec!["www".to_string()]));
+        assert_eq!(config.resolvers, vec!["1.1.1.1".to_string()]);
+        assert_eq!(config.dns_timeout_seconds, 10);
+        assert_eq!(config.max_wait_seconds, 10);
+        assert!(matches!(config.transport, PacketTransport::Ethernet));
         assert!(matches!(config.query_types.as_slice(), [QueryType::A]));
     }
 
@@ -1110,6 +1186,42 @@ mod tests {
         assert_eq!(config.query_types.len(), 2);
         assert!(matches!(config.query_types[0], QueryType::Aaaa));
         assert!(matches!(config.query_types[1], QueryType::Txt));
+    }
+
+    #[test]
+    fn normalize_resolvers_keeps_only_ip_addresses() {
+        let resolvers = normalize_resolvers(&[
+            "1.1.1.1:53".to_string(),
+            "8.8.8.8".to_string(),
+            "invalid".to_string(),
+            "8.8.8.8".to_string(),
+        ]);
+
+        assert_eq!(resolvers, vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()]);
+    }
+
+    #[test]
+    fn estimate_total_queries_uses_targets_dictionary_and_query_types() {
+        assert_eq!(
+            estimate_total_queries(
+                &["example.com".to_string(), "example.org".to_string()],
+                &["www".to_string(), "api".to_string(), "cdn".to_string()],
+                &[SubdomainQueryTypeInput::A, SubdomainQueryTypeInput::Txt],
+            ),
+            12
+        );
+    }
+
+    #[test]
+    fn estimate_total_queries_defaults_to_single_query_type() {
+        assert_eq!(
+            estimate_total_queries(
+                &["example.com".to_string()],
+                &["www".to_string(), "api".to_string()],
+                &[],
+            ),
+            2
+        );
     }
 
     #[test]

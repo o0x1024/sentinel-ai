@@ -110,44 +110,6 @@
           </span>
         </div>
 
-        <section
-          v-if="deleteActivityLog.length"
-          class="rounded-2xl border border-base-300 bg-base-200/30 px-4 py-3"
-        >
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <h3 class="text-sm font-medium">{{ $t('trafficAnalysis.oast.deleteActivityTitle') }}</h3>
-              <p class="text-xs text-base-content/60">
-                {{ $t('trafficAnalysis.oast.deleteActivityDesc') }}
-              </p>
-            </div>
-            <button class="btn btn-xs btn-ghost" type="button" @click="clearDeleteActivityLog">
-              {{ $t('trafficAnalysis.oast.clearDeleteActivity') }}
-            </button>
-          </div>
-          <div class="mt-3 space-y-2">
-            <div
-              v-for="entry in deleteActivityLog"
-              :key="entry.id"
-              class="rounded-xl border border-base-300 bg-base-100/80 px-3 py-2 text-xs"
-            >
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex min-w-0 flex-wrap items-center gap-2">
-                  <span class="badge badge-outline">{{ entry.action }}</span>
-                  <span class="font-mono text-base-content/70">{{ entry.token }}</span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-base-content/50">{{ formatDateTime(entry.at) }}</span>
-                  <button class="btn btn-ghost btn-xs" type="button" @click="copyDeleteActivitySummary(entry)">
-                    {{ $t('trafficAnalysis.oast.copyDeleteActivity') }}
-                  </button>
-                </div>
-              </div>
-              <p class="mt-1 text-base-content/70">{{ entry.summary }}</p>
-            </div>
-          </div>
-        </section>
-
         <div v-if="filteredRecords.length === 0" class="rounded-2xl border border-dashed border-base-300 p-8 text-center">
           <i class="fas fa-filter text-3xl text-base-content/30"></i>
           <p class="mt-3 text-sm font-medium">{{ $t('trafficAnalysis.oast.noFilteredResultsTitle') }}</p>
@@ -250,6 +212,16 @@
                     <span>{{ $t('trafficAnalysis.oast.selectAllFiltered') }}</span>
                   </label>
                   <button
+                    v-if="record.events.length"
+                    class="btn btn-xs btn-outline text-error"
+                    type="button"
+                    :disabled="isDeletingAllEvents(record)"
+                    @click="removeAllEvents(record)"
+                  >
+                    <i :class="isDeletingAllEvents(record) ? 'fas fa-spinner fa-spin' : 'fas fa-trash'"></i>
+                    <span>{{ $t('trafficAnalysis.oast.deleteAllEvents') }}</span>
+                  </button>
+                  <button
                     v-if="getSelectedEventKeySet(record.token).size"
                     class="btn btn-xs btn-ghost"
                     type="button"
@@ -303,6 +275,9 @@
                     </button>
                   </div>
                   <p class="mt-2 break-all font-mono">{{ event.url }}</p>
+                  <p class="mt-1 text-base-content/60">
+                    {{ $t('trafficAnalysis.oast.eventTime') }}: {{ formatDateTime(event.time) }}
+                  </p>
                   <p v-if="event.userAgent" class="mt-1 break-all text-base-content/60">
                     UA: {{ event.userAgent }}
                   </p>
@@ -325,9 +300,9 @@ import { getProxyRequest, resolveProxyHistoryRequestIdByDbRequestId } from '@/ap
 import { dialog } from '@/composables/useDialog'
 import {
   createTrafficOastToken,
-  deleteTrafficOastEvents,
   deleteTrafficOastRecord,
   getTrafficOastConfig,
+  hideTrafficOastEvents,
   listTrafficOastRecords,
   syncTrafficOastRecords,
 } from '@/api/trafficOast'
@@ -361,13 +336,6 @@ const records = ref<TrafficOastRecord[]>([])
 const sourceRequests = ref<Record<number, ProxyRequest>>({})
 const selectedEventKeys = ref<Record<string, string[]>>({})
 const deletingEventOperationKeys = ref<string[]>([])
-const deleteActivityLog = ref<Array<{
-  id: string
-  action: string
-  token: string
-  summary: string
-  at: string
-}>>([])
 let syncTimer: number | null = null
 
 const autoSyncEnabled = computed(() => config.value.enabled && config.value.pollIntervalSecs >= 5)
@@ -461,39 +429,6 @@ function applyRecords(items: TrafficOastRecord[]) {
   pruneSelectedEventKeys(records.value)
 }
 
-function pushDeleteActivity(action: string, token: string, summary: string) {
-  deleteActivityLog.value = [
-    {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      action,
-      token,
-      summary,
-      at: new Date().toISOString(),
-    },
-    ...deleteActivityLog.value,
-  ].slice(0, 6)
-}
-
-function clearDeleteActivityLog() {
-  deleteActivityLog.value = []
-}
-
-async function copyDeleteActivitySummary(entry: { action: string; token: string; summary: string; at: string }) {
-  const content = [
-    `${t('trafficAnalysis.oast.deleteActivityActionLabel')}: ${entry.action}`,
-    `Token: ${entry.token}`,
-    `${t('trafficAnalysis.oast.deleteActivityTimeLabel')}: ${formatDateTime(entry.at)}`,
-    `${t('trafficAnalysis.oast.deleteActivitySummaryLabel')}: ${entry.summary}`,
-  ].join('\n')
-
-  try {
-    await navigator.clipboard.writeText(content)
-    dialog.toast.success(t('trafficAnalysis.oast.copiedDeleteActivity'))
-  } catch {
-    dialog.toast.error(t('trafficAnalysis.oast.copyFailed'))
-  }
-}
-
 async function loadPanel() {
   loading.value = true
   try {
@@ -579,11 +514,6 @@ async function removeRecord(token: string) {
         ? t('trafficAnalysis.oast.localRemoved')
         : t('trafficAnalysis.oast.localRemoveUnknown'),
     })
-    pushDeleteActivity(
-      t('trafficAnalysis.oast.deleteRecordAction'),
-      token,
-      summary,
-    )
     dialog.toast.success(summary)
   } catch (error) {
     console.error('[TrafficOastPanel] Failed to delete record:', error)
@@ -692,36 +622,35 @@ function isDeletingSelectedEvents(record: TrafficOastRecord) {
   return getSelectedEvents(record).some(event => isDeletingEvent(record.token, event))
 }
 
+function isDeletingAllEvents(record: TrafficOastRecord) {
+  return record.events.some(event => isDeletingEvent(record.token, event))
+}
+
 function upsertRecord(updated: TrafficOastRecord) {
   applyRecords(records.value.map(record => record.token === updated.token ? updated : record))
 }
 
-async function removeEvent(record: TrafficOastRecord, event: TrafficOastEvent) {
-  const confirmed = await dialog.confirm(
-    t('trafficAnalysis.oast.confirmDeleteEvent'),
-  )
-  if (!confirmed) {
-    return
-  }
+function pushDeletedEventsActivity(deletedCount: number, remainingEventCount: number) {
+  const summary = t('trafficAnalysis.oast.hiddenEventsSummary', {
+    hidden: deletedCount,
+    visible: remainingEventCount,
+  })
+  dialog.toast.success(summary)
+}
 
+async function removeEvent(record: TrafficOastRecord, event: TrafficOastEvent) {
   const operationKey = buildRecordEventOperationKey(record.token, event)
   deletingEventOperationKeys.value = [...deletingEventOperationKeys.value, operationKey]
 
   try {
-    const result = await deleteTrafficOastEvents(record.token, [buildDeleteEventKey(event)])
+    const result = await hideTrafficOastEvents(record.token, [buildDeleteEventKey(event)])
     upsertRecord(result.record)
-    const summary = t('trafficAnalysis.oast.deletedEventsSummary', {
-      deleted: result.deletedCount,
-      remaining: result.remainingEventCount,
-    })
-    pushDeleteActivity(
-      t('trafficAnalysis.oast.deleteEventAction'),
-      record.token,
-      summary,
+    pushDeletedEventsActivity(
+      result.hiddenCount,
+      result.visibleEventCount,
     )
-    dialog.toast.success(summary)
   } catch (error) {
-    console.error('[TrafficOastPanel] Failed to delete OAST event:', error)
+    console.error('[TrafficOastPanel] Failed to hide OAST event:', error)
     dialog.toast.error(String(error))
   } finally {
     deletingEventOperationKeys.value = deletingEventOperationKeys.value.filter(key => key !== operationKey)
@@ -734,35 +663,51 @@ async function removeSelectedEvents(record: TrafficOastRecord) {
     return
   }
 
-  const confirmed = await dialog.confirm(
-    t('trafficAnalysis.oast.confirmDeleteSelectedEvents', { count: selectedEvents.length }),
-  )
-  if (!confirmed) {
-    return
-  }
-
   const operationKeys = selectedEvents.map(event => buildRecordEventOperationKey(record.token, event))
   deletingEventOperationKeys.value = [...new Set([...deletingEventOperationKeys.value, ...operationKeys])]
 
   try {
-    const result = await deleteTrafficOastEvents(
+    const result = await hideTrafficOastEvents(
       record.token,
       selectedEvents.map(event => buildDeleteEventKey(event)),
     )
     clearSelectedEvents(record.token)
     upsertRecord(result.record)
-    const summary = t('trafficAnalysis.oast.deletedEventsSummary', {
-      deleted: result.deletedCount,
-      remaining: result.remainingEventCount,
-    })
-    pushDeleteActivity(
-      t('trafficAnalysis.oast.deleteSelectedEventsAction', { count: selectedEvents.length }),
-      record.token,
-      summary,
+    pushDeletedEventsActivity(
+      result.hiddenCount,
+      result.visibleEventCount,
     )
-    dialog.toast.success(summary)
   } catch (error) {
-    console.error('[TrafficOastPanel] Failed to delete selected OAST events:', error)
+    console.error('[TrafficOastPanel] Failed to hide selected OAST events:', error)
+    dialog.toast.error(String(error))
+  } finally {
+    deletingEventOperationKeys.value = deletingEventOperationKeys.value.filter(
+      key => !operationKeys.includes(key),
+    )
+  }
+}
+
+async function removeAllEvents(record: TrafficOastRecord) {
+  if (!record.events.length) {
+    return
+  }
+
+  const operationKeys = record.events.map(event => buildRecordEventOperationKey(record.token, event))
+  deletingEventOperationKeys.value = [...new Set([...deletingEventOperationKeys.value, ...operationKeys])]
+
+  try {
+    const result = await hideTrafficOastEvents(
+      record.token,
+      record.events.map(event => buildDeleteEventKey(event)),
+    )
+    clearSelectedEvents(record.token)
+    upsertRecord(result.record)
+    pushDeletedEventsActivity(
+      result.hiddenCount,
+      result.visibleEventCount,
+    )
+  } catch (error) {
+    console.error('[TrafficOastPanel] Failed to hide all OAST events:', error)
     dialog.toast.error(String(error))
   } finally {
     deletingEventOperationKeys.value = deletingEventOperationKeys.value.filter(

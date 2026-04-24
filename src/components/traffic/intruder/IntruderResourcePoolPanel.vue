@@ -19,13 +19,13 @@
         <table class="w-full border-collapse text-left text-xs">
           <thead class="bg-base-200/80 text-base-content/70">
             <tr>
-              <th class="border-b border-base-300 px-3 py-2 font-medium">{{ $t('trafficAnalysis.intruder.labels.selected') }}</th>
-              <th class="border-b border-base-300 px-3 py-2 font-medium">{{ $t('trafficAnalysis.intruder.labels.resourcePool') }}</th>
-              <th class="border-b border-base-300 px-3 py-2 font-medium">{{ $t('trafficAnalysis.intruder.labels.concurrentRequests') }}</th>
-              <th class="border-b border-base-300 px-3 py-2 font-medium">{{ $t('trafficAnalysis.intruder.labels.requestDelay') }}</th>
-              <th class="border-b border-base-300 px-3 py-2 font-medium">{{ $t('trafficAnalysis.intruder.labels.randomDelay') }}</th>
-              <th class="border-b border-base-300 px-3 py-2 font-medium">{{ $t('trafficAnalysis.intruder.labels.delayIncrement') }}</th>
-              <th class="border-b border-base-300 px-3 py-2 font-medium">{{ $t('trafficAnalysis.intruder.labels.autoThrottle') }}</th>
+              <th class="border-b border-base-300 px-3 py-1.5 font-medium">{{ $t('trafficAnalysis.intruder.labels.selected') }}</th>
+              <th class="border-b border-base-300 px-3 py-1.5 font-medium">{{ $t('trafficAnalysis.intruder.labels.resourcePool') }}</th>
+              <th class="border-b border-base-300 px-3 py-1.5 font-medium">{{ $t('trafficAnalysis.intruder.labels.concurrentRequests') }}</th>
+              <th class="border-b border-base-300 px-3 py-1.5 font-medium">{{ $t('trafficAnalysis.intruder.labels.requestDelay') }}</th>
+              <th class="border-b border-base-300 px-3 py-1.5 font-medium">{{ $t('trafficAnalysis.intruder.labels.randomDelay') }}</th>
+              <th class="border-b border-base-300 px-3 py-1.5 font-medium">{{ $t('trafficAnalysis.intruder.labels.delayIncrement') }}</th>
+              <th class="border-b border-base-300 px-3 py-1.5 font-medium">{{ $t('trafficAnalysis.intruder.labels.autoThrottle') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -36,7 +36,7 @@
               :class="mode === 'existing' && selectedPoolId === pool.id ? 'bg-base-200/60' : ''"
               @click="selectPool(pool.id)"
             >
-              <td class="border-b border-base-300 px-3 py-2 align-middle">
+              <td class="border-b border-base-300 px-3 py-1 align-middle">
                 <input
                   :checked="mode === 'existing' && selectedPoolId === pool.id"
                   type="radio"
@@ -45,12 +45,12 @@
                   @change="selectPool(pool.id)"
                 />
               </td>
-              <td class="border-b border-base-300 px-3 py-2 align-middle">{{ pool.name }}</td>
-              <td class="border-b border-base-300 px-3 py-2 align-middle">{{ pool.concurrencyEnabled ? pool.concurrency : '' }}</td>
-              <td class="border-b border-base-300 px-3 py-2 align-middle">{{ pool.delayEnabled ? `${pool.delayMs}` : '' }}</td>
-              <td class="border-b border-base-300 px-3 py-2 align-middle">{{ pool.delayEnabled && pool.randomDelayEnabled ? `${pool.randomDelayMs}` : '' }}</td>
-              <td class="border-b border-base-300 px-3 py-2 align-middle">{{ pool.delayEnabled && pool.delayIncrementEnabled ? `${pool.delayIncrementMs}` : '' }}</td>
-              <td class="border-b border-base-300 px-3 py-2 align-middle">{{ pool.autoThrottleEnabled ? $t('trafficAnalysis.intruder.labels.yes') : '' }}</td>
+              <td class="border-b border-base-300 px-3 py-1 align-middle">{{ pool.name }}</td>
+              <td class="border-b border-base-300 px-3 py-1 align-middle">{{ pool.concurrencyEnabled ? pool.concurrency : '' }}</td>
+              <td class="border-b border-base-300 px-3 py-1 align-middle">{{ pool.delayEnabled ? `${pool.delayMs}` : '' }}</td>
+              <td class="border-b border-base-300 px-3 py-1 align-middle">{{ pool.delayEnabled && pool.randomDelayEnabled ? `${pool.randomDelayMs}` : '' }}</td>
+              <td class="border-b border-base-300 px-3 py-1 align-middle">{{ pool.delayEnabled && pool.delayIncrementEnabled ? `${pool.delayIncrementMs}` : '' }}</td>
+              <td class="border-b border-base-300 px-3 py-1 align-middle">{{ pool.autoThrottleEnabled ? $t('trafficAnalysis.intruder.labels.yes') : '' }}</td>
             </tr>
           </tbody>
         </table>
@@ -79,9 +79,11 @@
           />
         </label>
 
-        <label class="flex flex-wrap items-center gap-3">
-          <input v-model="draft.concurrencyEnabled" type="checkbox" class="checkbox checkbox-sm" />
-          <span>{{ $t('trafficAnalysis.intruder.labels.maximumConcurrentRequests') }}:</span>
+        <div class="flex flex-wrap items-center gap-3">
+          <label class="flex items-center gap-3">
+            <input v-model="draft.concurrencyEnabled" type="checkbox" class="checkbox checkbox-sm" />
+            <span>{{ $t('trafficAnalysis.intruder.labels.maximumConcurrentRequests') }}:</span>
+          </label>
           <input
             v-model.number="draft.concurrency"
             type="number"
@@ -90,12 +92,14 @@
             class="input input-bordered input-sm w-24"
             :disabled="!draft.concurrencyEnabled"
           />
-        </label>
+        </div>
 
         <div class="space-y-3">
-          <label class="flex flex-wrap items-center gap-3">
-            <input v-model="draft.delayEnabled" type="checkbox" class="checkbox checkbox-sm" />
-            <span>{{ $t('trafficAnalysis.intruder.labels.delayBetweenRequests') }}:</span>
+          <div class="flex flex-wrap items-center gap-3">
+            <label class="flex items-center gap-3">
+              <input v-model="draft.delayEnabled" type="checkbox" class="checkbox checkbox-sm" />
+              <span>{{ $t('trafficAnalysis.intruder.labels.delayBetweenRequests') }}:</span>
+            </label>
             <input
               v-model.number="draft.delayMs"
               type="number"
@@ -105,7 +109,7 @@
               :disabled="!draft.delayEnabled"
             />
             <span class="text-xs text-base-content/70">{{ $t('trafficAnalysis.intruder.labels.milliseconds') }}</span>
-          </label>
+          </div>
 
           <div class="space-y-2 pl-8">
             <label class="flex items-center gap-2">
@@ -119,15 +123,17 @@
               <span>{{ $t('trafficAnalysis.intruder.labels.fixed') }}</span>
             </label>
 
-            <label class="flex flex-wrap items-center gap-3">
-              <input
-                :checked="delayMode === 'random'"
-                type="radio"
-                class="radio radio-xs"
-                :disabled="!draft.delayEnabled"
-                @change="setDelayMode('random')"
-              />
-              <span>{{ $t('trafficAnalysis.intruder.labels.withRandomVariations') }}</span>
+            <div class="flex flex-wrap items-center gap-3">
+              <label class="flex items-center gap-3">
+                <input
+                  :checked="delayMode === 'random'"
+                  type="radio"
+                  class="radio radio-xs"
+                  :disabled="!draft.delayEnabled"
+                  @change="setDelayMode('random')"
+                />
+                <span>{{ $t('trafficAnalysis.intruder.labels.withRandomVariations') }}</span>
+              </label>
               <input
                 v-model.number="draft.randomDelayMs"
                 type="number"
@@ -137,17 +143,19 @@
                 :disabled="!draft.delayEnabled || delayMode !== 'random'"
               />
               <span class="text-xs text-base-content/70">{{ $t('trafficAnalysis.intruder.labels.milliseconds') }}</span>
-            </label>
+            </div>
 
-            <label class="flex flex-wrap items-center gap-3">
-              <input
-                :checked="delayMode === 'increment'"
-                type="radio"
-                class="radio radio-xs"
-                :disabled="!draft.delayEnabled"
-                @change="setDelayMode('increment')"
-              />
-              <span>{{ $t('trafficAnalysis.intruder.labels.increaseDelayInIncrementsOf') }}</span>
+            <div class="flex flex-wrap items-center gap-3">
+              <label class="flex items-center gap-3">
+                <input
+                  :checked="delayMode === 'increment'"
+                  type="radio"
+                  class="radio radio-xs"
+                  :disabled="!draft.delayEnabled"
+                  @change="setDelayMode('increment')"
+                />
+                <span>{{ $t('trafficAnalysis.intruder.labels.increaseDelayInIncrementsOf') }}</span>
+              </label>
               <input
                 v-model.number="draft.delayIncrementMs"
                 type="number"
@@ -157,7 +165,7 @@
                 :disabled="!draft.delayEnabled || delayMode !== 'increment'"
               />
               <span class="text-xs text-base-content/70">{{ $t('trafficAnalysis.intruder.labels.milliseconds') }}</span>
-            </label>
+            </div>
           </div>
         </div>
 
@@ -209,6 +217,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { buildIntruderResourcePoolAutoName } from './storage'
 import type { IntruderAttackOptions, IntruderResourcePool } from './types'
 
 interface ResourcePoolDraft {
@@ -253,6 +262,7 @@ const draftStatusSelections = reactive({
   useOther: false,
   otherStatusesText: '',
 })
+const lastAutoGeneratedName = ref('')
 const draft = ref<ResourcePoolDraft>(createDraftFromAttackOptions())
 const syncingDraft = ref(false)
 
@@ -320,8 +330,8 @@ function getNormalizedAttackOptions() {
 
 function createDraftFromAttackOptions(): ResourcePoolDraft {
   const attackOptions = getNormalizedAttackOptions()
-  return {
-    name: '',
+  const nextDraft = {
+    name: buildAutoGeneratedDraftName(undefined),
     concurrencyEnabled: true,
     concurrency: attackOptions.concurrency,
     delayEnabled: true,
@@ -333,6 +343,8 @@ function createDraftFromAttackOptions(): ResourcePoolDraft {
     autoThrottleEnabled: attackOptions.autoThrottleEnabled,
     autoThrottleStatusCodes: [...attackOptions.autoThrottleStatusCodes],
   }
+  lastAutoGeneratedName.value = buildAutoGeneratedDraftName(undefined)
+  return nextDraft
 }
 
 function applyDraft(nextDraft: ResourcePoolDraft) {
@@ -388,7 +400,7 @@ function buildPoolDraftForPersist(): ResourcePoolDraft {
   const attackOptions = buildAttackOptionsFromDraft()
   return {
     id: draft.value.id,
-    name: draft.value.name.trim(),
+    name: draft.value.name.trim() || buildAutoGeneratedDraftName(draft.value.id),
     concurrencyEnabled: draft.value.concurrencyEnabled,
     concurrency: attackOptions.concurrency,
     delayEnabled: draft.value.delayEnabled,
@@ -402,13 +414,39 @@ function buildPoolDraftForPersist(): ResourcePoolDraft {
   }
 }
 
+function buildAutoGeneratedDraftName(currentPoolId?: string): string {
+  return buildIntruderResourcePoolAutoName(props.pools, currentPoolId)
+}
+
+function syncAutoGeneratedDraftName() {
+  const nextAutoName = buildAutoGeneratedDraftName(draft.value.id)
+  const currentName = draft.value.name.trim()
+  const shouldReplace = !currentName || currentName === lastAutoGeneratedName.value
+  lastAutoGeneratedName.value = nextAutoName
+
+  if (!shouldReplace || currentName === nextAutoName) {
+    return
+  }
+
+  syncingDraft.value = true
+  draft.value = {
+    ...draft.value,
+    name: nextAutoName,
+  }
+  syncingDraft.value = false
+}
+
 function startCreateMode() {
   if (mode.value === 'create') return
   mode.value = 'create'
-  applyDraft({
+  const nextDraft = {
     ...draft.value,
     id: undefined,
-    name: '',
+    name: buildAutoGeneratedDraftName(undefined),
+  }
+  lastAutoGeneratedName.value = nextDraft.name
+  applyDraft({
+    ...nextDraft,
   })
 }
 
@@ -427,10 +465,11 @@ function handleDraftMutation() {
     startCreateMode()
   }
 
+  syncAutoGeneratedDraftName()
+
   emit('update:attack-options', buildAttackOptionsFromDraft())
 
   const nextPool = buildPoolDraftForPersist()
-  if (!nextPool.name) return
   emit('upsert:pool', nextPool)
 }
 
@@ -456,3 +495,9 @@ function removeSelectedPool() {
   mode.value = 'existing'
 }
 </script>
+
+<style scoped>
+table tbody tr {
+  height: 1.9rem;
+}
+</style>

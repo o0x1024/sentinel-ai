@@ -81,7 +81,6 @@ const WorkflowStudio = () => import('./views/WorkflowStudio.vue')
 const AIAssistant = () => import('./views/AIAssistant.vue')
 const RAGManagement = () => import('./views/RAGManagement.vue')
 const TrafficAnalysis = () => import('./views/TrafficAnalysis.vue')
-const IntruderResultsWindow = () => import('./views/IntruderResultsWindow.vue')
 const HelpCenterWindow = () => import('./views/HelpCenterWindow.vue')
 const PluginManagement = () => import('./views/PluginManagement.vue')
 const BugBounty = () => import('./views/BugBounty.vue')
@@ -154,12 +153,6 @@ const routes = [
     name: 'TrafficAnalysis',
     component: TrafficAnalysis,
     meta: { title: '流量分析' },
-  },
-  {
-    path: '/intruder-results/:workspaceId',
-    name: 'IntruderResultsWindow',
-    component: IntruderResultsWindow,
-    meta: { title: '爆破器结果', standalone: true },
   },
   {
     path: '/help-center',

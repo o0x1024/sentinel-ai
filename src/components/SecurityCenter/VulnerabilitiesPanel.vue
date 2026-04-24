@@ -2,14 +2,6 @@
   <div class="space-y-6">
     <VulnerabilitiesStatsOverview :stats="stats" />
 
-    <VulnerabilitiesEvaluationSummaryPanel
-      :current="evaluationComparison"
-      :history="evaluationComparisonHistory"
-      @select-history="selectEvaluationHistoryEntry"
-      @clear-current="clearEvaluationComparison"
-      @clear-history="clearEvaluationComparisonHistory"
-    />
-
     <!-- 筛选器 -->
     <div class="bg-base-100 rounded-lg p-4 shadow-sm border border-base-300">
       <div class="space-y-3">
@@ -61,89 +53,64 @@
               @input="applyFilters"
             />
           </div>
-          <button @click="refreshFindings" class="btn btn-outline btn-sm">
-            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              ></path>
-            </svg>
-            {{ $t('common.refresh') }}
-          </button>
-          <button
-            @click="exportCurrentSnapshot"
-            class="btn btn-outline btn-sm"
-            :disabled="exportingSnapshot"
-          >
-            <span v-if="exportingSnapshot" class="loading loading-spinner loading-xs mr-1"></span>
-            <svg v-else class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 16V4m0 12l-4-4m4 4l4-4M4 20h16"
-              ></path>
-            </svg>
-            导出评测快照
-          </button>
-          <button @click="loadEvaluationComparison" class="btn btn-outline btn-sm">
-            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 4v16m8-8H4"
-              ></path>
-            </svg>
-            导入评测对照
-          </button>
-        </div>
-
-        <!-- 批量操作 -->
-        <div v-if="selectedIds.size > 0" class="flex flex-wrap items-center gap-2">
-          <span class="text-sm text-base-content/70">已选择 {{ selectedIds.size }} 项</span>
-          <button @click="markSelectedAsRead" class="btn btn-success btn-sm btn-outline">
-            标记选中为已读
-          </button>
-          <button @click="markCurrentPageAsRead" class="btn btn-success btn-sm btn-outline">
-            标记本页已读
-          </button>
-          <button
-            @click="markAllFilteredAsRead"
-            class="btn btn-success btn-sm btn-outline"
-            :disabled="!canMarkAllFilteredAsRead"
-          >
-            全部标记已读
-          </button>
-          <button @click="deleteSelected" class="btn btn-error btn-sm">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-              ></path>
-            </svg>
-            删除选中
-          </button>
-          <button
-            @click="deleteAll"
-            class="btn btn-error btn-outline btn-sm"
-            :disabled="totalCount === 0"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-              ></path>
-            </svg>
-            删除全部
-          </button>
-          <button @click="selectedIds.clear()" class="btn btn-ghost btn-sm">取消选择</button>
+          <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <button @click="refreshFindings" class="btn btn-outline btn-sm">
+              <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                ></path>
+              </svg>
+              {{ $t('common.refresh') }}
+            </button>
+            <span class="text-sm text-base-content/70">已选择 {{ selectedIds.size }} 项</span>
+            <button
+              @click="markCurrentPageAsRead"
+              class="btn btn-success btn-sm btn-outline"
+              :disabled="findings.length === 0"
+            >
+              标记本页已读
+            </button>
+            <button
+              @click="markAllFilteredAsRead"
+              class="btn btn-success btn-sm btn-outline"
+              :disabled="!canMarkAllFilteredAsRead"
+            >
+              全部标记已读
+            </button>
+            <button
+              @click="deleteSelected"
+              class="btn btn-error btn-sm"
+              :disabled="selectedIds.size === 0"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                ></path>
+              </svg>
+              删除选中
+            </button>
+            <button
+              @click="deleteAll"
+              class="btn btn-error btn-outline btn-sm"
+              :disabled="totalCount === 0"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                ></path>
+              </svg>
+              删除全部
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -186,10 +153,12 @@
               :finding="finding"
               :selected="selectedIds.has(finding.id)"
               :read="isFindingRead(finding.id)"
+              :reviewing="reviewingFindingId === finding.id"
               @toggle-select="toggleSelect"
               @open-details="openDetails"
               @open-workbench="openWorkbenchForFinding"
               @mark-read="markSingleAsRead"
+              @ai-review="reviewFindingWithAi"
               @delete="deleteSingle"
             />
           </tbody>
@@ -347,7 +316,11 @@
           :transfer-messages="transferMessages"
           :finding="selectedFinding"
           :open-workbench-label="t('vulnerabilities.openWorkbench')"
+          :ai-review-label="t('vulnerabilities.aiReview.action')"
+          :ai-review-running-label="t('vulnerabilities.aiReview.running')"
+          :reviewing="reviewingFindingId === selectedFinding?.id"
           :close-label="t('common.close')"
+          @ai-review="reviewFindingWithAi"
           @open-workbench="openWorkbenchForFinding"
           @close="closeDetails"
         />
@@ -405,27 +378,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
-import { exportFindingSnapshot } from './vulnerabilitiesExportSupport'
-import {
-  clearPersistedEvaluationComparisonHistory,
-  clearPersistedEvaluationComparison,
-  importEvaluationComparison,
-  loadPersistedEvaluationComparison,
-  loadPersistedEvaluationComparisonHistory,
-  persistEvaluationComparison,
-  persistEvaluationComparisonHistory,
-  type EvaluationComparisonSummary,
-} from './vulnerabilitiesEvaluationSupport'
-import {
-  findEvaluationHistoryEntry,
-  mergeEvaluationHistory,
-} from './vulnerabilitiesEvaluationHistorySupport'
 import VulnerabilityDetailFooterActions from './VulnerabilityDetailFooterActions.vue'
 import VulnerabilityDetailOverview from './VulnerabilityDetailOverview.vue'
 import VulnerabilityEvidenceList from './VulnerabilityEvidenceList.vue'
@@ -433,14 +391,15 @@ import VulnerabilityFindingRow from './VulnerabilityFindingRow.vue'
 import VulnerabilitySystemAgentPanel from './VulnerabilitySystemAgentPanel.vue'
 import VulnerabilityTimelinePanel from './VulnerabilityTimelinePanel.vue'
 import VulnerabilitiesStatsOverview from './VulnerabilitiesStatsOverview.vue'
-import VulnerabilitiesEvaluationSummaryPanel from './VulnerabilitiesEvaluationSummaryPanel.vue'
 import { getOrCreateWorkbenchCaseForFinding } from './securityWorkbenchCaseSupport'
 import {
+  openSecurityEvidenceInTrafficWorkbench,
   findFirstTransferableSecurityEvidence,
   type SecurityEvidenceTransferMessages,
 } from './securityEvidenceTransferSupport'
+import { resolveSecurityEvidenceTransferShortcut } from './securityEvidenceTransferShortcut'
 import { useSecurityCenterActivity } from '@/composables/useSecurityCenterActivity'
-import type { Finding } from './vulnerabilityFindingTypes'
+import type { Evidence, Finding } from './vulnerabilityFindingTypes'
 import { isSystemAgentFinding } from './vulnerabilityFindingPresentation'
 
 const { t } = useI18n()
@@ -467,11 +426,10 @@ const showDeleteAllModal = ref(false)
 const selectedFinding = ref<Finding | null>(null)
 const selectedIds = ref<Set<string>>(new Set())
 const feedbackingId = ref<string | null>(null)
+const reviewingFindingId = ref<string | null>(null)
 type DetailTabId = 'overview' | 'evidence' | 'system_agent' | 'timeline'
-const detailTab = ref<DetailTabId>('overview')
-const exportingSnapshot = ref(false)
-const evaluationComparison = ref<EvaluationComparisonSummary | null>(null)
-const evaluationComparisonHistory = ref<EvaluationComparisonSummary[]>([])
+const DEFAULT_DETAIL_TAB: DetailTabId = 'evidence'
+const detailTab = ref<DetailTabId>(DEFAULT_DETAIL_TAB)
 const consumedRouteFindingId = ref<string | null>(null)
 const consumedImmersiveFindingRequestKey = ref<number | null>(null)
 
@@ -504,11 +462,11 @@ const primaryTransferableEvidence = computed(() =>
 )
 const transferMessages = computed<SecurityEvidenceTransferMessages>(() => ({
   triggerLabel: t('vulnerabilities.transfer.triggerLabel'),
-  sendToRepeater: t('vulnerabilities.transfer.sendToRepeater'),
-  sendToIntruder: t('vulnerabilities.transfer.sendToIntruder'),
+  createDraft: t('vulnerabilities.transfer.createDraft'),
+  createAttackWorkspace: t('vulnerabilities.transfer.createAttackWorkspace'),
   noTransferableRequest: t('vulnerabilities.transfer.noFindingTransferableRequest'),
-  sentToRepeater: t('vulnerabilities.transfer.sentToRepeater'),
-  sentToIntruder: t('vulnerabilities.transfer.sentToIntruder'),
+  draftCreated: t('vulnerabilities.transfer.draftCreated'),
+  attackWorkspaceCreated: t('vulnerabilities.transfer.attackWorkspaceCreated'),
   transferFailed: t('vulnerabilities.transfer.transferFailed', { error: '{error}' }),
 }))
 const detailTabs = computed<Array<{ id: DetailTabId; label: string }>>(() => {
@@ -522,6 +480,34 @@ const detailTabs = computed<Array<{ id: DetailTabId; label: string }>>(() => {
   tabs.push({ id: 'timeline', label: '时间线' })
   return tabs
 })
+
+const formatTransferError = (error: unknown) =>
+  transferMessages.value.transferFailed.replace('{error}', String(error))
+
+const transferSelectedFindingRequest = async (target: 'draft' | 'attackWorkspace') => {
+  const evidence = primaryTransferableEvidence.value
+  if (!evidence) {
+    dialog.toast.warning(transferMessages.value.noTransferableRequest)
+    return
+  }
+
+  try {
+    const handled = await openSecurityEvidenceInTrafficWorkbench(router, evidence, target)
+    if (!handled) {
+      dialog.toast.warning(transferMessages.value.noTransferableRequest)
+      return
+    }
+
+    dialog.toast.success(
+      target === 'draft'
+        ? transferMessages.value.draftCreated
+        : transferMessages.value.attackWorkspaceCreated,
+    )
+  } catch (error) {
+    console.error('Failed to send security evidence request from shortcut:', error)
+    dialog.toast.error(formatTransferError(error))
+  }
+}
 
 const resolveStatusFilters = () => {
   if (filters.value.status && VALID_STATUS_FILTERS.has(filters.value.status)) {
@@ -594,6 +580,39 @@ const normalizeFindingsResponse = (response: any): Finding[] => {
       }
     })
     .filter((f: Finding | null): f is Finding => f !== null)
+}
+
+const selectPrimaryEvidence = (evidence: Evidence[] = []) =>
+  evidence.find(item => !item.location.startsWith('system_agent_'))
+  || evidence.find(
+    item => !['system_agent_verification', 'system_agent_feedback'].includes(item.location),
+  )
+  || evidence[0]
+
+const buildDetailedFinding = (detail: any, fallbackFinding: Finding | null = null): Finding | null => {
+  const vulnerability = detail?.vulnerability
+  if (!vulnerability) {
+    return fallbackFinding
+  }
+
+  const evidence = Array.isArray(detail?.evidence) ? detail.evidence : (fallbackFinding?.evidence || [])
+  const primaryEvidence = selectPrimaryEvidence(evidence)
+
+  return {
+    ...(fallbackFinding || {}),
+    ...vulnerability,
+    url: primaryEvidence?.url || fallbackFinding?.url || '',
+    method: primaryEvidence?.method || fallbackFinding?.method,
+    evidence,
+  } as Finding
+}
+
+const fetchFindingDetail = async (findingId: string, fallbackFinding: Finding | null = null) => {
+  const response = await invoke<any>('get_finding', { findingId })
+  if (!response?.success || !response?.data) {
+    return fallbackFinding
+  }
+  return buildDetailedFinding(response.data, fallbackFinding)
 }
 
 const summarizeFindingsBySeverity = (items: Finding[]) => {
@@ -802,74 +821,6 @@ const syncFiltersFromRouteQuery = () => {
   return true
 }
 
-const loadEvaluationComparison = async () => {
-  try {
-    const imported = await importEvaluationComparison()
-    evaluationComparison.value = imported
-    if (imported) {
-      await persistEvaluationComparison(imported)
-      evaluationComparisonHistory.value = mergeEvaluationHistory(
-        evaluationComparisonHistory.value,
-        imported
-      )
-      await persistEvaluationComparisonHistory(evaluationComparisonHistory.value)
-    }
-  } catch (error) {
-    console.error('Failed to import evaluation comparison:', error)
-  }
-}
-
-const clearEvaluationComparison = async () => {
-  evaluationComparison.value = null
-  try {
-    await clearPersistedEvaluationComparison()
-  } catch (error) {
-    console.error('Failed to clear persisted evaluation comparison:', error)
-  }
-}
-
-const clearEvaluationComparisonHistory = async () => {
-  evaluationComparisonHistory.value = evaluationComparison.value ? [evaluationComparison.value] : []
-  try {
-    if (evaluationComparison.value) {
-      await persistEvaluationComparisonHistory(evaluationComparisonHistory.value)
-    } else {
-      await clearPersistedEvaluationComparisonHistory()
-    }
-  } catch (error) {
-    console.error('Failed to clear persisted evaluation comparison history:', error)
-  }
-}
-
-const selectEvaluationHistoryEntry = (comparedAt: string) => {
-  const target = findEvaluationHistoryEntry(evaluationComparisonHistory.value, comparedAt)
-  if (target) {
-    evaluationComparison.value = target
-  }
-}
-
-const exportCurrentSnapshot = async () => {
-  exportingSnapshot.value = true
-  try {
-    const { statusFilter, statusFilters, analysisStageFilters } = resolveStatusFilters()
-    await exportFindingSnapshot({
-      severityFilter: filters.value.severity || null,
-      statusFilter,
-      statusFilters,
-      analysisStageFilters,
-      lifecycleView: 'all',
-      search: filters.value.search,
-      semanticSourceFilter: null,
-      hypothesisRiskTypeFilter: null,
-      hypothesisRiskTypeFilters: null,
-    })
-  } catch (error) {
-    console.error('Failed to export finding snapshot:', error)
-  } finally {
-    exportingSnapshot.value = false
-  }
-}
-
 const setCurrentPage = (page: number) => {
   const nextPage = Math.min(Math.max(1, page), totalPages.value)
   if (currentPage.value === nextPage) {
@@ -909,11 +860,20 @@ const applyPageJump = () => {
   setCurrentPage(nextPage)
 }
 
-const openDetails = (finding: Finding) => {
+const openDetails = async (finding: Finding) => {
   securityCenterActivity.markFindingAsRead(finding.id)
   selectedFinding.value = finding
-  detailTab.value = 'overview'
+  detailTab.value = DEFAULT_DETAIL_TAB
   showDetailsModal.value = true
+
+  try {
+    const detailedFinding = await fetchFindingDetail(finding.id, finding)
+    if (selectedFinding.value?.id === finding.id && detailedFinding) {
+      selectedFinding.value = detailedFinding
+    }
+  } catch (error) {
+    console.error('Failed to load finding detail:', error)
+  }
 
   if (filters.value.readStatus === 'unread') {
     void refreshFindings()
@@ -923,7 +883,7 @@ const openDetails = (finding: Finding) => {
 const closeDetails = () => {
   showDetailsModal.value = false
   selectedFinding.value = null
-  detailTab.value = 'overview'
+  detailTab.value = DEFAULT_DETAIL_TAB
 
   if (props.immersiveMode) {
     return
@@ -942,7 +902,7 @@ const openWorkbenchForFinding = async (finding: Finding) => {
     const caseItem = await getOrCreateWorkbenchCaseForFinding(finding.id)
     showDetailsModal.value = false
     selectedFinding.value = null
-    detailTab.value = 'overview'
+    detailTab.value = DEFAULT_DETAIL_TAB
     if (props.immersiveMode) {
       emit('open-workbench-case', caseItem.id)
       return
@@ -975,16 +935,6 @@ const toggleSelectAll = () => {
 const markSingleAsRead = (id: string) => {
   securityCenterActivity.markFindingAsRead(id)
   selectedIds.value.delete(id)
-  if (filters.value.readStatus) {
-    void refreshFindings()
-  }
-}
-
-const markSelectedAsRead = () => {
-  if (selectedIds.value.size === 0) return
-  const targetIds = Array.from(selectedIds.value)
-  securityCenterActivity.markFindingsAsRead(targetIds)
-  targetIds.forEach(id => selectedIds.value.delete(id))
   if (filters.value.readStatus) {
     void refreshFindings()
   }
@@ -1048,7 +998,24 @@ const syncSelectedFinding = () => {
   if (!selectedFinding.value) return
   const nextFinding = findings.value.find(item => item.id === selectedFinding.value?.id)
   if (nextFinding) {
-    selectedFinding.value = nextFinding
+    selectedFinding.value = {
+      ...selectedFinding.value,
+      ...nextFinding,
+      url: selectedFinding.value.url || nextFinding.url || '',
+      method: selectedFinding.value.method || nextFinding.method,
+      evidence: selectedFinding.value.evidence?.length ? selectedFinding.value.evidence : (nextFinding.evidence || []),
+    }
+  }
+}
+
+const refreshSelectedFindingDetail = async (findingId: string) => {
+  const fallbackFinding =
+    findings.value.find(item => item.id === findingId)
+    || (selectedFinding.value?.id === findingId ? selectedFinding.value : null)
+
+  const detailedFinding = await fetchFindingDetail(findingId, fallbackFinding)
+  if (selectedFinding.value?.id === findingId && detailedFinding) {
+    selectedFinding.value = detailedFinding
   }
 }
 
@@ -1079,24 +1046,21 @@ const openFindingFromRoute = async () => {
   if (existingFinding) {
     consumedRouteFindingId.value = findingId
     consumedImmersiveFindingRequestKey.value = immersiveRequestKey
-    openDetails(existingFinding)
+    await openDetails(existingFinding)
     return
   }
 
   try {
-    const response = await invoke<any>('get_finding', { findingId })
-    if (!response?.success || !response?.data?.vulnerability) {
+    const detailedFinding = await fetchFindingDetail(findingId)
+    if (!detailedFinding) {
       return
     }
 
     consumedRouteFindingId.value = findingId
     consumedImmersiveFindingRequestKey.value = immersiveRequestKey
     securityCenterActivity.markFindingAsRead(findingId)
-    selectedFinding.value = {
-      ...response.data.vulnerability,
-      evidence: response.data.evidence || [],
-    }
-    detailTab.value = 'overview'
+    selectedFinding.value = detailedFinding
+    detailTab.value = DEFAULT_DETAIL_TAB
     showDetailsModal.value = true
   } catch (error) {
     console.error('Failed to open finding from route:', error)
@@ -1126,6 +1090,38 @@ const submitSystemAgentFeedback = async (
     alert('反馈提交失败: ' + error)
   } finally {
     feedbackingId.value = null
+  }
+}
+
+const reviewFindingWithAi = async (finding: Finding) => {
+  if (reviewingFindingId.value) return
+
+  reviewingFindingId.value = finding.id
+  try {
+    const response = await invoke<any>('review_finding_with_ai', {
+      findingId: finding.id,
+    })
+    if (!response?.success || !response?.data) {
+      throw new Error(response?.error || 'AI复核失败')
+    }
+
+    await refreshFindings()
+    await refreshSelectedFindingDetail(finding.id)
+
+    dialog.toast.success(
+      response.data.appliedStatus === 'false_positive'
+        ? t('vulnerabilities.aiReview.successFalsePositive')
+        : t('vulnerabilities.aiReview.successReal'),
+    )
+  } catch (error) {
+    console.error('Failed to review finding with AI:', error)
+    dialog.toast.error(
+      t('vulnerabilities.aiReview.failed', {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    )
+  } finally {
+    reviewingFindingId.value = null
   }
 }
 
@@ -1206,12 +1202,12 @@ watch(pageSize, () => {
 })
 
 watch(selectedFinding, finding => {
-  if (!finding && detailTab.value !== 'overview') {
-    detailTab.value = 'overview'
+  if (!finding && detailTab.value !== DEFAULT_DETAIL_TAB) {
+    detailTab.value = DEFAULT_DETAIL_TAB
     return
   }
   if (finding && !isSystemAgentFinding(finding) && detailTab.value === 'system_agent') {
-    detailTab.value = 'overview'
+    detailTab.value = DEFAULT_DETAIL_TAB
   }
 })
 
@@ -1247,7 +1243,21 @@ watch(
 const handleKeyDown = (e: KeyboardEvent) => {
   if (e.key === 'Escape' && showDetailsModal.value) {
     closeDetails()
+    return
   }
+
+  if (!selectedFinding.value || !showDetailsModal.value) {
+    return
+  }
+
+  const target = resolveSecurityEvidenceTransferShortcut(e)
+  if (!target) {
+    return
+  }
+
+  e.preventDefault()
+  e.stopPropagation()
+  void transferSelectedFindingRequest(target)
 }
 
 onMounted(async () => {
@@ -1256,25 +1266,8 @@ onMounted(async () => {
     syncFiltersFromRouteQuery()
   }
   await securityCenterActivity.initializeSecurityCenterActivity()
-  try {
-    evaluationComparison.value = await loadPersistedEvaluationComparison()
-  } catch (error) {
-    console.error('Failed to load persisted evaluation comparison:', error)
-  }
-  try {
-    evaluationComparisonHistory.value = await loadPersistedEvaluationComparisonHistory()
-  } catch (error) {
-    console.error('Failed to load persisted evaluation comparison history:', error)
-  }
-  if (evaluationComparison.value) {
-    evaluationComparisonHistory.value = mergeEvaluationHistory(
-      evaluationComparisonHistory.value,
-      evaluationComparison.value
-    )
-  }
   refreshFindings()
   window.addEventListener('security-center-refresh', handleRefresh)
-  window.addEventListener('keydown', handleKeyDown)
   unlistenFinding = await listen('scan:finding', () => {
     refreshFindings()
   })
@@ -1286,6 +1279,14 @@ onMounted(async () => {
       refreshFindings()
     }
   })
+})
+
+onActivated(() => {
+  window.addEventListener('keydown', handleKeyDown)
+})
+
+onDeactivated(() => {
+  window.removeEventListener('keydown', handleKeyDown)
 })
 
 onUnmounted(() => {

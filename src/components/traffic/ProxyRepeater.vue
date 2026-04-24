@@ -475,6 +475,7 @@ import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
 import { buildSourceRequestFromRawRequest } from '@/components/traffic/intruder/http'
 import type { HttpExchangeRequest, HttpHeaderEntry, HttpReplayResponse } from './http/model'
 import { findHeaderValue, headerEntriesToRecord, serializeHeaderEntries } from './http/headers'
+import { buildHttpExchangeRequestFromRawRequest } from './http/parser'
 import {
   buildHttpReplayResponseFromCommandResult,
   type RawReplayCommandResult,
@@ -521,6 +522,8 @@ import {
 } from './proxyRepeaterStorageSupport'
 import { createRepeaterTab } from './proxyRepeaterTabSupport'
 import type {
+  RepeaterActiveTabState,
+  RepeaterTabStats,
   ReplayCommandResponse,
   RepeaterRequestTab,
   RepeaterResponseTab,
@@ -536,6 +539,9 @@ import {
   buildRepeaterResponseStateKey,
   resolveTrafficTextDisplayMode,
 } from './trafficMessagePresentationSupport'
+import { isEditableKeyboardTarget } from '@/utils/editableKeyboardTarget'
+import { useTrafficWorkbenchStore } from './workbench/stores/useTrafficWorkbenchStore'
+import type { RequestDraft } from './workbench/model/requestDraft'
 
 const { t, locale } = useI18n();
 const { enabledTargets } = useTrafficSendTargets()
@@ -553,14 +559,17 @@ const {
 const requestViewTabs = computed(() => [...buildRepeaterRequestViewTabs(t, locale.value)])
 const responseViewTabs = computed(() => [...buildRepeaterResponseViewTabs(t, locale.value)])
 const emit = defineEmits<{
-  (e: 'sendToComparer', payload: TrafficComparePayload): void
-  (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
-  (e: 'sendToIntruder', request: HttpExchangeRequest): void
+  (e: 'openCompare', payload: TrafficComparePayload): void
+  (e: 'openDraftCompare', payload: TrafficComparerDraftRequestInput): void
+  (e: 'createAttackWorkspace', request: HttpExchangeRequest): void
+  (e: 'activeTabModeChanged', state: RepeaterActiveTabState): void
+  (e: 'tabStatsChanged', stats: RepeaterTabStats): void
 }>()
 
 // Props
 const props = defineProps<{
   initialRequest?: HttpExchangeRequest;
+  initialDraftId?: string;
 }>();
 
 // Refs
@@ -609,12 +618,42 @@ let startWidth = 0;
 let startHeight = 0;
 let hostDetectionTimer: number | null = null;
 let repeaterScrollState = { top: 0, left: 0 };
+let applyingWorkbenchDraft = false;
+let syncingCurrentTabToDraft = false;
+let suppressedPreviewPromotionCount = 0;
+
+const workbenchState = useTrafficWorkbenchStore()
+
+function suppressPreviewPromotionDuring(task: () => void) {
+  suppressedPreviewPromotionCount += 1
+  try {
+    task()
+  } finally {
+    void nextTick(() => {
+      suppressedPreviewPromotionCount = Math.max(0, suppressedPreviewPromotionCount - 1)
+    })
+  }
+}
 
 // Computed
 const currentTab = computed(() => {
   if (tabs.value.length === 0) return null;
   return tabs.value[activeTabIndex.value] || null;
 });
+
+function emitActiveTabModeChanged() {
+  emit('activeTabModeChanged', {
+    mode: currentTab.value?.mode ?? null,
+    draftId: currentTab.value?.draftId ?? null,
+    sourceRequestId: currentTab.value?.sourceRequestId ?? null,
+  })
+}
+
+function emitTabStatsChanged() {
+  emit('tabStatsChanged', {
+    editedTabCount: tabs.value.filter(tab => tab.userEdited).length,
+  })
+}
 
 const showPort = computed(() => {
   if (!currentTab.value) return false;
@@ -660,10 +699,10 @@ const isSending = computed(() => currentTab.value?.isSending || false);
 const repeaterSendMenuItems = computed(() =>
   buildTrafficRequestSendMenuItems({
     enabledTargets: enabledTargets.value,
-    supportedTargets: ['comparer', 'intruder'],
+    supportedTargets: ['compare', 'attackWorkspace'],
     actions: {
-      comparer: contextMenuSendToComparer,
-      intruder: contextMenu.value.pane === 'request' ? contextMenuSendToIntruder : undefined,
+      compare: contextMenuSendToComparer,
+      attackWorkspace: contextMenu.value.pane === 'request' ? contextMenuSendToIntruder : undefined,
     },
   }),
 )
@@ -682,7 +721,7 @@ const repeaterCompareMenuItems = computed(() =>
     contextMenu.value.pane === 'request' ? {
       key: 'compareRequestVersions',
       iconClass: 'fas fa-not-equal text-accent',
-      labelKey: 'sendToComparer',
+      labelKey: 'openCompare',
       onClick: () => {
         hideContextMenu()
         compareCurrentRequestVersions()
@@ -692,7 +731,7 @@ const repeaterCompareMenuItems = computed(() =>
     contextMenu.value.pane === 'response' ? {
       key: 'compareResponseVersions',
       iconClass: 'fas fa-not-equal text-accent',
-      labelKey: 'sendToComparer',
+      labelKey: 'openCompare',
       onClick: () => {
         hideContextMenu()
         compareCurrentResponseVersions()
@@ -719,7 +758,7 @@ const repeaterContextMenuSections = computed(() =>
           },
           ...repeaterSendMenuItems.value,
         ]
-      : repeaterSendMenuItems.value.filter((item) => item.key === 'comparer'),
+      : repeaterSendMenuItems.value.filter((item) => item.key === 'compare'),
     compareItems: repeaterCompareMenuItems.value,
     requestItems: contextMenu.value.pane === 'request' ? repeaterRequestActionMenuItems.value : [],
     assistantItems: contextMenu.value.pane === 'request'
@@ -758,16 +797,222 @@ function createTab(request?: HttpExchangeRequest): RepeaterTab {
   })
 }
 
+function buildDraftEndpointFromTab(tab: RepeaterTab) {
+  return {
+    scheme: tab.useTls ? 'https' : 'http',
+    host: tab.targetHost,
+    port: tab.targetPort || (tab.useTls ? 443 : 80),
+    sniHost: tab.overrideSni && tab.sniHost.trim() ? tab.sniHost.trim() : undefined,
+  } as const
+}
+
+function buildExchangeRequestFromTab(tab: RepeaterTab): HttpExchangeRequest | null {
+  return buildHttpExchangeRequestFromRawRequest(tab.rawRequest, buildDraftEndpointFromTab(tab))
+}
+
+function syncTabFromDraft(tab: RepeaterTab, draft: RequestDraft) {
+  tab.draftId = draft.id
+  tab.mode = 'draft'
+  tab.name = draft.title
+  tab.sourceRequestId = draft.source?.requestId ?? tab.sourceRequestId
+  tab.targetHost = draft.endpoint.host
+  tab.targetPort = draft.endpoint.port
+  tab.useTls = draft.endpoint.scheme === 'https'
+  tab.overrideSni = Boolean(draft.endpoint.sniHost)
+  tab.sniHost = draft.endpoint.sniHost || ''
+  tab.rawRequest = draft.rawRequest
+  tab.prettyRequest = formatRepeaterPrettyRequest(draft.rawRequest)
+  tab.requestTab = draft.preferredView === 'raw' ? 'raw' : 'pretty'
+}
+
+function createTabFromDraft(draft: RequestDraft): RepeaterTab {
+  const exchangeRequest = buildHttpExchangeRequestFromRawRequest(draft.rawRequest, draft.endpoint)
+  const tab = createTab(exchangeRequest || undefined)
+  tab.draftId = draft.id
+  tab.mode = 'draft'
+  syncTabFromDraft(tab, draft)
+  tab.initialRawRequest = draft.rawRequest
+  tab.modified = false
+  tab.userEdited = true
+  return tab
+}
+
+function syncTabFromExchangeRequest(tab: RepeaterTab, request: HttpExchangeRequest) {
+  const nextTab = createTab(request)
+  tab.name = nextTab.name
+  tab.sourceRequestId = nextTab.sourceRequestId
+  tab.targetHost = nextTab.targetHost
+  tab.targetPort = nextTab.targetPort
+  tab.useTls = nextTab.useTls
+  tab.overrideSni = false
+  tab.sniHost = ''
+  tab.initialRawRequest = nextTab.rawRequest
+  tab.rawRequest = nextTab.rawRequest
+  tab.prettyRequest = nextTab.prettyRequest
+  tab.requestTab = nextTab.requestTab
+  tab.responseTab = nextTab.responseTab
+  tab.response = null
+  tab.rawResponse = ''
+  tab.lastCompletedRawResponse = ''
+  tab.previousRawResponse = ''
+  tab.isSending = false
+  tab.modified = false
+  tab.userEdited = false
+}
+
+function openPreviewRequest(request: HttpExchangeRequest) {
+  suppressPreviewPromotionDuring(() => {
+    const existingPreviewIndex = tabs.value.findIndex(tab => tab.mode === 'preview')
+    applyingWorkbenchDraft = true
+    try {
+      if (existingPreviewIndex >= 0) {
+        const tab = tabs.value[existingPreviewIndex]
+        tab.draftId = null
+        tab.mode = 'preview'
+        syncTabFromExchangeRequest(tab, request)
+        activeTabIndex.value = existingPreviewIndex
+        return
+      }
+
+      if (tabs.value.length >= MAX_TABS) {
+        dialog.toast.warning(t('trafficAnalysis.repeater.messages.tooManyTabs', { max: MAX_TABS }))
+        return
+      }
+
+      const tab = createTab(request)
+      tab.mode = 'preview'
+      tab.draftId = null
+      tabs.value.push(tab)
+      activeTabIndex.value = tabs.value.length - 1
+    } finally {
+      applyingWorkbenchDraft = false
+    }
+  })
+}
+
+function ensureDraftForTab(tab: RepeaterTab) {
+  if (tab.draftId) {
+    tab.userEdited = true
+    return findDraftById(tab.draftId)
+  }
+
+  const exchangeRequest = buildExchangeRequestFromTab(tab)
+  if (!exchangeRequest) {
+    return null
+  }
+
+  const draft = workbenchState.drafts.createDraftFromExchangeRequest({
+    request: exchangeRequest,
+    source: tab.sourceRequestId
+      ? { kind: 'history', label: `历史记录 #${tab.sourceRequestId}`, requestId: tab.sourceRequestId }
+      : { kind: 'repeater', label: t('trafficAnalysis.tabs.repeater', '重放器') },
+    title: tab.name,
+  })
+  tab.draftId = draft.id
+  tab.mode = 'draft'
+  tab.userEdited = true
+  workbenchState.drafts.selectDraft(draft.id)
+  workbenchState.selection.selectDraft(draft)
+  return draft
+}
+
+function findDraftById(draftId: string | null | undefined) {
+  if (!draftId) {
+    return null
+  }
+  return workbenchState.drafts.drafts.value.find(draft => draft.id === draftId) ?? null
+}
+
+function openDraftInRepeater(draftId: string | null | undefined) {
+  const draft = findDraftById(draftId)
+  if (!draft) {
+    return
+  }
+
+  const existingIndex = tabs.value.findIndex(tab => tab.draftId === draft.id)
+  applyingWorkbenchDraft = true
+  try {
+    if (existingIndex >= 0) {
+      syncTabFromDraft(tabs.value[existingIndex], draft)
+      activeTabIndex.value = existingIndex
+      return
+    }
+
+    if (tabs.value.length >= MAX_TABS) {
+      dialog.toast.warning(t('trafficAnalysis.repeater.messages.tooManyTabs', { max: MAX_TABS }))
+      return
+    }
+
+    const tab = createTabFromDraft(draft)
+    tabs.value.push(tab)
+    activeTabIndex.value = tabs.value.length - 1
+  } finally {
+    applyingWorkbenchDraft = false
+  }
+}
+
+function syncCurrentTabBackToDraft() {
+  if (applyingWorkbenchDraft || syncingCurrentTabToDraft || !currentTab.value) {
+    return
+  }
+
+  const draft = findDraftById(currentTab.value.draftId)
+  if (!draft) {
+    return
+  }
+
+  syncingCurrentTabToDraft = true
+  try {
+    const nextRawRequest = currentTab.value.rawRequest
+    if (draft.rawRequest !== nextRawRequest) {
+      workbenchState.drafts.updateDraftRequest(draft.id, nextRawRequest)
+    }
+
+    const nextEndpoint = buildDraftEndpointFromTab(currentTab.value)
+    const endpointChanged = draft.endpoint.scheme !== nextEndpoint.scheme
+      || draft.endpoint.host !== nextEndpoint.host
+      || draft.endpoint.port !== nextEndpoint.port
+      || (draft.endpoint.sniHost || '') !== (nextEndpoint.sniHost || '')
+    if (endpointChanged) {
+      workbenchState.drafts.updateDraftEndpoint(draft.id, nextEndpoint, 'manual')
+    }
+
+    if (workbenchState.drafts.activeDraftId.value !== draft.id) {
+      workbenchState.drafts.selectDraft(draft.id)
+    }
+  } finally {
+    syncingCurrentTabToDraft = false
+  }
+}
+
+function createDraftBackedTab(request?: HttpExchangeRequest) {
+  const baseTab = createTab(request)
+  if (!baseTab.targetHost) {
+    syncRepeaterTabTargetFromRequest(baseTab, baseTab.rawRequest)
+  }
+  const exchangeRequest = buildExchangeRequestFromTab(baseTab)
+  if (!exchangeRequest) {
+    tabs.value.push(baseTab)
+    activeTabIndex.value = tabs.value.length - 1
+    return
+  }
+
+  const draft = workbenchState.drafts.createDraftFromExchangeRequest({
+    request: exchangeRequest,
+    source: { kind: 'repeater', label: t('trafficAnalysis.tabs.repeater', '重放器') },
+    title: baseTab.name,
+  })
+  workbenchState.drafts.selectDraft(draft.id)
+  openDraftInRepeater(draft.id)
+}
+
 function addTab() {
-  // 限制标签页数量
   if (tabs.value.length >= MAX_TABS) {
     dialog.toast.warning(t('trafficAnalysis.repeater.messages.tooManyTabs', { max: MAX_TABS }));
     return;
   }
-  
-  const tab = createTab();
-  tabs.value.push(tab);
-  activeTabIndex.value = tabs.value.length - 1;
+
+  createDraftBackedTab();
 }
 
 async function closeTab(index: number) {
@@ -791,13 +1036,18 @@ async function closeTab(index: number) {
   }
   
   if (tabs.value.length === 1) {
-    // 关闭最后一个 tab 时，创建一个新的空 tab
-    tabs.value = [createTab()];
-    activeTabIndex.value = 0;
+    tabs.value = [];
+    if (tab.draftId) {
+      workbenchState.drafts.removeDraft(tab.draftId)
+    }
+    createDraftBackedTab()
     return;
   }
   
   tabs.value.splice(index, 1);
+  if (tab.draftId) {
+    workbenchState.drafts.removeDraft(tab.draftId)
+  }
   if (activeTabIndex.value >= tabs.value.length) {
     activeTabIndex.value = tabs.value.length - 1;
   }
@@ -806,6 +1056,7 @@ async function closeTab(index: number) {
 
 function selectTab(index: number) {
   activeTabIndex.value = index;
+  syncCurrentTabBackToDraft()
 }
 
 function cancelRequest() {
@@ -829,6 +1080,12 @@ async function sendRequest() {
   }
   
   const tab = currentTab.value;
+  const draft = ensureDraftForTab(tab)
+  syncCurrentTabBackToDraft()
+  const revision = draft ? workbenchState.drafts.appendRevision(draft.id, 'send') : null
+  const replayRun = draft && revision
+    ? workbenchState.replay.startReplayRun(draft.id, revision.id)
+    : null
   
   // 验证端口号
   if (!tab.targetPort || tab.targetPort < 1 || tab.targetPort > 65535) {
@@ -870,6 +1127,10 @@ async function sendRequest() {
       endpoint: exchangeRequest.endpoint,
       request: exchangeRequest.request,
       timeoutSecs: 30,
+      originKind: 'draft',
+      originRefId: tab.id,
+      parentRequestId: tab.sourceRequestId,
+      sourceDraftRevisionId: revision?.id ?? null,
     });
     
     // 检查是否已取消
@@ -899,9 +1160,15 @@ async function sendRequest() {
       
       targetTab.name = targetTab.targetHost;
       targetTab.modified = false;
+      if (replayRun) {
+        workbenchState.replay.completeReplayRun(replayRun.id, replayResponse)
+      }
     } else {
       const errorMsg = parseRepeaterErrorMessage(response.error, t);
       dialog.toast.error(errorMsg);
+      if (replayRun) {
+        workbenchState.replay.failReplayRun(replayRun.id, errorMsg)
+      }
     }
   } catch (error: any) {
     if (controller.cancelled) return;
@@ -912,6 +1179,9 @@ async function sendRequest() {
     console.error('Failed to send request:', error);
     const errorMsg = parseRepeaterErrorMessage(error, t);
     dialog.toast.error(errorMsg);
+    if (replayRun) {
+      workbenchState.replay.failReplayRun(replayRun.id, errorMsg)
+    }
   } finally {
     const targetTab = tabs.value.find(t => t.id === tabId);
     if (targetTab) {
@@ -927,11 +1197,20 @@ function formatPrettyRequest(): string {
 
 function onPrettyRequestUpdate(value: string) {
   if (!currentTab.value) return;
+  if (suppressedPreviewPromotionCount > 0) {
+    currentTab.value.prettyRequest = value
+    currentTab.value.rawRequest = convertRepeaterPrettyRequestToRaw(value)
+    return
+  }
+  if (currentTab.value.mode === 'preview') {
+    ensureDraftForTab(currentTab.value)
+  }
 
   currentTab.value.prettyRequest = value
   currentTab.value.rawRequest = convertRepeaterPrettyRequestToRaw(value)
   syncRepeaterTabTargetFromRequest(currentTab.value, value);
   currentTab.value.modified = true;
+  currentTab.value.userEdited = true;
 }
 
 function formatPrettyResponse(): string {
@@ -1022,22 +1301,17 @@ function contextMenuSendToNewTab() {
   hideContextMenu();
   if (!currentTab.value) return;
   
-  // 限制标签页数量
   if (tabs.value.length >= MAX_TABS) {
     dialog.toast.warning(t('trafficAnalysis.repeater.messages.tooManyTabs', { max: MAX_TABS }));
     return;
   }
-  
-  const newTab = createTab();
-  newTab.sourceRequestId = currentTab.value.sourceRequestId;
-  newTab.targetHost = currentTab.value.targetHost;
-  newTab.targetPort = currentTab.value.targetPort;
-  newTab.useTls = currentTab.value.useTls;
-  newTab.initialRawRequest = currentTab.value.rawRequest;
-  newTab.rawRequest = currentTab.value.rawRequest;
-  newTab.prettyRequest = currentTab.value.prettyRequest;
-  tabs.value.push(newTab);
-  activeTabIndex.value = tabs.value.length - 1;
+
+  const request = buildCurrentRequestTransfer()
+  if (!request) {
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.invalidRequestForIntruder'))
+    return
+  }
+  createDraftBackedTab(request)
 }
 
 function contextMenuCopyUrl() {
@@ -1112,6 +1386,7 @@ async function insertOastPayloadIntoCurrentRequest() {
     }
 
     currentTab.value.modified = true
+    currentTab.value.userEdited = true
     await nextTick()
     requestEditor.value?.setSelection?.(next.selectionStart, next.selectionEnd)
     requestEditor.value?.focus?.()
@@ -1137,13 +1412,13 @@ function contextMenuSendToComparer() {
       return
     }
 
-    emit('sendDraftRequestToComparer', {
+    emit('openDraftCompare', {
       text: currentTab.value.rawResponse,
       messageType: 'response',
       name: currentTab.value.name || undefined,
       label: t('trafficAnalysis.repeater.contextMenu.response'),
     })
-    dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToComparer'))
+    dialog.toast.success(t('trafficAnalysis.repeater.messages.compareOpened'))
     return
   }
 
@@ -1153,12 +1428,12 @@ function contextMenuSendToComparer() {
     return
   }
 
-  emit('sendDraftRequestToComparer', {
+  emit('openDraftCompare', {
     request,
     name: currentTab.value?.name || undefined,
     label: t('trafficAnalysis.repeater.contextMenu.request'),
   })
-  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToComparer'))
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.compareOpened'))
 }
 
 function contextMenuSendToIntruder() {
@@ -1170,8 +1445,8 @@ function contextMenuSendToIntruder() {
     return
   }
 
-  emit('sendToIntruder', request)
-  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToIntruder'))
+  emit('createAttackWorkspace', request)
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.attackWorkspaceCreated'))
 }
 
 function contextMenuCopyRequest() {
@@ -1208,8 +1483,8 @@ function compareCurrentRequestVersions() {
     return;
   }
 
-  emit('sendToComparer', payload);
-  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToComparer'));
+  emit('openCompare', payload);
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.compareOpened'));
 }
 
 function compareCurrentResponseVersions() {
@@ -1221,8 +1496,8 @@ function compareCurrentResponseVersions() {
     return;
   }
 
-  emit('sendToComparer', payload);
-  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToComparer'));
+  emit('openCompare', payload);
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.compareOpened'));
 }
 
 async function sendRequestToAssistant() {
@@ -1327,27 +1602,12 @@ function stopResize() {
 
 // Expose
 function addRequestFromHistory(request: HttpExchangeRequest) {
-  // 限制标签页数量
-  if (tabs.value.length >= MAX_TABS) {
-    dialog.toast.warning(t('trafficAnalysis.repeater.messages.tooManyTabs', { max: MAX_TABS }));
-    // 删除最旧的标签页
-    if (tabs.value.length > 0) {
-      const oldestTab = tabs.value[0];
-      abortControllers.delete(oldestTab.id);
-      tabs.value.shift();
-      if (activeTabIndex.value > 0) {
-        activeTabIndex.value--;
-      }
-    }
-  }
-  
-  const tab = createTab(request);
-  tabs.value.push(tab);
-  activeTabIndex.value = tabs.value.length - 1;
+  openPreviewRequest(request)
 }
 
 defineExpose({
-  addRequestFromHistory,
+  openPreviewRequest,
+  openDraftFromWorkbench: openDraftInRepeater,
 });
 
 // Watchers
@@ -1357,16 +1617,79 @@ watch(() => props.initialRequest, (newRequest) => {
   }
 }, { immediate: true });
 
+watch(() => props.initialDraftId, (draftId) => {
+  if (draftId) {
+    openDraftInRepeater(draftId)
+  }
+}, { immediate: true })
+
+watch(() => workbenchState.drafts.activeDraftId.value, (draftId) => {
+  if (draftId) {
+    openDraftInRepeater(draftId)
+  }
+})
+
 watch(layoutMode, (newMode) => {
   localStorage.setItem(REPEATER_STORAGE_KEY_LAYOUT, newMode);
 });
 
+watch(
+  () => currentTab.value?.id,
+  () => {
+    syncCurrentTabBackToDraft()
+  },
+)
+
+watch(
+  () => [
+    currentTab.value?.id,
+    currentTab.value?.mode,
+    currentTab.value?.draftId,
+    currentTab.value?.sourceRequestId,
+  ] as const,
+  () => {
+    emitActiveTabModeChanged()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => tabs.value.map(tab => `${tab.id}:${tab.userEdited ? '1' : '0'}`).join('|'),
+  () => {
+    emitTabStatsChanged()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [
+    currentTab.value?.id,
+    currentTab.value?.rawRequest,
+    currentTab.value?.targetHost,
+    currentTab.value?.targetPort,
+    currentTab.value?.useTls,
+    currentTab.value?.overrideSni,
+    currentTab.value?.sniHost,
+    currentTab.value?.requestTab,
+  ] as const,
+  () => {
+    syncCurrentTabBackToDraft()
+  },
+)
+
 // 监听 rawRequest 变化，自动检测 Host（使用防抖避免频繁触发）
 watch(() => currentTab.value?.rawRequest, (newRequest, oldRequest) => {
   if (newRequest && currentTab.value && newRequest !== oldRequest) {
+    if (suppressedPreviewPromotionCount > 0) {
+      return
+    }
+    if (currentTab.value.mode === 'preview') {
+      ensureDraftForTab(currentTab.value)
+    }
     if (currentTab.value.requestTab !== 'pretty') {
       currentTab.value.prettyRequest = formatRepeaterPrettyRequest(newRequest)
     }
+    currentTab.value.userEdited = true
 
     // 清除之前的定时器
     if (hostDetectionTimer !== null) {
@@ -1384,17 +1707,48 @@ watch(() => currentTab.value?.rawRequest, (newRequest, oldRequest) => {
 }, { deep: false });
 
 // 键盘快捷键处理
+function shouldHandleRepeaterShortcut(event: KeyboardEvent) {
+  if (!repeaterRoot.value || repeaterRoot.value.offsetParent === null) return false
+  if (!currentTab.value || showTargetDialog.value) return false
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return false
+
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement) {
+    if (activeElement !== document.body && !repeaterRoot.value.contains(activeElement)) {
+      return false
+    }
+
+    if (isEditableKeyboardTarget(activeElement) && !repeaterRoot.value.contains(activeElement)) {
+      return false
+    }
+  }
+
+  const targetNode = event.target instanceof Node ? event.target : null
+  if (targetNode && !repeaterRoot.value.contains(targetNode)) {
+    return false
+  }
+
+  return true
+}
+
 function handleKeydown(event: KeyboardEvent) {
   if (event.defaultPrevented || event.repeat) return;
-  if (!repeaterRoot.value || repeaterRoot.value.offsetParent === null) return;
+  if (!shouldHandleRepeaterShortcut(event)) return;
 
   // Cmd/Ctrl + R 发送当前请求到新标签（Send to Repeater）
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'r') {
-    if (currentTab.value && currentTab.value.rawRequest.trim()) {
-      event.preventDefault();
-      event.stopPropagation();
-      contextMenuSendToNewTab();
-    }
+  const normalizedKey = event.key.toLowerCase()
+
+  if (normalizedKey === 'r' && currentTab.value.rawRequest.trim()) {
+    event.preventDefault();
+    event.stopPropagation();
+    contextMenuSendToNewTab();
+    return
+  }
+
+  if (normalizedKey === 'i' && currentTab.value.rawRequest.trim()) {
+    event.preventDefault()
+    event.stopPropagation()
+    contextMenuSendToIntruder()
   }
 }
 
@@ -1416,8 +1770,12 @@ function restoreRepeaterScrollState() {
 onMounted(() => {
   clearRepeaterTabsStorage()
 
-  // 如果没有恢复到任何 tab，创建一个新的
-  if (tabs.value.length === 0 && !props.initialRequest) {
+  if (
+    tabs.value.length === 0
+    && !props.initialRequest
+    && !props.initialDraftId
+    && !workbenchState.drafts.activeDraftId.value
+  ) {
     addTab();
   }
   

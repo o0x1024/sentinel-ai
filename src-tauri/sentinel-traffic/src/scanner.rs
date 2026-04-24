@@ -287,7 +287,7 @@ impl ScanPipeline {
             .collect();
         drop(plugins);
 
-        info!(
+        debug!(
             "Dispatching request scan: request_id={}, method={}, url={}, plugin_count={}, plugins={}",
             req_ctx.id,
             req_ctx.method,
@@ -472,7 +472,7 @@ impl ScanPipeline {
             return;
         }
 
-        info!(
+        debug!(
             "Dispatching response scan: request_id={}, method={}, url={}, status={}, plugin_count={}, plugins={}",
             resp_ctx.request_id,
             req_ctx.method,
@@ -1317,6 +1317,10 @@ impl ScanPipeline {
                 id: 0,
                 db_request_id: None,
                 traffic_request_id: Some(req_ctx.id.clone()),
+                origin_kind: None,
+                origin_ref_id: None,
+                parent_request_id: None,
+                source_draft_revision_id: None,
                 url: req_ctx.url.clone(),
                 host,
                 scheme,

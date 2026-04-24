@@ -9,30 +9,136 @@ export function parsePayloadLines(payloadsText: string): string[] {
     .filter((line) => line.length > 0)
 }
 
-export function expandPayloadSet(payloadSet: IntruderPayloadSet): string[] {
+export function countPayloadSet(payloadSet: IntruderPayloadSet): number {
   switch (payloadSet.payloadType) {
+    case 'bruteForcer':
+      return countBruteForcerPayloads(payloadSet)
+    default:
+      return expandPayloadSet(payloadSet).length
+  }
+}
+
+export function expandPayloadSet(payloadSet: IntruderPayloadSet, limit?: number): string[] {
+  switch (payloadSet.payloadType) {
+    case 'bruteForcer':
+      return buildBruteForcerPayloads(payloadSet, limit)
     case 'appDictionary':
-      return parsePayloadLines(payloadSet.payloadsText)
+      return takePayloadLimit(parsePayloadLines(payloadSet.payloadsText), limit)
     case 'extensionGenerated':
-      return parsePayloadLines(payloadSet.payloadsText)
+      return takePayloadLimit(parsePayloadLines(payloadSet.payloadsText), limit)
     case 'characterSubstitution':
-      return buildCharacterSubstitutionPayloads(payloadSet)
+      return takePayloadLimit(buildCharacterSubstitutionPayloads(payloadSet), limit)
     case 'characterList':
-      return buildCharacterListPayloads(payloadSet)
+      return takePayloadLimit(buildCharacterListPayloads(payloadSet), limit)
     case 'nullPayloads':
-      return buildNullPayloads(payloadSet)
+      return takePayloadLimit(buildNullPayloads(payloadSet), limit)
     case 'usernameGenerator':
-      return buildUsernameGeneratorPayloads(payloadSet)
+      return takePayloadLimit(buildUsernameGeneratorPayloads(payloadSet), limit)
     case 'runtimeFile':
-      return parsePayloadLines(payloadSet.payloadsText)
+      return takePayloadLimit(parsePayloadLines(payloadSet.payloadsText), limit)
     case 'numbers':
-      return buildNumberPayloads(payloadSet)
+      return takePayloadLimit(buildNumberPayloads(payloadSet), limit)
     case 'dates':
-      return buildDatePayloads(payloadSet)
+      return takePayloadLimit(buildDatePayloads(payloadSet), limit)
     case 'simpleList':
     default:
-      return parsePayloadLines(payloadSet.payloadsText)
+      return takePayloadLimit(parsePayloadLines(payloadSet.payloadsText), limit)
   }
+}
+
+function takePayloadLimit(values: string[], limit?: number): string[] {
+  if (limit == null) return values
+  const normalizedLimit = normalizePayloadLimit(limit)
+  if (!Number.isFinite(normalizedLimit)) return values
+  return values.slice(0, normalizedLimit)
+}
+
+function normalizePayloadLimit(limit?: number): number {
+  if (limit == null || !Number.isFinite(limit)) return Number.POSITIVE_INFINITY
+  return Math.max(0, Math.floor(limit))
+}
+
+function normalizeBruteForcerConfiguration(payloadSet: IntruderPayloadSet) {
+  const characters = Array.from(new Set(Array.from(payloadSet.bruteForceCharacterSet || '')))
+  const minLength = Math.max(0, Math.floor(Number(payloadSet.bruteForceMinLength) || 0))
+  const rawMaxLength = Math.max(0, Math.floor(Number(payloadSet.bruteForceMaxLength) || 0))
+  const maxLength = Math.max(minLength, rawMaxLength)
+
+  return {
+    characters,
+    minLength,
+    maxLength,
+  }
+}
+
+function countBruteForcerPayloads(payloadSet: IntruderPayloadSet): number {
+  const { characters, minLength, maxLength } = normalizeBruteForcerConfiguration(payloadSet)
+  const base = characters.length
+
+  if (!base) {
+    return minLength === 0 && maxLength === 0 ? 1 : 0
+  }
+
+  let total = 0
+  for (let length = minLength; length <= maxLength; length += 1) {
+    const count = base ** length
+    if (!Number.isFinite(count)) {
+      return Number.MAX_SAFE_INTEGER
+    }
+    total += count
+    if (!Number.isSafeInteger(total)) {
+      return Number.MAX_SAFE_INTEGER
+    }
+  }
+
+  return total
+}
+
+function buildBruteForcerPayloads(payloadSet: IntruderPayloadSet, limit?: number): string[] {
+  const { characters, minLength, maxLength } = normalizeBruteForcerConfiguration(payloadSet)
+  const normalizedLimit = normalizePayloadLimit(limit)
+  const values: string[] = []
+
+  if (!characters.length) {
+    if (minLength === 0 && maxLength === 0 && normalizedLimit > 0) {
+      return ['']
+    }
+    return values
+  }
+
+  const pushValue = (value: string): boolean => {
+    if (values.length >= normalizedLimit) return true
+    values.push(value)
+    return values.length >= normalizedLimit
+  }
+
+  const buildLength = (targetLength: number, depth: number, current: string): boolean => {
+    if (values.length >= normalizedLimit) return true
+    if (depth >= targetLength) {
+      return pushValue(current)
+    }
+
+    for (const character of characters) {
+      if (buildLength(targetLength, depth + 1, `${current}${character}`)) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  for (let length = minLength; length <= maxLength; length += 1) {
+    if (length === 0) {
+      if (pushValue('')) break
+      continue
+    }
+
+    if (buildLength(length, 0, '')) {
+      break
+    }
+  }
+
+  return values
 }
 
 function buildCharacterSubstitutionPayloads(payloadSet: IntruderPayloadSet): string[] {

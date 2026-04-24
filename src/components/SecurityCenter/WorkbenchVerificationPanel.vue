@@ -1,20 +1,29 @@
 <template>
   <div class="space-y-4">
-    <div
-      v-if="assessmentSuggestion"
-      class="rounded-lg border border-base-300 bg-base-100 p-4"
-    >
+    <div v-if="assessmentSuggestion" class="rounded-lg border border-base-300 bg-base-100 p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p class="text-sm font-semibold">{{ wb('verification.suggestionTitle') }}</p>
-          <p class="text-xs text-base-content/60">{{ assessmentSuggestion.summary }}</p>
+          <SecurityEvidenceTextBlock :text="assessmentSuggestion.summary" size="xs" />
         </div>
         <div class="flex flex-wrap gap-2">
-          <span :class="['badge', getWorkbenchConfidenceBadgeClass(assessmentSuggestion.confidence)]">
-            {{ wb('overview.confidence', { value: getWorkbenchConfidenceLabel(assessmentSuggestion.confidence) }) }}
+          <span
+            :class="['badge', getWorkbenchConfidenceBadgeClass(assessmentSuggestion.confidence)]"
+          >
+            {{
+              wb('overview.confidence', {
+                value: getWorkbenchConfidenceLabel(assessmentSuggestion.confidence),
+              })
+            }}
           </span>
-          <span :class="['badge', getWorkbenchStatusBadgeClass(assessmentSuggestion.suggestedStatus)]">
-            {{ wb('overview.suggestedStatus', { value: getWorkbenchStatusLabel(assessmentSuggestion.suggestedStatus) }) }}
+          <span
+            :class="['badge', getWorkbenchStatusBadgeClass(assessmentSuggestion.suggestedStatus)]"
+          >
+            {{
+              wb('overview.suggestedStatus', {
+                value: getWorkbenchStatusLabel(assessmentSuggestion.suggestedStatus),
+              })
+            }}
           </span>
         </div>
       </div>
@@ -23,7 +32,9 @@
     <div class="rounded-lg border border-base-300 bg-base-100 p-4">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p class="text-sm font-semibold">{{ wb('verification.verifierRuns') }}</p>
-        <span class="badge badge-outline">{{ wb('verification.count', { count: verifierRuns.length }) }}</span>
+        <span class="badge badge-outline">{{
+          wb('verification.count', { count: verifierRuns.length })
+        }}</span>
       </div>
 
       <div v-if="verifierRuns.length > 0" class="space-y-3">
@@ -32,7 +43,9 @@
           :key="run.id"
           :class="[
             'rounded-lg p-3 space-y-2',
-            selectedRunId === run.evidenceId ? 'bg-primary/10 ring-1 ring-primary/30' : 'bg-base-200/70',
+            selectedRunId === run.evidenceId
+              ? 'bg-primary/10 ring-1 ring-primary/30'
+              : 'bg-base-200/70',
           ]"
         >
           <div class="flex flex-wrap items-center justify-between gap-2">
@@ -48,14 +61,19 @@
               </span>
               <span
                 v-if="typeof run.responseStatus === 'number'"
-                :class="['badge badge-sm', run.responseStatus >= 400 ? 'badge-error' : 'badge-success']"
+                :class="[
+                  'badge badge-sm',
+                  run.responseStatus >= 400 ? 'badge-error' : 'badge-success',
+                ]"
               >
                 {{ run.responseStatus }}
               </span>
             </div>
-            <span class="text-xs text-base-content/60">{{ formatWorkbenchTime(run.finishedAt || run.startedAt) }}</span>
+            <span class="text-xs text-base-content/60">{{
+              formatWorkbenchTime(run.finishedAt || run.startedAt)
+            }}</span>
           </div>
-          <p class="text-sm text-base-content/70">{{ run.summary }}</p>
+          <SecurityEvidenceTextBlock :text="run.summary" size="sm" />
           <p v-if="run.errorMessage" class="text-xs text-error">{{ run.errorMessage }}</p>
         </div>
       </div>
@@ -68,7 +86,9 @@
     <div class="rounded-lg border border-base-300 bg-base-100 p-4">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p class="text-sm font-semibold">{{ wb('verification.executionRecords') }}</p>
-        <span class="badge badge-outline">{{ wb('verification.count', { count: executionRuns.length }) }}</span>
+        <span class="badge badge-outline">{{
+          wb('verification.count', { count: executionRuns.length })
+        }}</span>
       </div>
 
       <div v-if="executionRuns.length > 0" class="space-y-3">
@@ -86,20 +106,28 @@
               <span
                 :class="[
                   'badge',
-                  run.status === 'completed' ? 'badge-success' : run.status === 'blocked' ? 'badge-warning' : 'badge-error',
+                  run.status === 'completed'
+                    ? 'badge-success'
+                    : run.status === 'blocked'
+                      ? 'badge-warning'
+                      : 'badge-error',
                 ]"
               >
                 {{ getRunStatusLabel(run.status) }}
               </span>
               <span class="badge badge-outline">{{ run.method }}</span>
               <span class="badge badge-ghost">{{ run.targetField }}</span>
-              <span v-if="selectedRunId === run.id" class="badge badge-secondary">{{ wb('verification.focused') }}</span>
+              <span v-if="selectedRunId === run.id" class="badge badge-secondary">{{
+                wb('verification.focused')
+              }}</span>
             </div>
-            <span class="text-xs text-base-content/60">{{ formatWorkbenchTime(run.finishedAt) }}</span>
+            <span class="text-xs text-base-content/60">{{
+              formatWorkbenchTime(run.finishedAt)
+            }}</span>
           </div>
 
-          <p class="text-sm text-base-content/70">{{ run.summary }}</p>
-          <p class="font-mono text-xs break-all text-base-content/60">{{ run.baselineUrl }}</p>
+          <SecurityEvidenceTextBlock :text="run.summary" size="sm" />
+          <SecurityEvidenceTextBlock :text="run.baselineUrl" mono size="xs" />
 
           <div class="space-y-2">
             <div
@@ -115,27 +143,57 @@
                   <span class="badge badge-primary badge-sm">{{ attempt.candidateValue }}</span>
                   <span
                     v-if="typeof attempt.responseStatus === 'number'"
-                    :class="['badge badge-sm', attempt.responseStatus >= 400 ? 'badge-error' : 'badge-success']"
+                    :class="[
+                      'badge badge-sm',
+                      attempt.responseStatus >= 400 ? 'badge-error' : 'badge-success',
+                    ]"
                   >
                     {{ attempt.responseStatus }}
                   </span>
                 </div>
               </div>
               <div class="mt-2 flex flex-wrap gap-2">
-                <span :class="['badge badge-sm', attempt.diff.matchedStatus ? 'badge-outline' : 'badge-warning']">
-                  {{ attempt.diff.matchedStatus ? wb('verification.statusMatched') : wb('verification.statusChanged') }}
+                <span
+                  :class="[
+                    'badge badge-sm',
+                    attempt.diff.matchedStatus ? 'badge-outline' : 'badge-warning',
+                  ]"
+                >
+                  {{
+                    attempt.diff.matchedStatus
+                      ? wb('verification.statusMatched')
+                      : wb('verification.statusChanged')
+                  }}
                 </span>
-                <span :class="['badge badge-sm', attempt.diff.matchedBody ? 'badge-outline' : 'badge-info']">
-                  {{ attempt.diff.matchedBody ? wb('verification.bodyMatched') : wb('verification.bodyChanged') }}
+                <span
+                  :class="[
+                    'badge badge-sm',
+                    attempt.diff.matchedBody ? 'badge-outline' : 'badge-info',
+                  ]"
+                >
+                  {{
+                    attempt.diff.matchedBody
+                      ? wb('verification.bodyMatched')
+                      : wb('verification.bodyChanged')
+                  }}
                 </span>
                 <span class="badge badge-sm badge-ghost">
-                  {{ wb('verification.similarity', { value: getSimilarityLevelLabel(attempt.diff.similarityLevel) }) }}
+                  {{
+                    wb('verification.similarity', {
+                      value: getSimilarityLevelLabel(attempt.diff.similarityLevel),
+                    })
+                  }}
                 </span>
                 <span class="badge badge-sm badge-ghost">
-                  {{ wb('verification.length', { baseline: attempt.diff.baselineLength, response: attempt.diff.responseLength }) }}
+                  {{
+                    wb('verification.length', {
+                      baseline: attempt.diff.baselineLength,
+                      response: attempt.diff.responseLength,
+                    })
+                  }}
                 </span>
               </div>
-              <p class="mt-2 font-mono text-xs break-all text-base-content/70">{{ attempt.mutatedUrl }}</p>
+              <SecurityEvidenceTextBlock class="mt-2" :text="attempt.mutatedUrl" mono size="xs" />
               <div v-if="attempt.diff.changedSignals.length > 0" class="mt-2 flex flex-wrap gap-2">
                 <span
                   v-for="signal in attempt.diff.changedSignals"
@@ -145,10 +203,12 @@
                   {{ signal }}
                 </span>
               </div>
-              <pre
+              <SecurityEvidenceTextBlock
                 v-if="attempt.responseSnippet"
-                class="mt-2 bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto"
-              >{{ attempt.responseSnippet }}</pre>
+                class="mt-2"
+                :text="attempt.responseSnippet"
+                size="xs"
+              />
             </div>
           </div>
         </div>
@@ -172,22 +232,29 @@
               <span class="badge badge-success">{{ wb('verification.verificationRecord') }}</span>
               <span
                 v-if="typeof evidence.response_status === 'number'"
-                :class="['badge badge-sm', evidence.response_status >= 400 ? 'badge-error' : 'badge-success']"
+                :class="[
+                  'badge badge-sm',
+                  evidence.response_status >= 400 ? 'badge-error' : 'badge-success',
+                ]"
               >
                 {{ evidence.response_status }}
               </span>
             </div>
-            <span class="text-xs text-base-content/60">{{ formatWorkbenchTime(evidence.timestamp) }}</span>
+            <span class="text-xs text-base-content/60">{{
+              formatWorkbenchTime(evidence.timestamp)
+            }}</span>
           </div>
-          <pre class="mt-3 bg-base-100 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto">{{
-            getWorkbenchEvidenceSnippet(evidence)
-          }}</pre>
+          <div class="mt-3">
+            <SecurityEvidenceSnippetBlock :snippet="getWorkbenchEvidenceSnippet(evidence)" />
+          </div>
           <div class="mt-3 grid gap-3 xl:grid-cols-2">
             <div
               v-if="getBaselineExchange(evidence)"
               class="rounded-lg border border-base-300 bg-base-100 p-3"
             >
-              <p class="text-xs font-semibold text-base-content/70 mb-2">{{ wb('verification.baselineExchange') }}</p>
+              <p class="text-xs font-semibold text-base-content/70 mb-2">
+                {{ wb('verification.baselineExchange') }}
+              </p>
               <SecurityEvidenceRawExchangePanel
                 :exchange="getBaselineExchange(evidence)"
                 :fallback-url="evidence.url"
@@ -202,7 +269,9 @@
               v-if="getReplayExchange(evidence)"
               class="rounded-lg border border-base-300 bg-base-100 p-3"
             >
-              <p class="text-xs font-semibold text-base-content/70 mb-2">{{ wb('verification.replayExchange') }}</p>
+              <p class="text-xs font-semibold text-base-content/70 mb-2">
+                {{ wb('verification.replayExchange') }}
+              </p>
               <SecurityEvidenceRawExchangePanel
                 :exchange="getReplayExchange(evidence)"
                 :fallback-url="evidence.url"
@@ -225,6 +294,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import SecurityEvidenceSnippetBlock from './SecurityEvidenceSnippetBlock.vue'
+import SecurityEvidenceTextBlock from './SecurityEvidenceTextBlock.vue'
 import SecurityEvidenceRawExchangePanel from './SecurityEvidenceRawExchangePanel.vue'
 import type {
   WorkbenchAssessmentSuggestion,
@@ -260,7 +331,9 @@ const props = defineProps<{
 }>()
 
 const verificationEvidence = computed(() =>
-  (props.caseItem.finding.evidence || []).filter(item => item.location === 'system_agent_verification'),
+  (props.caseItem.finding.evidence || []).filter(
+    item => item.location === 'system_agent_verification'
+  )
 )
 const assessmentSuggestion = computed(() => props.assessmentSuggestion)
 const runRefs = ref<Record<string, HTMLElement | null>>({})
@@ -272,7 +345,7 @@ const setRunRef = (runId: string) => (element: Element | null) => {
 
 watch(
   () => props.selectedRunId,
-  async (runId) => {
+  async runId => {
     if (!runId) return
     await nextTick()
     runRefs.value[runId]?.scrollIntoView({
@@ -280,7 +353,7 @@ watch(
       block: 'center',
     })
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 const getRunStatusLabel = (status: WorkbenchExecutionRunStatus) => {

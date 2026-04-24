@@ -1598,14 +1598,19 @@ impl DatabaseService {
                 let row: (i64,) = sqlx::query_as(
                     r#"
                     INSERT INTO proxy_requests (
+                        origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
                         url, host, scheme, http_version_observed, method, status_code,
                         request_headers, request_body, response_headers, response_body,
                         response_size, response_time, timestamp,
                         request_body_compressed, response_body_compressed
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                     RETURNING id
                     "#,
                 )
+                .bind(&request.origin_kind)
+                .bind(&request.origin_ref_id)
+                .bind(request.parent_request_id)
+                .bind(&request.source_draft_revision_id)
                 .bind(&request.url)
                 .bind(&request.host)
                 .bind(&request.scheme)
@@ -1630,14 +1635,19 @@ impl DatabaseService {
                     sqlx::query_as(
                         r#"
                         INSERT INTO proxy_requests (
+                            origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
                             url, host, protocol, scheme, http_version_observed, method, status_code,
                             request_headers, request_body, response_headers, response_body,
                             response_size, response_time, timestamp,
                             request_body_compressed, response_body_compressed
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         RETURNING id
                         "#,
                     )
+                    .bind(&request.origin_kind)
+                    .bind(&request.origin_ref_id)
+                    .bind(request.parent_request_id)
+                    .bind(&request.source_draft_revision_id)
                     .bind(&request.url)
                     .bind(&request.host)
                     .bind(&request.scheme)
@@ -1660,14 +1670,19 @@ impl DatabaseService {
                     sqlx::query_as(
                         r#"
                         INSERT INTO proxy_requests (
+                            origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
                             url, host, scheme, http_version_observed, method, status_code,
                             request_headers, request_body, response_headers, response_body,
                             response_size, response_time, timestamp,
                             request_body_compressed, response_body_compressed
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         RETURNING id
                         "#,
                     )
+                    .bind(&request.origin_kind)
+                    .bind(&request.origin_ref_id)
+                    .bind(request.parent_request_id)
+                    .bind(&request.source_draft_revision_id)
                     .bind(&request.url)
                     .bind(&request.host)
                     .bind(&request.scheme)
@@ -1692,13 +1707,18 @@ impl DatabaseService {
                 let result = sqlx::query(
                     r#"
                     INSERT INTO proxy_requests (
+                        origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
                         url, host, scheme, http_version_observed, method, status_code,
                         request_headers, request_body, response_headers, response_body,
                         response_size, response_time, timestamp,
                         request_body_compressed, response_body_compressed
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
+                .bind(&request.origin_kind)
+                .bind(&request.origin_ref_id)
+                .bind(request.parent_request_id)
+                .bind(&request.source_draft_revision_id)
                 .bind(&request.url)
                 .bind(&request.host)
                 .bind(&request.scheme)
@@ -1742,7 +1762,8 @@ impl DatabaseService {
             DatabasePool::PostgreSQL(pool) => {
                 let mut query_builder = sqlx::QueryBuilder::<Postgres>::new(
                     r#"
-                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
+                    SELECT id, origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
+                           url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -1786,7 +1807,8 @@ impl DatabaseService {
             DatabasePool::SQLite(pool) => {
                 let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
                     r#"
-                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
+                    SELECT id, origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
+                           url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -1830,7 +1852,8 @@ impl DatabaseService {
             DatabasePool::MySQL(pool) => {
                 let mut query_builder = sqlx::QueryBuilder::<MySql>::new(
                     r#"
-                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
+                    SELECT id, origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
+                           url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -2015,7 +2038,8 @@ impl DatabaseService {
             DatabasePool::PostgreSQL(pool) => {
                 let record = sqlx::query_as::<_, ProxyRequestRecord>(
                     r#"
-                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
+                    SELECT id, origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
+                           url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -2031,7 +2055,8 @@ impl DatabaseService {
             DatabasePool::SQLite(pool) => {
                 let record = sqlx::query_as::<_, ProxyRequestRecord>(
                     r#"
-                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
+                    SELECT id, origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
+                           url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -2047,7 +2072,8 @@ impl DatabaseService {
             DatabasePool::MySQL(pool) => {
                 let record = sqlx::query_as::<_, ProxyRequestRecord>(
                     r#"
-                    SELECT id, url, host, scheme, http_version_observed, method, status_code,
+                    SELECT id, origin_kind, origin_ref_id, parent_request_id, source_draft_revision_id,
+                           url, host, scheme, http_version_observed, method, status_code,
                            request_headers, request_body, response_headers, response_body,
                            response_size, response_time, timestamp,
                            request_body_compressed, response_body_compressed
@@ -2342,6 +2368,14 @@ pub struct TrafficVulnerabilityWithEvidence {
 pub struct ProxyRequestRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_ref_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_request_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_draft_revision_id: Option<String>,
     pub url: String,
     pub host: String,
     pub scheme: String,

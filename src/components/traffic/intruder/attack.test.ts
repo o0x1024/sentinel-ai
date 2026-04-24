@@ -24,6 +24,9 @@ function createPayloadSet(overrides: Partial<IntruderPayloadSet> = {}): Intruder
     pluginPresetName: '',
     pluginConfig: '{}',
     filePath: '',
+    bruteForceCharacterSet: 'abcdefghijklmnopqrstuvwxyz0123456789',
+    bruteForceMinLength: 4,
+    bruteForceMaxLength: 4,
     characterList: '',
     substitutionSource: '',
     substitutionRules: '',
@@ -110,6 +113,19 @@ describe('intruder attack helpers', () => {
     ])
 
     expect(estimate).toBe(10)
+  })
+
+  it('estimates brute forcer request counts from the configured character space', () => {
+    const estimate = estimateAttackCount('batteringRam', 1, [
+      createPayloadSet({
+        payloadType: 'bruteForcer',
+        bruteForceCharacterSet: 'ab',
+        bruteForceMinLength: 1,
+        bruteForceMaxLength: 3,
+      }),
+    ])
+
+    expect(estimate).toBe(14)
   })
 
   it('encodes only selected payload characters', () => {

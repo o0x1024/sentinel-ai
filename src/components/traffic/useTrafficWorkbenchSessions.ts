@@ -7,6 +7,13 @@ import type {
 type WorkbenchTool = TrafficWorkbenchToolSession['tool']
 
 const createDefaultSessions = (): Record<WorkbenchTool, TrafficWorkbenchToolSession> => ({
+  capture: {
+    tool: 'capture',
+    title: '抓包',
+    source: null,
+    updatedAt: 0,
+    count: 0,
+  },
   repeater: {
     tool: 'repeater',
     title: '重放器',
@@ -52,6 +59,20 @@ export const useTrafficWorkbenchSessions = () => {
     }
   }
 
+  function clearSessionCount(tool: WorkbenchTool) {
+    if (sessions.value[tool].count === 0) {
+      return
+    }
+
+    sessions.value = {
+      ...sessions.value,
+      [tool]: {
+        ...sessions.value[tool],
+        count: 0,
+      },
+    }
+  }
+
   const sessionList = computed(() =>
     (Object.values(sessions.value) as TrafficWorkbenchToolSession[]).sort(
       (left, right) => right.updatedAt - left.updatedAt,
@@ -62,5 +83,6 @@ export const useTrafficWorkbenchSessions = () => {
     sessions,
     sessionList,
     markSession,
+    clearSessionCount,
   }
 }

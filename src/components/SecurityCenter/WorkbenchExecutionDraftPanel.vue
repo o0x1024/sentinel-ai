@@ -16,14 +16,20 @@
           :ref="setDraftRef(draft.id)"
           :class="[
             'rounded-lg border bg-base-200/50 p-4 space-y-3',
-            selectedDraftId === draft.id ? 'border-primary ring-1 ring-primary/30' : 'border-base-300',
+            selectedDraftId === draft.id
+              ? 'border-primary ring-1 ring-primary/30'
+              : 'border-base-300',
           ]"
         >
           <div class="flex flex-wrap items-center gap-2">
             <span
               :class="[
                 'badge',
-                draft.severity === 'high' ? 'badge-error' : draft.severity === 'medium' ? 'badge-warning' : 'badge-ghost',
+                draft.severity === 'high'
+                  ? 'badge-error'
+                  : draft.severity === 'medium'
+                    ? 'badge-warning'
+                    : 'badge-ghost',
               ]"
             >
               {{ wb(`priority.${draft.severity}`) }}
@@ -31,29 +37,36 @@
             <span :class="draft.readOnly ? 'badge badge-success' : 'badge badge-warning'">
               {{ draft.readOnly ? wb('drafts.readonlyPreferred') : wb('drafts.manualConfirm') }}
             </span>
-            <span class="badge badge-outline">{{ getExecutionDraftStatusLabel(draft.status) }}</span>
-            <span v-if="selectedDraftId === draft.id" class="badge badge-secondary">{{ wb('drafts.focused') }}</span>
+            <span class="badge badge-outline">{{
+              getExecutionDraftStatusLabel(draft.status)
+            }}</span>
+            <span v-if="selectedDraftId === draft.id" class="badge badge-secondary">{{
+              wb('drafts.focused')
+            }}</span>
           </div>
 
           <div>
             <p class="font-medium">{{ draft.title }}</p>
-            <p class="mt-1 text-sm text-base-content/70">{{ draft.targetMethod }} {{ draft.targetUrl }}</p>
-            <p class="mt-2 text-xs text-base-content/60">{{ draft.rationale }}</p>
+            <SecurityEvidenceTextBlock
+              class="mt-1"
+              :text="`${draft.targetMethod} ${draft.targetUrl}`"
+              mono
+              size="sm"
+            />
+            <SecurityEvidenceTextBlock class="mt-2" :text="draft.rationale" size="xs" />
           </div>
 
           <div class="flex flex-wrap gap-2">
-            <span
-              v-for="value in draft.candidateValues"
-              :key="value"
-              class="badge badge-primary"
-            >
+            <span v-for="value in draft.candidateValues" :key="value" class="badge badge-primary">
               {{ value }}
             </span>
           </div>
 
           <div class="flex flex-wrap items-center justify-between gap-3">
             <label class="form-control">
-              <span class="label-text text-xs text-base-content/60 mb-1">{{ wb('drafts.status') }}</span>
+              <span class="label-text text-xs text-base-content/60 mb-1">{{
+                wb('drafts.status')
+              }}</span>
               <select
                 class="select select-bordered select-sm"
                 :value="draft.status"
@@ -79,7 +92,9 @@
                       : wb('drafts.executeWithConfirm')
                 }}
               </button>
-              <button class="btn btn-sm btn-outline" @click="copyDraft(draft)">{{ wb('drafts.copySummary') }}</button>
+              <button class="btn btn-sm btn-outline" @click="copyDraft(draft)">
+                {{ wb('drafts.copySummary') }}
+              </button>
             </div>
           </div>
         </div>
@@ -95,7 +110,11 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { dialog } from '@/composables/useDialog'
-import type { WorkbenchExecutionDraft, WorkbenchExecutionDraftStatus } from './securityWorkbenchTypes'
+import SecurityEvidenceTextBlock from './SecurityEvidenceTextBlock.vue'
+import type {
+  WorkbenchExecutionDraft,
+  WorkbenchExecutionDraftStatus,
+} from './securityWorkbenchTypes'
 import { wb } from './securityWorkbenchLocale'
 
 const props = defineProps<{
@@ -111,7 +130,8 @@ const emit = defineEmits<{
 
 const draftRefs = ref<Record<string, HTMLElement | null>>({})
 
-const getExecutionDraftStatusLabel = (status: WorkbenchExecutionDraftStatus) => wb(`drafts.statusLabel.${status}`)
+const getExecutionDraftStatusLabel = (status: WorkbenchExecutionDraftStatus) =>
+  wb(`drafts.statusLabel.${status}`)
 
 const setDraftRef = (draftId: string) => (element: Element | null) => {
   draftRefs.value[draftId] = element instanceof HTMLElement ? element : null
@@ -119,7 +139,7 @@ const setDraftRef = (draftId: string) => (element: Element | null) => {
 
 watch(
   () => props.selectedDraftId,
-  async (draftId) => {
+  async draftId => {
     if (!draftId) return
     await nextTick()
     draftRefs.value[draftId]?.scrollIntoView({
@@ -127,7 +147,7 @@ watch(
       block: 'center',
     })
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 const onStatusChange = (draftId: string, event: Event) => {

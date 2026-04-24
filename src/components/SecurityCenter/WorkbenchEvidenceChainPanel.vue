@@ -44,11 +44,8 @@
         </div>
       </div>
 
-      <p class="font-mono text-xs break-all text-base-content/70">{{ evidence.url }}</p>
-      <pre
-        class="bg-base-200 p-3 rounded text-xs whitespace-pre-wrap break-words overflow-x-auto"
-        >{{ getWorkbenchEvidenceSnippet(evidence) }}</pre
-      >
+      <SecurityEvidenceTextBlock :text="evidence.url" mono size="xs" />
+      <SecurityEvidenceSnippetBlock :snippet="getWorkbenchEvidenceSnippet(evidence)" />
 
       <div
         v-if="hasWorkbenchEvidenceExchange(evidence) && getWorkbenchEvidenceExchange(evidence)"
@@ -127,6 +124,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import SecurityEvidenceSnippetBlock from './SecurityEvidenceSnippetBlock.vue'
+import SecurityEvidenceTextBlock from './SecurityEvidenceTextBlock.vue'
 import type { WorkbenchCase } from './securityWorkbenchTypes'
 import type { Evidence } from './vulnerabilityFindingTypes'
 import SecurityEvidenceRawExchangePanel from './SecurityEvidenceRawExchangePanel.vue'
@@ -152,11 +151,11 @@ const evidences = computed(() => props.caseItem.finding.evidence || [])
 const evidenceRefs = ref<Record<string, HTMLElement | null>>({})
 const transferMessages = computed(() => ({
   triggerLabel: wb('evidence.sendTo'),
-  sendToRepeater: wb('evidence.sendToRepeater'),
-  sendToIntruder: wb('evidence.sendToIntruder'),
+  createDraft: wb('evidence.createDraft'),
+  createAttackWorkspace: wb('evidence.createAttackWorkspace'),
   noTransferableRequest: wb('evidence.noTransferableRequest'),
-  sentToRepeater: wb('evidence.sentToRepeater'),
-  sentToIntruder: wb('evidence.sentToIntruder'),
+  draftCreated: wb('evidence.draftCreated'),
+  attackWorkspaceCreated: wb('evidence.attackWorkspaceCreated'),
   transferFailed: wb('evidence.transferFailed', { error: '{error}' }),
 }))
 const rawPanelHeight = '18rem'

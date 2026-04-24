@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultGrepPayloadSettings } from './analysis'
-import { createBuiltInResourcePools, exportIntruderResultsCsv, loadIntruderResourcePools } from './storage'
+import {
+  buildIntruderResourcePoolAutoName,
+  createBuiltInResourcePools,
+  exportIntruderResultsCsv,
+  loadIntruderResourcePools,
+  upsertIntruderResourcePoolEntry,
+} from './storage'
 import type { IntruderAttackResult } from './types'
 
 function createResult(): IntruderAttackResult {
@@ -82,5 +88,87 @@ describe('intruder resource pools', () => {
       delayEnabled: false,
       autoThrottleEnabled: false,
     })
+  })
+
+  it('builds an automatic name from the resource pool config', () => {
+    expect(buildIntruderResourcePoolAutoName(createBuiltInResourcePools())).toBe('资源池 1')
+  })
+
+  it('reuses an existing pool when the config already exists', () => {
+    const builtIns = createBuiltInResourcePools()
+    const result = upsertIntruderResourcePoolEntry(builtIns, {
+      concurrencyEnabled: true,
+      concurrency: 10,
+      delayEnabled: false,
+      delayMs: 0,
+      randomDelayEnabled: false,
+      randomDelayMs: 0,
+      delayIncrementEnabled: false,
+      delayIncrementMs: 0,
+      autoThrottleEnabled: false,
+      autoThrottleStatusCodes: [429, 503],
+    })
+
+    expect(result.pools).toHaveLength(1)
+    expect(result.pool.id).toBe('default')
+  })
+
+  it('creates a custom pool with an automatic name when the config is new', () => {
+    const result = upsertIntruderResourcePoolEntry(createBuiltInResourcePools(), {
+      concurrencyEnabled: true,
+      concurrency: 7,
+      delayEnabled: true,
+      delayMs: 120,
+      randomDelayEnabled: false,
+      randomDelayMs: 0,
+      delayIncrementEnabled: false,
+      delayIncrementMs: 0,
+      autoThrottleEnabled: true,
+      autoThrottleStatusCodes: [429],
+    })
+
+    expect(result.pools).toHaveLength(2)
+    expect(result.pool).toMatchObject({
+      name: '资源池 1',
+      concurrency: 7,
+      delayMs: 120,
+      autoThrottleEnabled: true,
+      autoThrottleStatusCodes: [429],
+    })
+  })
+
+  it('keeps the same auto-generated name when updating an existing custom pool', () => {
+    const result = upsertIntruderResourcePoolEntry([
+      ...createBuiltInResourcePools(),
+      {
+        id: 'resource-pool-1',
+        name: '资源池 3',
+        concurrencyEnabled: true,
+        concurrency: 3,
+        delayEnabled: false,
+        delayMs: 0,
+        randomDelayEnabled: false,
+        randomDelayMs: 0,
+        delayIncrementEnabled: false,
+        delayIncrementMs: 0,
+        autoThrottleEnabled: false,
+        autoThrottleStatusCodes: [],
+        builtIn: false,
+      },
+    ], {
+      id: 'resource-pool-1',
+      concurrencyEnabled: true,
+      concurrency: 8,
+      delayEnabled: false,
+      delayMs: 0,
+      randomDelayEnabled: false,
+      randomDelayMs: 0,
+      delayIncrementEnabled: false,
+      delayIncrementMs: 0,
+      autoThrottleEnabled: false,
+      autoThrottleStatusCodes: [],
+    })
+
+    expect(result.pool.name).toBe('资源池 3')
   })
 })

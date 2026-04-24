@@ -519,7 +519,7 @@ import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
 import { buildTrafficRequestActionMenuItems } from './trafficRequestActionMenuSupport'
 import { buildTrafficContextMenuSections } from './trafficContextMenuSectionSupport'
 import { buildTrafficContextSubmenu } from './trafficContextSubmenuSupport'
-import { useTrafficSendTargets } from './trafficSendTargets'
+import { useTrafficSendTargets, type TrafficSendTarget } from './trafficSendTargets'
 import { buildTrafficRequestSendMenuItems } from './trafficSendMenuSupport'
 import { useTrafficPaneCompactMode } from './useTrafficPaneCompactMode'
 import {
@@ -565,9 +565,9 @@ const refreshTrigger = inject<any>('refreshTrigger', ref(0));
 const emit = defineEmits<{
   (e: 'openResponseInterceptionSettings'): void
   (e: 'interceptQueueChanged', count: number): void
-  (e: 'sendToRepeater', request: HttpExchangeRequest): void
-  (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
-  (e: 'sendToIntruder', request: HttpExchangeRequest): void
+  (e: 'createDraft', request: HttpExchangeRequest): void
+  (e: 'openDraftCompare', payload: TrafficComparerDraftRequestInput): void
+  (e: 'createAttackWorkspace', request: HttpExchangeRequest): void
   (e: 'sendToAssistant', requests: any[]): void
   (e: 'addToBasket', payload: { request: HttpExchangeRequest; requestId?: number; title: string; host: string }): void
 }>();
@@ -642,27 +642,27 @@ const currentRequest = computed(() => {
   if (!item || item.type !== 'request') return null;
   return item.data as InterceptedRequest;
 });
-const currentSendTargets = computed(() => {
+const currentSendTargets = computed<TrafficSendTarget[]>(() => {
   if (currentItem.value?.type === 'request') {
-    return ['repeater', 'comparer', 'intruder'] as const
+    return ['draft', 'compare', 'attackWorkspace']
   }
   if (currentItem.value?.type === 'response') {
-    return ['comparer'] as const
+    return ['compare']
   }
-  return [] as const
+  return []
 })
 const interceptContextSendMenuItems = computed(() =>
   buildTrafficRequestSendMenuItems({
     enabledTargets: enabledTargets.value,
     supportedTargets: contextMenu.value.item?.type === 'request'
-      ? ['repeater', 'comparer', 'intruder']
+      ? ['draft', 'compare', 'attackWorkspace']
       : contextMenu.value.item?.type === 'response'
-        ? ['comparer']
+        ? ['compare']
         : [],
     actions: {
-      repeater: contextMenu.value.item?.type === 'request' ? contextMenuSendToRepeater : undefined,
-      comparer: contextMenuSendToComparer,
-      intruder: contextMenu.value.item?.type === 'request' ? contextMenuSendToIntruder : undefined,
+      draft: contextMenu.value.item?.type === 'request' ? contextMenuSendToRepeater : undefined,
+      compare: contextMenuSendToComparer,
+      attackWorkspace: contextMenu.value.item?.type === 'request' ? contextMenuSendToIntruder : undefined,
     },
   }),
 )
@@ -671,9 +671,9 @@ const interceptToolbarSendMenuItems = computed(() =>
     enabledTargets: enabledTargets.value,
     supportedTargets: [...currentSendTargets.value],
     actions: {
-      repeater: currentItem.value?.type === 'request' ? sendToRepeater : undefined,
-      comparer: sendToComparer,
-      intruder: currentItem.value?.type === 'request' ? sendToIntruder : undefined,
+      draft: currentItem.value?.type === 'request' ? createDraft : undefined,
+      compare: openDraftCompare,
+      attackWorkspace: currentItem.value?.type === 'request' ? createAttackWorkspace : undefined,
     },
   }),
 )
@@ -914,8 +914,8 @@ async function contextMenuDrop() {
 
 function contextMenuSendToRepeater() {
   if (contextMenu.value.item?.type === 'request') {
-    emit('sendToRepeater', buildExchangeRequestFromInterceptedRequest(contextMenu.value.item.data as InterceptedRequest));
-    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToRepeater'));
+    emit('createDraft', buildExchangeRequestFromInterceptedRequest(contextMenu.value.item.data as InterceptedRequest));
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.draftCreated'));
   }
   closeContextMenu();
 }
@@ -945,26 +945,26 @@ function contextMenuAddToBasket() {
 
 function contextMenuSendToIntruder() {
   if (contextMenu.value.item?.type === 'request') {
-    emit('sendToIntruder', buildExchangeRequestFromInterceptedRequest(contextMenu.value.item.data as InterceptedRequest));
-    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToIntruder'));
+    emit('createAttackWorkspace', buildExchangeRequestFromInterceptedRequest(contextMenu.value.item.data as InterceptedRequest));
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.attackWorkspaceCreated'));
   }
   closeContextMenu();
 }
 
 function contextMenuSendToComparer() {
   if (contextMenu.value.item?.type === 'request') {
-    emit('sendDraftRequestToComparer', {
+    emit('openDraftCompare', {
       request: buildExchangeRequestFromInterceptedRequest(contextMenu.value.item.data as InterceptedRequest),
       label: t('trafficAnalysis.comparer.draft.leftLabel'),
     });
-    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.compareOpened'));
   } else if (contextMenu.value.item?.type === 'response') {
-    emit('sendDraftRequestToComparer', {
+    emit('openDraftCompare', {
       text: buildInterceptResponseText(contextMenu.value.item.data as InterceptedResponse, interceptedRequests.value),
       messageType: 'response',
       label: t('trafficAnalysis.intercept.response'),
     })
-    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.compareOpened'));
   }
   closeContextMenu();
 }
@@ -1358,14 +1358,14 @@ async function dropAll() {
   }
 }
 
-function sendToRepeater() {
+function createDraft() {
   if (!currentRequest.value) return;
-  emit('sendToRepeater', buildExchangeRequestFromInterceptedRequest(currentRequest.value));
+  emit('createDraft', buildExchangeRequestFromInterceptedRequest(currentRequest.value));
 }
 
-function sendToIntruder() {
+function createAttackWorkspace() {
   if (!currentRequest.value) return;
-  emit('sendToIntruder', buildExchangeRequestFromInterceptedRequest(currentRequest.value));
+  emit('createAttackWorkspace', buildExchangeRequestFromInterceptedRequest(currentRequest.value));
 }
 
 function addCurrentRequestToBasket() {
@@ -1376,23 +1376,23 @@ function addCurrentRequestToBasket() {
   emitRequestToBasket(currentRequest.value)
 }
 
-function sendToComparer() {
+function openDraftCompare() {
   if (currentItem.value?.type === 'request' && currentRequest.value) {
-    emit('sendDraftRequestToComparer', {
+    emit('openDraftCompare', {
       request: buildExchangeRequestFromInterceptedRequest(currentRequest.value),
       label: t('trafficAnalysis.comparer.draft.leftLabel'),
     });
-    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.compareOpened'));
     return
   }
 
   if (currentItem.value?.type === 'response') {
-    emit('sendDraftRequestToComparer', {
+    emit('openDraftCompare', {
       text: buildInterceptResponseText(currentItem.value.data as InterceptedResponse, interceptedRequests.value),
       messageType: 'response',
       label: t('trafficAnalysis.intercept.response'),
     })
-    dialog.toast.success(t('trafficAnalysis.intercept.messages.sentToComparer'));
+    dialog.toast.success(t('trafficAnalysis.intercept.messages.compareOpened'));
   }
 }
 

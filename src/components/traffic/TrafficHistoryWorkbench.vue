@@ -43,6 +43,30 @@
       </form>
     </AppDialog>
 
+    <TrafficContextCandidateDialog
+      :open="showContextCandidateDialog"
+      :loading="contextCandidateLoading"
+      :applying="contextCandidateApplying"
+      :previewing="contextCandidatePreviewLoading"
+      :result="contextCandidateResult"
+      :preview-result="contextCandidatePreviewResult"
+      :selected-candidate-ids="selectedCandidateIds"
+      :preferred-preview-focus="preferredPreviewFocus"
+      @close="closeContextCandidateDialog"
+      @apply="applySelectedContextCandidates"
+      @preview="previewSelectedContextCandidates"
+      @open-evidence-request="openContextCandidateEvidenceRequest"
+      @update:selected-candidate-ids="updateSelectedCandidateIds"
+      @update:preferred-preview-focus="preferredPreviewFocus = $event"
+    />
+
+    <TrafficHistoryFilterDialog
+      :open="showHistoryFilterDialog"
+      :config="appliedFilterConfig"
+      @close="showHistoryFilterDialog = false"
+      @apply="applyHistoryFilters"
+    />
+
     <div
       v-if="contextMenu.visible"
       ref="contextMenuRef"
@@ -106,18 +130,21 @@
       <div
         ref="topPanel"
         class="flex flex-shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100"
-        :style="{ height: `${topPanelHeight}px` }"
+        :style="historyTopPanelStyle"
       >
         <TrafficHistoryWorkbenchToolbar
           :protocol-filter="protocolFilter"
+          :has-active-filters="hasActiveFilters"
           :is-multi-select-mode="isMultiSelectMode"
           :selected-count="selectedRequests.size"
           :filtered-count="filteredRequests.length"
-          :basket-count="basketCount"
+          :open-filter-dialog="openHistoryFilterDialog"
           :toggle-multi-select-mode="toggleMultiSelectMode"
           :select-all-visible="selectAllVisible"
-          :clear-selection="clearSelection"
-          :add-selected-to-basket="addSelectedToBasket"
+          :export-selected-to-file="exportSelectedToFile"
+          :export-as-har="exportAsHar"
+          :generate-candidates-from-filtered="generateCandidatesFromFiltered"
+          :generate-candidates-from-selection="generateCandidatesFromSelection"
           :refresh-requests="refreshRequests"
           :clear-history="clearHistory"
           @update:protocol-filter="protocolFilter = $event"
@@ -165,11 +192,12 @@
       </div>
 
       <div
+        v-if="showDetails"
         class="h-1 flex-shrink-0 cursor-row-resize bg-base-300 transition-colors hover:bg-primary/50"
         @mousedown="startHorizontalResize"
       ></div>
 
-      <div ref="bottomPanel" class="flex min-h-0 flex-1 flex-col overflow-hidden bg-base-100">
+      <div v-if="showDetails" ref="bottomPanel" class="flex min-h-0 flex-1 flex-col overflow-hidden bg-base-100">
         <ProxyHistoryDetailsPanel
           :selected-request="selectedRequest"
           :is-loading-selected-request="isSelectedRequestLoading"
@@ -210,15 +238,20 @@ import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
 import type { HttpExchangeRequest } from './http/model'
 import ProxyHistoryDetailsPanel from './ProxyHistoryDetailsPanel.vue'
+import TrafficHistoryFilterDialog from './TrafficHistoryFilterDialog.vue'
 import ProxyHistoryTopContent from './ProxyHistoryTopContent.vue'
+import TrafficContextCandidateDialog from './TrafficContextCandidateDialog.vue'
 import TrafficHistoryWorkbenchToolbar from './TrafficHistoryWorkbenchToolbar.vue'
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
 import TrafficContextSubmenu from './TrafficContextSubmenu.vue'
 import {
   buildDefaultProxyHistoryFilterConfig,
   buildProxyHistoryFilterCache,
+  hasActiveProxyHistoryFilters,
   hasParams,
+  mergeStoredProxyHistoryFilterConfig,
 } from './proxyHistoryFilterSupport'
+import { buildTrafficContextCandidateId } from './trafficContextCandidateSupport'
 import {
   buildHttpExchangeRequestFromHistory,
 } from './proxyHistoryHttpSupport'
@@ -245,6 +278,7 @@ import {
 import { classifyProxyHistoryRequestIdStep } from './proxyHistoryListStepSupport'
 import type {
   Column,
+  ProxyHistoryFilterConfig,
   ProxyHistoryProtocolFilter,
   ProxyHistoryRequestTab,
   ProxyHistoryResponseTab,
@@ -256,6 +290,7 @@ import type {
   WebSocketConnection,
   WebSocketMessage,
 } from './proxyHistoryTypes'
+import type { ProxyScopeRule } from './proxyConfigurationTypes'
 import { useProxyHistoryActions } from './useProxyHistoryActions'
 import { useProxyHistoryData } from './useProxyHistoryData'
 import { useProxyHistoryDerivedList } from './useProxyHistoryDerivedList'
@@ -267,35 +302,51 @@ import { buildTrafficRequestActionMenuItems } from './trafficRequestActionMenuSu
 import { buildTrafficRequestContextMenuSections } from './trafficRequestContextMenuSupport'
 import { buildTrafficRequestSendMenuItems } from './trafficSendMenuSupport'
 import { useTrafficSendTargets } from './trafficSendTargets'
+import { useTrafficContextCandidatePreferences } from './useTrafficContextCandidatePreferences'
 import { buildTrafficContextSubmenu } from './trafficContextSubmenuSupport'
 import type {
+  RecommendTrafficContextDictionaryCandidatesResponse,
   TrafficContextCandidateEvidenceSelection,
+  TrafficContextDictionaryCandidate,
+  TrafficContextExtractionPreviewResponse,
 } from './trafficContextCandidateTypes'
 import type {
   TrafficComparerDraftRequestInput,
   TrafficComparePayload,
 } from './transfers'
+import {
+  getTrafficContextExtractionSettings,
+  mergeCandidatesIntoTrafficContextExtractionSettings,
+  previewTrafficContextExtractionChanges,
+  recommendTrafficContextDictionaryCandidates,
+  setTrafficContextExtractionSettings,
+} from '@/services/trafficContextCandidates'
 
 type VisibleRow = VirtualItem & {
   cellValues: Record<string, string>
 }
 
 const emit = defineEmits<{
-  (e: 'sendToRepeater', request: HttpExchangeRequest): void
-  (e: 'sendToIntruder', request: HttpExchangeRequest): void
-  (e: 'sendDraftRequestToComparer', payload: TrafficComparerDraftRequestInput): void
-  (e: 'sendToComparer', payload: TrafficComparePayload): void
+  (e: 'createDraft', request: HttpExchangeRequest): void
+  (e: 'createAttackWorkspace', request: HttpExchangeRequest): void
+  (e: 'openDraftCompare', payload: TrafficComparerDraftRequestInput): void
+  (e: 'openCompare', payload: TrafficComparePayload): void
   (e: 'sendToAssistant', requests: ProxyRequest[]): void
   (e: 'addFilterRule', rule: { matchType: string; condition: string; relationship?: string }): void
   (e: 'addToBasket', payload: { request: HttpExchangeRequest; requestId?: number; title: string; host: string }): void
+  (e: 'selectionChange', request: ProxyRequest | null): void
 }>()
 
-defineProps<{
+const props = withDefaults(defineProps<{
   basketCount: number
-}>()
+  showDetails?: boolean
+}>(), {
+  showDetails: true,
+})
 
 const { t } = useI18n()
 const { enabledTargets } = useTrafficSendTargets()
+const { preferredPreviewFocus } = useTrafficContextCandidatePreferences()
 
 const refreshTrigger = inject<any>('refreshTrigger', ref(0))
 
@@ -347,6 +398,7 @@ const stats = ref({
 
 const STORAGE_KEY_TOP_HEIGHT = 'trafficHistoryWorkbench.topPanelHeight'
 const STORAGE_KEY_LEFT_WIDTH = 'trafficHistoryWorkbench.leftPanelWidth'
+const STORAGE_KEY_FILTERS = 'trafficHistoryWorkbench.filterConfig'
 const topPanelHeight = ref(260)
 const leftPanelWidth = ref(Number(localStorage.getItem(STORAGE_KEY_LEFT_WIDTH) || '600'))
 const isResizingHorizontal = ref(false)
@@ -371,6 +423,17 @@ const responseTab = ref<ProxyHistoryResponseTab>('pretty')
 const requestViewMode = ref<ProxyHistoryViewMode>('edited')
 const responseViewMode = ref<ProxyHistoryViewMode>('edited')
 const certErrorInfo = ref<{ host: string; url: string; error?: string } | null>(null)
+const showHistoryFilterDialog = ref(false)
+const showContextCandidateDialog = ref(false)
+const contextCandidateLoading = ref(false)
+const contextCandidateApplying = ref(false)
+const contextCandidatePreviewLoading = ref(false)
+const contextCandidateResult = ref<RecommendTrafficContextDictionaryCandidatesResponse | null>(null)
+const contextCandidatePreviewResult = ref<TrafficContextExtractionPreviewResponse | null>(null)
+const contextCandidateRequestIds = ref<number[]>([])
+const selectedCandidateIds = ref<string[]>([])
+const scopeIncludeRules = ref<ProxyScopeRule[]>([])
+const scopeExcludeRules = ref<ProxyScopeRule[]>([])
 
 let resizeObserver: ResizeObserver | null = null
 let mainContainerResizeObserver: ResizeObserver | null = null
@@ -382,14 +445,21 @@ const AUTO_FOLLOW_TOP_THRESHOLD = itemHeight
 const savedScrollTop = ref(0)
 
 const defaultFilterConfig = buildDefaultProxyHistoryFilterConfig
-const appliedFilterConfig = ref(defaultFilterConfig())
-const filterCache = computed(() => buildProxyHistoryFilterCache(appliedFilterConfig.value))
-const shouldBypassFrontendFilters = computed(() => true)
+const appliedFilterConfig = ref(loadStoredHistoryFilterConfig())
+const filterCache = computed(() => buildProxyHistoryFilterCache(appliedFilterConfig.value, {
+  includeRules: scopeIncludeRules.value,
+  excludeRules: scopeExcludeRules.value,
+}))
+const hasActiveFilters = computed(() => hasActiveProxyHistoryFilters(appliedFilterConfig.value))
+const shouldBypassFrontendFilters = computed(() => !hasActiveFilters.value)
 
 const columns = ref<Column[]>(loadProxyHistoryColumnsFromStorage())
 const sortState = ref<ProxyHistorySortState>(loadProxyHistorySortFromStorage())
 const translatedColumns = computed(() => translateProxyHistoryColumns(columns.value, t))
 const visibleColumns = computed(() => translatedColumns.value.filter((col) => col.visible))
+const historyTopPanelStyle = computed(() =>
+  props.showDetails ? { height: `${topPanelHeight.value}px` } : { height: '100%' },
+)
 const {
   filteredRequests,
   sortedRequests,
@@ -401,6 +471,16 @@ const {
   sortState,
 })
 const totalHeight = computed(() => sortedRequests.value.length * itemHeight + headerHeight)
+const selectedContextCandidates = computed<TrafficContextDictionaryCandidate[]>(() => {
+  if (!contextCandidateResult.value) {
+    return []
+  }
+
+  const selectedIdSet = new Set(selectedCandidateIds.value)
+  return contextCandidateResult.value.candidates.filter(candidate =>
+    selectedIdSet.has(buildTrafficContextCandidateId(candidate)),
+  )
+})
 const visibleItems = computed((): VirtualItem[] =>
   buildProxyHistoryVisibleItems(sortedRequests.value, scrollTop.value, containerHeight.value),
 )
@@ -479,16 +559,21 @@ const {
   detailSendToComparer,
   detailSendToIntruder,
   detailSendToRepeater,
+  exportAsHAR,
+  exportSelectedToFile,
   hideContextMenu,
   hideDetailContextMenu,
   isRequestSelected,
   openInBrowser,
   selectAllVisible,
   selectRequest,
+  sendSelectedRequestVersionsToComparer,
+  sendSelectedResponseVersionsToComparer,
+  sendSelectedToAssistant,
   sendRequestToAssistantFromMenu,
-  sendToComparer,
-  sendToIntruder,
-  sendToRepeater,
+  openDraftCompare,
+  createAttackWorkspace,
+  createDraft,
   showContextMenu,
   showDetailContextMenu,
   toggleMultiSelectMode,
@@ -511,16 +596,18 @@ const {
   keepDetailsOpenOnRepeatSelect: true,
   hideContextMenu: () => hideContextMenu(),
   hideDetailContextMenu: () => hideDetailContextMenu(),
-  emitSendToRepeater: request => emit('sendToRepeater', request),
-  emitSendToIntruder: request => emit('sendToIntruder', request),
-  emitSendDraftRequestToComparer: payload => emit('sendDraftRequestToComparer', payload),
-  emitSendToComparer: payload => emit('sendToComparer', payload),
+  emitCreateDraft: request => emit('createDraft', request),
+  emitCreateAttackWorkspace: request => emit('createAttackWorkspace', request),
+  emitOpenDraftCompare: payload => emit('openDraftCompare', payload),
+  emitOpenCompare: payload => emit('openCompare', payload),
   emitSendToAssistant: requestsToSend => emit('sendToAssistant', requestsToSend),
   emitAddFilterRule: rule => emit('addFilterRule', rule),
   fetchRequestDetails,
   updateStats,
   t,
 })
+
+const exportAsHar = () => exportAsHAR()
 
 const canCompareRequestFromContext = computed(() => canCompareRequestVersions(contextMenu.value.request))
 const canCompareResponseFromContext = computed(() => canCompareResponseVersions(contextMenu.value.request))
@@ -529,22 +616,22 @@ const canCompareResponseFromDetail = computed(() => canCompareResponseVersions(s
 const contextRequestSendMenuItems = computed(() =>
   buildTrafficRequestSendMenuItems({
     enabledTargets: enabledTargets.value,
-    supportedTargets: ['repeater', 'comparer', 'intruder'],
+    supportedTargets: ['draft', 'compare', 'attackWorkspace'],
     actions: {
-      repeater: sendToRepeater,
-      comparer: sendToComparer,
-      intruder: sendToIntruder,
+      draft: createDraft,
+      compare: openDraftCompare,
+      attackWorkspace: createAttackWorkspace,
     },
   }),
 )
 const detailRequestSendMenuItems = computed(() =>
   buildTrafficRequestSendMenuItems({
     enabledTargets: enabledTargets.value,
-    supportedTargets: ['repeater', 'comparer', 'intruder'],
+    supportedTargets: ['draft', 'compare', 'attackWorkspace'],
     actions: {
-      repeater: detailSendToRepeater,
-      comparer: detailSendToComparer,
-      intruder: detailSendToIntruder,
+      draft: detailSendToRepeater,
+      compare: detailSendToComparer,
+      attackWorkspace: detailSendToIntruder,
     },
   }),
 )
@@ -578,7 +665,7 @@ const historyContextMenuSections = computed(() =>
         ? {
             key: 'compareRequestVersions',
             iconClass: 'fas fa-not-equal text-accent',
-            labelKey: 'sendToComparer',
+            labelKey: 'openCompare',
             onClick: compareRequestVersions,
           }
         : null,
@@ -586,7 +673,7 @@ const historyContextMenuSections = computed(() =>
         ? {
             key: 'compareResponseVersions',
             iconClass: 'fas fa-not-equal text-accent',
-            labelKey: 'sendToComparer',
+            labelKey: 'openCompare',
             onClick: compareResponseVersions,
           }
         : null,
@@ -606,13 +693,13 @@ const historyDetailContextMenuSections = computed(() =>
   buildTrafficRequestContextMenuSections({
     sendItems: detailContextMenu.value.pane === 'request'
       ? detailRequestSendMenuItems.value
-      : detailRequestSendMenuItems.value.filter((item) => item.key === 'comparer'),
+      : detailRequestSendMenuItems.value.filter((item) => item.key === 'compare'),
     compareItems: [
       detailContextMenu.value.pane === 'request' && canCompareRequestFromDetail.value
         ? {
             key: 'detailCompareRequestVersions',
             iconClass: 'fas fa-not-equal text-accent',
-            labelKey: 'sendToComparer',
+            labelKey: 'openCompare',
             onClick: detailCompareRequestVersions,
           }
         : null,
@@ -620,7 +707,7 @@ const historyDetailContextMenuSections = computed(() =>
         ? {
             key: 'detailCompareResponseVersions',
             iconClass: 'fas fa-not-equal text-accent',
-            labelKey: 'sendToComparer',
+            labelKey: 'openCompare',
             onClick: detailCompareResponseVersions,
           }
         : null,
@@ -1011,6 +1098,153 @@ function closeCertErrorDialog() {
   certErrorInfo.value = null
 }
 
+function closeContextCandidateDialog() {
+  showContextCandidateDialog.value = false
+  contextCandidatePreviewResult.value = null
+}
+
+async function openHistoryFilterDialog() {
+  await loadScopeRules()
+  showHistoryFilterDialog.value = true
+}
+
+function applyHistoryFilters(config: ProxyHistoryFilterConfig) {
+  appliedFilterConfig.value = cloneHistoryFilterConfig(config)
+  persistHistoryFilterConfig()
+  showHistoryFilterDialog.value = false
+}
+
+async function loadScopeRules() {
+  try {
+    const response = await invoke<{ success?: boolean; data?: { scope_include_rules?: ProxyScopeRule[]; scope_exclude_rules?: ProxyScopeRule[] } }>('get_proxy_config')
+    if (!response?.success || !response.data) {
+      return
+    }
+
+    scopeIncludeRules.value = Array.isArray(response.data.scope_include_rules)
+      ? response.data.scope_include_rules
+      : []
+    scopeExcludeRules.value = Array.isArray(response.data.scope_exclude_rules)
+      ? response.data.scope_exclude_rules
+      : []
+  } catch (error) {
+    console.error('Failed to load scope rules for history filters:', error)
+  }
+}
+
+async function generateCandidatesFromFiltered() {
+  const requestIds = filteredRequests.value
+    .map(request => request.id)
+    .filter(id => Number.isFinite(id))
+
+  await openContextCandidateRecommendationDialog(requestIds)
+}
+
+async function generateCandidatesFromSelection() {
+  const requestIds = Array.from(selectedRequests.value)
+    .filter(id => Number.isFinite(id))
+
+  await openContextCandidateRecommendationDialog(requestIds)
+}
+
+async function openContextCandidateRecommendationDialog(requestIds: number[]) {
+  const normalizedRequestIds = [...new Set(requestIds)].slice(0, 500)
+  if (normalizedRequestIds.length === 0) {
+    dialog.toast.warning('当前没有可用于生成候选的历史记录')
+    return
+  }
+
+  showContextCandidateDialog.value = true
+  contextCandidateLoading.value = true
+  contextCandidateApplying.value = false
+  contextCandidatePreviewLoading.value = false
+  contextCandidateResult.value = null
+  contextCandidatePreviewResult.value = null
+  contextCandidateRequestIds.value = normalizedRequestIds
+  selectedCandidateIds.value = []
+
+  try {
+    const result = await recommendTrafficContextDictionaryCandidates({
+      requestIds: normalizedRequestIds,
+      maxCandidatesPerCategory: 12,
+    })
+    contextCandidateResult.value = result
+    selectedCandidateIds.value = result.candidates
+      .filter(candidate => candidate.confidence === 'high' && !candidate.alreadyCoveredBy)
+      .map(buildTrafficContextCandidateId)
+  } catch (error) {
+    console.error('Failed to recommend traffic context candidates from history workbench:', error)
+    dialog.toast.error(`生成词典候选失败: ${String(error)}`)
+    showContextCandidateDialog.value = false
+  } finally {
+    contextCandidateLoading.value = false
+  }
+}
+
+function updateSelectedCandidateIds(nextValue: string[]) {
+  selectedCandidateIds.value = nextValue
+  contextCandidatePreviewResult.value = null
+}
+
+async function applySelectedContextCandidates() {
+  if (selectedContextCandidates.value.length === 0) {
+    return
+  }
+
+  contextCandidateApplying.value = true
+  try {
+    const latestSettings = await getTrafficContextExtractionSettings()
+    const nextSettings = mergeCandidatesIntoTrafficContextExtractionSettings(
+      latestSettings,
+      selectedContextCandidates.value,
+    )
+    await setTrafficContextExtractionSettings(nextSettings)
+    dialog.toast.success(`已把 ${selectedContextCandidates.value.length} 项候选合并到上下文词典`)
+    closeContextCandidateDialog()
+    selectedCandidateIds.value = []
+  } catch (error) {
+    console.error('Failed to apply traffic context candidates from history workbench:', error)
+    dialog.toast.error(`应用候选失败: ${String(error)}`)
+  } finally {
+    contextCandidateApplying.value = false
+  }
+}
+
+async function previewSelectedContextCandidates() {
+  if (selectedContextCandidates.value.length === 0 || contextCandidateRequestIds.value.length === 0) {
+    return
+  }
+
+  contextCandidatePreviewLoading.value = true
+  try {
+    const currentSettings = await getTrafficContextExtractionSettings()
+    const previewSettings = mergeCandidatesIntoTrafficContextExtractionSettings(
+      currentSettings,
+      selectedContextCandidates.value,
+    )
+    contextCandidatePreviewResult.value = await previewTrafficContextExtractionChanges({
+      requestIds: contextCandidateRequestIds.value,
+      currentSettings,
+      previewSettings,
+      sampleLimit: 6,
+    })
+  } catch (error) {
+    console.error('Failed to preview traffic context candidates from history workbench:', error)
+    dialog.toast.error(`预览命中变化失败: ${String(error)}`)
+  } finally {
+    contextCandidatePreviewLoading.value = false
+  }
+}
+
+async function openContextCandidateEvidenceRequest(payload: TrafficContextCandidateEvidenceSelection) {
+  await openRequestById(
+    payload.requestId,
+    payload.matchedLocations,
+    payload.pane || 'request',
+    payload.searchTerms || [],
+  )
+}
+
 async function checkCAInstallation() {
   try {
     const response = await invoke<any>('export_root_ca')
@@ -1021,6 +1255,27 @@ async function checkCAInstallation() {
   } catch (error: any) {
     dialog.toast.error(`Failed to check certificate: ${error}`)
   }
+}
+
+function persistHistoryFilterConfig() {
+  window.localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify(appliedFilterConfig.value))
+}
+
+function loadStoredHistoryFilterConfig() {
+  const raw = window.localStorage.getItem(STORAGE_KEY_FILTERS)
+  if (!raw) {
+    return defaultFilterConfig()
+  }
+
+  try {
+    return mergeStoredProxyHistoryFilterConfig(JSON.parse(raw))
+  } catch {
+    return defaultFilterConfig()
+  }
+}
+
+function cloneHistoryFilterConfig(config: ProxyHistoryFilterConfig): ProxyHistoryFilterConfig {
+  return JSON.parse(JSON.stringify(config)) as ProxyHistoryFilterConfig
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null) {
@@ -1341,6 +1596,7 @@ function removeMatchingRecords(rule: { matchType: string; condition: string; rel
 }
 
 onMounted(async () => {
+  await loadScopeRules()
   await setupEventListeners()
   await refreshRequests()
   await nextTick()
@@ -1373,6 +1629,7 @@ onUnmounted(() => {
 })
 
 watch(selectedRequest, async () => {
+  emit('selectionChange', selectedRequest.value)
   if (selectedRequestEvidence.value && selectedRequest.value?.id !== selectedRequestEvidence.value.requestId) {
     selectedRequestEvidence.value = null
   }

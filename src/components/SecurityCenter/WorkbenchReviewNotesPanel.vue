@@ -12,7 +12,10 @@
             class="input input-bordered input-sm w-full sm:w-[240px]"
             :placeholder="wb('review.searchPlaceholder')"
           />
-          <select v-model="timelineFilter" class="select select-bordered select-sm w-full sm:w-[220px]">
+          <select
+            v-model="timelineFilter"
+            class="select select-bordered select-sm w-full sm:w-[220px]"
+          >
             <option value="all">{{ wb('review.filterAll') }}</option>
             <option value="system">{{ wb('review.filterSystem') }}</option>
             <option value="notes">{{ wb('review.filterNotes') }}</option>
@@ -49,7 +52,9 @@
                   item.kind === 'activity' ? 'badge-info' : 'badge-ghost',
                 ]"
               >
-                {{ item.kind === 'activity' ? wb('review.systemActivity') : wb('review.manualNote') }}
+                {{
+                  item.kind === 'activity' ? wb('review.systemActivity') : wb('review.manualNote')
+                }}
               </span>
               <span
                 :class="[
@@ -57,7 +62,11 @@
                   item.kind === 'activity' ? 'badge-info badge-outline' : 'badge-outline',
                 ]"
               >
-                {{ item.kind === 'activity' ? getWorkbenchActivityKindLabel(item.entry.kind) : getWorkbenchNoteKindLabel(item.entry.kind) }}
+                {{
+                  item.kind === 'activity'
+                    ? getWorkbenchActivityKindLabel(item.entry.kind)
+                    : getWorkbenchNoteKindLabel(item.entry.kind)
+                }}
               </span>
               <span class="font-medium text-sm">
                 {{ item.kind === 'activity' ? item.entry.title : getNoteTitle(item.entry.kind) }}
@@ -66,12 +75,16 @@
                 {{ item.kind === 'activity' ? item.entry.actor : item.entry.author }}
               </span>
             </div>
-            <span class="text-xs text-base-content/60">{{ formatWorkbenchTime(item.createdAt) }}</span>
+            <span class="text-xs text-base-content/60">{{
+              formatWorkbenchTime(item.createdAt)
+            }}</span>
           </div>
 
-          <p class="mt-3 whitespace-pre-wrap break-words text-sm">
-            {{ item.kind === 'activity' ? item.entry.summary : item.entry.body }}
-          </p>
+          <SecurityEvidenceTextBlock
+            class="mt-3"
+            :text="item.kind === 'activity' ? item.entry.summary : item.entry.body"
+            size="sm"
+          />
 
           <div
             v-if="item.kind === 'activity' && getTimelineActions(item.entry).length > 0"
@@ -92,31 +105,22 @@
             >
               {{ wb('review.copyLocationLink') }}
             </button>
-            <button
-              class="btn btn-xs btn-ghost"
-              @click="emit('copy-timeline-item-link', item.id)"
-            >
+            <button class="btn btn-xs btn-ghost" @click="emit('copy-timeline-item-link', item.id)">
               {{ wb('review.copyNodeLink') }}
             </button>
           </div>
 
-          <div
-            v-else
-            class="mt-3 flex flex-wrap gap-2"
-          >
-            <button
-              class="btn btn-xs btn-ghost"
-              @click="emit('copy-timeline-item-link', item.id)"
-            >
+          <div v-else class="mt-3 flex flex-wrap gap-2">
+            <button class="btn btn-xs btn-ghost" @click="emit('copy-timeline-item-link', item.id)">
               {{ wb('review.copyNodeLink') }}
             </button>
           </div>
 
           <div
             v-if="
-              item.kind === 'activity'
-                && (getWorkbenchSnapshotEntries(item.entry.before).length
-                  || getWorkbenchSnapshotEntries(item.entry.after).length)
+              item.kind === 'activity' &&
+              (getWorkbenchSnapshotEntries(item.entry.before).length ||
+                getWorkbenchSnapshotEntries(item.entry.after).length)
             "
             class="mt-3 grid gap-3 md:grid-cols-2"
           >
@@ -124,7 +128,9 @@
               v-if="getWorkbenchSnapshotEntries(item.entry.before).length"
               class="rounded-lg border border-base-300 bg-base-100 p-3"
             >
-              <div class="mb-2 text-xs font-medium text-base-content/60">{{ wb('review.snapshotBefore') }}</div>
+              <div class="mb-2 text-xs font-medium text-base-content/60">
+                {{ wb('review.snapshotBefore') }}
+              </div>
               <div class="space-y-2">
                 <div
                   v-for="entry in getWorkbenchSnapshotEntries(item.entry.before)"
@@ -141,7 +147,9 @@
               v-if="getWorkbenchSnapshotEntries(item.entry.after).length"
               class="rounded-lg border border-success/20 bg-success/5 p-3"
             >
-              <div class="mb-2 text-xs font-medium text-base-content/60">{{ wb('review.snapshotAfter') }}</div>
+              <div class="mb-2 text-xs font-medium text-base-content/60">
+                {{ wb('review.snapshotAfter') }}
+              </div>
               <div class="space-y-2">
                 <div
                   v-for="entry in getWorkbenchSnapshotEntries(item.entry.after)"
@@ -170,7 +178,9 @@
         <select v-model="kind" class="select select-bordered">
           <option value="observation">{{ wb('review.noteTitle.observation') }}</option>
           <option value="conclusion">{{ wb('review.noteTitle.conclusion') }}</option>
-          <option value="false_positive_reason">{{ wb('review.noteTitle.false_positive_reason') }}</option>
+          <option value="false_positive_reason">
+            {{ wb('review.noteTitle.false_positive_reason') }}
+          </option>
           <option value="remediation_note">{{ wb('review.noteTitle.remediation_note') }}</option>
           <option value="replay_note">{{ wb('review.noteTitle.replay_note') }}</option>
         </select>
@@ -182,9 +192,13 @@
       </div>
       <div class="flex items-center justify-between gap-3">
         <div class="text-xs text-base-content/60">
-          {{ wb('review.noteSummary', { activityCount: activities.length, noteCount: notes.length }) }}
+          {{
+            wb('review.noteSummary', { activityCount: activities.length, noteCount: notes.length })
+          }}
         </div>
-        <button class="btn btn-sm btn-primary" @click="submitNote">{{ wb('review.addNote') }}</button>
+        <button class="btn btn-sm btn-primary" @click="submitNote">
+          {{ wb('review.addNote') }}
+        </button>
       </div>
     </div>
   </div>
@@ -192,6 +206,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import SecurityEvidenceTextBlock from './SecurityEvidenceTextBlock.vue'
 import type { WorkbenchActivity, WorkbenchNote, WorkbenchNoteKind } from './securityWorkbenchTypes'
 import {
   formatWorkbenchTime,
@@ -218,30 +233,36 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'add-note': [kind: WorkbenchNoteKind, body: string]
-  'open-target': [target: {
-    tab: 'overview' | 'evidence' | 'drafts' | 'verification'
-    evidenceId?: string | null
-    draftId?: string | null
-    runId?: string | null
-  }]
-  'copy-target-link': [target: {
-    tab: 'overview' | 'evidence' | 'drafts' | 'verification'
-    evidenceId?: string | null
-    draftId?: string | null
-    runId?: string | null
-  }]
+  'open-target': [
+    target: {
+      tab: 'overview' | 'evidence' | 'drafts' | 'verification'
+      evidenceId?: string | null
+      draftId?: string | null
+      runId?: string | null
+    },
+  ]
+  'copy-target-link': [
+    target: {
+      tab: 'overview' | 'evidence' | 'drafts' | 'verification'
+      evidenceId?: string | null
+      draftId?: string | null
+      runId?: string | null
+    },
+  ]
   'copy-timeline-item-link': [itemId: string]
-  'change-timeline-state': [state: {
-    search: string
-    filter:
-      | 'all'
-      | 'system'
-      | 'notes'
-      | 'draft_execution'
-      | 'finding_sync'
-      | 'suggestion_sync'
-      | WorkbenchNoteKind
-  }]
+  'change-timeline-state': [
+    state: {
+      search: string
+      filter:
+        | 'all'
+        | 'system'
+        | 'notes'
+        | 'draft_execution'
+        | 'finding_sync'
+        | 'suggestion_sync'
+        | WorkbenchNoteKind
+    },
+  ]
 }>()
 
 const kind = ref<WorkbenchNoteKind>('observation')
@@ -305,7 +326,7 @@ const getNoteTitle = (noteKind: WorkbenchNoteKind) => {
 
 const readSnapshotString = (snapshot: WorkbenchActivity['before'] | WorkbenchActivity['after']) =>
   getWorkbenchSnapshotEntries(snapshot)
-    .map((entry) => `${entry.key}:${entry.value}`)
+    .map(entry => `${entry.key}:${entry.value}`)
     .join(' ')
 
 const getTimelineActions = (activity: WorkbenchActivity): WorkbenchTimelineAction[] => {
@@ -346,23 +367,23 @@ const getTimelineActions = (activity: WorkbenchActivity): WorkbenchTimelineActio
 }
 
 const timelineItems = computed<WorkbenchTimelineItem[]>(() => {
-  const activityItems: WorkbenchTimelineItem[] = props.activities.map((entry) => ({
+  const activityItems: WorkbenchTimelineItem[] = props.activities.map(entry => ({
     id: `activity-${entry.id}`,
     kind: 'activity',
     createdAt: entry.createdAt,
     entry,
   }))
-  const noteItems: WorkbenchTimelineItem[] = props.notes.map((entry) => ({
+  const noteItems: WorkbenchTimelineItem[] = props.notes.map(entry => ({
     id: `note-${entry.id}`,
     kind: 'note',
     createdAt: entry.createdAt,
     entry,
   }))
   const combined = [...activityItems, ...noteItems].sort(
-    (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
   )
 
-  return combined.filter((item) => {
+  return combined.filter(item => {
     const filterMatched = (() => {
       if (timelineFilter.value === 'all') return true
       if (timelineFilter.value === 'system') return item.kind === 'activity'
@@ -375,32 +396,30 @@ const timelineItems = computed<WorkbenchTimelineItem[]>(() => {
     if (!timelineSearch.value) return true
 
     const keyword = timelineSearch.value.toLowerCase()
-    const haystack = item.kind === 'activity'
-      ? [
-          item.entry.title,
-          item.entry.summary,
-          item.entry.actor,
-          getWorkbenchActivityKindLabel(item.entry.kind),
-          readSnapshotString(item.entry.before),
-          readSnapshotString(item.entry.after),
-        ]
-      : [
-          item.entry.body,
-          item.entry.author,
-          getWorkbenchNoteKindLabel(item.entry.kind),
-          getNoteTitle(item.entry.kind),
-        ]
+    const haystack =
+      item.kind === 'activity'
+        ? [
+            item.entry.title,
+            item.entry.summary,
+            item.entry.actor,
+            getWorkbenchActivityKindLabel(item.entry.kind),
+            readSnapshotString(item.entry.before),
+            readSnapshotString(item.entry.after),
+          ]
+        : [
+            item.entry.body,
+            item.entry.author,
+            getWorkbenchNoteKindLabel(item.entry.kind),
+            getNoteTitle(item.entry.kind),
+          ]
 
-    return haystack
-      .join(' ')
-      .toLowerCase()
-      .includes(keyword)
+    return haystack.join(' ').toLowerCase().includes(keyword)
   })
 })
 
 watch(
   () => props.selectedTimelineItemId,
-  async (itemId) => {
+  async itemId => {
     if (!itemId) return
     await nextTick()
     timelineItemRefs.value[itemId]?.scrollIntoView({
@@ -408,25 +427,25 @@ watch(
       block: 'center',
     })
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 watch(
   () => props.initialTimelineSearch,
-  (value) => {
+  value => {
     if (typeof value === 'string' && value !== timelineSearch.value) {
       timelineSearch.value = value
     }
-  },
+  }
 )
 
 watch(
   () => props.initialTimelineFilter,
-  (value) => {
+  value => {
     if (value && value !== timelineFilter.value) {
       timelineFilter.value = value
     }
-  },
+  }
 )
 
 watch([timelineSearch, timelineFilter], ([searchValue, filterValue]) => {

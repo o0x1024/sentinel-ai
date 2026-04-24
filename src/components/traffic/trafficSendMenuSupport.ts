@@ -12,21 +12,21 @@ type BuildTrafficRequestSendMenuItemsOptions = {
 }
 
 const TARGET_MENU_META: Record<TrafficSendTarget, Pick<TrafficRequestSendMenuItem, 'iconClass' | 'labelKey'>> = {
-  repeater: {
+  draft: {
     iconClass: 'fas fa-redo text-primary',
-    labelKey: 'sendToRepeater',
+    labelKey: 'createDraft',
   },
-  comparer: {
+  compare: {
     iconClass: 'fas fa-not-equal text-accent',
-    labelKey: 'sendToComparer',
+    labelKey: 'openCompare',
   },
-  intruder: {
+  attackWorkspace: {
     iconClass: 'fas fa-crosshairs text-secondary',
-    labelKey: 'sendToIntruder',
+    labelKey: 'createAttackWorkspace',
   },
 }
 
-const TARGET_ORDER: TrafficSendTarget[] = ['repeater', 'comparer', 'intruder']
+const TARGET_ORDER: TrafficSendTarget[] = ['draft', 'compare', 'attackWorkspace']
 
 export function buildTrafficRequestSendMenuItems(
   options: BuildTrafficRequestSendMenuItemsOptions,

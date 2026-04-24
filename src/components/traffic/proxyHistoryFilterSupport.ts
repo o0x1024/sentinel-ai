@@ -3,7 +3,9 @@ import type {
   ProxyHistoryFilterConfig,
   ProxyRequest,
 } from './proxyHistoryTypes'
+import type { ProxyScopeRule } from './proxyConfigurationTypes'
 import { getProxyHistoryDerived } from './proxyHistoryDerivedSupport'
+import { isProxyRequestInScope } from './proxyScopeSupport'
 
 export const buildDefaultProxyHistoryFilterConfig = (): ProxyHistoryFilterConfig => ({
   requestType: {
@@ -78,6 +80,7 @@ export const getMimeTypeCategory = (request: ProxyRequest): string => {
 
 export const buildProxyHistoryFilterCache = (
   config: ProxyHistoryFilterConfig,
+  scopeRules: { includeRules: ProxyScopeRule[]; excludeRules: ProxyScopeRule[] } | null = null,
 ): ProxyHistoryFilterCache => {
   let searchRegex: RegExp | null = null
   if (config.search.term && config.search.regex) {
@@ -106,6 +109,7 @@ export const buildProxyHistoryFilterCache = (
       : '',
     showExts,
     hideExts,
+    scopeRules,
   }
 }
 
@@ -130,6 +134,20 @@ export const matchesProxyHistoryRequest = (
   cache: ProxyHistoryFilterCache,
 ) => {
   const derived = getProxyHistoryDerived(request)
+
+  if (
+    config.requestType.showOnlyInScope
+    && (
+      !cache.scopeRules
+      || !isProxyRequestInScope(
+        request,
+        cache.scopeRules.includeRules,
+        cache.scopeRules.excludeRules,
+      )
+    )
+  ) {
+    return false
+  }
 
   if (config.requestType.showOnlyWithParams && !derived.hasParams) {
     return false

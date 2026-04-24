@@ -16,6 +16,7 @@ import {
 } from './trafficMessageViewTestAssertions'
 import { createTrafficMessageViewTestGlobal } from './trafficMessageViewTestMount'
 import { createInitialHttpExchangeRequest, createReplayResult } from './trafficMessageViewTestData'
+import { useTrafficWorkbenchStore } from './workbench/stores/useTrafficWorkbenchStore'
 
 vi.mock('vue-i18n', async () => {
   const { createVueI18nMock } = await import('./trafficMessageViewTestMocks')
@@ -39,6 +40,7 @@ describe('ProxyRepeater', () => {
   beforeEach(() => {
     global.testUtils.mockInvoke.mockReset()
     window.localStorage.clear()
+    useTrafficWorkbenchStore().drafts.resetDraftStore()
   })
 
   afterEach(() => {
@@ -162,5 +164,143 @@ describe('ProxyRepeater', () => {
     expect(wrapper.findAll('.http-message-surface-stub').find(node =>
       node.attributes('data-state-key')?.includes(':response:'),
     )).toBeFalsy()
+  })
+
+  it('sends the current request to intruder with Cmd/Ctrl+I inside repeater scope', async () => {
+    const wrapper = mount(ProxyRepeater, {
+      props: {
+        initialRequest: createInitialHttpExchangeRequest(),
+      },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+      attachTo: document.body,
+    })
+
+    Object.defineProperty(wrapper.element, 'offsetParent', {
+      configurable: true,
+      get: () => document.body,
+    })
+
+    wrapper.element.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'i',
+      metaKey: true,
+    }))
+    await flushPromises()
+
+    const emitted = wrapper.emitted('createAttackWorkspace')
+    expect(emitted).toHaveLength(1)
+    expect(emitted?.[0]?.[0]).toMatchObject({
+      absoluteUrl: 'https://example.com/api/test',
+      request: {
+        method: 'GET',
+        target: '/api/test',
+      },
+    })
+
+    wrapper.unmount()
+  })
+
+  it('does not create a draft when opening a preview request', async () => {
+    const workbenchState = useTrafficWorkbenchStore()
+
+    const wrapper = mount(ProxyRepeater, {
+      props: {
+        initialRequest: createInitialHttpExchangeRequest(),
+      },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await flushPromises()
+
+    expect(workbenchState.drafts.drafts.value).toHaveLength(0)
+
+    wrapper.unmount()
+  })
+
+  it('emits edited tab count after the user edits a preview request', async () => {
+    const wrapper = mount(ProxyRepeater, {
+      props: {
+        initialRequest: createInitialHttpExchangeRequest(),
+      },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await flushPromises()
+
+    const requestSurface = wrapper.findAllComponents(HttpMessageSurfaceStub).find(component =>
+      component.attributes('data-state-key')?.includes(':request:pretty'),
+    )
+    expect(requestSurface).toBeTruthy()
+
+    requestSurface!.vm.$emit(
+      'update:modelValue',
+      'GET /api/test?edited=1 HTTP/1.1\r\nHost: example.com\r\n\r\n',
+    )
+    await flushPromises()
+
+    const statsEvents = wrapper.emitted('tabStatsChanged')
+    expect(statsEvents?.at(-1)?.[0]).toEqual({ editedTabCount: 1 })
+
+    wrapper.unmount()
+  })
+
+  it('emits edited tab count after sending a preview request', async () => {
+    global.testUtils.mockInvoke.mockResolvedValueOnce({
+      success: true,
+      data: createReplayResult('response body', 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nresponse body'),
+    })
+
+    const wrapper = mount(ProxyRepeater, {
+      props: {
+        initialRequest: createInitialHttpExchangeRequest(),
+      },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await flushPromises()
+    await wrapper.get('button.btn-primary.btn-sm').trigger('click')
+    await flushPromises()
+
+    const statsEvents = wrapper.emitted('tabStatsChanged')
+    expect(statsEvents?.at(-1)?.[0]).toEqual({ editedTabCount: 1 })
+
+    wrapper.unmount()
   })
 })

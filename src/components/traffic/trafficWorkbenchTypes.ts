@@ -1,9 +1,12 @@
 import type { HttpExchangeRequest } from './http/model'
 
+export type TrafficWorkbenchRequestVariant = 'original' | 'edited'
+
 export type TrafficWorkbenchSourceKind =
   | 'history'
   | 'intercept'
   | 'basket'
+  | 'capture'
   | 'repeater'
   | 'intruder'
   | 'comparer'
@@ -13,6 +16,21 @@ export interface TrafficWorkbenchSource {
   kind: TrafficWorkbenchSourceKind
   label: string
   requestId?: number
+}
+
+export interface TrafficWorkbenchRequestContext {
+  sourceKind: TrafficWorkbenchSourceKind
+  sourceLabel: string
+  requestId: number | null
+  sourceRequestId: number | null
+  method: string
+  host: string
+  path: string
+  statusCode: number | null
+  variant: TrafficWorkbenchRequestVariant
+  hasEditedVariant: boolean
+  mode: 'preview' | 'draft' | 'workspace'
+  modeLabel: string
 }
 
 export interface TrafficWorkbenchBasketItem {
@@ -34,7 +52,7 @@ export interface TrafficWorkbenchBasketCandidateInput {
 }
 
 export interface TrafficWorkbenchToolSession {
-  tool: 'repeater' | 'intruder' | 'comparer' | 'oast'
+  tool: 'capture' | 'repeater' | 'intruder' | 'comparer' | 'oast'
   title: string
   source: TrafficWorkbenchSource | null
   updatedAt: number

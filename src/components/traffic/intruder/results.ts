@@ -3,11 +3,8 @@ import type {
   IntruderResultColumnFilter,
   IntruderResultFilter,
   IntruderResultSort,
-  IntruderResultsWindowState,
 } from './types'
 import { getIntruderResultColumnValue } from './analysis'
-
-const STORAGE_KEY_PREFIX = 'intruder-results-window'
 
 export function createDefaultResultFilter(): IntruderResultFilter {
   return {
@@ -141,25 +138,6 @@ export function buildIntruderDiffSummary(baseline: IntruderAttackResult | null, 
     lineDelta: result.lineCount - baseline.lineCount,
     timeDelta: subtractNullable(result.responseTimeMs, baseline.responseTimeMs),
     changedLines,
-  }
-}
-
-export function getIntruderResultsStorageKey(workspaceId: string): string {
-  return `${STORAGE_KEY_PREFIX}:${workspaceId}`
-}
-
-export function saveIntruderResultsWindowState(state: IntruderResultsWindowState): void {
-  localStorage.setItem(getIntruderResultsStorageKey(state.workspaceId), JSON.stringify(state))
-}
-
-export function loadIntruderResultsWindowState(workspaceId: string): IntruderResultsWindowState | null {
-  const raw = localStorage.getItem(getIntruderResultsStorageKey(workspaceId))
-  if (!raw) return null
-
-  try {
-    return JSON.parse(raw) as IntruderResultsWindowState
-  } catch {
-    return null
   }
 }
 

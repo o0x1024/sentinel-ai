@@ -113,7 +113,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { dialog } from '@/composables/useDialog'
 import type {
   WorkbenchActivity,
   WorkbenchAssessmentSuggestion,
@@ -135,7 +137,11 @@ import WorkbenchObjectAnalysisPanel from './WorkbenchObjectAnalysisPanel.vue'
 import WorkbenchReplayPlanPanel from './WorkbenchReplayPlanPanel.vue'
 import WorkbenchReviewNotesPanel from './WorkbenchReviewNotesPanel.vue'
 import WorkbenchVerificationPanel from './WorkbenchVerificationPanel.vue'
-import { findFirstTransferableSecurityEvidence } from './securityEvidenceTransferSupport'
+import {
+  findFirstTransferableSecurityEvidence,
+  openSecurityEvidenceInTrafficWorkbench,
+} from './securityEvidenceTransferSupport'
+import { resolveSecurityEvidenceTransferShortcut } from './securityEvidenceTransferShortcut'
 import { wb } from './securityWorkbenchLocale'
 import { getWorkbenchFindingTitle } from './securityWorkbenchSystemAgentContent'
 
@@ -227,17 +233,36 @@ const emit = defineEmits<{
   'delete-case': [caseId: string]
 }>()
 
+const router = useRouter()
 const activeTab = ref<CaseDetailTabId>(props.initialTab || 'overview')
 const primaryTransferableEvidence = computed(() =>
   findFirstTransferableSecurityEvidence(props.caseItem?.finding.evidence)
 )
+const selectedTransferableEvidence = computed(() => {
+  const selectedEvidenceId = props.selectedEvidenceId?.trim()
+  if (!selectedEvidenceId) {
+    return null
+  }
+
+  const selectedEvidence = props.caseItem?.finding.evidence?.find(
+    evidence => evidence.id === selectedEvidenceId,
+  )
+  if (!selectedEvidence) {
+    return null
+  }
+
+  return findFirstTransferableSecurityEvidence([selectedEvidence])
+})
+const shortcutTransferableEvidence = computed(
+  () => selectedTransferableEvidence.value || primaryTransferableEvidence.value,
+)
 const transferMessages = computed(() => ({
   triggerLabel: wb('caseDetail.sendTo'),
-  sendToRepeater: wb('caseDetail.sendToRepeater'),
-  sendToIntruder: wb('caseDetail.sendToIntruder'),
+  createDraft: wb('caseDetail.createDraft'),
+  createAttackWorkspace: wb('caseDetail.createAttackWorkspace'),
   noTransferableRequest: wb('evidence.noCaseTransferableRequest'),
-  sentToRepeater: wb('evidence.sentToRepeater'),
-  sentToIntruder: wb('evidence.sentToIntruder'),
+  draftCreated: wb('evidence.draftCreated'),
+  attackWorkspaceCreated: wb('evidence.attackWorkspaceCreated'),
   transferFailed: wb('evidence.transferFailed', { error: '{error}' }),
 }))
 
@@ -251,6 +276,53 @@ const tabs = computed<Array<{ id: CaseDetailTabId; label: string }>>(() => [
   { id: 'review', label: wb('caseDetail.tabs.review') },
 ])
 
+const formatTransferError = (error: unknown) =>
+  transferMessages.value.transferFailed.replace('{error}', String(error))
+
+const transferCaseEvidenceRequest = async (target: 'draft' | 'attackWorkspace') => {
+  const evidence = shortcutTransferableEvidence.value
+  if (!evidence) {
+    dialog.toast.warning(transferMessages.value.noTransferableRequest)
+    return
+  }
+
+  try {
+    const handled = await openSecurityEvidenceInTrafficWorkbench(router, evidence, target)
+    if (!handled) {
+      dialog.toast.warning(transferMessages.value.noTransferableRequest)
+      return
+    }
+
+    dialog.toast.success(
+      target === 'draft'
+        ? transferMessages.value.draftCreated
+        : transferMessages.value.attackWorkspaceCreated,
+    )
+  } catch (error) {
+    console.error('Failed to send workbench evidence request from shortcut:', error)
+    dialog.toast.error(formatTransferError(error))
+  }
+}
+
+const handleWindowKeydown = (event: KeyboardEvent) => {
+  if (!props.caseItem) {
+    return
+  }
+
+  const target = resolveSecurityEvidenceTransferShortcut(event)
+  if (!target) {
+    return
+  }
+
+  if (!shortcutTransferableEvidence.value) {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  void transferCaseEvidenceRequest(target)
+}
+
 watch(
   () => props.initialTab,
   nextTab => {
@@ -262,5 +334,21 @@ watch(
 
 watch(activeTab, nextTab => {
   emit('change-tab', nextTab)
+})
+
+onMounted(() => {
+  window.addEventListener('keydown', handleWindowKeydown)
+})
+
+onActivated(() => {
+  window.addEventListener('keydown', handleWindowKeydown)
+})
+
+onDeactivated(() => {
+  window.removeEventListener('keydown', handleWindowKeydown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleWindowKeydown)
 })
 </script>

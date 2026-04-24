@@ -1128,6 +1128,10 @@ impl DatabaseService {
             )"#,
             r#"CREATE TABLE IF NOT EXISTS proxy_requests (
                 id INTEGER PRIMARY KEY,
+                origin_kind TEXT,
+                origin_ref_id TEXT,
+                parent_request_id INTEGER,
+                source_draft_revision_id TEXT,
                 url TEXT NOT NULL,
                 host TEXT NOT NULL,
                 scheme TEXT NOT NULL DEFAULT 'http',
@@ -1553,6 +1557,22 @@ impl DatabaseService {
                 "response_body_compressed",
                 "ALTER TABLE proxy_requests ADD COLUMN response_body_compressed BOOLEAN NOT NULL DEFAULT FALSE",
             ),
+            (
+                "origin_kind",
+                "ALTER TABLE proxy_requests ADD COLUMN origin_kind TEXT",
+            ),
+            (
+                "origin_ref_id",
+                "ALTER TABLE proxy_requests ADD COLUMN origin_ref_id TEXT",
+            ),
+            (
+                "parent_request_id",
+                "ALTER TABLE proxy_requests ADD COLUMN parent_request_id INTEGER",
+            ),
+            (
+                "source_draft_revision_id",
+                "ALTER TABLE proxy_requests ADD COLUMN source_draft_revision_id TEXT",
+            ),
         ];
         for (column, ddl) in required_columns {
             if existing_columns.contains(column) {
@@ -1587,6 +1607,16 @@ impl DatabaseService {
         self.execute_runtime_ddl(
             runtime,
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_parent_request_id ON proxy_requests(parent_request_id)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_source_draft_revision_id ON proxy_requests(source_draft_revision_id)",
         )
         .await?;
 

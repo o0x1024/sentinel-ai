@@ -9,11 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
-const TOOL_TIMEOUT_FLOOR_SECS: u64 = 30 * 60;
+use crate::tool_timeout::resolve_tool_timeout;
 
 /// Tool execution function type
 pub type ToolExecutor = Arc<
@@ -161,13 +160,14 @@ impl Tool for DynamicTool {
                 .map_err(DynamicToolError::InvalidArguments)?;
         }
 
-        let timeout_secs = TOOL_TIMEOUT_FLOOR_SECS;
-        let result = timeout(Duration::from_secs(timeout_secs), executor(args))
+        let timeout_budget = resolve_tool_timeout(&self.def.name);
+        let timeout_secs = timeout_budget.as_secs();
+        let result = timeout(timeout_budget, executor(args))
             .await
             .map_err(|_| {
                 DynamicToolError::ExecutionFailed(format!(
-                    "Tool execution timed out after {} seconds",
-                    timeout_secs
+                    "Tool {} execution timed out after {} seconds",
+                    self.def.name, timeout_secs
                 ))
             })?
             .map_err(DynamicToolError::ExecutionFailed)?;

@@ -106,10 +106,10 @@ export interface DeleteTrafficOastRecordResult {
   localRemoved: boolean
 }
 
-export interface DeleteTrafficOastEventsResult {
+export interface HideTrafficOastEventsResult {
   token: string
-  deletedCount: number
-  remainingEventCount: number
+  hiddenCount: number
+  visibleEventCount: number
   record: TrafficOastRecord
 }
 

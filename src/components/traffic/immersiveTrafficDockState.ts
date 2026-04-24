@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { registerImmersiveToolCloser } from '@/services/immersiveToolCoordinator'
 
-export type ImmersiveTrafficWorkbenchTool = 'repeater' | 'intruder' | 'comparer' | 'oast'
+export type ImmersiveTrafficWorkbenchTool = 'capture' | 'repeater' | 'intruder' | 'comparer' | 'oast'
 
 const workbenchOpen = ref(false)
 const activeWorkbenchTool = ref<ImmersiveTrafficWorkbenchTool>('repeater')
@@ -10,6 +10,7 @@ const proxySettingsOpen = ref(false)
 const trafficPluginsOpen = ref(false)
 const basketOpen = ref(false)
 
+const captureCount = ref(0)
 const repeaterCount = ref(0)
 const intruderCount = ref(0)
 const comparerCount = ref(0)
@@ -25,6 +26,7 @@ export function useImmersiveTrafficDockState() {
     proxySettingsOpen,
     trafficPluginsOpen,
     basketOpen,
+    captureCount,
     repeaterCount,
     intruderCount,
     comparerCount,
@@ -120,6 +122,7 @@ export function syncImmersiveTrafficDockState(payload: {
   proxySettingsOpen: boolean
   trafficPluginsOpen: boolean
   basketOpen: boolean
+  captureCount: number
   repeaterCount: number
   intruderCount: number
   comparerCount: number
@@ -133,6 +136,7 @@ export function syncImmersiveTrafficDockState(payload: {
   proxySettingsOpen.value = payload.proxySettingsOpen
   trafficPluginsOpen.value = payload.trafficPluginsOpen
   basketOpen.value = payload.basketOpen
+  captureCount.value = payload.captureCount
   repeaterCount.value = payload.repeaterCount
   intruderCount.value = payload.intruderCount
   comparerCount.value = payload.comparerCount
@@ -148,6 +152,7 @@ export function resetImmersiveTrafficDockState() {
   proxySettingsOpen.value = false
   trafficPluginsOpen.value = false
   basketOpen.value = false
+  captureCount.value = 0
   repeaterCount.value = 0
   intruderCount.value = 0
   comparerCount.value = 0

@@ -22,19 +22,17 @@ import {
   useFeatureEntitlementsState,
 } from './services/featureEntitlements'
 import {
-  getEntitlementTokenStatus,
-  getEntitlementTokenIssueMessage,
-  isEntitlementTokenExpiringSoon,
-  refreshEntitlementTokenStatus,
-} from './services/entitlementToken'
-import { refreshEntitlementTokenFromServer } from './services/entitlementRefresh'
+  useFeatureAccessStatusState,
+  refreshFeatureAccessStatus,
+} from './services/featureAccessStatus'
+import { attemptEntitlementAutoRefresh } from './services/entitlementAutoRefresh'
 import {
-  canAttemptEntitlementAutoRefresh,
-  formatDurationLabel,
+  getFeatureAccessAutoRefreshFailureMessage,
+  getFeatureAccessReminderMessage,
+  shouldResetFeatureAccessReminder,
+} from './services/featureAccessAttention'
+import {
   getEntitlementRefreshCooldownSeconds,
-  markEntitlementRefreshAttempt,
-  markEntitlementRefreshFailure,
-  markEntitlementRefreshSuccess,
   useEntitlementRefreshRuntimeState,
 } from './services/entitlementRefreshState'
 import {
@@ -45,19 +43,21 @@ import { showImmersiveTrafficHistory } from './components/traffic/immersiveTraff
 import { closeTrafficAssistant } from './services/trafficAssistantWorkspace'
 import { applyTheme } from './views/settingsUiSupport'
 import { useToast } from './composables/useToast'
+import { isEditableKeyboardTarget } from './utils/editableKeyboardTarget'
 
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()
 const entitlements = useFeatureEntitlementsState()
+const featureAccessStatus = useFeatureAccessStatusState()
 const entitlementRefreshRuntime = useEntitlementRefreshRuntimeState()
 const isStandaloneRoute = computed(() => Boolean(route.meta?.standalone))
 const mainContentRef = ref<HTMLElement | null>(null)
 const licenseActivationRef = ref<InstanceType<typeof LicenseActivation> | null>(null)
 const routeScrollPositions = new Map<string, number>()
-let entitlementReminderTimer: number | null = null
-let entitlementPollTimer: number | null = null
-let hasShownEntitlementReminder = false
+let featureAccessReminderTimer: number | null = null
+let featureAccessPollTimer: number | null = null
+let hasShownFeatureAccessReminder = false
 
 // 初始化i18n
 const { t, locale } = useI18n()
@@ -108,16 +108,6 @@ const restoreMainScrollPosition = (routeKey: string) => {
   container.scrollTop = routeScrollPositions.get(routeKey) ?? 0
 }
 
-const isEditableTarget = (target: EventTarget | null) => {
-  const element = target as HTMLElement | null
-  if (!element) {
-    return false
-  }
-
-  const tagName = element.tagName.toLowerCase()
-  return element.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select'
-}
-
 const openGlobalSearch = async () => {
   if (isStandaloneRoute.value) {
     return
@@ -132,19 +122,14 @@ const handleKeyDown = (e: KeyboardEvent) => {
     closeMobileMenu()
   }
 
-  if (isGlobalSearchShortcut(e) && !isEditableTarget(e.target)) {
+  if (isGlobalSearchShortcut(e) && !isEditableKeyboardTarget(e.target)) {
     e.preventDefault()
     void openGlobalSearch()
     return
   }
 
   if (e.key === 'Backspace') {
-    const target = e.target as HTMLElement
-    const tagName = target.tagName.toLowerCase()
-    const isEditable = target.isContentEditable
-    const isInput = tagName === 'input' || tagName === 'textarea'
-
-    if (!isInput && !isEditable) {
+    if (!isEditableKeyboardTarget(e.target)) {
       e.preventDefault()
     }
   }
@@ -169,112 +154,76 @@ const setupAIChatShortcut = () => {
 
 async function onLicenseActivated() {
   await refreshFeatureEntitlements()
-  await refreshEntitlementTokenStatus()
-  hasShownEntitlementReminder = false
-  await maybeNotifyEntitlementAttention()
+  await refreshFeatureAccessStatus()
+  hasShownFeatureAccessReminder = false
+  notifyFeatureAccessAttention()
 }
 
-const maybeNotifyEntitlementAttention = async () => {
-  const tokenStatus = await getEntitlementTokenStatus()
+const notifyFeatureAccessAttention = () => {
+  const reminder = getFeatureAccessReminderMessage({
+    hasLocalLicense: entitlements.value.has_local_license,
+    isDebugAccess: entitlements.value.access_source === 'debug',
+    hasShownReminder: hasShownFeatureAccessReminder,
+    featureAccessStatus: featureAccessStatus.value,
+    cooldownSeconds: getEntitlementRefreshCooldownSeconds(),
+  })
 
-  if (
-    !entitlements.value.has_local_license ||
-    entitlements.value.access_source === 'debug' ||
-    hasShownEntitlementReminder
-  ) {
+  if (!reminder) {
     return
   }
 
-  if (!tokenStatus.valid) {
-    hasShownEntitlementReminder = true
-    const issue = getEntitlementTokenIssueMessage(tokenStatus)
-    const cooldown = getEntitlementRefreshCooldownSeconds()
-    const suffix =
-      cooldown > 0 ? `；自动重试将在${formatDurationLabel(cooldown)}` : ''
-    toast.warning(`当前已激活本地 license，但${issue}，高价值功能仍受限${suffix}。`, 4200)
+  hasShownFeatureAccessReminder = true
+
+  if (reminder.level === 'warning') {
+    toast.warning(reminder.message, 4200)
     return
   }
 
-  if (isEntitlementTokenExpiringSoon(tokenStatus)) {
-    hasShownEntitlementReminder = true
-    toast.info('entitlement token 即将过期，建议尽快同步新 token。', 4200)
-  }
+  toast.info(reminder.message, 4200)
 }
 
-const maybeAutoRefreshEntitlementToken = async () => {
-  const tokenStatus = await getEntitlementTokenStatus()
+const maybeAutoRefreshFeatureAccess = async () => {
+  const outcome = await attemptEntitlementAutoRefresh({
+    expiringSoonThresholdSeconds: 6 * 60 * 60,
+  })
 
-  if (
-    !entitlements.value.has_local_license ||
-    entitlements.value.access_source === 'debug'
-  ) {
+  if (outcome.status === 'success') {
+    hasShownFeatureAccessReminder = false
     return
   }
 
-  if (!canAttemptEntitlementAutoRefresh()) {
+  const message = getFeatureAccessAutoRefreshFailureMessage({
+    outcome,
+    consecutiveFailures: entitlementRefreshRuntime.value.consecutive_failures,
+    cooldownSeconds: getEntitlementRefreshCooldownSeconds(),
+  })
+
+  if (!message) {
     return
   }
 
-  const needsRefresh =
-    !tokenStatus.valid || isEntitlementTokenExpiringSoon(tokenStatus, 6 * 60 * 60)
-
-  if (!needsRefresh) {
-    return
-  }
-
-  try {
-    markEntitlementRefreshAttempt()
-    const result = await refreshEntitlementTokenFromServer()
-    if (result.success) {
-      markEntitlementRefreshSuccess()
-      await refreshFeatureEntitlements()
-      await refreshEntitlementTokenStatus()
-      hasShownEntitlementReminder = false
-      return
-    }
-
-    if (result.configured) {
-      markEntitlementRefreshFailure({
-        message: result.message,
-        errorCode: result.error_code,
-        retryAfterSecs: result.retry_after_secs,
-      })
-      if (entitlementRefreshRuntime.value.consecutive_failures <= 1 || result.error_code === 'customer_revoked') {
-        const cooldown = getEntitlementRefreshCooldownSeconds()
-        const suffix =
-          cooldown > 0 ? `；下次自动重试${formatDurationLabel(cooldown)}` : ''
-        toast.warning(`entitlement token 自动刷新失败：${result.message}${suffix}`, 4200)
-      }
-    }
-  } catch (error) {
-    console.error('Failed to auto refresh entitlement token:', error)
-    markEntitlementRefreshFailure({
-      message: String(error),
-      errorCode: 'auto_refresh_exception',
-      retryAfterSecs: 300,
-    })
-  }
+  toast.warning(message, 4200)
 }
 
-const scheduleEntitlementReminder = () => {
-  if (entitlementReminderTimer) {
-    window.clearTimeout(entitlementReminderTimer)
+const scheduleFeatureAccessReminder = () => {
+  if (featureAccessReminderTimer) {
+    window.clearTimeout(featureAccessReminderTimer)
   }
 
-  entitlementReminderTimer = window.setTimeout(() => {
-    void maybeNotifyEntitlementAttention()
+  featureAccessReminderTimer = window.setTimeout(() => {
+    notifyFeatureAccessAttention()
   }, 1200)
 }
 
-const scheduleEntitlementPolling = () => {
-  if (entitlementPollTimer) {
-    window.clearInterval(entitlementPollTimer)
+const scheduleFeatureAccessPolling = () => {
+  if (featureAccessPollTimer) {
+    window.clearInterval(featureAccessPollTimer)
   }
 
-  entitlementPollTimer = window.setInterval(async () => {
-    await maybeAutoRefreshEntitlementToken()
+  featureAccessPollTimer = window.setInterval(async () => {
+    await maybeAutoRefreshFeatureAccess()
     await refreshFeatureEntitlements()
-    await refreshEntitlementTokenStatus()
+    await refreshFeatureAccessStatus()
   }, 5 * 60 * 1000)
 }
 
@@ -285,10 +234,10 @@ onMounted(async () => {
   setLanguage((locale.value.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en')
 
   await refreshFeatureEntitlements()
-  await refreshEntitlementTokenStatus()
-  await maybeAutoRefreshEntitlementToken()
-  scheduleEntitlementReminder()
-  scheduleEntitlementPolling()
+  await refreshFeatureAccessStatus()
+  await maybeAutoRefreshFeatureAccess()
+  scheduleFeatureAccessReminder()
+  scheduleFeatureAccessPolling()
 
   // 只有在根路径时才重定向，避免路由冲突
   if (router.currentRoute.value.path === '/' && !isStandaloneRoute.value) {
@@ -316,13 +265,13 @@ onUnmounted(() => {
   saveMainScrollPosition(route.fullPath)
   window.removeEventListener('keydown', handleKeyDown)
   document.removeEventListener('click', handleClickOutside)
-  if (entitlementReminderTimer) {
-    window.clearTimeout(entitlementReminderTimer)
-    entitlementReminderTimer = null
+  if (featureAccessReminderTimer) {
+    window.clearTimeout(featureAccessReminderTimer)
+    featureAccessReminderTimer = null
   }
-  if (entitlementPollTimer) {
-    window.clearInterval(entitlementPollTimer)
-    entitlementPollTimer = null
+  if (featureAccessPollTimer) {
+    window.clearInterval(featureAccessPollTimer)
+    featureAccessPollTimer = null
   }
 })
 
@@ -343,28 +292,22 @@ watch(
 watch(
   () => [
     entitlements.value.has_local_license,
-    entitlements.value.has_valid_entitlement_token,
     entitlements.value.access_source,
-    entitlements.value.entitlement_expires_at,
+    featureAccessStatus.value.ready,
+    featureAccessStatus.value.expiresAt,
     entitlementRefreshRuntime.value.last_error_code,
     entitlementRefreshRuntime.value.next_retry_at,
   ],
   () => {
-    if (!entitlements.value.has_local_license) {
-      hasShownEntitlementReminder = false
-      return
+    if (shouldResetFeatureAccessReminder({
+      hasLocalLicense: entitlements.value.has_local_license,
+      isDebugAccess: entitlements.value.access_source === 'debug',
+      featureAccessReady: featureAccessStatus.value.ready,
+    })) {
+      hasShownFeatureAccessReminder = false
     }
 
-    if (entitlements.value.access_source === 'debug') {
-      hasShownEntitlementReminder = false
-      return
-    }
-
-    if (entitlements.value.has_valid_entitlement_token) {
-      hasShownEntitlementReminder = false
-    }
-
-    scheduleEntitlementReminder()
+    scheduleFeatureAccessReminder()
   },
 )
 

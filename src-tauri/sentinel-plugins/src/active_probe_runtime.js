@@ -5,9 +5,6 @@ const ACTIVE_PROBE_DEFAULTS = {
   timeoutMs: 8000,
 }
 
-const FAST_PROBE_CLASS = 'fast'
-const SLOW_PROBE_CLASS = 'slow'
-
 function clampPositiveInteger(value, fallback) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.trunc(value)
@@ -106,11 +103,6 @@ export function buildActiveProbeMetadata(url, method, headers, requestId, init =
     target_location: typeof activeProbe?.target_location === 'string' ? activeProbe.target_location : null,
     probe_value: typeof activeProbe?.probe_value === 'string' ? activeProbe.probe_value : null,
     technique: typeof activeProbe?.technique === 'string' ? activeProbe.technique : null,
-    probe_class: typeof activeProbe?.probeClass === 'string' ? activeProbe.probeClass : FAST_PROBE_CLASS,
-    probe_priority:
-      typeof activeProbe?.priority === 'number' && Number.isFinite(activeProbe.priority)
-        ? Math.trunc(activeProbe.priority)
-        : 0,
   }
 }
 
@@ -127,37 +119,16 @@ export function normalizeActiveProbeOptions(url, init = {}) {
     return null
   }
 
-  const rawRange = source.jitterRange || init.jitterRange || defaults.jitterRange
-  const normalizedRange = Array.isArray(rawRange) && rawRange.length === 2
-    ? [
-        clampPositiveInteger(rawRange[0], defaults.jitterRange[0]),
-        clampPositiveInteger(rawRange[1], defaults.jitterRange[1]),
-      ]
-    : [...defaults.jitterRange]
+  const normalizedRange = [...defaults.jitterRange]
   const jitterMin = Math.min(normalizedRange[0], normalizedRange[1])
   const jitterMax = Math.max(normalizedRange[0], normalizedRange[1])
-  const probeClass = source.probeClass === SLOW_PROBE_CLASS ? SLOW_PROBE_CLASS : FAST_PROBE_CLASS
 
   return {
     probe_label: typeof source.probeLabel === 'string' ? source.probeLabel : null,
-    cooldown_key: source.cooldownKey || init.cooldownKey || buildDefaultActiveProbeKey(url),
+    cooldown_key: buildDefaultActiveProbeKey(url),
     jitter_range: [jitterMin, jitterMax],
-    min_host_cooldown_ms: clampPositiveInteger(
-      source.minHostCooldownMs ?? init.minHostCooldownMs,
-      defaults.minHostCooldownMs,
-    ),
-    max_concurrent_per_host: Math.max(
-      1,
-      clampPositiveInteger(
-        source.maxConcurrentPerHost ?? init.maxConcurrentPerHost,
-        defaults.maxConcurrentPerHost,
-      ),
-    ),
+    min_host_cooldown_ms: defaults.minHostCooldownMs,
+    max_concurrent_per_host: Math.max(1, defaults.maxConcurrentPerHost),
     timeoutMs: defaults.timeoutMs,
-    probe_priority:
-      typeof source.priority === 'number' && Number.isFinite(source.priority)
-        ? Math.trunc(source.priority)
-        : 0,
-    probe_class: probeClass,
   }
 }

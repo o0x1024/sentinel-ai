@@ -1,17 +1,19 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 
 use super::TrafficAnalysisState;
 use crate::commands::command_response_support::CommandResponse;
 use crate::services::{
-    delete_traffic_oast_events, delete_traffic_oast_token, generate_traffic_oast_token,
-    lookup_traffic_oast_token, test_traffic_oast_config, OastGenerateResponse, TrafficOastConfig,
+    delete_traffic_oast_token, generate_traffic_oast_token, lookup_traffic_oast_token,
+    test_traffic_oast_config, OastGenerateResponse, TrafficOastConfig, TrafficOastEvent,
     TrafficOastEventKey, TrafficOastRecord, TrafficOastTestResult,
 };
 
 pub const TRAFFIC_OAST_CONFIG_KEY: &str = "traffic_oast_config";
 const TRAFFIC_OAST_RECORDS_KEY: &str = "traffic_oast_records";
+const TRAFFIC_OAST_HIDDEN_EVENTS_KEY: &str = "traffic_oast_hidden_events";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,7 +37,7 @@ pub struct CreateTrafficOastTokenPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DeleteTrafficOastEventsPayload {
+pub struct HideTrafficOastEventsPayload {
     pub token: String,
     pub event_keys: Vec<TrafficOastEventKey>,
 }
@@ -50,10 +52,10 @@ pub struct DeleteTrafficOastRecordResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DeleteTrafficOastEventsResult {
+pub struct HideTrafficOastEventsResult {
     pub token: String,
-    pub deleted_count: u64,
-    pub remaining_event_count: usize,
+    pub hidden_count: u64,
+    pub visible_event_count: usize,
     pub record: TrafficOastRecord,
 }
 
@@ -91,6 +93,95 @@ fn apply_lookup_to_record(
     record.hit_count = lookup.hit_count.unwrap_or(0);
     record.last_hit_at = lookup.last_hit_at;
     record.events = lookup.events.unwrap_or_default();
+}
+
+fn build_event_key_string(key: &TrafficOastEventKey) -> String {
+    [
+        key.time.as_str(),
+        key.method.as_str(),
+        key.url.as_str(),
+        key.ip.as_str(),
+    ]
+    .join("\n")
+}
+
+fn build_event_key_from_event(event: &TrafficOastEvent) -> TrafficOastEventKey {
+    TrafficOastEventKey {
+        time: event.time.clone(),
+        method: event.method.clone(),
+        url: event.url.clone(),
+        ip: event.ip.clone(),
+    }
+}
+
+fn apply_hidden_event_keys(record: &mut TrafficOastRecord, hidden_event_keys: &[TrafficOastEventKey]) {
+    if hidden_event_keys.is_empty() {
+        record.hit_count = record.events.len() as u64;
+        record.last_hit_at = record.events.last().map(|event| event.time.clone());
+        return;
+    }
+
+    let hidden = hidden_event_keys
+        .iter()
+        .map(build_event_key_string)
+        .collect::<HashSet<_>>();
+    record.events.retain(|event| !hidden.contains(&build_event_key_string(&build_event_key_from_event(event))));
+    record.hit_count = record.events.len() as u64;
+    record.last_hit_at = record.events.last().map(|event| event.time.clone());
+}
+
+async fn load_hidden_oast_events_from_state(
+    state: &TrafficAnalysisState,
+) -> Result<HashMap<String, Vec<TrafficOastEventKey>>, String> {
+    let db = state.get_db_service();
+    match db.load_proxy_config(TRAFFIC_OAST_HIDDEN_EVENTS_KEY).await {
+        Ok(Some(raw)) => serde_json::from_str::<HashMap<String, Vec<TrafficOastEventKey>>>(&raw)
+            .map_err(|error| format!("Failed to parse hidden traffic OAST events: {error}")),
+        Ok(None) => Ok(HashMap::new()),
+        Err(error) => Err(format!("Failed to load hidden traffic OAST events: {error}")),
+    }
+}
+
+async fn save_hidden_oast_events_to_state(
+    state: &TrafficAnalysisState,
+    hidden_events: &HashMap<String, Vec<TrafficOastEventKey>>,
+) -> Result<(), String> {
+    let db = state.get_db_service();
+    let raw = serde_json::to_string(hidden_events)
+        .map_err(|error| format!("Failed to serialize hidden traffic OAST events: {error}"))?;
+    db.save_proxy_config(TRAFFIC_OAST_HIDDEN_EVENTS_KEY, &raw)
+        .await
+        .map_err(|error| format!("Failed to save hidden traffic OAST events: {error}"))
+}
+
+fn apply_hidden_events_to_records(
+    records: &mut [TrafficOastRecord],
+    hidden_events: &HashMap<String, Vec<TrafficOastEventKey>>,
+) {
+    for record in records {
+        let hidden = hidden_events
+            .get(&record.token)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        apply_hidden_event_keys(record, hidden);
+    }
+}
+
+fn merge_hidden_event_keys(
+    existing: &[TrafficOastEventKey],
+    added: &[TrafficOastEventKey],
+) -> Vec<TrafficOastEventKey> {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+
+    for event_key in existing.iter().chain(added.iter()) {
+        let key = build_event_key_string(event_key);
+        if seen.insert(key) {
+            merged.push(event_key.clone());
+        }
+    }
+
+    merged
 }
 
 async fn load_traffic_oast_config_from_state(
@@ -215,7 +306,9 @@ pub async fn create_traffic_oast_token(
 pub async fn list_traffic_oast_records(
     state: State<'_, TrafficAnalysisState>,
 ) -> Result<CommandResponse<Vec<TrafficOastRecord>>, String> {
-    let records = load_traffic_oast_records_from_state(&state).await?;
+    let mut records = load_traffic_oast_records_from_state(&state).await?;
+    let hidden_events = load_hidden_oast_events_from_state(&state).await?;
+    apply_hidden_events_to_records(&mut records, &hidden_events);
     Ok(CommandResponse::ok(records))
 }
 
@@ -225,11 +318,17 @@ pub async fn sync_traffic_oast_records(
 ) -> Result<CommandResponse<Vec<TrafficOastRecord>>, String> {
     let config = load_traffic_oast_config_from_state(&state).await?;
     let mut records = load_traffic_oast_records_from_state(&state).await?;
+    let hidden_events = load_hidden_oast_events_from_state(&state).await?;
     let sync_time = Utc::now().to_rfc3339();
 
     for record in &mut records {
         let lookup = lookup_traffic_oast_token(&config, &record.token).await?;
         apply_lookup_to_record(record, lookup);
+        let hidden = hidden_events
+            .get(&record.token)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        apply_hidden_event_keys(record, hidden);
         record.last_sync_at = Some(sync_time.clone());
     }
 
@@ -252,6 +351,11 @@ pub async fn delete_traffic_oast_record(
     records.retain(|record| record.token != token.trim());
     let removed = records.len() != before_len;
     save_traffic_oast_records_to_state(&state, &records).await?;
+
+    let mut hidden_events = load_hidden_oast_events_from_state(&state).await?;
+    hidden_events.remove(token.trim());
+    save_hidden_oast_events_to_state(&state, &hidden_events).await?;
+
     Ok(CommandResponse::ok(DeleteTrafficOastRecordResult {
         token: token.trim().to_string(),
         remote_deleted_all: delete_result.deleted_all.unwrap_or(false),
@@ -260,10 +364,10 @@ pub async fn delete_traffic_oast_record(
 }
 
 #[tauri::command]
-pub async fn delete_traffic_oast_events_command(
+pub async fn hide_traffic_oast_events_command(
     state: State<'_, TrafficAnalysisState>,
-    payload: DeleteTrafficOastEventsPayload,
-) -> Result<CommandResponse<DeleteTrafficOastEventsResult>, String> {
+    payload: HideTrafficOastEventsPayload,
+) -> Result<CommandResponse<HideTrafficOastEventsResult>, String> {
     let token = payload.token.trim();
     if token.is_empty() {
         return Err("OAST token is required".to_string());
@@ -272,26 +376,26 @@ pub async fn delete_traffic_oast_events_command(
         return Err("At least one OAST event must be selected".to_string());
     }
 
-    let config = load_traffic_oast_config_from_state(&state).await?;
-    let delete_result = delete_traffic_oast_events(&config, token, &payload.event_keys).await?;
+    let mut hidden_events = load_hidden_oast_events_from_state(&state).await?;
+    let existing = hidden_events.remove(token).unwrap_or_default();
+    let next_hidden = merge_hidden_event_keys(&existing, &payload.event_keys);
+    hidden_events.insert(token.to_string(), next_hidden.clone());
+    save_hidden_oast_events_to_state(&state, &hidden_events).await?;
 
-    let lookup = lookup_traffic_oast_token(&config, token).await?;
-    let sync_time = Utc::now().to_rfc3339();
     let mut records = load_traffic_oast_records_from_state(&state).await?;
     let record = records
         .iter_mut()
         .find(|record| record.token == token)
         .ok_or_else(|| "OAST record not found".to_string())?;
 
-    apply_lookup_to_record(record, lookup);
-    record.last_sync_at = Some(sync_time);
+    apply_hidden_event_keys(record, &next_hidden);
     let updated = record.clone();
     save_traffic_oast_records_to_state(&state, &records).await?;
 
-    Ok(CommandResponse::ok(DeleteTrafficOastEventsResult {
+    Ok(CommandResponse::ok(HideTrafficOastEventsResult {
         token: token.to_string(),
-        deleted_count: delete_result.deleted_count.unwrap_or(0),
-        remaining_event_count: updated.events.len(),
+        hidden_count: payload.event_keys.len() as u64,
+        visible_event_count: updated.events.len(),
         record: updated,
     }))
 }

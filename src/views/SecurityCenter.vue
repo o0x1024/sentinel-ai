@@ -1,7 +1,7 @@
 <template>
   <div
     class="safe-top"
-    :class="immersiveDrillModeEnabled ? 'px-3 py-3 space-y-3' : 'page-content-padded space-y-6'"
+    :class="containerClasses"
   >
     <!-- 页面标题 -->
     <div v-if="!immersiveDrillModeEnabled" class="flex items-center justify-between">
@@ -65,17 +65,19 @@
       </a>
     </div>
 
-    <KeepAlive>
-      <component
-        :is="activeTabComponent"
-        :immersive-mode="isEmbeddedImmersiveOverlay"
-        :immersive-open-finding-request="immersiveOpenFindingRequest"
-        :immersive-open-case-request="immersiveOpenWorkbenchCaseRequest"
-        @stats-updated="updateVulnStats"
-        @open-finding="handleImmersiveOpenFinding"
-        @open-workbench-case="handleImmersiveOpenWorkbenchCase"
-      />
-    </KeepAlive>
+    <div :class="contentRegionClasses">
+      <KeepAlive>
+        <component
+          :is="activeTabComponent"
+          :immersive-mode="isEmbeddedImmersiveOverlay"
+          :immersive-open-finding-request="immersiveOpenFindingRequest"
+          :immersive-open-case-request="immersiveOpenWorkbenchCaseRequest"
+          @stats-updated="updateVulnStats"
+          @open-finding="handleImmersiveOpenFinding"
+          @open-workbench-case="handleImmersiveOpenWorkbenchCase"
+        />
+      </KeepAlive>
+    </div>
   </div>
 </template>
 
@@ -108,6 +110,7 @@ const router = useRouter();
 type SecurityCenterTab = 'scan' | 'vulnerabilities' | 'llmSecurity' | 'workbench' | 'assets'
 
 const allSecurityTabs: SecurityCenterTab[] = ['workbench', 'vulnerabilities', 'llmSecurity']
+const defaultSecurityCenterTab: SecurityCenterTab = 'vulnerabilities'
 
 // 当前激活的 Tab
 const activeTab = ref<SecurityCenterTab>('workbench');
@@ -118,13 +121,33 @@ const visibleSecurityTabs = computed<SecurityCenterTab[]>(() =>
 )
 const isEmbeddedImmersiveOverlay = computed(() => Boolean(props.immersiveActiveTab))
 const showTabs = computed(() => !isEmbeddedImmersiveOverlay.value)
+const containerClasses = computed(() => {
+  if (isEmbeddedImmersiveOverlay.value) {
+    return 'flex h-full min-h-0 flex-col gap-3 px-3 py-3 overflow-hidden'
+  }
+
+  return immersiveDrillModeEnabled.value
+    ? 'px-3 py-3 space-y-3'
+    : 'page-content-padded space-y-6'
+})
+const contentRegionClasses = computed(() =>
+  isEmbeddedImmersiveOverlay.value ? 'min-h-0 flex-1 overflow-auto' : ''
+)
 const immersiveNavigationRequestKey = ref(0)
 const immersiveOpenFindingRequest = ref<{ findingId: string; requestKey: number } | null>(null)
 const immersiveOpenWorkbenchCaseRequest = ref<{ caseId: string; requestKey: number } | null>(null)
 
 const isTabVisible = (tab: SecurityCenterTab) => visibleSecurityTabs.value.includes(tab)
 
-const normalizeRequestedTab = (tab: unknown, findingId: unknown): SecurityCenterTab => {
+const resolveDefaultTabByRoute = (routeName: unknown): SecurityCenterTab => {
+  if (routeName === 'Vulnerabilities' || routeName === 'SecurityCenter') {
+    return defaultSecurityCenterTab
+  }
+
+  return 'workbench'
+}
+
+const normalizeRequestedTab = (tab: unknown, findingId: unknown, routeName: unknown): SecurityCenterTab => {
   if (typeof findingId === 'string' && findingId.trim()) {
     return 'vulnerabilities'
   }
@@ -137,7 +160,7 @@ const normalizeRequestedTab = (tab: unknown, findingId: unknown): SecurityCenter
     return tab as SecurityCenterTab
   }
 
-  return 'workbench'
+  return resolveDefaultTabByRoute(routeName)
 }
 
 const tabComponents = {
@@ -184,17 +207,12 @@ onMounted(() => {
       : typeof route.query.caseId === 'string'
         ? route.query.caseId
         : ''
-  if (shouldNormalizeToWorkbenchRoute(route.name, route.path, tab, findingId, route.params.caseId, route.query.caseId)) {
-    activeTab.value = 'workbench'
-    normalizeToWorkbenchRoute()
-    return
-  }
   if (route.name === 'SecurityWorkbench' || caseId) {
     rememberWorkbenchLocation()
     activeTab.value = 'workbench'
     return
   }
-  activeTab.value = normalizeRequestedTab(tab, findingId)
+  activeTab.value = normalizeRequestedTab(tab, findingId, route.name)
 });
 
 const isWorkbenchRoute = (routePath: unknown, routeName: unknown, routeCaseId: unknown, queryCaseId: unknown) => (
@@ -212,49 +230,8 @@ const isSecurityCenterContainerRoute = (routePath: unknown, routeName: unknown) 
   || (typeof routePath === 'string' && routePath.startsWith('/security-center'))
 )
 
-const hasWorkbenchCase = (routeCaseId: unknown, queryCaseId: unknown) => (
-  (typeof routeCaseId === 'string' && routeCaseId.trim())
-  || (typeof queryCaseId === 'string' && queryCaseId.trim())
-)
-
-const shouldNormalizeToWorkbenchRoute = (
-  routeName: unknown,
-  routePath: unknown,
-  tab: unknown,
-  findingId: unknown,
-  routeCaseId: unknown,
-  queryCaseId: unknown,
-) => {
-  if (routeName !== 'SecurityCenter' || routePath !== '/security-center') {
-    return false
-  }
-
-  if (typeof findingId === 'string' && findingId.trim()) {
-    return false
-  }
-
-  if (hasWorkbenchCase(routeCaseId, queryCaseId)) {
-    return false
-  }
-
-  if (typeof tab === 'string' && tab.trim() && tab !== 'workbench') {
-    return false
-  }
-
-  return true
-}
-
 const rememberWorkbenchLocation = () => {
   lastWorkbenchLocation.value = route.fullPath
-}
-
-const normalizeToWorkbenchRoute = () => {
-  const nextQuery = { ...route.query }
-  delete nextQuery.tab
-  void router.replace({
-    path: '/security-center/workbench',
-    query: nextQuery,
-  })
 }
 
 watch(
@@ -268,19 +245,13 @@ watch(
       return
     }
 
-    if (shouldNormalizeToWorkbenchRoute(routeName, routePath, tab, findingId, routeCaseId, queryCaseId)) {
-      activeTab.value = 'workbench'
-      normalizeToWorkbenchRoute()
-      return
-    }
-
     if (isWorkbenchRoute(routePath, routeName, routeCaseId, queryCaseId)) {
       rememberWorkbenchLocation()
       activeTab.value = 'workbench'
       return
     }
 
-    activeTab.value = normalizeRequestedTab(tab, findingId)
+    activeTab.value = normalizeRequestedTab(tab, findingId, routeName)
   },
 )
 

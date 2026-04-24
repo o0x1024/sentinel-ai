@@ -58,6 +58,8 @@ export function createRepeaterTab(options: RepeaterTabCreationOptions): Repeater
 
   return {
     id: generateId(),
+    draftId: null,
+    mode: 'draft',
     name: targetHost || `Request ${fallbackNameIndex}`,
     sourceRequestId: request?.sourceRequestId ?? null,
     targetHost,
@@ -76,5 +78,6 @@ export function createRepeaterTab(options: RepeaterTabCreationOptions): Repeater
     response: null,
     isSending: false,
     modified: false,
+    userEdited: false,
   }
 }

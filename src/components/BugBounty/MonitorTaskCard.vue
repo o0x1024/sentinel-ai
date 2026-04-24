@@ -101,7 +101,7 @@
             </div>
           </div>
           <span v-if="!progress.indeterminate" class="text-sm font-semibold text-info">
-            {{ progress.progress }}%
+            {{ displayProgress }}%
           </span>
           <span v-else class="text-xs font-medium text-info/80">
             {{ t('bugBounty.monitor.runningNow') }}
@@ -134,7 +134,7 @@
         <progress
           v-if="!progress.indeterminate"
           class="progress progress-info w-full mt-3"
-          :value="progress.progress"
+          :value="displayProgress"
           max="100"
         ></progress>
         <progress
@@ -223,30 +223,10 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-interface MonitorTaskProgress {
-  status: string
-  progress: number
-  completed_steps: number
-  total_steps: number
-  current_plugin?: string | null
-  current_plugin_index?: number | null
-  target_count: number
-  imported_assets: number
-  indeterminate?: boolean
-  message?: string | null
-  execution_mode: string
-  started_at?: string
-  updated_at?: string
-  scan_completed_targets?: number
-  scan_total_targets?: number
-  scan_completed_units?: number
-  scan_total_units?: number
-  current_target?: string | null
-  plugin_completed_units?: number
-  plugin_total_units?: number
-  plugin_phase?: string | null
-  plugin_phase_label?: string | null
-}
+import {
+  deriveMonitorTaskProgressValue,
+  type MonitorTaskProgressState as MonitorTaskProgress,
+} from '../../composables/monitorTaskProgressSupport'
 
 const props = defineProps<{
   task: any
@@ -373,6 +353,7 @@ const formatCompactDuration = (durationMs: number | null) => {
 
 const elapsedLabel = computed(() => formatCompactDuration(elapsedMs.value))
 const heartbeatAgeLabel = computed(() => formatCompactDuration(heartbeatAgeMs.value))
+const displayProgress = computed(() => deriveMonitorTaskProgressValue(props.progress))
 const genericPluginPhaseLabel = computed(() => {
   if (props.progress?.plugin_phase_label) {
     return props.progress.plugin_phase_label

@@ -25,6 +25,14 @@ pub struct HttpRequestRecord {
     pub db_request_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub traffic_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_ref_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_request_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_draft_revision_id: Option<String>,
     pub url: String,
     pub host: String,
     pub scheme: String,
@@ -72,6 +80,14 @@ pub struct HttpRequestSummary {
     pub db_request_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub traffic_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_ref_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_request_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_draft_revision_id: Option<String>,
     pub url: String,
     pub host: String,
     pub scheme: String,
@@ -891,6 +907,10 @@ impl From<&HttpRequestRecord> for HttpRequestSummary {
             id: record.id,
             db_request_id: record.db_request_id,
             traffic_request_id: record.traffic_request_id.clone(),
+            origin_kind: record.origin_kind.clone(),
+            origin_ref_id: record.origin_ref_id.clone(),
+            parent_request_id: record.parent_request_id,
+            source_draft_revision_id: record.source_draft_revision_id.clone(),
             url: record.url.clone(),
             host: record.host.clone(),
             scheme: record.scheme.clone(),

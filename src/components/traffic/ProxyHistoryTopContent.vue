@@ -156,7 +156,7 @@ defineProps<{
 <style scoped>
 .table-row-text {
   font-size: 11px;
-  line-height: 1;
+  line-height: 1.15;
 }
 
 .history-pill {
@@ -167,6 +167,6 @@ defineProps<{
   padding: 0 4px;
   font-size: 10px;
   font-weight: 600;
-  line-height: 1;
+  line-height: 1.1;
 }
 </style>

@@ -46,10 +46,6 @@
           <i class="fas fa-stop"></i>
           {{ $t('trafficAnalysis.intruder.actions.stopAttack') }}
         </button>
-        <button class="btn btn-sm btn-ghost" type="button" :disabled="!currentWorkspace.results.length && !currentWorkspace.isRunning" @click="openResultsView">
-          <i class="fas fa-table"></i>
-          {{ $t('trafficAnalysis.intruder.actions.showResults') }}
-        </button>
         <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost" type="button" @click="duplicateWorkspace">
           <i class="fas fa-clone"></i>
           {{ $t('trafficAnalysis.intruder.actions.cloneTab') }}
@@ -101,8 +97,8 @@
             @update:update-host-header="updateAttackOption(currentWorkspace.id, 'updateHostHeader', $event)"
             @auto-mark="autoMarkPositions(currentWorkspace.id)"
             @clear-markers="clearMarkers(currentWorkspace.id)"
-            @send-to-repeater="sendWorkspaceRequestToRepeater(currentWorkspace.id)"
-            @send-draft-request-to-comparer="sendWorkspaceRequestToComparer(currentWorkspace.id)"
+            @create-draft="sendWorkspaceRequestToRepeater(currentWorkspace.id)"
+            @open-draft-compare="sendWorkspaceRequestToComparer(currentWorkspace.id)"
           />
         </div>
 
@@ -123,6 +119,7 @@
             :grep-payload-settings="currentWorkspace.grepPayloadSettings"
             :resource-pool-presets="resourcePools"
             :selected-resource-pool-id="currentWorkspace.selectedResourcePoolId"
+            :attack-type="currentWorkspace.attackType"
             :attack-options="currentWorkspace.attackOptions"
             :estimated-requests="estimatedRequests"
             :request-text="currentWorkspace.requestText"
@@ -138,6 +135,7 @@
             @update:active-tab="activeSidebarTab = $event"
             @update:attack-options="updateAttackOptions(currentWorkspace.id, $event)"
             @update-payload-set="(payloadSetId, patch) => updatePayloadSet(currentWorkspace.id, payloadSetId, patch)"
+            @apply-payload-template="(payloadSetId, value) => applyPayloadTemplate(currentWorkspace.id, payloadSetId, value)"
             @update:payload-processing-rules="updatePayloadProcessingRules(currentWorkspace.id, $event)"
             @update:payload-processor-plugins="updatePayloadProcessorPlugins(currentWorkspace.id, $event)"
             @update:request-processor-plugins="updateRequestProcessorPlugins(currentWorkspace.id, $event)"
@@ -163,40 +161,12 @@
       {{ $t('trafficAnalysis.intruder.empty.noWorkspace') }}
     </div>
 
-    <IntruderAttackResults
-      v-if="currentWorkspace"
-      :open="showResultsDialog"
-      :workspace-name="`${currentWorkspace.name} (${buildTargetUrl(currentWorkspace.target)})`"
-      :request-text="currentWorkspace.requestText"
-      :positions="currentWorkspace.positions"
-      :results="currentWorkspace.results"
-      :selected-result-id="currentWorkspace.selectedResultId"
-      :selected-result="selectedResult"
-      :progress="currentWorkspace.progress"
-      :is-running="currentWorkspace.isRunning"
-      :capture-filter="currentWorkspace.captureFilter"
-      :view-filter="currentWorkspace.viewFilter"
-      :sort="currentWorkspace.sort"
-      :grep-match-rules="currentWorkspace.grepMatchRules"
-      :grep-extract-rules="currentWorkspace.grepExtractRules"
-      :grep-payload-settings="currentWorkspace.grepPayloadSettings"
-      :visible-columns="currentWorkspace.visibleColumns"
-      @close="showResultsDialog = false"
-      @select-result="selectResult(currentWorkspace.id, $event)"
-      @update:capture-filter="updateCaptureFilter(currentWorkspace.id, $event)"
-      @update:view-filter="updateViewFilter(currentWorkspace.id, $event)"
-      @update:sort="updateResultSort(currentWorkspace.id, $event)"
-      @update:visible-columns="updateVisibleColumns(currentWorkspace.id, $event)"
-      @send-to-repeater="sendSelectedResultToRepeater(currentWorkspace.id, $event)"
-      @send-to-comparer="sendSelectedResultToComparer(currentWorkspace.id, $event)"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useI18n } from 'vue-i18n'
@@ -206,7 +176,6 @@ import {
   IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS,
   IMMERSIVE_TRAFFIC_TOP_BAR_CLASS,
 } from './immersiveTrafficUi'
-import IntruderAttackResults from './intruder/IntruderAttackResults.vue'
 import IntruderAttackTypeSelect from './intruder/IntruderAttackTypeSelect.vue'
 import IntruderAttackTemplateManager from './intruder/IntruderAttackTemplateManager.vue'
 import IntruderRequestEditor from './intruder/IntruderRequestEditor.vue'
@@ -231,13 +200,28 @@ import {
   extractTargetFromRequest,
 } from './intruder/http'
 import {
+  buildIntruderTargetUrl as buildTargetUrl,
+  clampIntruderSidebarWidth,
+  createDefaultAttackOptions,
+  createDefaultPayloadSet,
+  createDefaultPluginProcessorBinding,
+  createDefaultProgress,
+  createIntruderWorkspace,
+  INTRUDER_SIDEBAR_WIDTH_KEY,
+  IntruderWorkspace,
+  loadIntruderSidebarWidth,
+  normalizePersistedIntruderWorkspaceList,
+  normalizeAttackOptions,
+  normalizePayloadSet,
+  parseIntruderTargetUrl,
+  serializeIntruderWorkspaceSessionStore,
+} from './intruder/workspaceSupport'
+import {
   buildHttpReplayResponseFromCommandResult,
   type RawReplayCommandResult,
 } from './http/response'
-import { queueComparerTransfer, queueRepeaterTransfer } from './transfers'
 import type { TrafficComparePayload } from './transfers'
 import {
-  createDefaultVisibleColumns,
   evaluateIntruderPayloadReflections,
   evaluateIntruderGrepExtracts,
   evaluateIntruderGrepMatches,
@@ -245,25 +229,21 @@ import {
   normalizeGrepPayloadSettings,
 } from './intruder/analysis'
 import {
-  createDefaultResultFilter,
-  createDefaultResultSort,
-  getIntruderResultsStorageKey,
-  loadIntruderResultsWindowState,
   matchesIntruderResultFilter,
   normalizeIntruderResultFilter,
-  saveIntruderResultsWindowState,
   sortIntruderResults,
 } from './intruder/results'
 import {
+  buildIntruderResourcePoolAutoName,
   createBuiltInResourcePools,
   createIntruderAttackTemplate,
-  createIntruderResourcePool,
   exportIntruderResultsCsv,
   loadIntruderAttackTemplates,
   loadIntruderResourcePools,
   normalizeVisibleColumns,
   persistIntruderAttackTemplates,
   persistIntruderResourcePools,
+  upsertIntruderResourcePoolEntry,
   type IntruderAttackTemplate,
 } from './intruder/storage'
 import {
@@ -273,14 +253,24 @@ import {
   type IntruderRequestProcessorTrace,
 } from './intruder/plugins'
 import {
+  getIntruderAutoThrottleStepMs,
+  getIntruderRuntimeDelayMs,
+  shouldIntruderThrottleForStatus,
+  waitForIntruderDelay,
+} from './intruder/runtimeSupport'
+import {
   createDefaultIntruderDictionaryPayloadConfig,
-  normalizeIntruderDictionaryPayloadConfig,
   resolveIntruderDictionaryPayloads,
 } from './intruder/intruderAppDictionaryPayloads'
-import { buildIntruderResultsWindowUrl } from '@/router/standalone'
+import { useTrafficWorkbenchStore } from './workbench/stores/useTrafficWorkbenchStore'
+import type { AttackWorkspace as WorkbenchAttackWorkspace } from './workbench/model/attackWorkspace'
+import {
+  loadIntruderWorkspaceSessionStore,
+  saveIntruderWorkspaceSessionStore,
+  type PersistedIntruderWorkspaceSessionStore,
+} from '@/api/trafficIntruderSessions'
 import type {
   IntruderAttackOptions,
-  IntruderAttackProgress,
   IntruderAttackResult,
   IntruderAttackType,
   IntruderGrepExtractRule,
@@ -289,13 +279,11 @@ import type {
   IntruderPluginProcessorBinding,
   IntruderPayloadProcessingRule,
   IntruderPayloadSet,
-  IntruderPosition,
   IntruderRequestInput,
   IntruderRequestViewTab,
   IntruderResourcePool,
   IntruderResultFilter,
   IntruderResultSort,
-  IntruderTarget,
 } from './intruder/types'
 
 interface ReplayCommandResponse<T> {
@@ -304,54 +292,22 @@ interface ReplayCommandResponse<T> {
   error?: string
 }
 
-interface IntruderWorkspace {
-  id: string
-  name: string
-  sourceRequestId: number | null
-  requestText: string
-  requestViewTab: IntruderRequestViewTab
-  target: IntruderTarget
-  positions: IntruderPosition[]
-  attackType: IntruderAttackType
-  payloadSets: IntruderPayloadSet[]
-  payloadProcessingRules: IntruderPayloadProcessingRule[]
-  payloadProcessorPlugins: IntruderPluginProcessorBinding[]
-  requestProcessorPlugins: IntruderPluginProcessorBinding[]
-  grepMatchRules: IntruderGrepMatchRule[]
-  grepExtractRules: IntruderGrepExtractRule[]
-  grepPayloadSettings: IntruderGrepPayloadSettings
-  selectedResourcePoolId: string
-  attackOptions: IntruderAttackOptions
-  results: IntruderAttackResult[]
-  selectedResultId: string | null
-  progress: IntruderAttackProgress
-  isRunning: boolean
-  captureFilter: IntruderResultFilter
-  viewFilter: IntruderResultFilter
-  sort: IntruderResultSort
-  visibleColumns: string[]
-}
-
-const INTRUDER_WORKSPACE_STORAGE_KEY = 'trafficAnalysis.intruder.workspaces.v1'
-const INTRUDER_SIDEBAR_WIDTH_KEY = 'trafficAnalysis.intruder.sidebarWidth.v1'
-const INTRUDER_SIDEBAR_MIN_WIDTH = 320
-const INTRUDER_SIDEBAR_MAX_WIDTH = 720
-
 const props = defineProps<{
   initialRequest?: IntruderRequestInput
+  initialWorkspaceId?: string
 }>()
 
 const emit = defineEmits<{
-  (e: 'sendToRepeater', request: IntruderRequestInput): void
-  (e: 'sendToComparer', payload: TrafficComparePayload): void
-  (e: 'sendDraftRequestToComparer', payload: { request: IntruderRequestInput; label?: string }): void
+  (e: 'createDraft', request: IntruderRequestInput): void
+  (e: 'openCompare', payload: TrafficComparePayload): void
+  (e: 'openDraftCompare', payload: { request: IntruderRequestInput; label?: string }): void
 }>()
 
 const { t } = useI18n()
+const workbenchState = useTrafficWorkbenchStore()
 const workspaces = ref<IntruderWorkspace[]>([])
 const activeWorkspaceId = ref<string | null>(null)
 const activeSidebarTab = ref<'payloads' | 'resourcePool' | 'settings'>('payloads')
-const showResultsDialog = ref(false)
 const attackControllers = new Map<string, { cancelled: boolean }>()
 const resourcePools = ref<IntruderResourcePool[]>(loadIntruderResourcePools(createBuiltInResourcePools()))
 const attackTemplates = ref<IntruderAttackTemplate[]>(loadIntruderAttackTemplates())
@@ -363,10 +319,15 @@ const requestProcessingPreviewPayloadSummary = ref('')
 const requestProcessingPreviewTraces = ref<IntruderRequestProcessorTrace[]>([])
 const requestProcessingPreviewError = ref('')
 const workspaceLayoutRef = ref<HTMLElement | null>(null)
-const sidebarWidth = ref(loadSidebarWidth())
+const sidebarWidth = ref(loadIntruderSidebarWidth())
 const isResizingSidebar = ref(false)
 const sidebarResizeStartX = ref(0)
 const sidebarResizeStartWidth = ref(sidebarWidth.value)
+let applyingWorkbenchWorkspace = false
+const intruderSessionPersistenceReady = ref(false)
+const persistedIntruderSessionFingerprint = ref('')
+const persistedIntruderSessionStore = ref<PersistedIntruderWorkspaceSessionStore | null>(null)
+let persistIntruderSessionTimer: number | null = null
 
 const currentWorkspace = computed(() => workspaces.value.find((workspace) => workspace.id === activeWorkspaceId.value) ?? null)
 const selectedResult = computed(() => {
@@ -387,16 +348,93 @@ const planWillTruncate = computed(() => {
   return estimatedRequests.value > workspace.attackOptions.maxRequests
 })
 
-function loadSidebarWidth(): number {
-  const raw = localStorage.getItem(INTRUDER_SIDEBAR_WIDTH_KEY)
-  const width = raw ? Number.parseInt(raw, 10) : 448
-  return Number.isFinite(width) ? width : 448
+function buildPersistedIntruderSessionStore(): PersistedIntruderWorkspaceSessionStore {
+  return serializeIntruderWorkspaceSessionStore(activeWorkspaceId.value, workspaces.value)
+}
+
+function scheduleIntruderSessionPersistence() {
+  if (!intruderSessionPersistenceReady.value) {
+    return
+  }
+  if (persistIntruderSessionTimer !== null) {
+    window.clearTimeout(persistIntruderSessionTimer)
+  }
+  persistIntruderSessionTimer = window.setTimeout(() => {
+    persistIntruderSessionTimer = null
+    const store = buildPersistedIntruderSessionStore()
+    const fingerprint = JSON.stringify(store)
+    if (fingerprint === persistedIntruderSessionFingerprint.value) {
+      return
+    }
+    void saveIntruderWorkspaceSessionStore(store)
+      .then(() => {
+        persistedIntruderSessionStore.value = store
+        persistedIntruderSessionFingerprint.value = fingerprint
+      })
+      .catch(error => {
+        console.error('Failed to persist intruder workspace sessions', error)
+      })
+  }, 180)
+}
+
+function findPersistedWorkspaceSession(workspaceId: string | null | undefined) {
+  if (!workspaceId) {
+    return null
+  }
+  const workspaces = persistedIntruderSessionStore.value?.workspaces
+  if (!Array.isArray(workspaces)) {
+    return null
+  }
+  return workspaces.find(workspace => workspace?.id === workspaceId) ?? null
+}
+
+function syncWorkbenchWorkspaceRuntime(
+  workspace: IntruderWorkspace,
+  runState: 'idle' | 'running' | 'done' | 'cancelled' = workspace.isRunning ? 'running' : 'done',
+) {
+  workbenchState.attack.updateWorkspaceRuntime(workspace.id, {
+    runState,
+    resultCount: workspace.results.length,
+    progress: {
+      total: workspace.progress.total,
+      completed: workspace.progress.completed,
+      failed: workspace.progress.failed,
+      active: workspace.progress.active,
+      truncated: workspace.progress.truncated,
+    },
+  })
+}
+
+function syncWorkbenchWorkspaceDefinition(workspace: IntruderWorkspace) {
+  workbenchState.attack.updateWorkspaceRequestText(workspace.id, workspace.requestText)
+  workbenchState.attack.updateWorkspaceTarget(workspace.id, workspace.target)
+  workbenchState.attack.updateWorkspacePositions(workspace.id, workspace.positions)
+  workbenchState.attack.updateWorkspaceTitle(workspace.id, workspace.name)
+}
+
+async function hydrateIntruderWorkspaceSessions() {
+  try {
+    const store = await loadIntruderWorkspaceSessionStore()
+    persistedIntruderSessionStore.value = {
+      activeWorkspaceId: store.activeWorkspaceId,
+      workspaces: Array.isArray(store.workspaces) ? store.workspaces : [],
+    }
+    persistedIntruderSessionFingerprint.value = JSON.stringify(persistedIntruderSessionStore.value)
+  } catch (error) {
+    console.error('Failed to hydrate intruder workspace sessions', error)
+    persistedIntruderSessionStore.value = {
+      activeWorkspaceId: null,
+      workspaces: [],
+    }
+    persistedIntruderSessionFingerprint.value = JSON.stringify(persistedIntruderSessionStore.value)
+  } finally {
+    intruderSessionPersistenceReady.value = true
+  }
 }
 
 function clampSidebarWidth(width: number): number {
   const containerWidth = workspaceLayoutRef.value?.clientWidth ?? window.innerWidth
-  const maxWidth = Math.max(INTRUDER_SIDEBAR_MIN_WIDTH, Math.min(INTRUDER_SIDEBAR_MAX_WIDTH, containerWidth - 360))
-  return Math.min(maxWidth, Math.max(INTRUDER_SIDEBAR_MIN_WIDTH, width))
+  return clampIntruderSidebarWidth(width, containerWidth)
 }
 
 function persistSidebarWidth() {
@@ -436,284 +474,84 @@ function handleWindowResize() {
   persistSidebarWidth()
 }
 
-function buildResultsWindowLabel(workspaceId: string): string {
-  return `intruder-results-${workspaceId}`
+function createWorkspace(
+  source?: IntruderRequestInput,
+  overrides?: { id?: string; name?: string },
+): IntruderWorkspace {
+  return createIntruderWorkspace({
+    source,
+    id: overrides?.id,
+    name: overrides?.name,
+    existingCount: workspaces.value.length,
+    attackLabel: t('trafficAnalysis.intruder.labels.attack'),
+    payloadLabel: t('trafficAnalysis.intruder.labels.payloadSet'),
+  })
 }
 
-function buildResultsWindowState(workspace: IntruderWorkspace) {
-  return {
-    workspaceId: workspace.id,
-    workspaceName: `${workspace.name} (${buildTargetUrl(workspace.target)})`,
-    target: workspace.target,
-    requestText: workspace.requestText,
-    positions: workspace.positions,
-    results: workspace.results,
-    selectedResultId: workspace.selectedResultId,
-    progress: workspace.progress,
-    isRunning: workspace.isRunning,
-    captureFilter: workspace.captureFilter,
-    viewFilter: workspace.viewFilter,
-    sort: workspace.sort,
-    grepMatchRules: workspace.grepMatchRules,
-    grepExtractRules: workspace.grepExtractRules,
-    grepPayloadSettings: workspace.grepPayloadSettings,
-    visibleColumns: workspace.visibleColumns,
+function findWorkbenchWorkspace(workspaceId: string | null | undefined) {
+  if (!workspaceId) {
+    return null
   }
+  return workbenchState.attack.workspaces.value.find(workspace => workspace.id === workspaceId) ?? null
 }
 
-function syncResultsWindowState(workspace: IntruderWorkspace) {
-  saveIntruderResultsWindowState(buildResultsWindowState(workspace))
-}
-
-function createDefaultProgress(): IntruderAttackProgress {
-  return {
-    total: 0,
-    completed: 0,
-    failed: 0,
-    active: 0,
-    truncated: false,
+function syncLocalWorkspaceFromWorkbench(workspace: IntruderWorkspace, source: WorkbenchAttackWorkspace) {
+  workspace.name = source.title
+  workspace.sourceRequestId = source.source?.requestId ?? workspace.sourceRequestId
+  workspace.requestText = source.requestText
+  workspace.requestViewTab = 'raw'
+  workspace.target = { ...source.target }
+  workspace.positions = [...source.positions]
+  workspace.progress = { ...source.progress }
+  workspace.isRunning = source.runState === 'running'
+  if (!workspace.isRunning && source.resultCount === 0) {
+    workspace.results = []
+    workspace.selectedResultId = null
   }
+  syncPayloadSets(workspace.id, false)
 }
 
-function createDefaultAttackOptions(): IntruderAttackOptions {
-  return {
-    concurrency: 10,
-    delayMs: 0,
-    randomDelayMs: 0,
-    delayIncrementMs: 0,
-    autoThrottleEnabled: false,
-    autoThrottleStatusCodes: [429, 503],
-    timeoutSecs: 30,
-    maxRequests: 500,
-    updateHostHeader: true,
-    updateContentLength: true,
-    setConnectionClose: true,
-    followRedirects: false,
-    maxRedirects: 5,
-    processCookiesInRedirects: true,
-    retryCount: 3,
-    retryPauseMs: 2000,
-    storeRequests: true,
-    storeResponses: true,
-    storeFullPayloads: false,
-    denialOfServiceMode: false,
-    makeUnmodifiedBaseline: true,
-    autoPauseEnabled: false,
-    autoPauseMode: 'contains',
-    autoPauseExpression: '',
-    autoPauseExpressions: [],
+function createWorkspaceFromWorkbench(source: WorkbenchAttackWorkspace): IntruderWorkspace {
+  const persisted = normalizePersistedIntruderWorkspaceList(
+    {
+      activeWorkspaceId: source.id,
+      workspaces: findPersistedWorkspaceSession(source.id) ? [findPersistedWorkspaceSession(source.id)!] : [],
+    },
+    {
+      attackLabel: t('trafficAnalysis.intruder.labels.attack'),
+      payloadLabel: t('trafficAnalysis.intruder.labels.payloadSet'),
+    },
+  )
+  const request = buildSourceRequestFromRawRequest(source.requestText, source.target)
+  const workspace = persisted?.workspaces[0] || createWorkspace(request || undefined, {
+    id: source.id,
+    name: source.title,
+  })
+  syncLocalWorkspaceFromWorkbench(workspace, source)
+  return workspace
+}
+
+function openWorkspaceFromWorkbench(workspaceId: string | null | undefined) {
+  const source = findWorkbenchWorkspace(workspaceId)
+  if (!source) {
+    return
   }
-}
 
-function normalizeAttackOptions(value?: Partial<IntruderAttackOptions>): IntruderAttackOptions {
-  const defaults = createDefaultAttackOptions()
-  const normalized = { ...defaults, ...(value || {}) }
-  const autoThrottleStatusCodes = Array.isArray(value?.autoThrottleStatusCodes)
-    ? value.autoThrottleStatusCodes
-      .map((item) => Number(item))
-      .filter((item) => Number.isInteger(item) && item >= 100 && item <= 999)
-    : defaults.autoThrottleStatusCodes
-  const expressions = Array.isArray(value?.autoPauseExpressions)
-    ? value?.autoPauseExpressions.filter((item) => typeof item === 'string' && item.trim().length > 0)
-    : []
-
-  return {
-    ...normalized,
-    delayIncrementMs: Math.max(0, Number(normalized.delayIncrementMs) || 0),
-    autoThrottleEnabled: Boolean(normalized.autoThrottleEnabled),
-    autoThrottleStatusCodes,
-    autoPauseExpressions: expressions.length
-      ? expressions
-      : normalized.autoPauseExpression.trim()
-        ? [normalized.autoPauseExpression.trim()]
-        : [],
-  }
-}
-
-function createDefaultPayloadSet(index: number): IntruderPayloadSet {
-  return {
-    id: createIntruderId('payload-set'),
-    name: `${t('trafficAnalysis.intruder.labels.payloadSet')} ${index + 1}`,
-    payloadType: 'simpleList',
-    payloadsText: '',
-    urlEncode: false,
-    urlEncodeCharacters: String.raw`./\=<>?+&*;:"' {}|^#`,
-    dictionaryConfig: createDefaultIntruderDictionaryPayloadConfig(),
-    pluginId: '',
-    pluginPresetName: '',
-    pluginConfig: '{}',
-    filePath: '',
-    characterList: '',
-    substitutionSource: '',
-    substitutionRules: '',
-    numberFrom: 0,
-    numberTo: 100,
-    numberStep: 1,
-    numberPadWidth: 0,
-    dateFrom: '2026-01-01',
-    dateTo: '2026-01-07',
-    dateStepDays: 1,
-    dateFormat: 'yyyy-MM-dd',
-    nullCount: 10,
-    nullValue: '',
-    usernameFirstNames: '',
-    usernameLastNames: '',
-    usernameFormats: '{first}.{last}\n{f}{last}\n{first}{l}',
-  }
-}
-
-function normalizePayloadSet(
-  index: number,
-  value?: Partial<IntruderPayloadSet> | null,
-): IntruderPayloadSet {
-  const defaults = createDefaultPayloadSet(index)
-  return {
-    ...defaults,
-    ...(value || {}),
-    dictionaryConfig: normalizeIntruderDictionaryPayloadConfig(
-      value?.dictionaryConfig || defaults.dictionaryConfig,
-    ),
-  }
-}
-
-function createDefaultPluginProcessorBinding(): IntruderPluginProcessorBinding {
-  return {
-    id: createIntruderId('plugin-processor'),
-    pluginId: '',
-    presetName: '',
-    enabled: true,
-    config: '{}',
-  }
-}
-
-function createWorkspace(source?: IntruderRequestInput): IntruderWorkspace {
-  const requestText = createRawRequestFromSource(source)
-  const target = extractTargetFromRequest(requestText, source?.absoluteUrl)
-  const positions = extractIntruderPositions(requestText)
-
-  return {
-    id: createIntruderId('intruder-workspace'),
-    name: target.host || `${t('trafficAnalysis.intruder.labels.attack')} ${workspaces.value.length + 1}`,
-    sourceRequestId: source?.sourceRequestId ?? null,
-    requestText,
-    requestViewTab: source?.preferredRequestView === 'pretty' ? 'pretty' : 'raw',
-    target,
-    positions,
-    attackType: 'sniper',
-    payloadSets: [createDefaultPayloadSet(0)],
-    payloadProcessingRules: [],
-    payloadProcessorPlugins: [],
-    requestProcessorPlugins: [],
-    grepMatchRules: [],
-    grepExtractRules: [],
-    grepPayloadSettings: normalizeGrepPayloadSettings(),
-    selectedResourcePoolId: 'default',
-    attackOptions: createDefaultAttackOptions(),
-    results: [],
-    selectedResultId: null,
-    progress: createDefaultProgress(),
-    isRunning: false,
-    captureFilter: createDefaultResultFilter(),
-    viewFilter: createDefaultResultFilter(),
-    sort: createDefaultResultSort(),
-    visibleColumns: createDefaultVisibleColumns([], [], normalizeGrepPayloadSettings()),
-  }
-}
-
-function serializeWorkspaces() {
-  return {
-    activeWorkspaceId: activeWorkspaceId.value,
-    workspaces: workspaces.value.map((workspace) => ({
-      id: workspace.id,
-      name: workspace.name,
-      sourceRequestId: workspace.sourceRequestId,
-      requestText: workspace.requestText,
-      requestViewTab: workspace.requestViewTab,
-      target: workspace.target,
-      positions: workspace.positions,
-      attackType: workspace.attackType,
-      payloadSets: workspace.payloadSets,
-      payloadProcessingRules: workspace.payloadProcessingRules,
-      payloadProcessorPlugins: workspace.payloadProcessorPlugins,
-      requestProcessorPlugins: workspace.requestProcessorPlugins,
-      grepMatchRules: workspace.grepMatchRules,
-      grepExtractRules: workspace.grepExtractRules,
-      grepPayloadSettings: workspace.grepPayloadSettings,
-      selectedResourcePoolId: workspace.selectedResourcePoolId,
-      attackOptions: workspace.attackOptions,
-      captureFilter: workspace.captureFilter,
-      viewFilter: workspace.viewFilter,
-      sort: workspace.sort,
-      visibleColumns: workspace.visibleColumns,
-    })),
-  }
-}
-
-function restorePersistedWorkspaces() {
-  const raw = localStorage.getItem(INTRUDER_WORKSPACE_STORAGE_KEY)
-  if (!raw) return false
-
+  const existing = findWorkspace(source.id)
+  applyingWorkbenchWorkspace = true
   try {
-    const persisted = JSON.parse(raw) as {
-      activeWorkspaceId?: string | null
-      workspaces?: Array<Partial<IntruderWorkspace>>
-    }
-    if (!Array.isArray(persisted.workspaces) || !persisted.workspaces.length) {
-      return false
+    if (existing) {
+      syncLocalWorkspaceFromWorkbench(existing, source)
+      activeWorkspaceId.value = existing.id
+      return
     }
 
-    workspaces.value = persisted.workspaces.map((workspace, index) => ({
-      id: workspace.id || createIntruderId('intruder-workspace'),
-      name: workspace.name || `${t('trafficAnalysis.intruder.labels.attack')} ${index + 1}`,
-      sourceRequestId: workspace.sourceRequestId ?? null,
-      requestText: workspace.requestText || createRawRequestFromSource(),
-      requestViewTab: workspace.requestViewTab === 'pretty' ? 'pretty' : 'raw',
-      target: workspace.target || extractTargetFromRequest(workspace.requestText || ''),
-      positions: workspace.positions || extractIntruderPositions(workspace.requestText || ''),
-      attackType: workspace.attackType || 'sniper',
-      payloadSets: (workspace.payloadSets?.length ? workspace.payloadSets : [createDefaultPayloadSet(0)]).map((item, payloadIndex) =>
-        normalizePayloadSet(payloadIndex, item),
-      ),
-      payloadProcessingRules: workspace.payloadProcessingRules || [],
-      payloadProcessorPlugins: (workspace.payloadProcessorPlugins || []).map((item) => ({
-        ...createDefaultPluginProcessorBinding(),
-        ...item,
-      })),
-      requestProcessorPlugins: (workspace.requestProcessorPlugins || []).map((item) => ({
-        ...createDefaultPluginProcessorBinding(),
-        ...item,
-      })),
-      grepMatchRules: (workspace.grepMatchRules || []).map((item) => normalizeGrepMatchRule(item)),
-      grepExtractRules: workspace.grepExtractRules || [],
-      grepPayloadSettings: normalizeGrepPayloadSettings(workspace.grepPayloadSettings),
-      selectedResourcePoolId: workspace.selectedResourcePoolId || 'default',
-      attackOptions: normalizeAttackOptions(workspace.attackOptions),
-      results: [],
-      selectedResultId: null,
-      progress: createDefaultProgress(),
-      isRunning: false,
-      captureFilter: normalizeIntruderResultFilter(workspace.captureFilter),
-      viewFilter: normalizeIntruderResultFilter(workspace.viewFilter),
-      sort: { ...createDefaultResultSort(), ...(workspace.sort || {}) },
-      visibleColumns: normalizeVisibleColumns(
-        workspace.visibleColumns,
-        workspace.grepMatchRules || [],
-        workspace.grepExtractRules || [],
-        normalizeGrepPayloadSettings(workspace.grepPayloadSettings),
-      ),
-    }))
-
-    activeWorkspaceId.value = workspaces.value.some((workspace) => workspace.id === persisted.activeWorkspaceId)
-      ? persisted.activeWorkspaceId || null
-      : workspaces.value[0]?.id ?? null
-    return true
-  } catch {
-    return false
+    const workspace = createWorkspaceFromWorkbench(source)
+    workspaces.value.push(workspace)
+    activeWorkspaceId.value = workspace.id
+  } finally {
+    applyingWorkbenchWorkspace = false
   }
-}
-
-function persistWorkspaces() {
-  localStorage.setItem(INTRUDER_WORKSPACE_STORAGE_KEY, JSON.stringify(serializeWorkspaces()))
 }
 
 function createAttackTemplateFromWorkspace(workspace: IntruderWorkspace, name: string): IntruderAttackTemplate {
@@ -760,7 +598,9 @@ function syncPayloadSets(workspaceId: string, trimExcess: boolean) {
 
   const requiredCount = getRequiredPayloadSetCount(workspace.attackType, workspace.positions.length)
   while (workspace.payloadSets.length < requiredCount) {
-    workspace.payloadSets.push(createDefaultPayloadSet(workspace.payloadSets.length))
+    workspace.payloadSets.push(
+      createDefaultPayloadSet(workspace.payloadSets.length, t('trafficAnalysis.intruder.labels.payloadSet')),
+    )
   }
 
   if (trimExcess && workspace.payloadSets.length > requiredCount) {
@@ -786,30 +626,22 @@ function applyDerivedWorkspaceState(workspace: IntruderWorkspace) {
   syncPayloadSets(workspace.id, false)
 }
 
-function buildTargetUrl(target: IntruderTarget): string {
-  const protocol = target.useTls ? 'https' : 'http'
-  const defaultPort = target.useTls ? 443 : 80
-  const portSuffix = target.port === defaultPort ? '' : `:${target.port}`
-  return `${protocol}://${target.host || 'example.com'}${portSuffix}`
-}
-
-function parseTargetUrl(value: string): IntruderTarget | null {
-  try {
-    const url = new URL(value.includes('://') ? value : `https://${value}`)
-    return {
-      host: url.hostname,
-      port: url.port ? Number.parseInt(url.port, 10) : url.protocol === 'https:' ? 443 : 80,
-      useTls: url.protocol === 'https:',
-    }
-  } catch {
-    return null
-  }
-}
-
 function addWorkspace(source?: IntruderRequestInput) {
-  const workspace = createWorkspace(source)
-  workspaces.value.push(workspace)
-  activeWorkspaceId.value = workspace.id
+  const request = source || buildSourceRequestFromRawRequest(
+    createRawRequestFromSource(),
+    extractTargetFromRequest(createRawRequestFromSource()),
+  )
+  if (!request) {
+    return
+  }
+
+  const attackWorkspace = workbenchState.attack.createWorkspaceFromExchangeRequest({
+    request,
+    source: { kind: 'intruder', label: t('trafficAnalysis.tabs.intruder', '爆破器') },
+    title: request.endpoint.host,
+  })
+  workbenchState.attack.selectWorkspace(attackWorkspace.id)
+  openWorkspaceFromWorkbench(attackWorkspace.id)
 }
 
 function addRequestFromHistory(request: IntruderRequestInput) {
@@ -822,9 +654,8 @@ function closeWorkspace(workspaceId: string) {
     controller.cancelled = true
   }
   attackControllers.delete(workspaceId)
-  void closeResultsWindow(workspaceId)
-  localStorage.removeItem(getIntruderResultsStorageKey(workspaceId))
   workspaces.value = workspaces.value.filter((workspace) => workspace.id !== workspaceId)
+  workbenchState.attack.removeWorkspace(workspaceId)
   ensureWorkspaceSelection()
 }
 
@@ -837,7 +668,7 @@ function duplicateWorkspace() {
     id: createIntruderId('intruder-workspace'),
     name: `${workspace.name} Copy`,
     payloadSets: workspace.payloadSets.map((payloadSet, index) => ({
-      ...normalizePayloadSet(index, payloadSet),
+      ...normalizePayloadSet(index, payloadSet, t('trafficAnalysis.intruder.labels.payloadSet')),
       id: createIntruderId('payload-set'),
     })),
     payloadProcessingRules: workspace.payloadProcessingRules.map((rule) => ({ ...rule, id: createIntruderId('payload-rule') })),
@@ -862,6 +693,9 @@ function updateRequestText(workspaceId: string, value: string) {
 
   workspace.requestText = value
   applyDerivedWorkspaceState(workspace)
+  if (!applyingWorkbenchWorkspace) {
+    syncWorkbenchWorkspaceDefinition(workspace)
+  }
 }
 
 function updateRequestViewTab(workspaceId: string, value: IntruderRequestViewTab) {
@@ -882,8 +716,8 @@ function sendWorkspaceRequestToRepeater(workspaceId: string) {
   }
   request.sourceRequestId = workspace.sourceRequestId
 
-  emit('sendToRepeater', request)
-  dialog.toast.success(t('trafficAnalysis.history.messages.sentToRepeater'))
+  emit('createDraft', request)
+  dialog.toast.success(t('trafficAnalysis.history.messages.draftCreated'))
 }
 
 function sendWorkspaceRequestToComparer(workspaceId: string) {
@@ -897,22 +731,25 @@ function sendWorkspaceRequestToComparer(workspaceId: string) {
   }
   request.sourceRequestId = workspace.sourceRequestId
 
-  emit('sendDraftRequestToComparer', {
+  emit('openDraftCompare', {
     request,
     label: t('trafficAnalysis.intruder.labels.request'),
   })
-  dialog.toast.success(t('trafficAnalysis.history.messages.sentToComparer'))
+  dialog.toast.success(t('trafficAnalysis.history.messages.compareOpened'))
 }
 
 function updateTargetUrl(workspaceId: string, value: string) {
   const workspace = findWorkspace(workspaceId)
   if (!workspace) return
 
-  const target = parseTargetUrl(value)
+  const target = parseIntruderTargetUrl(value)
   if (!target) return
 
   workspace.target = target
   workspace.name = target.host
+  if (!applyingWorkbenchWorkspace) {
+    syncWorkbenchWorkspaceDefinition(workspace)
+  }
 }
 
 function updateAttackType(workspaceId: string, value: IntruderAttackType) {
@@ -948,8 +785,53 @@ function updatePayloadSet(workspaceId: string, payloadSetId: string, patch: Part
   if (!workspace) return
 
   workspace.payloadSets = workspace.payloadSets.map((payloadSet, index) =>
-    payloadSet.id === payloadSetId ? normalizePayloadSet(index, { ...payloadSet, ...patch }) : payloadSet,
+    payloadSet.id === payloadSetId
+      ? normalizePayloadSet(index, { ...payloadSet, ...patch }, t('trafficAnalysis.intruder.labels.payloadSet'))
+      : payloadSet,
   )
+}
+
+function applyPayloadTemplate(
+  workspaceId: string,
+  payloadSetId: string,
+  value: {
+    sourceRef: string
+    attackType: IntruderAttackType
+    sets: Array<{ name: string; payloadsText: string }>
+  },
+) {
+  const workspace = findWorkspace(workspaceId)
+  if (!workspace) return
+
+  const startIndex = Math.max(0, workspace.payloadSets.findIndex((payloadSet) => payloadSet.id === payloadSetId))
+  workspace.attackType = value.attackType
+  syncPayloadSets(workspaceId, false)
+
+  const requiredLength = startIndex + value.sets.length
+  while (workspace.payloadSets.length < requiredLength) {
+    workspace.payloadSets.push(
+      createDefaultPayloadSet(workspace.payloadSets.length, t('trafficAnalysis.intruder.labels.payloadSet')),
+    )
+  }
+
+  workspace.payloadSets = workspace.payloadSets.map((payloadSet, index) => {
+    const templateSet = value.sets[index - startIndex]
+    if (!templateSet) {
+      return normalizePayloadSet(index, payloadSet, t('trafficAnalysis.intruder.labels.payloadSet'))
+    }
+
+    return normalizePayloadSet(index, {
+      ...payloadSet,
+      name: templateSet.name,
+      payloadType: 'simpleList',
+      payloadsText: templateSet.payloadsText,
+      dictionaryConfig: createDefaultIntruderDictionaryPayloadConfig(),
+      pluginId: '',
+      pluginPresetName: '',
+      pluginConfig: '{}',
+      filePath: '',
+    }, t('trafficAnalysis.intruder.labels.payloadSet'))
+  })
 }
 
 async function resolvePayloadSetValues(workspace: IntruderWorkspace, payloadSet: IntruderPayloadSet): Promise<string[]> {
@@ -1227,34 +1109,9 @@ function upsertResourcePool(
   const workspace = findWorkspace(workspaceId)
   if (!workspace) return
 
-  const name = value.name.trim()
-  if (!name) return
-
-  const nextPool = createIntruderResourcePool(name, {
-    concurrencyEnabled: value.concurrencyEnabled,
-    concurrency: value.concurrency,
-    delayEnabled: value.delayEnabled,
-    delayMs: value.delayMs,
-    randomDelayEnabled: value.randomDelayEnabled,
-    randomDelayMs: value.randomDelayMs,
-    delayIncrementEnabled: value.delayIncrementEnabled,
-    delayIncrementMs: value.delayIncrementMs,
-    autoThrottleEnabled: value.autoThrottleEnabled,
-    autoThrottleStatusCodes: value.autoThrottleStatusCodes,
-  })
-  if (value.id) {
-    const currentPool = resourcePools.value.find((pool) => pool.id === value.id)
-    if (currentPool?.builtIn) {
-      return
-    }
-    nextPool.id = value.id
-  }
-
-  resourcePools.value = [
-    ...resourcePools.value.filter((pool) => pool.id !== nextPool.id),
-    nextPool,
-  ]
-  selectResourcePoolPreset(workspaceId, nextPool.id)
+  const result = upsertIntruderResourcePoolEntry(resourcePools.value, value)
+  resourcePools.value = result.pools
+  selectResourcePoolPreset(workspaceId, result.pool.id)
 }
 
 function deleteResourcePool(workspaceId: string, resourcePoolId: string) {
@@ -1320,6 +1177,7 @@ function autoMarkPositions(workspaceId: string) {
 
   workspace.requestText = autoMarkIntruderPositions(workspace.requestText)
   applyDerivedWorkspaceState(workspace)
+  syncWorkbenchWorkspaceDefinition(workspace)
 }
 
 function clearMarkers(workspaceId: string) {
@@ -1328,6 +1186,7 @@ function clearMarkers(workspaceId: string) {
 
   workspace.requestText = clearIntruderMarkers(workspace.requestText)
   applyDerivedWorkspaceState(workspace)
+  syncWorkbenchWorkspaceDefinition(workspace)
 }
 
 function selectResult(workspaceId: string, resultId: string) {
@@ -1354,9 +1213,8 @@ function sendSelectedResultToRepeater(workspaceId: string, resultId?: string) {
   }
   request.sourceRequestId = workspace.sourceRequestId
 
-  emit('sendToRepeater', request)
-  queueRepeaterTransfer(request)
-  dialog.toast.success(t('trafficAnalysis.intruder.messages.sentToRepeater'))
+  emit('createDraft', request)
+  dialog.toast.success(t('trafficAnalysis.intruder.messages.draftCreated'))
 }
 
 function sendSelectedResultToComparer(workspaceId: string, resultId?: string) {
@@ -1392,9 +1250,8 @@ function sendSelectedResultToComparer(workspaceId: string, resultId?: string) {
     },
   }
 
-  emit('sendToComparer', payload)
-  queueComparerTransfer(payload)
-  dialog.toast.success(t('trafficAnalysis.intruder.messages.sentToComparer'))
+  emit('openCompare', payload)
+  dialog.toast.success(t('trafficAnalysis.intruder.messages.compareOpened'))
 }
 
 function saveAttackTemplate(name: string) {
@@ -1444,7 +1301,9 @@ function loadAttackTemplate(templateId = selectedAttackTemplateId.value) {
   workspace.requestText = template.requestText
   workspace.target = template.target
   workspace.attackType = template.attackType
-  workspace.payloadSets = template.payloadSets.map((item, index) => normalizePayloadSet(index, item))
+  workspace.payloadSets = template.payloadSets.map((item, index) =>
+    normalizePayloadSet(index, item, t('trafficAnalysis.intruder.labels.payloadSet')),
+  )
   workspace.payloadProcessingRules = template.payloadProcessingRules.map((item) => ({ ...item }))
   workspace.payloadProcessorPlugins = (template.payloadProcessorPlugins || []).map((item) => ({ ...createDefaultPluginProcessorBinding(), ...item }))
   workspace.requestProcessorPlugins = (template.requestProcessorPlugins || []).map((item) => ({ ...createDefaultPluginProcessorBinding(), ...item }))
@@ -1467,6 +1326,8 @@ function loadAttackTemplate(templateId = selectedAttackTemplateId.value) {
   workspace.progress = createDefaultProgress()
   workspace.isRunning = false
   applyDerivedWorkspaceState(workspace)
+  syncWorkbenchWorkspaceDefinition(workspace)
+  syncWorkbenchWorkspaceRuntime(workspace, 'idle')
   dialog.toast.success(t('trafficAnalysis.intruder.messages.attackTemplateLoaded'))
 }
 
@@ -1493,7 +1354,7 @@ async function exportResults() {
   )
   const path = await save({
     title: t('trafficAnalysis.intruder.actions.exportResults'),
-    defaultPath: `${workspace.name || 'intruder-results'}.csv`,
+    defaultPath: `${workspace.name || 'attack-results'}.csv`,
     filters: [{ name: 'CSV', extensions: ['csv'] }],
   })
 
@@ -1509,70 +1370,26 @@ function clearResults() {
   workspace.results = []
   workspace.selectedResultId = null
   workspace.progress = createDefaultProgress()
+  workspace.isRunning = false
+  syncWorkbenchWorkspaceRuntime(workspace, 'idle')
+}
+
+function cancelAttack(workspaceId: string, notifyStopping: boolean) {
+  const controller = attackControllers.get(workspaceId)
+  if (!controller || controller.cancelled) return false
+
+  controller.cancelled = true
+  if (notifyStopping) {
+    dialog.toast.info(t('trafficAnalysis.intruder.messages.attackStopping'))
+  }
+  return true
 }
 
 function stopAttack() {
   const workspace = currentWorkspace.value
   if (!workspace) return
 
-  const controller = attackControllers.get(workspace.id)
-  if (controller) {
-    controller.cancelled = true
-    dialog.toast.info(t('trafficAnalysis.intruder.messages.attackStopping'))
-  }
-}
-
-async function closeResultsWindow(workspaceId: string) {
-  const existingWindow = await WebviewWindow.getByLabel(buildResultsWindowLabel(workspaceId))
-  if (!existingWindow) return
-
-  try {
-    await existingWindow.close()
-  } catch (error) {
-    console.warn('Failed to close intruder results window', error)
-  }
-}
-
-async function openResultsView() {
-  const workspace = currentWorkspace.value
-  if (!workspace) return
-
-  syncResultsWindowState(workspace)
-
-  const label = buildResultsWindowLabel(workspace.id)
-  const title = `${workspace.name} - ${t('trafficAnalysis.intruder.sections.results')}`
-
-  try {
-    const existingWindow = await WebviewWindow.getByLabel(label)
-    if (existingWindow) {
-      await existingWindow.show()
-      await existingWindow.setFocus()
-      return
-    }
-
-    const resultsWindow = new WebviewWindow(label, {
-      url: buildIntruderResultsWindowUrl(workspace.id),
-      title,
-      width: 1440,
-      height: 920,
-      center: true,
-      resizable: true,
-    })
-
-    await new Promise<void>((resolve, reject) => {
-      void resultsWindow.once('tauri://created', async () => {
-        await resultsWindow.setFocus()
-        resolve()
-      })
-      void resultsWindow.once('tauri://error', (event) => {
-        reject(new Error(String(event.payload ?? t('trafficAnalysis.intruder.messages.resultsWindowOpenFailed'))))
-      })
-    })
-  } catch (error) {
-    console.error('Failed to open intruder results window', error)
-    showResultsDialog.value = true
-    dialog.toast.warning(t('trafficAnalysis.intruder.messages.resultsWindowFallback'))
-  }
+  cancelAttack(workspace.id, true)
 }
 
 function parseReplayError(error: unknown): string {
@@ -1608,47 +1425,18 @@ function shouldAutoPause(workspace: IntruderWorkspace, result: IntruderAttackRes
   })
 }
 
-async function wait(ms: number) {
-  if (ms <= 0) return
-  await new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-function getDelayMs(options: IntruderAttackOptions): number {
-  return options.delayMs
-}
-
-function getRuntimeDelayMs(
-  options: IntruderAttackOptions,
-  completedCount: number,
-  throttlePenaltyMs: number,
-): number {
-  let delay = getDelayMs(options)
-
-  if (options.delayIncrementMs > 0) {
-    delay += completedCount * options.delayIncrementMs
-  } else if (options.randomDelayMs > 0) {
-    delay += Math.floor(Math.random() * (options.randomDelayMs + 1))
-  }
-
-  return delay + throttlePenaltyMs
-}
-
-function getAutoThrottleStepMs(options: IntruderAttackOptions): number {
-  return Math.max(options.delayIncrementMs, options.delayMs > 0 ? Math.ceil(options.delayMs / 2) : 0, 200)
-}
-
-function shouldThrottleForStatus(options: IntruderAttackOptions, statusCode: number | null): boolean {
-  if (!options.autoThrottleEnabled || statusCode == null) return false
-  return options.autoThrottleStatusCodes.includes(statusCode)
-}
-
 async function executeAttackRequest(
   workspace: IntruderWorkspace,
   requestText: string,
   payloadSummary: string,
   payloadValues: string[],
   index: number,
+  controller: { cancelled: boolean },
 ): Promise<IntruderAttackResult> {
+  if (controller.cancelled) {
+    throw new Error('Attack cancelled')
+  }
+
   const transformedRequest = await applyRequestProcessorPlugins(
     workspace,
     requestText,
@@ -1656,6 +1444,10 @@ async function executeAttackRequest(
     payloadSummary,
     index,
   )
+  if (controller.cancelled) {
+    throw new Error('Attack cancelled')
+  }
+
   const preparedRequest = applyIntruderRequestSettings(
     transformedRequest.requestText,
     workspace.target,
@@ -1665,11 +1457,19 @@ async function executeAttackRequest(
   let attempt = 0
   while (true) {
     try {
+      if (controller.cancelled) {
+        throw new Error('Attack cancelled')
+      }
+
       const exchangeRequest = buildSourceRequestFromRawRequest(preparedRequest, workspace.target)
       if (!exchangeRequest) {
         throw new Error('Invalid request')
       }
       exchangeRequest.sourceRequestId = workspace.sourceRequestId
+
+      if (controller.cancelled) {
+        throw new Error('Attack cancelled')
+      }
 
       const response = await invoke<ReplayCommandResponse<RawReplayCommandResult>>('replay_raw_request', {
         endpoint: exchangeRequest.endpoint,
@@ -1678,6 +1478,10 @@ async function executeAttackRequest(
         followRedirects: workspace.attackOptions.followRedirects,
         maxRedirects: workspace.attackOptions.maxRedirects,
         processCookiesInRedirects: workspace.attackOptions.processCookiesInRedirects,
+        originKind: 'attack-workspace',
+        originRefId: workspace.id,
+        parentRequestId: workspace.sourceRequestId,
+        sourceDraftRevisionId: findWorkbenchWorkspace(workspace.id)?.sourceDraftRevisionId ?? null,
       })
 
       if (!response.success || !response.data) {
@@ -1724,12 +1528,16 @@ async function executeAttackRequest(
         grepExtracts,
       }
     } catch (error) {
+      if (controller.cancelled) {
+        throw error
+      }
+
       if (attempt >= workspace.attackOptions.retryCount) {
         throw error
       }
 
       attempt += 1
-      await wait(workspace.attackOptions.retryPauseMs)
+      await waitForIntruderDelay(workspace.attackOptions.retryPauseMs)
     }
   }
 }
@@ -1742,6 +1550,22 @@ async function startAttack() {
     dialog.toast.warning(t('trafficAnalysis.intruder.messages.fillTarget'))
     return
   }
+
+  const resourcePoolResult = upsertIntruderResourcePoolEntry(resourcePools.value, {
+    name: buildIntruderResourcePoolAutoName(resourcePools.value, workspace.selectedResourcePoolId),
+    concurrencyEnabled: true,
+    concurrency: workspace.attackOptions.concurrency,
+    delayEnabled: workspace.attackOptions.delayMs > 0 || workspace.attackOptions.randomDelayMs > 0 || workspace.attackOptions.delayIncrementMs > 0,
+    delayMs: workspace.attackOptions.delayMs,
+    randomDelayEnabled: workspace.attackOptions.randomDelayMs > 0,
+    randomDelayMs: workspace.attackOptions.randomDelayMs,
+    delayIncrementEnabled: workspace.attackOptions.delayIncrementMs > 0,
+    delayIncrementMs: workspace.attackOptions.delayIncrementMs,
+    autoThrottleEnabled: workspace.attackOptions.autoThrottleEnabled,
+    autoThrottleStatusCodes: workspace.attackOptions.autoThrottleStatusCodes,
+  })
+  resourcePools.value = resourcePoolResult.pools
+  workspace.selectedResourcePoolId = resourcePoolResult.pool.id
 
   syncPayloadSets(workspace.id, false)
 
@@ -1799,7 +1623,7 @@ async function startAttack() {
     truncated: plan.truncated || requests.length < estimatedRequests.value,
   }
   workspace.isRunning = true
-  await openResultsView()
+  syncWorkbenchWorkspaceRuntime(workspace, 'running')
 
   const controller = { cancelled: false }
   attackControllers.set(workspace.id, controller)
@@ -1828,6 +1652,7 @@ async function startAttack() {
           candidate.payloadSummary,
           candidate.payloadValues,
           currentIndex + 1,
+          controller,
         )
         result.isBaseline = Boolean(candidate.isBaseline)
 
@@ -1845,14 +1670,15 @@ async function startAttack() {
             }
           }
         }
+        syncWorkbenchWorkspaceRuntime(updatedWorkspace, controller.cancelled ? 'cancelled' : 'running')
 
         if (shouldAutoPause(updatedWorkspace, result)) {
           controller.cancelled = true
           dialog.toast.warning(t('trafficAnalysis.intruder.messages.attackAutoPaused'))
         }
 
-        const throttleStepMs = getAutoThrottleStepMs(updatedWorkspace.attackOptions)
-        if (shouldThrottleForStatus(updatedWorkspace.attackOptions, result.statusCode)) {
+        const throttleStepMs = getIntruderAutoThrottleStepMs(updatedWorkspace.attackOptions)
+        if (shouldIntruderThrottleForStatus(updatedWorkspace.attackOptions, result.statusCode)) {
           pacingState.throttlePenaltyMs = Math.min(10000, pacingState.throttlePenaltyMs + throttleStepMs)
         } else {
           pacingState.throttlePenaltyMs = Math.max(0, pacingState.throttlePenaltyMs - throttleStepMs)
@@ -1893,15 +1719,17 @@ async function startAttack() {
             updatedWorkspace.results.sort((left, right) => left.index - right.index)
           }
         }
+        syncWorkbenchWorkspaceRuntime(updatedWorkspace, controller.cancelled ? 'cancelled' : 'running')
       } finally {
         const updatedWorkspace = findWorkspace(workspace.id)
         if (!updatedWorkspace) return
 
         updatedWorkspace.progress.active = Math.max(0, updatedWorkspace.progress.active - 1)
         updatedWorkspace.progress.completed += 1
+        syncWorkbenchWorkspaceRuntime(updatedWorkspace, controller.cancelled ? 'cancelled' : 'running')
 
         if (!controller.cancelled) {
-          await wait(getRuntimeDelayMs(
+          await waitForIntruderDelay(getIntruderRuntimeDelayMs(
             updatedWorkspace.attackOptions,
             updatedWorkspace.progress.completed - 1,
             pacingState.throttlePenaltyMs,
@@ -1918,6 +1746,10 @@ async function startAttack() {
     if (updatedWorkspace) {
       updatedWorkspace.isRunning = false
       updatedWorkspace.progress.active = 0
+      syncWorkbenchWorkspaceRuntime(
+        updatedWorkspace,
+        controller.cancelled ? 'cancelled' : 'done',
+      )
     }
     attackControllers.delete(workspace.id)
   }
@@ -1930,27 +1762,6 @@ async function startAttack() {
   dialog.toast.success(t('trafficAnalysis.intruder.messages.attackFinished', { count: workspace.results.length }))
 }
 
-function handleResultsWindowStorage(event: StorageEvent) {
-  if (!event.key) return
-
-  const workspace = workspaces.value.find((item) => getIntruderResultsStorageKey(item.id) === event.key)
-  if (!workspace) return
-
-  const persistedState = loadIntruderResultsWindowState(workspace.id)
-  if (!persistedState) return
-
-  workspace.selectedResultId = persistedState.selectedResultId
-  workspace.captureFilter = normalizeIntruderResultFilter(persistedState.captureFilter)
-  workspace.viewFilter = normalizeIntruderResultFilter(persistedState.viewFilter)
-  workspace.sort = persistedState.sort
-  workspace.visibleColumns = normalizeVisibleColumns(
-    persistedState.visibleColumns,
-    persistedState.grepMatchRules || [],
-    persistedState.grepExtractRules || [],
-    normalizeGrepPayloadSettings(persistedState.grepPayloadSettings),
-  )
-}
-
 watch(
   () => props.initialRequest,
   (request) => {
@@ -1961,16 +1772,36 @@ watch(
 )
 
 watch(
+  () => props.initialWorkspaceId,
+  (workspaceId) => {
+    if (workspaceId) {
+      openWorkspaceFromWorkbench(workspaceId)
+    }
+  },
+)
+
+watch(
+  () => workbenchState.attack.activeWorkspaceId.value,
+  (workspaceId) => {
+    if (workspaceId) {
+      openWorkspaceFromWorkbench(workspaceId)
+    }
+  },
+)
+
+watch(
   workspaces,
   (items) => {
-    items.forEach(syncResultsWindowState)
-    persistWorkspaces()
+    scheduleIntruderSessionPersistence()
   },
   { deep: true },
 )
 
 watch(activeWorkspaceId, () => {
-  persistWorkspaces()
+  if (activeWorkspaceId.value && workbenchState.attack.activeWorkspaceId.value !== activeWorkspaceId.value) {
+    workbenchState.attack.selectWorkspace(activeWorkspaceId.value)
+  }
+  scheduleIntruderSessionPersistence()
   requestProcessingPreviewLoading.value = false
   requestProcessingPreviewOriginal.value = ''
   requestProcessingPreviewFinal.value = ''
@@ -1996,26 +1827,32 @@ watch(
 )
 
 onMounted(() => {
-  window.addEventListener('storage', handleResultsWindowStorage)
   window.addEventListener('resize', handleWindowResize)
   sidebarWidth.value = clampSidebarWidth(sidebarWidth.value)
-
-  if (props.initialRequest) {
-    addRequestFromHistory(props.initialRequest)
-  } else if (!restorePersistedWorkspaces()) {
-    ensureWorkspaceSelection()
-  } else {
-    ensureWorkspaceSelection()
-  }
+  void hydrateIntruderWorkspaceSessions().finally(() => {
+    if (props.initialWorkspaceId) {
+      openWorkspaceFromWorkbench(props.initialWorkspaceId)
+    } else if (workbenchState.attack.activeWorkspaceId.value) {
+      openWorkspaceFromWorkbench(workbenchState.attack.activeWorkspaceId.value)
+    } else if (props.initialRequest) {
+      addRequestFromHistory(props.initialRequest)
+    } else {
+      ensureWorkspaceSelection()
+    }
+  })
 })
 
 onUnmounted(() => {
+  if (persistIntruderSessionTimer !== null) {
+    window.clearTimeout(persistIntruderSessionTimer)
+    persistIntruderSessionTimer = null
+  }
   stopSidebarResize()
-  window.removeEventListener('storage', handleResultsWindowStorage)
   window.removeEventListener('resize', handleWindowResize)
 })
 
 defineExpose({
   addRequestFromHistory,
+  openWorkspaceFromWorkbench,
 })
 </script>

@@ -1,366 +1,176 @@
 <template>
   <div class="traffic-workbench flex h-[calc(100vh-var(--app-navbar-height,4rem))] flex-col px-3 py-3">
     <div ref="workspaceStageRef" class="relative min-h-0 flex-1">
-      <div class="workbench-solid-surface h-full overflow-hidden rounded-[30px] border border-base-300/70 shadow-[0_28px_72px_rgba(15,23,42,0.08)]">
-        <TrafficHistoryWorkbench
-          ref="proxyHistoryRef"
-          class="h-full overflow-auto"
-          :basket-count="basketItems.length"
-          @sendToRepeater="handleSendToRepeaterFromHistory"
-          @sendToIntruder="handleSendToIntruderFromHistory"
-          @sendDraftRequestToComparer="handleSendDraftRequestToComparerFromHistory"
-          @sendToComparer="handleSendToComparerFromHistory"
-          @addFilterRule="handleAddFilterRule"
-          @addToBasket="handleAddToBasketFromHistory"
-        />
+      <div class="grid h-full min-h-0 gap-3" :style="workbenchGridStyle">
+        <div ref="leftColumnRef" class="grid min-h-0 min-w-0 gap-3" :style="leftColumnStyle">
+          <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[30px] border border-base-300/70 shadow-[0_28px_72px_rgba(15,23,42,0.08)]">
+            <TrafficHistoryWorkbench
+              ref="proxyHistoryRef"
+              class="h-full overflow-auto"
+              :basket-count="basketItems.length"
+              :show-details="false"
+              @selectionChange="handleHistorySelectionChange"
+              @createDraft="handleCreateDraftFromHistory"
+              @createAttackWorkspace="handleCreateAttackWorkspaceFromHistory"
+              @openDraftCompare="handleOpenDraftCompareFromHistory"
+              @openCompare="handleOpenCompareFromHistory"
+              @addFilterRule="handleAddFilterRule"
+              @addToBasket="handleAddToBasketFromHistory"
+            />
+          </section>
+
+          <div
+            v-if="showSidebarHeightResizeHandle"
+            :class="[sidebarResizeHandleClass, 'hidden xl:block']"
+            @mousedown="startSidebarHeightResize($event)"
+          ></div>
+
+          <TrafficWorkbenchSidebar
+            class="min-h-0 h-full"
+            :basket-count="basketItems.length"
+            :control-intercept-count="controlInterceptCount"
+            :draft-count="workbenchState.counts.value.drafts"
+            :attack-workspace-count="workbenchState.counts.value.attackWorkspaces"
+            :replay-summary="replaySummary"
+            :running-attack-count="runningAttackCount"
+            :layout-toggle-label="layoutToggleLabel"
+            :layout-toggle-icon="layoutToggleIcon"
+            :effective-layout-label="effectiveLayoutLabel"
+            @open-capture="openCaptureWorkbench"
+            @open-repeater="openRepeaterWorkbench"
+            @open-intruder="openIntruderWorkbench"
+            @toggle-workbench-layout="toggleWorkbenchLayoutPreference"
+            @toggle-intercept="toggleInterceptDrawer"
+            @toggle-basket="toggleBasketDrawer"
+            @open-settings="openProxySettingsDrawer"
+            @open-plugins="openTrafficPluginsPanel"
+          />
+        </div>
+
+        <div
+          v-if="showHistoryPanelResizeHandle"
+          :class="[historyResizeHandleClass, 'hidden xl:block']"
+          @mousedown="startWorkbenchPanelResize('history', $event)"
+        ></div>
+
+        <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[30px] border border-base-300/70 shadow-[0_28px_72px_rgba(15,23,42,0.08)]">
+          <div class="h-full min-h-0 p-3">
+            <TrafficWorkbenchMainStage
+              ref="mainStageRef"
+              :workbench-open="workbenchOpen"
+              :active-workbench-tool="activeWorkbenchTool"
+              :workbench-tools-mounted="workbenchToolsMounted"
+              :active-workbench-meta="activeWorkbenchMeta"
+              :tool-chips="toolChips"
+              :pending-repeater-request="pendingRepeaterRequest"
+              :pending-repeater-draft-id="pendingRepeaterDraftId"
+              :pending-intruder-request="pendingIntruderRequest"
+              :pending-intruder-workspace-id="pendingIntruderWorkspaceId"
+              :active-request-context="activeRequestContext"
+              @open-tool="handleOpenWorkbenchTool"
+              @open-compare-from-repeater="handleOpenCompareFromRepeater"
+              @open-draft-compare-from-repeater="handleOpenDraftCompareFromRepeater"
+              @create-attack-workspace-from-repeater="handleCreateAttackWorkspaceFromRepeater"
+              @repeater-tab-mode-changed="handleRepeaterTabModeChanged"
+              @repeater-tab-stats-changed="handleRepeaterTabStatsChanged"
+              @switch-request-variant="handleSwitchActiveRequestVariant"
+              @create-draft-from-intruder="handleCreateDraftFromIntruder"
+              @open-compare-from-intruder="handleOpenCompareFromIntruder"
+              @open-draft-compare-from-intruder="handleOpenDraftCompareFromIntruder"
+              @create-draft-from-comparer="handleCreateDraftFromComparer"
+              @open-proxy-settings="openProxySettingsDrawer"
+              @open-history-request-from-oast="openHistoryRequestFromOast"
+            />
+          </div>
+        </section>
+
       </div>
 
-      <section
-        v-if="workbenchToolsMounted"
-        v-show="workbenchOpen && activeWorkbenchTool"
-        class="workbench-drawer workbench-solid-surface absolute inset-x-4 bottom-4 top-auto z-20 overflow-hidden rounded-[30px] border border-base-300/80 shadow-[0_28px_72px_rgba(15,23,42,0.14)]"
-        :style="workbenchDrawerStyle"
-      >
-        <div
-          class="workbench-header-surface relative z-[1] flex h-3.5 cursor-row-resize items-center justify-center border-b border-base-300/60"
-          @mousedown="startWorkbenchResize"
-        >
-          <span class="h-1 w-12 rounded-full bg-base-300/90"></span>
-        </div>
-
-        <div class="workbench-header-surface relative z-[1] border-b border-base-300/70 px-4 py-2">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <div class="min-w-0 flex-1">
-              <div class="flex min-w-0 flex-wrap items-center gap-2">
-                <h3 class="shrink-0 text-base font-semibold text-base-content">
-                  {{ activeWorkbenchMeta.title }}
-                </h3>
-                <span class="rounded-full bg-base-200 px-2.5 py-1 text-[11px] font-medium text-base-content/65">
-                  {{ activeWorkbenchMeta.shortTitle }}
-                </span>
-                <p class="min-w-0 text-xs text-base-content/60">
-                  {{ activeWorkbenchMeta.description }}
-                </p>
-              </div>
-              <p v-if="activeWorkbenchSourceLabel" class="mt-1 text-[11px] text-base-content/55">
-                来源：{{ activeWorkbenchSourceLabel }}
-              </p>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2">
-              <button
-                v-for="chip in toolChips"
-                :key="`drawer-${chip.tool}`"
-                type="button"
-                class="tool-switch"
-                :class="{ 'tool-switch-active': activeWorkbenchTool === chip.tool }"
-                @click="openWorkbenchTool(chip.tool)"
-              >
-                <i :class="`${chip.icon} text-xs`"></i>
-                <span>{{ chip.shortLabel }}</span>
-                <span v-if="chip.count > 0" class="badge badge-xs badge-primary">{{ chip.count }}</span>
-              </button>
-              <button type="button" class="btn btn-xs btn-ghost rounded-2xl" @click="closeWorkbench">
-                <i class="fas fa-times"></i>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="workbench-content-surface relative min-h-0 flex-1 overflow-hidden">
-          <ProxyRepeater
-            v-show="activeWorkbenchTool === 'repeater'"
-            ref="repeaterRef"
-            :initialRequest="pendingRepeaterRequest"
-            class="absolute inset-0 h-full overflow-auto"
-            @sendToComparer="handleSendToComparerFromRepeater"
-            @sendDraftRequestToComparer="handleSendDraftRequestToComparerFromRepeater"
-            @sendToIntruder="handleSendToIntruderFromRepeater"
-          />
-          <ProxyIntruder
-            v-show="activeWorkbenchTool === 'intruder'"
-            ref="intruderRef"
-            :initialRequest="pendingIntruderRequest"
-            class="absolute inset-0 h-full overflow-auto"
-            @sendToRepeater="handleSendToRepeaterFromIntruder"
-            @sendToComparer="handleSendToComparerFromIntruder"
-            @sendDraftRequestToComparer="handleSendDraftRequestToComparerFromIntruder"
-          />
-          <ProxyComparer
-            v-show="activeWorkbenchTool === 'comparer'"
-            ref="comparerRef"
-            class="absolute inset-0 h-full overflow-auto"
-            @sendToRepeater="handleSendToRepeaterFromComparer"
-          />
-          <TrafficOastPanel
-            v-show="activeWorkbenchTool === 'oast'"
-            class="absolute inset-0 h-full overflow-auto"
-            @openConfig="openProxySettingsDrawer"
-            @openSourceRequest="openHistoryRequestFromOast"
-          />
-        </div>
-      </section>
-
-      <section
-        v-show="interceptDrawerOpen"
-        class="intercept-drawer workbench-solid-surface absolute right-4 top-4 z-30 overflow-hidden rounded-[28px] border border-warning/20 shadow-[0_28px_72px_rgba(15,23,42,0.16)]"
-        :style="interceptDrawerStyle"
-      >
-        <div
-          class="drawer-width-resizer drawer-width-resizer-warning absolute bottom-0 left-0 top-0 z-[2]"
-          @mousedown="startDrawerWidthResize('intercept', $event)"
-        ></div>
-        <div class="border-b border-warning/10 px-4 py-3">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-warning">
-                Intercept Queue
-              </p>
-              <h3 class="mt-1 text-lg font-semibold text-base-content">
-                {{ $t('trafficAnalysis.tabs.control', '代理控制') }}
-              </h3>
-              <p class="mt-1 text-sm text-base-content/65">
-                高频拦截处理留在这里，低频监听器和规则设置收进单独设置抽屉。
-              </p>
-            </div>
-            <div class="flex items-center gap-2">
-              <button type="button" class="btn btn-xs btn-outline rounded-2xl" @click="openProxySettingsDrawer">
-                <i class="fas fa-cog mr-1"></i>
-                代理设置
-              </button>
-              <button type="button" class="btn btn-sm btn-ghost rounded-2xl" @click="closeInterceptDrawer">
-                <i class="fas fa-times"></i>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <TrafficControl
-          class="h-full max-h-[min(72vh,760px)] overflow-auto"
-          @openResponseInterceptionSettings="handleOpenResponseInterceptionSettings"
-          @interceptQueueChanged="handleInterceptQueueChanged"
-          @sendToRepeater="handleSendToRepeaterFromIntercept"
-          @sendDraftRequestToComparer="handleSendDraftRequestToComparerFromIntercept"
-          @sendToIntruder="handleSendToIntruderFromIntercept"
-          @addToBasket="handleAddToBasketFromIntercept"
-        />
-      </section>
-
-      <AppModal
-        :open="proxySettingsOpen"
-        box-class="traffic-proxy-config-modal-box"
-        resizable
-        resize-storage-key="traffic-proxy-config-modal-size"
-        :min-width="1040"
-        :min-height="720"
-        @close="closeProxySettingsDrawer"
-      >
-        <div class="flex h-full min-h-0 flex-col overflow-hidden">
-          <div class="border-b border-base-300/70 px-6 py-4">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/80">
-                  Proxy Settings
-                </p>
-                <h3 class="mt-1 text-xl font-semibold text-base-content">
-                  代理设置
-                </h3>
-              </div>
-              <button
-                type="button"
-                class="btn btn-sm btn-ghost rounded-2xl"
-                @click="closeProxySettingsDrawer"
-              >
-                <i class="fas fa-times"></i>
-              </button>
-            </div>
-          </div>
-
-          <div class="min-h-0 flex-1 bg-base-200/35 p-4">
-            <ProxyConfiguration
-              v-if="proxySettingsOpen"
-              ref="proxyConfigRef"
-              class="h-full min-h-0"
-              @filterRuleAdded="handleFilterRuleAdded"
-            />
-          </div>
-        </div>
-      </AppModal>
-
-      <AppModal
-        :open="trafficPluginsOpen"
-        box-class="traffic-plugin-modal-box"
-        resizable
-        resize-storage-key="traffic-plugin-modal-size-v3"
-        :min-width="1008"
-        :min-height="640"
-        :default-width="1120"
-        :default-height="900"
-        @close="closeTrafficPluginsPanel"
-      >
-        <div class="flex h-full min-h-0 flex-col overflow-hidden">
-          <div class="border-b border-base-300/70 px-6 py-4">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/80">
-                  Traffic Plugins
-                </p>
-                <h3 class="mt-1 text-xl font-semibold text-base-content">
-                  {{ $t('trafficAnalysis.immersivePlugins.title', '流量分析插件') }}
-                </h3>
-              </div>
-              <button
-                type="button"
-                class="btn btn-sm btn-ghost rounded-2xl"
-                @click="closeTrafficPluginsPanel"
-              >
-                <i class="fas fa-times"></i>
-              </button>
-            </div>
-          </div>
-
-          <div class="min-h-0 flex-1 bg-base-200/35 p-4">
-            <ImmersiveTrafficPluginPanel
-              v-if="trafficPluginsOpen"
-              class="h-full min-h-0"
-            />
-          </div>
-        </div>
-      </AppModal>
-
-      <TrafficWorkbenchBasketDrawer
-        :open="basketOpen"
-        :items="basketItems"
-        @close="closeBasketDrawer"
-        @remove="removeBasketItem"
-        @clear="clearBasket"
-        @sendToRepeater="sendBasketItemToRepeater"
-        @sendToIntruder="sendBasketItemToIntruder"
-        @sendAllToRepeater="sendAllBasketItemsToRepeater"
-        @sendAllToIntruder="sendAllBasketItemsToIntruder"
-        @openHistoryRequest="openHistoryRequestFromBasket"
+      <TrafficWorkbenchOverlays
+        ref="overlaysRef"
+        :intercept-drawer-open="interceptDrawerOpen"
+        :intercept-drawer-style="interceptDrawerStyle"
+        :proxy-settings-open="proxySettingsOpen"
+        :traffic-plugins-open="trafficPluginsOpen"
+        :basket-open="basketOpen"
+        :basket-items="basketItems"
+        :control-title="$t('trafficAnalysis.tabs.control', '代理控制')"
+        :plugins-title="$t('trafficAnalysis.immersivePlugins.title', '流量分析插件')"
+        :active-probe-shell-style="activeProbeShellStyle"
+        :pending-active-probe-entries="pendingActiveProbeEntries"
+        :running-active-probe-entries="runningActiveProbeEntries"
+        :recent-active-probe-entries="recentActiveProbeEntries"
+        :active-probe-queued-count="activeProbeQueuedCount"
+        :active-probe-collapsed="activeProbeCollapsed"
+        :active-probe-preview-requests="activeProbePreviewRequests"
+        :active-probe-preview-loading-id="activeProbePreviewLoadingId"
+        :start-drawer-width-resize="startDrawerWidthResize"
+        @open-proxy-settings="openProxySettingsDrawer"
+        @close-intercept-drawer="closeInterceptDrawer"
+        @open-response-interception-settings="handleOpenResponseInterceptionSettings"
+        @intercept-queue-changed="handleInterceptQueueChanged"
+        @create-draft-from-intercept="handleCreateDraftFromIntercept"
+        @open-draft-compare-from-intercept="handleOpenDraftCompareFromIntercept"
+        @create-attack-workspace-from-intercept="handleCreateAttackWorkspaceFromIntercept"
+        @add-to-basket-from-intercept="handleAddToBasketFromIntercept"
+        @close-proxy-settings="closeProxySettingsDrawer"
+        @filter-rule-added="handleFilterRuleAdded"
+        @close-traffic-plugins="closeTrafficPluginsPanel"
+        @close-basket="closeBasketDrawer"
+        @remove-basket-item="removeBasketItem"
+        @clear-basket="clearBasket"
+        @create-draft-from-basket-item="createDraftFromBasketItem"
+        @create-attack-workspace-from-basket-item="createAttackWorkspaceFromBasketItem"
+        @create-drafts-for-all-basket-items="createDraftsForAllBasketItems"
+        @create-attack-workspaces-for-all-basket-items="createAttackWorkspacesForAllBasketItems"
+        @open-history-request-from-basket="openHistoryRequestFromBasket"
+        @toggle-active-probe-collapsed="toggleActiveProbeCollapsed"
+        @ensure-active-probe-preview="ensureActiveProbePreview"
+        @open-history-request-by-id="openHistoryRequestById"
+        @open-history-request-by-traffic-request-id="openHistoryRequestByTrafficRequestId"
       />
-    </div>
-
-    <TrafficActiveProbePanel
-      :shell-style="activeProbeShellStyle"
-      :pending-entries="pendingActiveProbeEntries"
-      :running-entries="runningActiveProbeEntries"
-      :recent-entries="recentActiveProbeEntries"
-      :queued-count="activeProbeQueuedCount"
-      :collapsed="activeProbeCollapsed"
-      :preview-request-map="activeProbePreviewRequests"
-      :loading-traffic-request-id="activeProbePreviewLoadingId"
-      @toggle-collapsed="toggleActiveProbeCollapsed"
-      @ensure-preview="ensureActiveProbePreview"
-      @open-history="openHistoryRequestById"
-      @open-history-by-traffic-request-id="openHistoryRequestByTrafficRequestId"
-    />
-    <div v-if="!immersiveDrillModeEnabled" class="fixed bottom-6 right-6 z-40 flex flex-col gap-3">
-      <button
-        type="button"
-        class="floating-trigger"
-        :class="{ 'floating-trigger-active': !workbenchOpen }"
-        @click="closeWorkbench"
-      >
-        <i class="fas fa-history text-sm"></i>
-        <span class="floating-trigger-label">
-          {{ $t('trafficAnalysis.tabs.history', '历史记录') }}
-        </span>
-      </button>
-      <button
-        v-for="chip in toolChips"
-        :key="`floating-${chip.tool}`"
-        type="button"
-        class="floating-trigger"
-        :class="{ 'floating-trigger-active': workbenchOpen && activeWorkbenchTool === chip.tool }"
-        @click="openWorkbenchTool(chip.tool)"
-      >
-        <i :class="`${chip.icon} text-sm`"></i>
-        <span class="floating-trigger-label">
-          {{ chip.label }}
-        </span>
-        <span v-if="chip.count > 0" class="floating-badge">
-          {{ chip.count }}
-        </span>
-      </button>
-      <button
-        type="button"
-        class="floating-trigger"
-        :class="{ 'floating-trigger-warning': controlInterceptCount > 0 }"
-        @click="toggleInterceptDrawer"
-      >
-        <i class="fas fa-sliders-h text-sm"></i>
-        <span class="floating-trigger-label">
-          {{ $t('trafficAnalysis.tabs.control', '代理控制') }}
-        </span>
-        <span v-if="controlInterceptCount > 0" class="floating-badge">
-          {{ controlInterceptCount }}
-        </span>
-      </button>
-      <button
-        type="button"
-        class="floating-trigger"
-        :class="{ 'floating-trigger-active': basketOpen }"
-        @click="toggleBasketDrawer"
-      >
-        <i class="fas fa-basket-shopping text-sm"></i>
-        <span class="floating-trigger-label">请求篮子</span>
-        <span v-if="basketItems.length > 0" class="floating-badge">
-          {{ basketItems.length }}
-        </span>
-      </button>
-      <button
-        type="button"
-        class="floating-trigger"
-        :class="{ 'floating-trigger-active': proxySettingsOpen }"
-        @click="toggleProxySettingsDrawer"
-      >
-        <i class="fas fa-cog text-sm"></i>
-        <span class="floating-trigger-label">代理设置</span>
-      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, computed, onMounted, onUnmounted, ref, watchEffect } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
-import ProxyRepeater from './ProxyRepeater.vue'
-import ProxyIntruder from './ProxyIntruder.vue'
-import ProxyComparer from './ProxyComparer.vue'
-import TrafficControl from './ProxyIntercept.vue'
-import ProxyConfiguration from './ProxyConfiguration.vue'
 import TrafficHistoryWorkbench from './TrafficHistoryWorkbench.vue'
-import TrafficOastPanel from './TrafficOastPanel.vue'
-import TrafficActiveProbePanel from './TrafficActiveProbePanel.vue'
-import ImmersiveTrafficPluginPanel from './ImmersiveTrafficPluginPanel.vue'
-import TrafficWorkbenchBasketDrawer from './TrafficWorkbenchBasketDrawer.vue'
-import AppModal from '@/components/AppModal.vue'
+import TrafficWorkbenchMainStage from './workbench/components/TrafficWorkbenchMainStage.vue'
+import TrafficWorkbenchOverlays from './workbench/components/TrafficWorkbenchOverlays.vue'
+import TrafficWorkbenchSidebar from './workbench/components/TrafficWorkbenchSidebar.vue'
 import { useToast } from '@/composables/useToast'
 import type { HttpExchangeRequest } from './http/model'
 import type { ProxyRequest } from './proxyHistoryTypes'
-import type { TrafficContextCandidateEvidenceSelection } from './trafficContextCandidateTypes'
-import type {
-  TrafficComparerDraftRequestInput,
-  TrafficComparePayload,
-} from './transfers'
 import type { TrafficAnalysisViewHandle } from './trafficAnalysisViewTypes'
 import type {
-  TrafficWorkbenchBasketCandidateInput,
   TrafficWorkbenchBasketItem,
-  TrafficWorkbenchSource,
+  TrafficWorkbenchRequestContext,
+  TrafficWorkbenchRequestVariant,
   TrafficWorkbenchToolSession,
 } from './trafficWorkbenchTypes'
+import type { RepeaterActiveTabState, RepeaterTabStats } from './proxyRepeaterTypes'
 import { useActiveProbeQueue } from './useActiveProbeQueue'
 import { useTrafficWorkbenchBasket } from './useTrafficWorkbenchBasket'
 import { useTrafficWorkbenchSessions } from './useTrafficWorkbenchSessions'
+import { useTrafficWorkbenchActions } from './workbench/composables/useTrafficWorkbenchActions'
+import { useActiveProbePreview } from './workbench/composables/useActiveProbePreview'
+import { useTrafficWorkbenchHistoryNavigation } from './workbench/composables/useTrafficWorkbenchHistoryNavigation'
+import { useTrafficWorkbenchLayout } from './workbench/composables/useTrafficWorkbenchLayout'
+import { useTrafficWorkbenchPersistence } from './workbench/composables/useTrafficWorkbenchPersistence'
+import type { HistorySnapshotVariant } from './workbench/model/historySnapshot'
+import { usePacketCaptureStatusStore } from './workbench/stores/usePacketCaptureStatusStore'
+import {
+  getHistorySource,
+} from './workbench/services/sourceSupport'
+import { useTrafficWorkbenchStore } from './workbench/stores/useTrafficWorkbenchStore'
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { closeTopmostImmersiveTool } from '@/services/immersiveToolCoordinator'
 import {
   closeImmersiveTrafficWorkbench,
+  openImmersiveTrafficPluginsPanel,
   openImmersiveTrafficWorkbenchTool,
   openImmersiveTrafficBasket,
   openImmersiveTrafficProxySettings,
@@ -369,7 +179,6 @@ import {
   syncImmersiveTrafficDockState,
   toggleImmersiveTrafficBasket,
   toggleImmersiveTrafficInterceptDrawer,
-  toggleImmersiveTrafficProxySettings,
   useImmersiveTrafficDockState,
 } from './immersiveTrafficDockState'
 interface FilterRule {
@@ -393,24 +202,26 @@ const { t } = useI18n()
 const toast = useToast()
 
 const proxyHistoryRef = ref<InstanceType<typeof TrafficHistoryWorkbench> | null>(null)
-const proxyConfigRef = ref<InstanceType<typeof ProxyConfiguration> | null>(null)
-const repeaterRef = ref<InstanceType<typeof ProxyRepeater> | null>(null)
-const intruderRef = ref<InstanceType<typeof ProxyIntruder> | null>(null)
-const comparerRef = ref<InstanceType<typeof ProxyComparer> | null>(null)
+const mainStageRef = ref<InstanceType<typeof TrafficWorkbenchMainStage> | null>(null)
+const overlaysRef = ref<InstanceType<typeof TrafficWorkbenchOverlays> | null>(null)
 const workspaceStageRef = ref<HTMLElement | null>(null)
+const leftColumnRef = ref<HTMLElement | null>(null)
 
-const WORKBENCH_HEIGHT_STORAGE_KEY = 'sentinel:traffic-workbench-height:v1'
 const INTERCEPT_DRAWER_WIDTH_STORAGE_KEY = 'sentinel:traffic-workbench-intercept-width:v1'
-const SETTINGS_DRAWER_WIDTH_STORAGE_KEY = 'sentinel:traffic-workbench-settings-width:v1'
 const ACTIVE_PROBE_COLLAPSED_STORAGE_KEY = 'sentinel:traffic-active-probe-collapsed:v1'
-const WORKBENCH_MIN_HEIGHT = 300
-const INTERCEPT_DRAWER_DEFAULT_WIDTH = 416
-const INTERCEPT_DRAWER_MIN_WIDTH = 340
-const SETTINGS_DRAWER_DEFAULT_WIDTH = 544
-const SETTINGS_DRAWER_MIN_WIDTH = 420
+const HISTORY_PANEL_WIDTH_STORAGE_KEY = 'sentinel:traffic-workbench-history-width:v1'
+const HISTORY_PANEL_HEIGHT_STORAGE_KEY = 'sentinel:traffic-workbench-history-height:v1'
+const SIDEBAR_HEIGHT_STORAGE_KEY = 'sentinel:traffic-workbench-sidebar-height:v1'
+const SIDEBAR_WIDTH_STORAGE_KEY = 'sentinel:traffic-workbench-sidebar-width:v1'
+const WORKBENCH_LAYOUT_STORAGE_KEY = 'sentinel:traffic-workbench-layout:v1'
 
 const pendingRepeaterRequest = ref<HttpExchangeRequest | undefined>(undefined)
+const pendingRepeaterDraftId = ref<string | undefined>(undefined)
 const pendingIntruderRequest = ref<HttpExchangeRequest | undefined>(undefined)
+const pendingIntruderWorkspaceId = ref<string | undefined>(undefined)
+const selectedHistoryRequest = ref<ProxyRequest | null>(null)
+const activeRequestContext = ref<TrafficWorkbenchRequestContext | null>(null)
+const repeaterEditedTabCount = ref(0)
 const workbenchToolsMounted = ref(false)
 const {
   workbenchOpen,
@@ -421,21 +232,12 @@ const {
   basketOpen,
   controlInterceptCount,
 } = useImmersiveTrafficDockState()
-const workbenchHeight = ref(loadWorkbenchHeight())
-const interceptDrawerWidth = ref(loadStoredDrawerWidth(INTERCEPT_DRAWER_WIDTH_STORAGE_KEY, INTERCEPT_DRAWER_DEFAULT_WIDTH))
-const settingsDrawerWidth = ref(loadStoredDrawerWidth(SETTINGS_DRAWER_WIDTH_STORAGE_KEY, SETTINGS_DRAWER_DEFAULT_WIDTH))
-const viewportWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
-const isResizingWorkbench = ref(false)
-const resizeStartY = ref(0)
-const resizeStartHeight = ref(workbenchHeight.value)
-const drawerWidthResizeState = ref<{
-  drawer: 'intercept' | 'settings' | null
-  startX: number
-  startWidth: number
-} | null>(null)
 
 const { basketItems, addRequest, removeItem, clear } = useTrafficWorkbenchBasket()
-const { sessions, markSession } = useTrafficWorkbenchSessions()
+const { sessions, markSession, clearSessionCount } = useTrafficWorkbenchSessions()
+const workbenchState = useTrafficWorkbenchStore()
+const packetCaptureStatus = usePacketCaptureStatusStore()
+const persistence = useTrafficWorkbenchPersistence(workbenchState)
 const {
   pendingEntries: pendingActiveProbeEntries,
   runningEntries: runningActiveProbeEntries,
@@ -444,15 +246,69 @@ const {
   start: startActiveProbeQueue,
   stop: stopActiveProbeQueue,
 } = useActiveProbeQueue()
-const activeProbePreviewRequests = ref<Record<string, ProxyRequest | undefined>>({})
-const activeProbePreviewLoadingId = ref<string | null>(null)
-const activeProbeCollapsed = ref(loadStoredBoolean(ACTIVE_PROBE_COLLAPSED_STORAGE_KEY, false))
+const {
+  previewRequests: activeProbePreviewRequests,
+  previewLoadingId: activeProbePreviewLoadingId,
+  rememberPreviewRequest: rememberActiveProbePreviewRequest,
+  ensurePreview: ensureActiveProbePreview,
+} = useActiveProbePreview()
+const {
+  openHistoryRequest,
+  openHistoryRequestById,
+  openHistoryRequestByTrafficRequestId,
+  openHistoryRequestFromBasket,
+  openHistoryRequestFromOast,
+} = useTrafficWorkbenchHistoryNavigation({
+  proxyHistoryRef,
+  closeBasketDrawer,
+  closeWorkbench,
+  ensurePreview: ensureActiveProbePreview,
+})
+const {
+  activeProbeCollapsed,
+  workbenchGridStyle,
+  leftColumnStyle,
+  historyResizeHandleClass,
+  sidebarResizeHandleClass,
+  layoutToggleLabel,
+  layoutToggleIcon,
+  effectiveLayoutLabel,
+  showHistoryPanelResizeHandle,
+  showSidebarHeightResizeHandle,
+  interceptDrawerStyle,
+  activeProbeShellStyle,
+  handleWindowResize,
+  startWorkbenchPanelResize,
+  stopWorkbenchPanelResize,
+  startSidebarHeightResize,
+  stopSidebarHeightResize,
+  startDrawerWidthResize,
+  stopDrawerWidthResize,
+  normalizeWorkbenchLayout,
+  toggleWorkbenchLayoutPreference,
+  toggleActiveProbeCollapsed,
+} = useTrafficWorkbenchLayout({
+  workspaceStageRef,
+  leftColumnRef,
+  historyPanelWidthStorageKey: HISTORY_PANEL_WIDTH_STORAGE_KEY,
+  historyPanelHeightStorageKey: HISTORY_PANEL_HEIGHT_STORAGE_KEY,
+  sidebarHeightStorageKey: SIDEBAR_HEIGHT_STORAGE_KEY,
+  sidebarWidthStorageKey: SIDEBAR_WIDTH_STORAGE_KEY,
+  interceptDrawerWidthStorageKey: INTERCEPT_DRAWER_WIDTH_STORAGE_KEY,
+  activeProbeCollapsedStorageKey: ACTIVE_PROBE_COLLAPSED_STORAGE_KEY,
+  layoutPreferenceStorageKey: WORKBENCH_LAYOUT_STORAGE_KEY,
+})
 const findingToastIds = new Set<string>()
 
 const workbenchMetaMap: Record<
   WorkbenchTool,
   { title: string; shortTitle: string; description: string }
 > = {
+  capture: {
+    title: t('trafficAnalysis.tabs.capture', '抓包'),
+    shortTitle: t('trafficAnalysis.tabs.capture', '抓包'),
+    description: '同页查看网络抓包结果，不再单独切出流量分析工作台。',
+  },
   repeater: {
     title: t('trafficAnalysis.tabs.repeater', '重放器'),
     shortTitle: t('trafficAnalysis.tabs.repeater', '重放器'),
@@ -476,24 +332,35 @@ const workbenchMetaMap: Record<
 }
 
 const activeWorkbenchMeta = computed(() => workbenchMetaMap[activeWorkbenchTool.value])
-const activeWorkbenchSourceLabel = computed(
-  () => sessions.value[activeWorkbenchTool.value].source?.label || '',
+const replaySummary = computed(() => ({
+  total: workbenchState.replay.replayRuns.value.length,
+  running: workbenchState.replay.runningReplayCount.value,
+}))
+const runningAttackCount = computed(() =>
+  workbenchState.attack.workspaces.value.filter(workspace => workspace.runState === 'running').length,
 )
 
 const toolChips = computed(() => [
+  {
+    tool: 'capture' as const,
+    label: t('trafficAnalysis.tabs.capture', '抓包'),
+    shortLabel: t('trafficAnalysis.tabs.capture', '抓包'),
+    icon: 'fas fa-wave-square',
+    count: sessions.value.capture.count,
+  },
   {
     tool: 'repeater' as const,
     label: t('trafficAnalysis.tabs.repeater', '重放器'),
     shortLabel: t('trafficAnalysis.tabs.repeater', '重放器'),
     icon: 'fas fa-redo',
-    count: sessions.value.repeater.count,
+    count: repeaterEditedTabCount.value,
   },
   {
     tool: 'intruder' as const,
     label: t('trafficAnalysis.tabs.intruder', '爆破器'),
     shortLabel: t('trafficAnalysis.tabs.intruder', '爆破器'),
     icon: 'fas fa-crosshairs',
-    count: sessions.value.intruder.count,
+    count: workbenchState.counts.value.attackWorkspaces,
   },
   {
     tool: 'comparer' as const,
@@ -510,19 +377,50 @@ const toolChips = computed(() => [
     count: sessions.value.oast.count,
   },
 ])
-
-const workbenchDrawerStyle = computed(() => ({
-  height: `${workbenchHeight.value}px`,
-}))
-const interceptDrawerStyle = computed(() =>
-  viewportWidth.value <= 1024 ? {} : { width: `${interceptDrawerWidth.value}px` },
-)
-const settingsDrawerStyle = computed(() =>
-  viewportWidth.value <= 1024 ? {} : { width: `${settingsDrawerWidth.value}px` },
-)
-const activeProbeShellStyle = computed(() =>
-  immersiveDrillModeEnabled.value ? { right: '1.5rem', bottom: '1.5rem' } : { right: '1.5rem', bottom: '23rem' },
-)
+const workbenchMetaTitleMap = {
+  capture: workbenchMetaMap.capture.title,
+  repeater: workbenchMetaMap.repeater.title,
+  intruder: workbenchMetaMap.intruder.title,
+  comparer: workbenchMetaMap.comparer.title,
+  oast: workbenchMetaMap.oast.title,
+} as const
+const {
+  handleCreateDraftFromHistory,
+  handleCreateAttackWorkspaceFromHistory,
+  handleOpenCompareFromHistory,
+  handleOpenDraftCompareFromHistory,
+  handleCreateDraftFromIntercept,
+  handleCreateAttackWorkspaceFromIntercept,
+  handleOpenDraftCompareFromIntercept,
+  handleCreateAttackWorkspaceFromRepeater,
+  handleOpenCompareFromRepeater,
+  handleOpenDraftCompareFromRepeater,
+  handleCreateDraftFromIntruder,
+  handleOpenCompareFromIntruder,
+  handleOpenDraftCompareFromIntruder,
+  handleCreateDraftFromComparer,
+  handleAddToBasketFromHistory,
+  handleAddToBasketFromIntercept,
+  previewRequestInRepeater,
+  createDraftFromBasketItem,
+  createAttackWorkspaceFromBasketItem,
+  createDraftsForAllBasketItems,
+  createAttackWorkspacesForAllBasketItems,
+} = useTrafficWorkbenchActions({
+  workbenchState,
+  mainStageRef,
+  basketItems,
+  addBasketRequest: addRequest,
+  markSession,
+  openWorkbenchTool,
+  closeInterceptDrawer,
+  openBasket: openImmersiveTrafficBasket,
+  pendingRepeaterDraftId,
+  pendingRepeaterRequest,
+  pendingIntruderWorkspaceId,
+  pendingIntruderRequest,
+  workbenchMetaTitleMap,
+})
 
 function normalizeScanFindingPayload(payload: unknown): ScanFindingEventPayload | null {
   if (!payload || typeof payload !== 'object') {
@@ -586,336 +484,138 @@ function emitImmersiveFindingToast(finding: ScanFindingEventPayload) {
   })
 }
 
-function rememberActiveProbePreviewRequest(request: ProxyRequest) {
-  if (!request.traffic_request_id) {
-    return
-  }
-
-  activeProbePreviewRequests.value = {
-    ...activeProbePreviewRequests.value,
-    [request.traffic_request_id]: request,
-  }
-}
-
-function buildSource(
-  kind: TrafficWorkbenchSource['kind'],
-  label: string,
-  requestId?: number,
-): TrafficWorkbenchSource {
-  return { kind, label, requestId }
-}
-
-function getHistorySource(requestId?: number) {
-  return buildSource('history', requestId ? `历史记录 #${requestId}` : '历史记录', requestId)
-}
-
-function getInterceptSource() {
-  return buildSource('intercept', '拦截队列')
-}
-
-function getBasketSource(item?: TrafficWorkbenchBasketItem) {
-  return buildSource('basket', item?.requestId ? `请求篮子 -> #${item.requestId}` : '请求篮子', item?.requestId)
-}
-
-function getToolSource(tool: WorkbenchTool) {
-  return buildSource(tool, workbenchMetaMap[tool].title)
-}
-
-function loadWorkbenchHeight() {
-  if (typeof window === 'undefined') {
-    return 520
-  }
-
-  const stored = Number(window.localStorage.getItem(WORKBENCH_HEIGHT_STORAGE_KEY) || '520')
-  return Number.isFinite(stored) ? stored : 520
-}
-
-function loadStoredDrawerWidth(storageKey: string, fallback: number) {
-  if (typeof window === 'undefined') {
-    return fallback
-  }
-
-  const stored = Number(window.localStorage.getItem(storageKey) || String(fallback))
-  return Number.isFinite(stored) ? stored : fallback
-}
-
-function loadStoredBoolean(storageKey: string, fallback: boolean) {
-  if (typeof window === 'undefined') {
-    return fallback
-  }
-
-  const stored = window.localStorage.getItem(storageKey)
-  if (stored === null) {
-    return fallback
-  }
-
-  return stored === 'true'
-}
-
-function clampWorkbenchHeight(height: number) {
-  const stageHeight = workspaceStageRef.value?.offsetHeight ?? window.innerHeight
-  const maxHeight = Math.max(WORKBENCH_MIN_HEIGHT, stageHeight - 24)
-  return Math.min(Math.max(WORKBENCH_MIN_HEIGHT, height), maxHeight)
-}
-
-function clampDrawerWidth(drawer: 'intercept' | 'settings', width: number) {
-  const minWidth = drawer === 'intercept' ? INTERCEPT_DRAWER_MIN_WIDTH : SETTINGS_DRAWER_MIN_WIDTH
-  const stageWidth = workspaceStageRef.value?.offsetWidth ?? viewportWidth.value
-  const maxWidth = Math.max(minWidth, stageWidth - 32)
-  return Math.min(Math.max(minWidth, width), maxWidth)
-}
-
-function persistWorkbenchHeight() {
-  window.localStorage.setItem(WORKBENCH_HEIGHT_STORAGE_KEY, String(workbenchHeight.value))
-}
-
-function persistDrawerWidth(drawer: 'intercept' | 'settings') {
-  window.localStorage.setItem(
-    drawer === 'intercept' ? INTERCEPT_DRAWER_WIDTH_STORAGE_KEY : SETTINGS_DRAWER_WIDTH_STORAGE_KEY,
-    String(drawer === 'intercept' ? interceptDrawerWidth.value : settingsDrawerWidth.value),
-  )
-}
-
-function persistActiveProbeCollapsed() {
-  window.localStorage.setItem(ACTIVE_PROBE_COLLAPSED_STORAGE_KEY, String(activeProbeCollapsed.value))
-}
-
-function applyWorkbenchHeight(height: number) {
-  workbenchHeight.value = clampWorkbenchHeight(height)
-}
-
-function applyDrawerWidth(drawer: 'intercept' | 'settings', width: number) {
-  if (drawer === 'intercept') {
-    interceptDrawerWidth.value = clampDrawerWidth(drawer, width)
-    return
-  }
-
-  settingsDrawerWidth.value = clampDrawerWidth(drawer, width)
-}
-
-function handleWorkbenchResize(event: MouseEvent) {
-  if (!isResizingWorkbench.value) {
-    return
-  }
-
-  const diff = resizeStartY.value - event.clientY
-  applyWorkbenchHeight(resizeStartHeight.value + diff)
-}
-
-function stopWorkbenchResize() {
-  if (!isResizingWorkbench.value) {
-    return
-  }
-
-  isResizingWorkbench.value = false
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
-  window.removeEventListener('mousemove', handleWorkbenchResize)
-  window.removeEventListener('mouseup', stopWorkbenchResize)
-  persistWorkbenchHeight()
-}
-
-function handleDrawerWidthResize(event: MouseEvent) {
-  const state = drawerWidthResizeState.value
-  if (!state) {
-    return
-  }
-
-  const diffX = event.clientX - state.startX
-  applyDrawerWidth(state.drawer, state.startWidth - diffX)
-}
-
-function stopDrawerWidthResize() {
-  const state = drawerWidthResizeState.value
-  if (!state) {
-    return
-  }
-
-  persistDrawerWidth(state.drawer)
-  drawerWidthResizeState.value = null
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
-  window.removeEventListener('mousemove', handleDrawerWidthResize)
-  window.removeEventListener('mouseup', stopDrawerWidthResize)
-}
-
-function startDrawerWidthResize(drawer: 'intercept' | 'settings', event: MouseEvent) {
-  if (viewportWidth.value <= 1024) {
-    return
-  }
-
-  drawerWidthResizeState.value = {
-    drawer,
-    startX: event.clientX,
-    startWidth: drawer === 'intercept' ? interceptDrawerWidth.value : settingsDrawerWidth.value,
-  }
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-  window.addEventListener('mousemove', handleDrawerWidthResize)
-  window.addEventListener('mouseup', stopDrawerWidthResize)
-  event.preventDefault()
-}
-
-function startWorkbenchResize(event: MouseEvent) {
-  isResizingWorkbench.value = true
-  resizeStartY.value = event.clientY
-  resizeStartHeight.value = workbenchHeight.value
-  document.body.style.cursor = 'ns-resize'
-  document.body.style.userSelect = 'none'
-  window.addEventListener('mousemove', handleWorkbenchResize)
-  window.addEventListener('mouseup', stopWorkbenchResize)
-  event.preventDefault()
-}
-
-function handleWindowResize() {
-  viewportWidth.value = window.innerWidth
-  applyWorkbenchHeight(workbenchHeight.value)
-  applyDrawerWidth('intercept', interceptDrawerWidth.value)
-  applyDrawerWidth('settings', settingsDrawerWidth.value)
-}
-
 function openWorkbenchTool(tool: WorkbenchTool) {
   openImmersiveTrafficWorkbenchTool(tool)
   workbenchToolsMounted.value = true
-  applyWorkbenchHeight(workbenchHeight.value)
+}
+
+function handleOpenWorkbenchTool(tool: WorkbenchTool) {
+  clearSessionCount(tool)
+  openWorkbenchTool(tool)
+}
+
+function openCaptureWorkbench() {
+  handleOpenWorkbenchTool('capture')
+}
+
+function openRepeaterWorkbench() {
+  handleOpenWorkbenchTool('repeater')
+}
+
+function openIntruderWorkbench() {
+  handleOpenWorkbenchTool('intruder')
 }
 
 function closeWorkbench() {
   closeImmersiveTrafficWorkbench()
 }
 
-function pushRequestToRepeater(request: HttpExchangeRequest, source: TrafficWorkbenchSource) {
-  markSession('repeater', source)
-  if (repeaterRef.value) {
-    repeaterRef.value.addRequestFromHistory(request)
-    openWorkbenchTool('repeater')
+function syncHistorySnapshot(
+  request: ProxyRequest,
+  variant: HistorySnapshotVariant,
+) {
+  const snapshot = workbenchState.historySnapshots.createSnapshotFromProxyRequest(
+    request,
+    variant,
+    getHistorySource(request),
+  )
+  workbenchState.selection.selectHistorySnapshot(snapshot)
+  return snapshot
+}
+
+function resolveHistoryVariantUrl(request: ProxyRequest, variant: TrafficWorkbenchRequestVariant) {
+  return variant === 'edited' && request.was_edited && request.edited_url
+    ? request.edited_url
+    : request.url
+}
+
+function resolveHistoryVariantMethod(request: ProxyRequest, variant: TrafficWorkbenchRequestVariant) {
+  return variant === 'edited' && request.was_edited && request.edited_method
+    ? request.edited_method
+    : request.method
+}
+
+function resolveHistoryVariantStatusCode(request: ProxyRequest, variant: TrafficWorkbenchRequestVariant) {
+  const statusCode = variant === 'edited' && request.was_edited && request.edited_status_code
+    ? request.edited_status_code
+    : request.status_code
+  return Number.isFinite(statusCode) ? statusCode : null
+}
+
+function buildActiveRequestContext(
+  request: ProxyRequest,
+  variant: TrafficWorkbenchRequestVariant,
+  mode: TrafficWorkbenchRequestContext['mode'],
+): TrafficWorkbenchRequestContext {
+  const parsedUrl = new URL(resolveHistoryVariantUrl(request, variant))
+  const source = getHistorySource(request)
+  return {
+    sourceKind: 'history',
+    sourceLabel: source.label,
+    requestId: request.id,
+    sourceRequestId: request.db_request_id ?? null,
+    method: resolveHistoryVariantMethod(request, variant),
+    host: parsedUrl.host,
+    path: `${parsedUrl.pathname}${parsedUrl.search}`,
+    statusCode: resolveHistoryVariantStatusCode(request, variant),
+    variant,
+    hasEditedVariant: Boolean(request.was_edited),
+    mode,
+    modeLabel: mode === 'draft' ? '草稿' : mode === 'workspace' ? '工作区' : '预览',
+  }
+}
+
+function previewHistoryRequest(request: ProxyRequest, variant: TrafficWorkbenchRequestVariant) {
+  const snapshot = syncHistorySnapshot(request, variant)
+  selectedHistoryRequest.value = request
+  activeRequestContext.value = buildActiveRequestContext(request, variant, 'preview')
+  previewRequestInRepeater(snapshot.request)
+}
+
+function handleHistorySelectionChange(request: ProxyRequest | null) {
+  if (!request) {
+    selectedHistoryRequest.value = null
+    activeRequestContext.value = null
+    workbenchState.historySnapshots.selectSnapshot(null)
+    workbenchState.selection.clearSelectionKind('history-snapshot')
     return
   }
 
-  pendingRepeaterRequest.value = request
-  openWorkbenchTool('repeater')
-  void nextTick(() => {
-    pendingRepeaterRequest.value = undefined
-  })
+  previewHistoryRequest(request, request.was_edited ? 'edited' : 'original')
 }
 
-function pushRequestToIntruder(request: HttpExchangeRequest, source: TrafficWorkbenchSource) {
-  markSession('intruder', source)
-  if (intruderRef.value) {
-    intruderRef.value.addRequestFromHistory(request)
-    openWorkbenchTool('intruder')
+function handleSwitchActiveRequestVariant(variant: TrafficWorkbenchRequestVariant) {
+  const request = selectedHistoryRequest.value
+  if (!request || !request.was_edited) {
+    return
+  }
+  previewHistoryRequest(request, variant)
+}
+
+function handleRepeaterTabModeChanged(state: RepeaterActiveTabState) {
+  if (
+    !activeRequestContext.value
+    || !state.mode
+    || activeRequestContext.value.sourceRequestId === null
+    || state.sourceRequestId !== activeRequestContext.value.sourceRequestId
+  ) {
     return
   }
 
-  pendingIntruderRequest.value = request
-  openWorkbenchTool('intruder')
-  void nextTick(() => {
-    pendingIntruderRequest.value = undefined
-  })
-}
-
-function pushPayloadToComparer(payload: TrafficComparePayload, source: TrafficWorkbenchSource) {
-  markSession('comparer', source)
-  if (comparerRef.value) {
-    comparerRef.value.addComparison(payload)
-    openWorkbenchTool('comparer')
-    return
+  const mode = state.mode === 'draft' ? 'draft' : 'preview'
+  activeRequestContext.value = {
+    ...activeRequestContext.value,
+    mode,
+    modeLabel: mode === 'draft' ? '草稿' : '预览',
   }
-
-  openWorkbenchTool('comparer')
-  requestAnimationFrame(() => {
-    comparerRef.value?.addComparison(payload)
-  })
 }
 
-function pushDraftToComparer(payload: TrafficComparerDraftRequestInput, source: TrafficWorkbenchSource) {
-  markSession('comparer', source)
-  if (comparerRef.value) {
-    comparerRef.value.addDraftRequest(payload)
-    openWorkbenchTool('comparer')
-    return
-  }
-
-  openWorkbenchTool('comparer')
-  requestAnimationFrame(() => {
-    comparerRef.value?.addDraftRequest(payload)
-  })
+function handleRepeaterTabStatsChanged(stats: RepeaterTabStats) {
+  repeaterEditedTabCount.value = stats.editedTabCount
 }
 
-function handleSendToRepeaterFromHistory(request: HttpExchangeRequest) {
-  pushRequestToRepeater(request, getHistorySource())
-}
-
-function handleSendToIntruderFromHistory(request: HttpExchangeRequest) {
-  pushRequestToIntruder(request, getHistorySource())
-}
-
-function handleSendToComparerFromHistory(payload: TrafficComparePayload) {
-  pushPayloadToComparer(payload, getHistorySource())
-}
-
-function handleSendDraftRequestToComparerFromHistory(payload: TrafficComparerDraftRequestInput) {
-  pushDraftToComparer(payload, getHistorySource())
-}
-
-function handleSendToRepeaterFromIntercept(request: HttpExchangeRequest) {
-  closeInterceptDrawer()
-  pushRequestToRepeater(request, getInterceptSource())
-}
-
-function handleSendToIntruderFromIntercept(request: HttpExchangeRequest) {
-  closeInterceptDrawer()
-  pushRequestToIntruder(request, getInterceptSource())
-}
-
-function handleSendDraftRequestToComparerFromIntercept(payload: TrafficComparerDraftRequestInput) {
-  closeInterceptDrawer()
-  pushDraftToComparer(payload, getInterceptSource())
-}
-
-function handleSendToIntruderFromRepeater(request: HttpExchangeRequest) {
-  pushRequestToIntruder(request, getToolSource('repeater'))
-}
-
-function handleSendToComparerFromRepeater(payload: TrafficComparePayload) {
-  pushPayloadToComparer(payload, getToolSource('repeater'))
-}
-
-function handleSendDraftRequestToComparerFromRepeater(payload: TrafficComparerDraftRequestInput) {
-  pushDraftToComparer(payload, getToolSource('repeater'))
-}
-
-function handleSendToRepeaterFromIntruder(request: HttpExchangeRequest) {
-  pushRequestToRepeater(request, getToolSource('intruder'))
-}
-
-function handleSendToComparerFromIntruder(payload: TrafficComparePayload) {
-  pushPayloadToComparer(payload, getToolSource('intruder'))
-}
-
-function handleSendDraftRequestToComparerFromIntruder(payload: TrafficComparerDraftRequestInput) {
-  pushDraftToComparer(payload, getToolSource('intruder'))
-}
-
-function handleSendToRepeaterFromComparer(request: HttpExchangeRequest) {
-  pushRequestToRepeater(request, getToolSource('comparer'))
-}
-
-function addBasketCandidate(source: TrafficWorkbenchSource, payload: TrafficWorkbenchBasketCandidateInput) {
-  addRequest(payload.request, source, {
-    requestId: payload.requestId,
-    title: payload.title,
-  })
-}
-
-function handleAddToBasketFromHistory(payload: TrafficWorkbenchBasketCandidateInput) {
-  addBasketCandidate(getHistorySource(payload.requestId), payload)
-  openImmersiveTrafficBasket()
-}
-
-function handleAddToBasketFromIntercept(payload: TrafficWorkbenchBasketCandidateInput) {
-  addBasketCandidate(getInterceptSource(), payload)
-  openImmersiveTrafficBasket()
+function openTrafficPluginsPanel() {
+  openImmersiveTrafficPluginsPanel()
 }
 
 function removeBasketItem(id: string) {
@@ -926,52 +626,10 @@ function clearBasket() {
   clear()
 }
 
-function findBasketItem(id: string) {
-  return basketItems.value.find(item => item.id === id) || null
-}
-
-function sendBasketItemToRepeater(id: string) {
-  const item = findBasketItem(id)
-  if (!item) {
-    return
-  }
-  pushRequestToRepeater(item.request, getBasketSource(item))
-}
-
-function sendBasketItemToIntruder(id: string) {
-  const item = findBasketItem(id)
-  if (!item) {
-    return
-  }
-  pushRequestToIntruder(item.request, getBasketSource(item))
-}
-
-function sendAllBasketItemsToRepeater() {
-  basketItems.value.forEach(item => {
-    pushRequestToRepeater(item.request, getBasketSource(item))
-  })
-}
-
-function sendAllBasketItemsToIntruder() {
-  basketItems.value.forEach(item => {
-    pushRequestToIntruder(item.request, getBasketSource(item))
-  })
-}
-
-async function openHistoryRequestFromBasket(requestId: number) {
-  closeBasketDrawer()
-  await openHistoryRequest({
-    requestId,
-    pane: 'request',
-    matchedLocations: [],
-    searchTerms: [],
-  })
-}
-
 async function handleAddFilterRule(rule: FilterRule) {
   openImmersiveTrafficProxySettings()
   await nextTick()
-  proxyConfigRef.value?.addRequestFilterRule(
+  overlaysRef.value?.addRequestFilterRule(
     rule.matchType,
     rule.condition,
     rule.relationship || 'matches',
@@ -989,37 +647,11 @@ function handleFilterRuleAdded(rule: FilterRule) {
 async function handleOpenResponseInterceptionSettings() {
   openImmersiveTrafficProxySettings()
   await nextTick()
-  await proxyConfigRef.value?.openResponseInterceptionRules?.()
+  await overlaysRef.value?.openResponseInterceptionRules()
 }
 
 function handleInterceptQueueChanged(count: number) {
   controlInterceptCount.value = count
-}
-
-async function openHistoryRequest(payload: TrafficContextCandidateEvidenceSelection) {
-  if (!Number.isFinite(payload.requestId)) {
-    return
-  }
-
-  closeBasketDrawer()
-  await nextTick()
-  await proxyHistoryRef.value?.openRequestById?.(
-    payload.requestId,
-    payload.matchedLocations,
-    payload.pane || 'request',
-    payload.searchTerms || [],
-  )
-}
-
-async function openHistoryRequestFromOast(requestId: number) {
-  closeWorkbench()
-  await nextTick()
-  await openHistoryRequest({
-    requestId,
-    pane: 'request',
-    matchedLocations: [],
-    searchTerms: [],
-  })
 }
 
 function closeInterceptDrawer() {
@@ -1044,10 +676,6 @@ function openProxySettingsDrawer() {
 
 function closeProxySettingsDrawer() {
   proxySettingsOpen.value = false
-}
-
-function toggleProxySettingsDrawer() {
-  toggleImmersiveTrafficProxySettings()
 }
 
 function closeTrafficPluginsPanel() {
@@ -1075,102 +703,26 @@ function handleWindowKeydown(event: KeyboardEvent) {
   event.stopPropagation()
 }
 
-function toggleActiveProbeCollapsed() {
-  activeProbeCollapsed.value = !activeProbeCollapsed.value
-  persistActiveProbeCollapsed()
-}
-
-async function ensureActiveProbePreview(trafficRequestId: string) {
-  if (!trafficRequestId || activeProbePreviewRequests.value[trafficRequestId]) {
-    return
-  }
-
-  activeProbePreviewLoadingId.value = trafficRequestId
-  try {
-    const request = await loadActiveProbeRequestByTrafficRequestId(trafficRequestId)
-    if (!request) {
-      return
-    }
-    rememberActiveProbePreviewRequest(request)
-  } catch (error) {
-    console.error(`Failed to load active probe preview for ${trafficRequestId}:`, error)
-  } finally {
-    if (activeProbePreviewLoadingId.value === trafficRequestId) {
-      activeProbePreviewLoadingId.value = null
-    }
-  }
-}
-
-async function loadActiveProbeRequestByTrafficRequestId(trafficRequestId: string): Promise<ProxyRequest | null> {
-  const listResponse = await invoke<any>('list_proxy_requests', {
-    limit: 200,
-    offset: 0,
-  })
-
-  const summary = listResponse?.success
-    ? (listResponse.data as ProxyRequest[]).find(
-        request => request.traffic_request_id === trafficRequestId,
-      )
-    : null
-
-  if (!summary) {
-    return null
-  }
-
-  const detailResponse = await invoke<any>('get_proxy_request', { id: summary.id })
-  if (!detailResponse?.success || !detailResponse.data) {
-    return null
-  }
-
-  return detailResponse.data as ProxyRequest
-}
-
-async function openHistoryRequestByTrafficRequestId(trafficRequestId: string) {
-  if (!trafficRequestId) {
-    return
-  }
-
-  const existing = activeProbePreviewRequests.value[trafficRequestId]
-  if (existing) {
-    await openHistoryRequestById(existing.id)
-    return
-  }
-
-  const request = await loadActiveProbeRequestByTrafficRequestId(trafficRequestId)
-  if (!request) {
-    return
-  }
-
-  rememberActiveProbePreviewRequest(request)
-  await openHistoryRequestById(request.id)
-}
-
-async function openHistoryRequestById(requestId: number) {
-  await openHistoryRequest({
-    requestId,
-    pane: 'request',
-    matchedLocations: [],
-    searchTerms: [],
-  })
-}
-
 let unlistenProxyRequest: UnlistenFn | null = null
 let unlistenScanFinding: UnlistenFn | null = null
 
 defineExpose<TrafficAnalysisViewHandle>({
-  sendToRepeater: handleSendToRepeaterFromHistory,
-  sendToIntruder: handleSendToIntruderFromHistory,
-  sendToComparer: handleSendToComparerFromHistory,
-  sendDraftRequestToComparer: handleSendDraftRequestToComparerFromHistory,
+  createDraftFromRequest: handleCreateDraftFromHistory,
+  createAttackWorkspaceFromRequest: handleCreateAttackWorkspaceFromHistory,
+  openCompare: handleOpenCompareFromHistory,
+  openDraftCompare: handleOpenDraftCompareFromHistory,
   openHistoryRequest,
 })
 
 onMounted(() => {
+  void persistence.hydrate()
   if (immersiveDrillModeEnabled.value) {
     showImmersiveTrafficHistory()
   }
 
-  applyWorkbenchHeight(workbenchHeight.value)
+  void nextTick(() => {
+    normalizeWorkbenchLayout()
+  })
   window.addEventListener('resize', handleWindowResize)
   window.addEventListener('keydown', handleWindowKeydown)
   void startActiveProbeQueue()
@@ -1194,10 +746,24 @@ onMounted(() => {
   })
 })
 
+watch(
+  [
+    () => workbenchState.drafts.drafts.value,
+    () => workbenchState.drafts.revisions.value,
+    () => workbenchState.drafts.activeDraftId.value,
+    () => workbenchState.attack.workspaces.value,
+    () => workbenchState.attack.activeWorkspaceId.value,
+    () => workbenchState.replay.replayRuns.value,
+  ],
+  () => {
+    persistence.schedulePersist()
+  },
+  { deep: true },
+)
+
 watchEffect(() => {
   if (workbenchOpen.value) {
     workbenchToolsMounted.value = true
-    applyWorkbenchHeight(workbenchHeight.value)
   }
 
   syncImmersiveTrafficDockState({
@@ -1207,8 +773,9 @@ watchEffect(() => {
     proxySettingsOpen: proxySettingsOpen.value,
     trafficPluginsOpen: trafficPluginsOpen.value,
     basketOpen: basketOpen.value,
-    repeaterCount: sessions.value.repeater.count,
-    intruderCount: sessions.value.intruder.count,
+    captureCount: sessions.value.capture.count,
+    repeaterCount: repeaterEditedTabCount.value,
+    intruderCount: workbenchState.counts.value.attackWorkspaces,
     comparerCount: sessions.value.comparer.count,
     oastCount: sessions.value.oast.count,
     controlInterceptCount: controlInterceptCount.value,
@@ -1217,8 +784,10 @@ watchEffect(() => {
 })
 
 onUnmounted(() => {
-  stopWorkbenchResize()
+  persistence.stopPersistTimer()
   stopDrawerWidthResize()
+  stopWorkbenchPanelResize()
+  stopSidebarHeightResize()
   window.removeEventListener('resize', handleWindowResize)
   window.removeEventListener('keydown', handleWindowKeydown)
   stopActiveProbeQueue()
@@ -1272,6 +841,24 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
+.workbench-sidebar-card {
+  background:
+    radial-gradient(circle at top right, rgb(14 165 233 / 0.08), transparent 34%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.98), rgb(248 250 252 / 0.96));
+}
+
+.workbench-metric-card {
+  display: flex;
+  min-height: 5.5rem;
+  flex-direction: column;
+  justify-content: center;
+  border-radius: 1.35rem;
+  border: 1px solid hsl(var(--b3) / 0.7);
+  background: hsl(var(--b1) / 0.84);
+  padding: 1rem 1.1rem;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.55);
+}
+
 .tool-switch {
   display: inline-flex;
   align-items: center;
@@ -1292,7 +879,7 @@ onUnmounted(() => {
 }
 
 .tool-switch:hover,
-.floating-trigger:hover {
+.workspace-record:hover {
   transform: translateY(-1px);
 }
 
@@ -1303,112 +890,92 @@ onUnmounted(() => {
   box-shadow: 0 10px 26px hsl(var(--p) / 0.1);
 }
 
-.workbench-drawer {
+.workspace-record {
   display: flex;
-  flex-direction: column;
-  isolation: isolate;
-}
-
-.intercept-drawer {
-  height: min(72vh, 48rem);
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-drawer {
-  display: flex;
-  flex-direction: column;
-}
-
-.drawer-width-resizer {
-  width: 10px;
-  cursor: col-resize;
-  background: linear-gradient(180deg, transparent 0%, rgb(148 163 184 / 0.12) 50%, transparent 100%);
-  transition: background-color 160ms ease, opacity 160ms ease;
-  opacity: 0.4;
-}
-
-.drawer-width-resizer:hover {
-  opacity: 1;
-  background: linear-gradient(180deg, transparent 0%, rgb(59 130 246 / 0.3) 50%, transparent 100%);
-}
-
-.drawer-width-resizer-warning:hover {
-  background: linear-gradient(180deg, transparent 0%, rgb(245 158 11 / 0.28) 50%, transparent 100%);
-}
-
-.floating-trigger {
-  position: relative;
-  display: inline-flex;
-  height: 3.75rem;
-  width: 3.75rem;
+  width: 100%;
   align-items: center;
-  justify-content: center;
-  border-radius: 1.5rem;
-  border: 1px solid hsl(var(--b3) / 0.72);
-  background: hsl(var(--b1) / 0.92);
-  color: hsl(var(--bc) / 0.78);
-  box-shadow: 0 22px 48px rgb(15 23 42 / 0.16);
+  gap: 0.75rem;
+  border-radius: 1rem;
+  border: 1px solid hsl(var(--b3) / 0.6);
+  background: hsl(var(--b1) / 0.84);
+  padding: 0.85rem 0.9rem;
+  text-align: left;
   transition:
     transform 160ms ease,
     border-color 160ms ease,
     background-color 160ms ease,
-    color 160ms ease;
+    box-shadow 160ms ease;
 }
 
-.floating-trigger-active {
-  border-color: hsl(var(--p) / 0.3);
-  background: hsl(var(--p) / 0.12);
-  color: hsl(var(--p));
+.workspace-record-active {
+  border-color: hsl(var(--p) / 0.28);
+  background: hsl(var(--p) / 0.08);
+  box-shadow: 0 10px 22px hsl(var(--p) / 0.08);
 }
 
-.floating-trigger-warning {
-  border-color: hsl(var(--wa) / 0.24);
-  color: hsl(var(--wa));
+.workspace-empty-state {
+  border-radius: 1rem;
+  border: 1px dashed hsl(var(--b3) / 0.7);
+  background: hsl(var(--b1) / 0.65);
+  padding: 1rem;
+  font-size: 0.82rem;
+  color: hsl(var(--bc) / 0.58);
 }
 
-.floating-trigger-label {
-  position: absolute;
-  right: calc(100% + 0.75rem);
-  white-space: nowrap;
+.workbench-column-resizer {
+  position: relative;
+  width: 4px;
+  min-height: 0;
+  cursor: col-resize;
   border-radius: 999px;
-  background: rgb(15 23 42 / 0.88);
-  color: #fff;
-  padding: 0.45rem 0.7rem;
-  font-size: 0.72rem;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 140ms ease;
+  background: linear-gradient(180deg, transparent 0%, rgb(148 163 184 / 0.14) 50%, transparent 100%);
+  opacity: 0.42;
+  transition: opacity 160ms ease, background-color 160ms ease;
 }
 
-.floating-trigger:hover .floating-trigger-label {
+.workbench-column-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 20px 1px;
+  border-radius: 999px;
+  background: rgb(148 163 184 / 0.38);
+}
+
+.workbench-column-resizer:hover {
   opacity: 1;
+  background: linear-gradient(180deg, transparent 0%, rgb(59 130 246 / 0.24) 50%, transparent 100%);
 }
 
-.floating-badge {
-  position: absolute;
-  right: -0.2rem;
-  top: -0.2rem;
-  min-width: 1.2rem;
-  height: 1.2rem;
+.workbench-column-resizer:hover::before {
+  background: rgb(59 130 246 / 0.58);
+}
+
+.workbench-row-resizer {
+  position: relative;
+  height: 4px;
+  min-width: 0;
+  cursor: row-resize;
   border-radius: 999px;
-  background: hsl(var(--er));
-  color: hsl(var(--erc));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 0.25rem;
-  font-size: 0.68rem;
-  font-weight: 700;
+  background: linear-gradient(90deg, transparent 0%, rgb(148 163 184 / 0.14) 50%, transparent 100%);
+  opacity: 0.42;
+  transition: opacity 160ms ease, background-color 160ms ease;
 }
 
-@media (max-width: 1024px) {
-  .intercept-drawer,
-  .settings-drawer {
-    left: 1rem;
-    right: 1rem;
-    width: auto;
-  }
-
+.workbench-row-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 1px 20px;
+  border-radius: 999px;
+  background: rgb(148 163 184 / 0.38);
 }
+
+.workbench-row-resizer:hover {
+  opacity: 1;
+  background: linear-gradient(90deg, transparent 0%, rgb(59 130 246 / 0.24) 50%, transparent 100%);
+}
+
+.workbench-row-resizer:hover::before {
+  background: rgb(59 130 246 / 0.58);
+}
+
 </style>

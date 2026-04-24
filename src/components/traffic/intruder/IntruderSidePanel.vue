@@ -24,6 +24,7 @@
               @change="handlePayloadTypeChange(($event.target as HTMLSelectElement).value as IntruderPayloadSet['payloadType'])"
             >
               <option value="simpleList">{{ $t('trafficAnalysis.intruder.labels.simpleList') }}</option>
+              <option value="bruteForcer">{{ $t('trafficAnalysis.intruder.labels.bruteForcer') }}</option>
               <option value="appDictionary">{{ $t('trafficAnalysis.intruder.labels.appDictionary') }}</option>
               <option value="extensionGenerated">{{ $t('trafficAnalysis.intruder.labels.extensionGenerated') }}</option>
               <option value="numbers">{{ $t('trafficAnalysis.intruder.labels.numbers') }}</option>
@@ -52,25 +53,56 @@
               {{ $t('trafficAnalysis.intruder.labels.payloadConfiguration') }}
             </div>
 
-            <div v-if="activePayloadSet?.payloadType === 'simpleList'" class="grid grid-cols-[6rem_1fr] gap-3 p-3">
-              <div class="space-y-2">
-                <button class="btn btn-sm btn-ghost w-full justify-start" type="button" @click="pastePayloads">
-                  {{ $t('trafficAnalysis.intruder.actions.paste') }}
-                </button>
-                <button class="btn btn-sm btn-ghost w-full justify-start" type="button" @click="deduplicatePayloads">
-                  {{ $t('trafficAnalysis.intruder.actions.deduplicate') }}
-                </button>
-                <button class="btn btn-sm btn-ghost w-full justify-start" type="button" @click="clearPayloads">
-                  {{ $t('trafficAnalysis.intruder.actions.clear') }}
-                </button>
-              </div>
+            <IntruderSimpleListPayloadPanel
+              v-if="activePayloadSet?.payloadType === 'simpleList' && activePayloadSet"
+              :payload-set="activePayloadSet"
+              :payload-sets="payloadSets"
+              :attack-type="attackType"
+              :positions="positions"
+              :request-text="requestText"
+              @update="updateActivePayloadSet($event)"
+              @apply-template="emit('applyPayloadTemplate', activePayloadSet.id, $event)"
+            />
 
-              <textarea
-                :value="activePayloadSet?.payloadsText || ''"
-                class="h-64 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none transition focus:border-primary"
-                :placeholder="$t('trafficAnalysis.intruder.placeholders.payloads')"
-                @input="updateActivePayloadSet({ payloadsText: ($event.target as HTMLTextAreaElement).value })"
-              ></textarea>
+            <div v-else-if="activePayloadSet?.payloadType === 'bruteForcer'" class="grid gap-3 p-4">
+              <p class="text-sm text-base-content/70">
+                {{ $t('trafficAnalysis.intruder.help.bruteForcerHint') }}
+              </p>
+
+              <label class="form-control">
+                <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.bruteForceCharacterSet') }}</span>
+                <input
+                  :value="activePayloadSet.bruteForceCharacterSet"
+                  type="text"
+                  class="input input-bordered input-sm"
+                  :placeholder="$t('trafficAnalysis.intruder.placeholders.bruteForceCharacterSet')"
+                  @input="updateActivePayloadSet({ bruteForceCharacterSet: ($event.target as HTMLInputElement).value })"
+                />
+              </label>
+
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="form-control">
+                  <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.bruteForceMinLength') }}</span>
+                  <input
+                    :value="activePayloadSet.bruteForceMinLength"
+                    type="number"
+                    min="0"
+                    class="input input-bordered input-sm"
+                    @input="updateActivePayloadSet({ bruteForceMinLength: Math.max(0, Number(($event.target as HTMLInputElement).value) || 0) })"
+                  />
+                </label>
+
+                <label class="form-control">
+                  <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.bruteForceMaxLength') }}</span>
+                  <input
+                    :value="activePayloadSet.bruteForceMaxLength"
+                    type="number"
+                    min="0"
+                    class="input input-bordered input-sm"
+                    @input="updateActivePayloadSet({ bruteForceMaxLength: Math.max(0, Number(($event.target as HTMLInputElement).value) || 0) })"
+                  />
+                </label>
+              </div>
             </div>
 
             <IntruderAppDictionaryPanel
@@ -1071,7 +1103,8 @@ import IntruderPluginConfigDialog from './IntruderPluginConfigDialog.vue'
 import IntruderRedirectHandlingPanel from './IntruderRedirectHandlingPanel.vue'
 import IntruderRequestHeadersPanel from './IntruderRequestHeadersPanel.vue'
 import IntruderResourcePoolPanel from './IntruderResourcePoolPanel.vue'
-import { expandPayloadSet, parsePayloadLines } from './payloads'
+import IntruderSimpleListPayloadPanel from './IntruderSimpleListPayloadPanel.vue'
+import { countPayloadSet } from './payloads'
 import {
   generateIntruderPluginPayloads,
   getIntruderPluginInputSchema,
@@ -1089,6 +1122,7 @@ import { buildRequestPreviewDebugReport } from './requestPreviewReport'
 import { extractIntruderPayloadSourceSummaryEntries } from './intruderPayloadSourceSummary'
 import { getIntruderDictionaryTypeTranslationKey } from './intruderDictionaries'
 import type {
+  IntruderAttackType,
   IntruderAttackOptions,
   IntruderGrepExtractRule,
   IntruderGrepMatchRule,
@@ -1114,6 +1148,7 @@ const props = defineProps<{
   grepPayloadSettings: IntruderGrepPayloadSettings
   resourcePoolPresets: IntruderResourcePool[]
   selectedResourcePoolId: string
+  attackType: IntruderAttackType
   attackOptions: IntruderAttackOptions
   estimatedRequests: number
   requestText: string
@@ -1132,6 +1167,11 @@ const emit = defineEmits<{
   (e: 'update:activeTab', value: 'payloads' | 'resourcePool' | 'settings'): void
   (e: 'update:attackOptions', value: IntruderAttackOptions): void
   (e: 'updatePayloadSet', id: string, patch: Partial<IntruderPayloadSet>): void
+  (e: 'applyPayloadTemplate', payloadSetId: string, value: {
+    sourceRef: string
+    attackType: IntruderAttackType
+    sets: Array<{ name: string; payloadsText: string }>
+  }): void
   (e: 'update:payloadProcessingRules', value: IntruderPayloadProcessingRule[]): void
   (e: 'update:payloadProcessorPlugins', value: IntruderPluginProcessorBinding[]): void
   (e: 'update:requestProcessorPlugins', value: IntruderPluginProcessorBinding[]): void
@@ -1196,7 +1236,7 @@ watch(
 )
 
 const activePayloadSet = computed(() => props.payloadSets.find((payloadSet) => payloadSet.id === selectedPayloadSetId.value) ?? props.payloadSets[0] ?? null)
-const activePayloadCount = computed(() => (activePayloadSet.value ? expandPayloadSet(activePayloadSet.value).length : 0))
+const activePayloadCount = computed(() => (activePayloadSet.value ? countPayloadSet(activePayloadSet.value) : 0))
 const selectedPayloadPlugin = computed(() => availablePayloadPlugins.value.find((plugin) => plugin.id === activePayloadSet.value?.pluginId) ?? null)
 const activePluginSchema = computed(() => {
   const pluginId = activePayloadSet.value?.pluginId
@@ -1494,15 +1534,6 @@ function formatTraceFieldLabel(key: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
-async function pastePayloads() {
-  try {
-    const text = await navigator.clipboard.readText()
-    updateActivePayloadSet({ payloadsText: text })
-  } catch {
-    dialog.toast.error('Clipboard read failed')
-  }
-}
-
 async function loadPayloadFile() {
   if (!activePayloadSet.value) return
 
@@ -1521,18 +1552,8 @@ async function loadPayloadFile() {
     })
   } catch (error) {
     console.error('Failed to load payload file', error)
-    dialog.toast.error('Failed to load payload file')
+    dialog.toast.error(t('trafficAnalysis.intruder.messages.payloadFileLoadFailed'))
   }
-}
-
-function clearPayloads() {
-  updateActivePayloadSet({ payloadsText: '' })
-}
-
-function deduplicatePayloads() {
-  if (!activePayloadSet.value || activePayloadSet.value.payloadType !== 'simpleList') return
-  const deduped = Array.from(new Set(parsePayloadLines(activePayloadSet.value.payloadsText)))
-  updateActivePayloadSet({ payloadsText: deduped.join('\n') })
 }
 
 watch(

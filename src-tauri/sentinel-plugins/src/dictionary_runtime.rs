@@ -213,16 +213,30 @@ pub async fn get_dictionary_words(
     let Some(dict_id) = resolve_dictionary_id(pool, &id_or_name).await? else {
         return Ok(vec![]);
     };
-    let limit_val = limit.unwrap_or(10000) as i64;
+
+    if let Some(limit_val) = limit.map(i64::from) {
+        #[cfg(feature = "db-postgres")]
+        let query = "SELECT word FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2";
+        #[cfg(not(feature = "db-postgres"))]
+        let query = "SELECT word FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC LIMIT ?";
+
+        return sqlx::query_scalar(query)
+            .bind(&dict_id)
+            .bind(limit_val)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)));
+    }
 
     #[cfg(feature = "db-postgres")]
-    let query = "SELECT word FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2";
+    let query =
+        "SELECT word FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC";
     #[cfg(not(feature = "db-postgres"))]
-    let query = "SELECT word FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC LIMIT ?";
+    let query =
+        "SELECT word FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC";
 
     sqlx::query_scalar(query)
         .bind(&dict_id)
-        .bind(limit_val)
         .fetch_all(pool)
         .await
         .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))
@@ -236,19 +250,32 @@ pub async fn get_dictionary_entries(
     let Some(dict_id) = resolve_dictionary_id(pool, &id_or_name).await? else {
         return Ok(vec![]);
     };
-    let limit_val = limit.unwrap_or(10000) as i64;
 
-    #[cfg(feature = "db-postgres")]
-    let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2";
-    #[cfg(not(feature = "db-postgres"))]
-    let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC LIMIT ?";
+    let rows: Vec<(String, f64, Option<String>, Option<String>)> =
+        if let Some(limit_val) = limit.map(i64::from) {
+            #[cfg(feature = "db-postgres")]
+            let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2";
+            #[cfg(not(feature = "db-postgres"))]
+            let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC LIMIT ?";
 
-    let rows: Vec<(String, f64, Option<String>, Option<String>)> = sqlx::query_as(query)
-        .bind(&dict_id)
-        .bind(limit_val)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?;
+            sqlx::query_as(query)
+                .bind(&dict_id)
+                .bind(limit_val)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?
+        } else {
+            #[cfg(feature = "db-postgres")]
+            let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC";
+            #[cfg(not(feature = "db-postgres"))]
+            let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC";
+
+            sqlx::query_as(query)
+                .bind(&dict_id)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?
+        };
 
     Ok(rows
         .into_iter()

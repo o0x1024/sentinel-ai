@@ -1010,6 +1010,10 @@ impl DatabaseService {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS proxy_requests (
                 id SERIAL PRIMARY KEY,
+                origin_kind TEXT,
+                origin_ref_id TEXT,
+                parent_request_id BIGINT,
+                source_draft_revision_id TEXT,
                 url TEXT NOT NULL,
                 host TEXT NOT NULL,
                 scheme TEXT NOT NULL,
@@ -1048,6 +1052,18 @@ impl DatabaseService {
         let _ = sqlx::query("ALTER TABLE proxy_requests ADD COLUMN http_version_observed TEXT")
             .execute(pool)
             .await;
+        let _ = sqlx::query("ALTER TABLE proxy_requests ADD COLUMN origin_kind TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE proxy_requests ADD COLUMN origin_ref_id TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE proxy_requests ADD COLUMN parent_request_id BIGINT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE proxy_requests ADD COLUMN source_draft_revision_id TEXT")
+            .execute(pool)
+            .await;
 
         let _ = sqlx::query(
             "UPDATE proxy_requests SET scheme = LOWER(protocol) WHERE (scheme IS NULL OR scheme = '') AND protocol IS NOT NULL"
@@ -1070,6 +1086,16 @@ impl DatabaseService {
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_parent_request_id ON proxy_requests(parent_request_id)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_source_draft_revision_id ON proxy_requests(source_draft_revision_id)",
         )
         .execute(pool)
         .await?;

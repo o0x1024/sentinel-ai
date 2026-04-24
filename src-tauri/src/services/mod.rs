@@ -6,6 +6,7 @@ pub mod ai_tasks;
 pub mod asset_service;
 pub mod builtin_bounty_plugins;
 pub mod feature_entitlements;
+pub mod finding_ai_review;
 pub mod plugin_authoring;
 pub mod plugin_execution_test;
 pub mod database {
@@ -61,8 +62,8 @@ pub use plugin_execution_test::{
 };
 pub use system_agents::SystemAgentRuntime;
 pub use traffic_oast::{
-    delete_traffic_oast_events, delete_traffic_oast_token, generate_traffic_oast_token,
-    lookup_traffic_oast_token, test_traffic_oast_config, OastGenerateResponse, TrafficOastConfig,
+    delete_traffic_oast_token, generate_traffic_oast_token, lookup_traffic_oast_token,
+    test_traffic_oast_config, OastGenerateResponse, TrafficOastConfig, TrafficOastEvent,
     TrafficOastEventKey, TrafficOastRecord, TrafficOastTestResult,
 };
 

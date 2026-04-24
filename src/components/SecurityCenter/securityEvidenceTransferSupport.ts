@@ -3,18 +3,18 @@ import type { HttpExchangeRequest } from '@/components/traffic/http/model'
 import { parseStoredHeaderEntries } from '@/components/traffic/http/headers'
 import { endpointFromUrl } from '@/components/traffic/http/url'
 import { DEFAULT_HTTP_VERSION } from '@/components/traffic/http/version'
-import { queueIntruderTransfer, queueRepeaterTransfer } from '@/components/traffic/transfers'
+import { useTrafficLaunchQueueStore } from '@/components/traffic/workbench/stores/useTrafficLaunchQueueStore'
 import { getWorkbenchEvidenceExchange } from './securityWorkbenchSystemAgentContent'
 import type { Evidence } from './vulnerabilityFindingTypes'
 
-export type SecurityEvidenceTransferTarget = 'repeater' | 'intruder'
+export type SecurityEvidenceTransferTarget = 'draft' | 'attackWorkspace'
 export interface SecurityEvidenceTransferMessages {
   triggerLabel: string
-  sendToRepeater: string
-  sendToIntruder: string
+  createDraft: string
+  createAttackWorkspace: string
   noTransferableRequest: string
-  sentToRepeater: string
-  sentToIntruder: string
+  draftCreated: string
+  attackWorkspaceCreated: string
   transferFailed: string
 }
 
@@ -87,7 +87,7 @@ export function findFirstTransferableSecurityEvidence(
   )
 }
 
-export async function openSecurityEvidenceInTrafficTool(
+export async function openSecurityEvidenceInTrafficWorkbench(
   router: Router,
   evidence: Evidence,
   target: SecurityEvidenceTransferTarget
@@ -97,10 +97,11 @@ export async function openSecurityEvidenceInTrafficTool(
     return false
   }
 
-  if (target === 'repeater') {
-    queueRepeaterTransfer(request)
+  const launchQueue = useTrafficLaunchQueueStore()
+  if (target === 'draft') {
+    launchQueue.queueDraftRequest(request)
   } else {
-    queueIntruderTransfer(request)
+    launchQueue.queueAttackWorkspaceRequest(request)
   }
 
   await router.push({ name: 'TrafficAnalysis' })

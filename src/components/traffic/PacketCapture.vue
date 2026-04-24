@@ -136,7 +136,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick, shallowRef, triggerRef } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, watch, watchEffect, nextTick, shallowRef, triggerRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -150,8 +150,10 @@ import {
     appendPacketsWithLimit,
     formatPacketTime,
 } from './packetCapturePerformanceSupport'
+import { usePacketCaptureStatusStore } from './workbench/stores/usePacketCaptureStatusStore'
 
 const { t } = useI18n()
+const packetCaptureStatus = usePacketCaptureStatusStore()
 
 // 状态
 const interfaces = ref<NetworkInterface[]>([])
@@ -545,6 +547,14 @@ async function loadInterfaces() {
         loadError.value = String(e)
     } finally {
         isLoading.value = false
+    }
+}
+
+async function syncCaptureRuntimeState() {
+    try {
+        isCapturing.value = await invoke<boolean>('is_capture_running')
+    } catch (e) {
+        console.error('Failed to read capture runtime state:', e)
     }
 }
 
@@ -1364,6 +1374,7 @@ watch(listHeight, () => {
 
 onMounted(() => {
     loadInterfaces()
+    void syncCaptureRuntimeState()
     document.addEventListener('click', hideMenus)
     document.addEventListener('keydown', handleKeydown)
     
@@ -1390,6 +1401,16 @@ onUnmounted(() => {
         window.clearTimeout(scrollTimer)
     }
     clearScheduledFilterRefresh()
+})
+
+watchEffect(() => {
+    packetCaptureStatus.setStatus({
+        isCapturing: isCapturing.value,
+        selectedInterface: selectedInterface.value,
+        selectedInterfaceLabel: selectedInterfaceDisplayName.value,
+        packetCount: packets.value.length,
+        filteredPacketCount: filteredPackets.value.length,
+    })
 })
 </script>
 

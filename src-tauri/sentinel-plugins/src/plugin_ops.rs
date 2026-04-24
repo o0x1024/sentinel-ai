@@ -515,18 +515,6 @@ pub struct ActiveProbeFetchOptions {
     pub probe_value: Option<String>,
     #[serde(default)]
     pub technique: Option<String>,
-    #[serde(default)]
-    pub probe_class: Option<String>,
-    #[serde(default)]
-    pub probe_priority: Option<i32>,
-    #[serde(default)]
-    pub cooldown_key: Option<String>,
-    #[serde(default)]
-    pub jitter_range: Option<[u64; 2]>,
-    #[serde(default)]
-    pub min_host_cooldown_ms: Option<u64>,
-    #[serde(default)]
-    pub max_concurrent_per_host: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -631,6 +619,34 @@ fn fetch_client_cache() -> &'static Mutex<HashMap<FetchClientKey, reqwest::Clien
 
 fn fetch_abort_cache() -> &'static Mutex<HashMap<String, oneshot::Sender<()>>> {
     FETCH_ABORTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn build_active_probe_cooldown_key(url: &str) -> String {
+    let Ok(parsed) = deno_core::url::Url::parse(url) else {
+        return "global".to_string();
+    };
+
+    let Some(host) = parsed.host_str().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    }) else {
+        return "global".to_string();
+    };
+
+    let path = if parsed.path().is_empty() {
+        "/"
+    } else {
+        parsed.path()
+    };
+
+    match parsed.port() {
+        Some(port) => format!("{host}:{port}{path}"),
+        None => format!("{host}{path}"),
+    }
 }
 
 async fn read_response_body(
@@ -753,7 +769,6 @@ async fn op_fetch(
     });
 
     let method = opts.method.to_uppercase();
-    let timeout_ms = opts.timeout.unwrap_or(3000);
     let follow_redirects = !matches!(opts.redirect.as_deref(), Some("manual"));
     let max_redirects = opts.max_redirects.unwrap_or(1);
     let max_body_bytes = opts.max_body_bytes.filter(|value| *value > 0);
@@ -765,6 +780,13 @@ async fn op_fetch(
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let active_probe = opts.active_probe.clone();
+    let runtime_settings = get_plugin_runtime_settings();
+    let active_probe_defaults = runtime_settings.active_probe.clone();
+    let timeout_ms = if active_probe.is_some() {
+        active_probe_defaults.timeout_ms
+    } else {
+        opts.timeout.unwrap_or(3000)
+    };
     let plugin_ctx = {
         let op_state = state.borrow();
         op_state.borrow::<PluginContext>().clone()
@@ -826,17 +848,12 @@ async fn op_fetch(
                 target_location: active_probe.target_location,
                 probe_value: active_probe.probe_value,
                 technique: active_probe.technique,
-                probe_class: active_probe
-                    .probe_class
-                    .unwrap_or_else(|| "fast".to_string()),
-                probe_priority: active_probe.probe_priority.unwrap_or(0),
-                cooldown_key: active_probe
-                    .cooldown_key
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| url.clone()),
-                jitter_range: active_probe.jitter_range.unwrap_or([0, 0]),
-                min_host_cooldown_ms: active_probe.min_host_cooldown_ms.unwrap_or(0),
-                max_concurrent_per_host: active_probe.max_concurrent_per_host.unwrap_or(1),
+                probe_class: "fast".to_string(),
+                probe_priority: 0,
+                cooldown_key: build_active_probe_cooldown_key(&url),
+                jitter_range: active_probe_defaults.jitter_range,
+                min_host_cooldown_ms: active_probe_defaults.min_host_cooldown_ms,
+                max_concurrent_per_host: active_probe_defaults.max_concurrent_per_host as u32,
             })
         } else {
             None
@@ -1916,5 +1933,18 @@ mod tests {
         assert!(matches!(parse_confidence("medium"), Confidence::Medium));
         assert!(matches!(parse_confidence("low"), Confidence::Low));
         assert!(matches!(parse_confidence("unknown"), Confidence::Medium));
+    }
+
+    #[test]
+    fn test_build_active_probe_cooldown_key_uses_host_and_path() {
+        assert_eq!(
+            build_active_probe_cooldown_key("https://example.com:8443/api/items?id=1"),
+            "example.com:8443/api/items"
+        );
+        assert_eq!(
+            build_active_probe_cooldown_key("https://example.com"),
+            "example.com/"
+        );
+        assert_eq!(build_active_probe_cooldown_key("not-a-url"), "global");
     }
 }

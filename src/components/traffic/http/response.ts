@@ -20,6 +20,8 @@ export interface RawReplayCommandResult {
   headers: HttpHeaderEntry[]
   body_text: string
   body_bytes_base64?: string
+  history_request_id?: number | null
+  db_request_id?: number | null
 }
 
 export function getHttpStatusText(statusCode: number): string {

@@ -18,6 +18,7 @@ import type {
 
 const RESOURCE_POOLS_STORAGE_KEY = 'trafficAnalysis.intruder.resourcePools.v1'
 const ATTACK_TEMPLATES_STORAGE_KEY = 'trafficAnalysis.intruder.attackTemplates.v1'
+const INTRUDER_RESOURCE_POOL_AUTO_NAME_PREFIX = '资源池 '
 
 export interface IntruderAttackTemplate {
   id: string
@@ -40,6 +41,20 @@ export interface IntruderAttackTemplate {
   visibleColumns: string[]
 }
 
+export type IntruderResourcePoolConfigInput = Pick<
+  IntruderResourcePool,
+  | 'concurrencyEnabled'
+  | 'concurrency'
+  | 'delayEnabled'
+  | 'delayMs'
+  | 'randomDelayEnabled'
+  | 'randomDelayMs'
+  | 'delayIncrementEnabled'
+  | 'delayIncrementMs'
+  | 'autoThrottleEnabled'
+  | 'autoThrottleStatusCodes'
+>
+
 export function createBuiltInResourcePools(): IntruderResourcePool[] {
   return [
     {
@@ -58,6 +73,84 @@ export function createBuiltInResourcePools(): IntruderResourcePool[] {
       builtIn: true,
     },
   ]
+}
+
+export function normalizeIntruderResourcePoolConfig(
+  value: Partial<IntruderResourcePoolConfigInput>,
+): IntruderResourcePoolConfigInput {
+  const delayMs = Math.max(0, Number(value.delayMs) || 0)
+  const randomDelayMs = Math.max(0, Number(value.randomDelayMs) || 0)
+  const delayIncrementMs = Math.max(0, Number(value.delayIncrementMs) || 0)
+  const autoThrottleEnabled = Boolean(value.autoThrottleEnabled)
+
+  const delayEnabled = value.delayEnabled ?? (delayMs > 0 || randomDelayMs > 0 || delayIncrementMs > 0)
+  const randomDelayEnabled = delayEnabled && (value.randomDelayEnabled ?? randomDelayMs > 0)
+  const delayIncrementEnabled = delayEnabled && (value.delayIncrementEnabled ?? delayIncrementMs > 0)
+
+  return {
+    concurrencyEnabled: value.concurrencyEnabled ?? true,
+    concurrency: Math.max(1, Number(value.concurrency) || 1),
+    delayEnabled,
+    delayMs: delayEnabled ? delayMs : 0,
+    randomDelayEnabled,
+    randomDelayMs: delayEnabled && randomDelayEnabled ? randomDelayMs : 0,
+    delayIncrementEnabled,
+    delayIncrementMs: delayEnabled && delayIncrementEnabled ? delayIncrementMs : 0,
+    autoThrottleEnabled,
+    autoThrottleStatusCodes: autoThrottleEnabled
+      ? Array.isArray(value.autoThrottleStatusCodes)
+        ? value.autoThrottleStatusCodes
+          .map((item) => Number(item))
+          .filter((item) => Number.isInteger(item) && item >= 100 && item <= 999)
+          .sort((left, right) => left - right)
+        : []
+      : [],
+  }
+}
+
+export function buildIntruderResourcePoolAutoName(
+  resourcePools: IntruderResourcePool[],
+  currentPoolId?: string,
+): string {
+  const currentPool = currentPoolId
+    ? resourcePools.find((pool) => pool.id === currentPoolId && !pool.builtIn)
+    : null
+  if (currentPool && isIntruderResourcePoolAutoName(currentPool.name)) {
+    return currentPool.name
+  }
+
+  const usedNumbers = new Set(
+    resourcePools
+      .map((pool) => parseIntruderResourcePoolAutoNameIndex(pool.name))
+      .filter((value): value is number => value != null),
+  )
+
+  let nextIndex = 1
+  while (usedNumbers.has(nextIndex)) {
+    nextIndex += 1
+  }
+
+  return `${INTRUDER_RESOURCE_POOL_AUTO_NAME_PREFIX}${nextIndex}`
+}
+
+export function matchIntruderResourcePoolConfig(
+  pool: IntruderResourcePool,
+  value: Partial<IntruderResourcePoolConfigInput>,
+): boolean {
+  const normalizedPool = normalizeIntruderResourcePoolConfig(pool)
+  const normalizedValue = normalizeIntruderResourcePoolConfig(value)
+
+  return normalizedPool.concurrencyEnabled === normalizedValue.concurrencyEnabled
+    && normalizedPool.concurrency === normalizedValue.concurrency
+    && normalizedPool.delayEnabled === normalizedValue.delayEnabled
+    && normalizedPool.delayMs === normalizedValue.delayMs
+    && normalizedPool.randomDelayEnabled === normalizedValue.randomDelayEnabled
+    && normalizedPool.randomDelayMs === normalizedValue.randomDelayMs
+    && normalizedPool.delayIncrementEnabled === normalizedValue.delayIncrementEnabled
+    && normalizedPool.delayIncrementMs === normalizedValue.delayIncrementMs
+    && normalizedPool.autoThrottleEnabled === normalizedValue.autoThrottleEnabled
+    && normalizedPool.autoThrottleStatusCodes.length === normalizedValue.autoThrottleStatusCodes.length
+    && normalizedPool.autoThrottleStatusCodes.every((code, index) => code === normalizedValue.autoThrottleStatusCodes[index])
 }
 
 function normalizeIntruderResourcePool(pool: Partial<IntruderResourcePool>): IntruderResourcePool {
@@ -102,35 +195,78 @@ export function persistIntruderResourcePools(resourcePools: IntruderResourcePool
 
 export function createIntruderResourcePool(
   name: string,
-  options: Pick<
-    IntruderResourcePool,
-    | 'concurrencyEnabled'
-    | 'concurrency'
-    | 'delayEnabled'
-    | 'delayMs'
-    | 'randomDelayEnabled'
-    | 'randomDelayMs'
-    | 'delayIncrementEnabled'
-    | 'delayIncrementMs'
-    | 'autoThrottleEnabled'
-    | 'autoThrottleStatusCodes'
-  >,
+  options: IntruderResourcePoolConfigInput,
 ): IntruderResourcePool {
+  const normalized = normalizeIntruderResourcePoolConfig(options)
   return {
     id: createIntruderId('resource-pool'),
     name,
-    concurrencyEnabled: options.concurrencyEnabled,
-    concurrency: options.concurrency,
-    delayEnabled: options.delayEnabled,
-    delayMs: options.delayMs,
-    randomDelayEnabled: options.randomDelayEnabled,
-    randomDelayMs: options.randomDelayMs,
-    delayIncrementEnabled: options.delayIncrementEnabled,
-    delayIncrementMs: options.delayIncrementMs,
-    autoThrottleEnabled: options.autoThrottleEnabled,
-    autoThrottleStatusCodes: options.autoThrottleStatusCodes,
+    concurrencyEnabled: normalized.concurrencyEnabled,
+    concurrency: normalized.concurrency,
+    delayEnabled: normalized.delayEnabled,
+    delayMs: normalized.delayMs,
+    randomDelayEnabled: normalized.randomDelayEnabled,
+    randomDelayMs: normalized.randomDelayMs,
+    delayIncrementEnabled: normalized.delayIncrementEnabled,
+    delayIncrementMs: normalized.delayIncrementMs,
+    autoThrottleEnabled: normalized.autoThrottleEnabled,
+    autoThrottleStatusCodes: normalized.autoThrottleStatusCodes,
     builtIn: false,
   }
+}
+
+export function upsertIntruderResourcePoolEntry(
+  resourcePools: IntruderResourcePool[],
+  value: Partial<IntruderResourcePool> & Partial<IntruderResourcePoolConfigInput>,
+): {
+  pools: IntruderResourcePool[]
+  pool: IntruderResourcePool
+} {
+  const normalized = normalizeIntruderResourcePoolConfig(value)
+  const requestedName = String(value.name || '').trim()
+  const nextName = requestedName || buildIntruderResourcePoolAutoName(resourcePools, value.id)
+
+  if (value.id) {
+    const currentPool = resourcePools.find((pool) => pool.id === value.id)
+    if (currentPool && !currentPool.builtIn) {
+      const nextPool = {
+        ...createIntruderResourcePool(nextName, normalized),
+        id: currentPool.id,
+      }
+      return {
+        pools: [
+          ...resourcePools.filter((pool) => pool.id !== currentPool.id),
+          nextPool,
+        ],
+        pool: nextPool,
+      }
+    }
+  }
+
+  const matchedPool = resourcePools.find((pool) => matchIntruderResourcePoolConfig(pool, normalized))
+  if (matchedPool) {
+    return {
+      pools: resourcePools,
+      pool: matchedPool,
+    }
+  }
+
+  const nextPool = createIntruderResourcePool(nextName, normalized)
+  return {
+    pools: [...resourcePools, nextPool],
+    pool: nextPool,
+  }
+}
+
+function isIntruderResourcePoolAutoName(name: string): boolean {
+  return parseIntruderResourcePoolAutoNameIndex(name) != null
+}
+
+function parseIntruderResourcePoolAutoNameIndex(name: string): number | null {
+  const match = String(name).trim().match(/^资源池\s+(\d+)$/)
+  if (!match) return null
+  const value = Number.parseInt(match[1], 10)
+  return Number.isInteger(value) && value > 0 ? value : null
 }
 
 export function loadIntruderAttackTemplates(): IntruderAttackTemplate[] {

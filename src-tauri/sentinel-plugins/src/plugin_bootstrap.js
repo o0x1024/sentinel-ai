@@ -224,21 +224,21 @@ globalThis.Sentinel = {
     /**
      * Get words from a dictionary
      * @param {string} idOrName - Dictionary ID or name
-     * @param {number} [limit=10000] - Maximum number of words to return
+     * @param {number} [limit] - Maximum number of words to return. Omit for all words.
      * @returns {Promise<string[]>}
      */
     getWords: async (idOrName, limit) => {
-      return await Deno.core.ops.op_get_dictionary_words(idOrName, limit || null)
+      return await Deno.core.ops.op_get_dictionary_words(idOrName, limit ?? null)
     },
 
     /**
      * Get structured entries from a dictionary
      * @param {string} idOrName - Dictionary ID or name
-     * @param {number} [limit=10000]
+     * @param {number} [limit] - Maximum number of entries to return. Omit for all entries.
      * @returns {Promise<Array<{word: string, weight: number, category?: string, metadata?: any}>>}
      */
     getEntries: async (idOrName, limit) => {
-      return await Deno.core.ops.op_get_dictionary_entries(idOrName, limit || null)
+      return await Deno.core.ops.op_get_dictionary_entries(idOrName, limit ?? null)
     },
     
     /**
@@ -646,7 +646,9 @@ globalThis.fetch = async function (input, init = {}) {
   }
 
   const body = await serializeFetchBody(init.body)
-  const timeout = init.timeout || (activeProbeOptions ? activeProbeOptions.timeoutMs : 30000)
+  const timeout = activeProbeOptions
+    ? activeProbeOptions.timeoutMs
+    : (init.timeout || 30000)
   const redirect = init.redirect || 'follow'
   const maxRedirects =
     typeof init.maxRedirects === 'number' && Number.isFinite(init.maxRedirects)
