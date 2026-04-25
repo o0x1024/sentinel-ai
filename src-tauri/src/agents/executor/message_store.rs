@@ -1,11 +1,38 @@
 //! Message persistence helpers.
 
 use std::sync::Arc;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
 use sentinel_db::Database;
 
 use crate::agents::executor::types::ToolCallRecord;
+
+pub fn build_assistant_session_stats_metadata(
+    duration_ms: Option<i64>,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+) -> Option<Value> {
+    let duration_ms = duration_ms?;
+    let input_tokens = input_tokens?;
+    let output_tokens = output_tokens?;
+    if duration_ms <= 0 {
+        return None;
+    }
+
+    let duration_secs = duration_ms as f64 / 1000.0;
+    let total_tokens = input_tokens + output_tokens;
+
+    Some(json!({
+        "session_stats": {
+            "duration_ms": duration_ms,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "tokens_per_second": output_tokens as f64 / duration_secs,
+        }
+    }))
+}
 
 pub async fn save_assistant_message(
     app_handle: &AppHandle,
@@ -13,6 +40,7 @@ pub async fn save_assistant_message(
     content: &str,
     tool_calls: Option<&[ToolCallRecord]>,
     reasoning_content: Option<String>,
+    metadata: Option<Value>,
     persist_messages: bool,
     subagent_run_id: Option<&str>,
 ) {
@@ -45,7 +73,7 @@ pub async fn save_assistant_message(
             conversation_id: conversation_id.to_string(),
             role: "assistant".to_string(),
             content: content.to_string(),
-            metadata: None,
+            metadata: metadata.as_ref().and_then(|value| serde_json::to_string(value).ok()),
             token_count: Some(content.len() as i32),
             cost: None,
             tool_calls: tool_calls_json,
@@ -73,6 +101,7 @@ pub async fn save_assistant_message(
                     "execution_id": conversation_id,
                     "message_id": message_id,
                     "content": content,
+                    "metadata": metadata,
                     "reasoning_content": msg.reasoning_content,
                     "timestamp": msg.timestamp.timestamp_millis(),
                     "tool_calls": tool_calls,

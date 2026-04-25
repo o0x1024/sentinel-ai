@@ -1,9 +1,9 @@
 <template>
-  <div class="traffic-workbench flex h-[calc(100vh-var(--app-navbar-height,4rem))] flex-col px-3 py-3">
+  <div class="traffic-workbench flex h-[calc(100vh-var(--app-navbar-height,4rem))] flex-col px-2 py-2">
     <div ref="workspaceStageRef" class="relative min-h-0 flex-1">
-      <div class="grid h-full min-h-0 gap-3" :style="workbenchGridStyle">
-        <div ref="leftColumnRef" class="grid min-h-0 min-w-0 gap-3" :style="leftColumnStyle">
-          <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[30px] border border-base-300/70 shadow-[0_28px_72px_rgba(15,23,42,0.08)]">
+      <div class="grid h-full min-h-0 gap-2" :style="workbenchGridStyle">
+        <div ref="leftColumnRef" class="grid min-h-0 min-w-0 gap-2" :style="leftColumnStyle">
+          <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[18px] border border-base-300/70 shadow-[0_18px_44px_rgba(15,23,42,0.08)]">
             <TrafficHistoryWorkbench
               ref="proxyHistoryRef"
               class="h-full overflow-auto"
@@ -29,9 +29,9 @@
             class="min-h-0 h-full"
             :basket-count="basketItems.length"
             :control-intercept-count="controlInterceptCount"
-            :draft-count="workbenchState.counts.value.drafts"
-            :attack-workspace-count="workbenchState.counts.value.attackWorkspaces"
-            :replay-summary="replaySummary"
+            :repeater-history-count="workbenchState.counts.value.drafts"
+            :intruder-history-count="workbenchState.counts.value.attackWorkspaces"
+            :has-replay-history="hasReplayHistory"
             :running-attack-count="runningAttackCount"
             :layout-toggle-label="layoutToggleLabel"
             :layout-toggle-icon="layoutToggleIcon"
@@ -39,6 +39,7 @@
             @open-capture="openCaptureWorkbench"
             @open-repeater="openRepeaterWorkbench"
             @open-intruder="openIntruderWorkbench"
+            @clear-tool-history="clearToolHistory"
             @toggle-workbench-layout="toggleWorkbenchLayoutPreference"
             @toggle-intercept="toggleInterceptDrawer"
             @toggle-basket="toggleBasketDrawer"
@@ -53,8 +54,8 @@
           @mousedown="startWorkbenchPanelResize('history', $event)"
         ></div>
 
-        <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[30px] border border-base-300/70 shadow-[0_28px_72px_rgba(15,23,42,0.08)]">
-          <div class="h-full min-h-0 p-3">
+        <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[18px] border border-base-300/70 shadow-[0_18px_44px_rgba(15,23,42,0.08)]">
+          <div class="h-full min-h-0 p-2">
             <TrafficWorkbenchMainStage
               ref="mainStageRef"
               :workbench-open="workbenchOpen"
@@ -73,6 +74,7 @@
               @create-attack-workspace-from-repeater="handleCreateAttackWorkspaceFromRepeater"
               @repeater-tab-mode-changed="handleRepeaterTabModeChanged"
               @repeater-tab-stats-changed="handleRepeaterTabStatsChanged"
+              @intruder-workspace-stats-changed="handleIntruderWorkspaceStatsChanged"
               @switch-request-variant="handleSwitchActiveRequestVariant"
               @create-draft-from-intruder="handleCreateDraftFromIntruder"
               @open-compare-from-intruder="handleOpenCompareFromIntruder"
@@ -142,6 +144,7 @@ import TrafficWorkbenchMainStage from './workbench/components/TrafficWorkbenchMa
 import TrafficWorkbenchOverlays from './workbench/components/TrafficWorkbenchOverlays.vue'
 import TrafficWorkbenchSidebar from './workbench/components/TrafficWorkbenchSidebar.vue'
 import { useToast } from '@/composables/useToast'
+import { dialog } from '@/composables/useDialog'
 import type { HttpExchangeRequest } from './http/model'
 import type { ProxyRequest } from './proxyHistoryTypes'
 import type { TrafficAnalysisViewHandle } from './trafficAnalysisViewTypes'
@@ -222,6 +225,7 @@ const pendingIntruderWorkspaceId = ref<string | undefined>(undefined)
 const selectedHistoryRequest = ref<ProxyRequest | null>(null)
 const activeRequestContext = ref<TrafficWorkbenchRequestContext | null>(null)
 const repeaterEditedTabCount = ref(0)
+const intruderOpenWorkspaceCount = ref(0)
 const workbenchToolsMounted = ref(false)
 const {
   workbenchOpen,
@@ -299,6 +303,7 @@ const {
   layoutPreferenceStorageKey: WORKBENCH_LAYOUT_STORAGE_KEY,
 })
 const findingToastIds = new Set<string>()
+let hydrationPromise: Promise<void> | null = null
 
 const workbenchMetaMap: Record<
   WorkbenchTool,
@@ -307,38 +312,35 @@ const workbenchMetaMap: Record<
   capture: {
     title: t('trafficAnalysis.tabs.capture', '抓包'),
     shortTitle: t('trafficAnalysis.tabs.capture', '抓包'),
-    description: '同页查看网络抓包结果，不再单独切出流量分析工作台。',
+    description: t('trafficAnalysis.workbench.toolDescriptions.capture'),
   },
   repeater: {
     title: t('trafficAnalysis.tabs.repeater', '重放器'),
     shortTitle: t('trafficAnalysis.tabs.repeater', '重放器'),
-    description: '单条请求精修和重放只在需要时展开，不常驻占用主视图。',
+    description: t('trafficAnalysis.workbench.toolDescriptions.repeater'),
   },
   intruder: {
     title: t('trafficAnalysis.tabs.intruder', '爆破器'),
     shortTitle: t('trafficAnalysis.tabs.intruder', '爆破器'),
-    description: '批量化尝试收进底部工作台，避免把同屏密度拉高。',
+    description: t('trafficAnalysis.workbench.toolDescriptions.intruder'),
   },
   comparer: {
     title: t('trafficAnalysis.tabs.comparer', '对比器'),
     shortTitle: t('trafficAnalysis.tabs.comparer', '对比器'),
-    description: '只在确认差异时临时展开，看完后立即回到主工作流。',
+    description: t('trafficAnalysis.workbench.toolDescriptions.comparer'),
   },
   oast: {
     title: t('trafficAnalysis.tabs.oast', 'OAST'),
     shortTitle: t('trafficAnalysis.tabs.oast', 'OAST'),
-    description: '集中生成和跟踪 OAST token，不再分散在各个测试工具里。',
+    description: t('trafficAnalysis.workbench.toolDescriptions.oast'),
   },
 }
 
 const activeWorkbenchMeta = computed(() => workbenchMetaMap[activeWorkbenchTool.value])
-const replaySummary = computed(() => ({
-  total: workbenchState.replay.replayRuns.value.length,
-  running: workbenchState.replay.runningReplayCount.value,
-}))
 const runningAttackCount = computed(() =>
   workbenchState.attack.workspaces.value.filter(workspace => workspace.runState === 'running').length,
 )
+const hasReplayHistory = computed(() => workbenchState.replay.replayRuns.value.length > 0)
 
 const toolChips = computed(() => [
   {
@@ -353,14 +355,14 @@ const toolChips = computed(() => [
     label: t('trafficAnalysis.tabs.repeater', '重放器'),
     shortLabel: t('trafficAnalysis.tabs.repeater', '重放器'),
     icon: 'fas fa-redo',
-    count: repeaterEditedTabCount.value,
+    count: workbenchState.counts.value.drafts,
   },
   {
     tool: 'intruder' as const,
     label: t('trafficAnalysis.tabs.intruder', '爆破器'),
     shortLabel: t('trafficAnalysis.tabs.intruder', '爆破器'),
     icon: 'fas fa-crosshairs',
-    count: workbenchState.counts.value.attackWorkspaces,
+    count: intruderOpenWorkspaceCount.value,
   },
   {
     tool: 'comparer' as const,
@@ -480,7 +482,11 @@ function emitImmersiveFindingToast(finding: ScanFindingEventPayload) {
   toast.show({
     type: findingToastType(finding.severity),
     duration: 6000,
-    message: `[${finding.severity.toUpperCase()}] 发现漏洞: ${finding.summary} @ ${host}`,
+    message: t('trafficAnalysis.workbench.findingToast', {
+      severity: finding.severity.toUpperCase(),
+      summary: finding.summary,
+      host,
+    }),
   })
 }
 
@@ -489,21 +495,38 @@ function openWorkbenchTool(tool: WorkbenchTool) {
   workbenchToolsMounted.value = true
 }
 
-function handleOpenWorkbenchTool(tool: WorkbenchTool) {
+function hydratePersistence() {
+  if (!hydrationPromise) {
+    hydrationPromise = persistence.hydrate()
+  }
+  return hydrationPromise
+}
+
+async function ensurePersistenceReady() {
+  if (persistence.ready.value) {
+    return
+  }
+  await hydratePersistence()
+}
+
+async function handleOpenWorkbenchTool(tool: WorkbenchTool) {
+  if (tool === 'repeater' || tool === 'intruder') {
+    await ensurePersistenceReady()
+  }
   clearSessionCount(tool)
   openWorkbenchTool(tool)
 }
 
-function openCaptureWorkbench() {
-  handleOpenWorkbenchTool('capture')
+async function openCaptureWorkbench() {
+  await handleOpenWorkbenchTool('capture')
 }
 
-function openRepeaterWorkbench() {
-  handleOpenWorkbenchTool('repeater')
+async function openRepeaterWorkbench() {
+  await handleOpenWorkbenchTool('repeater')
 }
 
-function openIntruderWorkbench() {
-  handleOpenWorkbenchTool('intruder')
+async function openIntruderWorkbench() {
+  await handleOpenWorkbenchTool('intruder')
 }
 
 function closeWorkbench() {
@@ -561,7 +584,7 @@ function buildActiveRequestContext(
     variant,
     hasEditedVariant: Boolean(request.was_edited),
     mode,
-    modeLabel: mode === 'draft' ? '草稿' : mode === 'workspace' ? '工作区' : '预览',
+    modeLabel: resolveRequestContextModeLabel(mode),
   }
 }
 
@@ -606,12 +629,28 @@ function handleRepeaterTabModeChanged(state: RepeaterActiveTabState) {
   activeRequestContext.value = {
     ...activeRequestContext.value,
     mode,
-    modeLabel: mode === 'draft' ? '草稿' : '预览',
+    modeLabel: resolveRequestContextModeLabel(mode),
+  }
+}
+
+function resolveRequestContextModeLabel(mode: TrafficWorkbenchRequestContext['mode']) {
+  switch (mode) {
+    case 'draft':
+      return t('trafficAnalysis.workbench.mainStage.modeDraft')
+    case 'workspace':
+      return t('trafficAnalysis.workbench.mainStage.modeWorkspace')
+    case 'preview':
+    default:
+      return t('trafficAnalysis.workbench.mainStage.modePreview')
   }
 }
 
 function handleRepeaterTabStatsChanged(stats: RepeaterTabStats) {
   repeaterEditedTabCount.value = stats.editedTabCount
+}
+
+function handleIntruderWorkspaceStatsChanged(stats: { openWorkspaceCount: number }) {
+  intruderOpenWorkspaceCount.value = stats.openWorkspaceCount
 }
 
 function openTrafficPluginsPanel() {
@@ -624,6 +663,40 @@ function removeBasketItem(id: string) {
 
 function clearBasket() {
   clear()
+}
+
+async function clearToolHistory() {
+  await ensurePersistenceReady()
+  const total = workbenchState.counts.value.drafts
+    + workbenchState.counts.value.attackWorkspaces
+    + workbenchState.replay.replayRuns.value.length
+  if (total === 0) {
+    return
+  }
+
+  const confirmed = await dialog.confirm({
+    title: t('trafficAnalysis.workbench.sidebar.clearToolHistoryConfirmTitle'),
+    message: t('trafficAnalysis.workbench.sidebar.clearToolHistoryConfirmMessage', { count: total }),
+    confirmText: t('trafficAnalysis.workbench.sidebar.clearToolHistoryConfirm'),
+    variant: 'warning',
+  })
+  if (!confirmed) {
+    return
+  }
+
+  workbenchState.drafts.resetDraftStore()
+  workbenchState.attack.resetAttackWorkspaceStore()
+  workbenchState.replay.resetReplayStore()
+  workbenchState.selection.clearSelection()
+  activeRequestContext.value = null
+  pendingRepeaterDraftId.value = undefined
+  pendingRepeaterRequest.value = undefined
+  pendingIntruderWorkspaceId.value = undefined
+  pendingIntruderRequest.value = undefined
+  repeaterEditedTabCount.value = 0
+  intruderOpenWorkspaceCount.value = 0
+  await persistence.persist()
+  dialog.toast.success(t('trafficAnalysis.workbench.sidebar.clearToolHistorySuccess'))
 }
 
 async function handleAddFilterRule(rule: FilterRule) {
@@ -706,16 +779,36 @@ function handleWindowKeydown(event: KeyboardEvent) {
 let unlistenProxyRequest: UnlistenFn | null = null
 let unlistenScanFinding: UnlistenFn | null = null
 
+async function createDraftFromRequest(request: HttpExchangeRequest) {
+  await ensurePersistenceReady()
+  handleCreateDraftFromHistory(request)
+}
+
+async function createAttackWorkspaceFromRequest(request: HttpExchangeRequest) {
+  await ensurePersistenceReady()
+  handleCreateAttackWorkspaceFromHistory(request)
+}
+
+async function openCompare(payload: Parameters<typeof handleOpenCompareFromHistory>[0]) {
+  await ensurePersistenceReady()
+  handleOpenCompareFromHistory(payload)
+}
+
+async function openDraftCompare(payload: Parameters<typeof handleOpenDraftCompareFromHistory>[0]) {
+  await ensurePersistenceReady()
+  handleOpenDraftCompareFromHistory(payload)
+}
+
 defineExpose<TrafficAnalysisViewHandle>({
-  createDraftFromRequest: handleCreateDraftFromHistory,
-  createAttackWorkspaceFromRequest: handleCreateAttackWorkspaceFromHistory,
-  openCompare: handleOpenCompareFromHistory,
-  openDraftCompare: handleOpenDraftCompareFromHistory,
+  createDraftFromRequest,
+  createAttackWorkspaceFromRequest,
+  openCompare,
+  openDraftCompare,
   openHistoryRequest,
 })
 
 onMounted(() => {
-  void persistence.hydrate()
+  void hydratePersistence()
   if (immersiveDrillModeEnabled.value) {
     showImmersiveTrafficHistory()
   }
@@ -774,8 +867,8 @@ watchEffect(() => {
     trafficPluginsOpen: trafficPluginsOpen.value,
     basketOpen: basketOpen.value,
     captureCount: sessions.value.capture.count,
-    repeaterCount: repeaterEditedTabCount.value,
-    intruderCount: workbenchState.counts.value.attackWorkspaces,
+    repeaterCount: workbenchState.counts.value.drafts,
+    intruderCount: intruderOpenWorkspaceCount.value,
     comparerCount: sessions.value.comparer.count,
     oastCount: sessions.value.oast.count,
     controlInterceptCount: controlInterceptCount.value,

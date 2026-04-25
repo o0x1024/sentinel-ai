@@ -45,6 +45,7 @@ describe('ProxyRepeater', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('clears the response content while keeping the response search input mounted during a new request', async () => {
@@ -236,6 +237,49 @@ describe('ProxyRepeater', () => {
     wrapper.unmount()
   })
 
+  it('opens all persisted drafts and focuses the active draft when mounted after workbench hydration', async () => {
+    const workbenchState = useTrafficWorkbenchStore()
+    const draft = workbenchState.drafts.createDraftFromExchangeRequest({
+      request: createInitialHttpExchangeRequest(),
+      source: { kind: 'repeater', label: '重放器' },
+      title: 'persisted draft',
+    })
+    workbenchState.drafts.createDraftFromExchangeRequest({
+      request: {
+        ...createInitialHttpExchangeRequest(),
+        absoluteUrl: 'https://example.com/api/second',
+        request: {
+          ...createInitialHttpExchangeRequest().request,
+          target: '/api/second',
+        },
+      },
+      source: { kind: 'repeater', label: '重放器' },
+      title: 'second persisted draft',
+    })
+    workbenchState.drafts.selectDraft(draft.id)
+
+    const wrapper = mount(ProxyRepeater, {
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="request-content"]').text()).toContain('GET /api/test HTTP/1.1')
+    expect(wrapper.get('[data-testid="request-content"]').text()).toContain('Host: example.com')
+    expect(wrapper.emitted('tabStatsChanged')?.at(-1)?.[0]).toEqual({ editedTabCount: 2 })
+
+    wrapper.unmount()
+  })
+
   it('emits edited tab count after the user edits a preview request', async () => {
     const wrapper = mount(ProxyRepeater, {
       props: {
@@ -300,6 +344,94 @@ describe('ProxyRepeater', () => {
 
     const statsEvents = wrapper.emitted('tabStatsChanged')
     expect(statsEvents?.at(-1)?.[0]).toEqual({ editedTabCount: 1 })
+
+    wrapper.unmount()
+  })
+
+  it('keeps local request deletions when the active draft is reselected after sending', async () => {
+    const workbenchState = useTrafficWorkbenchStore()
+
+    global.testUtils.mockInvoke.mockResolvedValueOnce({
+      success: true,
+      data: createReplayResult('response body', 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nresponse body'),
+    })
+
+    const wrapper = mount(ProxyRepeater, {
+      props: {
+        initialRequest: createInitialHttpExchangeRequest(),
+      },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await flushPromises()
+    await wrapper.get('button.btn-primary.btn-sm').trigger('click')
+    await flushPromises()
+
+    const draftId = workbenchState.drafts.activeDraftId.value
+    expect(draftId).toBeTruthy()
+
+    const requestSurface = wrapper.findAllComponents(HttpMessageSurfaceStub).find(component =>
+      component.attributes('data-state-key')?.includes(':request:pretty'),
+    )
+    expect(requestSurface).toBeTruthy()
+
+    requestSurface!.vm.$emit(
+      'update:modelValue',
+      'GET /api/tes HTTP/1.1\r\nHost: example.com\r\n\r\n',
+    )
+    workbenchState.drafts.selectDraft(null)
+    workbenchState.drafts.selectDraft(draftId)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="request-content"]').text()).toContain('GET /api/tes HTTP/1.1')
+    expect(wrapper.get('[data-testid="request-content"]').text()).not.toContain('GET /api/test HTTP/1.1')
+
+    wrapper.unmount()
+  })
+
+  it('renders the first replay response with the real HTTP surface', async () => {
+    const ResizeObserverMock = vi.fn(() => ({
+      observe: vi.fn(),
+      disconnect: vi.fn(),
+      unobserve: vi.fn(),
+    }))
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    global.testUtils.mockInvoke.mockResolvedValueOnce({
+      success: true,
+      data: createReplayResult('response body', 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nresponse body'),
+    })
+
+    const wrapper = mount(ProxyRepeater, {
+      props: {
+        initialRequest: createInitialHttpExchangeRequest(),
+      },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+      attachTo: document.body,
+    })
+
+    await flushPromises()
+    await wrapper.get('button.btn-primary.btn-sm').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('200')
 
     wrapper.unmount()
   })

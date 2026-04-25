@@ -1,6 +1,6 @@
 <template>
-  <section class="workbench-main-stage flex h-full min-h-0 flex-col overflow-hidden rounded-[26px] border border-base-300/70">
-    <div class="workbench-header-surface border-b border-base-300/70 px-4 py-2.5">
+  <section class="workbench-main-stage flex h-full min-h-0 flex-col overflow-hidden rounded-[16px] border border-base-300/70">
+    <div class="workbench-header-surface border-b border-base-300/70 px-3 py-2">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="min-w-0 flex-1">
           <div class="flex min-w-0 flex-wrap items-center gap-2">
@@ -12,7 +12,7 @@
             </span>
           </div>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="flex flex-wrap items-center gap-1.5">
           <button
             v-for="chip in toolChips"
             :key="`main-${chip.tool}`"
@@ -24,60 +24,7 @@
             @click="$emit('openTool', chip.tool)"
           >
             <span>{{ chip.shortLabel }}</span>
-            <span v-if="chip.count > 0" class="badge badge-xs badge-primary">{{ chip.count }}</span>
-          </button>
-        </div>
-      </div>
-
-      <div
-        v-if="activeRequestContext"
-        class="mt-2 flex min-w-0 flex-wrap items-center gap-2 rounded-2xl border border-base-300/70 bg-base-100/75 px-3 py-2 text-xs"
-      >
-        <span class="rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary">
-          {{ activeRequestContext.modeLabel }}
-        </span>
-        <span class="rounded-full bg-base-200 px-2 py-0.5 text-base-content/60">
-          {{ activeRequestContext.sourceLabel }}
-        </span>
-        <span class="badge badge-sm font-mono">{{ activeRequestContext.method }}</span>
-        <span
-          v-if="activeRequestContext.statusCode !== null"
-          class="badge badge-sm"
-          :class="statusBadgeClass(activeRequestContext.statusCode)"
-        >
-          {{ activeRequestContext.statusCode }}
-        </span>
-        <span class="min-w-0 flex-1 truncate font-mono text-base-content/75">
-          {{ activeRequestContext.host }}{{ activeRequestContext.path }}
-        </span>
-        <span
-          v-if="activeRequestContext.mode === 'preview'"
-          class="text-[11px] text-base-content/45"
-        >
-          编辑或发送后自动保存为草稿
-        </span>
-        <div
-          v-if="activeRequestContext.hasEditedVariant"
-          class="join"
-          aria-label="请求版本"
-        >
-          <button
-            type="button"
-            class="btn join-item btn-xs"
-            :class="activeRequestContext.variant === 'original' ? 'btn-primary' : 'btn-ghost'"
-            :disabled="activeRequestContext.variant === 'original'"
-            @click="$emit('switchRequestVariant', 'original')"
-          >
-            原始
-          </button>
-          <button
-            type="button"
-            class="btn join-item btn-xs"
-            :class="activeRequestContext.variant === 'edited' ? 'btn-warning' : 'btn-ghost'"
-            :disabled="activeRequestContext.variant === 'edited'"
-            @click="$emit('switchRequestVariant', 'edited')"
-          >
-            编辑后
+            <span v-if="chip.showCount !== false && chip.count > 0" class="badge badge-xs badge-primary">{{ chip.count }}</span>
           </button>
         </div>
       </div>
@@ -95,7 +42,7 @@
           {{ t('trafficAnalysis.workbench.mainStage.idleTitle', '从历史记录选择请求进行预览') }}
         </h4>
         <p class="max-w-md text-sm text-base-content/55">
-          {{ t('trafficAnalysis.workbench.mainStage.idleDescription', '编辑请求内容或发送请求后会自动保存为重放器草稿；发送到爆破器请在历史记录或预览中右键操作。') }}
+          {{ t('trafficAnalysis.workbench.mainStage.idleDescription', '编辑请求内容或发送请求后会自动保存到重放器历史；发送到爆破器会进入爆破器历史。') }}
         </p>
       </div>
 
@@ -121,6 +68,7 @@
           @createDraft="$emit('createDraftFromIntruder', $event)"
           @openCompare="$emit('openCompareFromIntruder', $event)"
           @openDraftCompare="$emit('openDraftCompareFromIntruder', $event)"
+          @workspaceStatsChanged="$emit('intruderWorkspaceStatsChanged', $event)"
         />
         <ProxyComparer
           v-show="activeWorkbenchTool === 'comparer'"
@@ -176,6 +124,7 @@ defineProps<{
     tool: WorkbenchTool
     shortLabel: string
     count: number
+    showCount?: boolean
   }>
   pendingRepeaterRequest?: HttpExchangeRequest
   pendingRepeaterDraftId?: string
@@ -195,6 +144,7 @@ defineEmits<{
   (e: 'createDraftFromIntruder', request: HttpExchangeRequest): void
   (e: 'openCompareFromIntruder', payload: TrafficComparePayload): void
   (e: 'openDraftCompareFromIntruder', payload: TrafficComparerDraftRequestInput): void
+  (e: 'intruderWorkspaceStatsChanged', stats: { openWorkspaceCount: number }): void
   (e: 'createDraftFromComparer', request: HttpExchangeRequest): void
   (e: 'openProxySettings'): void
   (e: 'openHistoryRequestFromOast', requestId: number): void
@@ -203,14 +153,6 @@ defineEmits<{
 const repeaterRef = ref<InstanceType<typeof ProxyRepeater> | null>(null)
 const intruderRef = ref<InstanceType<typeof ProxyIntruder> | null>(null)
 const comparerRef = ref<InstanceType<typeof ProxyComparer> | null>(null)
-
-function statusBadgeClass(statusCode: number) {
-  if (statusCode >= 200 && statusCode < 300) return 'badge-success'
-  if (statusCode >= 300 && statusCode < 400) return 'badge-info'
-  if (statusCode >= 400 && statusCode < 500) return 'badge-warning'
-  if (statusCode >= 500) return 'badge-error'
-  return 'badge-ghost'
-}
 
 function hasRepeater() {
   return Boolean(repeaterRef.value)

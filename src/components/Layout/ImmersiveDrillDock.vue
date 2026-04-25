@@ -3,10 +3,8 @@
     ref="toolbarRef"
     class="immersive-drill-toolbar fixed z-[80]"
     :style="toolbarStyle"
-    @mouseenter="setToolbarHovering(true)"
-    @mouseleave="setToolbarHovering(false)"
     @focusin="setToolbarHovering(true)"
-    @focusout="setToolbarHovering(false)"
+    @focusout="handleToolbarFocusOut"
     @keydown="handleToolbarKeydown"
   >
     <div
@@ -16,28 +14,39 @@
       :style="snapPreviewStyle"
     ></div>
 
-    <div
+    <button
       v-if="dockState.side"
-      class="toolbar-edge-glow absolute top-2.5 bottom-2.5 w-1 rounded-full"
-      :class="[
-        dockState.side === 'left' ? 'left-0' : 'right-0',
-        shouldCollapseToEdge ? 'opacity-100' : 'opacity-45',
-      ]"
-    ></div>
+      type="button"
+      class="toolbar-collapsed-trigger absolute flex h-11 w-11 items-center justify-center border border-primary/18 bg-base-100/92 text-primary shadow-xl shadow-base-300/35 backdrop-blur-xl transition-all duration-200 hover:border-primary/35 hover:bg-base-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100"
+      :class="collapsedTriggerClass"
+      :style="collapsedTriggerStyle"
+      :title="expandToolbarLabel"
+      :aria-label="expandToolbarLabel"
+      :aria-expanded="!shouldCollapseToEdge"
+      @mouseenter="setToolbarHovering(true)"
+      @focus="expandCollapsedToolbar(true)"
+      @click="expandCollapsedToolbar(true)"
+    >
+      <i class="fas fa-crosshairs text-sm"></i>
+    </button>
 
     <div
       ref="panelRef"
       role="toolbar"
       aria-orientation="vertical"
       :aria-label="title"
-      class="flex flex-col items-center gap-1.5 rounded-[1.6rem] border border-base-300/70 bg-base-100/92 px-1.5 py-2.5 shadow-2xl backdrop-blur-xl"
+      class="toolbar-panel flex flex-col items-center gap-1.5 rounded-[1.6rem] border border-base-300/70 bg-base-100/92 px-1.5 py-2.5 shadow-2xl backdrop-blur-xl"
       :class="[
         dragState.isDragging ? 'select-none shadow-primary/10' : '',
         dockState.side ? 'ring-1 ring-base-300/50' : '',
+        panelTransformOriginClass,
       ]"
       :style="panelStyle"
+      @mouseenter="setToolbarHovering(true)"
+      @mouseleave="setToolbarHovering(false)"
     >
       <button
+        ref="dragHandleRef"
         type="button"
         class="drag-handle group relative flex h-9 w-9 cursor-grab items-center justify-center rounded-xl bg-primary/12 text-primary transition-all duration-200 hover:bg-primary/18 hover:shadow-lg hover:shadow-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 active:cursor-grabbing active:scale-[0.98]"
         :title="title"
@@ -50,7 +59,7 @@
         <span class="drag-grip" aria-hidden="true">
           <span v-for="index in 6" :key="`drag-grip-${index}`" class="drag-grip-dot"></span>
         </span>
-          <i class="fas fa-crosshairs text-sm"></i>
+        <i class="fas fa-crosshairs text-sm"></i>
       </button>
 
       <nav v-if="showTrafficWorkbenchControls" class="flex flex-col gap-1.5">
@@ -103,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, type CSSProperties } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { setImmersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
@@ -157,6 +166,7 @@ const route = useRoute()
 const router = useRouter()
 const toolbarRef = ref<HTMLElement | null>(null)
 const panelRef = ref<HTMLElement | null>(null)
+const dragHandleRef = ref<HTMLButtonElement | null>(null)
 const {
   workbenchOpen,
   activeWorkbenchTool,
@@ -175,6 +185,9 @@ const {
 
 const title = computed(() => t('common.immersiveDrillMode', '沉浸式挖洞模式'))
 const exitLabel = computed(() => t('common.exitImmersiveDrillMode', '退出挖洞模式'))
+const expandToolbarLabel = computed(() =>
+  t('common.expandImmersiveDrillToolbar', '展开沉浸式挖洞模式工具条'),
+)
 const toolbarDragHandleShortcuts =
   'ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight Home End PageUp PageDown'
 
@@ -182,8 +195,8 @@ const TOOLBAR_POSITION_STORAGE_KEY = 'sentinel:immersive-drill-toolbar-position:
 const TOOLBAR_VIEWPORT_MARGIN = 14
 const TOOLBAR_DOCK_OFFSET = 2
 const TOOLBAR_SNAP_THRESHOLD = 20
-const TOOLBAR_PEEK_WIDTH = 8
 const TOOLBAR_MAGNETIC_THRESHOLD = 88
+const TOOLBAR_COLLAPSE_DELAY = 140
 const TOOLBAR_KEYBOARD_STEP = 18
 const TOOLBAR_KEYBOARD_FAST_STEP = 54
 
@@ -217,6 +230,8 @@ const dragState = reactive({
   frameId: 0,
 })
 
+let collapseTimerId: number | null = null
+
 const shouldCollapseToEdge = computed(
   () => !dragState.isDragging && !!dockState.side && !dockState.hovering,
 )
@@ -240,6 +255,28 @@ const tooltipDockClass = computed(() =>
     : 'toolbar-label-right right-full mr-3 group-hover:translate-x-0',
 )
 
+const collapsedTriggerClass = computed(() =>
+  dockState.side === 'left'
+    ? 'left-0 rounded-r-2xl rounded-l-md'
+    : 'right-0 rounded-l-2xl rounded-r-md',
+)
+
+const panelTransformOriginClass = computed(() =>
+  dockState.side === 'left' ? 'origin-left' : 'origin-right',
+)
+
+const collapsedTriggerStyle = computed<CSSProperties>(() => ({
+  opacity: shouldCollapseToEdge.value ? 1 : 0,
+  pointerEvents: shouldCollapseToEdge.value ? 'auto' : 'none',
+  top: '0px',
+  transform: shouldCollapseToEdge.value
+    ? 'translate3d(0, 0, 0) scale(1)'
+    : `translate3d(${dockState.side === 'left' ? '-8px' : '8px'}, 0, 0) scale(0.92)`,
+  transition: dragState.isDragging
+    ? 'none'
+    : 'opacity 180ms cubic-bezier(0.22, 1, 0.36, 1), transform 240ms cubic-bezier(0.22, 1, 0.36, 1)',
+}))
+
 const getPanelWidth = () => panelRef.value?.offsetWidth ?? 52
 
 const getPanelHeight = () => panelRef.value?.offsetHeight ?? 228
@@ -254,10 +291,16 @@ const toolbarStyle = computed(() => {
   }
 })
 
-const panelStyle = computed(() => ({
-  transform: buildToolbarTransform(),
-  transition: dragState.isDragging ? 'none' : 'transform 180ms ease, box-shadow 180ms ease',
-  willChange: 'transform',
+const panelStyle = computed<CSSProperties>(() => ({
+  opacity: shouldCollapseToEdge.value ? '0' : '1',
+  pointerEvents: shouldCollapseToEdge.value ? 'none' : 'auto',
+  transform: shouldCollapseToEdge.value
+    ? `translate3d(${dockState.side === 'left' ? '-10px' : '10px'}, 0, 0) scale(0.94)`
+    : 'translate3d(0, 0, 0) scale(1)',
+  transition: dragState.isDragging
+    ? 'none'
+    : 'opacity 180ms cubic-bezier(0.22, 1, 0.36, 1), transform 240ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 240ms cubic-bezier(0.22, 1, 0.36, 1)',
+  willChange: 'opacity, transform',
 }))
 
 const toggleSecurityCenter = () => {
@@ -448,24 +491,53 @@ const announceToolbarPosition = () => {
   announceToolbar(buildImmersiveFloatingPositionAnnouncement(title.value, dockState.side, position))
 }
 
-function buildToolbarTransform() {
-  if (!shouldCollapseToEdge.value || !dockState.side) {
-    return 'translate3d(0, 0, 0)'
+const clearCollapseTimer = () => {
+  if (collapseTimerId === null) {
+    return
   }
 
-  const width = getPanelWidth()
-  const hiddenOffset = Math.max(0, width - TOOLBAR_PEEK_WIDTH)
-  const direction = dockState.side === 'left' ? -1 : 1
-  return `translate3d(${direction * hiddenOffset}px, 0, 0)`
+  window.clearTimeout(collapseTimerId)
+  collapseTimerId = null
 }
 
 const setToolbarHovering = (hovering: boolean) => {
   if (dragState.isDragging) {
+    clearCollapseTimer()
     dockState.hovering = false
     return
   }
 
-  dockState.hovering = hovering
+  if (hovering) {
+    clearCollapseTimer()
+    dockState.hovering = true
+    return
+  }
+
+  clearCollapseTimer()
+  collapseTimerId = window.setTimeout(() => {
+    dockState.hovering = false
+    collapseTimerId = null
+  }, TOOLBAR_COLLAPSE_DELAY)
+}
+
+const expandCollapsedToolbar = (focusHandle = false) => {
+  setToolbarHovering(true)
+  if (!focusHandle) {
+    return
+  }
+
+  void nextTick(() => {
+    dragHandleRef.value?.focus()
+  })
+}
+
+const handleToolbarFocusOut = (event: FocusEvent) => {
+  const nextFocusedElement = event.relatedTarget as Node | null
+  if (nextFocusedElement && toolbarRef.value?.contains(nextFocusedElement)) {
+    return
+  }
+
+  setToolbarHovering(false)
 }
 
 const clampPosition = (x: number, y: number): ToolbarPosition => {
@@ -688,6 +760,7 @@ const startDrag = (event: PointerEvent) => {
   dragState.pointerOffsetY = event.clientY - bounds.top
   dragState.pendingX = position.x
   dragState.pendingY = position.y
+  clearCollapseTimer()
   dockState.hovering = false
   dockState.side = null
 
@@ -804,6 +877,7 @@ onBeforeUnmount(() => {
   if (dragState.frameId) {
     window.cancelAnimationFrame(dragState.frameId)
   }
+  clearCollapseTimer()
   window.removeEventListener('pointermove', handlePointerMove)
   window.removeEventListener('pointerup', handlePointerUp)
   window.removeEventListener('pointercancel', handlePointerCancel)
@@ -814,6 +888,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .immersive-drill-toolbar {
+  pointer-events: none;
+}
+
+.toolbar-panel,
+.toolbar-collapsed-trigger {
   pointer-events: auto;
 }
 
@@ -829,19 +908,6 @@ onBeforeUnmount(() => {
   box-shadow:
     0 0 0 1px rgb(59 130 246 / 0.18),
     0 0 22px rgb(59 130 246 / 0.45);
-  pointer-events: none;
-}
-
-.toolbar-edge-glow {
-  background:
-    linear-gradient(
-      180deg,
-      rgb(59 130 246 / 0.06) 0%,
-      rgb(59 130 246 / 0.82) 50%,
-      rgb(59 130 246 / 0.06) 100%
-    );
-  box-shadow: 0 0 18px rgb(59 130 246 / 0.35);
-  transition: opacity 180ms ease;
   pointer-events: none;
 }
 

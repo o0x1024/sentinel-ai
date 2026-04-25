@@ -87,6 +87,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { isDarkHttpEditorTheme } from '@/components/http-editor/httpEditorTheme'
+import { setSessionStorageItem } from '@/utils/browserStorage'
 import {
   TRAFFIC_MESSAGE_TEXT_LINE_HEIGHT,
   useTrafficDisplaySettings,
@@ -351,11 +352,7 @@ function saveScrollStateForKey(stateKey: string) {
     if (!oldestKey) break
     scrollStateCache.delete(oldestKey)
   }
-  try {
-    window.sessionStorage.setItem(`${STORAGE_PREFIX}${stateKey}`, JSON.stringify(state))
-  } catch {
-    // Ignore storage failures.
-  }
+  setSessionStorageItem(`${STORAGE_PREFIX}${stateKey}`, JSON.stringify(state))
 }
 
 function saveScrollState() {

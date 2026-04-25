@@ -53,14 +53,32 @@
       <div
         v-for="col in visibleColumns"
         :key="col.id"
-        class="group relative flex items-center"
+        class="group relative flex items-center overflow-visible"
+        :data-proxy-history-column-id="col.id"
+        :class="{
+          'select-none': true,
+          'opacity-50': draggedColumnId === col.id,
+          'column-drop-before': columnDropTargetId === col.id && columnDropPosition === 'before',
+          'column-drop-after': columnDropTargetId === col.id && columnDropPosition === 'after',
+        }"
         :style="{ width: col.width + 'px', minWidth: col.minWidth + 'px' }"
       >
+        <div
+          v-if="columnDropTargetId === col.id"
+          class="pointer-events-none absolute inset-0 z-[2] rounded-sm bg-primary/10 ring-1 ring-inset ring-primary/25"
+        ></div>
         <button
           type="button"
-          class="flex min-w-0 flex-1 items-center gap-1 px-1.5 py-0 text-left"
+          class="relative z-[1] flex min-w-0 flex-1 items-center gap-1 px-1.5 py-0 text-left"
           @click="toggleSort(col.id)"
         >
+          <span
+            class="inline-flex h-full shrink-0 cursor-grab items-center px-0.5 text-base-content/35 active:cursor-grabbing"
+            @click.stop.prevent
+            @pointerdown.stop.prevent="startColumnDrag(col.id, $event)"
+          >
+            <i class="fas fa-grip-vertical text-[10px]"></i>
+          </span>
           <span class="truncate">{{ col.label }}</span>
           <i
             v-if="sortState.columnId === col.id"
@@ -71,7 +89,20 @@
             class="fas fa-sort text-[10px] text-base-content/30 opacity-0 transition-opacity group-hover:opacity-100"
           ></i>
         </button>
-        <div class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/25" @mousedown.stop="startResize(col.id, $event)"></div>
+        <div
+          v-if="columnDropTargetId === col.id"
+          class="pointer-events-none absolute inset-y-[-3px] z-[4] flex w-3 flex-col items-center"
+          :class="columnDropPosition === 'before' ? '-left-1.5' : '-right-1.5'"
+        >
+          <div class="history-column-drop-cap"></div>
+          <div class="history-column-drop-marker"></div>
+          <div class="history-column-drop-cap"></div>
+        </div>
+        <div
+          class="absolute right-0 top-0 bottom-0 z-[5] w-1 cursor-col-resize hover:bg-primary/25"
+          draggable="false"
+          @mousedown.stop="startResize(col.id, $event)"
+        ></div>
       </div>
     </div>
     <div v-for="item in visibleRows" :key="item.data.id" class="absolute left-0 right-0 flex cursor-pointer table-row-text hover:bg-base-200/60" :class="{ 'bg-primary/10': selectedRequest?.id === item.data.id, 'bg-accent/10': isMultiSelectMode && isRequestSelected(item.data), 'bg-error/10 hover:bg-error/20': item.data.status_code === 0 }" :style="{ top: (item.offset + headerHeight) + 'px', height: itemHeight + 'px', minWidth: 'max-content' }" @click="isMultiSelectMode ? toggleSelectRequest(item.data) : (item.data.status_code === 0 ? showCertificateError(item.data) : selectRequest(item.data))" @contextmenu.prevent="showContextMenu($event, item.data)">
@@ -110,6 +141,7 @@
 
 <script setup lang="ts">
 import type { Column, ProxyHistoryProtocolFilter, ProxyHistorySortState, ProxyHistoryWsTab, ProxyRequest, VirtualItem, WebSocketConnection, WebSocketMessage } from './proxyHistoryTypes'
+import type { ProxyHistoryColumnDropPosition } from './proxyHistoryTableSupport'
 type VisibleRow = VirtualItem & {
   cellValues: Record<string, string>
 }
@@ -138,6 +170,10 @@ defineProps<{
   sortState: ProxyHistorySortState
   toggleSort: (columnId: string) => void
   startResize: (columnId: string, event: MouseEvent) => void
+  draggedColumnId: string | null
+  columnDropTargetId: string | null
+  columnDropPosition: ProxyHistoryColumnDropPosition | null
+  startColumnDrag: (columnId: string, event: PointerEvent) => void
   visibleRows: VisibleRow[]
   selectedRequest: ProxyRequest | null
   isRequestSelected: (request: ProxyRequest) => boolean
@@ -157,6 +193,24 @@ defineProps<{
 .table-row-text {
   font-size: 11px;
   line-height: 1.15;
+}
+
+.history-column-drop-marker {
+  flex: 1;
+  width: 3px;
+  border-radius: 999px;
+  background: hsl(var(--p));
+  box-shadow:
+    0 0 0 1px hsl(var(--b1)),
+    0 0 0 2px hsl(var(--p) / 0.18);
+}
+
+.history-column-drop-cap {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: hsl(var(--p));
+  box-shadow: 0 0 0 2px hsl(var(--b1));
 }
 
 .history-pill {

@@ -1,8 +1,8 @@
 import { parseStoredHeaderEntries } from '../../http/headers'
-import type { HttpExchangeRequest } from '../../http/model'
+import type { HttpExchangeRequest, HttpReplayResponse } from '../../http/model'
 import { endpointFromUrl } from '../../http/url'
 import { normalizeProxyHistoryHttpVersion } from '../../proxyHistoryHttpSupport'
-import { formatResponseRaw } from '../../proxyHistoryFormattingSupport'
+import { formatResponseRaw, getHarStatusText } from '../../proxyHistoryFormattingSupport'
 import type { ProxyRequest } from '../../proxyHistoryTypes'
 import type { TrafficWorkbenchSource } from '../../trafficWorkbenchTypes'
 import type { HistorySnapshot, HistorySnapshotVariant } from '../model/historySnapshot'
@@ -41,15 +41,49 @@ function resolveVariantStatusCode(request: ProxyRequest, variant: HistorySnapsho
   return Number.isFinite(statusCode) ? statusCode : null
 }
 
+function resolveVariantResponseHeaders(request: ProxyRequest, variant: HistorySnapshotVariant) {
+  return variant === 'edited' && request.was_edited && request.edited_response_headers
+    ? request.edited_response_headers
+    : request.response_headers
+}
+
+function resolveVariantResponseBody(request: ProxyRequest, variant: HistorySnapshotVariant) {
+  return variant === 'edited' && request.was_edited && request.edited_response_body
+    ? request.edited_response_body
+    : request.response_body
+}
+
+function buildPreviewResponse(
+  request: ProxyRequest,
+  variant: HistorySnapshotVariant,
+): HttpReplayResponse | undefined {
+  const statusCode = resolveVariantStatusCode(request, variant)
+  if (statusCode === null) {
+    return undefined
+  }
+
+  return {
+    statusCode,
+    versionObserved: normalizeProxyHistoryHttpVersion(request.http_version_observed) as HttpReplayResponse['versionObserved'],
+    statusText: getHarStatusText(statusCode),
+    headers: parseStoredHeaderEntries(resolveVariantResponseHeaders(request, variant)),
+    bodyText: resolveVariantResponseBody(request, variant) || '',
+    rawText: formatResponseRaw(request, variant),
+    responseTimeMs: Number.isFinite(request.response_time) ? request.response_time : 0,
+  }
+}
+
 function buildHttpExchangeRequest(request: ProxyRequest, variant: HistorySnapshotVariant): HttpExchangeRequest {
   const absoluteUrl = resolveVariantUrl(request, variant)
   const parsedUrl = new URL(absoluteUrl)
+  const previewResponse = buildPreviewResponse(request, variant)
 
   return {
     endpoint: endpointFromUrl(absoluteUrl),
     absoluteUrl,
     sourceRequestId: request.db_request_id ?? null,
     preferredRequestView: 'pretty',
+    ...(previewResponse ? { previewResponse } : {}),
     request: {
       method: resolveVariantMethod(request, variant),
       target: `${parsedUrl.pathname}${parsedUrl.search}`,

@@ -10,7 +10,7 @@ function resolveTargetElement(target: EventTarget | null): HTMLElement | null {
   return null
 }
 
-export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+function containsEditableKeyboardElement(target: EventTarget | null): boolean {
   const element = resolveTargetElement(target)
   if (!element) {
     return false
@@ -21,4 +21,21 @@ export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   }
 
   return Boolean(element.isContentEditable)
+}
+
+export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  return containsEditableKeyboardElement(target)
+}
+
+export function isEditableKeyboardEvent(event: KeyboardEvent): boolean {
+  if (containsEditableKeyboardElement(event.target)) {
+    return true
+  }
+
+  const path = event.composedPath()
+  if (path.some((target) => containsEditableKeyboardElement(target))) {
+    return true
+  }
+
+  return containsEditableKeyboardElement(document.activeElement)
 }

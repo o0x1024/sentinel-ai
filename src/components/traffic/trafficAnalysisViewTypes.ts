@@ -6,9 +6,9 @@ import type {
 import type { TrafficContextCandidateEvidenceSelection } from './trafficContextCandidateTypes'
 
 export interface TrafficAnalysisViewHandle {
-  createDraftFromRequest(request: HttpExchangeRequest): void
-  createAttackWorkspaceFromRequest(request: HttpExchangeRequest): void
-  openCompare(payload: TrafficComparePayload): void
-  openDraftCompare(payload: TrafficComparerDraftRequestInput): void
+  createDraftFromRequest(request: HttpExchangeRequest): Promise<void>
+  createAttackWorkspaceFromRequest(request: HttpExchangeRequest): Promise<void>
+  openCompare(payload: TrafficComparePayload): Promise<void>
+  openDraftCompare(payload: TrafficComparerDraftRequestInput): Promise<void>
   openHistoryRequest(payload: TrafficContextCandidateEvidenceSelection): Promise<void>
 }

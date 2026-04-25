@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest'
-import { buildHttpExchangeRequestFromSecurityEvidence } from './securityEvidenceTransferSupport'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Router } from 'vue-router'
+import {
+  TRAFFIC_LAUNCH_QUEUE_EVENT,
+  useTrafficLaunchQueueStore,
+} from '@/components/traffic/workbench/stores/useTrafficLaunchQueueStore'
+import {
+  buildHttpExchangeRequestFromSecurityEvidence,
+  openSecurityEvidenceInTrafficWorkbench,
+} from './securityEvidenceTransferSupport'
 import type { Evidence } from './vulnerabilityFindingTypes'
 
 const createEvidence = (overrides: Partial<Evidence> = {}): Evidence => ({
@@ -22,6 +30,12 @@ const createEvidence = (overrides: Partial<Evidence> = {}): Evidence => ({
 })
 
 describe('securityEvidenceTransferSupport', () => {
+  const launchQueue = useTrafficLaunchQueueStore()
+
+  beforeEach(() => {
+    launchQueue.consumeLaunchQueue()
+  })
+
   it('builds repeater-compatible requests from direct evidence payloads', () => {
     const request = buildHttpExchangeRequestFromSecurityEvidence(createEvidence())
 
@@ -89,5 +103,43 @@ describe('securityEvidenceTransferSupport', () => {
     )
 
     expect(request).toBeNull()
+  })
+
+  it('queues evidence requests for the repeater and notifies active traffic workbench views', async () => {
+    const router = { push: vi.fn().mockResolvedValue(undefined) }
+    const eventListener = vi.fn()
+    window.addEventListener(TRAFFIC_LAUNCH_QUEUE_EVENT, eventListener)
+
+    try {
+      const handled = await openSecurityEvidenceInTrafficWorkbench(
+        router as unknown as Router,
+        createEvidence(),
+        'repeater',
+      )
+
+      const snapshot = launchQueue.consumeLaunchQueue()
+      expect(handled).toBe(true)
+      expect(router.push).toHaveBeenCalledWith({ name: 'TrafficAnalysis' })
+      expect(snapshot.repeaterRequests).toHaveLength(1)
+      expect(snapshot.intruderRequests).toHaveLength(0)
+      expect(eventListener).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener(TRAFFIC_LAUNCH_QUEUE_EVENT, eventListener)
+    }
+  })
+
+  it('queues evidence requests for the intruder', async () => {
+    const router = { push: vi.fn().mockResolvedValue(undefined) }
+
+    const handled = await openSecurityEvidenceInTrafficWorkbench(
+      router as unknown as Router,
+      createEvidence(),
+      'intruder',
+    )
+
+    const snapshot = launchQueue.consumeLaunchQueue()
+    expect(handled).toBe(true)
+    expect(snapshot.repeaterRequests).toHaveLength(0)
+    expect(snapshot.intruderRequests).toHaveLength(1)
   })
 })

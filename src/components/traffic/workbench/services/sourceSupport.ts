@@ -48,9 +48,9 @@ export function getToolSource(tool: WorkbenchTool, title: string) {
 export function formatHistoryOriginLabel(originKind?: string | null) {
   switch (originKind) {
     case 'draft':
-      return '草稿执行'
+      return '重放器历史执行'
     case 'attack-workspace':
-      return '攻击工作区'
+      return '爆破器历史'
     default:
       return originKind || ''
   }

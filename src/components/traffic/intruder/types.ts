@@ -304,3 +304,22 @@ export interface IntruderAttackResult {
   grepExtracts: Record<string, string>
   error?: string
 }
+
+export interface IntruderResultsWindowState {
+  workspaceId: string
+  workspaceName: string
+  target: IntruderTarget
+  requestText: string
+  positions: IntruderPosition[]
+  results: IntruderAttackResult[]
+  selectedResultId: string | null
+  progress: IntruderAttackProgress
+  isRunning: boolean
+  captureFilter: IntruderResultFilter
+  viewFilter: IntruderResultFilter
+  sort: IntruderResultSort
+  grepMatchRules: IntruderGrepMatchRule[]
+  grepExtractRules: IntruderGrepExtractRule[]
+  grepPayloadSettings: IntruderGrepPayloadSettings
+  visibleColumns: string[]
+}

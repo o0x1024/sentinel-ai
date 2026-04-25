@@ -92,45 +92,49 @@
         </div>
       </div>
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'request')">
-        <HttpMessageSurface
-          v-if="requestTab !== 'hex'"
-          ref="requestSurface"
-          :model-value="requestContent"
-          readonly
-          message-type="request"
-          custom-context-menu
-          show-search-bar
-          :display-mode="resolveTrafficTextDisplayMode(requestTab)"
-          :state-key="buildHistoryRequestStateKey(selectedRequest?.id, requestTab, requestViewMode)"
-          :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
-          :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
-          :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
-          :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
-          :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
-          :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
-          :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
-          :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
-          :show-display-toolbar="false"
-          @contextmenu="showDetailContextMenu($event, 'request')"
-        />
-        <TrafficMessageReader
-          v-else
-          ref="requestSurface"
-          :model-value="stringToHex(requestRawContent)"
-          custom-context-menu
-          show-search-bar
-          :state-key="buildHistoryRequestStateKey(selectedRequest?.id, 'hex', requestViewMode)"
-          :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
-          :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
-          :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
-          :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
-          :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
-          :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
-          :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
-          :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
-          :show-display-toolbar="false"
-          @contextmenu="showDetailContextMenu($event, 'request')"
-        />
+        <div key="history-request-viewer" class="h-full min-h-0">
+          <HttpMessageSurface
+            v-if="requestTab !== 'hex'"
+            key="history-request-text"
+            ref="requestSurface"
+            :model-value="requestContent"
+            readonly
+            message-type="request"
+            custom-context-menu
+            show-search-bar
+            :display-mode="resolveTrafficTextDisplayMode(requestTab)"
+            :state-key="buildHistoryRequestStateKey(selectedRequest?.id, requestTab, requestViewMode)"
+            :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+            :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+            :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+            :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+            :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+            :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+            :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+            :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+            :show-display-toolbar="false"
+            @contextmenu="showDetailContextMenu($event, 'request')"
+          />
+          <TrafficMessageReader
+            v-else
+            key="history-request-hex"
+            ref="requestSurface"
+            :model-value="stringToHex(requestRawContent)"
+            custom-context-menu
+            show-search-bar
+            :state-key="buildHistoryRequestStateKey(selectedRequest?.id, 'hex', requestViewMode)"
+            :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+            :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+            :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+            :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+            :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+            :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+            :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+            :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+            :show-display-toolbar="false"
+            @contextmenu="showDetailContextMenu($event, 'request')"
+          />
+        </div>
       </div>
     </div>
     <div class="w-1 bg-base-300 cursor-col-resize hover:bg-primary/50 transition-colors flex-shrink-0" @mousedown="startVerticalResize"></div>
@@ -170,50 +174,55 @@
         </div>
       </div>
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'response')">
-        <TrafficResponseRenderPane
-          v-if="responseTab === 'render'"
-          :body="responseBodyText"
-          :content-type="responseContentType"
-        />
-        <TrafficMessageReader
-          v-else-if="responseTab === 'hex'"
-          ref="responseSurface"
-          :model-value="stringToHex(responseRawContent)"
-          custom-context-menu
-          show-search-bar
-          :state-key="buildHistoryResponseStateKey(selectedRequest?.id, 'hex', responseViewMode)"
-          :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
-          :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
-          :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
-          :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
-          :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
-          :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
-          :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
-          :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
-          :show-display-toolbar="false"
-          @contextmenu="showDetailContextMenu($event, 'response')"
-        />
-        <HttpMessageSurface
-          v-else
-          ref="responseSurface"
-          :model-value="responseContent"
-          readonly
-          message-type="response"
-          custom-context-menu
-          show-search-bar
-          :display-mode="resolveTrafficTextDisplayMode(responseTab)"
-          :state-key="buildHistoryResponseStateKey(selectedRequest?.id, responseTab, responseViewMode)"
-          :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
-          :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
-          :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
-          :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
-          :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
-          :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
-          :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
-          :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
-          :show-display-toolbar="false"
-          @contextmenu="showDetailContextMenu($event, 'response')"
-        />
+        <div key="history-response-viewer" class="h-full min-h-0">
+          <TrafficResponseRenderPane
+            v-if="responseTab === 'render'"
+            key="history-response-render"
+            :body="responseBodyText"
+            :content-type="responseContentType"
+          />
+          <TrafficMessageReader
+            v-else-if="responseTab === 'hex'"
+            key="history-response-hex"
+            ref="responseSurface"
+            :model-value="stringToHex(responseRawContent)"
+            custom-context-menu
+            show-search-bar
+            :state-key="buildHistoryResponseStateKey(selectedRequest?.id, 'hex', responseViewMode)"
+            :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+            :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+            :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+            :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+            :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+            :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+            :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+            :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+            :show-display-toolbar="false"
+            @contextmenu="showDetailContextMenu($event, 'response')"
+          />
+          <HttpMessageSurface
+            v-else
+            key="history-response-text"
+            ref="responseSurface"
+            :model-value="responseContent"
+            readonly
+            message-type="response"
+            custom-context-menu
+            show-search-bar
+            :display-mode="resolveTrafficTextDisplayMode(responseTab)"
+            :state-key="buildHistoryResponseStateKey(selectedRequest?.id, responseTab, responseViewMode)"
+            :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+            :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+            :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+            :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+            :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+            :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+            :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+            :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+            :show-display-toolbar="false"
+            @contextmenu="showDetailContextMenu($event, 'response')"
+          />
+        </div>
       </div>
     </div>
   </div>

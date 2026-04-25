@@ -55,6 +55,8 @@ export function createRepeaterTab(options: RepeaterTabCreationOptions): Repeater
 
   const prettyRequest = formatRepeaterPrettyRequest(rawRequest)
   const requestTab = request?.preferredRequestView ?? defaultRequestTab
+  const previewResponse = request?.previewResponse ?? null
+  const previewRawResponse = previewResponse?.rawText ?? ''
 
   return {
     id: generateId(),
@@ -70,12 +72,12 @@ export function createRepeaterTab(options: RepeaterTabCreationOptions): Repeater
     initialRawRequest: rawRequest,
     rawRequest,
     prettyRequest,
-    lastCompletedRawResponse: '',
+    lastCompletedRawResponse: previewRawResponse,
     previousRawResponse: '',
-    rawResponse: '',
+    rawResponse: previewRawResponse,
     requestTab,
     responseTab: defaultResponseTab,
-    response: null,
+    response: previewResponse,
     isSending: false,
     modified: false,
     userEdited: false,

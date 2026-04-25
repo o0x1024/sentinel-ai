@@ -107,12 +107,12 @@ export default {
   },
   transfer: {
     triggerLabel: '发送到',
-    createDraft: '创建草稿',
-    createAttackWorkspace: '创建攻击工作区',
+    sendToRepeater: '发送到重放器',
+    sendToIntruder: '发送到爆破器',
     noTransferableRequest: '当前证据没有可发送的原始请求',
     noFindingTransferableRequest: '当前漏洞没有可发送的原始请求',
-    draftCreated: '已创建草稿',
-    attackWorkspaceCreated: '已创建攻击工作区',
+    repeaterOpened: '已发送到重放器',
+    intruderOpened: '已发送到爆破器',
     transferFailed: '发送请求失败: {error}',
   },
   aiReview: {

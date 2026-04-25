@@ -22,7 +22,7 @@ describe('useTrafficWorkbenchLayout helpers', () => {
         mode: 'split',
         historyWidth: 640,
       }),
-    ).toBe('640px 4px minmax(0, 1fr)')
+    ).toBe('640px 3px minmax(0, 1fr)')
 
     expect(
       buildTrafficWorkbenchGridTemplate({
@@ -38,14 +38,14 @@ describe('useTrafficWorkbenchLayout helpers', () => {
         mode: 'top-bottom',
         topPanelHeight: 420,
       }),
-    ).toBe('420px 4px minmax(0, 1fr)')
+    ).toBe('420px 3px minmax(0, 1fr)')
 
     expect(
       buildTrafficWorkbenchLeftColumnColumns({
         mode: 'top-bottom',
         sidebarWidth: 420,
       }),
-    ).toBe('minmax(0, 1fr) 4px 420px')
+    ).toBe('minmax(0, 1fr) 3px 420px')
   })
 
   it('builds split left column templates', () => {
@@ -54,7 +54,7 @@ describe('useTrafficWorkbenchLayout helpers', () => {
         mode: 'split',
         sidebarHeight: 336,
       }),
-    ).toBe('minmax(0, 1fr) 4px 336px')
+    ).toBe('minmax(0, 1fr) 3px 336px')
 
     expect(
       buildTrafficWorkbenchLeftColumnTemplate({
@@ -88,7 +88,7 @@ describe('useTrafficWorkbenchLayout helpers', () => {
         height: 1000,
         columnHeight: 900,
       }),
-    ).toBe(896)
+    ).toBe(897)
 
     expect(
       clampTrafficWorkbenchSidebarHeight({

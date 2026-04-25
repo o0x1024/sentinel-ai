@@ -375,62 +375,67 @@
 
           <!-- Response Content -->
           <div class="flex-1 overflow-hidden" @contextmenu.prevent="showContextMenu($event, 'response')">
-            <template v-if="currentTab.isSending || currentTab.response || currentTab.rawResponse">
+            <div
+              v-if="currentTab.isSending || currentTab.response || currentTab.rawResponse"
+              key="response-viewer"
+              class="h-full min-h-0"
+            >
               <!-- Pretty/Raw View -->
-              <template v-if="currentTab.responseTab === 'pretty' || currentTab.responseTab === 'raw'">
-                <HttpMessageSurface
-                  ref="responseEditor"
-                  :modelValue="currentTab.responseTab === 'pretty' ? formatPrettyResponse() : currentDisplayedRawResponse"
-                  readonly
-                  message-type="response"
-                  custom-context-menu
-                  show-search-bar
-                  @contextmenu="showContextMenu($event, 'response')"
-                  height="100%"
-                  :display-mode="resolveTrafficTextDisplayMode(currentTab.responseTab)"
-                  :state-key="buildRepeaterResponseStateKey(currentTab.id, currentTab.responseTab)"
-                  :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
-                  :search-next-title="$t('trafficAnalysis.messageSearch.next')"
-                  :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
-                  :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
-                  :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
-                  :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
-                  :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
-                  :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
-                  :show-display-toolbar="false"
-                />
-              </template>
+              <HttpMessageSurface
+                v-if="currentTab.responseTab === 'pretty' || currentTab.responseTab === 'raw'"
+                key="response-text-viewer"
+                ref="responseEditor"
+                :modelValue="currentTab.responseTab === 'pretty' ? formatPrettyResponse() : currentDisplayedRawResponse"
+                readonly
+                message-type="response"
+                custom-context-menu
+                show-search-bar
+                @contextmenu="showContextMenu($event, 'response')"
+                height="100%"
+                :display-mode="resolveTrafficTextDisplayMode(currentTab.responseTab)"
+                :state-key="buildRepeaterResponseStateKey(currentTab.id, currentTab.responseTab)"
+                :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                :show-display-toolbar="false"
+              />
               
               <!-- Hex View -->
-              <template v-else-if="currentTab.responseTab === 'hex'">
-                <TrafficMessageReader
-                  ref="responseEditor"
-                  :model-value="repeaterTextToHex(currentDisplayedRawResponse)"
-                  custom-context-menu
-                  show-search-bar
-                  @contextmenu="showContextMenu($event, 'response')"
-                  height="100%"
-                  :state-key="buildRepeaterResponseStateKey(currentTab.id, 'hex')"
-                  :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
-                  :search-next-title="$t('trafficAnalysis.messageSearch.next')"
-                  :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
-                  :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
-                  :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
-                  :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
-                  :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
-                  :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
-                  :show-display-toolbar="false"
-                />
-              </template>
+              <TrafficMessageReader
+                v-else-if="currentTab.responseTab === 'hex'"
+                key="response-hex-viewer"
+                ref="responseEditor"
+                :model-value="repeaterTextToHex(currentDisplayedRawResponse)"
+                custom-context-menu
+                show-search-bar
+                @contextmenu="showContextMenu($event, 'response')"
+                height="100%"
+                :state-key="buildRepeaterResponseStateKey(currentTab.id, 'hex')"
+                :search-placeholder="$t('trafficAnalysis.messageSearch.placeholder')"
+                :search-next-title="$t('trafficAnalysis.messageSearch.next')"
+                :search-previous-title="$t('trafficAnalysis.messageSearch.previous')"
+                :search-case-sensitive-title="$t('trafficAnalysis.messageSearch.caseSensitive')"
+                :search-regexp-title="$t('trafficAnalysis.messageSearch.regexp')"
+                :search-clear-title="$t('trafficAnalysis.messageSearch.clear')"
+                :search-no-matches-text="$t('trafficAnalysis.messageSearch.noMatches')"
+                :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
+                :show-display-toolbar="false"
+              />
               
               <!-- Render View -->
               <TrafficResponseRenderPane
                 v-else-if="currentTab.responseTab === 'render'"
+                key="response-render-viewer"
                 :body="currentDisplayedResponseBody"
                 :content-type="getCurrentResponseContentType()"
               />
-            </template>
-            <div v-else class="flex items-center justify-center w-full h-full text-base-content/50">
+            </div>
+            <div v-else key="response-empty" class="flex items-center justify-center w-full h-full text-base-content/50">
               <div class="text-center">
                 <i class="fas fa-inbox text-4xl mb-2"></i>
                 <p>{{ $t('trafficAnalysis.repeater.contextMenu.clickSendToSendRequest') }}</p>
@@ -851,9 +856,9 @@ function syncTabFromExchangeRequest(tab: RepeaterTab, request: HttpExchangeReque
   tab.prettyRequest = nextTab.prettyRequest
   tab.requestTab = nextTab.requestTab
   tab.responseTab = nextTab.responseTab
-  tab.response = null
-  tab.rawResponse = ''
-  tab.lastCompletedRawResponse = ''
+  tab.response = nextTab.response
+  tab.rawResponse = nextTab.rawResponse
+  tab.lastCompletedRawResponse = nextTab.lastCompletedRawResponse
   tab.previousRawResponse = ''
   tab.isSending = false
   tab.modified = false
@@ -948,6 +953,27 @@ function openDraftInRepeater(draftId: string | null | undefined) {
     activeTabIndex.value = tabs.value.length - 1
   } finally {
     applyingWorkbenchDraft = false
+  }
+}
+
+function openAllDraftsInRepeater() {
+  const activeDraftId = workbenchState.drafts.activeDraftId.value
+  const draftIds = workbenchState.drafts.drafts.value.map(draft => draft.id)
+  if (!draftIds.length) {
+    if (!tabs.value.some(tab => tab.mode === 'draft')) return
+    abortControllers.forEach(controller => { controller.cancelled = true })
+    abortControllers.clear()
+    tabs.value = []
+    activeTabIndex.value = 0
+    return
+  }
+  for (const draftId of draftIds) {
+    if (draftId !== activeDraftId) {
+      openDraftInRepeater(draftId)
+    }
+  }
+  if (activeDraftId) {
+    openDraftInRepeater(activeDraftId)
   }
 }
 
@@ -1071,6 +1097,12 @@ function cancelRequest() {
   dialog.toast.info(t('trafficAnalysis.repeater.messages.requestCancelled'));
 }
 
+function refocusRequestEditor() {
+  void nextTick(() => {
+    requestEditor.value?.focus?.()
+  })
+}
+
 async function sendRequest() {
   if (!currentTab.value || currentTab.value.isSending) return;
   
@@ -1102,6 +1134,7 @@ async function sendRequest() {
   tab.isSending = true;
   tab.response = null;
   tab.rawResponse = '';
+  refocusRequestEditor()
   
   // 创建取消控制器
   const controller = { cancelled: false };
@@ -1623,11 +1656,20 @@ watch(() => props.initialDraftId, (draftId) => {
   }
 }, { immediate: true })
 
+watch(
+  () => workbenchState.drafts.drafts.value.map(draft => draft.id).join('|'),
+  openAllDraftsInRepeater,
+  { immediate: true },
+)
+
 watch(() => workbenchState.drafts.activeDraftId.value, (draftId) => {
   if (draftId) {
+    if (currentTab.value?.draftId === draftId) {
+      return
+    }
     openDraftInRepeater(draftId)
   }
-})
+}, { immediate: true })
 
 watch(layoutMode, (newMode) => {
   localStorage.setItem(REPEATER_STORAGE_KEY_LAYOUT, newMode);

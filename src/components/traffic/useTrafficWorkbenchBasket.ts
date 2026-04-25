@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { setLocalStorageItem } from '@/utils/browserStorage'
 import type { HttpExchangeRequest } from './http/model'
 import type {
   TrafficWorkbenchBasketItem,
@@ -50,7 +51,7 @@ export const useTrafficWorkbenchBasket = () => {
   }
 
   function persist() {
-    window.localStorage.setItem(BASKET_STORAGE_KEY, JSON.stringify(basketItems.value))
+    setLocalStorageItem(BASKET_STORAGE_KEY, JSON.stringify(basketItems.value))
   }
 
   function addRequest(

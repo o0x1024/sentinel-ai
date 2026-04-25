@@ -151,11 +151,11 @@ const evidences = computed(() => props.caseItem.finding.evidence || [])
 const evidenceRefs = ref<Record<string, HTMLElement | null>>({})
 const transferMessages = computed(() => ({
   triggerLabel: wb('evidence.sendTo'),
-  createDraft: wb('evidence.createDraft'),
-  createAttackWorkspace: wb('evidence.createAttackWorkspace'),
+  sendToRepeater: wb('evidence.sendToRepeater'),
+  sendToIntruder: wb('evidence.sendToIntruder'),
   noTransferableRequest: wb('evidence.noTransferableRequest'),
-  draftCreated: wb('evidence.draftCreated'),
-  attackWorkspaceCreated: wb('evidence.attackWorkspaceCreated'),
+  repeaterOpened: wb('evidence.repeaterOpened'),
+  intruderOpened: wb('evidence.intruderOpened'),
   transferFailed: wb('evidence.transferFailed', { error: '{error}' }),
 }))
 const rawPanelHeight = '18rem'

@@ -258,11 +258,11 @@ const shortcutTransferableEvidence = computed(
 )
 const transferMessages = computed(() => ({
   triggerLabel: wb('caseDetail.sendTo'),
-  createDraft: wb('caseDetail.createDraft'),
-  createAttackWorkspace: wb('caseDetail.createAttackWorkspace'),
+  sendToRepeater: wb('caseDetail.sendToRepeater'),
+  sendToIntruder: wb('caseDetail.sendToIntruder'),
   noTransferableRequest: wb('evidence.noCaseTransferableRequest'),
-  draftCreated: wb('evidence.draftCreated'),
-  attackWorkspaceCreated: wb('evidence.attackWorkspaceCreated'),
+  repeaterOpened: wb('evidence.repeaterOpened'),
+  intruderOpened: wb('evidence.intruderOpened'),
   transferFailed: wb('evidence.transferFailed', { error: '{error}' }),
 }))
 
@@ -279,7 +279,7 @@ const tabs = computed<Array<{ id: CaseDetailTabId; label: string }>>(() => [
 const formatTransferError = (error: unknown) =>
   transferMessages.value.transferFailed.replace('{error}', String(error))
 
-const transferCaseEvidenceRequest = async (target: 'draft' | 'attackWorkspace') => {
+const transferCaseEvidenceRequest = async (target: 'repeater' | 'intruder') => {
   const evidence = shortcutTransferableEvidence.value
   if (!evidence) {
     dialog.toast.warning(transferMessages.value.noTransferableRequest)
@@ -294,9 +294,9 @@ const transferCaseEvidenceRequest = async (target: 'draft' | 'attackWorkspace') 
     }
 
     dialog.toast.success(
-      target === 'draft'
-        ? transferMessages.value.draftCreated
-        : transferMessages.value.attackWorkspaceCreated,
+      target === 'repeater'
+        ? transferMessages.value.repeaterOpened
+        : transferMessages.value.intruderOpened,
     )
   } catch (error) {
     console.error('Failed to send workbench evidence request from shortcut:', error)

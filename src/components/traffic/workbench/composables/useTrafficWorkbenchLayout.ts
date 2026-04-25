@@ -1,11 +1,12 @@
 import { computed, ref, type Ref } from 'vue'
+import { setLocalStorageItem } from '@/utils/browserStorage'
 
 export const TRAFFIC_WORKBENCH_XL_BREAKPOINT = 1280
-export const TRAFFIC_WORKBENCH_COLUMN_GAP = 12
-export const TRAFFIC_WORKBENCH_RESIZER_WIDTH = 4
+export const TRAFFIC_WORKBENCH_COLUMN_GAP = 8
+export const TRAFFIC_WORKBENCH_RESIZER_WIDTH = 3
 export const TRAFFIC_WORKBENCH_HISTORY_PANEL_DEFAULT_WIDTH = 620
-export const TRAFFIC_WORKBENCH_SIDEBAR_DEFAULT_HEIGHT = 336
-export const TRAFFIC_WORKBENCH_TOP_PANEL_DEFAULT_HEIGHT = 420
+export const TRAFFIC_WORKBENCH_SIDEBAR_DEFAULT_HEIGHT = 300
+export const TRAFFIC_WORKBENCH_TOP_PANEL_DEFAULT_HEIGHT = 380
 export const TRAFFIC_WORKBENCH_SIDEBAR_DEFAULT_WIDTH = 420
 
 const INTERCEPT_DRAWER_DEFAULT_WIDTH = 760
@@ -280,31 +281,31 @@ export function useTrafficWorkbenchLayout(options: {
   }
 
   function persistHistoryPanelWidth() {
-    window.localStorage.setItem(historyPanelWidthStorageKey, String(historyPanelWidth.value))
+    setLocalStorageItem(historyPanelWidthStorageKey, String(historyPanelWidth.value))
   }
 
   function persistHistoryPanelHeight() {
-    window.localStorage.setItem(historyPanelHeightStorageKey, String(historyPanelHeight.value))
+    setLocalStorageItem(historyPanelHeightStorageKey, String(historyPanelHeight.value))
   }
 
   function persistDrawerWidth() {
-    window.localStorage.setItem(interceptDrawerWidthStorageKey, String(interceptDrawerWidth.value))
+    setLocalStorageItem(interceptDrawerWidthStorageKey, String(interceptDrawerWidth.value))
   }
 
   function persistSidebarHeight() {
-    window.localStorage.setItem(sidebarHeightStorageKey, String(sidebarHeight.value))
+    setLocalStorageItem(sidebarHeightStorageKey, String(sidebarHeight.value))
   }
 
   function persistSidebarWidth() {
-    window.localStorage.setItem(sidebarWidthStorageKey, String(sidebarWidth.value))
+    setLocalStorageItem(sidebarWidthStorageKey, String(sidebarWidth.value))
   }
 
   function persistActiveProbeCollapsed() {
-    window.localStorage.setItem(activeProbeCollapsedStorageKey, String(activeProbeCollapsed.value))
+    setLocalStorageItem(activeProbeCollapsedStorageKey, String(activeProbeCollapsed.value))
   }
 
   function persistLayoutPreference() {
-    window.localStorage.setItem(layoutPreferenceStorageKey, layoutPreference.value)
+    setLocalStorageItem(layoutPreferenceStorageKey, layoutPreference.value)
   }
 
   function applyDrawerWidth(width: number) {

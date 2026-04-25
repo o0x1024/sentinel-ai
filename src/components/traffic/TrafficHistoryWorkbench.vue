@@ -175,6 +175,10 @@
             :sort-state="sortState"
             :toggle-sort="toggleSort"
             :start-resize="startResize"
+            :dragged-column-id="draggedColumnId"
+            :column-drop-target-id="columnDropTargetId"
+            :column-drop-position="columnDropPosition"
+            :start-column-drag="startColumnDrag"
             :visible-rows="visibleRows"
             :selected-request="selectedRequest"
             :is-request-selected="isRequestSelected"
@@ -236,6 +240,7 @@ import {
 } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
+import { setLocalStorageItem } from '@/utils/browserStorage'
 import type { HttpExchangeRequest } from './http/model'
 import ProxyHistoryDetailsPanel from './ProxyHistoryDetailsPanel.vue'
 import TrafficHistoryFilterDialog from './TrafficHistoryFilterDialog.vue'
@@ -268,6 +273,8 @@ import {
   isProxyHistoryDefaultSort,
   loadProxyHistoryColumnsFromStorage,
   loadProxyHistorySortFromStorage,
+  moveProxyHistoryColumn,
+  type ProxyHistoryColumnDropPosition,
   PROXY_HISTORY_BUFFER_SIZE,
   PROXY_HISTORY_COLUMNS_STORAGE_KEY,
   PROXY_HISTORY_HEADER_HEIGHT,
@@ -772,7 +779,7 @@ function toggleSort(columnId: string) {
     }
   }
 
-  localStorage.setItem(PROXY_HISTORY_SORT_STORAGE_KEY, JSON.stringify(sortState.value))
+  setLocalStorageItem(PROXY_HISTORY_SORT_STORAGE_KEY, JSON.stringify(sortState.value))
   scrollTop.value = 0
   if (scrollContainer.value) {
     scrollContainer.value.scrollTop = 0
@@ -782,6 +789,14 @@ function toggleSort(columnId: string) {
 const resizingColumn = ref<string | null>(null)
 const columnResizeStartX = ref(0)
 const resizeStartWidth = ref(0)
+const draggedColumnId = ref<string | null>(null)
+const columnDropTargetId = ref<string | null>(null)
+const columnDropPosition = ref<ProxyHistoryColumnDropPosition | null>(null)
+const columnDragPointerId = ref<number | null>(null)
+
+function persistProxyHistoryColumns() {
+  setLocalStorageItem(PROXY_HISTORY_COLUMNS_STORAGE_KEY, JSON.stringify(columns.value))
+}
 
 function startResize(columnId: string, event: MouseEvent) {
   event.preventDefault()
@@ -814,7 +829,100 @@ function stopResize() {
   resizingColumn.value = null
   document.removeEventListener('mousemove', handleResize)
   document.removeEventListener('mouseup', stopResize)
-  localStorage.setItem(PROXY_HISTORY_COLUMNS_STORAGE_KEY, JSON.stringify(columns.value))
+  persistProxyHistoryColumns()
+}
+
+function getColumnElementFromPoint(clientX: number, clientY: number) {
+  const elements = document.elementsFromPoint(clientX, clientY)
+  for (const element of elements) {
+    if (!(element instanceof HTMLElement)) {
+      continue
+    }
+
+    const columnElement = element.closest<HTMLElement>('[data-proxy-history-column-id]')
+    if (columnElement?.dataset.proxyHistoryColumnId) {
+      return columnElement
+    }
+  }
+
+  return null
+}
+
+function updateColumnDropTarget(clientX: number, clientY: number) {
+  if (!draggedColumnId.value) {
+    return
+  }
+
+  const columnElement = getColumnElementFromPoint(clientX, clientY)
+  const targetColumnId = columnElement?.dataset.proxyHistoryColumnId || null
+
+  if (!columnElement || !targetColumnId || targetColumnId === draggedColumnId.value) {
+    columnDropTargetId.value = null
+    columnDropPosition.value = null
+    return
+  }
+
+  const rect = columnElement.getBoundingClientRect()
+  columnDropTargetId.value = targetColumnId
+  columnDropPosition.value = clientX < rect.left + rect.width / 2 ? 'before' : 'after'
+}
+
+function startColumnDrag(columnId: string, event: PointerEvent) {
+  if (resizingColumn.value) {
+    event.preventDefault()
+    return
+  }
+
+  event.preventDefault()
+  draggedColumnId.value = columnId
+  columnDropTargetId.value = null
+  columnDropPosition.value = null
+  columnDragPointerId.value = event.pointerId
+  updateColumnDropTarget(event.clientX, event.clientY)
+
+  document.addEventListener('pointermove', handleColumnPointerMove)
+  document.addEventListener('pointerup', stopColumnDrag)
+  document.addEventListener('pointercancel', cancelColumnDrag)
+  document.body.style.cursor = 'grabbing'
+  document.body.style.userSelect = 'none'
+}
+
+function handleColumnPointerMove(event: PointerEvent) {
+  if (columnDragPointerId.value !== event.pointerId) {
+    return
+  }
+
+  event.preventDefault()
+  updateColumnDropTarget(event.clientX, event.clientY)
+}
+
+function stopColumnDrag(event: PointerEvent) {
+  if (columnDragPointerId.value !== event.pointerId) {
+    return
+  }
+
+  const sourceColumnId = draggedColumnId.value
+  const targetColumnId = columnDropTargetId.value
+  const position = columnDropPosition.value
+
+  if (sourceColumnId && targetColumnId && position) {
+    columns.value = moveProxyHistoryColumn(columns.value, sourceColumnId, targetColumnId, position)
+    persistProxyHistoryColumns()
+  }
+
+  cancelColumnDrag()
+}
+
+function cancelColumnDrag() {
+  draggedColumnId.value = null
+  columnDropTargetId.value = null
+  columnDropPosition.value = null
+  columnDragPointerId.value = null
+  document.removeEventListener('pointermove', handleColumnPointerMove)
+  document.removeEventListener('pointerup', stopColumnDrag)
+  document.removeEventListener('pointercancel', cancelColumnDrag)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
 }
 
 function startHorizontalResize(event: MouseEvent) {
@@ -845,7 +953,7 @@ function stopHorizontalResize() {
   document.removeEventListener('mouseup', stopHorizontalResize)
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
-  localStorage.setItem(STORAGE_KEY_TOP_HEIGHT, String(topPanelHeight.value))
+  setLocalStorageItem(STORAGE_KEY_TOP_HEIGHT, String(topPanelHeight.value))
 }
 
 function startVerticalResize(event: MouseEvent) {
@@ -876,7 +984,7 @@ function stopVerticalResize() {
   document.removeEventListener('mouseup', stopVerticalResize)
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
-  localStorage.setItem(STORAGE_KEY_LEFT_WIDTH, String(leftPanelWidth.value))
+  setLocalStorageItem(STORAGE_KEY_LEFT_WIDTH, String(leftPanelWidth.value))
 }
 
 function handleScroll(event: Event) {
@@ -1258,7 +1366,7 @@ async function checkCAInstallation() {
 }
 
 function persistHistoryFilterConfig() {
-  window.localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify(appliedFilterConfig.value))
+  setLocalStorageItem(STORAGE_KEY_FILTERS, JSON.stringify(appliedFilterConfig.value))
 }
 
 function loadStoredHistoryFilterConfig() {

@@ -43,7 +43,7 @@ import { showImmersiveTrafficHistory } from './components/traffic/immersiveTraff
 import { closeTrafficAssistant } from './services/trafficAssistantWorkspace'
 import { applyTheme } from './views/settingsUiSupport'
 import { useToast } from './composables/useToast'
-import { isEditableKeyboardTarget } from './utils/editableKeyboardTarget'
+import { isEditableKeyboardEvent, isEditableKeyboardTarget } from './utils/editableKeyboardTarget'
 
 const router = useRouter()
 const route = useRoute()
@@ -129,7 +129,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
   }
 
   if (e.key === 'Backspace') {
-    if (!isEditableKeyboardTarget(e.target)) {
+    if (!isEditableKeyboardEvent(e)) {
       e.preventDefault()
     }
   }

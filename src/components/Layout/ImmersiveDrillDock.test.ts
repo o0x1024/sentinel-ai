@@ -108,6 +108,36 @@ describe('ImmersiveDrillDock', () => {
     wrapper.unmount()
   })
 
+  it('collapses a docked toolbar into a compact hover trigger', async () => {
+    const router = createTestRouter()
+    await router.push('/traffic')
+    await router.isReady()
+
+    const wrapper = mount(ImmersiveDrillDock, {
+      global: {
+        plugins: [router],
+      },
+      attachTo: document.body,
+    })
+
+    await nextTick()
+
+    const panel = wrapper.get('[role="toolbar"]')
+    expect(panel.attributes('style')).toContain('opacity: 0')
+    expect(panel.attributes('style')).toContain('pointer-events: none')
+
+    const trigger = wrapper.get('button[aria-label="展开沉浸式挖洞模式工具条"]')
+    expect(trigger.classes()).toContain('toolbar-collapsed-trigger')
+
+    await trigger.trigger('mouseenter')
+    await nextTick()
+
+    expect(panel.attributes('style')).toContain('opacity: 1')
+    expect(panel.attributes('style')).toContain('pointer-events: auto')
+
+    wrapper.unmount()
+  })
+
   it('opens the OAST workbench tool from the immersive toolbar', async () => {
     const router = createTestRouter()
     await router.push('/traffic')

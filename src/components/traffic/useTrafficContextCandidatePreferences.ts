@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { setLocalStorageItem } from '@/utils/browserStorage'
 
 import type {
   TrafficContextPreviewFocus,
@@ -59,7 +60,7 @@ function persistPreferredPreviewFocus(value: TrafficContextPreviewFocus) {
     return
   }
 
-  window.localStorage.setItem(TRAFFIC_CONTEXT_CANDIDATE_PREFERENCES_KEY, JSON.stringify(value))
+  setLocalStorageItem(TRAFFIC_CONTEXT_CANDIDATE_PREFERENCES_KEY, JSON.stringify(value))
 }
 
 function normalizePreferredPreviewKind(value: string | null | undefined): TrafficContextPreviewKind | null {

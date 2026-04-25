@@ -29,11 +29,11 @@ export function resolveSecurityEvidenceTransferShortcut(
 
   const normalizedKey = event.key.toLowerCase()
   if (normalizedKey === 'r') {
-    return 'draft'
+    return 'repeater'
   }
 
   if (normalizedKey === 'i') {
-    return 'attackWorkspace'
+    return 'intruder'
   }
 
   return null

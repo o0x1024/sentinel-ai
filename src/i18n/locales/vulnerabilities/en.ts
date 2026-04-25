@@ -107,12 +107,12 @@ export default {
   },
   transfer: {
     triggerLabel: 'Send To',
-    createDraft: 'Create Draft',
-    createAttackWorkspace: 'Create Attack Workspace',
+    sendToRepeater: 'Send to Repeater',
+    sendToIntruder: 'Send to Intruder',
     noTransferableRequest: 'No raw request is available for this evidence.',
     noFindingTransferableRequest: 'No raw request is available for this finding.',
-    draftCreated: 'Draft created',
-    attackWorkspaceCreated: 'Attack workspace created',
+    repeaterOpened: 'Sent to Repeater',
+    intruderOpened: 'Sent to Intruder',
     transferFailed: 'Failed to send request: {error}',
   },
   aiReview: {

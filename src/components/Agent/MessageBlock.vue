@@ -396,76 +396,13 @@
 
   <!-- Regular message block for non-tool-call messages (only render if has content) -->
   <div v-else-if="hasRegularMessageContent" class="message-container group relative max-w-full">
-    <div :class="['message-block relative rounded-lg px-3 py-2 overflow-hidden', typeClass]">
+    <div :class="['message-block relative min-w-0 rounded-lg px-3 py-2 overflow-hidden', typeClass]">
       <div
         v-if="isTeamMessage"
         class="message-team-indicator inline-flex items-center gap-1 text-xs text-primary font-medium mb-1"
       >
         <i class="fas fa-users"></i>
         <span>{{ teamSpeakerLabel }}</span>
-      </div>
-      <!-- Actions (overlay) - hide when editing -->
-      <div
-        v-if="!isEditing && (message.type === 'user' || message.type === 'final')"
-        class="message-actions absolute right-2 top-2 z-10"
-      >
-        <!-- Desktop/hover: icon buttons -->
-        <div
-          class="hidden md:flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto"
-        >
-          <button
-            v-if="message.type === 'user'"
-            @click="handleEdit"
-            class="action-btn btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content"
-            :title="t('agent.editMessage')"
-          >
-            <i class="fas fa-edit"></i>
-          </button>
-          <button
-            @click="handleCopy"
-            class="action-btn btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content"
-            :title="t('agent.copyMessage')"
-          >
-            <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
-          </button>
-          <button
-            v-if="message.type === 'user'"
-            @click="handleResend"
-            class="action-btn btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content"
-            :title="t('agent.resendMessage')"
-          >
-            <i class="fas fa-redo"></i>
-          </button>
-        </div>
-
-        <!-- Touch/mobile: overflow menu -->
-        <details class="dropdown dropdown-end md:hidden">
-          <summary
-            class="btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content"
-          >
-            <i class="fas fa-ellipsis-h"></i>
-          </summary>
-          <ul class="menu dropdown-content bg-base-100 rounded-box shadow w-40 p-1 mt-1">
-            <li v-if="message.type === 'user'">
-              <button @click="handleEdit">
-                <i class="fas fa-edit"></i>
-                <span class="text-xs">{{ t('agent.edit') }}</span>
-              </button>
-            </li>
-            <li>
-              <button @click="handleCopy">
-                <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
-                <span class="text-xs">{{ t('agent.copy') }}</span>
-              </button>
-            </li>
-            <li v-if="message.type === 'user'">
-              <button @click="handleResend">
-                <i class="fas fa-redo"></i>
-                <span class="text-xs">{{ t('agent.resend') }}</span>
-              </button>
-            </li>
-          </ul>
-        </details>
       </div>
 
       <!-- Header with type indicator -->
@@ -593,6 +530,31 @@
             @render-html="(html: string) => emit('renderHtml', html)"
           />
 
+          <div
+            v-if="sessionStats"
+            class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-base-300/50 pt-2 text-xs text-base-content/60"
+          >
+            <span class="inline-flex items-center gap-1">
+              <i class="fas fa-gauge-high text-primary"></i>
+              {{ t('agent.sessionStatsTotalTokens') }}:
+              <span class="font-medium text-base-content/80">{{ formatNumber(sessionStats.total_tokens) }}</span>
+            </span>
+            <span class="inline-flex items-center gap-1">
+              {{ t('agent.sessionStatsInputOutput', {
+                input: formatNumber(sessionStats.input_tokens),
+                output: formatNumber(sessionStats.output_tokens),
+              }) }}
+            </span>
+            <span class="inline-flex items-center gap-1">
+              {{ t('agent.sessionStatsTokenRate') }}:
+              <span class="font-medium text-base-content/80">{{ sessionTokenRate }}</span>
+            </span>
+            <span class="inline-flex items-center gap-1">
+              {{ t('agent.sessionStatsDuration') }}:
+              <span class="font-medium text-base-content/80">{{ sessionDuration }}</span>
+            </span>
+          </div>
+
           <!-- Document attachments for user messages (shown below content) -->
           <div
             v-if="message.type === 'user' && documentAttachments.length > 0"
@@ -708,6 +670,38 @@
               </div>
             </div>
           </div>
+
+          <div
+            v-if="showMessageActions"
+            class="message-action-toolbar mt-3 justify-start border-t border-base-300/40 pt-2"
+            :class="sessionStats ? 'mt-1 border-t-0 pt-1' : ''"
+          >
+            <div class="flex items-center gap-1">
+              <button
+                v-if="message.type === 'user'"
+                @click="handleEdit"
+                class="action-icon-button"
+                :title="t('agent.editMessage')"
+              >
+                <i class="fas fa-edit"></i>
+              </button>
+              <button
+                @click="handleCopy"
+                class="action-icon-button"
+                :title="t('agent.copyMessage')"
+              >
+                <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
+              </button>
+              <button
+                v-if="message.type === 'user'"
+                @click="handleResend"
+                class="action-icon-button"
+                :title="t('agent.resendMessage')"
+              >
+                <i class="fas fa-redo"></i>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -780,6 +774,10 @@ import ShellToolResult from './ShellToolResult.vue'
 import StoredArtifactPanel from './StoredArtifactPanel.vue'
 import ToolRuntimeMeta from './ToolRuntimeMeta.vue'
 import WebSearchToolResult from './WebSearchToolResult.vue'
+import {
+  formatSessionDuration,
+  formatTokenRate,
+} from './agentSessionStatsSupport'
 import {
   shouldShowDefaultToolCallPanel,
   shouldShowRegularMessageBlock,
@@ -963,6 +961,22 @@ const typeName = computed(() => getMessageTypeName(props.message.type))
 
 // RAG信息
 const ragInfo = computed(() => props.message.metadata?.rag_info)
+
+const sessionStats = computed(() => {
+  if (props.message.type !== 'final') return null
+  return props.message.metadata?.session_stats || null
+})
+
+const sessionDuration = computed(() => formatSessionDuration(sessionStats.value?.duration_ms))
+
+const sessionTokenRate = computed(() => {
+  const formatted = formatTokenRate(sessionStats.value?.tokens_per_second)
+  return formatted ? `${formatted} tok/s` : ''
+})
+
+const showMessageActions = computed(() => {
+  return !isEditing.value && (props.message.type === 'user' || props.message.type === 'final')
+})
 
 // Tool name from metadata
 const toolName = computed(() => props.message.metadata?.tool_name)
@@ -1793,10 +1807,29 @@ const handleDownloadTable = (tableIndex: number) => {
   white-space: pre-wrap;
 }
 
-.action-btn {
-  min-height: 1.5rem;
+.message-action-toolbar {
+  display: flex;
+  align-items: center;
+}
+
+.action-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
   height: 1.5rem;
-  padding: 0 0.5rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--bc) / 0.55);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.action-icon-button:hover,
+.action-icon-button:focus-visible {
+  color: rgb(var(--bc) / 0.9);
+  outline: none;
 }
 
 /* Image attachments styles */
@@ -1813,7 +1846,7 @@ const handleDownloadTable = (tableIndex: number) => {
   display: block;
 }
 
-.action-btn i {
+.action-icon-button i {
   font-size: 0.75rem;
 }
 

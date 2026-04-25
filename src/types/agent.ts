@@ -52,6 +52,13 @@ export interface MessageMetadata {
   tool_result?: string  // 工具执行结果（合并显示）
   error?: string
   duration_ms?: number
+  session_stats?: {
+    duration_ms: number
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+    tokens_per_second: number
+  }
   step_index?: number
   total_steps?: number
   success?: boolean

@@ -3,6 +3,7 @@ use crate::commands::ai_task_support::{
     complete_external_profile_run_success, load_external_profile_context,
     merge_external_profile_prompt, run_external_chat_task, start_external_profile_run,
 };
+use crate::agents::executor::message_store::build_assistant_session_stats_metadata;
 use crate::commands::traffic::TrafficAnalysisState;
 use crate::models::database::{AiMessage, SubagentMessage, SubagentRun};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
@@ -468,6 +469,7 @@ pub(crate) async fn stream_chat_with_llm(
     let msg_id = message_id.to_string();
     let conv_id = conversation_id.to_string();
     let app = app_handle.clone();
+    let execution_started_at_ms = chrono::Utc::now().timestamp_millis();
 
     // 记录用量
     let usage_data = Arc::new(std::sync::Mutex::new(None::<(u32, u32)>));
@@ -624,7 +626,13 @@ pub(crate) async fn stream_chat_with_llm(
             conversation_id: conversation_id.to_string(),
             role: "assistant".to_string(),
             content: content.clone(),
-            metadata: None,
+            metadata: build_assistant_session_stats_metadata(
+                Some(chrono::Utc::now().timestamp_millis() - execution_started_at_ms),
+                Some(input_tokens),
+                Some(output_tokens),
+            )
+            .as_ref()
+            .and_then(|value| serde_json::to_string(value).ok()),
             token_count: Some(output_tokens as i32),
             cost: None,
             tool_calls: None,
@@ -677,6 +685,7 @@ pub(crate) async fn stream_chat_with_llm(
                     "execution_id": conversation_id,
                     "message_id": message_id,
                     "content": content,
+                    "metadata": msg.metadata.as_ref().and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok()),
                     "reasoning_content": msg.reasoning_content,
                     "timestamp": msg.timestamp.timestamp_millis(),
                 }),

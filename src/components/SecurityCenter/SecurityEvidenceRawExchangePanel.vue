@@ -10,9 +10,25 @@
 
     <div :class="containerClass">
       <div v-if="requestRaw" class="min-w-0 space-y-2">
-        <p v-if="requestTitle" class="text-xs font-medium text-base-content/70">
-          {{ requestTitle }}
-        </p>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="text-xs font-medium text-base-content/70">
+            {{ requestTitle || '请求' }}
+          </p>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs btn-square h-7 min-h-0 w-7"
+            title="复制请求"
+            aria-label="复制请求"
+            @click="copyRaw('request')"
+          >
+            <i
+              :class="[
+                'fas',
+                copiedTarget === 'request' ? 'fa-check text-success' : 'fa-copy',
+              ]"
+            ></i>
+          </button>
+        </div>
         <SecurityEvidenceHighlightTermList
           v-if="requestHighlightTerms.length"
           label="PoC"
@@ -27,9 +43,25 @@
       </div>
 
       <div v-if="responseRaw" class="min-w-0 space-y-2">
-        <p v-if="responseTitle" class="text-xs font-medium text-base-content/70">
-          {{ responseTitle }}
-        </p>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="text-xs font-medium text-base-content/70">
+            {{ responseTitle || '响应' }}
+          </p>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs btn-square h-7 min-h-0 w-7"
+            title="复制响应"
+            aria-label="复制响应"
+            @click="copyRaw('response')"
+          >
+            <i
+              :class="[
+                'fas',
+                copiedTarget === 'response' ? 'fa-check text-success' : 'fa-copy',
+              ]"
+            ></i>
+          </button>
+        </div>
         <SecurityEvidenceHighlightTermList
           v-if="responseHighlightTerms.length"
           label="命中值"
@@ -47,7 +79,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { dialog } from '@/composables/useDialog'
 import SecurityEvidenceHighlightTermList from './SecurityEvidenceHighlightTermList.vue'
 import SecurityEvidenceSnippetFields from './SecurityEvidenceSnippetFields.vue'
 import type { WorkbenchEvidenceExchange } from './securityWorkbenchSystemAgentContent'
@@ -86,6 +119,11 @@ const props = withDefaults(
   }
 )
 
+type CopyTarget = 'request' | 'response'
+
+const copiedTarget = ref<CopyTarget | ''>('')
+let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+
 const requestRaw = computed(() =>
   props.showRequest ? buildSecurityEvidenceRawRequest(props.exchange, props.fallbackUrl) : ''
 )
@@ -112,6 +150,34 @@ const responseHtml = computed(() =>
 const containerClass = computed(() =>
   requestRaw.value && responseRaw.value ? 'grid gap-3 xl:grid-cols-2' : 'space-y-3'
 )
+
+const resetCopyFeedback = () => {
+  if (copyFeedbackTimer) {
+    clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = null
+  }
+}
+
+const copyRaw = async (target: CopyTarget) => {
+  const text = target === 'request' ? requestRaw.value : responseRaw.value
+  if (!text) return
+
+  try {
+    await navigator.clipboard.writeText(text)
+    copiedTarget.value = target
+    resetCopyFeedback()
+    copyFeedbackTimer = setTimeout(() => {
+      copiedTarget.value = ''
+      copyFeedbackTimer = null
+    }, 1200)
+    dialog.toast.success(target === 'request' ? '请求已复制' : '响应已复制')
+  } catch (error) {
+    console.error(`Failed to copy security evidence ${target}`, error)
+    dialog.toast.error(target === 'request' ? '复制请求失败' : '复制响应失败')
+  }
+}
+
+onBeforeUnmount(resetCopyFeedback)
 </script>
 
 <style scoped>

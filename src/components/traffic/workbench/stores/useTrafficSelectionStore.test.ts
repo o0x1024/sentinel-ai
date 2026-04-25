@@ -49,6 +49,11 @@ describe('useTrafficSelectionStore', () => {
     )
     selection.selectHistorySnapshot(snapshot)
     expect(selection.activeSelection.value?.kind).toBe('history-snapshot')
+    expect(snapshot.request.previewResponse).toMatchObject({
+      statusCode: 200,
+      headers: [{ name: 'Content-Type', value: 'text/plain' }],
+      bodyText: '',
+    })
 
     const draft = drafts.createDraftFromExchangeRequest({
       request: snapshot.request,

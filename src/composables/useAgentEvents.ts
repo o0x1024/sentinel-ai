@@ -14,6 +14,7 @@ import {
   buildToolsPreview,
 } from '@/utils/agentToolActivation'
 import { applyFileVerificationStatuses } from '@/components/Agent/fileVerificationSupport'
+import { buildAgentSessionStats } from '@/components/Agent/agentSessionStatsSupport'
 import type { AgentTasksUpdatePayload } from '@/types/taskRuntime'
 import type {
   AgentChunkEvent,
@@ -62,6 +63,8 @@ export function useAgentEvents(
   const subagents = ref<SubagentItem[]>([])
   const contextUsage = ref<ContextUsageInfo | null>(null)
   const suppressedExecutionId = ref<string | null>(null)
+  const executionStartedAt = ref<number | null>(null)
+  const latestUsage = ref<{ inputTokens: number; outputTokens: number } | null>(null)
 
   // Thinking content buffer for incremental display
   const thinkingBuffer = ref('')
@@ -271,6 +274,32 @@ export function useAgentEvents(
     contentBuffer.value = ''
   }
 
+  const startExecutionTiming = (): void => {
+    executionStartedAt.value = Date.now()
+    latestUsage.value = null
+  }
+
+  const attachSessionStatsToLatestAssistant = (executionId: string): void => {
+    const stats = buildAgentSessionStats({
+      startedAt: executionStartedAt.value,
+      endedAt: Date.now(),
+      inputTokens: latestUsage.value?.inputTokens,
+      outputTokens: latestUsage.value?.outputTokens,
+    })
+    if (!stats) return
+
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const message = messages.value[i]
+      if (message.type !== 'final') continue
+      if (message.metadata?.execution_id !== executionId) continue
+      message.metadata = {
+        ...(message.metadata || {}),
+        session_stats: stats,
+      }
+      return
+    }
+  }
+
   const handleExecutionFinished = (payload: AgentExecutionFinishedEvent): void => {
     if (!matchesTarget(payload.execution_id)) return
 
@@ -300,6 +329,7 @@ export function useAgentEvents(
     error.value = null
 
     if (payload.outcome === 'succeeded') {
+      attachSessionStatsToLatestAssistant(payload.execution_id)
       if (ragMetaInfo.value) {
         const lastAssistant = [...messages.value].reverse().find(m => m.type === 'final')
         if (lastAssistant) {
@@ -373,6 +403,8 @@ export function useAgentEvents(
     subagents.value = []
     contextUsage.value = null
     suppressedExecutionId.value = null
+    executionStartedAt.value = null
+    latestUsage.value = null
   }
 
   const resetError = () => {
@@ -393,6 +425,8 @@ export function useAgentEvents(
     currentThinkingMessageId.value = null
     currentAssistantMessageId.value = null
     assistantSegmentBuffer.value = ''
+    executionStartedAt.value = null
+    latestUsage.value = null
 
     // 如果有正在流式输出的内容，将其作为最终消息添加
     // 注意：后端取消后可能不会发送 complete 事件，所以这里处理残留内容
@@ -418,6 +452,7 @@ export function useAgentEvents(
 
       isExecuting.value = true
       currentExecutionId.value = payload.execution_id
+      startExecutionTiming()
       error.value = null
       contentBuffer.value = ''
       streamingContent.value = ''
@@ -518,6 +553,7 @@ export function useAgentEvents(
 
       isExecuting.value = true
       currentExecutionId.value = payload.execution_id
+      startExecutionTiming()
       error.value = null
       contentBuffer.value = ''
       streamingContent.value = ''
@@ -730,6 +766,9 @@ export function useAgentEvents(
             type: 'final',
             content: assistantSegmentBuffer.value,
             timestamp: Date.now(),
+            metadata: {
+              execution_id: payload.execution_id,
+            },
           })
         } else {
           const existingMsg = messages.value.find(m => m.id === currentAssistantMessageId.value)
@@ -742,6 +781,10 @@ export function useAgentEvents(
         if (payload.input_tokens !== undefined && payload.output_tokens !== undefined) {
           const inputTokens = payload.input_tokens
           const outputTokens = payload.output_tokens
+          latestUsage.value = {
+            inputTokens,
+            outputTokens,
+          }
           
           // Update context usage with real values from LLM
           if (contextUsage.value) {
@@ -1174,6 +1217,7 @@ export function useAgentEvents(
       execution_id: string
       message_id: string
       content: string
+      metadata?: Record<string, any> | null
       reasoning_content?: string | null
       timestamp: number
     }>('agent:assistant_message_saved', (event) => {
@@ -1226,7 +1270,11 @@ export function useAgentEvents(
         }
 
         if (lastAssistant) {
-          lastAssistant.metadata = ragMetaInfo.value ? { rag_info: ragMetaInfo.value } : lastAssistant.metadata
+          lastAssistant.metadata = {
+            ...(lastAssistant.metadata || {}),
+            ...(payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {}),
+            ...(ragMetaInfo.value ? { rag_info: ragMetaInfo.value } : {}),
+          }
         }
       }
       currentAssistantMessageId.value = null
@@ -1541,6 +1589,9 @@ export function useAgentEvents(
             type: 'final',
             content: assistantSegmentBuffer.value,
             timestamp: Date.now(),
+            metadata: {
+              execution_id: chunk.execution_id,
+            },
           })
         } else {
           const existingMsg = messages.value.find(m => m.id === currentAssistantMessageId.value)

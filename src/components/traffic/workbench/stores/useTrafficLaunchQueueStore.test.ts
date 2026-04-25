@@ -22,9 +22,9 @@ describe('useTrafficLaunchQueueStore', () => {
       },
     }
 
-    store.queueDraftRequest(request)
+    store.queueRepeaterRequest(request)
     request.request.headers[0].value = 'mutated.example.com'
-    store.queueAttackWorkspaceRequest(request)
+    store.queueIntruderRequest(request)
     store.queueComparePayload({
       name: 'login compare',
       leftLabel: 'A',
@@ -38,17 +38,17 @@ describe('useTrafficLaunchQueueStore', () => {
     })
 
     const snapshot = store.consumeLaunchQueue()
-    expect(snapshot.draftRequests).toHaveLength(1)
-    expect(snapshot.attackWorkspaceRequests).toHaveLength(1)
+    expect(snapshot.repeaterRequests).toHaveLength(1)
+    expect(snapshot.intruderRequests).toHaveLength(1)
     expect(snapshot.comparePayloads).toHaveLength(1)
-    expect(snapshot.draftRequests[0]?.request.headers[0]?.value).toBe('api.example.com')
-    expect(snapshot.attackWorkspaceRequests[0]?.request.headers[0]?.value).toBe('mutated.example.com')
+    expect(snapshot.repeaterRequests[0]?.request.headers[0]?.value).toBe('api.example.com')
+    expect(snapshot.intruderRequests[0]?.request.headers[0]?.value).toBe('mutated.example.com')
     expect(snapshot.comparePayloads[0]?.leftMeta?.repeaterRequest?.request.headers[0]?.value).toBe(
       'mutated.example.com',
     )
     expect(store.consumeLaunchQueue()).toEqual({
-      draftRequests: [],
-      attackWorkspaceRequests: [],
+      repeaterRequests: [],
+      intruderRequests: [],
       comparePayloads: [],
     })
   })

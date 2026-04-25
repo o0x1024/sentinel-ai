@@ -2,6 +2,7 @@ import { detectHttpBodyLanguage } from '@/components/http-editor/httpDocument'
 import { parseStoredHeaderEntries } from './http/headers'
 import { normalizeProxyHistoryHttpVersion } from './proxyHistoryHttpSupport'
 import { getProxyHistoryDerived } from './proxyHistoryDerivedSupport'
+import { getProxyHistoryRequestPath } from './proxyHistoryTableSupport'
 import {
   getDisplayResponseBody,
   isImageResponseContentType,
@@ -94,6 +95,8 @@ export const getColumnValue = (request: ProxyRequest, columnId: string): string 
       return request.method
     case 'httpVersion':
       return normalizeProxyHistoryHttpVersion(request.http_version_observed)
+    case 'path':
+      return getProxyHistoryRequestPath(request)
     case 'url':
       return request.url
     case 'params':

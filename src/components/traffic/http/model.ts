@@ -26,6 +26,7 @@ export interface HttpExchangeRequest {
   absoluteUrl: string
   sourceRequestId?: number | null
   preferredRequestView?: 'pretty' | 'raw'
+  previewResponse?: HttpReplayResponse
   request: HttpRequestDraft
 }
 

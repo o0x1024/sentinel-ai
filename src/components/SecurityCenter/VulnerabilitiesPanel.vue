@@ -462,11 +462,11 @@ const primaryTransferableEvidence = computed(() =>
 )
 const transferMessages = computed<SecurityEvidenceTransferMessages>(() => ({
   triggerLabel: t('vulnerabilities.transfer.triggerLabel'),
-  createDraft: t('vulnerabilities.transfer.createDraft'),
-  createAttackWorkspace: t('vulnerabilities.transfer.createAttackWorkspace'),
+  sendToRepeater: t('vulnerabilities.transfer.sendToRepeater'),
+  sendToIntruder: t('vulnerabilities.transfer.sendToIntruder'),
   noTransferableRequest: t('vulnerabilities.transfer.noFindingTransferableRequest'),
-  draftCreated: t('vulnerabilities.transfer.draftCreated'),
-  attackWorkspaceCreated: t('vulnerabilities.transfer.attackWorkspaceCreated'),
+  repeaterOpened: t('vulnerabilities.transfer.repeaterOpened'),
+  intruderOpened: t('vulnerabilities.transfer.intruderOpened'),
   transferFailed: t('vulnerabilities.transfer.transferFailed', { error: '{error}' }),
 }))
 const detailTabs = computed<Array<{ id: DetailTabId; label: string }>>(() => {
@@ -484,7 +484,7 @@ const detailTabs = computed<Array<{ id: DetailTabId; label: string }>>(() => {
 const formatTransferError = (error: unknown) =>
   transferMessages.value.transferFailed.replace('{error}', String(error))
 
-const transferSelectedFindingRequest = async (target: 'draft' | 'attackWorkspace') => {
+const transferSelectedFindingRequest = async (target: 'repeater' | 'intruder') => {
   const evidence = primaryTransferableEvidence.value
   if (!evidence) {
     dialog.toast.warning(transferMessages.value.noTransferableRequest)
@@ -499,9 +499,9 @@ const transferSelectedFindingRequest = async (target: 'draft' | 'attackWorkspace
     }
 
     dialog.toast.success(
-      target === 'draft'
-        ? transferMessages.value.draftCreated
-        : transferMessages.value.attackWorkspaceCreated,
+      target === 'repeater'
+        ? transferMessages.value.repeaterOpened
+        : transferMessages.value.intruderOpened,
     )
   } catch (error) {
     console.error('Failed to send security evidence request from shortcut:', error)

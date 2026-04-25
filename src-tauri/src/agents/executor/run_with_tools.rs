@@ -28,7 +28,9 @@ use super::AgentExecuteParams;
 use crate::agents::context_engineering::reflection::{
     record_execution_reflection, ExecutionOutcome,
 };
-use crate::agents::executor::message_store::save_assistant_message;
+use crate::agents::executor::message_store::{
+    build_assistant_session_stats_metadata, save_assistant_message,
+};
 use crate::agents::executor::skill_loaded_events::emit_and_persist_skill_loaded;
 use crate::agents::executor::tenth_man_hypothesis::HypothesisTracker;
 use crate::agents::executor::terminal_session_store::scope_active_terminal_session;
@@ -61,6 +63,7 @@ pub async fn execute_agent_with_tools(
     params: AgentExecuteParams,
     tool_server: &ToolServer,
 ) -> Result<String> {
+    let execution_started_at_ms = chrono::Utc::now().timestamp_millis();
     clear_execution_tool_trace(&params.execution_id);
     let _active_terminal_session_guard = scope_active_terminal_session(
         &params.execution_id,
@@ -111,6 +114,8 @@ pub async fn execute_agent_with_tools(
         &tool_config,
     )
     .await;
+    let usage_data = Arc::new(std::sync::Mutex::new(None::<(u32, u32)>));
+    let usage_data_for_stream = usage_data.clone();
 
     tracing::info!(
         "Selected {} tools for execution_id {}: {:?} (strategy={:?})",
@@ -1208,6 +1213,9 @@ pub async fn execute_agent_with_tools(
                     input_tokens,
                     output_tokens,
                 } => {
+                    if let Ok(mut guard) = usage_data_for_stream.lock() {
+                        *guard = Some((input_tokens, output_tokens));
+                    }
                     tracing::info!(
                         "Token usage report - execution_id: {}, input: {}, output: {}, total: {}",
                         execution_id,
@@ -1588,6 +1596,16 @@ pub async fn execute_agent_with_tools(
                 } else {
                     Some(all_tool_calls.as_slice())
                 };
+                let (input_tokens, output_tokens) = if let Ok(guard) = usage_data.lock() {
+                    guard.unwrap_or((0, 0))
+                } else {
+                    (0, 0)
+                };
+                let session_metadata = build_assistant_session_stats_metadata(
+                    Some(chrono::Utc::now().timestamp_millis() - execution_started_at_ms),
+                    Some(input_tokens),
+                    Some(output_tokens),
+                );
 
                 save_assistant_message(
                     app_handle,
@@ -1595,6 +1613,7 @@ pub async fn execute_agent_with_tools(
                     &final_response,
                     tool_calls_slice,
                     reasoning_content,
+                    session_metadata,
                     params.persist_messages,
                     params.subagent_run_id.as_deref(),
                 )

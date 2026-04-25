@@ -1,8 +1,8 @@
 <template>
-  <aside ref="sidebarRoot" class="flex h-full min-h-0 flex-col gap-3">
-    <section class="workbench-solid-surface workbench-sidebar-card flex h-full min-h-0 flex-col overflow-hidden rounded-[30px] border border-base-300/70 shadow-[0_20px_48px_rgba(15,23,42,0.08)]">
-      <div class="workbench-header-surface border-b border-base-300/70 px-5 py-4">
-        <div class="flex flex-wrap items-center justify-between gap-3">
+  <aside ref="sidebarRoot" class="flex h-full min-h-0 flex-col gap-2">
+    <section class="workbench-solid-surface workbench-sidebar-card flex h-full min-h-0 flex-col overflow-hidden rounded-[18px] border border-base-300/70 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+      <div class="workbench-header-surface border-b border-base-300/70 px-3 py-2.5">
+        <div class="flex flex-wrap items-center justify-between gap-2">
           <h2 class="text-lg font-semibold tracking-tight text-base-content">
             {{ t('trafficAnalysis.workbench.sidebar.title', '工作台') }}
           </h2>
@@ -100,28 +100,19 @@
         </div>
       </div>
 
-      <div class="min-h-0 space-y-4 overflow-auto px-5 py-4">
+      <div class="min-h-0 space-y-2.5 overflow-auto px-3 py-3">
         <div class="workbench-stat-strip">
           <div class="workbench-stat-cell">
-            <span class="workbench-stat-label">{{ t('trafficAnalysis.workbench.stats.drafts', '草稿') }}</span>
+            <span class="workbench-stat-label">{{ t('trafficAnalysis.workbench.stats.repeaterHistory', '重放器历史') }}</span>
             <div class="workbench-stat-main">
-              <strong class="workbench-stat-value">{{ draftCount }}</strong>
-              <span class="workbench-stat-meta">{{ t('trafficAnalysis.workbench.stats.draftsMeta', '草稿请求') }}</span>
+              <strong class="workbench-stat-value">{{ repeaterHistoryCount }}</strong>
+              <span class="workbench-stat-meta">{{ t('trafficAnalysis.workbench.stats.repeaterHistoryMeta', '重放记录') }}</span>
             </div>
           </div>
           <div class="workbench-stat-cell">
-            <span class="workbench-stat-label">{{ t('trafficAnalysis.workbench.stats.replay', '重放') }}</span>
+            <span class="workbench-stat-label">{{ t('trafficAnalysis.workbench.stats.intruderHistory', '爆破器历史') }}</span>
             <div class="workbench-stat-main">
-              <strong class="workbench-stat-value">{{ replaySummary.total }}</strong>
-              <span class="workbench-stat-meta">
-                {{ t('trafficAnalysis.workbench.stats.runningMeta', { count: replaySummary.running }) }}
-              </span>
-            </div>
-          </div>
-          <div class="workbench-stat-cell">
-            <span class="workbench-stat-label">{{ t('trafficAnalysis.workbench.stats.attacks', '攻击') }}</span>
-            <div class="workbench-stat-main">
-              <strong class="workbench-stat-value">{{ attackWorkspaceCount }}</strong>
+              <strong class="workbench-stat-value">{{ intruderHistoryCount }}</strong>
               <span class="workbench-stat-meta">
                 {{ t('trafficAnalysis.workbench.stats.runningMeta', { count: runningAttackCount }) }}
               </span>
@@ -129,16 +120,8 @@
           </div>
         </div>
 
-        <div class="space-y-4">
+        <div class="space-y-2.5">
           <div class="workbench-status-card">
-            <div>
-              <h4 class="text-sm font-semibold text-base-content">
-                {{ t('trafficAnalysis.workbench.sidebar.workflowTitle', '当前工作流') }}
-              </h4>
-              <p class="mt-1 text-xs leading-5 text-base-content/55">
-                {{ t('trafficAnalysis.workbench.sidebar.workflowDescription', '历史记录负责定位请求；重放器和爆破器的历史切换在各自工具内部完成。') }}
-              </p>
-            </div>
             <div class="grid grid-cols-2 gap-2">
               <button type="button" class="btn btn-sm btn-primary rounded-2xl" @click="$emit('openRepeater')">
                 <i class="fas fa-redo mr-1"></i>
@@ -149,35 +132,15 @@
                 {{ t('trafficAnalysis.tabs.intruder', '爆破器') }}
               </button>
             </div>
-          </div>
-
-          <div class="grid gap-2">
-            <div class="workbench-compact-status-row">
-              <div>
-                <p class="text-xs font-semibold text-base-content">
-                  {{ t('trafficAnalysis.workbench.sidebar.repeaterState', '重放器状态') }}
-                </p>
-                <p class="text-[11px] text-base-content/50">
-                  {{ t('trafficAnalysis.workbench.sidebar.repeaterStateMeta', '历史由重放器 Tab 管理') }}
-                </p>
-              </div>
-              <span class="rounded-full bg-base-200 px-2 py-1 text-[11px] font-semibold text-base-content/65">
-                {{ draftCount }}
-              </span>
-            </div>
-            <div class="workbench-compact-status-row">
-              <div>
-                <p class="text-xs font-semibold text-base-content">
-                  {{ t('trafficAnalysis.workbench.sidebar.intruderState', '爆破器状态') }}
-                </p>
-                <p class="text-[11px] text-base-content/50">
-                  {{ t('trafficAnalysis.workbench.sidebar.intruderStateMeta', '历史由爆破器工作区管理') }}
-                </p>
-              </div>
-              <span class="rounded-full bg-base-200 px-2 py-1 text-[11px] font-semibold text-base-content/65">
-                {{ attackWorkspaceCount }}
-              </span>
-            </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-error btn-outline rounded-2xl"
+              :disabled="toolHistoryCount === 0"
+              @click="$emit('clearToolHistory')"
+            >
+              <i class="fas fa-trash-alt mr-1"></i>
+              {{ t('trafficAnalysis.workbench.sidebar.clearToolHistory', '清空工具历史') }}
+            </button>
           </div>
         </div>
       </div>
@@ -203,6 +166,7 @@ const emit = defineEmits<{
   (e: 'openCapture'): void
   (e: 'openRepeater'): void
   (e: 'openIntruder'): void
+  (e: 'clearToolHistory'): void
   (e: 'toggleWorkbenchLayout'): void
   (e: 'toggleIntercept'): void
   (e: 'toggleBasket'): void
@@ -221,9 +185,8 @@ let sidebarResizeObserver: ResizeObserver | null = null
 const props = defineProps<{
   basketCount: number
   controlInterceptCount: number
-  draftCount: number
-  attackWorkspaceCount: number
-  replaySummary: { total: number; running: number }
+  repeaterHistoryCount: number
+  intruderHistoryCount: number
   runningAttackCount: number
   layoutToggleLabel: string
   layoutToggleIcon: string
@@ -231,6 +194,7 @@ const props = defineProps<{
 }>()
 
 const compactActionBadgeCount = computed(() => props.basketCount + props.controlInterceptCount)
+const toolHistoryCount = computed(() => props.repeaterHistoryCount + props.intruderHistoryCount)
 
 function updateCompactHeaderActions(width: number) {
   compactHeaderActions.value = width < COMPACT_HEADER_ACTIONS_WIDTH
@@ -311,10 +275,10 @@ onUnmounted(() => {
 <style scoped>
 .workbench-stat-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
-  border-radius: 1rem;
+  border-radius: 0.75rem;
   border: 1px solid hsl(var(--b3) / 0.65);
   background: hsl(var(--b3) / 0.65);
 }
@@ -323,9 +287,9 @@ onUnmounted(() => {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.12rem;
   background: hsl(var(--b1) / 0.88);
-  padding: 0.6rem 0.65rem;
+  padding: 0.45rem 0.55rem;
 }
 
 .workbench-stat-main {
@@ -359,23 +323,23 @@ onUnmounted(() => {
 
 .workbench-status-card,
 .workbench-compact-status-row {
-  border-radius: 1rem;
+  border-radius: 0.75rem;
   border: 1px solid hsl(var(--b3) / 0.65);
   background: hsl(var(--b1) / 0.72);
 }
 
 .workbench-status-card {
   display: grid;
-  gap: 1rem;
-  padding: 1rem;
+  gap: 0.65rem;
+  padding: 0.75rem;
 }
 
 .workbench-compact-status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 0.8rem 0.9rem;
+  gap: 0.65rem;
+  padding: 0.6rem 0.7rem;
 }
 
 </style>

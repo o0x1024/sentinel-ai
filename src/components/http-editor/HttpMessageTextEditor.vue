@@ -134,6 +134,7 @@ import {
   type TrafficMessageType,
 } from '@/components/traffic/trafficDisplaySettings'
 import { getIntruderMarkerEditorExtensions } from '@/components/traffic/intruder/intruderMarkerEditorExtension'
+import { setSessionStorageItem } from '@/utils/browserStorage'
 
 const scrollStateCache = new Map<string, { top: number; left: number }>()
 const MAX_SCROLL_STATE_CACHE_SIZE = 100
@@ -205,6 +206,7 @@ let contextMenuListenerAttached = false
 let pendingScrollRestoreState: { top: number; left: number } | null = null
 let pendingScrollRestoreFrames = 0
 let pendingScrollRestoreAnimationFrame: number | null = null
+let editorDeletionKeyListenerAttached = false
 const editorThemeMode = ref<'burp-light' | 'burp-dark'>(isDarkHttpEditorTheme() ? 'burp-dark' : 'burp-light')
 const readOnlyCompartment = new Compartment()
 const editableCompartment = new Compartment()
@@ -419,6 +421,17 @@ function handleEditorContextMenu(event: MouseEvent) {
   emit('contextmenu', event)
 }
 
+function stopEditorDeletionKeyPropagation(event: KeyboardEvent) {
+  if (event.key !== 'Backspace' && event.key !== 'Delete') return
+  event.stopPropagation()
+}
+
+function updateEditorDeletionKeyBinding() {
+  if (!editorView || editorDeletionKeyListenerAttached) return
+  editorView.dom.addEventListener('keydown', stopEditorDeletionKeyPropagation)
+  editorDeletionKeyListenerAttached = true
+}
+
 function updateContextMenuBinding() {
   if (!editorView) return
   if (props.customContextMenu && !contextMenuListenerAttached) {
@@ -456,14 +469,10 @@ function saveScrollStateForKey(stateKey: string) {
     scrollStateCache.delete(oldestKey)
   }
 
-  try {
-    window.sessionStorage.setItem(
-      `${HTTP_EDITOR_SCROLL_STATE_STORAGE_PREFIX}${stateKey}`,
-      JSON.stringify(scrollState),
-    )
-  } catch {
-    // Ignore storage quota or privacy-mode failures and keep in-memory fallback.
-  }
+  setSessionStorageItem(
+    `${HTTP_EDITOR_SCROLL_STATE_STORAGE_PREFIX}${stateKey}`,
+    JSON.stringify(scrollState),
+  )
 }
 
 function saveScrollState() {
@@ -559,6 +568,10 @@ function destroyEditorView() {
   if (contextMenuListenerAttached) {
     editorView.dom.removeEventListener('contextmenu', handleEditorContextMenu, { capture: true })
     contextMenuListenerAttached = false
+  }
+  if (editorDeletionKeyListenerAttached) {
+    editorView.dom.removeEventListener('keydown', stopEditorDeletionKeyPropagation)
+    editorDeletionKeyListenerAttached = false
   }
   editorView.scrollDOM.removeEventListener('scroll', saveScrollState)
   editorView.destroy()
@@ -740,6 +753,7 @@ function initEditor() {
   })
 
   forceVisibleSyntaxHighlight(8)
+  updateEditorDeletionKeyBinding()
   updateContextMenuBinding()
   editorView.scrollDOM.addEventListener('scroll', saveScrollState, { passive: true })
   requestAnimationFrame(() => {

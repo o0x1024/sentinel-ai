@@ -22,7 +22,10 @@ import type { HttpExchangeRequest } from '@/components/traffic/http/model'
 import type { TrafficAnalysisViewHandle } from '@/components/traffic/trafficAnalysisViewTypes'
 import type { TrafficContextCandidateEvidenceSelection } from '@/components/traffic/trafficContextCandidateTypes'
 import type { TrafficComparePayload } from '@/components/traffic/transfers'
-import { useTrafficLaunchQueueStore } from '@/components/traffic/workbench/stores/useTrafficLaunchQueueStore'
+import {
+  TRAFFIC_LAUNCH_QUEUE_EVENT,
+  useTrafficLaunchQueueStore,
+} from '@/components/traffic/workbench/stores/useTrafficLaunchQueueStore'
 
 defineOptions({
   name: 'TrafficAnalysis',
@@ -91,6 +94,9 @@ async function getTrafficViewHandle() {
   }
 
   await nextTick()
+  if (!trafficViewRef.value) {
+    throw new Error('Traffic workbench is not ready')
+  }
   return trafficViewRef.value
 }
 
@@ -189,32 +195,33 @@ function restoreTrafficScrollStateAfterLayout() {
 
 async function createDraftFromRequest(request: HttpExchangeRequest) {
   const view = await getTrafficViewHandle()
-  view?.createDraftFromRequest(request)
+  await view.createDraftFromRequest(request)
 }
 
 async function createAttackWorkspaceFromRequest(request: HttpExchangeRequest) {
   const view = await getTrafficViewHandle()
-  view?.createAttackWorkspaceFromRequest(request)
+  await view.createAttackWorkspaceFromRequest(request)
 }
 
 async function openCompare(payload: TrafficComparePayload) {
   const view = await getTrafficViewHandle()
-  view?.openCompare(payload)
+  await view.openCompare(payload)
 }
 
 async function processPendingTransfers() {
+  const view = await getTrafficViewHandle()
   const pending = trafficLaunchQueue.consumeLaunchQueue()
 
-  for (const request of pending.draftRequests) {
-    await createDraftFromRequest(request)
+  for (const request of pending.repeaterRequests) {
+    await view.createDraftFromRequest(request)
   }
 
-  for (const request of pending.attackWorkspaceRequests) {
-    await createAttackWorkspaceFromRequest(request)
+  for (const request of pending.intruderRequests) {
+    await view.createAttackWorkspaceFromRequest(request)
   }
 
   for (const payload of pending.comparePayloads) {
-    await openCompare(payload)
+    await view.openCompare(payload)
   }
 }
 
@@ -233,10 +240,17 @@ async function openHistoryRequest(payload: TrafficContextCandidateEvidenceSelect
   lastOpenedHistoryRequestAt = now
 
   const view = await getTrafficViewHandle()
-  await view?.openHistoryRequest(payload)
+  await view.openHistoryRequest(payload)
+}
+
+function handleSecurityEvidenceTransferQueued() {
+  void processPendingTransfers().catch(error => {
+    console.error('Failed to process queued security evidence transfer', error)
+  })
 }
 
 onMounted(async () => {
+  window.addEventListener(TRAFFIC_LAUNCH_QUEUE_EVENT, handleSecurityEvidenceTransferQueued)
   await processPendingTransfers()
   restoreTrafficScrollStateAfterLayout()
 
@@ -279,6 +293,7 @@ onDeactivated(() => {
 
 onUnmounted(() => {
   saveTrafficScrollState()
+  window.removeEventListener(TRAFFIC_LAUNCH_QUEUE_EVENT, handleSecurityEvidenceTransferQueued)
   unlistenOpenHistoryRequest?.()
   unlistenOpenHistoryRequest = null
 })

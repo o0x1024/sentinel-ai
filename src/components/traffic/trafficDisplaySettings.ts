@@ -1,4 +1,5 @@
 import { computed, ref, watch } from 'vue'
+import { setLocalStorageItem } from '@/utils/browserStorage'
 
 export type TrafficMessageType = 'request' | 'response' | 'generic'
 export type TrafficMessageViewTab = 'pretty' | 'raw'
@@ -133,7 +134,7 @@ const trafficDisplaySettings = ref<TrafficDisplaySettings>(loadTrafficDisplaySet
 watch(
   trafficDisplaySettings,
   (value) => {
-    localStorage.setItem(TRAFFIC_DISPLAY_SETTINGS_STORAGE_KEY, JSON.stringify(value))
+    setLocalStorageItem(TRAFFIC_DISPLAY_SETTINGS_STORAGE_KEY, JSON.stringify(value))
   },
   { deep: true },
 )

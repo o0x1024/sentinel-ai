@@ -23,6 +23,8 @@
           msg.content,
           msg.metadata?.status,
           msg.metadata?.duration_ms,
+          msg.metadata?.session_stats?.total_tokens,
+          msg.metadata?.session_stats?.tokens_per_second,
           isExecuting && index === displayedMessages.length - 1,
           focusedMessageId === msg.id,
           animatedFocusMessageId === msg.id,

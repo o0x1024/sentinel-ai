@@ -8,7 +8,9 @@ use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
 
 use super::AgentExecuteParams;
 use crate::agents::apply_sentinel_execution_outcome;
-use crate::agents::executor::message_store::save_assistant_message;
+use crate::agents::executor::message_store::{
+    build_assistant_session_stats_metadata, save_assistant_message,
+};
 use crate::agents::executor::utils::cleanup_container_context_async;
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 
@@ -16,6 +18,7 @@ pub async fn execute_agent_simple(
     app_handle: &AppHandle,
     params: AgentExecuteParams,
 ) -> Result<String> {
+    let execution_started_at_ms = chrono::Utc::now().timestamp_millis();
     let rig_provider = params.rig_provider.to_lowercase();
 
     let mut config = LlmConfig::new(&rig_provider, &params.model)
@@ -41,6 +44,8 @@ pub async fn execute_agent_simple(
     let app = app_handle.clone();
     let reasoning_content = Arc::new(Mutex::new(String::new()));
     let reasoning_content_for_stream = reasoning_content.clone();
+    let usage_data = Arc::new(Mutex::new(None::<(u32, u32)>));
+    let usage_data_for_stream = usage_data.clone();
 
     let result = client
         .stream_completion(Some(&system_prompt), &params.task, |content| {
@@ -74,6 +79,14 @@ pub async fn execute_agent_simple(
                 StreamContent::Done => {
                     tracing::info!("Agent completed - execution_id: {}", execution_id);
                 }
+                StreamContent::Usage {
+                    input_tokens,
+                    output_tokens,
+                } => {
+                    if let Ok(mut guard) = usage_data_for_stream.lock() {
+                        *guard = Some((input_tokens, output_tokens));
+                    }
+                }
                 _ => {}
             }
             true
@@ -93,6 +106,16 @@ pub async fn execute_agent_simple(
                 .ok()
                 .map(|buf| buf.clone())
                 .filter(|buf| !buf.trim().is_empty());
+            let (input_tokens, output_tokens) = if let Ok(guard) = usage_data.lock() {
+                guard.unwrap_or((0, 0))
+            } else {
+                (0, 0)
+            };
+            let session_metadata = build_assistant_session_stats_metadata(
+                Some(chrono::Utc::now().timestamp_millis() - execution_started_at_ms),
+                Some(input_tokens),
+                Some(output_tokens),
+            );
 
             save_assistant_message(
                 app_handle,
@@ -100,6 +123,7 @@ pub async fn execute_agent_simple(
                 &response,
                 None,
                 final_reasoning_content,
+                session_metadata,
                 params.persist_messages,
                 params.subagent_run_id.as_deref(),
             )

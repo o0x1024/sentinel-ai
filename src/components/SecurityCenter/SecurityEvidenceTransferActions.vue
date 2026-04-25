@@ -9,13 +9,13 @@
       class="dropdown-content menu z-[70] mt-2 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
     >
       <li>
-        <button @click.stop="sendRequest('draft')">
-          {{ messages.createDraft }}
+        <button @click.stop="sendRequest('repeater')">
+          {{ messages.sendToRepeater }}
         </button>
       </li>
       <li>
-        <button @click.stop="sendRequest('attackWorkspace')">
-          {{ messages.createAttackWorkspace }}
+        <button @click.stop="sendRequest('intruder')">
+          {{ messages.sendToIntruder }}
         </button>
       </li>
     </ul>
@@ -83,7 +83,7 @@ const sendRequest = async (target: SecurityEvidenceTransferTarget) => {
     }
 
     dialog.toast.success(
-      target === 'draft' ? props.messages.draftCreated : props.messages.attackWorkspaceCreated
+      target === 'repeater' ? props.messages.repeaterOpened : props.messages.intruderOpened
     )
   } catch (error) {
     console.error('Failed to send security evidence request:', error)

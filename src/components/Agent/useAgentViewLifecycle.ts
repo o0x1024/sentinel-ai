@@ -19,6 +19,7 @@ interface AgentAssistantMessageSavedEvent {
   execution_id: string
   message_id: string
   content: string
+  metadata?: Record<string, unknown> | null
   reasoning_content?: string | null
   timestamp: number
 }

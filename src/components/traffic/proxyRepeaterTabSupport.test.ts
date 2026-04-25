@@ -59,4 +59,29 @@ describe('proxyRepeaterTabSupport', () => {
       '}',
     ].join('\n'))
   })
+
+  it('hydrates preview response data from a history request', () => {
+    const request = createHistoryRequest()
+    request.previewResponse = {
+      statusCode: 200,
+      versionObserved: 'HTTP/1.1',
+      statusText: 'OK',
+      headers: [{ name: 'Content-Type', value: 'application/json' }],
+      bodyText: '{"ok":true}',
+      rawText: 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"ok":true}',
+      responseTimeMs: 24,
+    }
+
+    const tab = createRepeaterTab({
+      request,
+      fallbackNameIndex: 1,
+      generateId: () => 'tab-1',
+      defaultRequestTab: 'pretty',
+      defaultResponseTab: 'pretty',
+    })
+
+    expect(tab.response?.bodyText).toBe('{"ok":true}')
+    expect(tab.rawResponse).toContain('{"ok":true}')
+    expect(tab.lastCompletedRawResponse).toBe(tab.rawResponse)
+  })
 })

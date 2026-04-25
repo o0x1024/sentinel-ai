@@ -15,6 +15,7 @@ const proxyHistorySortCollator = new Intl.Collator(undefined, {
 
 export const defaultProxyHistoryColumns: Column[] = [
   { id: 'id', label: 'ID', visible: true, width: 52, minWidth: 46 },
+  { id: 'path', label: 'Path', visible: true, width: 380, minWidth: 180 },
   { id: 'host', label: 'Host', visible: true, width: 220, minWidth: 120 },
   { id: 'method', label: 'Method', visible: true, width: 78, minWidth: 64 },
   { id: 'httpVersion', label: 'HTTP', visible: true, width: 92, minWidth: 84 },
@@ -46,10 +47,15 @@ export const loadProxyHistoryColumnsFromStorage = () => {
     const saved = localStorage.getItem(PROXY_HISTORY_COLUMNS_STORAGE_KEY)
     if (saved) {
       const savedColumns = JSON.parse(saved) as Column[]
-      return defaultProxyHistoryColumns.map((column) => {
-        const savedColumn = savedColumns.find((item) => item.id === column.id)
-        return savedColumn ? { ...column, ...savedColumn } : column
-      })
+      const savedColumnIds = new Set(savedColumns.map(column => column.id))
+      const orderedSavedColumns = savedColumns
+        .map((savedColumn) => {
+          const defaultColumn = defaultProxyHistoryColumns.find(column => column.id === savedColumn.id)
+          return defaultColumn ? { ...defaultColumn, ...savedColumn } : null
+        })
+        .filter((column): column is Column => Boolean(column))
+      const newDefaultColumns = defaultProxyHistoryColumns.filter(column => !savedColumnIds.has(column.id))
+      return [...orderedSavedColumns, ...newDefaultColumns]
     }
   } catch (error) {
     console.error('Failed to load columns from storage:', error)
@@ -68,6 +74,7 @@ export const translateProxyHistoryColumns = (
         : column.id === 'host' ? t('trafficAnalysis.history.table.host')
         : column.id === 'method' ? t('trafficAnalysis.history.table.method')
         : column.id === 'httpVersion' ? t('trafficAnalysis.history.table.httpVersion')
+        : column.id === 'path' ? t('trafficAnalysis.history.table.path')
         : column.id === 'url' ? t('trafficAnalysis.history.table.url')
         : column.id === 'params' ? t('trafficAnalysis.history.table.params')
         : column.id === 'status' ? t('trafficAnalysis.history.table.status')
@@ -103,6 +110,42 @@ export const loadProxyHistorySortFromStorage = (): ProxyHistorySortState => {
 export const getProxyHistoryDefaultSortDirection = (columnId: string): ProxyHistorySortDirection =>
   ['id', 'time', 'status', 'length', 'responseTimer'].includes(columnId) ? 'desc' : 'asc'
 
+export type ProxyHistoryColumnDropPosition = 'before' | 'after'
+
+export function moveProxyHistoryColumn(
+  columns: Column[],
+  sourceColumnId: string,
+  targetColumnId: string,
+  position: ProxyHistoryColumnDropPosition,
+) {
+  if (sourceColumnId === targetColumnId) {
+    return columns
+  }
+
+  const sourceIndex = columns.findIndex(column => column.id === sourceColumnId)
+  const targetIndex = columns.findIndex(column => column.id === targetColumnId)
+
+  if (sourceIndex === -1 || targetIndex === -1) {
+    return columns
+  }
+
+  const nextColumns = [...columns]
+  const [sourceColumn] = nextColumns.splice(sourceIndex, 1)
+  const targetIndexAfterRemoval = nextColumns.findIndex(column => column.id === targetColumnId)
+  const insertIndex = position === 'before' ? targetIndexAfterRemoval : targetIndexAfterRemoval + 1
+  nextColumns.splice(insertIndex, 0, sourceColumn)
+  return nextColumns
+}
+
+export function getProxyHistoryRequestPath(request: ProxyRequest) {
+  try {
+    const parsedUrl = new URL(request.url)
+    return `${parsedUrl.pathname || '/'}${parsedUrl.search || ''}`
+  } catch {
+    return request.url || ''
+  }
+}
+
 function getProxyHistorySortValue(request: ProxyRequest, columnId: string): number | string {
   const derived = getProxyHistoryDerived(request)
 
@@ -115,6 +158,8 @@ function getProxyHistorySortValue(request: ProxyRequest, columnId: string): numb
       return request.method || ''
     case 'httpVersion':
       return normalizeProxyHistoryHttpVersion(request.http_version_observed)
+    case 'path':
+      return getProxyHistoryRequestPath(request)
     case 'url':
       return request.url || ''
     case 'params':

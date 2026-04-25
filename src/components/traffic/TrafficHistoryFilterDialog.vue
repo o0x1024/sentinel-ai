@@ -177,13 +177,13 @@
               <legend class="filter-card-title px-1">{{ t('trafficAnalysis.history.filterDialog.listenerTitle', '按监听器过滤') }}</legend>
               <div class="filter-card-body">
                 <div class="listener-row">
-                <label class="filter-inline-label">{{ t('trafficAnalysis.history.filterDialog.checkboxes.port') }}</label>
-                <input
-                  v-model="draft.listener.port"
-                  type="text"
-                  class="input input-bordered input-sm h-8 w-full"
-                  :placeholder="t('trafficAnalysis.history.filterDialog.checkboxes.placeholders.port')"
-                />
+                  <label class="filter-inline-label">{{ t('trafficAnalysis.history.filterDialog.checkboxes.port') }}</label>
+                  <input
+                    v-model="draft.listener.port"
+                    type="text"
+                    class="input input-bordered input-sm h-8 w-full"
+                    :placeholder="t('trafficAnalysis.history.filterDialog.checkboxes.placeholders.port')"
+                  />
                 </div>
               </div>
             </fieldset>
@@ -382,6 +382,14 @@ function cloneFilterConfig(config: ProxyHistoryFilterConfig): ProxyHistoryFilter
 }
 
 @media (min-width: 1024px) {
+  .filter-grid-top > .filter-card {
+    min-height: 11.2rem;
+  }
+
+  .filter-grid-bottom > .filter-card {
+    min-height: 8.8rem;
+  }
+
   .filter-grid-top {
     grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.3fr) minmax(0, 1fr);
   }

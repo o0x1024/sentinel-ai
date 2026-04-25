@@ -2,15 +2,17 @@ import { ref } from 'vue'
 import type { HttpExchangeRequest } from '../../http/model'
 import type { TrafficComparePayload } from '../../transfers'
 
+export const TRAFFIC_LAUNCH_QUEUE_EVENT = 'traffic-workbench:launch-queue-updated'
+
 type LaunchQueueState = {
-  draftRequests: HttpExchangeRequest[]
-  attackWorkspaceRequests: HttpExchangeRequest[]
+  repeaterRequests: HttpExchangeRequest[]
+  intruderRequests: HttpExchangeRequest[]
   comparePayloads: TrafficComparePayload[]
 }
 
 const launchQueueState = ref<LaunchQueueState>({
-  draftRequests: [],
-  attackWorkspaceRequests: [],
+  repeaterRequests: [],
+  intruderRequests: [],
   comparePayloads: [],
 })
 
@@ -57,17 +59,17 @@ function cloneComparePayload(payload: TrafficComparePayload): TrafficComparePayl
   }
 }
 
-function queueDraftRequest(request: HttpExchangeRequest) {
+function queueRepeaterRequest(request: HttpExchangeRequest) {
   launchQueueState.value = {
     ...launchQueueState.value,
-    draftRequests: [...launchQueueState.value.draftRequests, cloneRequest(request)],
+    repeaterRequests: [...launchQueueState.value.repeaterRequests, cloneRequest(request)],
   }
 }
 
-function queueAttackWorkspaceRequest(request: HttpExchangeRequest) {
+function queueIntruderRequest(request: HttpExchangeRequest) {
   launchQueueState.value = {
     ...launchQueueState.value,
-    attackWorkspaceRequests: [...launchQueueState.value.attackWorkspaceRequests, cloneRequest(request)],
+    intruderRequests: [...launchQueueState.value.intruderRequests, cloneRequest(request)],
   }
 }
 
@@ -80,13 +82,13 @@ function queueComparePayload(payload: TrafficComparePayload) {
 
 function consumeLaunchQueue(): LaunchQueueState {
   const snapshot = {
-    draftRequests: launchQueueState.value.draftRequests.map(cloneRequest),
-    attackWorkspaceRequests: launchQueueState.value.attackWorkspaceRequests.map(cloneRequest),
+    repeaterRequests: launchQueueState.value.repeaterRequests.map(cloneRequest),
+    intruderRequests: launchQueueState.value.intruderRequests.map(cloneRequest),
     comparePayloads: launchQueueState.value.comparePayloads.map(cloneComparePayload),
   }
   launchQueueState.value = {
-    draftRequests: [],
-    attackWorkspaceRequests: [],
+    repeaterRequests: [],
+    intruderRequests: [],
     comparePayloads: [],
   }
   return snapshot
@@ -95,8 +97,8 @@ function consumeLaunchQueue(): LaunchQueueState {
 export function useTrafficLaunchQueueStore() {
   return {
     state: launchQueueState,
-    queueDraftRequest,
-    queueAttackWorkspaceRequest,
+    queueRepeaterRequest,
+    queueIntruderRequest,
     queueComparePayload,
     consumeLaunchQueue,
   }

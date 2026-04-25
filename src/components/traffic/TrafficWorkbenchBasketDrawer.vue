@@ -6,13 +6,13 @@
     <div class="flex items-center justify-between gap-3 border-b border-base-300/70 px-4 py-3">
       <div>
         <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/80">
-          Request Basket
+          {{ t('trafficAnalysis.workbench.basket.kicker') }}
         </p>
         <h3 class="mt-1 text-base font-semibold text-base-content">
-          请求篮子
+          {{ t('trafficAnalysis.workbench.basket.title') }}
         </h3>
         <p class="mt-1 text-xs text-base-content/60">
-          先收集高价值请求，再批量发送到重放器或爆破器。
+          {{ t('trafficAnalysis.workbench.basket.description') }}
         </p>
       </div>
       <button type="button" class="btn btn-xs btn-ghost rounded-2xl" @click="$emit('close')">
@@ -23,22 +23,22 @@
     <div v-if="items.length > 0" class="flex flex-wrap items-center gap-2 border-b border-base-300/70 px-4 py-3">
       <button type="button" class="btn btn-xs btn-primary" @click="$emit('createDraftsForAll')">
         <i class="fas fa-redo mr-1"></i>
-        全部发送到重放器
+        {{ t('trafficAnalysis.workbench.basket.sendAllToRepeater') }}
       </button>
       <button type="button" class="btn btn-xs btn-outline" @click="$emit('createAttackWorkspacesForAll')">
         <i class="fas fa-crosshairs mr-1"></i>
-        全部发送到爆破器
+        {{ t('trafficAnalysis.workbench.basket.sendAllToIntruder') }}
       </button>
       <button type="button" class="btn btn-xs btn-ghost text-error" @click="$emit('clear')">
         <i class="fas fa-trash mr-1"></i>
-        清空篮子
+        {{ t('trafficAnalysis.workbench.basket.clear') }}
       </button>
     </div>
 
     <div v-if="items.length === 0" class="flex h-48 items-center justify-center px-6 text-center text-sm text-base-content/55">
       <div>
         <i class="fas fa-basket-shopping mb-3 text-3xl text-base-content/25"></i>
-        <p>历史记录和拦截队列里的高价值请求，可以先放到这里再统一处理。</p>
+        <p>{{ t('trafficAnalysis.workbench.basket.empty') }}</p>
       </div>
     </div>
 
@@ -86,7 +86,7 @@
               @click="$emit('createDraft', item.id)"
             >
               <i class="fas fa-redo mr-1"></i>
-              重放器
+              {{ t('trafficAnalysis.tabs.repeater') }}
             </button>
             <button
               type="button"
@@ -94,7 +94,7 @@
               @click="$emit('createAttackWorkspace', item.id)"
             >
               <i class="fas fa-crosshairs mr-1"></i>
-              爆破器
+              {{ t('trafficAnalysis.tabs.intruder') }}
             </button>
             <button
               v-if="item.requestId"
@@ -103,7 +103,7 @@
               @click="$emit('openHistoryRequest', item.requestId)"
             >
               <i class="fas fa-history mr-1"></i>
-              查看源请求
+              {{ t('trafficAnalysis.workbench.basket.openSourceRequest') }}
             </button>
           </div>
         </article>
@@ -113,7 +113,10 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import type { TrafficWorkbenchBasketItem } from './trafficWorkbenchTypes'
+
+const { t } = useI18n()
 
 defineProps<{
   open: boolean
