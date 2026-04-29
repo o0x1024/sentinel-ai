@@ -233,18 +233,6 @@ pub async fn save_entitlement_refresh_config(
 pub async fn refresh_entitlement_token(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<EntitlementRefreshResult, String> {
-    if !sentinel_license::is_licensed() {
-        return Ok(EntitlementRefreshResult {
-            success: false,
-            configured: false,
-            message: "Local license is not activated".to_string(),
-            error_code: Some("local_license_missing".to_string()),
-            retry_after_secs: None,
-            token_stored: false,
-            status: sentinel_license::get_entitlement_token_status(),
-        });
-    }
-
     let config = load_entitlement_refresh_config(db.inner().as_ref()).await?;
     if !config.enabled || config.endpoint.trim().is_empty() {
         return Ok(EntitlementRefreshResult {
@@ -268,7 +256,7 @@ pub async fn refresh_entitlement_token(
         "machine_id": sentinel_license::get_machine_id(),
         "machine_id_full": sentinel_license::get_machine_id_full(),
         "customer_id": trim_to_option(&config.customer_id),
-        "license_present": sentinel_license::is_licensed(),
+        "license_present": sentinel_license::get_entitlement_token_status().valid,
         "current_entitlement": {
             "exists": current_status.exists,
             "license_id": current_status.license_id,

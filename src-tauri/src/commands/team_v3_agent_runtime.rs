@@ -75,6 +75,8 @@ pub(crate) async fn execute_team_wave_tasks(
             api_key,
             api_base,
             system_prompt: String::new(),
+            active_browser_shell_direct_write_enabled: false,
+            active_browser_shell_session_id: None,
             active_terminal_session_fingerprint: None,
             active_terminal_session_id: None,
             tool_config: base_tool_config,

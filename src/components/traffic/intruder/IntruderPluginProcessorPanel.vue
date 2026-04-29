@@ -57,11 +57,7 @@
                     :value="binding.pluginId"
                     class="select select-bordered select-xs w-full"
                     @click.stop
-                  @change="updateBinding(binding.id, {
-                      pluginId: ($event.target as HTMLSelectElement).value,
-                      presetName: '',
-                      config: '{}',
-                    })"
+                    @change="handleBindingPluginChange(binding.id, ($event.target as HTMLSelectElement).value)"
                   >
                     <option value="">{{ $t('trafficAnalysis.intruder.labels.pleaseSelect') }}</option>
                     <option v-for="plugin in availablePlugins" :key="plugin.id" :value="plugin.id">{{ plugin.name }}</option>
@@ -101,6 +97,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
+import { buildResolvedPluginDefaultConfig } from '@/services/pluginDefaultConfig'
 import { createIntruderId } from './http'
 import IntruderPluginConfigDialog from './IntruderPluginConfigDialog.vue'
 import { getIntruderPluginInputSchema, listIntruderPlugins, type IntruderPluginSummary } from './plugins'
@@ -216,6 +213,26 @@ function describeBinding(binding: IntruderPluginProcessorBinding): string {
   if (!plugin) return binding.pluginId
   const configured = binding.config.trim() && binding.config.trim() !== '{}'
   return configured ? `${plugin.name} (${t('trafficAnalysis.intruder.labels.configured')})` : plugin.name
+}
+
+async function handleBindingPluginChange(bindingId: string, pluginId: string) {
+  let config = '{}'
+
+  if (pluginId) {
+    await ensureSchema(pluginId)
+    try {
+      const resolvedConfig = await buildResolvedPluginDefaultConfig(pluginId, schemaCache.value[pluginId])
+      config = JSON.stringify(resolvedConfig, null, 2)
+    } catch (error) {
+      console.error(`Failed to load default config for plugin ${pluginId}`, error)
+    }
+  }
+
+  updateBinding(bindingId, {
+    pluginId,
+    presetName: '',
+    config,
+  })
 }
 
 async function ensureSchema(pluginId: string) {

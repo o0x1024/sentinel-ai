@@ -105,9 +105,9 @@
         ></div>
       </div>
     </div>
-    <div v-for="item in visibleRows" :key="item.data.id" class="absolute left-0 right-0 flex cursor-pointer table-row-text hover:bg-base-200/60" :class="{ 'bg-primary/10': selectedRequest?.id === item.data.id, 'bg-accent/10': isMultiSelectMode && isRequestSelected(item.data), 'bg-error/10 hover:bg-error/20': item.data.status_code === 0 }" :style="{ top: (item.offset + headerHeight) + 'px', height: itemHeight + 'px', minWidth: 'max-content' }" @click="isMultiSelectMode ? toggleSelectRequest(item.data) : (item.data.status_code === 0 ? showCertificateError(item.data) : selectRequest(item.data))" @contextmenu.prevent="showContextMenu($event, item.data)">
-      <div v-if="isMultiSelectMode" class="flex items-center justify-center px-1.5" style="width: 34px; min-width: 34px;" @click.stop="toggleSelectRequest(item.data)">
-        <input type="checkbox" class="checkbox checkbox-xs checkbox-accent" :checked="isRequestSelected(item.data)" @click.stop @change="toggleSelectRequest(item.data)" />
+    <div v-for="item in visibleRows" :key="item.data.id" class="absolute left-0 right-0 flex cursor-pointer select-none table-row-text hover:bg-base-200/60" :class="{ 'bg-primary/10': selectedRequest?.id === item.data.id, 'bg-accent/10': isMultiSelectMode && isRequestSelected(item.data), 'bg-error/10 hover:bg-error/20': item.data.status_code === 0 }" :style="{ top: (item.offset + headerHeight) + 'px', height: itemHeight + 'px', minWidth: 'max-content' }" @click="isMultiSelectMode || $event.shiftKey ? toggleSelectRequest(item.data, $event) : (item.data.status_code === 0 ? showCertificateError(item.data) : selectRequest(item.data))" @contextmenu.prevent="showContextMenu($event, item.data)">
+      <div v-if="isMultiSelectMode" class="flex items-center justify-center px-1.5" style="width: 34px; min-width: 34px;" @click.stop="toggleSelectRequest(item.data, $event)">
+        <input type="checkbox" class="checkbox checkbox-xs checkbox-accent" :checked="isRequestSelected(item.data)" @click.stop.prevent="toggleSelectRequest(item.data, $event)" />
       </div>
       <div v-for="col in visibleColumns" :key="col.id" class="flex items-center overflow-hidden px-1.5" :style="{ width: col.width + 'px', minWidth: col.minWidth + 'px' }">
         <template v-if="col.id === 'method'">
@@ -177,7 +177,7 @@ defineProps<{
   visibleRows: VisibleRow[]
   selectedRequest: ProxyRequest | null
   isRequestSelected: (request: ProxyRequest) => boolean
-  toggleSelectRequest: (request: ProxyRequest) => void
+  toggleSelectRequest: (request: ProxyRequest, event?: MouseEvent | Event) => void
   showCertificateError: (request: ProxyRequest) => void
   selectRequest: (request: ProxyRequest) => void
   showContextMenu: (event: MouseEvent, request: ProxyRequest) => void

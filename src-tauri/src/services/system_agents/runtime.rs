@@ -1014,6 +1014,8 @@ impl SystemAgentRuntime {
             model: config.model.clone(),
             system_prompt,
             task,
+            active_browser_shell_direct_write_enabled: false,
+            active_browser_shell_session_id: None,
             active_terminal_session_fingerprint: None,
             active_terminal_session_id: None,
             rig_provider: config
@@ -1029,6 +1031,7 @@ impl SystemAgentRuntime {
             tenth_man_config: None,
             document_attachments: None,
             image_attachments: None,
+            referenced_traffic: None,
             persist_messages: false,
             subagent_run_id: None,
             context_policy: None,

@@ -8,6 +8,7 @@ use tauri::{Manager, State};
 use super::TrafficAnalysisState;
 use crate::commands::command_response_support::CommandResponse;
 use crate::services::system_agents::{
+    BrowserShellFrame, BrowserShellSession, BrowserShellWriteRequest,
     TrafficBehaviorSignalSettings, TRAFFIC_BEHAVIOR_EXTENSION_BRIDGE_PORT,
     TRAFFIC_BEHAVIOR_SIGNAL_SETTINGS_KEY,
 };
@@ -31,6 +32,33 @@ pub struct TrafficBehaviorExtensionInstallation {
 #[serde(rename_all = "camelCase")]
 pub struct CopyTrafficBehaviorExtensionResult {
     pub copied_directory: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrafficBrowserShellFrameList {
+    pub session_id: String,
+    pub frames: Vec<BrowserShellFrame>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueTrafficBrowserShellWritePayload {
+    pub session_id: String,
+    pub input_text: String,
+    #[serde(default = "default_requires_approval")]
+    pub requires_approval: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RespondTrafficBrowserShellWritePayload {
+    pub request_id: String,
+    pub allowed: bool,
+}
+
+fn default_requires_approval() -> bool {
+    true
 }
 
 fn resolve_extension_directory(app: &tauri::AppHandle) -> Option<(PathBuf, bool)> {
@@ -194,6 +222,79 @@ pub async fn read_traffic_clipboard_text() -> Result<CommandResponse<String>, St
         .get_text()
         .map_err(|error| format!("Failed to read clipboard text: {error}"))?;
     Ok(CommandResponse::ok(text))
+}
+
+#[tauri::command]
+pub async fn list_traffic_browser_shell_sessions(
+    state: State<'_, TrafficAnalysisState>,
+) -> Result<CommandResponse<Vec<BrowserShellSession>>, String> {
+    let store = state.get_browser_shell_store();
+    let sessions = store.read().await.list_sessions();
+    Ok(CommandResponse::ok(sessions))
+}
+
+#[tauri::command]
+pub async fn get_traffic_browser_shell_frames(
+    state: State<'_, TrafficAnalysisState>,
+    session_id: String,
+    limit: Option<usize>,
+) -> Result<CommandResponse<TrafficBrowserShellFrameList>, String> {
+    let normalized_session_id = session_id.trim();
+    if normalized_session_id.is_empty() {
+        return Ok(CommandResponse::err("Session id is required"));
+    }
+
+    let store = state.get_browser_shell_store();
+    let frames = store
+        .read()
+        .await
+        .list_frames(normalized_session_id, limit.unwrap_or(50));
+    Ok(CommandResponse::ok(TrafficBrowserShellFrameList {
+        session_id: normalized_session_id.to_string(),
+        frames,
+    }))
+}
+
+#[tauri::command]
+pub async fn queue_traffic_browser_shell_write(
+    state: State<'_, TrafficAnalysisState>,
+    payload: QueueTrafficBrowserShellWritePayload,
+) -> Result<CommandResponse<BrowserShellWriteRequest>, String> {
+    let store = state.get_browser_shell_store();
+    let request = store.write().await.enqueue_write(
+        &payload.session_id,
+        &payload.input_text,
+        payload.requires_approval,
+    );
+    match request {
+        Ok(data) => Ok(CommandResponse::ok(data)),
+        Err(error) => Ok(CommandResponse::err(error)),
+    }
+}
+
+#[tauri::command]
+pub async fn respond_traffic_browser_shell_write(
+    state: State<'_, TrafficAnalysisState>,
+    payload: RespondTrafficBrowserShellWritePayload,
+) -> Result<CommandResponse<BrowserShellWriteRequest>, String> {
+    let store = state.get_browser_shell_store();
+    let request = store
+        .write()
+        .await
+        .respond_write_request(&payload.request_id, payload.allowed);
+    match request {
+        Ok(data) => Ok(CommandResponse::ok(data)),
+        Err(error) => Ok(CommandResponse::err(error)),
+    }
+}
+
+#[tauri::command]
+pub async fn list_traffic_browser_shell_write_requests(
+    state: State<'_, TrafficAnalysisState>,
+) -> Result<CommandResponse<Vec<BrowserShellWriteRequest>>, String> {
+    let store = state.get_browser_shell_store();
+    let requests = store.read().await.list_write_requests();
+    Ok(CommandResponse::ok(requests))
 }
 
 #[tauri::command]

@@ -51,6 +51,10 @@ pub struct AgentExecuteConfig {
     #[serde(default)]
     pub display_content: Option<String>,
     #[serde(default)]
+    pub current_browser_shell_direct_write_enabled: Option<bool>,
+    #[serde(default)]
+    pub current_browser_shell_session_id: Option<String>,
+    #[serde(default)]
     pub current_terminal_session_fingerprint: Option<String>,
     #[serde(default)]
     pub current_terminal_session_id: Option<String>,
@@ -76,6 +80,8 @@ pub struct AgentExecuteConfig {
     pub enable_tenth_man_rule: Option<bool>,
     #[serde(default)]
     pub tenth_man_config: Option<crate::agents::tenth_man::TenthManConfig>,
+    #[serde(default)]
+    pub persist_messages: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -101,8 +107,10 @@ fn build_vision_unsupported_message(provider: &str, model_name: &str) -> String 
 fn append_force_tasks_contract(system_prompt: &str, force_tasks: bool) -> String {
     const TASK_COMPLETION_CONTRACT: &str = "[TaskCompletionContract]
 - For multi-step work, create and maintain tasks.
+- Task status must reflect live progress: when you begin a step, mark it in_progress; when that step finishes or fails, immediately call tasks update_status with completed or failed and record the result.
+- Do not batch task updates at the end. Update one step as soon as its work is done, before moving to unrelated work or composing the final answer.
 - Do not claim completion or end the task while any task remains pending or in_progress.
-- Before the final answer, update every task to completed or failed.
+- Before the final answer, verify every task is completed or failed.
 - If unfinished tasks remain, continue the task instead of ending the response.";
 
     if !force_tasks || system_prompt.contains("[TaskCompletionContract]") {
@@ -646,6 +654,8 @@ pub async fn agent_execute(
         tool_config: None,
         traffic_context: None,
         display_content: None,
+        current_browser_shell_direct_write_enabled: None,
+        current_browser_shell_session_id: None,
         current_terminal_session_fingerprint: None,
         current_terminal_session_id: None,
         referenced_files: None,
@@ -659,6 +669,7 @@ pub async fn agent_execute(
         force_tasks: None,
         enable_tenth_man_rule: None,
         tenth_man_config: None,
+        persist_messages: None,
     });
 
     let conversation_id = config
@@ -670,6 +681,7 @@ pub async fn agent_execute(
         .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let enable_rag = config.enable_rag.unwrap_or(false);
+    let persist_messages = config.persist_messages.unwrap_or(true);
     let raw_attachments = config.attachments.clone();
     let attachments_for_save = raw_attachments.as_ref().map(sanitize_image_attachments);
     let document_attachments_for_save = config.document_attachments.clone();
@@ -813,157 +825,159 @@ pub async fn agent_execute(
 
     tokio::spawn(async move {
         let _guard = CancellationGuard(conv_id.clone(), cancel_gen);
-        if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
-            let conversation_exists = db
-                .get_ai_conversation(&conv_id)
-                .await
-                .map(|c| c.is_some())
-                .unwrap_or(false);
+        if persist_messages {
+            if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+                let conversation_exists = db
+                    .get_ai_conversation(&conv_id)
+                    .await
+                    .map(|c| c.is_some())
+                    .unwrap_or(false);
 
-            if !conversation_exists {
+                if !conversation_exists {
+                    use sentinel_core::models::database as core_db;
+                    let new_conv = core_db::AiConversation {
+                        id: conv_id.clone(),
+                        title: Some(task_clone.chars().take(50).collect::<String>()),
+                        service_name: "default".to_string(),
+                        model_name: "default".to_string(),
+                        model_provider: None,
+                        context_type: None,
+                        project_id: None,
+                        vulnerability_id: None,
+                        scan_task_id: None,
+                        conversation_data: None,
+                        summary: None,
+                        total_messages: 0,
+                        total_tokens: 0,
+                        cost: 0.0,
+                        tags: None,
+                        tool_config: None,
+                        is_archived: false,
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                    };
+                    if let Err(e) = db.create_ai_conversation(&new_conv).await {
+                        tracing::warn!("Failed to create conversation: {}", e);
+                    }
+                }
+
                 use sentinel_core::models::database as core_db;
-                let new_conv = core_db::AiConversation {
-                    id: conv_id.clone(),
-                    title: Some(task_clone.chars().take(50).collect::<String>()),
-                    service_name: "default".to_string(),
-                    model_name: "default".to_string(),
-                    model_provider: None,
-                    context_type: None,
-                    project_id: None,
-                    vulnerability_id: None,
-                    scan_task_id: None,
-                    conversation_data: None,
-                    summary: None,
-                    total_messages: 0,
-                    total_tokens: 0,
-                    cost: 0.0,
-                    tags: None,
-                    tool_config: None,
-                    is_archived: false,
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
+                let user_msg_id = Uuid::new_v4().to_string();
+                let display_text = display_content_clone.as_ref().unwrap_or(&task_clone);
+
+                let structured_data = {
+                    let mut data = serde_json::json!({});
+                    if let Some(ref content) = display_content_clone {
+                        data["display_content"] = serde_json::json!(content);
+                    }
+                    if let Some(ref doc_atts) = document_attachments_for_save {
+                        if !doc_atts.is_empty() {
+                            data["document_attachments"] =
+                                serde_json::to_value(doc_atts).unwrap_or_default();
+                        }
+                    }
+                    if let Some(ref files) = referenced_files_for_save {
+                        if !files.is_empty() {
+                            data["referenced_files"] = serde_json::json!(files);
+                        }
+                    }
+                    if let Some(ref messages) = referenced_messages_for_save {
+                        if !messages.is_empty() {
+                            data["referenced_messages"] = serde_json::json!(messages);
+                        }
+                    }
+                    if let Some(ref assets) = referenced_assets_for_save {
+                        if !assets.is_empty() {
+                            data["referenced_assets"] = serde_json::json!(assets);
+                        }
+                    }
+                    if let Some(ref traffic) = referenced_traffic_for_save {
+                        if !traffic.is_empty() {
+                            data["referenced_traffic"] = serde_json::json!(traffic);
+                        }
+                    }
+                    if data.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+                        None
+                    } else {
+                        Some(data.to_string())
+                    }
                 };
-                if let Err(e) = db.create_ai_conversation(&new_conv).await {
-                    tracing::warn!("Failed to create conversation: {}", e);
-                }
-            }
 
-            use sentinel_core::models::database as core_db;
-            let user_msg_id = Uuid::new_v4().to_string();
-            let display_text = display_content_clone.as_ref().unwrap_or(&task_clone);
+                let metadata = {
+                    let mut meta = serde_json::json!({});
+                    if let Some(ref atts) = attachments_for_save {
+                        meta["image_attachments"] = atts.clone();
+                    }
+                    if let Some(ref doc_atts) = document_attachments_for_save {
+                        if !doc_atts.is_empty() {
+                            meta["document_attachments"] =
+                                serde_json::to_value(doc_atts).unwrap_or_default();
+                        }
+                    }
+                    if let Some(ref files) = referenced_files_for_save {
+                        if !files.is_empty() {
+                            meta["referenced_files"] = serde_json::json!(files);
+                        }
+                    }
+                    if let Some(ref messages) = referenced_messages_for_save {
+                        if !messages.is_empty() {
+                            meta["referenced_messages"] = serde_json::json!(messages);
+                        }
+                    }
+                    if let Some(ref assets) = referenced_assets_for_save {
+                        if !assets.is_empty() {
+                            meta["referenced_assets"] = serde_json::json!(assets);
+                        }
+                    }
+                    if let Some(ref traffic) = referenced_traffic_for_save {
+                        if !traffic.is_empty() {
+                            meta["referenced_traffic"] = serde_json::json!(traffic);
+                        }
+                    }
+                    if meta.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+                        None
+                    } else {
+                        Some(meta.to_string())
+                    }
+                };
 
-            let structured_data = {
-                let mut data = serde_json::json!({});
-                if let Some(ref content) = display_content_clone {
-                    data["display_content"] = serde_json::json!(content);
-                }
-                if let Some(ref doc_atts) = document_attachments_for_save {
-                    if !doc_atts.is_empty() {
-                        data["document_attachments"] =
-                            serde_json::to_value(doc_atts).unwrap_or_default();
-                    }
-                }
-                if let Some(ref files) = referenced_files_for_save {
-                    if !files.is_empty() {
-                        data["referenced_files"] = serde_json::json!(files);
-                    }
-                }
-                if let Some(ref messages) = referenced_messages_for_save {
-                    if !messages.is_empty() {
-                        data["referenced_messages"] = serde_json::json!(messages);
-                    }
-                }
-                if let Some(ref assets) = referenced_assets_for_save {
-                    if !assets.is_empty() {
-                        data["referenced_assets"] = serde_json::json!(assets);
-                    }
-                }
-                if let Some(ref traffic) = referenced_traffic_for_save {
-                    if !traffic.is_empty() {
-                        data["referenced_traffic"] = serde_json::json!(traffic);
-                    }
-                }
-                if data.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-                    None
+                let user_msg = core_db::AiMessage {
+                    id: user_msg_id.clone(),
+                    conversation_id: conv_id.clone(),
+                    role: "user".to_string(),
+                    content: task_clone.clone(),
+                    metadata,
+                    token_count: Some(task_clone.len() as i32),
+                    cost: None,
+                    tool_calls: None,
+                    attachments: attachments_for_save
+                        .as_ref()
+                        .and_then(|v| serde_json::to_string(v).ok()),
+                    reasoning_content: None,
+                    timestamp: chrono::Utc::now(),
+                    architecture_type: None,
+                    architecture_meta: None,
+                    structured_data,
+                };
+                if let Err(e) = db.create_ai_message(&user_msg).await {
+                    tracing::warn!("Failed to save user message: {}", e);
                 } else {
-                    Some(data.to_string())
+                    let _ = app_handle.emit(
+                        "agent:user_message",
+                        &serde_json::json!({
+                            "execution_id": conv_id,
+                            "message_id": user_msg_id,
+                            "content": display_text,
+                            "timestamp": user_msg.timestamp.timestamp_millis(),
+                            "document_attachments": document_attachments_for_save,
+                            "image_attachments": attachments_for_save,
+                            "referenced_files": referenced_files_for_save,
+                            "referenced_messages": referenced_messages_for_save,
+                            "referenced_assets": referenced_assets_for_save,
+                            "referenced_traffic": referenced_traffic_for_save,
+                        }),
+                    );
                 }
-            };
-
-            let metadata = {
-                let mut meta = serde_json::json!({});
-                if let Some(ref atts) = attachments_for_save {
-                    meta["image_attachments"] = atts.clone();
-                }
-                if let Some(ref doc_atts) = document_attachments_for_save {
-                    if !doc_atts.is_empty() {
-                        meta["document_attachments"] =
-                            serde_json::to_value(doc_atts).unwrap_or_default();
-                    }
-                }
-                if let Some(ref files) = referenced_files_for_save {
-                    if !files.is_empty() {
-                        meta["referenced_files"] = serde_json::json!(files);
-                    }
-                }
-                if let Some(ref messages) = referenced_messages_for_save {
-                    if !messages.is_empty() {
-                        meta["referenced_messages"] = serde_json::json!(messages);
-                    }
-                }
-                if let Some(ref assets) = referenced_assets_for_save {
-                    if !assets.is_empty() {
-                        meta["referenced_assets"] = serde_json::json!(assets);
-                    }
-                }
-                if let Some(ref traffic) = referenced_traffic_for_save {
-                    if !traffic.is_empty() {
-                        meta["referenced_traffic"] = serde_json::json!(traffic);
-                    }
-                }
-                if meta.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-                    None
-                } else {
-                    Some(meta.to_string())
-                }
-            };
-
-            let user_msg = core_db::AiMessage {
-                id: user_msg_id.clone(),
-                conversation_id: conv_id.clone(),
-                role: "user".to_string(),
-                content: task_clone.clone(),
-                metadata,
-                token_count: Some(task_clone.len() as i32),
-                cost: None,
-                tool_calls: None,
-                attachments: attachments_for_save
-                    .as_ref()
-                    .and_then(|v| serde_json::to_string(v).ok()),
-                reasoning_content: None,
-                timestamp: chrono::Utc::now(),
-                architecture_type: None,
-                architecture_meta: None,
-                structured_data,
-            };
-            if let Err(e) = db.create_ai_message(&user_msg).await {
-                tracing::warn!("Failed to save user message: {}", e);
-            } else {
-                let _ = app_handle.emit(
-                    "agent:user_message",
-                    &serde_json::json!({
-                        "execution_id": conv_id,
-                        "message_id": user_msg_id,
-                        "content": display_text,
-                        "timestamp": user_msg.timestamp.timestamp_millis(),
-                        "document_attachments": document_attachments_for_save,
-                        "image_attachments": attachments_for_save,
-                        "referenced_files": referenced_files_for_save,
-                        "referenced_messages": referenced_messages_for_save,
-                        "referenced_assets": referenced_assets_for_save,
-                        "referenced_traffic": referenced_traffic_for_save,
-                    }),
-                );
             }
         }
 
@@ -1248,6 +1262,12 @@ pub async fn agent_execute(
                     model: model_name_for_closure.clone(),
                     system_prompt: base_system_prompt.unwrap_or_default(),
                     task: augmented_task.clone(),
+                    active_browser_shell_direct_write_enabled: config
+                        .current_browser_shell_direct_write_enabled
+                        .unwrap_or(false),
+                    active_browser_shell_session_id: config
+                        .current_browser_shell_session_id
+                        .clone(),
                     active_terminal_session_fingerprint: config
                         .current_terminal_session_fingerprint
                         .clone(),
@@ -1265,7 +1285,8 @@ pub async fn agent_execute(
                     tenth_man_config: config.tenth_man_config.clone(),
                     document_attachments: doc_attachments,
                     image_attachments: image_attachments_for_execution.clone(),
-                    persist_messages: true,
+                    referenced_traffic: config.referenced_traffic.clone(),
+                    persist_messages,
                     subagent_run_id: None,
                     context_policy: None,
                     context_engine_mode: config
@@ -1372,7 +1393,7 @@ pub async fn agent_execute(
             &augmented_task,
             base_system_prompt.as_deref(),
             image_attachments_for_execution,
-            true,
+            persist_messages,
         )
         .await
         {

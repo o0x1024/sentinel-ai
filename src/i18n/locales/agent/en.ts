@@ -616,6 +616,7 @@ export default {
   ragCitationIndicator: 'RAG Citation Indicator',
   knowledgeBaseCited: 'Knowledge Base cited ({count} references)',
   noKnowledgeBaseCitations: 'No knowledge base citations',
+  sessionStatsFirstResponse: 'First response',
   sessionStatsTotalTokens: 'Turn tokens',
   sessionStatsInputOutput: 'Input {input} / output {output}',
   sessionStatsTokenRate: 'Output speed',

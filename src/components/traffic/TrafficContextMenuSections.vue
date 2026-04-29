@@ -4,6 +4,7 @@
     <button
       v-for="item in section.items"
       :key="item.key"
+      :data-testid="`traffic-context-${item.key}`"
       class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
       :disabled="item.disabled"
       :class="{ 'opacity-50 cursor-not-allowed': item.disabled }"

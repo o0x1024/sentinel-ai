@@ -15,8 +15,12 @@ pub async fn review_finding_with_ai(
     finding_id: String,
 ) -> Result<CommandResponse<FindingAiReviewResult>, String> {
     let db_service = state.get_db_service();
-    let result = run_finding_ai_review(db_service.as_ref(), ai_manager.inner().as_ref(), &finding_id)
-        .await
-        .map_err(|error| error.to_string())?;
+    let result = run_finding_ai_review(
+        db_service.as_ref(),
+        ai_manager.inner().as_ref(),
+        &finding_id,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(CommandResponse::ok(result))
 }

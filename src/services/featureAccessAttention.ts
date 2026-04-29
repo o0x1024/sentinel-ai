@@ -42,14 +42,14 @@ export const getFeatureAccessReminderMessage = ({
       cooldownSeconds > 0 ? `；自动重试将在${formatCooldownLabel(cooldownSeconds)}` : ''
     return {
       level: 'warning',
-      message: `当前已激活本地 license，但${getFeatureAccessIssueMessage(featureAccessStatus)}，高价值功能仍受限${suffix}。`,
+      message: `当前服务端授权不可用：${getFeatureAccessIssueMessage(featureAccessStatus)}，付费功能仍受限${suffix}。`,
     }
   }
 
   if (isFeatureAccessExpiringSoon(featureAccessStatus, expiringSoonThresholdSeconds)) {
     return {
       level: 'info',
-      message: '高级功能权限即将过期，建议尽快完成同步。',
+      message: '服务端授权即将过期，建议尽快完成续期。',
     }
   }
 
@@ -73,7 +73,7 @@ export const getFeatureAccessAutoRefreshFailureMessage = ({
 
   const suffix =
     cooldownSeconds > 0 ? `；下次自动重试${formatCooldownLabel(cooldownSeconds)}` : ''
-  return `高级功能权限自动同步失败：${outcome.message}${suffix}`
+  return `服务端授权自动刷新失败：${outcome.message}${suffix}`
 }
 
 export const shouldResetFeatureAccessReminder = ({

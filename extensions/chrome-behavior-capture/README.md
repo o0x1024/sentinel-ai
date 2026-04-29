@@ -10,6 +10,12 @@
 - 表单提交
 - 输入项变化
 
+同时可以在页面主世界探测第三方 WebSocket Shell：
+
+- 发现疑似终端 WebSocket 会话
+- 将会话元数据和最近帧发送到 Sentinel 本地 bridge
+- 轮询 Sentinel 下发的已审批写入请求，并写回原始 WebSocket
+
 然后通过本地 bridge 发送到 Sentinel：
 
 ```text
@@ -42,5 +48,6 @@ sentinel-ai/extensions/chrome-behavior-capture
 ## 说明
 
 - 如果 bridge 不可用，扩展不会影响页面功能，只是无法上报增强行为事件
+- 第三方 Shell 桥接默认开启，但只有命中终端特征的 WebSocket 才会被跟踪
 - 如果 Sentinel 侧没有启用浏览器扩展模式，系统仍会自动退回到默认的代理侧弱行为推断
 - 当前版本只针对 Chrome Manifest V3

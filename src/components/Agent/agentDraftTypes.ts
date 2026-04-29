@@ -49,6 +49,8 @@ export interface AssistantSessionSettings {
 
 export interface AssistantConversationBinding extends AssistantSessionSettings {
   schemaVersion: number
+  browserShellDirectWriteEnabled?: boolean
+  browserShellSessionId?: string | null
   selectedModel?: string | null
   toolsEnabled?: boolean
   toolConfig?: UiToolConfigPayload | null

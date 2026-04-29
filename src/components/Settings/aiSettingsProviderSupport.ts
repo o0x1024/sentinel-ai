@@ -94,3 +94,86 @@ export const rigProviderOptions = [
 ]
 
 export const needsApiKey = (provider: string) => !['Ollama'].includes(provider)
+
+export interface ExtraHeaderInputRow {
+  key: string
+  value: string
+}
+
+export type ExtraHeaderInputRowsResult =
+  | { ok: true; headers: Record<string, string> }
+  | { ok: false; reason: 'missing-key' | 'duplicate-key'; key?: string }
+
+export const createExtraHeaderInputRows = (extraHeaders: unknown): ExtraHeaderInputRow[] => {
+  if (!extraHeaders || typeof extraHeaders !== 'object' || Array.isArray(extraHeaders)) {
+    return []
+  }
+
+  return Object.entries(extraHeaders as Record<string, string>).map(([key, value]) => ({
+    key,
+    value,
+  }))
+}
+
+export const buildExtraHeadersFromInputRows = (
+  rows: ExtraHeaderInputRow[],
+): ExtraHeaderInputRowsResult => {
+  const headers: Record<string, string> = {}
+  const usedKeys = new Set<string>()
+
+  for (const row of rows) {
+    const key = row.key.trim()
+    const value = row.value
+    const hasValue = value.length > 0
+
+    if (!key && !hasValue) {
+      continue
+    }
+
+    if (!key) {
+      return { ok: false, reason: 'missing-key' }
+    }
+
+    const normalizedKey = key.toLowerCase()
+    if (usedKeys.has(normalizedKey)) {
+      return { ok: false, reason: 'duplicate-key', key }
+    }
+
+    usedKeys.add(normalizedKey)
+    headers[key] = value
+  }
+
+  return { ok: true, headers }
+}
+
+export type ExtraBodyJsonResult =
+  | { ok: true; body: Record<string, unknown> | null }
+  | { ok: false; reason: 'invalid-json' | 'not-object' }
+
+export const parseExtraBodyJson = (raw: string): ExtraBodyJsonResult => {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return { ok: true, body: null }
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return { ok: false, reason: 'invalid-json' }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, reason: 'not-object' }
+  }
+
+  return { ok: true, body: parsed as Record<string, unknown> }
+}
+
+export const formatExtraBodyJson = (body: unknown): string => {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return ''
+  }
+
+  return JSON.stringify(body, null, 2)
+}

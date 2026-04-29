@@ -14,6 +14,7 @@ import {
 } from './immersiveTrafficDockState'
 import { setImmersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { useTrafficWorkbenchStore } from './workbench/stores/useTrafficWorkbenchStore'
+import { resetTrafficOastRecordCount } from './trafficOastRecordCount'
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -44,6 +45,7 @@ describe('TrafficWorkbench', () => {
     workbenchState.attack.resetAttackWorkspaceStore()
     workbenchState.replay.resetReplayStore()
     workbenchState.selection.clearSelection()
+    resetTrafficOastRecordCount()
     vi.mocked(invoke).mockImplementation(async (command: string) => {
       if (command === 'load_traffic_draft_store') {
         return {
@@ -69,6 +71,12 @@ describe('TrafficWorkbench', () => {
           data: {
             replayRuns: [],
           },
+        } as never
+      }
+      if (command === 'list_traffic_oast_records') {
+        return {
+          success: true,
+          data: [],
         } as never
       }
       return {
@@ -186,6 +194,9 @@ describe('TrafficWorkbench', () => {
       if (command === 'load_replay_run_store') {
         return new Promise(resolve => { resolveReplayStore = resolve }) as never
       }
+      if (command === 'list_traffic_oast_records') {
+        return Promise.resolve({ success: true, data: [] }) as never
+      }
       return Promise.resolve({ success: true, data: null }) as never
     })
 
@@ -292,6 +303,9 @@ describe('TrafficWorkbench', () => {
       if (command === 'load_replay_run_store') {
         return { success: true, data: { replayRuns: [] } } as never
       }
+      if (command === 'list_traffic_oast_records') {
+        return { success: true, data: [] } as never
+      }
       return { success: true, data: null } as never
     })
 
@@ -311,8 +325,107 @@ describe('TrafficWorkbench', () => {
     await flushPromises()
 
     const mainStage = wrapper.findComponent({ name: 'TrafficWorkbenchMainStage' })
-    const repeaterChip = mainStage.props('toolChips').find((chip: { tool: string }) => chip.tool === 'repeater')
+    const toolChips = mainStage.props('toolChips') as Array<{ tool: string; count: number }>
+    const repeaterChip = toolChips.find((chip) => chip.tool === 'repeater')
     expect(repeaterChip).toMatchObject({ count: 1 })
+    expect(toolChips.some((chip) => chip.tool === 'capture')).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('shows OAST hit record count on the main workspace OAST button', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'load_traffic_draft_store') {
+        return {
+          success: true,
+          data: {
+            activeDraftId: null,
+            drafts: [],
+          },
+        } as never
+      }
+      if (command === 'load_attack_workspace_store') {
+        return { success: true, data: { activeWorkspaceId: null, workspaces: [] } } as never
+      }
+      if (command === 'load_replay_run_store') {
+        return { success: true, data: { replayRuns: [] } } as never
+      }
+      if (command === 'list_traffic_oast_records') {
+        return {
+          success: true,
+          data: [
+            {
+              token: 'token-hit',
+              fqdn: 'token-hit.oast.test',
+              httpUrl: 'http://token-hit.oast.test/',
+              httpsUrl: 'https://token-hit.oast.test/',
+              createdAt: '2026-04-27T10:00:00.000Z',
+              label: 'Hit token',
+              sourceTool: 'repeater',
+              sourceRequestId: 1,
+              hitCount: 2,
+              lastHitAt: '2026-04-27T10:05:00.000Z',
+              lastSyncAt: '2026-04-27T10:05:00.000Z',
+              events: [
+                {
+                  time: '2026-04-27T10:05:00.000Z',
+                  host: 'token-hit.oast.test',
+                  method: 'GET',
+                  url: 'https://token-hit.oast.test/a',
+                  path: '/a',
+                  query: {},
+                  userAgent: 'Vitest UA',
+                  referer: '',
+                  ip: '127.0.0.1',
+                  ray: '',
+                  colo: '',
+                  country: 'CN',
+                  asn: null,
+                },
+              ],
+            },
+            {
+              token: 'token-pending',
+              fqdn: 'token-pending.oast.test',
+              httpUrl: 'http://token-pending.oast.test/',
+              httpsUrl: 'https://token-pending.oast.test/',
+              createdAt: '2026-04-27T09:00:00.000Z',
+              label: 'Pending token',
+              sourceTool: 'intruder',
+              sourceRequestId: 2,
+              hitCount: 0,
+              lastHitAt: null,
+              lastSyncAt: '2026-04-27T10:05:00.000Z',
+              events: [],
+            },
+          ],
+        } as never
+      }
+      return { success: true, data: null } as never
+    })
+
+    const wrapper = shallowMount(TrafficWorkbench, {
+      global: {
+        mocks: {
+          $t: (key: string, fallback?: string) => fallback ?? key,
+        },
+        stubs: {
+          AppModal: {
+            template: '<div><slot /></div>',
+          },
+        },
+      },
+    })
+
+    await flushPromises()
+
+    const mainStage = wrapper.findComponent({ name: 'TrafficWorkbenchMainStage' })
+    const toolChips = mainStage.props('toolChips') as Array<{ tool: string; count: number }>
+    const oastChip = toolChips.find(chip => chip.tool === 'oast')
+    expect(oastChip).toMatchObject({ count: 1 })
+
+    const dockState = useImmersiveTrafficDockState()
+    expect(dockState.oastCount.value).toBe(1)
 
     wrapper.unmount()
   })

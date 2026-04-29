@@ -534,6 +534,11 @@
             v-if="sessionStats"
             class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-base-300/50 pt-2 text-xs text-base-content/60"
           >
+            <span v-if="sessionFirstResponseDuration" class="inline-flex items-center gap-1">
+              <i class="fas fa-bolt text-primary"></i>
+              {{ t('agent.sessionStatsFirstResponse') }}:
+              <span class="font-medium text-base-content/80">{{ sessionFirstResponseDuration }}</span>
+            </span>
             <span class="inline-flex items-center gap-1">
               <i class="fas fa-gauge-high text-primary"></i>
               {{ t('agent.sessionStatsTotalTokens') }}:
@@ -671,37 +676,6 @@
             </div>
           </div>
 
-          <div
-            v-if="showMessageActions"
-            class="message-action-toolbar mt-3 justify-start border-t border-base-300/40 pt-2"
-            :class="sessionStats ? 'mt-1 border-t-0 pt-1' : ''"
-          >
-            <div class="flex items-center gap-1">
-              <button
-                v-if="message.type === 'user'"
-                @click="handleEdit"
-                class="action-icon-button"
-                :title="t('agent.editMessage')"
-              >
-                <i class="fas fa-edit"></i>
-              </button>
-              <button
-                @click="handleCopy"
-                class="action-icon-button"
-                :title="t('agent.copyMessage')"
-              >
-                <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
-              </button>
-              <button
-                v-if="message.type === 'user'"
-                @click="handleResend"
-                class="action-icon-button"
-                :title="t('agent.resendMessage')"
-              >
-                <i class="fas fa-redo"></i>
-              </button>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -749,6 +723,38 @@
           </div>
         </div>
       </div>
+
+      <div
+        v-if="showMessageActions"
+        class="message-action-toolbar mt-3 justify-start border-t border-base-300/40 pt-2"
+        :class="sessionStats ? 'mt-1 border-t-0 pt-1' : ''"
+      >
+        <div class="flex items-center gap-1">
+          <button
+            v-if="message.type === 'user'"
+            @click="handleEdit"
+            class="action-icon-button"
+            :title="t('agent.editMessage')"
+          >
+            <i class="fas fa-edit"></i>
+          </button>
+          <button
+            @click="handleCopy"
+            class="action-icon-button"
+            :title="t('agent.copyMessage')"
+          >
+            <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
+          </button>
+          <button
+            v-if="message.type === 'user'"
+            @click="handleResend"
+            class="action-icon-button"
+            :title="t('agent.resendMessage')"
+          >
+            <i class="fas fa-redo"></i>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -789,6 +795,7 @@ const { t } = useI18n()
 const props = defineProps<{
   message: AgentMessage
   isExecuting?: boolean
+  showActions?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -969,13 +976,19 @@ const sessionStats = computed(() => {
 
 const sessionDuration = computed(() => formatSessionDuration(sessionStats.value?.duration_ms))
 
+const sessionFirstResponseDuration = computed(() =>
+  formatSessionDuration(sessionStats.value?.first_response_ms)
+)
+
 const sessionTokenRate = computed(() => {
   const formatted = formatTokenRate(sessionStats.value?.tokens_per_second)
   return formatted ? `${formatted} tok/s` : ''
 })
 
 const showMessageActions = computed(() => {
-  return !isEditing.value && (props.message.type === 'user' || props.message.type === 'final')
+  if (isEditing.value) return false
+  if (props.message.type === 'user') return true
+  return props.showActions === true && props.message.type === 'final'
 })
 
 // Tool name from metadata

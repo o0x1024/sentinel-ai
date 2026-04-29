@@ -23,9 +23,12 @@
           msg.content,
           msg.metadata?.status,
           msg.metadata?.duration_ms,
+          msg.metadata?.session_stats?.first_response_ms,
           msg.metadata?.session_stats?.total_tokens,
           msg.metadata?.session_stats?.tokens_per_second,
           isExecuting && index === displayedMessages.length - 1,
+          isStreaming,
+          msg.id === lastAssistantActionMessageId,
           focusedMessageId === msg.id,
           animatedFocusMessageId === msg.id,
         ]"
@@ -40,6 +43,7 @@
         <MessageBlock 
           :message="msg" 
           :is-executing="isExecuting && index === displayedMessages.length - 1"
+          :show-actions="msg.id === lastAssistantActionMessageId"
           @focus-team-task="(taskId: string) => emit('focusTeamTask', taskId)"
           @resend="handleResend"
           @edit="handleEdit"
@@ -132,6 +136,23 @@ const windowStart = computed(() => {
 const displayedMessages = computed(() => {
   return props.messages.slice(windowStart.value, windowEnd.value)
 })
+
+const canShowAssistantActions = computed(() => {
+  return props.isExecuting !== true && props.isStreaming !== true
+})
+
+const lastAssistantActionMessageId = computed(() => {
+  if (!canShowAssistantActions.value) return ''
+
+  for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+    const message = props.messages[i]
+    if (message?.type === 'final') {
+      return message.id
+    }
+  }
+  return ''
+})
+
 const focusedMessageId = computed(() => String(props.focusedMessageId || '').trim())
 
 const hasOlderMessages = computed(() => windowStart.value > 0)

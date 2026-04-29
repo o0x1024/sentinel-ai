@@ -20,7 +20,7 @@ describe('trafficRepeaterPrettyRequestSupport', () => {
       'Content-Type: application/json',
       '',
       '{',
-      '  "suspended": false',
+      '  "suspended":false',
       '}',
     ].join('\n'))
   })
@@ -66,11 +66,11 @@ describe('trafficRepeaterPrettyRequestSupport', () => {
       'Content-Type: application/json',
       '',
       '{',
-      '  "suspended": false,',
-      '  "12313": "",',
-      '  "nested": {',
-      '    "2": true,',
-      '    "alpha": false',
+      '  "suspended":false,',
+      '  "12313":"",',
+      '  "nested":{',
+      '    "2":true,',
+      '    "alpha":false',
       '  }',
       '}',
     ].join('\n'))

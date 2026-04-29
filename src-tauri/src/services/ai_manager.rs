@@ -158,6 +158,10 @@ pub struct ProviderConfig {
     organization: Option<String>,
     enabled: bool,
     default_model: String,
+    #[serde(default)]
+    extra_headers: Option<HashMap<String, String>>,
+    #[serde(default)]
+    extra_body: Option<serde_json::Value>,
     #[allow(unused)]
     models: Vec<ModelDefinition>,
 }
@@ -222,6 +226,10 @@ impl AiServiceManager {
                                     .get("rig_provider")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
+                                let extra_headers = provider_obj
+                                    .get("extra_headers")
+                                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                                let extra_body = provider_obj.get("extra_body").cloned();
 
                                 return Ok(Some(AiConfig {
                                     provider: provider_name.to_string(),
@@ -239,6 +247,8 @@ impl AiServiceManager {
                                         .ok()
                                         .flatten()
                                         .and_then(|s| s.parse().ok()),
+                                    extra_headers,
+                                    extra_body,
                                 }));
                             }
                         }
@@ -311,6 +321,8 @@ impl AiServiceManager {
                     .ok()
                     .flatten()
                     .and_then(|s| s.parse().ok()),
+                extra_headers: None,
+                extra_body: None,
             }));
         }
 
@@ -459,6 +471,8 @@ impl AiServiceManager {
                             max_tokens: Some(max_tokens),
                             rig_provider: Some(rig_provider),
                             max_turns,
+                            extra_headers: provider_config.extra_headers.clone(),
+                            extra_body: provider_config.extra_body.clone(),
                         };
 
                         // Use lowercase name as service key for consistency
@@ -626,6 +640,8 @@ impl AiServiceManager {
                 .ok()
                 .flatten()
                 .and_then(|s| s.parse().ok()),
+            extra_headers: None,
+            extra_body: None,
         };
         self.add_service("default".to_string(), config).await?;
         Ok(())

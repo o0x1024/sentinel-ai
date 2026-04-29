@@ -1,10 +1,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { Ref } from 'vue'
+import { getProxyRequestPreview, getProxyRequestResponseBodyChunk } from '@/api/trafficHistory'
 import { dialog } from '@/composables/useDialog'
 import { clearProxyHistoryDerivedCache, pruneProxyHistoryDerivedCache } from './proxyHistoryDerivedSupport'
 import { dedupeProxyHistoryRequests, mergeProxyHistoryRequests } from './proxyHistoryRequestStore'
-import type { ProxyHistoryWsTab, ProxyRequest, WebSocketConnection, WebSocketMessage } from './proxyHistoryTypes'
+import type {
+  ProxyHistoryWsTab,
+  ProxyRequest,
+  ProxyRequestBodyChunk,
+  WebSocketConnection,
+  WebSocketMessage,
+} from './proxyHistoryTypes'
 
 type ProxyHistoryStats = {
   total: number
@@ -40,12 +47,11 @@ export const useProxyHistoryData = (params: Params) => {
 
   const normalizeRequest = (request: ProxyRequest): ProxyRequest => ({
     ...request,
-    has_full_details: request.has_full_details ?? Boolean(
-      request.request_body
-      || request.response_body
-      || request.edited_request_body
-      || request.edited_response_body,
-    ),
+    has_full_details: request.has_full_details ?? true,
+    request_body_loaded: request.request_body_loaded ?? (request.has_full_details ?? true),
+    response_body_loaded: request.response_body_loaded ?? (request.has_full_details ?? true),
+    edited_request_body_loaded: request.edited_request_body_loaded ?? (request.has_full_details ?? true),
+    edited_response_body_loaded: request.edited_response_body_loaded ?? (request.has_full_details ?? true),
   })
 
   const normalizeRequests = (requests: ProxyRequest[]) => requests.map(normalizeRequest)
@@ -201,9 +207,40 @@ export const useProxyHistoryData = (params: Params) => {
       return mergeRequestIntoList({
         ...response.data,
         has_full_details: true,
+        request_body_loaded: true,
+        response_body_loaded: true,
+        edited_request_body_loaded: true,
+        edited_response_body_loaded: true,
       } as ProxyRequest)
     } catch (error) {
       console.error(`Failed to load request details for #${requestId}:`, error)
+      return null
+    }
+  }
+
+  const fetchRequestPreview = async (requestId: number): Promise<ProxyRequest | null> => {
+    try {
+      const preview = await getProxyRequestPreview(requestId)
+      if (!preview) {
+        return null
+      }
+      return mergeRequestIntoList(normalizeRequest(preview))
+    } catch (error) {
+      console.error(`Failed to load request preview for #${requestId}:`, error)
+      return null
+    }
+  }
+
+  const fetchRequestResponseBodyChunk = async (
+    requestId: number,
+    variant: 'original' | 'edited',
+    offset: number,
+    limit: number,
+  ): Promise<ProxyRequestBodyChunk | null> => {
+    try {
+      return await getProxyRequestResponseBodyChunk(requestId, variant, offset, limit)
+    } catch (error) {
+      console.error(`Failed to load response body chunk for #${requestId}:`, error)
       return null
     }
   }
@@ -363,6 +400,8 @@ export const useProxyHistoryData = (params: Params) => {
     loadMoreRequests,
     loadWsConnections,
     fetchRequestDetails,
+    fetchRequestPreview,
+    fetchRequestResponseBodyChunk,
     refreshRequests,
     setWsActiveTab,
     setupEventListeners,

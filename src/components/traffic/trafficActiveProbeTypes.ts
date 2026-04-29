@@ -46,6 +46,10 @@ export interface ActiveProbeQueueSnapshot {
   recent: ActiveProbeQueueEntry[]
 }
 
+export interface ActiveProbeQueueEventPayload {
+  entries: ActiveProbeQueueEntry[]
+}
+
 export type ActiveProbePhase = ActiveProbeQueuePhase | string
 
 export interface ActiveProbeEntry
@@ -165,4 +169,21 @@ export function normalizeActiveProbeQueueSnapshot(payload: unknown): ActiveProbe
     : []
 
   return { pending, running, recent }
+}
+
+export function normalizeActiveProbeQueueEventPayload(payload: unknown): ActiveProbeQueueEventPayload | null {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const candidate = payload as Record<string, unknown>
+  const entries = Array.isArray(candidate.entries)
+    ? candidate.entries.map(normalizeActiveProbeQueueEntry).filter(Boolean) as ActiveProbeQueueEntry[]
+    : null
+
+  if (!entries) {
+    return null
+  }
+
+  return { entries }
 }

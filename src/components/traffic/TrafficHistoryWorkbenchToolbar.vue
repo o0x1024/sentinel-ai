@@ -44,6 +44,30 @@
             class="btn btn-xs btn-ghost"
             :class="{ 'btn-disabled pointer-events-none opacity-50': selectedCount === 0 }"
           >
+            <i class="fas fa-share mr-1"></i>
+            {{ $t('trafficAnalysis.history.sendTo') }}
+          </label>
+          <ul tabindex="0" class="dropdown-content z-[1] menu mt-1 w-56 rounded-box bg-base-100 p-2 shadow">
+            <li v-if="showSendToRepeater">
+              <a @click="sendSelectedToDraft">{{ $t('trafficAnalysis.history.contextMenu.createDraft') }}</a>
+            </li>
+            <li v-if="showSendToComparer">
+              <a @click="sendSelectedToComparer">{{ $t('trafficAnalysis.history.contextMenu.openCompare') }}</a>
+            </li>
+            <li v-if="showSendToIntruder">
+              <a @click="sendSelectedToIntruder">{{ $t('trafficAnalysis.history.contextMenu.createAttackWorkspace') }}</a>
+            </li>
+            <li>
+              <a @click="sendSelectedToAssistant('request')">{{ $t('trafficAnalysis.history.contextMenu.sendToAssistant') }}</a>
+            </li>
+          </ul>
+        </div>
+        <div class="dropdown dropdown-end">
+          <label
+            tabindex="0"
+            class="btn btn-xs btn-ghost"
+            :class="{ 'btn-disabled pointer-events-none opacity-50': selectedCount === 0 }"
+          >
             <i class="fas fa-download mr-1"></i>
             {{ $t('trafficAnalysis.history.export.export') }}
           </label>
@@ -103,6 +127,13 @@ defineProps<{
   openFilterDialog: () => void
   toggleMultiSelectMode: () => void
   selectAllVisible: () => void
+  showSendToRepeater: boolean
+  showSendToComparer: boolean
+  showSendToIntruder: boolean
+  sendSelectedToDraft: () => void
+  sendSelectedToComparer: () => void
+  sendSelectedToIntruder: () => void
+  sendSelectedToAssistant: (type?: 'request') => void
   exportSelectedToFile: (type: 'request' | 'response') => void
   exportAsHar: () => void
   generateCandidatesFromFiltered: () => void

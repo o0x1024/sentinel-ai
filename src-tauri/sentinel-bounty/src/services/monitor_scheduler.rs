@@ -534,7 +534,9 @@ mod tests {
         scheduler.start().await.unwrap();
 
         let task = scheduler.get_task(&task_id).await.unwrap();
-        let next_run_at = task.next_run_at.expect("enabled task should have next_run_at");
+        let next_run_at = task
+            .next_run_at
+            .expect("enabled task should have next_run_at");
         let seconds_until_next = (next_run_at - Utc::now()).num_seconds();
 
         assert_eq!(task.run_count, 0);

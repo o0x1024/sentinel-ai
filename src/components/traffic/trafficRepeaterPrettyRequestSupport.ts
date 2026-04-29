@@ -108,7 +108,7 @@ function formatJsonProperty(node: SyntaxNode, source: string, depth: number): st
     return source.slice(node.from, node.to)
   }
 
-  return `${formatJsonNode(propertyName, source, depth)}: ${formatJsonNode(propertyValue, source, depth)}`
+  return `${formatJsonNode(propertyName, source, depth)}:${formatJsonNode(propertyValue, source, depth)}`
 }
 
 function formatJsonBodyIfPossible(bodyPart: string): string | null {

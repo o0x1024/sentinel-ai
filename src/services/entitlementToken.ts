@@ -114,20 +114,20 @@ export const getEntitlementTokenIssueCode = (
 export const getEntitlementTokenIssueMessage = (status: EntitlementTokenStatus) => {
   switch (getEntitlementTokenIssueCode(status)) {
     case 'ok':
-      return 'entitlement token 有效'
+      return '服务端授权令牌有效'
     case 'missing':
-      return '缺少 entitlement token'
+      return '缺少服务端授权令牌'
     case 'expired':
-      return 'entitlement token 已过期'
+      return '服务端授权令牌已过期'
     case 'machine_mismatch':
-      return 'entitlement token 与当前设备不匹配'
+      return '服务端授权令牌与当前设备不匹配'
     case 'not_yet_valid':
-      return 'entitlement token 尚未生效'
+      return '服务端授权令牌尚未生效'
     case 'invalid_signature':
-      return 'entitlement token 签名无效'
+      return '服务端授权令牌签名无效'
     case 'invalid_storage':
-      return '本地 entitlement token 缓存损坏'
+      return '本地服务端授权令牌缓存损坏'
     default:
-      return status.error ? `entitlement token 不可用：${status.error}` : 'entitlement token 不可用'
+      return status.error ? `服务端授权令牌不可用：${status.error}` : '服务端授权令牌不可用'
   }
 }

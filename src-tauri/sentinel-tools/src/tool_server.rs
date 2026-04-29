@@ -11,10 +11,10 @@ use crate::buildin_tools::OcrTool;
 #[cfg(feature = "plugins")]
 use crate::buildin_tools::SubdomainBruteTool;
 use crate::buildin_tools::{
-    AskUserQuestionTool, BrowserTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
-    GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, PluginAuthoringTool, RouteDiscoveryTool,
-    SearchExploitTool, ShellTool, SkillsTool, TenthManTool, ToolSearchArgs, ToolSearchOutput,
-    ToolSearchTool, WebSearchTool,
+    AskUserQuestionTool, BrowserShellTool, BrowserTool, FileEditTool, FileReadTool, FileWriteTool,
+    GlobTool, GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, PluginAuthoringTool,
+    RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool, TenthManTool, ToolSearchArgs,
+    ToolSearchOutput, ToolSearchTool, WebSearchTool,
 };
 #[cfg(feature = "db")]
 use crate::buildin_tools::{SopsTool, TasksTool};
@@ -104,7 +104,15 @@ impl ToolServer {
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "Target URL"
+                        "description": "Target URL. Optional when referenced_traffic_id or referenced_traffic_index is available in the agent runtime."
+                    },
+                    "referenced_traffic_id": {
+                        "type": "integer",
+                        "description": "Referenced traffic history id to replay with captured URL, method, body, and all request headers including Cookie."
+                    },
+                    "referenced_traffic_index": {
+                        "type": "integer",
+                        "description": "1-based referenced traffic index from the current user message to replay with captured request details."
                     },
                     "method": {
                         "type": "string",
@@ -126,7 +134,7 @@ impl ToolServer {
                         "default": 30
                     }
                 },
-                "required": ["url"]
+                "required": []
             }))
             .source(ToolSource::Builtin)
             .category("network")
@@ -289,6 +297,53 @@ impl ToolServer {
             .expect("Failed to build browser tool");
 
         self.registry.register(browser_def).await;
+
+        let browser_shell_def = DynamicToolBuilder::new(BrowserShellTool::NAME.to_string())
+            .description(BrowserShellTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::browser_shell::BrowserShellArgs
+                ))
+                .unwrap_or_default(),
+            )
+            .source(ToolSource::Builtin)
+            .category("browser")
+            .tags(vec![
+                "browser".to_string(),
+                "shell".to_string(),
+                "websocket".to_string(),
+                "terminal".to_string(),
+                "extension".to_string(),
+            ])
+            .search_hint("inspect or control third-party browser websocket shell sessions captured by the extension")
+            .exposure("deferred")
+            .execution_policy(ToolExecutionPolicy {
+                read_only: false,
+                mutating: true,
+                concurrency_safe: false,
+                requires_permission: false,
+                supports_background: false,
+            })
+            .executor(|args| async move {
+                use crate::buildin_tools::browser_shell::{BrowserShellArgs, BrowserShellTool};
+                use rig::tool::Tool;
+
+                let tool_args: BrowserShellArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = BrowserShellTool::default();
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("Browser shell tool failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build browser_shell tool");
+
+        self.registry.register(browser_shell_def).await;
 
         let glob_def = DynamicToolBuilder::new(GlobTool::NAME.to_string())
             .description(GlobTool::DESCRIPTION.to_string())

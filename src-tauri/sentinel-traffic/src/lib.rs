@@ -1,4 +1,8 @@
-//! Sentinel Traffic - 流量分析代理与插件引擎\n//!\n//! 本 crate 提供：\n//! - 基于 Hudsucker 的 HTTP/HTTPS 拦截代理（MITM）\n//! - 流量分析流水线（请求/响应上下文、插件分发、Finding 去重）
+//! Sentinel Traffic - 流量分析代理与插件引擎
+//!
+//! 本 crate 提供：
+//! - 基于 Hudsucker 的 HTTP/HTTPS 拦截代理（MITM）
+//! - 流量分析流水线（请求/响应上下文、插件分发、Finding 去重）
 //! - 证书管理（Root CA 生成、macOS Keychain 集成）
 //! - HTML 报告导出（Tera 模板）
 //!
@@ -13,9 +17,12 @@ pub mod certificate;
 pub mod certificate_authority;
 pub mod error;
 pub mod finding;
+pub mod header_utils;
 pub mod history_cache;
+pub mod history_record_builder;
 pub mod intercept_rules;
 pub mod intercept_tracking;
+pub mod match_replace;
 pub mod packet_capture;
 pub mod proxy;
 pub mod scanner;
@@ -34,6 +41,7 @@ pub use history_cache::{
     WebSocketConnectionRecord, WebSocketConnectionStatus, WebSocketDirection, WebSocketFilters,
     WebSocketMessageRecord, WebSocketMessageType,
 };
+pub use match_replace::MatchReplaceRule;
 pub use packet_capture::{
     CapturedPacket, ExtractedFile, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps,
     ProtocolLayer,

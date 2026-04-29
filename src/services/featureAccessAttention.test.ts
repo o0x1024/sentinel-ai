@@ -19,7 +19,7 @@ const missingFeatureAccess = {
 }
 
 describe('featureAccessAttention', () => {
-  it('builds a warning reminder when local license exists but advanced access is still missing', () => {
+  it('builds a warning reminder when server activation exists but authorization is unavailable', () => {
     expect(getFeatureAccessReminderMessage({
       hasLocalLicense: true,
       isDebugAccess: false,
@@ -28,11 +28,11 @@ describe('featureAccessAttention', () => {
       cooldownSeconds: 180,
     })).toEqual({
       level: 'warning',
-      message: '当前已激活本地 license，但缺少高级功能权限，高价值功能仍受限；自动重试将在3 分钟后。',
+      message: '当前服务端授权不可用：缺少服务端授权，付费功能仍受限；自动重试将在3 分钟后。',
     })
   })
 
-  it('builds an info reminder when advanced access is expiring soon', () => {
+  it('builds an info reminder when server authorization is expiring soon', () => {
     expect(getFeatureAccessReminderMessage({
       hasLocalLicense: true,
       isDebugAccess: false,
@@ -49,7 +49,7 @@ describe('featureAccessAttention', () => {
       expiringSoonThresholdSeconds: 120,
     })).toEqual({
       level: 'info',
-      message: '高级功能权限即将过期，建议尽快完成同步。',
+      message: '服务端授权即将过期，建议尽快完成续期。',
     })
   })
 
@@ -64,7 +64,7 @@ describe('featureAccessAttention', () => {
       },
       consecutiveFailures: 3,
       cooldownSeconds: 600,
-    })).toBe('高级功能权限自动同步失败：customer revoked；下次自动重试10 分钟后')
+    })).toBe('服务端授权自动刷新失败：customer revoked；下次自动重试10 分钟后')
 
     expect(getFeatureAccessAutoRefreshFailureMessage({
       outcome: {
@@ -79,7 +79,7 @@ describe('featureAccessAttention', () => {
     })).toBeNull()
   })
 
-  it('resets reminder state once local license disappears, debug bypass is active, or access becomes ready', () => {
+  it('resets reminder state once server activation disappears, debug bypass is active, or access becomes ready', () => {
     expect(shouldResetFeatureAccessReminder({
       hasLocalLicense: false,
       isDebugAccess: false,

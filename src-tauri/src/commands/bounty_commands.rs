@@ -6,7 +6,9 @@ use super::bounty_workflow_event_support::{
 use crate::commands::workflow_notification_support::{
     build_workflow_result_summary_event, emit_workflow_result_summary, summarize_workflow_results,
 };
-use crate::services::ensure_bug_bounty_access;
+use crate::services::{
+    ensure_bug_bounty_access, load_plugin_default_inputs, merge_plugin_input_defaults,
+};
 use chrono::Utc;
 use sentinel_bounty::services::{
     CreateFindingInput, CreateProgramInput, CreateSubmissionInput, FindingService,
@@ -3234,8 +3236,14 @@ async fn execute_single_step(
         }
     }
 
+    let default_inputs = load_plugin_default_inputs(db.as_ref(), plugin_id).await?;
+    let resolved_inputs = merge_plugin_input_defaults(&default_inputs, inputs);
+
     // Execute plugin
-    match plugin_manager.execute_agent(plugin_id, inputs).await {
+    match plugin_manager
+        .execute_agent(plugin_id, &resolved_inputs)
+        .await
+    {
         Ok((findings, output)) => {
             let result = serde_json::json!({
                 "success": true,

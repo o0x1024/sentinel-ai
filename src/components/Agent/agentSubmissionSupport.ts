@@ -1,12 +1,20 @@
 import type { ProcessedDocumentResult } from '@/types/agent'
 
 export interface SubmissionReferencedTraffic {
+  db_request_id?: number | null
   host: string
+  id?: number
   method: string
   request_body?: string
   request_headers?: string
   response_body?: string
+  response_body_available?: boolean
+  response_body_preview?: string
+  response_body_truncated?: boolean
+  response_content_type?: string
   response_headers?: string
+  response_size?: number
+  response_time?: number
   sendType?: 'request' | 'response' | 'both'
   status_code: number
   url: string
@@ -82,6 +90,7 @@ export const buildTrafficContext = (traffic: SubmissionReferencedTraffic[]): str
         : 'Traffic'
     parts.push(`\n--- ${typeLabel} #${index + 1} ---`)
     parts.push(`URL: ${entry.url}`)
+    parts.push(`Replay: use http_request with referenced_traffic_index=${index + 1}${typeof entry.id === 'number' ? ` or referenced_traffic_id=${entry.id}` : ''} to preserve captured request headers including Cookie. Use traffic_response_read with the same reference to read the full captured response body in chunks.`)
     parts.push(`Method: ${entry.method}`)
     parts.push(`Host: ${entry.host}`)
 
@@ -90,6 +99,18 @@ export const buildTrafficContext = (traffic: SubmissionReferencedTraffic[]): str
 
     if (showResponse) {
       parts.push(`Status: ${entry.status_code || 'N/A'}`)
+    }
+    if (!showResponse && typeof entry.status_code === 'number') {
+      parts.push(`Response Status: ${entry.status_code || 'N/A'}`)
+    }
+    if (entry.response_content_type) {
+      parts.push(`Response Content-Type: ${entry.response_content_type}`)
+    }
+    if (typeof entry.response_size === 'number') {
+      parts.push(`Response Size: ${entry.response_size} bytes`)
+    }
+    if (typeof entry.response_time === 'number') {
+      parts.push(`Response Time: ${entry.response_time} ms`)
     }
 
     if (showRequest && entry.request_headers) {
@@ -111,23 +132,27 @@ export const buildTrafficContext = (traffic: SubmissionReferencedTraffic[]): str
       parts.push(`\nRequest Body:\n${body}`)
     }
 
-    if (showResponse && entry.response_headers) {
+    if (entry.response_headers) {
       try {
         const headers = JSON.parse(entry.response_headers)
         const headerStr = Object.entries(headers)
           .map(([key, value]) => `  ${key}: ${value}`)
           .join('\n')
-        parts.push(`\nResponse Headers:\n${headerStr}`)
+        parts.push(`\nResponse Headers${showResponse ? '' : ' Summary'}:\n${headerStr}`)
       } catch {
-        parts.push(`\nResponse Headers: ${entry.response_headers}`)
+        parts.push(`\nResponse Headers${showResponse ? '' : ' Summary'}: ${entry.response_headers}`)
       }
     }
 
-    if (showResponse && entry.response_body) {
-      const body = entry.response_body.length > 3000
-        ? `${entry.response_body.substring(0, 3000)}... [truncated]`
-        : entry.response_body
-      parts.push(`\nResponse Body:\n${body}`)
+    const responsePreview = entry.response_body_preview || (showResponse ? entry.response_body : undefined)
+    if (responsePreview) {
+      const body = responsePreview.length > 3000
+        ? `${responsePreview.substring(0, 3000)}... [truncated]`
+        : responsePreview
+      const label = showResponse ? 'Response Body Preview' : 'Response Preview'
+      parts.push(`\n${label}${entry.response_body_truncated ? ' [truncated]' : ''}:\n${body}`)
+    } else if (entry.response_body_available === false) {
+      parts.push('\nResponse Preview: [not available in referenced context]')
     }
   })
 

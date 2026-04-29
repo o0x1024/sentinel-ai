@@ -1,9 +1,9 @@
 <template>
   <section class="flex h-full min-h-0 flex-col rounded-l-lg border border-base-300 bg-base-100">
-    <div class="border-b border-base-300 px-4 py-3">
-      <div class="flex flex-wrap items-center gap-3">
-        <label class="flex min-w-0 flex-1 items-center gap-3">
-          <span class="w-14 text-sm text-base-content/70">{{ $t('trafficAnalysis.intruder.labels.target') }}</span>
+    <div class="border-b border-base-300 px-3 py-2">
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="flex min-w-0 flex-1 items-center gap-2">
+          <span class="w-12 text-sm text-base-content/70">{{ $t('trafficAnalysis.intruder.labels.target') }}</span>
           <input
             :value="targetUrl"
             type="text"
@@ -13,7 +13,7 @@
           />
         </label>
 
-        <label class="flex items-center gap-2 text-sm">
+        <label class="flex items-center gap-1.5 text-sm">
           <input
             :checked="updateHostHeader"
             type="checkbox"
@@ -25,12 +25,12 @@
       </div>
     </div>
 
-    <div class="flex flex-wrap items-center gap-2 border-b border-base-300 bg-base-200 px-4 py-2">
+    <div class="flex flex-wrap items-center gap-1.5 border-b border-base-300 bg-base-200 px-3 py-1.5">
       <span class="text-sm font-medium text-base-content/70">{{ $t('trafficAnalysis.intruder.sections.positions') }}</span>
-      <div class="ml-2 inline-flex items-center gap-1 rounded-full border border-base-300/80 bg-base-100 p-1">
+      <div class="ml-1.5 inline-flex items-center gap-1 rounded-full border border-base-300/80 bg-base-100 p-0.5">
         <button
           type="button"
-          class="btn btn-ghost btn-xs rounded-full px-3"
+          class="btn btn-ghost btn-xs min-h-6 rounded-full px-2.5"
           :class="props.requestViewTab === 'pretty' ? 'btn-active' : ''"
           @click="$emit('update:requestViewTab', 'pretty')"
         >
@@ -38,27 +38,27 @@
         </button>
         <button
           type="button"
-          class="btn btn-ghost btn-xs rounded-full px-3"
+          class="btn btn-ghost btn-xs min-h-6 rounded-full px-2.5"
           :class="props.requestViewTab === 'raw' ? 'btn-active' : ''"
           @click="$emit('update:requestViewTab', 'raw')"
         >
           Raw
         </button>
       </div>
-      <button class="btn btn-sm btn-ghost" type="button" @click="markSelection">
+      <button class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" @click="markSelection">
         {{ $t('trafficAnalysis.intruder.actions.addPositionSymbol') }}
       </button>
-      <button class="btn btn-sm btn-ghost" type="button" @click="$emit('clearMarkers')">
+      <button class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" @click="$emit('clearMarkers')">
         {{ $t('trafficAnalysis.intruder.actions.clearPositionSymbol') }}
       </button>
-      <button class="btn btn-sm btn-ghost" type="button" @click="$emit('autoMark')">
+      <button class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" @click="$emit('autoMark')">
         {{ $t('trafficAnalysis.intruder.actions.autoMark') }}
       </button>
-      <button class="btn btn-sm btn-ghost" type="button" :disabled="creatingOastPayload" @click="insertOastPayload">
+      <button class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" :disabled="creatingOastPayload" @click="insertOastPayload">
         <i :class="creatingOastPayload ? 'fas fa-spinner fa-spin' : 'fas fa-satellite-dish'"></i>
         {{ $t('trafficAnalysis.oast.insertPayload') }}
       </button>
-      <div class="ml-auto flex items-center gap-3 text-xs text-base-content/70">
+      <div class="ml-auto flex items-center gap-2 text-xs text-base-content/70">
         <span>{{ positions.length }} {{ $t('trafficAnalysis.intruder.labels.detectedPositions') }}</span>
         <span>{{ requestLengthLabel }}</span>
       </div>
@@ -100,7 +100,7 @@
       />
     </div>
 
-    <div class="flex items-center gap-3 border-t border-base-300 bg-base-200 px-4 py-2 text-xs text-base-content/70">
+    <div class="flex items-center gap-2 border-t border-base-300 bg-base-200 px-3 py-1.5 text-xs text-base-content/70">
       <span>{{ $t('trafficAnalysis.intruder.help.markerHint') }}</span>
       <span class="ml-auto">{{ positions.length }} {{ $t('trafficAnalysis.intruder.labels.positionCount') }}</span>
     </div>

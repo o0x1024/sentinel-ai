@@ -8,11 +8,11 @@
 //! - Proxy configuration
 
 use anyhow::Result;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use tracing::{debug, info};
@@ -84,6 +84,20 @@ impl DatabaseService {
 
     /// Insert new vulnerability
     pub async fn insert_traffic_vulnerability(&self, finding: &TrafficFinding) -> Result<()> {
+        match self.insert_traffic_vulnerability_deduped(finding).await? {
+            TrafficVulnerabilityInsertResult::Inserted => Ok(()),
+            TrafficVulnerabilityInsertResult::Duplicate => Err(anyhow::anyhow!(
+                "Traffic vulnerability already exists for signature: {}",
+                finding.calculate_signature()
+            )),
+        }
+    }
+
+    /// Insert new vulnerability and treat a concurrent signature collision as a duplicate hit.
+    pub async fn insert_traffic_vulnerability_deduped(
+        &self,
+        finding: &TrafficFinding,
+    ) -> Result<TrafficVulnerabilityInsertResult> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -97,6 +111,7 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
                 sqlx::query(
                     r#"
                     INSERT INTO traffic_vulnerabilities (
@@ -118,20 +133,30 @@ impl DatabaseService {
                 .bind(&signature)
                 .bind(finding.created_at)
                 .bind(finding.created_at)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
 
-                sqlx::query(
+                let dedupe_insert = sqlx::query(
                     r#"
                     INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES ($1, $2)
+                    ON CONFLICT(signature) DO NOTHING
                     "#,
                 )
                 .bind(&signature)
                 .bind(&finding.id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
+
+                if dedupe_insert.rows_affected() == 0 {
+                    tx.rollback().await?;
+                    self.update_traffic_vulnerability_hit(&signature).await?;
+                    return Ok(TrafficVulnerabilityInsertResult::Duplicate);
+                }
+
+                tx.commit().await?;
             }
             DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
                 sqlx::query(
                     r#"
                     INSERT INTO traffic_vulnerabilities (
@@ -153,16 +178,27 @@ impl DatabaseService {
                 .bind(&signature)
                 .bind(finding.created_at)
                 .bind(finding.created_at)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
 
-                sqlx::query("INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES (?, ?)")
-                    .bind(&signature)
-                    .bind(&finding.id)
-                    .execute(pool)
-                    .await?;
+                let dedupe_insert = sqlx::query(
+                    "INSERT OR IGNORE INTO traffic_dedupe_index (signature, vuln_id) VALUES (?, ?)",
+                )
+                .bind(&signature)
+                .bind(&finding.id)
+                .execute(&mut *tx)
+                .await?;
+
+                if dedupe_insert.rows_affected() == 0 {
+                    tx.rollback().await?;
+                    self.update_traffic_vulnerability_hit(&signature).await?;
+                    return Ok(TrafficVulnerabilityInsertResult::Duplicate);
+                }
+
+                tx.commit().await?;
             }
             DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
                 sqlx::query(
                     r#"
                     INSERT INTO traffic_vulnerabilities (
@@ -184,14 +220,24 @@ impl DatabaseService {
                 .bind(&signature)
                 .bind(finding.created_at)
                 .bind(finding.created_at)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
 
-                sqlx::query("INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES (?, ?)")
-                    .bind(&signature)
-                    .bind(&finding.id)
-                    .execute(pool)
-                    .await?;
+                let dedupe_insert = sqlx::query(
+                    "INSERT IGNORE INTO traffic_dedupe_index (signature, vuln_id) VALUES (?, ?)",
+                )
+                .bind(&signature)
+                .bind(&finding.id)
+                .execute(&mut *tx)
+                .await?;
+
+                if dedupe_insert.rows_affected() == 0 {
+                    tx.rollback().await?;
+                    self.update_traffic_vulnerability_hit(&signature).await?;
+                    return Ok(TrafficVulnerabilityInsertResult::Duplicate);
+                }
+
+                tx.commit().await?;
             }
         }
 
@@ -221,7 +267,7 @@ impl DatabaseService {
             "Vulnerability inserted with evidence: {} - {}",
             finding.id, finding.title
         );
-        Ok(())
+        Ok(TrafficVulnerabilityInsertResult::Inserted)
     }
 
     /// Update vulnerability hit count
@@ -2430,6 +2476,12 @@ pub struct TrafficFinding {
     pub response_headers: Option<String>,
     pub response_body: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrafficVulnerabilityInsertResult {
+    Inserted,
+    Duplicate,
 }
 
 impl TrafficFinding {

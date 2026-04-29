@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ProxyRequest } from '@/components/traffic/proxyHistoryTypes'
+import type { ProxyRequest, ProxyRequestBodyChunk } from '@/components/traffic/proxyHistoryTypes'
 
 export async function resolveProxyHistoryRequestIdByDbRequestId(
   dbRequestId: number,
@@ -24,6 +24,37 @@ export async function getProxyRequest(requestId: number): Promise<ProxyRequest |
 
   if (!response.success) {
     throw new Error(response.error || 'Failed to load proxy request')
+  }
+
+  return response.data || null
+}
+
+export async function getProxyRequestPreview(requestId: number): Promise<ProxyRequest | null> {
+  const response = await invoke<{ success: boolean; data?: ProxyRequest | null; error?: string }>(
+    'get_proxy_request_preview',
+    { id: requestId },
+  )
+
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to load proxy request preview')
+  }
+
+  return response.data || null
+}
+
+export async function getProxyRequestResponseBodyChunk(
+  requestId: number,
+  variant: 'original' | 'edited',
+  offset: number,
+  limit: number,
+): Promise<ProxyRequestBodyChunk | null> {
+  const response = await invoke<{ success: boolean; data?: ProxyRequestBodyChunk | null; error?: string }>(
+    'get_proxy_request_response_body_chunk',
+    { id: requestId, variant, offset, limit },
+  )
+
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to load proxy request response body chunk')
   }
 
   return response.data || null

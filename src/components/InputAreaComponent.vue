@@ -382,12 +382,10 @@
         <div class="flex items-center justify-between gap-2">
           <InputToolbarActions
             :rag-enabled="effectiveRagEnabled"
-            :team-enabled="effectiveTeamEnabled"
             :web-search-enabled="effectiveWebSearchEnabled"
             @trigger-file-select="triggerFileSelect"
             @open-tool-config="emit('open-tool-config')"
             @toggle-rag="toggleRAG"
-            @toggle-team="toggleTeam"
             @toggle-web-search="toggleWebSearch"
             @open-slash-manager="openSlashManager"
             @clear-conversation="clearConversation"
@@ -713,7 +711,6 @@ const props = defineProps<{
   allowTakeover?: boolean
   ragEnabled?: boolean
   webSearchEnabled?: boolean
-  teamEnabled?: boolean
   pendingAttachments?: any[]
   pendingDocuments?: PendingDocumentAttachment[]
   processedDocuments?: ProcessedDocumentResult[]
@@ -738,7 +735,6 @@ const emit = defineEmits<{
   (e: 'clear-conversation'): void
   (e: 'toggle-rag', enabled: boolean): void
   (e: 'toggle-web-search', enabled: boolean): void
-  (e: 'toggle-team', enabled: boolean): void
   (e: 'open-tool-config'): void
   (e: 'add-attachments', files: string[]): void
   (e: 'remove-attachment', index: number): void
@@ -778,7 +774,6 @@ let hideMentionPreviewTimer: ReturnType<typeof setTimeout> | null = null
 // Feature states are fully controlled by parent.
 const effectiveRagEnabled = computed(() => !!props.ragEnabled)
 const effectiveWebSearchEnabled = computed(() => !!props.webSearchEnabled)
-const effectiveTeamEnabled = computed(() => !!props.teamEnabled)
 const effectiveSelectedAgent = computed({
   get: () => props.selectedAgent || '',
   set: (value: string) => {
@@ -1567,10 +1562,6 @@ const toggleRAG = () => {
 
 const toggleWebSearch = () => {
   emit('toggle-web-search', !effectiveWebSearchEnabled.value)
-}
-
-const toggleTeam = () => {
-  emit('toggle-team', !effectiveTeamEnabled.value)
 }
 
 const onAgentChanged = (value: string) => {

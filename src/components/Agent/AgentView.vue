@@ -111,6 +111,16 @@
             <span>{{ t('agent.terminal') }}</span>
           </button>
           <button
+            v-if="hasConnectedBrowserShellSessions"
+            @click="handleToggleBrowserShell()"
+            class="btn btn-sm gap-1"
+            :class="activeRightPanel === 'browser-shell' ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="browserShellPanelTitle"
+          >
+            <i class="fas fa-window-maximize"></i>
+            <span>{{ browserShellDisplayName }}</span>
+          </button>
+          <button
             v-if="teamWorkspaceAvailable"
             @click="handleToggleTeamWorkspace()"
             class="btn btn-sm gap-1"
@@ -142,6 +152,51 @@
             @toggle="isSubagentPanelOpen = !isSubagentPanelOpen"
             @view-details="handleViewSubagentDetails"
           />
+          <div
+            v-if="currentBrowserShellSessionId && isCurrentBoundBrowserShellConnected"
+            class="mx-4 mt-2 rounded-lg border border-primary/25 bg-primary/10 px-3 py-2"
+          >
+            <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-primary">当前对话已绑定第三方{{ browserShellDisplayName }}</div>
+                <div class="text-xs text-base-content/70 break-all">
+                  session: {{ currentBrowserShellSessionId }}
+                </div>
+                <div class="mt-1 text-xs text-base-content/60">
+                  本次对话会优先使用 <code>browser_shell</code> 操作这个第三方网页终端，而不是普通 DOM 浏览器动作。
+                </div>
+                <div class="mt-1 text-xs">
+                  <span :class="currentBrowserShellDirectWriteEnabled ? 'text-warning' : 'text-base-content/60'">
+                    {{ currentBrowserShellDirectWriteEnabled ? '已授权 AI 直接写入，无需逐条审批。' : '当前仍需逐条审批写入请求。' }}
+                  </span>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  class="btn btn-xs"
+                  :class="currentBrowserShellDirectWriteEnabled ? 'btn-warning' : 'btn-outline btn-warning'"
+                  @click="toggleBrowserShellDirectWrite()"
+                >
+                  <i class="fas fa-bolt mr-1"></i>
+                  {{ currentBrowserShellDirectWriteEnabled ? '关闭 AI 直写' : '授权 AI 直写' }}
+                </button>
+                <button
+                  class="btn btn-xs btn-outline btn-primary"
+                  @click="activateRightPanel('browser-shell')"
+                >
+                  <i class="fas fa-terminal mr-1"></i>
+                  打开{{ browserShellDisplayName }}
+                </button>
+                <button
+                  class="btn btn-xs btn-outline"
+                  @click="clearBoundBrowserShellSession"
+                >
+                  <i class="fas fa-link-slash mr-1"></i>
+                  解除绑定
+                </button>
+              </div>
+            </div>
+          </div>
           <div
             v-if="isFocusBannerVisible"
             class="mx-4 mt-2 rounded-lg border border-info/25 bg-info/10 px-3 py-2"
@@ -208,7 +263,6 @@
             :show-debug-info="false"
             :rag-enabled="ragEnabled"
             :web-search-enabled="webSearchEnabled"
-            :team-enabled="teamModeEnabled"
             :pending-attachments="pendingAttachments"
             :pending-documents="pendingDocuments"
             :processed-documents="processedDocuments"
@@ -226,7 +280,6 @@
             @stop-execution="handleStop"
             @toggle-rag="handleToggleRAG"
             @toggle-web-search="handleToggleWebSearch"
-            @toggle-team="handleToggleTeamMode"
             @change-agent="handleAssistantProfileChange"
             @add-attachments="handleAddAttachments"
             @remove-attachment="handleRemoveAttachment"
@@ -268,7 +321,7 @@
             ></div>
             
             <TeamWorkspacePanel
-              v-if="activeRightPanel === 'team'"
+              v-if="activeRightPanel === 'team' && !activeTeamV4RunId"
               v-model:tab="teamWorkspaceTab"
               :loading="teamWorkspaceLoading"
               :pending-create-task="pendingTeamCreateTask"
@@ -289,6 +342,19 @@
               @fail-task="handleFailTeamTask"
               @release-task="handleReleaseTeamTask"
               @toggle-selected-task="toggleSelectedTeamTask"
+            />
+
+            <TeamV4WorkspacePanel
+              v-else-if="activeRightPanel === 'team'"
+              :agents="teamV4Agents"
+              :events="teamV4Events"
+              :harness-runs="teamV4HarnessRuns"
+              :loading="teamV4WorkspaceLoading"
+              :memories="teamV4Memories"
+              :run="teamV4Run"
+              :tasks="teamV4Tasks"
+              @cancel-harness="cancelTeamV4HarnessRun"
+              @resume-harness="resumeTeamV4HarnessRun"
             />
 
             <TaskPanel 
@@ -312,6 +378,12 @@
               v-else-if="activeRightPanel === 'terminal'"
               class="h-full border-0 rounded-none bg-transparent"
               @close="handleCloseTerminal"
+            />
+            <BrowserShellBridgePanel
+              v-else-if="activeRightPanel === 'browser-shell' && hasConnectedBrowserShellSessions"
+              class="h-full overflow-y-auto border-0 rounded-none bg-transparent p-4"
+              :auto-authorize-direct-write-on-bind="true"
+              :show-tool-test-actions="false"
             />
         </div>
       </div>
@@ -349,7 +421,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
 import type {
@@ -358,9 +429,19 @@ import type {
   TeamBlackboardEntry,
   TeamTask,
 } from '@/types/agentTeam'
+import type {
+  TeamV4Agent,
+  TeamV4Event,
+  TeamV4HarnessRun,
+  TeamV4Memory,
+  TeamV4Run,
+  TeamV4Task,
+} from '@/types/teamRuntime'
 import { agentTeamApi } from '@/api/agentTeam'
+import { teamRuntimeApi } from '@/api/teamRuntime'
 import { useAgentEvents } from '@/composables/useAgentEvents'
 import { useAgentTasks } from '@/composables/useAgentTasks'
+import { useBrowserShell } from '@/composables/useBrowserShell'
 import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import AskUserQuestionModal from './AskUserQuestionModal.vue'
@@ -369,11 +450,13 @@ import TaskPanel from './TaskPanel.vue'
 import HtmlPanel from './HtmlPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import SubagentDetailModal from './SubagentDetailModal.vue'
+import BrowserShellBridgePanel from '@/components/Tools/BrowserShellBridgePanel.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
 import AssistantWorkConfigPanel from './AssistantWorkConfigPanel.vue'
 import TeamWorkspacePanel from './TeamWorkspacePanel.vue'
+import TeamV4WorkspacePanel from './TeamV4WorkspacePanel.vue'
 import {
   type AgentExecutionFinishedEvent,
   getExecutionStateBadgeClass,
@@ -412,6 +495,7 @@ import { useAgentMessageFocus } from './useAgentMessageFocus'
 import { useAgentTeamOrchestration } from './useAgentTeamOrchestration'
 import { useAgentTeamTaskActions } from './useAgentTeamTaskActions'
 import { useAgentConversationBinding } from './useAgentConversationBinding'
+import { useAgentBrowserShellAvailability } from './useAgentBrowserShellAvailability'
 import { useAgentViewLifecycle } from './useAgentViewLifecycle'
 import { useAgentSubagents } from './useAgentSubagents'
 import { useAgentViewEffects } from './useAgentViewEffects'
@@ -449,9 +533,12 @@ const emit = defineEmits<{
   (e: 'memory-message-focused', payload: { memoryId: string; messageId: string }): void
 }>()
 
-// i18n & router
-const { t } = useI18n()
-const router = useRouter()
+// i18n
+const { t, locale } = useI18n()
+
+const isChineseUi = computed(() => locale.value.toLowerCase().startsWith('zh'))
+const browserShellDisplayName = computed(() => (isChineseUi.value ? '浏览器 Shell' : 'Browser Shell'))
+const browserShellPanelTitle = computed(() => (isChineseUi.value ? '打开浏览器 Shell 面板' : 'Open Browser Shell Bridge'))
 
 // Refs
 const messageFlowRef = ref<InstanceType<typeof MessageFlow> | null>(null)
@@ -481,11 +568,16 @@ const conversationExecutionStateBadgeClass = computed(() => {
 
 const {
   defaultAssistantProfileId,
+  defaultTeamProfileId,
   getAssistantProfileOption,
+  getTeamProfileOption,
   loadDefaultAssistantProfile,
+  loadDefaultTeamProfile,
   isLoadingAssistantProfiles,
   loadAssistantProfiles,
+  loadTeamProfiles,
   profileOptions: assistantProfileOptions,
+  teamProfileOptions,
 } = useAssistantProfiles()
 const assistantAgentOptions = computed(() =>
   assistantProfileOptions.value.map((profile) => ({
@@ -543,6 +635,7 @@ const {
   syncReferencedTraffic,
 } = useAgentDraftArtifacts()
 const activeTeamSessionId = ref<string | null>(null)
+const activeTeamV4RunId = ref<string | null>(null)
 const teamSessionState = ref<string>('PENDING')
 const isTeamWorkspaceActive = ref(false)
 const teamWorkspaceTab = ref<'tasks' | 'inbox' | 'blackboard' | 'agents'>('tasks')
@@ -555,6 +648,13 @@ const teamBlackboardEntries = ref<TeamBlackboardEntry[]>([])
 const teamOrchestrationDraft = ref<TeamOrchestrationPlan>({ version: 1, steps: [] })
 const teamSelectedOrchestrationPresetId = ref<TeamOrchestrationPresetId | null>(null)
 const teamSelectedRecoveryPresetId = ref<TeamRecoveryPresetId>('balanced')
+const teamV4Agents = ref<TeamV4Agent[]>([])
+const teamV4Events = ref<TeamV4Event[]>([])
+const teamV4HarnessRuns = ref<TeamV4HarnessRun[]>([])
+const teamV4Memories = ref<TeamV4Memory[]>([])
+const teamV4Run = ref<TeamV4Run | null>(null)
+const teamV4Tasks = ref<TeamV4Task[]>([])
+const teamV4WorkspaceLoading = ref(false)
 const isSubagentPanelOpen = ref(false)
 const subagents = computed(() => agentEvents.subagents.value)
 const {
@@ -661,6 +761,11 @@ const {
   teamTasks,
 })
 const isTeamRunActive = computed(() => {
+  if (activeTeamV4RunId.value) {
+    return ['draft', 'planning', 'running', 'waiting_human'].includes(
+      String(teamV4Run.value?.state || '').trim().toLowerCase(),
+    )
+  }
   if (!teamModeEnabled.value || !activeTeamSessionId.value) return false
   const normalized = String(teamSessionState.value || '').trim().toUpperCase()
   return [
@@ -679,10 +784,17 @@ const teamWorkspaceAvailable = computed(() =>
   Boolean(
     teamModeEnabled.value ||
     activeTeamSessionId.value ||
+    activeTeamV4RunId.value ||
     teamSessionDetail.value ||
     teamSessionMessages.value.length ||
     teamTasks.value.length ||
-    teamBlackboardEntries.value.length,
+    teamBlackboardEntries.value.length ||
+    teamV4Agents.value.length ||
+    teamV4Events.value.length ||
+    teamV4HarnessRuns.value.length ||
+    teamV4Memories.value.length ||
+    teamV4Run.value ||
+    teamV4Tasks.value.length,
   ),
 )
 const isExecuting = computed(() => agentEvents.isExecuting.value || isTeamRunActive.value)
@@ -751,6 +863,11 @@ const parseTeamTaskExecutionId = (executionId: string) => {
   }
 }
 const terminalComposable = useTerminal()
+const browserShellComposable = useBrowserShell()
+const currentBrowserShellSessionId = computed(() => browserShellComposable.currentSessionId.value)
+const currentBrowserShellDirectWriteEnabled = computed(() =>
+  browserShellComposable.directWriteEnabled.value,
+)
 const {
   activeRightPanel,
   activateRightPanel,
@@ -763,6 +880,7 @@ const {
   handleCloseTerminal,
   handleRenderHtml,
   handleTaskSourceChange,
+  handleToggleBrowserShell,
   handleToggleHtmlPanel,
   handleToggleTasks,
   handleToggleTerminal,
@@ -819,6 +937,28 @@ const openToolConfigDrawer = () => {
   showConversations.value = false
   showToolConfig.value = true
 }
+
+const clearBoundBrowserShellSession = () => {
+  browserShellComposable.clearSession()
+}
+
+const toggleBrowserShellDirectWrite = () => {
+  browserShellComposable.setDirectWriteEnabled(!browserShellComposable.directWriteEnabled.value)
+}
+
+const {
+  hasConnectedBrowserShellSessions,
+  isCurrentBoundBrowserShellConnected,
+} = useAgentBrowserShellAvailability({
+  currentBrowserShellSessionId,
+  clearBoundBrowserShellSession,
+})
+
+watch(hasConnectedBrowserShellSessions, (hasConnected) => {
+  if (!hasConnected && activeRightPanel.value === 'browser-shell') {
+    deactivateRightPanel('browser-shell')
+  }
+})
 
 // Handle retrieval toggle
 const handleToggleRAG = (enabled: boolean) => {
@@ -969,7 +1109,15 @@ const {
   loadConversationBinding,
   schedulePersistConversationBinding,
 } = useAgentConversationBinding({
+  bindBrowserShellSession: (sessionId) => {
+    browserShellComposable.bindSession(sessionId)
+  },
+  setBrowserShellDirectWriteEnabled: (enabled) => {
+    browserShellComposable.setDirectWriteEnabled(enabled)
+  },
   conversationId,
+  currentBrowserShellDirectWriteEnabled,
+  currentBrowserShellSessionId,
   activeTeamSessionId,
   assistantSelectedModel,
   defaultAssistantProfileId,
@@ -989,6 +1137,181 @@ const {
   setRunMode,
   toConversationBinding,
 })
+
+const loadTeamV4WorkspaceData = async (runId = activeTeamV4RunId.value) => {
+  const normalizedRunId = String(runId || '').trim()
+  if (!normalizedRunId) return
+  teamV4WorkspaceLoading.value = true
+  try {
+    const [run, agents, tasks, events, memories, harnessRuns] = await Promise.all([
+      teamRuntimeApi.getRun(normalizedRunId),
+      teamRuntimeApi.listAgents(normalizedRunId),
+      teamRuntimeApi.listTasks(normalizedRunId),
+      teamRuntimeApi.listEvents(normalizedRunId, 0, 500),
+      teamRuntimeApi.listMemories(normalizedRunId),
+      teamRuntimeApi.listHarnessRuns(normalizedRunId),
+    ])
+    teamV4Run.value = run
+    teamV4Agents.value = agents
+    teamV4Tasks.value = tasks
+    teamV4Events.value = events
+    teamV4Memories.value = memories
+    teamV4HarnessRuns.value = harnessRuns
+  } finally {
+    teamV4WorkspaceLoading.value = false
+  }
+}
+
+const cancelTeamV4HarnessRun = async (harnessRunId: string) => {
+  await teamRuntimeApi.cancelHarnessRun(harnessRunId)
+  await loadTeamV4WorkspaceData()
+}
+
+const resumeTeamV4HarnessRun = async (harnessRunId: string) => {
+  await teamRuntimeApi.resumeHarnessRun(harnessRunId, 600)
+  await loadTeamV4WorkspaceData()
+}
+
+const persistTeamV4Message = async (message: AgentMessage, role: 'user' | 'assistant') => {
+  const targetConversationId = conversationId.value
+  if (!targetConversationId) return
+  await invoke('save_ai_message', {
+    request: {
+      id: message.id,
+      conversation_id: targetConversationId,
+      role,
+      content: message.content,
+      metadata: message.metadata ?? null,
+      architecture_type: 'team_v4',
+      architecture_meta: JSON.stringify({
+        team_run_id: message.metadata?.team_session_id ?? null,
+        role,
+      }),
+      structured_data: null,
+    },
+  })
+}
+
+const startTeamV4AssistantRun = async (goal: string) => {
+  await flushPendingToolConfigSave()
+  await Promise.all([
+    loadTeamProfiles(),
+    loadDefaultTeamProfile(),
+  ])
+  const selectedAssistantProfile = getAssistantProfileOption(assistantSessionSettings.value.profileId)
+  const selectedTeamProfileId =
+    selectedAssistantProfile?.defaultTeamProfileId?.trim()
+    || defaultTeamProfileId.value.trim()
+    || teamProfileOptions.value[0]?.id
+    || null
+  const selectedTeamProfile = selectedTeamProfileId
+    ? getTeamProfileOption(selectedTeamProfileId)
+    : null
+  if (!selectedTeamProfile) {
+    throw new Error('Team mode requires a Team Profile.')
+  }
+  const teamToolPolicyMatrix = selectedTeamProfile.toolPolicyMatrix
+  const teamMemoryPolicy = {
+    ...selectedTeamProfile.memoryPolicy,
+    ragEnabled: ragEnabled.value,
+  }
+  const teamHarnessPolicy = selectedTeamProfile.harnessPolicy
+  const teamConcurrencyPolicy = selectedTeamProfile.concurrencyPolicy
+  const teamSafetyPolicy = selectedTeamProfile.safetyPolicy
+  const bootstrap = await teamRuntimeApi.startAssistantRun({
+    conversationId: conversationId.value,
+    profileId: assistantSessionSettings.value.profileId,
+    teamProfileId: selectedTeamProfile.id,
+    commanderProfileId: selectedTeamProfile.commanderProfileId,
+    solverProfileIds: selectedTeamProfile.solverProfileIds,
+    observerProfileId: selectedTeamProfile.observerProfileId,
+    goal,
+    model: selectedTeamProfile.defaultModel || assistantSelectedModel.value || null,
+    contextMode: selectedTeamProfile.contextMode,
+    toolPolicyMatrix: teamToolPolicyMatrix,
+    memoryPolicy: teamMemoryPolicy,
+    harnessPolicy: teamHarnessPolicy,
+    concurrencyPolicy: teamConcurrencyPolicy,
+    safetyPolicy: teamSafetyPolicy,
+  })
+
+  activeTeamV4RunId.value = bootstrap.run.id
+  teamV4Run.value = bootstrap.run
+  teamV4Agents.value = [bootstrap.commander, bootstrap.observer, ...bootstrap.solvers]
+  teamV4Tasks.value = bootstrap.solverAssignments.map((assignment) => assignment.task)
+  teamV4Events.value = bootstrap.events
+  teamV4Memories.value = []
+  teamV4HarnessRuns.value = bootstrap.solverAssignments.map((assignment) => assignment.harnessRun)
+  teamSessionState.value = 'EXECUTING'
+  isTeamWorkspaceActive.value = true
+  activateRightPanel('team')
+
+  const now = Date.now()
+  const userMessage: AgentMessage = {
+    id: crypto.randomUUID(),
+    type: 'user',
+    content: goal,
+    timestamp: now,
+    metadata: {
+      kind: 'team_v4_user_goal',
+      team_session_id: bootstrap.run.id,
+      team_task_record_id: bootstrap.rootTask.id,
+    },
+  }
+  const summaryContent = [
+    `Team v4 run started: ${bootstrap.run.id}`,
+    `Commander created ${bootstrap.solverAssignments.length} task assignment(s) for ${bootstrap.solvers.length} Solver(s).`,
+    'Observer is attached to filter noise and promote high value memory.',
+    `Harness lease active until ${bootstrap.solverAssignments[0]?.harnessRun.lease_expires_at || 'unknown'}.`,
+  ].join('\n')
+  const assistantMessage: AgentMessage = {
+    id: crypto.randomUUID(),
+    type: 'planning',
+    content: summaryContent,
+    timestamp: now + 1,
+    metadata: {
+      kind: 'team_v4_commander_bootstrap',
+      team_member_id: bootstrap.commander.id,
+      team_member_name: bootstrap.commander.name,
+      team_member_role: 'commander',
+      team_session_id: bootstrap.run.id,
+      team_task_record_id: bootstrap.rootTask.id,
+      team_task_key: bootstrap.rootTask.task_key,
+      team_task_title: bootstrap.rootTask.title,
+      team_sequence: bootstrap.events[bootstrap.events.length - 1]?.sequence,
+    },
+  }
+  agentEvents.messages.value.push(userMessage, assistantMessage)
+  nextTick(() => {
+    scrollMessageViewportToBottom()
+  })
+  void Promise.all([
+    persistTeamV4Message(userMessage, 'user'),
+    persistTeamV4Message(assistantMessage, 'assistant'),
+    loadTeamV4WorkspaceData(bootstrap.run.id),
+  ]).catch((error) => {
+    console.warn('[AgentView] Team v4 bootstrap side effects failed:', error)
+  })
+  return bootstrap
+}
+
+const stopTeamV4Run = async () => {
+  const runId = activeTeamV4RunId.value
+  if (!runId) return
+  await teamRuntimeApi.appendEvent(runId, {
+    actorId: null,
+    taskId: teamV4Tasks.value[0]?.id || null,
+    eventType: 'run_cancelled_by_user',
+    visibility: 'user',
+    payload: {
+      reason: 'user_stop',
+    },
+  })
+  await teamRuntimeApi.updateRunState(runId, 'cancelled')
+  teamSessionState.value = 'FAILED'
+  await loadTeamV4WorkspaceData(runId)
+}
+
 const {
   handleClearConversation,
   handleConversationExecutionStateUpdate,
@@ -1002,6 +1325,7 @@ const {
   loadLatestConversation,
 } = useAgentConversationFlow({
   activeTeamSessionId,
+  activeTeamV4RunId,
   agentMessages: agentEvents.messages,
   agentStreamingContent: agentEvents.streamingContent,
   agentSubagents: agentEvents.subagents,
@@ -1037,6 +1361,7 @@ const {
   getNewConversationTitle: () => `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
   getToolCallCompletedLabel: () => t('agent.toolCallCompleted'),
   getUnnamedConversationTitle: () => t('agent.newConversationTitle'),
+  getAssistantProfileOption,
   handleStopTeamState: applyTeamState,
   hydrateTaskHistory,
   historyLoadToken,
@@ -1057,6 +1382,7 @@ const {
   referencedFiles,
   referencedMessages,
   referencedTraffic,
+  refreshTeamV4Workspace: loadTeamV4WorkspaceData,
   resetTerminal: () => {
     terminalComposable.resetTerminal()
   },
@@ -1067,10 +1393,12 @@ const {
   setPendingDocumentAttachments: (documents) => {
     agentEvents.setPendingDocumentAttachments(documents)
   },
+  startTeamV4AssistantRun,
   startTeamExecutionRun,
   stopAgentExecutionState: () => {
     agentEvents.stopExecution()
   },
+  stopTeamV4Run,
   submitInFlight,
   syncActiveTeamSession,
   syncTeamMessagesToMainFlow,
@@ -1155,6 +1483,8 @@ watch(
     tenthManEnabled,
     teamModeEnabled,
     assistantSelectedModel,
+    currentBrowserShellDirectWriteEnabled,
+    currentBrowserShellSessionId,
     toolsEnabled,
     toolConfig,
   ],

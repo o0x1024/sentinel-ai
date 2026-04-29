@@ -937,6 +937,8 @@ export default {
     pluginParamsLoadFailed: 'Failed to load plugin parameter schema',
     pluginParamsJsonInvalid: 'Invalid JSON. It will not take effect until fixed.',
     pluginParamDefaultValue: 'Default: {value}',
+    pluginParamPluginDefaultConfigured: 'A plugin default value is configured',
+    pluginParamSchemaDefaultConfigured: 'A schema default value is configured',
     pluginParamRange: 'Range: {min} - {max}',
     pluginParamArrayPlaceholder: 'One value per line',
     usePluginDefaultParamValue: 'Leave empty to use the plugin default',

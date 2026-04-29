@@ -3,6 +3,7 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use tauri::AppHandle;
 
 use sentinel_db::Database;
 use sentinel_db::DatabaseService;
@@ -20,10 +21,12 @@ use sentinel_tools::ToolServer;
 use crate::agents::executor::file_tool_state::{
     ensure_file_snapshot_is_editable, invalidate_file_snapshot, record_file_read_snapshot,
 };
-use crate::agents::executor::terminal_session_store::{
-    get_active_terminal_session, set_active_terminal_session,
-};
+use crate::agents::executor::http_request_override::build_http_override_def;
+use crate::agents::executor::question_override::build_ask_user_question_override_def;
+use crate::agents::executor::shell_override::build_shell_override_def;
+use crate::agents::executor::terminal_override::build_interactive_shell_override_def;
 use crate::agents::executor::tool_search_override::build_tool_search_override_def;
+use crate::agents::executor::traffic_response_read_tool::build_traffic_response_read_tool;
 use crate::agents::executor::types::ToolCallRecord;
 
 type PendingToolCalls = std::collections::HashMap<String, (String, String, i64, u32)>;
@@ -1003,107 +1006,6 @@ fn replace_dynamic_tool(dynamic_tools: Vec<DynamicTool>, def: DynamicToolDef) ->
         .collect()
 }
 
-async fn build_shell_override_def(
-    tool_server: &ToolServer,
-    execution_id: &str,
-) -> Option<DynamicToolDef> {
-    let shell_info = tool_server.get_tool(ShellTool::NAME).await?;
-    let execution_id_for_shell = execution_id.to_string();
-    let shell_input_schema = shell_info.input_schema.clone();
-    let shell_description = shell_info.description.clone();
-    let shell_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-        let execution_id_for_shell = execution_id_for_shell.clone();
-        Box::pin(async move {
-            use rig::tool::Tool;
-            use sentinel_tools::buildin_tools::shell::{ShellArgs, ShellTool};
-
-            let mut patched_args = args;
-            if let Some(obj) = patched_args.as_object_mut() {
-                obj.insert(
-                    "execution_id".to_string(),
-                    serde_json::Value::String(execution_id_for_shell.clone()),
-                );
-                obj.insert(
-                    "enable_large_output_storage".to_string(),
-                    serde_json::Value::Bool(true),
-                );
-            }
-
-            let tool_args: ShellArgs = serde_json::from_value(patched_args)
-                .map_err(|e| format!("Invalid arguments: {}", e))?;
-
-            let tool = ShellTool::new();
-            let result = tool
-                .call(tool_args)
-                .await
-                .map_err(|e| format!("Shell execution failed: {}", e))?;
-
-            serde_json::to_value(result)
-                .map_err(|e| format!("Failed to serialize shell result: {}", e))
-        })
-    });
-
-    Some(DynamicToolDef {
-        name: ShellTool::NAME.to_string(),
-        description: shell_description,
-        input_schema: shell_input_schema,
-        output_schema: None,
-        source: ToolSource::Builtin,
-        category: "system".to_string(),
-        tags: shell_info.tags.clone(),
-        search_hint: shell_info.search_hint.clone(),
-        exposure: shell_info.exposure.clone(),
-        execution_policy: shell_info.execution_policy.clone(),
-        executor: shell_executor,
-    })
-}
-
-async fn build_http_override_def(tool_server: &ToolServer) -> Option<DynamicToolDef> {
-    let http_info = tool_server.get_tool(HttpRequestTool::NAME).await?;
-    let http_input_schema = http_info.input_schema.clone();
-    let http_description = http_info.description.clone();
-    let http_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-        Box::pin(async move {
-            use rig::tool::Tool;
-            use sentinel_tools::buildin_tools::http_request::{HttpRequestArgs, HttpRequestTool};
-
-            let mut patched_args = args;
-            if let Some(obj) = patched_args.as_object_mut() {
-                obj.insert(
-                    "enable_large_output_storage".to_string(),
-                    serde_json::Value::Bool(true),
-                );
-            }
-
-            let tool_args: HttpRequestArgs = serde_json::from_value(patched_args)
-                .map_err(|e| format!("Invalid arguments: {}", e))?;
-
-            let tool = HttpRequestTool::default();
-            let result = tool
-                .call(tool_args)
-                .await
-                .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-            serde_json::to_value(result)
-                .map_err(|e| format!("Failed to serialize HTTP result: {}", e))
-        })
-    });
-
-    Some(DynamicToolDef {
-        name: HttpRequestTool::NAME.to_string(),
-        description: http_description,
-        input_schema: http_input_schema,
-        output_schema: None,
-        source: ToolSource::Builtin,
-        category: "network".to_string(),
-        tags: http_info.tags.clone(),
-        search_hint: http_info.search_hint.clone(),
-        exposure: http_info.exposure.clone(),
-        execution_policy: http_info.execution_policy.clone(),
-        executor: http_executor,
-    })
-}
-
 async fn build_glob_override_def(
     tool_server: &ToolServer,
     active_terminal_session_id: Option<&str>,
@@ -1500,142 +1402,19 @@ async fn build_tasks_override_def(
     })
 }
 
-async fn build_ask_user_question_override_def(
-    tool_server: &ToolServer,
-    execution_id: &str,
-) -> Option<DynamicToolDef> {
-    let info = tool_server.get_tool(AskUserQuestionTool::NAME).await?;
-    let execution_id_for_questions = execution_id.to_string();
-    let input_schema = info.input_schema.clone();
-    let description = info.description.clone();
-    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-        let execution_id_for_questions = execution_id_for_questions.clone();
-        Box::pin(async move {
-            use rig::tool::Tool;
-            use sentinel_tools::buildin_tools::ask_user_question::{
-                AskUserQuestionArgs, AskUserQuestionTool,
-            };
-
-            let mut patched_args = args;
-            if let Some(obj) = patched_args.as_object_mut() {
-                obj.insert(
-                    "execution_id".to_string(),
-                    serde_json::Value::String(execution_id_for_questions.clone()),
-                );
-            }
-
-            let tool_args: AskUserQuestionArgs = serde_json::from_value(patched_args)
-                .map_err(|e| format!("Invalid arguments: {}", e))?;
-
-            let tool = AskUserQuestionTool::new();
-            let result = tool
-                .call(tool_args)
-                .await
-                .map_err(|e| format!("AskUserQuestion failed: {}", e))?;
-
-            serde_json::to_value(result)
-                .map_err(|e| format!("Failed to serialize ask_user_question result: {}", e))
-        })
-    });
-
-    Some(DynamicToolDef {
-        name: AskUserQuestionTool::NAME.to_string(),
-        description,
-        input_schema,
-        output_schema: None,
-        source: ToolSource::Builtin,
-        category: "system".to_string(),
-        tags: info.tags.clone(),
-        search_hint: info.search_hint.clone(),
-        exposure: info.exposure.clone(),
-        execution_policy: info.execution_policy.clone(),
-        executor,
-    })
-}
-
-async fn build_interactive_shell_override_def(
-    tool_server: &ToolServer,
-    execution_id: &str,
-    fallback_active_session_id: Option<&str>,
-) -> Option<DynamicToolDef> {
-    let info = tool_server.get_tool(TerminalServer::NAME).await?;
-    let execution_id_for_terminal = execution_id.to_string();
-    let fallback_active_session_id = fallback_active_session_id.map(str::to_string);
-    let input_schema = info.input_schema.clone();
-    let description = info.description.clone();
-    let execution_policy = info.execution_policy.clone();
-    let terminal_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-        let execution_id_for_terminal = execution_id_for_terminal.clone();
-        let fallback_active_session_id = fallback_active_session_id.clone();
-        Box::pin(async move {
-            let tool_server = sentinel_tools::get_tool_server();
-            let mut patched_args = args;
-
-            if let Some(obj) = patched_args.as_object_mut() {
-                obj.insert(
-                    "execution_id".to_string(),
-                    serde_json::Value::String(execution_id_for_terminal.clone()),
-                );
-                if !obj.contains_key("session_policy") {
-                    obj.insert(
-                        "session_policy".to_string(),
-                        serde_json::Value::String("reuse".to_string()),
-                    );
-                }
-                if let Some(active_session_id) =
-                    get_active_terminal_session(&execution_id_for_terminal)
-                        .or_else(|| fallback_active_session_id.clone())
-                {
-                    obj.insert(
-                        "active_session_id".to_string(),
-                        serde_json::Value::String(active_session_id),
-                    );
-                }
-            }
-
-            let result = tool_server
-                .execute(TerminalServer::NAME, patched_args)
-                .await;
-            if !result.success {
-                return Err(result
-                    .error
-                    .unwrap_or_else(|| "Interactive shell execution failed".to_string()));
-            }
-
-            let output = result
-                .output
-                .ok_or_else(|| "Interactive shell returned no output".to_string())?;
-
-            if let Some(session_id) = output.get("session_id").and_then(|value| value.as_str()) {
-                set_active_terminal_session(&execution_id_for_terminal, Some(session_id));
-            }
-
-            Ok(output)
-        })
-    });
-
-    Some(DynamicToolDef {
-        name: TerminalServer::NAME.to_string(),
-        description,
-        input_schema,
-        output_schema: None,
-        source: ToolSource::Builtin,
-        category: "system".to_string(),
-        tags: info.tags.clone(),
-        search_hint: info.search_hint.clone(),
-        exposure: info.exposure.clone(),
-        execution_policy,
-        executor: terminal_executor,
-    })
-}
-
 pub(super) async fn patch_builtin_dynamic_tools(
     mut dynamic_tools: Vec<DynamicTool>,
     current_tool_ids: &[String],
+    app_handle: &AppHandle,
     tool_server: &ToolServer,
     execution_id: &str,
     active_terminal_session_id: Option<&str>,
+    referenced_traffic: &[serde_json::Value],
 ) -> Vec<DynamicTool> {
+    if let Some(def) = build_traffic_response_read_tool(app_handle.clone(), referenced_traffic) {
+        dynamic_tools.push(DynamicTool::new(def));
+    }
+
     if current_tool_ids.iter().any(|id| id == ShellTool::NAME) {
         if let Some(def) = build_shell_override_def(tool_server, execution_id).await {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
@@ -1646,7 +1425,7 @@ pub(super) async fn patch_builtin_dynamic_tools(
         .iter()
         .any(|id| id == HttpRequestTool::NAME)
     {
-        if let Some(def) = build_http_override_def(tool_server).await {
+        if let Some(def) = build_http_override_def(tool_server, referenced_traffic).await {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }

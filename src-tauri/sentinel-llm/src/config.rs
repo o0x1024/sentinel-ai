@@ -1,6 +1,11 @@
 //! LLM 配置模块
 
+use anyhow::{anyhow, Result};
+use http::{HeaderMap, HeaderName, HeaderValue};
+use rig::{agent::AgentBuilder, client::ClientBuilder, completion::CompletionModel};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
 
 /// LLM 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +30,10 @@ pub struct LlmConfig {
     pub max_tokens: Option<u32>,
     /// 最大对话轮数（工具调用循环次数）
     pub max_turns: Option<usize>,
+    /// 额外 HTTP 请求头
+    pub extra_headers: Option<HashMap<String, String>>,
+    /// 额外请求体字段
+    pub extra_body: Option<Value>,
 }
 
 impl Default for LlmConfig {
@@ -40,6 +49,8 @@ impl Default for LlmConfig {
             temperature: Some(0.7),
             max_tokens: Some(4096),
             max_turns: Some(100),
+            extra_headers: None,
+            extra_body: None,
         }
     }
 }
@@ -118,9 +129,65 @@ impl LlmConfig {
         self
     }
 
+    /// 设置额外 HTTP 请求头
+    pub fn with_extra_headers(mut self, extra_headers: HashMap<String, String>) -> Self {
+        self.extra_headers = Some(extra_headers);
+        self
+    }
+
+    /// 设置额外请求体字段
+    pub fn with_extra_body(mut self, extra_body: Value) -> Self {
+        self.extra_body = Some(extra_body);
+        self
+    }
+
     /// 获取最大对话轮数（默认 100）
     pub fn get_max_turns(&self) -> usize {
         self.max_turns.unwrap_or(100)
+    }
+
+    pub fn apply_extra_headers<Ext, Key, H>(
+        &self,
+        builder: ClientBuilder<Ext, Key, H>,
+    ) -> Result<ClientBuilder<Ext, Key, H>>
+    where
+        Ext: Clone,
+    {
+        let Some(extra_headers) = self.extra_headers.as_ref() else {
+            return Ok(builder);
+        };
+        if extra_headers.is_empty() {
+            return Ok(builder);
+        }
+
+        let mut headers = HeaderMap::new();
+        for (key, value) in extra_headers {
+            let header_name = HeaderName::from_bytes(key.as_bytes())
+                .map_err(|err| anyhow!("Invalid extra header name '{}': {}", key, err))?;
+            let header_value = HeaderValue::from_str(value)
+                .map_err(|err| anyhow!("Invalid extra header value for '{}': {}", key, err))?;
+            headers.insert(header_name, header_value);
+        }
+
+        Ok(builder.http_headers(headers))
+    }
+
+    pub fn apply_extra_body<M>(
+        &self,
+        builder: AgentBuilder<M>,
+        base_params: Option<Value>,
+    ) -> Result<AgentBuilder<M>>
+    where
+        M: CompletionModel,
+    {
+        let params = match (base_params, self.extra_body.as_ref()) {
+            (None, None) => return Ok(builder),
+            (Some(params), None) => params,
+            (None, Some(extra)) => extra_body_object(extra)?,
+            (Some(base), Some(extra)) => merge_extra_body(base, extra_body_object(extra)?),
+        };
+
+        Ok(builder.additional_params(params))
     }
 
     /// 获取实际使用的 rig provider（优先使用 rig_provider，否则使用 provider）
@@ -215,6 +282,25 @@ impl LlmConfig {
                 tracing::debug!("Set DeepSeek default base URL: {}", deepseek_base);
             }
         }
+    }
+}
+
+fn extra_body_object(value: &Value) -> Result<Value> {
+    match value {
+        Value::Object(map) => Ok(Value::Object(map.clone())),
+        _ => Err(anyhow!("extra_body must be a JSON object")),
+    }
+}
+
+fn merge_extra_body(base: Value, extra: Value) -> Value {
+    match (base, extra) {
+        (Value::Object(mut base_map), Value::Object(extra_map)) => {
+            for (key, value) in extra_map {
+                base_map.insert(key, value);
+            }
+            Value::Object(base_map)
+        }
+        (base, _) => base,
     }
 }
 

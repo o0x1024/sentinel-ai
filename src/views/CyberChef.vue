@@ -128,7 +128,7 @@
 
         <div class="p-2 border-t border-base-300 bg-base-200">
           <button class="btn btn-primary btn-sm w-full gap-2 shadow-lg" :loading="baking" @click="bake">
-            <i class="fas fa-play text-[10px]"></i> {{ t('cyberchef.bake', '执行 BAKE!') }}
+            <i class="fas fa-play text-[10px]"></i> {{ t('cyberchef.bake', '编解码') }}
           </button>
           <div class="mt-2 flex items-center gap-2 px-1">
             <input type="checkbox" v-model="isAutoBake" class="checkbox checkbox-xs checkbox-primary" />
@@ -193,10 +193,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { v4 as uuidv4 } from 'uuid'
 import { useI18n } from 'vue-i18n'
 import draggable from 'vuedraggable'
+import { decodeUnicodeEscapes, encodeUnicodeEscapes } from './cyberchefUnicodeSupport'
+
+
+defineOptions({
+  name: 'CyberChefView',
+});
 
 const { t } = useI18n()
 
@@ -265,6 +271,20 @@ const operations: Operation[] = [
     category: 'Data Formats',
     description: 'Decodes URL-encoded data.',
     process: (input) => decodeURIComponent(input)
+  },
+  {
+    id: 'unicode-encode',
+    name: 'To Unicode',
+    category: 'Data Formats',
+    description: 'Encodes text as Unicode escape sequences.',
+    process: (input) => encodeUnicodeEscapes(input)
+  },
+  {
+    id: 'unicode-decode',
+    name: 'From Unicode',
+    category: 'Data Formats',
+    description: 'Decodes Unicode escape sequences back to text.',
+    process: (input) => decodeUnicodeEscapes(input)
   },
   {
     id: 'hex-encode',

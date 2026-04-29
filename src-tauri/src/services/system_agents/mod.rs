@@ -1,6 +1,8 @@
 pub mod behavior_extension;
 pub mod behavior_session;
 pub mod behavior_signal;
+pub mod browser_shell_models;
+pub mod browser_shell_store;
 pub mod clusters;
 pub mod context;
 pub mod context_agent;
@@ -47,6 +49,12 @@ pub use behavior_signal::{
     BEHAVIOR_SOURCE_PROXY_INFERRED, TRAFFIC_BEHAVIOR_EXTENSION_BRIDGE_PORT,
     TRAFFIC_BEHAVIOR_SIGNAL_SETTINGS_KEY,
 };
+pub use browser_shell_models::{
+    BrowserShellCommandAckInput, BrowserShellFrame, BrowserShellFrameInput, BrowserShellSession,
+    BrowserShellSessionRemoveInput, BrowserShellSessionUpsertInput, BrowserShellWriteRequest,
+    BrowserShellWriteStatus,
+};
+pub use browser_shell_store::BrowserShellStore;
 pub use context_agent::build_raw_context_request_payload;
 pub use context_candidate_miner::recommend_traffic_context_dictionary_candidates;
 pub use context_candidate_types::RecommendTrafficContextDictionaryCandidatesResponse;

@@ -18,8 +18,12 @@ use sentinel_tools::buildin_tools::{
 use sentinel_tools::get_tool_server;
 use sentinel_tools::terminal::server::TerminalServer;
 
+use crate::agents::tool_router::tool_server_catalog::{
+    build_builtin_tool_metadata, convert_tool_info_to_metadata, is_configurable_tool_name,
+    parse_tool_category,
+};
 use crate::agents::tool_router::{
-    clear_tool_usage_records, get_tool_usage_statistics, ToolCategory, ToolMetadata, ToolRouter,
+    clear_tool_usage_records, get_tool_usage_statistics, ToolCategory, ToolMetadata,
     ToolStatistics, ToolUsageStatistics,
 };
 
@@ -740,79 +744,157 @@ pub async fn build_node_catalog(
 // Tool Metadata Management Commands
 // ============================================================================
 
+async fn load_tool_server_metadata() -> Result<Vec<ToolMetadata>, String> {
+    let tool_server = get_tool_server();
+    tool_server.init_builtin_tools().await;
+
+    let tools = tool_server.list_tools().await;
+    let mut metadata = build_builtin_tool_metadata(tools.clone());
+    metadata.extend(
+        tools
+            .into_iter()
+            .filter(|tool| tool.source != "builtin")
+            .filter(|tool| is_configurable_tool_name(&tool.name))
+            .map(convert_tool_info_to_metadata),
+    );
+    Ok(metadata)
+}
+
+fn build_tool_statistics_from_metadata(tools: &[ToolMetadata]) -> ToolStatistics {
+    let mut by_category = HashMap::new();
+    let mut builtin_tools = 0usize;
+    let mut workflow_tools = 0usize;
+    let mut mcp_tools = 0usize;
+    let mut plugin_tools = 0usize;
+    let mut always_available = 0usize;
+
+    for tool in tools {
+        *by_category
+            .entry(tool.category.to_string())
+            .or_insert(0usize) += 1;
+
+        if tool.always_available {
+            always_available += 1;
+        }
+
+        match tool.category {
+            ToolCategory::MCP => mcp_tools += 1,
+            ToolCategory::Plugin => plugin_tools += 1,
+            ToolCategory::Workflow => workflow_tools += 1,
+            _ => {}
+        }
+    }
+
+    for tool in tools {
+        if matches!(
+            tool.category,
+            ToolCategory::MCP | ToolCategory::Plugin | ToolCategory::Workflow
+        ) {
+            continue;
+        }
+        builtin_tools += 1;
+    }
+
+    let mut by_cost = HashMap::new();
+    by_cost.insert("medium".to_string(), tools.len());
+
+    ToolStatistics {
+        total_tools: tools.len(),
+        builtin_tools,
+        workflow_tools,
+        mcp_tools,
+        plugin_tools,
+        always_available,
+        by_category,
+        by_cost,
+    }
+}
+
 /// Get all tool metadata
 #[tauri::command]
 pub async fn get_all_tool_metadata(
-    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+    _db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<ToolMetadata>, String> {
-    let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    Ok(router
-        .list_all_tools()
-        .into_iter()
-        .filter(|tool| tool.id != sentinel_tools::buildin_tools::SopsTool::NAME)
-        .collect())
+    load_tool_server_metadata().await
 }
 
 /// Get tool metadata by category
 #[tauri::command]
 pub async fn get_tools_by_category(
     category: String,
-    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+    _db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<ToolMetadata>, String> {
-    let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
+    let requested_category = parse_tool_category(&category);
+    if matches!(requested_category, ToolCategory::Other)
+        && category.trim().to_lowercase() != "other"
+    {
+        return Err(format!("Unknown category: {}", category));
+    }
 
-    let category_enum = match category.to_lowercase().as_str() {
-        "network" => ToolCategory::Network,
-        "security" => ToolCategory::Security,
-        "data" => ToolCategory::Data,
-        "ai" => ToolCategory::AI,
-        "system" => ToolCategory::System,
-        "mcp" => ToolCategory::MCP,
-        "plugin" => ToolCategory::Plugin,
-        "workflow" => ToolCategory::Workflow,
-        "browser" => ToolCategory::Browser,
-        "utility" => ToolCategory::Utility,
-        "recon" => ToolCategory::Recon,
-        "scanning" => ToolCategory::Scanning,
-        "exploitation" => ToolCategory::Exploitation,
-        "monitoring" => ToolCategory::Monitoring,
-        "other" => ToolCategory::Other,
-        _ => return Err(format!("Unknown category: {}", category)),
-    };
-
-    Ok(router.list_tools_by_category(category_enum))
+    Ok(load_tool_server_metadata()
+        .await?
+        .into_iter()
+        .filter(|tool| tool.category == requested_category)
+        .collect())
 }
 
 /// Search tools by query
 #[tauri::command]
 pub async fn search_tools(
     query: String,
-    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+    _db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<ToolMetadata>, String> {
-    let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    Ok(router.search_tools(&query))
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return load_tool_server_metadata().await;
+    }
+
+    Ok(load_tool_server_metadata()
+        .await?
+        .into_iter()
+        .filter(|tool| {
+            tool.name.to_lowercase().contains(&query)
+                || tool.description.to_lowercase().contains(&query)
+                || tool
+                    .search_hint
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .contains(&query)
+                || tool
+                    .tags
+                    .iter()
+                    .any(|tag| tag.to_lowercase().contains(&query))
+        })
+        .collect())
 }
 
 /// Get tool statistics
 #[tauri::command]
 pub async fn get_tool_statistics(
-    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+    _db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<ToolStatistics, String> {
-    let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    Ok(router.get_statistics())
+    let tools = load_tool_server_metadata().await?;
+    Ok(build_tool_statistics_from_metadata(&tools))
 }
 
 /// Get tool metadata by ID
 #[tauri::command]
 pub async fn get_tool_metadata(
     tool_id: String,
-    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+    _db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Option<ToolMetadata>, String> {
-    if tool_id == SkillsTool::NAME {
+    if !is_configurable_tool_name(&tool_id) {
         return Ok(None);
     }
-    let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    Ok(router.get_tool_metadata(&tool_id))
+
+    let tool_server = get_tool_server();
+    tool_server.init_builtin_tools().await;
+    Ok(tool_server
+        .get_tool(&tool_id)
+        .await
+        .filter(|tool| is_configurable_tool_name(&tool.name))
+        .map(convert_tool_info_to_metadata))
 }
 
 /// Get tool usage statistics

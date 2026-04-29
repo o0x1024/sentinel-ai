@@ -18,6 +18,7 @@ export interface ProxyConfigState {
   exclude_self_traffic: boolean
   scope_include_rules: ProxyScopeRule[]
   scope_exclude_rules: ProxyScopeRule[]
+  match_replace_rules: MatchReplaceRule[]
 }
 
 export interface ProxyScopeRule {
@@ -242,6 +243,7 @@ export function createDefaultProxyConfig(): ProxyConfigState {
     exclude_self_traffic: true,
     scope_include_rules: [],
     scope_exclude_rules: [],
+    match_replace_rules: [],
   }
 }
 
@@ -433,17 +435,7 @@ export function createDefaultEditingListener(): EditingListenerState {
 }
 
 export function createDefaultMatchReplaceRules(): MatchReplaceRule[] {
-  return [
-    {
-      enabled: true,
-      type: 'Request header',
-      match: 'User-Agent:.*',
-      replace: 'User-Agent: Mozilla/5.0',
-      scope: 'In scope',
-      item: '1',
-      comment: '修改 User-Agent',
-    },
-  ]
+  return []
 }
 
 export function createDefaultTlsPassThroughRules(): TlsPassThroughRule[] {

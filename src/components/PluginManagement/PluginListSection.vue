@@ -271,6 +271,12 @@
                   </button>
                 </div>
 
+                <div class="tooltip" :data-tip="$t('plugins.configureDefaults', '配置默认值')">
+                  <button class="btn btn-sm btn-outline" :disabled="pluginBatchProcessing" @click="$emit('configureDefaults', plugin)">
+                    <i class="fas fa-sliders-h mr-1"></i>
+                  </button>
+                </div>
+
                 <!-- Advanced Test -->
                 <div class="tooltip" :data-tip="isAgentPluginType(plugin) ? 'Agent 高级测试' : '流量分析高级测试'">
                   <button class="btn btn-sm btn-outline" :disabled="pluginBatchProcessing" @click="$emit('advancedTest', plugin)">
@@ -398,6 +404,7 @@ const emit = defineEmits<{
   toggleSelection: [plugin: PluginRecord]
   toggleFavorite: [plugin: PluginRecord]
   testPlugin: [plugin: PluginRecord]
+  configureDefaults: [plugin: PluginRecord]
   advancedTest: [plugin: PluginRecord]
   togglePlugin: [plugin: PluginRecord]
   viewCode: [plugin: PluginRecord]

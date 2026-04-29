@@ -439,6 +439,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '../../composables/useToast'
+import { buildResolvedPluginDefaultConfig } from '@/services/pluginDefaultConfig'
 import WorkflowDataFlow from './WorkflowDataFlow.vue'
 import WorkflowExecutionPanel from './WorkflowExecutionPanel.vue'
 
@@ -554,77 +555,6 @@ const initialInputSchema = computed(() => {
     },
   }
 })
-
-// Generate default config from JSON Schema (show all fields)
-const generateDefaultFromSchema = (schema: any): any => {
-  if (!schema || typeof schema !== 'object') return {}
-  
-  const properties = schema.properties || {}
-  const requiredFields = schema.required || []
-  const result: Record<string, any> = {}
-  
-  for (const [key, prop] of Object.entries(properties) as [string, any][]) {
-    // Use default value if specified
-    if (prop.default !== undefined) {
-      result[key] = prop.default
-      continue
-    }
-    
-    // Generate value based on type (always show all fields)
-    switch (prop.type) {
-      case 'string':
-        if (prop.enum && prop.enum.length > 0) {
-          result[key] = prop.enum[0]
-        } else if (requiredFields.includes(key)) {
-          // Required string field - show empty placeholder
-          result[key] = ''
-        } else {
-          result[key] = ''
-        }
-        break
-      case 'number':
-      case 'integer':
-        if (prop.minimum !== undefined) {
-          result[key] = prop.minimum
-        } else if (key.includes('timeout')) {
-          result[key] = 30
-        } else if (key.includes('concurrency') || key.includes('threads')) {
-          result[key] = 10
-        } else if (key.includes('port')) {
-          result[key] = 80
-        } else if (key.includes('max') || key.includes('limit')) {
-          result[key] = 100
-        } else {
-          result[key] = 0
-        }
-        break
-      case 'boolean':
-        result[key] = true
-        break
-      case 'array':
-        if (prop.items?.enum) {
-          // Show first few enum values as example
-          result[key] = prop.items.enum.slice(0, 3)
-        } else if (prop.items?.type === 'string') {
-          result[key] = []
-        } else if (prop.items?.type === 'number' || prop.items?.type === 'integer') {
-          result[key] = []
-        } else {
-          result[key] = []
-        }
-        break
-      case 'object':
-        result[key] = {}
-        break
-      default:
-        // Unknown type, show null
-        result[key] = null
-        break
-    }
-  }
-  
-  return result
-}
 
 // Fetch plugin input schema
 const fetchPluginSchema = async (pluginId: string): Promise<any> => {
@@ -1089,7 +1019,7 @@ watch(() => stepForm.plugin_id, async (newPluginId) => {
     
     // Only auto-fill config for new steps, not editing
     if (schema && !editingStep.value) {
-      const defaultConfig = generateDefaultFromSchema(schema)
+      const defaultConfig = await buildResolvedPluginDefaultConfig(newPluginId, schema)
       if (Object.keys(defaultConfig).length > 0) {
         stepForm.config_json = JSON.stringify(defaultConfig, null, 2)
       }

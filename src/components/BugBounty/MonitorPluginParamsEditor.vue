@@ -24,7 +24,11 @@
       {{ loadError }}
     </div>
 
-    <template v-else>
+    <div v-if="!loadError && defaultConfigLoadError" class="text-xs text-warning">
+      {{ defaultConfigLoadError }}
+    </div>
+
+    <template v-if="!loadError">
       <div
         v-if="editableFields.length > 0"
         class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-base-300/60 bg-base-100/70 px-3 py-2"
@@ -54,6 +58,7 @@
           :key="getFieldPathKey(field.path)"
           :field="field"
           :params="pluginParams"
+          :default-params="pluginDefaultParams"
           :json-editor-values="jsonEditorValues"
           :field-errors="fieldErrors"
           :expanded-hint-fields="expandedHintFields"
@@ -86,6 +91,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { buildResolvedPluginDefaultConfig } from '@/services/pluginDefaultConfig'
 import MonitorPluginParamsField from './MonitorPluginParamsField.vue'
 import {
   buildEditableFields,
@@ -107,10 +113,12 @@ const { t } = useI18n()
 const schema = ref<any>(null)
 const loading = ref(false)
 const loadError = ref('')
+const defaultConfigLoadError = ref('')
 const showOnlyChanged = ref(false)
 const expandedHintFields = reactive<Record<string, boolean>>({})
 const fieldErrors = reactive<Record<string, string>>({})
 const jsonEditorValues = reactive<Record<string, string>>({})
+const pluginDefaultParams = ref<Record<string, unknown>>({})
 
 const schemaCache = new Map<string, any>()
 
@@ -140,6 +148,14 @@ const hasCustomizedParams = computed(() =>
   editableFields.value.some(field => hasCustomizedField(pluginParams.value as Record<string, any>, field))
 )
 
+const getInheritedDefaultValue = (field: EditableField) => {
+  const pluginDefaultValue = getValueAtPath(
+    pluginDefaultParams.value as Record<string, any>,
+    field.path,
+  )
+  return pluginDefaultValue === undefined ? field.defaultValue : pluginDefaultValue
+}
+
 const syncJsonEditors = () => {
   const validFieldKeys = new Set<string>()
 
@@ -151,7 +167,7 @@ const syncJsonEditors = () => {
     const pathKey = getFieldPathKey(field.path)
     validFieldKeys.add(pathKey)
     const explicitValue = getValueAtPath(pluginParams.value as Record<string, any>, field.path)
-    const sourceValue = explicitValue === undefined ? field.defaultValue : explicitValue
+    const sourceValue = explicitValue === undefined ? getInheritedDefaultValue(field) : explicitValue
     jsonEditorValues[pathKey] =
       sourceValue === undefined ? '' : JSON.stringify(sourceValue, null, 2)
   }
@@ -180,17 +196,17 @@ const loadPluginSchema = async (nextPluginId: string) => {
   if (!nextPluginId) {
     schema.value = null
     loadError.value = ''
-    return
+    return { type: 'object', properties: {} }
   }
 
   if (schemaCache.has(nextPluginId)) {
-    schema.value = schemaCache.get(nextPluginId)
+    const cachedSchema = schemaCache.get(nextPluginId) || { type: 'object', properties: {} }
+    schema.value = cachedSchema
     loadError.value = ''
     syncJsonEditors()
-    return
+    return cachedSchema
   }
 
-  loading.value = true
   loadError.value = ''
 
   try {
@@ -203,14 +219,37 @@ const loadPluginSchema = async (nextPluginId: string) => {
     schemaCache.set(nextPluginId, resolvedSchema)
     schema.value = resolvedSchema
     syncJsonEditors()
+    return resolvedSchema
   } catch (error) {
     schema.value = { type: 'object', properties: {} }
     loadError.value =
       error instanceof Error
         ? error.message
         : t('bugBounty.monitor.pluginParamsLoadFailed')
-  } finally {
-    loading.value = false
+    return { type: 'object', properties: {} }
+  }
+}
+
+const loadPluginDefaultParams = async (nextPluginId: string, nextSchema: any) => {
+  if (!nextPluginId) {
+    pluginDefaultParams.value = {}
+    defaultConfigLoadError.value = ''
+    syncJsonEditors()
+    return
+  }
+
+  defaultConfigLoadError.value = ''
+
+  try {
+    const resolvedConfig = await buildResolvedPluginDefaultConfig(nextPluginId, nextSchema)
+    pluginDefaultParams.value = resolvedConfig
+    syncJsonEditors()
+  } catch (error) {
+    pluginDefaultParams.value = {}
+    defaultConfigLoadError.value =
+      error instanceof Error
+        ? error.message
+        : t('bugBounty.monitor.pluginParamsLoadFailed')
   }
 }
 
@@ -242,7 +281,13 @@ const injectedParamLabels = computed(() => {
 watch(
   pluginId,
   async nextPluginId => {
-    await loadPluginSchema(nextPluginId)
+    loading.value = true
+    try {
+      const resolvedSchema = await loadPluginSchema(nextPluginId)
+      await loadPluginDefaultParams(nextPluginId, resolvedSchema)
+    } finally {
+      loading.value = false
+    }
   },
   { immediate: true }
 )

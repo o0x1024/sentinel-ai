@@ -1,9 +1,11 @@
+use crate::agents::executor::message_store::{
+    build_assistant_session_stats_metadata, mark_first_response_ms,
+};
 use crate::commands::ai_task_support::{
     build_virtual_tool_context, complete_external_profile_run_failure,
     complete_external_profile_run_success, load_external_profile_context,
     merge_external_profile_prompt, run_external_chat_task, start_external_profile_run,
 };
-use crate::agents::executor::message_store::build_assistant_session_stats_metadata;
 use crate::commands::traffic::TrafficAnalysisState;
 use crate::models::database::{AiMessage, SubagentMessage, SubagentRun};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
@@ -53,6 +55,10 @@ pub struct CommandAiConfig {
     pub organization: Option<String>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub extra_headers: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub extra_body: Option<serde_json::Value>,
 }
 
 impl From<CommandAiConfig> for AiConfig {
@@ -67,6 +73,8 @@ impl From<CommandAiConfig> for AiConfig {
             max_tokens: c.max_tokens,
             rig_provider: None,
             max_turns: None,
+            extra_headers: c.extra_headers,
+            extra_body: c.extra_body,
         }
     }
 }
@@ -474,6 +482,8 @@ pub(crate) async fn stream_chat_with_llm(
     // 记录用量
     let usage_data = Arc::new(std::sync::Mutex::new(None::<(u32, u32)>));
     let usage_data_clone = usage_data.clone();
+    let first_response_ms = Arc::new(std::sync::Mutex::new(None::<i64>));
+    let first_response_ms_clone = first_response_ms.clone();
 
     let content = streaming_client
         .stream_chat(
@@ -487,6 +497,10 @@ pub(crate) async fn stream_chat_with_llm(
                 }
                 match chunk {
                     StreamContent::Text(text) => {
+                        mark_first_response_ms(
+                            first_response_ms_clone.as_ref(),
+                            execution_started_at_ms,
+                        );
                         tracing::debug!("Stream chunk received: {} chars", text.len());
                         crate::utils::ordered_message::emit_message_chunk_with_arch(
                             &app,
@@ -503,6 +517,10 @@ pub(crate) async fn stream_chat_with_llm(
                         );
                     }
                     StreamContent::Reasoning(text) => {
+                        mark_first_response_ms(
+                            first_response_ms_clone.as_ref(),
+                            execution_started_at_ms,
+                        );
                         tracing::debug!("Stream reasoning received: {} chars", text.len());
                         crate::utils::ordered_message::emit_message_chunk_with_arch(
                             &app,
@@ -628,6 +646,7 @@ pub(crate) async fn stream_chat_with_llm(
             content: content.clone(),
             metadata: build_assistant_session_stats_metadata(
                 Some(chrono::Utc::now().timestamp_millis() - execution_started_at_ms),
+                first_response_ms.lock().ok().and_then(|guard| *guard),
                 Some(input_tokens),
                 Some(output_tokens),
             )

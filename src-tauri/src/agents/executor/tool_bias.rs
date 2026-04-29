@@ -1,6 +1,10 @@
 use tauri::AppHandle;
 
-use sentinel_tools::buildin_tools::{FileReadTool, ToolSearchRuntimeContext, ToolSearchTool};
+use sentinel_tools::buildin_tools::{
+    BrowserShellTool, BrowserTool, FileReadTool, ShellTool, ToolSearchRuntimeContext,
+    ToolSearchTool,
+};
+use sentinel_tools::terminal::server::TerminalServer;
 use serde_json::Value;
 
 use crate::agents::context_engineering::checkpoint::ContextRunState;
@@ -11,14 +15,106 @@ use crate::agents::{ToolConfig, ToolDigest};
 pub async fn bias_tool_ids_for_recent_file_changes(
     app_handle: &AppHandle,
     execution_id: &str,
+    task: &str,
     tool_ids: Vec<String>,
     tool_config: &ToolConfig,
+    active_browser_shell_session_id: Option<&str>,
 ) -> Vec<String> {
     let run_state = load_run_state(app_handle, execution_id)
         .await
         .ok()
         .flatten();
+    let tool_ids =
+        apply_browser_shell_bias(tool_ids, task, active_browser_shell_session_id, tool_config);
     apply_file_read_bias(tool_ids, run_state.as_ref(), tool_config)
+}
+
+fn apply_browser_shell_bias(
+    mut tool_ids: Vec<String>,
+    task: &str,
+    active_browser_shell_session_id: Option<&str>,
+    tool_config: &ToolConfig,
+) -> Vec<String> {
+    let has_bound_browser_shell = active_browser_shell_session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    if !has_bound_browser_shell {
+        return tool_ids;
+    }
+
+    if task_explicitly_targets_bound_browser_shell(task) {
+        tool_ids.retain(|id| {
+            id != ShellTool::NAME && id != TerminalServer::NAME && id != BrowserTool::NAME
+        });
+    }
+
+    let browser_shell_id = BrowserShellTool::NAME.to_string();
+    if tool_ids.iter().any(|id| id == &browser_shell_id) {
+        return tool_ids;
+    }
+    if tool_config
+        .disabled_tools
+        .iter()
+        .any(|id| id == &browser_shell_id)
+    {
+        return tool_ids;
+    }
+    if !tool_config.allowed_tools.is_empty()
+        && !tool_config
+            .allowed_tools
+            .iter()
+            .any(|id| id == &browser_shell_id)
+    {
+        return tool_ids;
+    }
+
+    if tool_ids.len() >= tool_config.max_tools {
+        if let Some(index) = tool_ids.iter().position(|id| id == ToolSearchTool::NAME) {
+            tool_ids.remove(index);
+        } else {
+            return tool_ids;
+        }
+    }
+
+    tool_ids.push(browser_shell_id);
+    tool_ids
+}
+
+fn task_explicitly_targets_bound_browser_shell(task: &str) -> bool {
+    let task = task.trim().to_lowercase();
+    if task.is_empty() {
+        return false;
+    }
+
+    let explicit_target_phrases = [
+        "browser shell",
+        "current browser shell",
+        "current browser terminal",
+        "browser websocket shell",
+        "third-party shell",
+        "third party shell",
+        "third-party terminal",
+        "third party terminal",
+        "浏览器shell",
+        "浏览器 shell",
+        "当前browser shell",
+        "当前 browser shell",
+        "当前浏览器shell",
+        "当前浏览器 shell",
+        "当前浏览器终端",
+        "浏览器终端",
+        "第三方shell",
+        "第三方 shell",
+        "第三方终端",
+        "网页shell",
+        "网页 shell",
+        "websocket shell",
+    ];
+
+    explicit_target_phrases
+        .iter()
+        .any(|phrase| task.contains(phrase))
 }
 
 pub(crate) async fn build_tool_search_runtime_context(
@@ -346,6 +442,75 @@ mod tests {
         assert_eq!(
             tool_ids,
             vec!["http_request".to_string(), "file_read".to_string()]
+        );
+    }
+
+    #[test]
+    fn adds_browser_shell_when_session_is_bound() {
+        let config = ToolConfig {
+            max_tools: 4,
+            ..Default::default()
+        };
+
+        let tool_ids = apply_browser_shell_bias(
+            vec!["shell".to_string(), "tool_search".to_string()],
+            "inspect current state",
+            Some("browser-shell-1"),
+            &config,
+        );
+
+        assert_eq!(
+            tool_ids,
+            vec![
+                "shell".to_string(),
+                "tool_search".to_string(),
+                "browser_shell".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn prefers_browser_shell_over_tool_search_when_budget_is_full() {
+        let config = ToolConfig {
+            max_tools: 2,
+            ..Default::default()
+        };
+
+        let tool_ids = apply_browser_shell_bias(
+            vec!["tool_search".to_string(), "shell".to_string()],
+            "inspect current state",
+            Some("browser-shell-1"),
+            &config,
+        );
+
+        assert_eq!(
+            tool_ids,
+            vec!["shell".to_string(), "browser_shell".to_string()]
+        );
+    }
+
+    #[test]
+    fn removes_local_terminal_tools_when_task_targets_bound_browser_shell() {
+        let config = ToolConfig {
+            max_tools: 4,
+            ..Default::default()
+        };
+
+        let tool_ids = apply_browser_shell_bias(
+            vec![
+                "shell".to_string(),
+                "interactive_shell".to_string(),
+                "browser".to_string(),
+                "tool_search".to_string(),
+            ],
+            "在当前浏览器shell中执行一个ls",
+            Some("browser-shell-1"),
+            &config,
+        );
+
+        assert_eq!(
+            tool_ids,
+            vec!["tool_search".to_string(), "browser_shell".to_string()]
         );
     }
 }

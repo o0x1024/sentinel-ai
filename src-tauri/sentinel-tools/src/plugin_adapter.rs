@@ -20,6 +20,7 @@ pub struct PluginToolMeta {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    pub default_input: Value,
     pub code: Option<String>,
     pub category: Option<String>,
 }
@@ -30,6 +31,36 @@ pub struct PluginContext {
     pub plugin_id: String,
     pub name: String,
     pub code: String,
+    pub default_input: Value,
+}
+
+fn merge_object_values(
+    defaults: &serde_json::Map<String, Value>,
+    overrides: &serde_json::Map<String, Value>,
+) -> Value {
+    let mut merged = defaults.clone();
+
+    for (key, override_value) in overrides {
+        let next_value = match (merged.get(key), override_value) {
+            (Some(Value::Object(default_map)), Value::Object(override_map)) => {
+                merge_object_values(default_map, override_map)
+            }
+            _ => override_value.clone(),
+        };
+        merged.insert(key.clone(), next_value);
+    }
+
+    Value::Object(merged)
+}
+
+fn merge_plugin_input_defaults(default_input: &Value, args: &Value) -> Value {
+    match (default_input, args) {
+        (Value::Object(default_map), Value::Object(arg_map)) => {
+            merge_object_values(default_map, arg_map)
+        }
+        (Value::Object(_), Value::Null) => default_input.clone(),
+        _ => args.clone(),
+    }
 }
 
 /// Global plugin registry
@@ -68,7 +99,7 @@ fn create_plugin_executor(plugin_id: String) -> ToolExecutor {
             let plugin_id = ctx.plugin_id.clone();
             let plugin_name = ctx.name.clone();
             let plugin_code = ctx.code.clone();
-            let args_clone = args.clone();
+            let merged_args = merge_plugin_input_defaults(&ctx.default_input, &args);
 
             // Run plugin execution in a blocking thread since JsRuntime is not Send+Sync
             // We use spawn_blocking + LocalSet to handle non-Send futures
@@ -83,7 +114,7 @@ fn create_plugin_executor(plugin_id: String) -> ToolExecutor {
                 let local = tokio::task::LocalSet::new();
                 local.block_on(
                     &rt,
-                    execute_plugin_async(plugin_id, plugin_name, plugin_code, args_clone),
+                    execute_plugin_async(plugin_id, plugin_name, plugin_code, merged_args),
                 )
             })
             .await
@@ -99,9 +130,10 @@ fn create_plugin_executor_with_context(ctx: PluginContext) -> ToolExecutor {
         let plugin_id = ctx.plugin_id.clone();
         let plugin_name = ctx.name.clone();
         let plugin_code = ctx.code.clone();
+        let default_input = ctx.default_input.clone();
 
         async move {
-            let args_clone = args.clone();
+            let merged_args = merge_plugin_input_defaults(&default_input, &args);
 
             let result = tokio::task::spawn_blocking(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
@@ -112,7 +144,7 @@ fn create_plugin_executor_with_context(ctx: PluginContext) -> ToolExecutor {
                 let local = tokio::task::LocalSet::new();
                 local.block_on(
                     &rt,
-                    execute_plugin_async(plugin_id, plugin_name, plugin_code, args_clone),
+                    execute_plugin_async(plugin_id, plugin_name, plugin_code, merged_args),
                 )
             })
             .await
@@ -235,6 +267,7 @@ pub async fn load_plugin_tools_to_server(tool_server: &ToolServer, plugins: Vec<
                 plugin_id: plugin_meta.plugin_id.clone(),
                 name: plugin_meta.name.clone(),
                 code: code.clone(),
+                default_input: plugin_meta.default_input.clone(),
             };
             register_plugin_context(ctx.clone()).await;
             bound_context = Some(ctx);

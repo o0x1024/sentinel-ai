@@ -28,10 +28,11 @@ use super::AgentExecuteParams;
 use crate::agents::context_engineering::reflection::{
     record_execution_reflection, ExecutionOutcome,
 };
-use crate::agents::executor::message_store::{
-    build_assistant_session_stats_metadata, save_assistant_message,
-};
+use crate::agents::executor::message_store::{build_assistant_session_stats_metadata, mark_first_response_ms, save_assistant_message};
 use crate::agents::executor::skill_loaded_events::emit_and_persist_skill_loaded;
+use crate::agents::executor::team_runtime_log_context::{
+    is_toolset_error_result, log_toolset_error_with_context, resolve_team_runtime_log_context,
+};
 use crate::agents::executor::tenth_man_hypothesis::HypothesisTracker;
 use crate::agents::executor::terminal_session_store::scope_active_terminal_session;
 use crate::agents::executor::tool_activation_events::{
@@ -76,13 +77,11 @@ pub async fn execute_agent_with_tools(
         .map(|config| config.trigger_policy.clone())
         .unwrap_or_default();
 
-    // 1. 创建工具路由器（加载所有动态工具：工作流、MCP、插件）
     use tauri::Manager;
     let db_service = app_handle.state::<std::sync::Arc<sentinel_db::DatabaseService>>();
 
     let tool_router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
 
-    // 2. 工具选择（传入 LLM 配置用于智能选择）
     let rig_provider = params.rig_provider.to_lowercase();
     let mut llm_config = sentinel_llm::LlmConfig::new(&rig_provider, &params.model)
         .with_timeout(params.timeout_secs)
@@ -102,7 +101,6 @@ pub async fn execute_agent_with_tools(
         llm_config = apply_generation_settings_from_db(db.as_ref(), llm_config).await;
     }
 
-    // Use plan_tools to support Skills mode with injected context
     let selection_plan = tool_router
         .plan_tools(&params.task, &tool_config, Some(&llm_config))
         .await?;
@@ -110,12 +108,15 @@ pub async fn execute_agent_with_tools(
     let selected_tool_ids = bias_tool_ids_for_recent_file_changes(
         app_handle,
         &params.execution_id,
+        &params.task,
         apply_allowed_tools_policy(selection_plan.tool_ids.clone(), &tool_config.allowed_tools),
         &tool_config,
+        params.active_browser_shell_session_id.as_deref(),
     )
     .await;
     let usage_data = Arc::new(std::sync::Mutex::new(None::<(u32, u32)>));
     let usage_data_for_stream = usage_data.clone();
+    let first_response_ms = Arc::new(std::sync::Mutex::new(None::<i64>));
 
     tracing::info!(
         "Selected {} tools for execution_id {}: {:?} (strategy={:?})",
@@ -135,10 +136,8 @@ pub async fn execute_agent_with_tools(
         &selected_tool_ids,
     );
 
-    // 3. 获取 DynamicTool 实例（用于 rig-core 原生工具调用）
     let mut current_tool_ids = selected_tool_ids.clone();
 
-    // 4. Build context via Context Engineering
     let context_policy = resolve_context_policy(
         params.context_policy.clone(),
         params.context_engine_mode.unwrap_or_default(),
@@ -146,6 +145,8 @@ pub async fn execute_agent_with_tools(
     let context_result = build_context(ContextBuildInput {
         app_handle: app_handle.clone(),
         execution_id: params.execution_id.clone(),
+        active_browser_shell_direct_write_enabled: params.active_browser_shell_direct_write_enabled,
+        active_browser_shell_session_id: params.active_browser_shell_session_id.clone(),
         active_terminal_session_fingerprint: params.active_terminal_session_fingerprint.clone(),
         active_terminal_session_id: params.active_terminal_session_id.clone(),
         base_system_prompt: params.system_prompt.clone(),
@@ -163,22 +164,19 @@ pub async fn execute_agent_with_tools(
     let final_system_prompt_content = Some(context_result.system_prompt);
     let mut history_chat_messages = context_result.history_messages;
 
-    // 移除历史记录中最后一条用户消息，避免与当前任务重复发送
-    // 因为 stream_chat_with_dynamic_tools 会自动将 user_prompt 添加到对话末尾
     if let Some(last) = history_chat_messages.last() {
         if last.role == "user" {
             history_chat_messages.pop();
         }
     }
 
-    // 解析图片附件
     let image_attachments = parse_images_from_json(params.image_attachments.as_ref());
 
-    // 6. 使用 rig-core 原生工具调用
-    // rig 的 multi_turn() 会自动处理工具调用循环
     let client = StreamingLlmClient::new(llm_config);
     let execution_id = params.execution_id.clone();
     let team_stream_context = parse_team_stream_context(&execution_id);
+    let team_log_context =
+        resolve_team_runtime_log_context(&execution_id, Some(db_service.inner())).await;
     let app = app_handle.clone();
     let db_for_stream: Option<std::sync::Arc<sentinel_db::DatabaseService>> =
         if params.persist_messages {
@@ -242,9 +240,11 @@ pub async fn execute_agent_with_tools(
     let hypothesis_tracker_for_stream = hypothesis_tracker.clone();
     let segment_buf = assistant_segment_buf.clone();
     let reasoning_buf = reasoning_content_buf.clone();
+    let first_response_ms_for_stream = first_response_ms.clone();
     let pending_digests = pending_tool_digests.clone();
     let tracked_artifacts_for_stream = tracked_artifacts_state.clone();
     let persisted_seg_count = persisted_segment_count.clone();
+    let team_log_context_for_stream = team_log_context.clone();
 
     // Ensure skills tool enforces per-skill enable flags at execution time.
     if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
@@ -290,12 +290,15 @@ pub async fn execute_agent_with_tools(
         }
 
         let mut dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
+        let referenced_traffic = params.referenced_traffic.as_deref().unwrap_or(&[]);
         dynamic_tools = patch_builtin_dynamic_tools(
             dynamic_tools,
             &current_tool_ids,
+            app_handle,
             tool_server,
             &params.execution_id,
             params.active_terminal_session_id.as_deref(),
+            referenced_traffic,
         )
         .await;
 
@@ -380,6 +383,7 @@ pub async fn execute_agent_with_tools(
                     }
                     match content {
                         StreamContent::Text(text) => {
+                            mark_first_response_ms(first_response_ms_for_stream.as_ref(), execution_started_at_ms);
                             if let Some(ctx) = team_stream_context.as_ref() {
                                 if !team_stream_started.swap(true, Ordering::SeqCst) {
                                     let _ = app.emit(
@@ -507,6 +511,7 @@ pub async fn execute_agent_with_tools(
                             );
                         }
                         StreamContent::Reasoning(reasoning) => {
+                            mark_first_response_ms(first_response_ms_for_stream.as_ref(), execution_started_at_ms);
                             // Accumulate reasoning content
                             if let Ok(mut buf) = reasoning_buf.lock() {
                                 buf.push_str(&reasoning);
@@ -836,6 +841,15 @@ pub async fn execute_agent_with_tools(
                                         tool_success,
                                         &result,
                                     );
+                                    if !tool_success && is_toolset_error_result(&result) {
+                                        log_toolset_error_with_context(
+                                            team_log_context_for_stream.as_ref(),
+                                            &execution_id,
+                                            &name_for_meta,
+                                            &id,
+                                            &result,
+                                        );
+                                    }
                                     let record = ToolCallRecord {
                                         id: id.clone(),
                                         name,
@@ -1603,6 +1617,7 @@ pub async fn execute_agent_with_tools(
                 };
                 let session_metadata = build_assistant_session_stats_metadata(
                     Some(chrono::Utc::now().timestamp_millis() - execution_started_at_ms),
+                    first_response_ms.lock().ok().and_then(|guard| *guard),
                     Some(input_tokens),
                     Some(output_tokens),
                 );

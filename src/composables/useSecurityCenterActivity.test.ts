@@ -183,4 +183,28 @@ describe('useSecurityCenterActivity', () => {
       readWorkbenchCaseIds: expect.arrayContaining(['case-1', 'case-new']),
     })
   })
+
+  it('does not throw when persisting read state exceeds localStorage quota', async () => {
+    mockSecurityCenterResponses([baseFinding], workbenchList.items)
+
+    const setItemSpy = vi.spyOn(window.localStorage.__proto__, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { useSecurityCenterActivity } = await import('./useSecurityCenterActivity')
+    const activity = useSecurityCenterActivity()
+
+    expect(() => activity.markFindingAsRead('finding-over-quota')).not.toThrow()
+    expect(activity.isFindingRead('finding-over-quota')).toBe(true)
+
+    await activity.initializeSecurityCenterActivity()
+
+    expect(() => activity.markWorkbenchCaseAsRead('case-over-quota')).not.toThrow()
+    expect(activity.isWorkbenchCaseRead('case-over-quota')).toBe(true)
+    expect(warnSpy).toHaveBeenCalled()
+
+    warnSpy.mockRestore()
+    setItemSpy.mockRestore()
+  })
 })

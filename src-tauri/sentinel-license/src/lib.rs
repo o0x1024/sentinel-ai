@@ -94,8 +94,7 @@ impl LicensedFeature {
     }
 }
 
-/// Hardcoded switch: controls whether license enforcement is enabled.
-/// Keep this enabled so release builds require activation.
+/// Hardcoded switch: controls whether release builds require server activation.
 /// Debug builds still bypass enforcement via `debug_assertions`.
 pub const LICENSE_ENFORCEMENT_ENABLED: bool = true;
 
@@ -135,20 +134,15 @@ pub fn initialize() -> ValidationResult {
             return ValidationResult::Invalid(obfuscate::decrypt_str("debug_detected"));
         }
 
-        // Check 3: Load and validate license
-        match LicenseStorage::load() {
-            Some(license_key) => {
-                let validator = LicenseValidator::new();
-                let result = validator.validate(&license_key);
-
-                if matches!(result, ValidationResult::Valid) {
-                    LICENSE_VALID.store(true, Ordering::SeqCst);
-                    VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
-                }
-
-                result
-            }
-            None => ValidationResult::NotActivated,
+        // Check 3: Load and validate the server activation token.
+        if get_valid_entitlement_claims().is_some() {
+            LICENSE_VALID.store(true, Ordering::SeqCst);
+            VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
+            ValidationResult::Valid
+        } else {
+            LICENSE_VALID.store(false, Ordering::SeqCst);
+            VALIDATION_TOKEN.store(0, Ordering::SeqCst);
+            ValidationResult::NotActivated
         }
     }
 }
@@ -165,6 +159,14 @@ pub fn is_licensed() -> bool {
 
     #[cfg(not(debug_assertions))]
     {
+        if get_valid_entitlement_claims().is_some() {
+            LICENSE_VALID.store(true, Ordering::SeqCst);
+            VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
+        } else {
+            LICENSE_VALID.store(false, Ordering::SeqCst);
+            VALIDATION_TOKEN.store(0, Ordering::SeqCst);
+        }
+
         // Verify token integrity
         let stored_token = VALIDATION_TOKEN.load(Ordering::SeqCst);
         let expected_token = compute_valid_token();
@@ -183,12 +185,6 @@ pub fn ensure_feature_access(feature: LicensedFeature) -> Result<(), String> {
         return Err(feature.license_denial_message());
     }
 
-    if feature.requires_entitlement_token()
-        && !has_valid_entitlement_for(feature.entitlement_feature_id().unwrap_or_default())
-    {
-        return Err(feature.entitlement_denial_message());
-    }
-
     Ok(())
 }
 
@@ -203,14 +199,7 @@ pub fn has_valid_entitlement_for(feature_id: &str) -> bool {
         return true;
     }
 
-    let feature_id = feature_id.trim();
-    if feature_id.is_empty() {
-        return false;
-    }
-
-    get_valid_entitlement_claims().is_some_and(|claims| {
-        claims.tier.eq_ignore_ascii_case("pro") || claims.has_feature(feature_id)
-    })
+    !feature_id.trim().is_empty() && is_licensed()
 }
 
 /// Require license for critical operations (returns derived key for obfuscation)
@@ -239,21 +228,18 @@ pub fn activate(license_key: &str) -> ValidationResult {
         return ValidationResult::Valid;
     }
 
-    let validator = LicenseValidator::new();
-    let result = validator.validate_str(license_key);
-
-    if matches!(result, ValidationResult::Valid) {
-        // Save license
-        if let Err(e) = LicenseStorage::save(license_key) {
-            tracing::error!("Failed to save license: {}", e);
-            return ValidationResult::Invalid("Failed to save license".to_string());
-        }
-
-        LICENSE_VALID.store(true, Ordering::SeqCst);
-        VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
+    if license_key.trim().is_empty() {
+        return ValidationResult::Invalid("Server activation token is required".to_string());
     }
 
-    result
+    match store_entitlement_token(license_key) {
+        Ok(_) => {
+            LICENSE_VALID.store(true, Ordering::SeqCst);
+            VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
+            ValidationResult::Valid
+        }
+        Err(error) => ValidationResult::Invalid(error),
+    }
 }
 
 /// Get current machine ID (display format: XXXX-XXXX-XXXX-XXXX)

@@ -15,6 +15,8 @@ pub struct AssistantConversationBinding {
     pub rag_enabled: bool,
     pub web_search_enabled: bool,
     pub tenth_man_enabled: bool,
+    pub browser_shell_direct_write_enabled: Option<bool>,
+    pub browser_shell_session_id: Option<String>,
     pub selected_model: Option<String>,
     pub tools_enabled: Option<bool>,
     pub tool_config: Option<serde_json::Value>,

@@ -61,7 +61,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { emit as tauriEmit } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from 'vue-i18n'
 import IntruderResultsContent from '@/components/traffic/intruder/IntruderResultsContent.vue'
 import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
@@ -86,6 +87,7 @@ const { t } = useI18n()
 const { enabledTargets } = useTrafficSendTargets()
 const workspaceId = computed(() => String(route.params.workspaceId ?? ''))
 const windowState = ref<IntruderResultsWindowState | null>(null)
+let closeNotified = false
 
 const selectedResult = computed<IntruderAttackResult | null>(() => {
   if (!windowState.value?.selectedResultId) return null
@@ -219,8 +221,21 @@ function sendToComparer(resultId?: string) {
   })
 }
 
+function notifyResultsWindowClosed() {
+  if (closeNotified || !workspaceId.value) return
+  closeNotified = true
+  void tauriEmit('intruder-results-window:closed', { workspaceId: workspaceId.value })
+}
+
 async function closeWindow() {
-  await getCurrentWebviewWindow().close()
+  notifyResultsWindowClosed()
+  const currentWindow = getCurrentWindow()
+  try {
+    await currentWindow.close()
+  } catch (error) {
+    console.error('Failed to close intruder results window, forcing destroy', error)
+    await currentWindow.destroy()
+  }
 }
 
 onMounted(() => {
@@ -229,6 +244,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  notifyResultsWindowClosed()
   window.removeEventListener('storage', handleStorage)
 })
 </script>

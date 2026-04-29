@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
   refreshFeatureEntitlements,
@@ -13,7 +13,6 @@ import {
   getEntitlementRefreshConfig,
   refreshEntitlementTokenFromServer,
 } from '../services/entitlementRefresh'
-import { attemptEntitlementAutoRefresh } from '../services/entitlementAutoRefresh'
 import { getFeatureAccessIssueMessage } from '../services/featureAccessMessaging'
 import { buildLicenseActivationViewState } from '../services/licenseActivationViewState'
 import {
@@ -30,11 +29,6 @@ interface LicenseInfo {
   needs_activation: boolean
 }
 
-interface ActivationResult {
-  success: boolean
-  message: string
-}
-
 const emit = defineEmits<{
   (e: 'activated'): void
 }>()
@@ -43,7 +37,6 @@ const entitlements = useFeatureEntitlementsState()
 const featureAccessStatus = useFeatureAccessStatusState()
 const entitlementRefreshRuntime = useEntitlementRefreshRuntimeState()
 const licenseInfo = ref<LicenseInfo | null>(null)
-const licenseKey = ref('')
 const refreshConfig = ref({
   enabled: false,
   endpoint: '',
@@ -57,6 +50,18 @@ const accessSyncMessage = ref('')
 const copied = ref(false)
 const dialogOpen = ref(false)
 const featureAccessToolsOpen = ref(false)
+const upgradeToolbarRef = ref<HTMLElement | null>(null)
+const upgradeToolbarPosition = ref<{ x: number; y: number } | null>(null)
+const upgradeToolbarDrag = ref<{
+  pointerId: number
+  startClientX: number
+  startClientY: number
+  startX: number
+  startY: number
+} | null>(null)
+
+const UPGRADE_TOOLBAR_POSITION_KEY = 'sentinel.license-upgrade-toolbar-position'
+const UPGRADE_TOOLBAR_MARGIN = 12
 
 const hasLocalLicense = computed(() => entitlements.value.has_local_license || Boolean(licenseInfo.value?.is_licensed))
 const hasFullAccess = computed(() => entitlements.value.is_licensed)
@@ -75,10 +80,33 @@ const activationView = computed(() => buildLicenseActivationViewState({
   formatTimestamp,
   formatDuration: formatDurationLabel,
 }))
-const activateButtonLabel = computed(() => (loading.value ? '激活中...' : '完成本机激活'))
+const activateButtonLabel = computed(() => (loading.value ? '激活中...' : '服务端激活'))
+const upgradeToolbarStyle = computed(() => {
+  if (!upgradeToolbarPosition.value) {
+    return {
+      right: '1rem',
+      bottom: '1rem',
+    }
+  }
+
+  return {
+    left: `${upgradeToolbarPosition.value.x}px`,
+    top: `${upgradeToolbarPosition.value.y}px`,
+  }
+})
 
 onMounted(async () => {
+  loadUpgradeToolbarPosition()
+  window.addEventListener('pointermove', handleUpgradeToolbarPointerMove)
+  window.addEventListener('pointerup', handleUpgradeToolbarPointerUp)
+  window.addEventListener('resize', clampStoredUpgradeToolbarPosition)
   await refreshAllStatus()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('pointermove', handleUpgradeToolbarPointerMove)
+  window.removeEventListener('pointerup', handleUpgradeToolbarPointerUp)
+  window.removeEventListener('resize', clampStoredUpgradeToolbarPosition)
 })
 
 async function checkLicenseStatus() {
@@ -99,8 +127,8 @@ async function refreshAllStatus() {
 }
 
 async function activateLicense() {
-  if (!licenseKey.value.trim()) {
-    error.value = '请输入许可证密钥'
+  if (!refreshServiceConfigured.value) {
+    error.value = '服务端激活服务尚未配置'
     return
   }
 
@@ -108,33 +136,26 @@ async function activateLicense() {
   error.value = ''
 
   try {
-    const result = await invoke<ActivationResult>('activate_license', {
-      licenseKey: licenseKey.value.trim()
-    })
+    const result = await refreshEntitlementTokenFromServer()
 
     if (result.success) {
-      licenseKey.value = ''
       error.value = ''
       accessSyncError.value = ''
-      accessSyncMessage.value = ''
-      await refreshAllStatus()
-
-      const autoRefreshOutcome = await attemptEntitlementAutoRefresh({
-        force: true,
-        expiringSoonThresholdSeconds: 24 * 60 * 60,
-      })
+      accessSyncMessage.value = result.message
+      markEntitlementRefreshSuccess()
       await refreshAllStatus()
       emit('activated')
-
-      if (autoRefreshOutcome.status === 'failure' && autoRefreshOutcome.configured) {
-        featureAccessToolsOpen.value = true
-        accessSyncError.value = autoRefreshOutcome.message
-        return
-      }
-
       dialogOpen.value = false
     } else {
+      if (result.configured) {
+        markEntitlementRefreshFailure({
+          message: result.message,
+          errorCode: result.error_code,
+          retryAfterSecs: result.retry_after_secs,
+        })
+      }
       error.value = result.message
+      await refreshAllStatus()
     }
   } catch (e) {
     error.value = String(e)
@@ -158,10 +179,6 @@ async function copyMachineId() {
 }
 
 async function loadRefreshConfig() {
-  if (!hasLocalLicense.value && !licenseInfo.value?.is_licensed) {
-    return
-  }
-
   try {
     refreshConfig.value = await getEntitlementRefreshConfig()
   } catch (e) {
@@ -181,7 +198,7 @@ async function refreshFeatureAccessFromServer() {
       accessSyncMessage.value = result.message
       await refreshAllStatus()
     } else if (!result.configured) {
-      accessSyncError.value = '尚未配置高级功能权限刷新服务'
+      accessSyncError.value = '尚未配置服务端激活服务'
     } else {
       markEntitlementRefreshFailure({
         message: result.message,
@@ -204,8 +221,99 @@ async function refreshFeatureAccessFromServer() {
 }
 
 function openDialog() {
-  featureAccessToolsOpen.value = hasLocalLicense.value && !featureAccessStatus.value.ready
+  featureAccessToolsOpen.value = hasLocalLicense.value
   dialogOpen.value = true
+}
+
+function startUpgradeToolbarDrag(event: PointerEvent) {
+  if (event.button !== 0) {
+    return
+  }
+
+  const rect = upgradeToolbarRef.value?.getBoundingClientRect()
+  if (!rect) {
+    return
+  }
+
+  event.preventDefault()
+  upgradeToolbarDrag.value = {
+    pointerId: event.pointerId,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startX: rect.left,
+    startY: rect.top,
+  }
+}
+
+function handleUpgradeToolbarPointerMove(event: PointerEvent) {
+  const drag = upgradeToolbarDrag.value
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return
+  }
+
+  upgradeToolbarPosition.value = clampUpgradeToolbarPosition({
+    x: drag.startX + event.clientX - drag.startClientX,
+    y: drag.startY + event.clientY - drag.startClientY,
+  })
+}
+
+function handleUpgradeToolbarPointerUp(event: PointerEvent) {
+  const drag = upgradeToolbarDrag.value
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return
+  }
+
+  upgradeToolbarDrag.value = null
+  persistUpgradeToolbarPosition()
+}
+
+function loadUpgradeToolbarPosition() {
+  const raw = window.localStorage.getItem(UPGRADE_TOOLBAR_POSITION_KEY)
+  if (!raw) {
+    return
+  }
+
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
+      upgradeToolbarPosition.value = clampUpgradeToolbarPosition(parsed)
+    }
+  } catch (error) {
+    window.localStorage.removeItem(UPGRADE_TOOLBAR_POSITION_KEY)
+  }
+}
+
+function persistUpgradeToolbarPosition() {
+  if (!upgradeToolbarPosition.value) {
+    return
+  }
+
+  window.localStorage.setItem(
+    UPGRADE_TOOLBAR_POSITION_KEY,
+    JSON.stringify(upgradeToolbarPosition.value),
+  )
+}
+
+function clampStoredUpgradeToolbarPosition() {
+  if (!upgradeToolbarPosition.value) {
+    return
+  }
+
+  upgradeToolbarPosition.value = clampUpgradeToolbarPosition(upgradeToolbarPosition.value)
+  persistUpgradeToolbarPosition()
+}
+
+function clampUpgradeToolbarPosition(position: { x: number; y: number }) {
+  const toolbar = upgradeToolbarRef.value
+  const width = toolbar?.offsetWidth || 220
+  const height = toolbar?.offsetHeight || 44
+  const maxX = Math.max(UPGRADE_TOOLBAR_MARGIN, window.innerWidth - width - UPGRADE_TOOLBAR_MARGIN)
+  const maxY = Math.max(UPGRADE_TOOLBAR_MARGIN, window.innerHeight - height - UPGRADE_TOOLBAR_MARGIN)
+
+  return {
+    x: Math.min(Math.max(position.x, UPGRADE_TOOLBAR_MARGIN), maxX),
+    y: Math.min(Math.max(position.y, UPGRADE_TOOLBAR_MARGIN), maxY),
+  }
 }
 
 function formatTimestamp(timestamp: number | null) {
@@ -226,8 +334,18 @@ defineExpose({
   <Teleport to="body">
     <div
       v-if="showUpgradeEntry"
-      class="fixed bottom-4 right-4 z-[9998] flex items-center gap-2 rounded-2xl border border-warning/30 bg-base-100/95 px-3 py-2 shadow-xl backdrop-blur"
+      ref="upgradeToolbarRef"
+      class="fixed z-[9998] flex items-center gap-2 rounded-2xl border border-warning/30 bg-base-100/95 px-2 py-2 shadow-xl backdrop-blur"
+      :style="upgradeToolbarStyle"
     >
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs cursor-grab px-2 active:cursor-grabbing"
+        aria-label="拖动激活入口"
+        @pointerdown="startUpgradeToolbarDrag"
+      >
+        <i class="fas fa-grip-vertical"></i>
+      </button>
       <span class="badge badge-ghost">{{ activationView.statusBadgeLabel }}</span>
       <button class="btn btn-warning btn-sm" @click="openDialog">
         <i class="fas fa-crown mr-2"></i>
@@ -280,20 +398,21 @@ defineExpose({
               </button>
             </div>
             <label class="label">
-              <span class="label-text-alt text-base-content/50">将这串标识发送给许可证签发方，用于生成当前设备的许可证密钥。</span>
+              <span class="label-text-alt text-base-content/50">服务端激活会使用这串标识绑定当前设备。</span>
             </label>
           </div>
 
-          <div class="form-control mb-4">
-            <label class="label">
-              <span class="label-text font-medium">许可证密钥</span>
-            </label>
-            <textarea
-              v-model="licenseKey"
-              placeholder="粘贴许可证签发方提供的许可证密钥"
-              class="textarea textarea-bordered font-mono text-sm h-24"
-              :disabled="loading"
-            ></textarea>
+          <div class="rounded-xl border border-base-300 bg-base-200/50 px-4 py-3 text-sm text-base-content/70 mb-4">
+            <div class="flex items-center justify-between gap-3">
+              <span class="font-medium text-base-content">服务端激活配置</span>
+              <span class="badge" :class="refreshServiceConfigured ? 'badge-success' : 'badge-ghost'">
+                {{ refreshServiceConfigured ? '已配置' : '未配置' }}
+              </span>
+            </div>
+            <p class="mt-2">{{ activationView.refreshServiceHint }}</p>
+            <p v-if="refreshServiceConfigured" class="mt-1 text-xs text-base-content/50 break-all">
+              服务地址：{{ refreshConfig.endpoint }}
+            </p>
           </div>
 
           <div v-if="error" class="alert alert-error mb-4">
@@ -305,7 +424,7 @@ defineExpose({
             <button
               class="btn btn-primary btn-wide"
               :class="{ 'loading': loading }"
-              :disabled="loading || !licenseKey.trim()"
+              :disabled="loading || !refreshServiceConfigured"
               @click="activateLicense"
             >
               <i v-if="!loading" class="fas fa-unlock mr-2"></i>
@@ -314,13 +433,13 @@ defineExpose({
           </div>
 
           <template v-if="hasLocalLicense">
-            <div class="divider my-6">高级功能同步</div>
+            <div class="divider my-6">服务端授权</div>
 
             <div class="rounded-2xl border border-base-300 bg-base-200/50 p-4">
               <div class="flex items-start justify-between gap-4">
                 <div class="space-y-2">
                   <div class="flex items-center gap-2">
-                    <h3 class="text-lg font-semibold">高级功能权限</h3>
+                    <h3 class="text-lg font-semibold">当前授权</h3>
                     <span
                       v-if="featureAccessStatus?.exists"
                       class="badge"
@@ -335,7 +454,7 @@ defineExpose({
                   <p class="text-xs text-base-content/50">
                     {{ isDebugAccess
                       ? '当前为 debug 模式，这里的权限状态仅用于手工验证 release 授权链路，不影响本地开发放行。'
-                      : '它不是第二次基础激活，而是服务端对高价值功能的短期权限同步。普通本地授权完成后，不需要再重复输入许可密钥。'
+                      : '服务端激活成功后会开放全部功能，不再按单个功能拆分授权。'
                     }}
                   </p>
                 </div>
@@ -379,11 +498,11 @@ defineExpose({
                     @click="refreshFeatureAccessFromServer"
                   >
                     <i v-if="!accessSyncLoading" class="fas fa-rotate-right mr-2"></i>
-                    立即补齐权限
+                    立即刷新授权
                   </button>
                 </div>
 
-                <div class="divider my-2">自动刷新</div>
+                <div class="divider my-2">自动续期</div>
 
                 <div class="alert alert-info">
                   <i class="fas fa-rotate"></i>
@@ -392,7 +511,7 @@ defineExpose({
 
                 <div class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 text-sm text-base-content/70">
                   <div class="flex items-center justify-between gap-3">
-                    <span class="font-medium text-base-content">服务端同步配置</span>
+                    <span class="font-medium text-base-content">服务端激活配置</span>
                     <span class="badge" :class="refreshServiceConfigured ? 'badge-success' : 'badge-ghost'">
                       {{ refreshServiceConfigured ? '已配置' : '未配置' }}
                     </span>
@@ -402,7 +521,7 @@ defineExpose({
                     服务地址：{{ refreshConfig.endpoint }}
                   </p>
                   <p class="mt-2 text-xs text-base-content/50">
-                    手工写入或清除高级功能权限的管理员工具已移至 设置 &gt; 安全 &gt; 高级功能权限同步管理。
+                    手工写入或清除服务端授权令牌的管理员工具已移至 设置 &gt; 安全 &gt; 高级功能权限同步管理。
                   </p>
                 </div>
               </div>

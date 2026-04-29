@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildRuntimeToolConfigForExecution } from '@/components/Agent/toolConfigRuntime'
+import {
+  buildRuntimeToolConfigForExecution,
+  buildRuntimeToolConfigForTeamRole,
+} from '@/components/Agent/toolConfigRuntime'
 
 describe('toolConfigRuntime', () => {
   it('serializes manual selection strategy into Rust enum payload for agent execution', () => {
@@ -35,5 +38,92 @@ describe('toolConfigRuntime', () => {
     expect(runtimeConfig.selection_strategy).toEqual({
       Manual: ['http_request', 'web_search'],
     })
+  })
+
+  it('applies Team solver tools as the intersection of profile tools and role tools', () => {
+    const runtimeConfig = buildRuntimeToolConfigForTeamRole({
+      enabled: true,
+      selection_strategy: 'Manual',
+      max_tools: 6,
+      fixed_tools: ['interactive_shell'],
+      disabled_tools: [],
+      manual_tools: ['file_read', 'shell'],
+      allowed_tools: [],
+    }, {
+      solver: {
+        tools: ['file_read', 'http_request', 'shell'],
+      },
+    }, 'solver')
+
+    expect(runtimeConfig).toMatchObject({
+      enabled: true,
+      selection_strategy: { Manual: ['file_read', 'shell'] },
+      max_tools: 6,
+      fixed_tools: [],
+      allowed_tools: ['file_read', 'shell'],
+    })
+  })
+
+  it('disables Team solver tools when the role scope has no overlap with the profile tools', () => {
+    const runtimeConfig = buildRuntimeToolConfigForTeamRole({
+      enabled: true,
+      selection_strategy: 'Manual',
+      max_tools: 8,
+      fixed_tools: ['interactive_shell', 'file_write'],
+      disabled_tools: [],
+      manual_tools: ['interactive_shell', 'file_write', 'http_request'],
+      allowed_tools: [],
+    }, {
+      solver: {
+        tools: ['shell', 'browser_shell'],
+      },
+    }, 'solver')
+
+    expect(runtimeConfig.enabled).toBe(false)
+    expect(runtimeConfig.selection_strategy).toEqual({ Manual: [] })
+    expect(runtimeConfig.fixed_tools).toEqual([])
+    expect(runtimeConfig.allowed_tools).toEqual([])
+  })
+
+  it('keeps role tools exact without alias expansion', () => {
+    const runtimeConfig = buildRuntimeToolConfigForTeamRole({
+      enabled: true,
+      selection_strategy: 'Manual',
+      max_tools: 8,
+      fixed_tools: [],
+      disabled_tools: [],
+      manual_tools: ['shell', 'interactive_shell'],
+      allowed_tools: [],
+    }, {
+      solver: {
+        tools: ['shell'],
+      },
+    }, 'solver')
+
+    expect(runtimeConfig.selection_strategy).toEqual({
+      Manual: ['shell'],
+    })
+    expect(runtimeConfig.allowed_tools).toEqual(['shell'])
+  })
+
+  it('uses explicit agent allowed tools for Team scope even when profile strategy is not manual', () => {
+    const runtimeConfig = buildRuntimeToolConfigForTeamRole({
+      enabled: true,
+      selection_strategy: 'Hybrid',
+      max_tools: 8,
+      fixed_tools: ['interactive_shell'],
+      disabled_tools: [],
+      manual_tools: [],
+      allowed_tools: ['interactive_shell', 'shell', 'grep'],
+    }, {
+      solver: {
+        tools: ['shell', 'grep', 'http_request'],
+      },
+    }, 'solver')
+
+    expect(runtimeConfig.selection_strategy).toEqual({
+      Manual: ['shell', 'grep'],
+    })
+    expect(runtimeConfig.allowed_tools).toEqual(['shell', 'grep'])
   })
 })

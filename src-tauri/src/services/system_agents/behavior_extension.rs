@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
     CONTENT_TYPE,
@@ -21,7 +21,9 @@ use url::Url;
 use crate::commands::traffic::TrafficAnalysisState;
 use crate::services::database::DatabaseService;
 use crate::services::system_agents::{
-    TRAFFIC_BEHAVIOR_EXTENSION_BRIDGE_PORT, TRAFFIC_BEHAVIOR_SIGNAL_SETTINGS_KEY,
+    BrowserShellCommandAckInput, BrowserShellFrameInput, BrowserShellSessionRemoveInput,
+    BrowserShellSessionUpsertInput, TRAFFIC_BEHAVIOR_EXTENSION_BRIDGE_PORT,
+    TRAFFIC_BEHAVIOR_SIGNAL_SETTINGS_KEY,
 };
 use sentinel_traffic::HttpRequestRecord;
 
@@ -177,6 +179,13 @@ struct BehaviorExtensionBridgeState {
     app_handle: AppHandle,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserShellPollQuery {
+    session_ids: Option<String>,
+    limit: Option<usize>,
+}
+
 pub async fn start_behavior_extension_bridge(
     db: Arc<DatabaseService>,
     traffic_state: Arc<TrafficAnalysisState>,
@@ -195,6 +204,30 @@ pub async fn start_behavior_extension_bridge(
         .route(
             "/v1/events",
             post(ingest_behavior_events).options(bridge_options),
+        )
+        .route(
+            "/v1/browser-shell/sessions",
+            get(list_browser_shell_sessions).options(bridge_options),
+        )
+        .route(
+            "/v1/browser-shell/sessions/upsert",
+            post(upsert_browser_shell_session).options(bridge_options),
+        )
+        .route(
+            "/v1/browser-shell/sessions/remove",
+            post(remove_browser_shell_session).options(bridge_options),
+        )
+        .route(
+            "/v1/browser-shell/frames",
+            post(ingest_browser_shell_frame).options(bridge_options),
+        )
+        .route(
+            "/v1/browser-shell/commands/poll",
+            get(poll_browser_shell_commands).options(bridge_options),
+        )
+        .route(
+            "/v1/browser-shell/commands/ack",
+            post(ack_browser_shell_command).options(bridge_options),
         )
         .with_state(state);
 
@@ -296,6 +329,155 @@ async fn refresh_behavior_extension_status(
         }),
     );
     Ok(())
+}
+
+async fn list_browser_shell_sessions(
+    State(state): State<BehaviorExtensionBridgeState>,
+) -> Response {
+    let store = state.traffic_state.get_browser_shell_store();
+    let sessions = store.read().await.list_sessions();
+    cors_json(
+        StatusCode::OK,
+        json!({
+            "ok": true,
+            "sessions": sessions,
+        }),
+    )
+}
+
+async fn upsert_browser_shell_session(
+    State(state): State<BehaviorExtensionBridgeState>,
+    Json(payload): Json<BrowserShellSessionUpsertInput>,
+) -> Response {
+    let received_at = Utc::now();
+    let store = state.traffic_state.get_browser_shell_store();
+    let result = store.write().await.upsert_session(payload);
+    match result {
+        Ok(session) => cors_json(
+            StatusCode::OK,
+            json!({
+                "ok": true,
+                "session": session,
+                "receivedAt": received_at.to_rfc3339(),
+            }),
+        ),
+        Err(error) => cors_json(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "ok": false,
+                "error": error,
+            }),
+        ),
+    }
+}
+
+async fn remove_browser_shell_session(
+    State(state): State<BehaviorExtensionBridgeState>,
+    Json(payload): Json<BrowserShellSessionRemoveInput>,
+) -> Response {
+    let store = state.traffic_state.get_browser_shell_store();
+    let result = store.write().await.remove_session(payload);
+    match result {
+        Ok(removed) => cors_json(
+            StatusCode::OK,
+            json!({
+                "ok": true,
+                "removed": removed,
+            }),
+        ),
+        Err(error) => cors_json(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "ok": false,
+                "error": error,
+            }),
+        ),
+    }
+}
+
+async fn ingest_browser_shell_frame(
+    State(state): State<BehaviorExtensionBridgeState>,
+    Json(payload): Json<BrowserShellFrameInput>,
+) -> Response {
+    let store = state.traffic_state.get_browser_shell_store();
+    let result = store.write().await.record_frame(payload);
+    match result {
+        Ok(frame) => cors_json(
+            StatusCode::OK,
+            json!({
+                "ok": true,
+                "frame": frame,
+            }),
+        ),
+        Err(error) => cors_json(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "ok": false,
+                "error": error,
+            }),
+        ),
+    }
+}
+
+async fn poll_browser_shell_commands(
+    State(state): State<BehaviorExtensionBridgeState>,
+    Query(query): Query<BrowserShellPollQuery>,
+) -> Response {
+    let session_ids = query
+        .session_ids
+        .as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if session_ids.is_empty() {
+        return cors_json(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "ok": false,
+                "error": "session_ids is required",
+            }),
+        );
+    }
+
+    let store = state.traffic_state.get_browser_shell_store();
+    let commands = store
+        .write()
+        .await
+        .poll_queued_writes(&session_ids, query.limit.unwrap_or(8));
+    cors_json(
+        StatusCode::OK,
+        json!({
+            "ok": true,
+            "commands": commands,
+        }),
+    )
+}
+
+async fn ack_browser_shell_command(
+    State(state): State<BehaviorExtensionBridgeState>,
+    Json(payload): Json<BrowserShellCommandAckInput>,
+) -> Response {
+    let store = state.traffic_state.get_browser_shell_store();
+    let result = store.write().await.ack_write(payload);
+    match result {
+        Ok(request) => cors_json(
+            StatusCode::OK,
+            json!({
+                "ok": true,
+                "request": request,
+            }),
+        ),
+        Err(error) => cors_json(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "ok": false,
+                "error": error,
+            }),
+        ),
+    }
 }
 
 fn cors_json(status: StatusCode, body: Value) -> Response {

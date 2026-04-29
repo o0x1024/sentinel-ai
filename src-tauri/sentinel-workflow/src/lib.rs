@@ -2,6 +2,7 @@ pub mod commands;
 pub mod data_nodes;
 pub mod edge_mapping;
 pub mod engine;
+pub mod plugin_default_inputs;
 pub mod scheduler;
 
 pub use commands::{

@@ -1,36 +1,21 @@
 <template>
   <div class="flex h-full min-h-0 flex-col bg-base-100">
-    <div
-      class="flex items-center gap-2 border-b border-base-300"
-      :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_TOP_BAR_CLASS : 'bg-base-200 px-2 py-1'"
-    >
-      <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-        <div
-          v-for="(workspace, index) in workspaces"
-          :key="workspace.id"
-          class="flex items-center gap-2 rounded border border-base-300 px-3 py-1.5 text-sm"
-          :class="activeWorkspaceId === workspace.id ? 'bg-base-100 border-primary' : 'bg-base-200 hover:bg-base-300'"
-        >
-          <button class="truncate" type="button" :title="workspace.name" @click="activeWorkspaceId = workspace.id">
-            {{ index + 1 }}
-          </button>
-          <button class="btn btn-ghost btn-xs btn-circle" type="button" @click="closeWorkspace(workspace.id)">
-            <i class="fas fa-times text-[10px]"></i>
-          </button>
-        </div>
-
-        <button class="btn btn-xs btn-ghost" type="button" @click="addWorkspace()">
-          <i class="fas fa-plus"></i>
-        </button>
-      </div>
-    </div>
+    <IntruderWorkspaceTabsBar
+      :workspaces="workspaces"
+      :active-workspace-id="activeWorkspaceId"
+      @update:active-workspace-id="activeWorkspaceId = $event"
+      @close-workspace="closeWorkspace"
+      @close-other-workspaces="closeOtherWorkspaces"
+      @add-workspace="addWorkspace()"
+      @clear-all-workspaces="clearAllWorkspaces"
+    />
 
     <div v-if="currentWorkspace" class="flex min-h-0 flex-1 flex-col">
       <div
-        class="flex flex-wrap items-start gap-3 border-b border-base-300"
-        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2.5 py-2 backdrop-blur-sm' : 'px-4 py-3'"
+        class="flex flex-wrap items-start gap-2 border-b border-base-300"
+        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2 py-1.5 backdrop-blur-sm' : 'px-3 py-2'"
       >
-        <div class="min-w-[28rem]">
+        <div class="min-w-[24rem]">
           <IntruderAttackTypeSelect
             :model-value="currentWorkspace.attackType"
             variant="toolbar"
@@ -38,23 +23,23 @@
           />
         </div>
 
-        <button class="btn btn-primary btn-sm" type="button" :disabled="currentWorkspace.isRunning" @click="startAttack">
+        <button class="btn btn-primary btn-sm min-h-8 px-2.5" type="button" :disabled="currentWorkspace.isRunning" @click="startAttack">
           <i :class="['fas', currentWorkspace.isRunning ? 'fa-spinner fa-spin' : 'fa-play']"></i>
           {{ $t('trafficAnalysis.intruder.actions.startAttack') }}
         </button>
-        <button class="btn btn-sm btn-ghost" type="button" :disabled="!currentWorkspace.isRunning" @click="stopAttack">
+        <button class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" :disabled="!currentWorkspace.isRunning" @click="stopAttack">
           <i class="fas fa-stop"></i>
           {{ $t('trafficAnalysis.intruder.actions.stopAttack') }}
         </button>
-        <button class="btn btn-sm btn-ghost" type="button" :disabled="!currentWorkspace.results.length && !currentWorkspace.isRunning" @click="openResultsView">
+        <button class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" :disabled="!currentWorkspace.results.length && !currentWorkspace.isRunning" @click="openResultsView">
           <i class="fas fa-table"></i>
           {{ $t('trafficAnalysis.intruder.actions.showResults') }}
         </button>
-        <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost" type="button" @click="duplicateWorkspace">
+        <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" @click="duplicateWorkspace">
           <i class="fas fa-clone"></i>
           {{ $t('trafficAnalysis.intruder.actions.cloneTab') }}
         </button>
-        <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost" type="button" :disabled="!currentWorkspace.results.length" @click="clearResults">
+        <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" :disabled="!currentWorkspace.results.length" @click="clearResults">
           <i class="fas fa-trash-alt"></i>
           {{ $t('trafficAnalysis.intruder.actions.clearResults') }}
         </button>
@@ -70,12 +55,12 @@
           @load="loadAttackTemplate"
           @delete="deleteAttackTemplate"
         />
-        <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost" type="button" :disabled="!currentWorkspace.results.length" @click="exportResults">
+        <button v-if="!immersiveDrillModeEnabled" class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" :disabled="!currentWorkspace.results.length" @click="exportResults">
           <i class="fas fa-file-export"></i>
           {{ $t('trafficAnalysis.intruder.actions.exportResults') }}
         </button>
 
-        <div class="ml-auto flex flex-wrap items-center gap-2 text-sm">
+        <div class="ml-auto flex flex-wrap items-center gap-1.5 text-sm">
           <div v-if="!immersiveDrillModeEnabled" :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ $t('trafficAnalysis.intruder.labels.requestCount') }}: {{ estimatedRequests }}</div>
           <div v-if="currentWorkspace.progress.completed > 0 || currentWorkspace.isRunning" :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">
             {{ currentWorkspace.progress.completed }}/{{ currentWorkspace.progress.total }}
@@ -154,132 +139,48 @@
         </div>
       </div>
 
-      <div v-if="!immersiveDrillModeEnabled" class="flex items-center gap-3 border-t border-base-300 bg-base-200 px-4 py-2 text-xs text-base-content/70">
+      <div v-if="!immersiveDrillModeEnabled" class="flex items-center gap-2.5 border-t border-base-300 bg-base-200 px-3 py-1.5 text-xs text-base-content/70">
         <span>{{ currentWorkspace.target.useTls ? 'https' : 'http' }}://{{ currentWorkspace.target.host || 'example.com' }}:{{ currentWorkspace.target.port }}</span>
-        <span>{{ currentWorkspace.positions.length }} {{ $t('trafficAnalysis.intruder.labels.detectedPositions') }}</span>
-        <span v-if="currentWorkspace.isRunning">{{ $t('trafficAnalysis.intruder.labels.running') }}</span>
+        <span>{{ currentWorkspace.positions.length }} {{ $t('trafficAnalysis.intruder.labels.detectedPositions') }}</span><span v-if="currentWorkspace.isRunning">{{ $t('trafficAnalysis.intruder.labels.running') }}</span>
       </div>
     </div>
 
-    <div v-else class="flex flex-1 items-center justify-center text-sm text-base-content/60">
-      {{ $t('trafficAnalysis.intruder.empty.noWorkspace') }}
-    </div>
-
+    <div v-else class="flex flex-1 items-center justify-center text-sm text-base-content/60">{{ $t('trafficAnalysis.intruder.empty.noWorkspace') }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useI18n } from 'vue-i18n'
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { dialog } from '@/composables/useDialog'
-import {
-  buildIntruderResultsWindowUrl,
-} from '@/router/standalone'
-import {
-  IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS,
-  IMMERSIVE_TRAFFIC_TOP_BAR_CLASS,
-} from './immersiveTrafficUi'
+import { buildIntruderResultsWindowUrl } from '@/router/standalone'
+import { IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS } from './immersiveTrafficUi'
 import IntruderAttackTypeSelect from './intruder/IntruderAttackTypeSelect.vue'
 import IntruderAttackTemplateManager from './intruder/IntruderAttackTemplateManager.vue'
 import IntruderRequestEditor from './intruder/IntruderRequestEditor.vue'
 import IntruderSidePanel from './intruder/IntruderSidePanel.vue'
-import {
-  autoMarkIntruderPositions,
-  buildIntruderAttackPlan,
-  clearIntruderMarkers,
-  extractIntruderPositions,
-  getRequiredPayloadSetCount,
-  estimateAttackCount,
-} from './intruder/attack'
+import IntruderWorkspaceTabsBar from './intruder/IntruderWorkspaceTabsBar.vue'
+import { autoMarkIntruderPositions, buildIntruderAttackPlan, clearIntruderMarkers, estimateAttackCount, extractIntruderPositions, getRequiredPayloadSetCount } from './intruder/attack'
 import { expandPayloadSet } from './intruder/payloads'
-import {
-  applyIntruderRequestSettings,
-  buildSourceRequestFromRawRequest,
-  countLines,
-  countWords,
-  createIntruderId,
-  createRawRequestFromSource,
-  ensureRawRequestTerminator,
-  extractTargetFromRequest,
-} from './intruder/http'
-import {
-  buildIntruderTargetUrl as buildTargetUrl,
-  clampIntruderSidebarWidth,
-  createDefaultAttackOptions,
-  createDefaultPayloadSet,
-  createDefaultPluginProcessorBinding,
-  createDefaultProgress,
-  createIntruderWorkspace,
-  INTRUDER_SIDEBAR_WIDTH_KEY,
-  IntruderWorkspace,
-  loadIntruderSidebarWidth,
-  normalizePersistedIntruderWorkspaceList,
-  normalizeAttackOptions,
-  normalizePayloadSet,
-  parseIntruderTargetUrl,
-  serializeIntruderWorkspaceSessionStore,
-} from './intruder/workspaceSupport'
-import {
-  buildHttpReplayResponseFromCommandResult,
-  type RawReplayCommandResult,
-} from './http/response'
+import { applyIntruderRequestSettings, buildSourceRequestFromRawRequest, countLines, countWords, createIntruderId, createRawRequestFromSource, ensureRawRequestTerminator, extractTargetFromRequest } from './intruder/http'
+import { buildIntruderTargetUrl as buildTargetUrl, INTRUDER_SIDEBAR_WIDTH_KEY, IntruderWorkspace, clampIntruderSidebarWidth, createDefaultAttackOptions, createDefaultPayloadSet, createDefaultPluginProcessorBinding, createDefaultProgress, createIntruderWorkspace, loadIntruderSidebarWidth, normalizeAttackOptions, normalizePayloadSet, normalizePersistedIntruderWorkspaceList, parseIntruderTargetUrl, serializeIntruderWorkspaceSessionStore } from './intruder/workspaceSupport'
+import { buildHttpReplayResponseFromCommandResult, type RawReplayCommandResult } from './http/response'
 import type { TrafficComparePayload } from './transfers'
-import {
-  evaluateIntruderPayloadReflections,
-  evaluateIntruderGrepExtracts,
-  evaluateIntruderGrepMatches,
-  normalizeGrepMatchRule,
-  normalizeGrepPayloadSettings,
-} from './intruder/analysis'
-import {
-  getIntruderResultsStorageKey,
-  loadIntruderResultsWindowState,
-  matchesIntruderResultFilter,
-  normalizeIntruderResultFilter,
-  saveIntruderResultsWindowState,
-  sortIntruderResults,
-} from './intruder/results'
-import {
-  buildIntruderResourcePoolAutoName,
-  createBuiltInResourcePools,
-  createIntruderAttackTemplate,
-  exportIntruderResultsCsv,
-  loadIntruderAttackTemplates,
-  loadIntruderResourcePools,
-  normalizeVisibleColumns,
-  persistIntruderAttackTemplates,
-  persistIntruderResourcePools,
-  upsertIntruderResourcePoolEntry,
-  type IntruderAttackTemplate,
-} from './intruder/storage'
-import {
-  generateIntruderPluginPayloads,
-  processIntruderPayloadWithPlugin,
-  transformIntruderRequestWithPlugin,
-  type IntruderRequestProcessorTrace,
-} from './intruder/plugins'
-import {
-  getIntruderAutoThrottleStepMs,
-  getIntruderRuntimeDelayMs,
-  shouldIntruderThrottleForStatus,
-  waitForIntruderDelay,
-} from './intruder/runtimeSupport'
-import {
-  createDefaultIntruderDictionaryPayloadConfig,
-  resolveIntruderDictionaryPayloads,
-} from './intruder/intruderAppDictionaryPayloads'
+import { evaluateIntruderGrepExtracts, evaluateIntruderGrepMatches, evaluateIntruderPayloadReflections, normalizeGrepMatchRule, normalizeGrepPayloadSettings } from './intruder/analysis'
+import { getIntruderResultsStorageKey, loadIntruderResultsWindowState, matchesIntruderResultFilter, normalizeIntruderResultFilter, saveIntruderResultsWindowState, sortIntruderResults } from './intruder/results'
+import { buildIntruderResourcePoolAutoName, createBuiltInResourcePools, createIntruderAttackTemplate, exportIntruderResultsCsv, loadIntruderAttackTemplates, loadIntruderResourcePools, normalizeVisibleColumns, persistIntruderAttackTemplates, persistIntruderResourcePools, type IntruderAttackTemplate, upsertIntruderResourcePoolEntry } from './intruder/storage'
+import { generateIntruderPluginPayloads, processIntruderPayloadWithPlugin, transformIntruderRequestWithPlugin, type IntruderRequestProcessorTrace } from './intruder/plugins'
+import { getIntruderAutoThrottleStepMs, getIntruderRuntimeDelayMs, shouldIntruderThrottleForStatus, waitForIntruderDelay } from './intruder/runtimeSupport'
+import { createDefaultIntruderDictionaryPayloadConfig, resolveIntruderDictionaryPayloads } from './intruder/intruderAppDictionaryPayloads'
 import { useTrafficWorkbenchStore } from './workbench/stores/useTrafficWorkbenchStore'
 import type { AttackWorkspace as WorkbenchAttackWorkspace } from './workbench/model/attackWorkspace'
-import {
-  loadIntruderWorkspaceSessionStore,
-  saveIntruderWorkspaceSessionStore,
-  type PersistedIntruderWorkspaceSessionStore,
-} from '@/api/trafficIntruderSessions'
+import { loadIntruderWorkspaceSessionStore, saveIntruderWorkspaceSessionStore, type PersistedIntruderWorkspaceSessionStore } from '@/api/trafficIntruderSessions'
 import type {
   IntruderAttackOptions,
   IntruderAttackResult,
@@ -340,6 +241,8 @@ const intruderSessionPersistenceReady = ref(false)
 const persistedIntruderSessionFingerprint = ref('')
 const persistedIntruderSessionStore = ref<PersistedIntruderWorkspaceSessionStore | null>(null)
 let persistIntruderSessionTimer: number | null = null
+const openResultsWindowLabels = new Set<string>()
+let unlistenResultsWindowClosed: UnlistenFn | null = null
 
 const currentWorkspace = computed(() => workspaces.value.find((workspace) => workspace.id === activeWorkspaceId.value) ?? null)
 const selectedResult = computed(() => {
@@ -422,7 +325,14 @@ function buildResultsWindowState(workspace: IntruderWorkspace) {
   }
 }
 
-function syncResultsWindowState(workspace: IntruderWorkspace) {
+function markResultsWindowOpen(label: string) {
+  openResultsWindowLabels.add(label)
+}
+
+function syncResultsWindowState(workspace: IntruderWorkspace, options: { force?: boolean } = {}) {
+  if (!options.force && !openResultsWindowLabels.has(buildResultsWindowLabel(workspace.id))) {
+    return
+  }
   saveIntruderResultsWindowState(buildResultsWindowState(workspace))
 }
 
@@ -430,7 +340,7 @@ async function openResultsView() {
   const workspace = currentWorkspace.value
   if (!workspace) return
 
-  syncResultsWindowState(workspace)
+  syncResultsWindowState(workspace, { force: true })
 
   const label = buildResultsWindowLabel(workspace.id)
   const title = `${workspace.name} - ${t('trafficAnalysis.intruder.sections.results')}`
@@ -438,6 +348,8 @@ async function openResultsView() {
   try {
     const existingWindow = await WebviewWindow.getByLabel(label)
     if (existingWindow) {
+      markResultsWindowOpen(label)
+      syncResultsWindowState(workspace, { force: true })
       await existingWindow.show()
       await existingWindow.setFocus()
       return
@@ -454,6 +366,7 @@ async function openResultsView() {
 
     await new Promise<void>((resolve, reject) => {
       void resultsWindow.once('tauri://created', async () => {
+        markResultsWindowOpen(label)
         await resultsWindow.setFocus()
         resolve()
       })
@@ -781,6 +694,45 @@ function closeWorkspace(workspaceId: string) {
   workspaces.value = workspaces.value.filter((workspace) => workspace.id !== workspaceId)
   workbenchState.attack.removeWorkspace(workspaceId)
   ensureWorkspaceSelection()
+}
+
+async function clearAllWorkspaces() {
+  if (workspaces.value.length === 0) return
+
+  const confirmed = await dialog.confirm({
+    title: t('trafficAnalysis.intruder.messages.confirmClearAllWorkspaces'),
+    message: t('trafficAnalysis.intruder.messages.confirmClearAllWorkspacesMessage', {
+      count: workspaces.value.length,
+    }),
+    variant: 'warning',
+  })
+  if (!confirmed) return
+
+  attackControllers.forEach(controller => { controller.cancelled = true })
+  attackControllers.clear()
+  workspaces.value = []
+  activeWorkspaceId.value = null
+  workbenchState.attack.resetAttackWorkspaceStore()
+  resetRequestProcessingPreviewState()
+}
+
+function closeOtherWorkspaces(workspaceId: string) {
+  const remainingWorkspace = workspaces.value.find(workspace => workspace.id === workspaceId)
+  if (!remainingWorkspace) return
+
+  attackControllers.forEach((controller, id) => {
+    if (id !== workspaceId) controller.cancelled = true
+  })
+  attackControllers.forEach((_, id) => {
+    if (id !== workspaceId) attackControllers.delete(id)
+  })
+  workspaces.value = [remainingWorkspace]
+  activeWorkspaceId.value = workspaceId
+  workbenchState.attack.replaceState(
+    workbenchState.attack.workspaces.value.filter(workspace => workspace.id === workspaceId),
+    workspaceId,
+  )
+  resetRequestProcessingPreviewState()
 }
 
 function duplicateWorkspace() {
@@ -1498,6 +1450,15 @@ function clearResults() {
   syncWorkbenchWorkspaceRuntime(workspace, 'idle')
 }
 
+function resetRequestProcessingPreviewState() {
+  requestProcessingPreviewLoading.value = false
+  requestProcessingPreviewOriginal.value = ''
+  requestProcessingPreviewFinal.value = ''
+  requestProcessingPreviewPayloadSummary.value = ''
+  requestProcessingPreviewTraces.value = []
+  requestProcessingPreviewError.value = ''
+}
+
 function cancelAttack(workspaceId: string, notifyStopping: boolean) {
   const controller = attackControllers.get(workspaceId)
   if (!controller || controller.cancelled) return false
@@ -1931,7 +1892,7 @@ watch(
 watch(
   workspaces,
   (items) => {
-    items.forEach(syncResultsWindowState)
+    items.forEach((workspace) => syncResultsWindowState(workspace))
     scheduleIntruderSessionPersistence()
   },
   { deep: true },
@@ -1942,12 +1903,7 @@ watch(activeWorkspaceId, () => {
     workbenchState.attack.selectWorkspace(activeWorkspaceId.value)
   }
   scheduleIntruderSessionPersistence()
-  requestProcessingPreviewLoading.value = false
-  requestProcessingPreviewOriginal.value = ''
-  requestProcessingPreviewFinal.value = ''
-  requestProcessingPreviewPayloadSummary.value = ''
-  requestProcessingPreviewTraces.value = []
-  requestProcessingPreviewError.value = ''
+  resetRequestProcessingPreviewState()
 })
 
 watch(
@@ -1969,6 +1925,12 @@ watch(
 onMounted(() => {
   window.addEventListener('resize', handleWindowResize)
   window.addEventListener('storage', handleResultsWindowStorage)
+  void listen<{ workspaceId?: string }>('intruder-results-window:closed', (event) => {
+    if (!event.payload?.workspaceId) return
+    openResultsWindowLabels.delete(buildResultsWindowLabel(event.payload.workspaceId))
+  }).then((unlisten) => {
+    unlistenResultsWindowClosed = unlisten
+  })
   sidebarWidth.value = clampSidebarWidth(sidebarWidth.value)
   void hydrateIntruderWorkspaceSessions().finally(() => {
     if (workbenchState.attack.workspaces.value.length) {
@@ -1991,6 +1953,8 @@ onUnmounted(() => {
   stopSidebarResize()
   window.removeEventListener('resize', handleWindowResize)
   window.removeEventListener('storage', handleResultsWindowStorage)
+  unlistenResultsWindowClosed?.()
+  unlistenResultsWindowClosed = null
 })
 
 defineExpose({

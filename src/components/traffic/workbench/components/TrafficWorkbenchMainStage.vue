@@ -1,23 +1,23 @@
 <template>
-  <section class="workbench-main-stage flex h-full min-h-0 flex-col overflow-hidden rounded-[16px] border border-base-300/70">
-    <div class="workbench-header-surface border-b border-base-300/70 px-3 py-2">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+  <section class="workbench-main-stage flex h-full min-h-0 flex-col overflow-hidden rounded-[14px] border border-base-300/70">
+    <div class="workbench-header-surface border-b border-base-300/70 px-2.5 py-1.5">
+      <div class="flex flex-wrap items-center justify-between gap-1.5">
         <div class="min-w-0 flex-1">
-          <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <div class="flex min-w-0 flex-wrap items-center gap-1.5">
             <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-primary/75">
               {{ t('trafficAnalysis.workbench.mainStage.title', '主工作区') }}
             </p>
-            <span class="rounded-full bg-base-200 px-2 py-0.5 text-[11px] font-medium text-base-content/65">
+            <span class="rounded-full bg-base-200 px-1.5 py-0.5 text-[10px] font-medium text-base-content/65">
               {{ activeWorkbenchMeta.shortTitle }}
             </span>
           </div>
         </div>
-        <div class="flex flex-wrap items-center gap-1.5">
+        <div class="flex flex-wrap items-center gap-1">
           <button
             v-for="chip in toolChips"
             :key="`main-${chip.tool}`"
             type="button"
-            class="btn btn-xs btn-outline rounded-2xl"
+            class="btn btn-xs btn-outline min-h-7 rounded-2xl px-2"
             :class="{
               'border-primary bg-primary/10 text-primary': workbenchOpen && activeWorkbenchTool === chip.tool,
             }"
@@ -33,15 +33,15 @@
     <div class="workbench-content-surface relative min-h-0 flex-1 overflow-hidden">
       <div
         v-if="!workbenchOpen"
-        class="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center"
+        class="absolute inset-0 flex flex-col items-center justify-center gap-2.5 px-6 text-center"
       >
-        <div class="rounded-full bg-base-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-base-content/50">
+        <div class="rounded-full bg-base-200 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-base-content/50">
           {{ t('trafficAnalysis.workbench.mainStage.idleBadge', '工作区空闲') }}
         </div>
-        <h4 class="text-lg font-semibold text-base-content">
+        <h4 class="text-base font-semibold text-base-content">
           {{ t('trafficAnalysis.workbench.mainStage.idleTitle', '从历史记录选择请求进行预览') }}
         </h4>
-        <p class="max-w-md text-sm text-base-content/55">
+        <p class="max-w-md text-xs text-base-content/55">
           {{ t('trafficAnalysis.workbench.mainStage.idleDescription', '编辑请求内容或发送请求后会自动保存到重放器历史；发送到爆破器会进入爆破器历史。') }}
         </p>
       </div>
@@ -52,12 +52,14 @@
           ref="repeaterRef"
           :initial-request="pendingRepeaterRequest"
           :initial-draft-id="pendingRepeaterDraftId"
+          :active-request-context="activeRequestContext"
           class="absolute inset-0 h-full overflow-auto"
           @openCompare="$emit('openCompareFromRepeater', $event)"
           @openDraftCompare="$emit('openDraftCompareFromRepeater', $event)"
           @createAttackWorkspace="$emit('createAttackWorkspaceFromRepeater', $event)"
           @active-tab-mode-changed="$emit('repeaterTabModeChanged', $event)"
           @tab-stats-changed="$emit('repeaterTabStatsChanged', $event)"
+          @switch-preview-variant="$emit('switchRequestVariant', $event)"
         />
         <ProxyIntruder
           v-show="activeWorkbenchTool === 'intruder'"

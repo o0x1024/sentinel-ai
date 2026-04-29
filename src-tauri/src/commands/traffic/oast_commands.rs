@@ -114,7 +114,10 @@ fn build_event_key_from_event(event: &TrafficOastEvent) -> TrafficOastEventKey {
     }
 }
 
-fn apply_hidden_event_keys(record: &mut TrafficOastRecord, hidden_event_keys: &[TrafficOastEventKey]) {
+fn apply_hidden_event_keys(
+    record: &mut TrafficOastRecord,
+    hidden_event_keys: &[TrafficOastEventKey],
+) {
     if hidden_event_keys.is_empty() {
         record.hit_count = record.events.len() as u64;
         record.last_hit_at = record.events.last().map(|event| event.time.clone());
@@ -125,7 +128,9 @@ fn apply_hidden_event_keys(record: &mut TrafficOastRecord, hidden_event_keys: &[
         .iter()
         .map(build_event_key_string)
         .collect::<HashSet<_>>();
-    record.events.retain(|event| !hidden.contains(&build_event_key_string(&build_event_key_from_event(event))));
+    record.events.retain(|event| {
+        !hidden.contains(&build_event_key_string(&build_event_key_from_event(event)))
+    });
     record.hit_count = record.events.len() as u64;
     record.last_hit_at = record.events.last().map(|event| event.time.clone());
 }
@@ -138,7 +143,9 @@ async fn load_hidden_oast_events_from_state(
         Ok(Some(raw)) => serde_json::from_str::<HashMap<String, Vec<TrafficOastEventKey>>>(&raw)
             .map_err(|error| format!("Failed to parse hidden traffic OAST events: {error}")),
         Ok(None) => Ok(HashMap::new()),
-        Err(error) => Err(format!("Failed to load hidden traffic OAST events: {error}")),
+        Err(error) => Err(format!(
+            "Failed to load hidden traffic OAST events: {error}"
+        )),
     }
 }
 

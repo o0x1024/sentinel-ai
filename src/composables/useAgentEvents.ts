@@ -63,6 +63,7 @@ export function useAgentEvents(
   const subagents = ref<SubagentItem[]>([])
   const contextUsage = ref<ContextUsageInfo | null>(null)
   const suppressedExecutionId = ref<string | null>(null)
+  const settledExecutionId = ref<string | null>(null)
   const executionStartedAt = ref<number | null>(null)
   const latestUsage = ref<{ inputTokens: number; outputTokens: number } | null>(null)
 
@@ -274,6 +275,20 @@ export function useAgentEvents(
     contentBuffer.value = ''
   }
 
+  const markExecutionActive = (executionId: string): void => {
+    settledExecutionId.value = null
+    isExecuting.value = true
+    currentExecutionId.value = executionId
+  }
+
+  const markExecutionSettled = (executionId: string): void => {
+    settledExecutionId.value = executionId
+  }
+
+  const isSettledActivityEvent = (executionId: string): boolean => (
+    settledExecutionId.value === executionId
+  )
+
   const startExecutionTiming = (): void => {
     executionStartedAt.value = Date.now()
     latestUsage.value = null
@@ -313,6 +328,7 @@ export function useAgentEvents(
     }
 
     resetExecutionBuffers()
+    markExecutionSettled(payload.execution_id)
 
     if (payload.outcome === 'failed') {
       const err = payload.error || 'Agent execution failed'
@@ -403,6 +419,7 @@ export function useAgentEvents(
     subagents.value = []
     contextUsage.value = null
     suppressedExecutionId.value = null
+    settledExecutionId.value = null
     executionStartedAt.value = null
     latestUsage.value = null
   }
@@ -450,8 +467,7 @@ export function useAgentEvents(
       releaseSuppressedExecution(payload.execution_id)
       if (!matchesTarget(payload.execution_id)) return
 
-      isExecuting.value = true
-      currentExecutionId.value = payload.execution_id
+      markExecutionActive(payload.execution_id)
       startExecutionTiming()
       error.value = null
       contentBuffer.value = ''
@@ -551,8 +567,7 @@ export function useAgentEvents(
       releaseSuppressedExecution(payload.execution_id)
       if (!matchesTarget(payload.execution_id)) return
 
-      isExecuting.value = true
-      currentExecutionId.value = payload.execution_id
+      markExecutionActive(payload.execution_id)
       startExecutionTiming()
       error.value = null
       contentBuffer.value = ''
@@ -712,12 +727,12 @@ export function useAgentEvents(
     const unlistenIteration = await listen<AgentIterationEvent>('agent:iteration', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
+      if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
       if (!isExecuting.value) {
         console.log('[useAgentEvents] Auto-recovering execution state from iteration event')
-        isExecuting.value = true
-        currentExecutionId.value = payload.execution_id
+        markExecutionActive(payload.execution_id)
       }
       error.value = null
 
@@ -738,12 +753,12 @@ export function useAgentEvents(
     const unlistenChunk = await listen<AgentChunkEvent>('agent:chunk', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
+      if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
       if (!isExecuting.value) {
         console.log('[useAgentEvents] Auto-recovering execution state from chunk event')
-        isExecuting.value = true
-        currentExecutionId.value = payload.execution_id
+        markExecutionActive(payload.execution_id)
       }
       error.value = null
 
@@ -847,12 +862,12 @@ export function useAgentEvents(
     const unlistenToolCall = await listen<AgentToolCallEvent>('agent:tool_call', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
+      if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
       if (!isExecuting.value) {
         console.log('[useAgentEvents] Auto-recovering execution state from tool_call event')
-        isExecuting.value = true
-        currentExecutionId.value = payload.execution_id
+        markExecutionActive(payload.execution_id)
       }
 
       // Close current assistant segment so later assistant text won't appear above this tool call
@@ -884,12 +899,12 @@ export function useAgentEvents(
     const unlistenToolCallComplete = await listen<AgentToolCallCompleteEvent>('agent:tool_call_complete', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
+      if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
       if (!isExecuting.value) {
         console.log('[useAgentEvents] Auto-recovering execution state from tool_call_complete event')
-        isExecuting.value = true
-        currentExecutionId.value = payload.execution_id
+        markExecutionActive(payload.execution_id)
       }
 
       // 解析参数 JSON
@@ -941,12 +956,12 @@ export function useAgentEvents(
     const unlistenToolResult = await listen<AgentToolResultEvent>('agent:tool_result', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
+      if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
       if (!isExecuting.value) {
         console.log('[useAgentEvents] Auto-recovering execution state from tool_result event')
-        isExecuting.value = true
-        currentExecutionId.value = payload.execution_id
+        markExecutionActive(payload.execution_id)
       }
 
       // 检查是否是新格式（有 tool_call_id 而没有 tool_name）
@@ -1280,6 +1295,11 @@ export function useAgentEvents(
       currentAssistantMessageId.value = null
       assistantSegmentBuffer.value = ''
 
+      // The assistant response is visible at this point. Backend cleanup/final review may
+      // still finish later, but the chat turn should no longer show a thinking indicator.
+      markExecutionSettled(payload.execution_id)
+      resetExecutionBuffers()
+
       // 清空缓冲区，避免 agent:complete 事件重复添加
       contentBuffer.value = ''
       streamingContent.value = ''
@@ -1527,17 +1547,16 @@ export function useAgentEvents(
     const unlistenOldChunk = await listen<OrderedMessageChunk>('message_chunk', (event) => {
       const chunk = event.payload
       if (!matchesTarget(chunk.execution_id)) return
+      if (isSettledActivityEvent(chunk.execution_id)) return
 
       if (!isExecuting.value) {
-        isExecuting.value = true
-        currentExecutionId.value = chunk.execution_id
+        markExecutionActive(chunk.execution_id)
       }
 
       const chunkType = chunk.chunk_type
 
       if (chunkType === 'Meta' && chunk.stage === 'start') {
-        isExecuting.value = true
-        currentExecutionId.value = chunk.execution_id
+        markExecutionActive(chunk.execution_id)
         error.value = null
         return
       }

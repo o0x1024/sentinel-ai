@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ProxyRepeater from './ProxyRepeater.vue'
-import type { RawReplayCommandResult } from './http/response'
+import { buildHttpReplayResponseFromCommandResult, type RawReplayCommandResult } from './http/response'
 import {
   AppDialogStub,
   createHttpMessageSurfaceStub,
@@ -41,11 +41,68 @@ describe('ProxyRepeater', () => {
     global.testUtils.mockInvoke.mockReset()
     window.localStorage.clear()
     useTrafficWorkbenchStore().drafts.resetDraftStore()
+    useTrafficWorkbenchStore().replay.resetReplayStore()
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('clears all repeater tabs and drafts from the new toolbar action', async () => {
+    const workbenchState = useTrafficWorkbenchStore()
+    const wrapper = mount(ProxyRepeater, {
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await flushPromises()
+
+    expect(workbenchState.drafts.drafts.value).toHaveLength(1)
+
+    await wrapper.get('[data-testid="repeater-clear-all-tabs"]').trigger('click')
+    await flushPromises()
+
+    expect(workbenchState.drafts.drafts.value).toHaveLength(0)
+    expect(wrapper.find('button.btn-primary.btn-sm').exists()).toBe(false)
+  })
+
+  it('deletes other tabs from the tab context menu while keeping the targeted tab', async () => {
+    const workbenchState = useTrafficWorkbenchStore()
+    const wrapper = mount(ProxyRepeater, {
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: false,
+        },
+      }),
+      attachTo: document.body,
+    })
+
+    await flushPromises()
+    await wrapper.get('[title="trafficAnalysis.repeater.contextMenu.newTab"]').trigger('click')
+    await flushPromises()
+
+    expect(workbenchState.drafts.drafts.value).toHaveLength(2)
+
+    await wrapper.get('[data-testid="repeater-tab-0"]').trigger('contextmenu', { clientX: 32, clientY: 40 })
+    await wrapper.get('[data-testid="traffic-context-deleteOthers"]').trigger('click')
+    await flushPromises()
+
+    expect(workbenchState.drafts.drafts.value).toHaveLength(1)
+    expect(wrapper.findAll('[data-testid^="repeater-tab-"]')).toHaveLength(1)
   })
 
   it('clears the response content while keeping the response search input mounted during a new request', async () => {
@@ -237,6 +294,58 @@ describe('ProxyRepeater', () => {
     wrapper.unmount()
   })
 
+  it('shows preview variant switches beside request and response titles and emits variant changes', async () => {
+    const wrapper = mount(ProxyRepeater, {
+      props: {
+        initialRequest: createInitialHttpExchangeRequest(),
+        activeRequestContext: {
+          sourceKind: 'history',
+          sourceLabel: '历史记录',
+          requestId: 1,
+          sourceRequestId: 1,
+          method: 'GET',
+          host: 'example.com',
+          path: '/api/test',
+          statusCode: 200,
+          variant: 'edited',
+          hasEditedVariant: true,
+          hasEditedResponseVariant: true,
+          mode: 'preview',
+          modeLabel: '预览',
+        },
+      },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="preview-request-variant-switch"]').text()).toContain('修改后')
+    expect(wrapper.get('[data-testid="preview-response-variant-switch"]').text()).toContain('修改后')
+
+    await wrapper.get('[data-testid="preview-request-variant-switch"]').trigger('click')
+    await flushPromises()
+
+    const requestOriginalLink = Array.from(document.body.querySelectorAll('a'))
+      .find(node => node.textContent?.includes('trafficAnalysis.history.detailsPanel.originalRequest'))
+    expect(requestOriginalLink).toBeTruthy()
+
+    requestOriginalLink!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await flushPromises()
+
+    expect(wrapper.emitted('switchPreviewVariant')?.[0]).toEqual(['original'])
+
+    wrapper.unmount()
+  })
+
   it('opens all persisted drafts and focuses the active draft when mounted after workbench hydration', async () => {
     const workbenchState = useTrafficWorkbenchStore()
     const draft = workbenchState.drafts.createDraftFromExchangeRequest({
@@ -276,6 +385,49 @@ describe('ProxyRepeater', () => {
     expect(wrapper.get('[data-testid="request-content"]').text()).toContain('GET /api/test HTTP/1.1')
     expect(wrapper.get('[data-testid="request-content"]').text()).toContain('Host: example.com')
     expect(wrapper.emitted('tabStatsChanged')?.at(-1)?.[0]).toEqual({ editedTabCount: 2 })
+
+    wrapper.unmount()
+  })
+
+  it('restores persisted response bodies when replay runs hydrate after draft tabs', async () => {
+    const workbenchState = useTrafficWorkbenchStore()
+    const draft = workbenchState.drafts.createDraftFromExchangeRequest({
+      request: createInitialHttpExchangeRequest(),
+      source: { kind: 'repeater', label: '重放器' },
+      title: 'persisted draft',
+    })
+
+    const wrapper = mount(ProxyRepeater, {
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await flushPromises()
+    expect(wrapper.find('[data-testid="response-content"]').exists()).toBe(false)
+
+    workbenchState.replay.replaceState([{
+      id: 'run-1',
+      draftId: draft.id,
+      draftRevisionId: draft.activeRevisionId,
+      state: 'done',
+      response: buildHttpReplayResponseFromCommandResult(
+        createReplayResult('restored body', 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nrestored body'),
+      ),
+      error: null,
+      createdAt: 1,
+      updatedAt: 2,
+    }])
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="response-content"]').text()).toContain('restored body')
 
     wrapper.unmount()
   })

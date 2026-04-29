@@ -48,6 +48,7 @@ pub struct AddCustomProviderRequest {
     pub model_id: String,
     pub compat_mode: String,
     pub extra_headers: Option<HashMap<String, String>>,
+    pub extra_body: Option<serde_json::Value>,
     pub timeout: Option<u64>,
     pub max_retries: Option<u32>,
 }
@@ -77,6 +78,8 @@ pub struct AiProviderConfig {
     pub models: Vec<serde_json::Value>,
     pub rig_provider: Option<String>,
     pub max_context_length: Option<u32>,
+    pub extra_headers: Option<HashMap<String, String>>,
+    pub extra_body: Option<serde_json::Value>,
 }
 
 const DERIVED_MODEL_CONFIG_KEYS: [&str; 3] = [
@@ -490,6 +493,8 @@ pub async fn add_custom_provider(
         models: vec![model_config],
         rig_provider: Some(request.compat_mode.clone()),
         max_context_length: Some(128000), // Default context length
+        extra_headers: request.extra_headers.clone(),
+        extra_body: request.extra_body.clone(),
     };
 
     providers.insert(provider_id.clone(), new_provider);

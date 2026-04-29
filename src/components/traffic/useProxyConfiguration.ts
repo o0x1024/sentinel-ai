@@ -824,10 +824,14 @@ export function useProxyConfiguration({
   const saveConfiguration = async () => {
     try {
       isSaving.value = true
-      console.log('[ProxyConfiguration] Saving configuration...', proxyConfig.value)
+      const configToSave = {
+        ...proxyConfig.value,
+        match_replace_rules: matchReplaceRules.value.map(rule => ({ ...rule })),
+      }
+      console.log('[ProxyConfiguration] Saving configuration...', configToSave)
 
       const response = await invoke<CommandResponse>('save_proxy_config', {
-        config: proxyConfig.value,
+        config: configToSave,
       })
       if (!response.success) {
         throw new Error(response.error || '保存失败')
@@ -862,6 +866,8 @@ export function useProxyConfiguration({
 
   const resetToDefaults = () => {
     proxyConfig.value = createDefaultProxyConfig()
+    matchReplaceRules.value = createDefaultMatchReplaceRules()
+    selectedMatchReplaceIndex.value = -1
     requestBodySizeMB.value = 2
     responseBodySizeMB.value = 2
     upstreamProxy.value = null
@@ -1294,6 +1300,12 @@ export function useProxyConfiguration({
           scope_include_rules: normalizeScopeRules(configResponse.data.scope_include_rules),
           scope_exclude_rules: normalizeScopeRules(configResponse.data.scope_exclude_rules),
         }
+        matchReplaceRules.value = Array.isArray(configResponse.data.match_replace_rules)
+          ? configResponse.data.match_replace_rules.map(rule => ({
+              ...rule,
+            }))
+          : createDefaultMatchReplaceRules()
+        selectedMatchReplaceIndex.value = -1
         requestBodySizeMB.value = Math.round(configResponse.data.max_request_body_size / (1024 * 1024))
         responseBodySizeMB.value = Math.round(configResponse.data.max_response_body_size / (1024 * 1024))
         proxyListeners.value[0].interface = `127.0.0.1:${configResponse.data.start_port}`
@@ -1632,6 +1644,12 @@ export function useProxyConfiguration({
     if (isInitialLoad.value) return
     console.log('[ProxyConfiguration] Response rules changed, syncing to backend')
     syncFilterRulesToBackend()
+  }, { deep: true })
+
+  watch(matchReplaceRules, () => {
+    if (isInitialLoad.value) return
+    console.log('[ProxyConfiguration] Match-replace rules changed, triggering auto-save')
+    debouncedSave()
   }, { deep: true })
 
   watch(trafficOastConfig, () => {

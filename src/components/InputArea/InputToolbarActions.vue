@@ -6,9 +6,6 @@
     <button class="icon-btn" title="Agent 配置" @click="emit('open-tool-config')">
       <i class="fas fa-sliders-h"></i>
     </button>
-    <button class="icon-btn" :class="{ active: teamEnabled }" title="Team 模式" @click="emit('toggle-team')">
-      <i class="fas fa-users"></i>
-    </button>
     <button
       class="icon-btn"
       :class="{ active: ragEnabled }"
@@ -37,7 +34,6 @@
 <script setup lang="ts">
 defineProps<{
   ragEnabled: boolean
-  teamEnabled: boolean
   webSearchEnabled: boolean
 }>()
 
@@ -45,7 +41,6 @@ const emit = defineEmits<{
   (e: 'trigger-file-select'): void
   (e: 'open-tool-config'): void
   (e: 'toggle-rag'): void
-  (e: 'toggle-team'): void
   (e: 'toggle-web-search'): void
   (e: 'open-slash-manager'): void
   (e: 'clear-conversation'): void

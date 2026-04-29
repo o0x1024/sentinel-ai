@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// AI 服务配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +20,12 @@ pub struct AiConfig {
     /// 最大对话轮数（工具调用循环次数）
     #[serde(default)]
     pub max_turns: Option<usize>,
+    /// 额外 HTTP 请求头
+    #[serde(default)]
+    pub extra_headers: Option<HashMap<String, String>>,
+    /// 额外请求体字段
+    #[serde(default)]
+    pub extra_body: Option<Value>,
 }
 
 impl Default for AiConfig {
@@ -33,6 +40,8 @@ impl Default for AiConfig {
             max_tokens: Some(4096),
             rig_provider: None,
             max_turns: Some(100),
+            extra_headers: None,
+            extra_body: None,
         }
     }
 }

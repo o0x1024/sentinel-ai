@@ -10,7 +10,8 @@ use crate::commands::monitor_config_support::infer_monitor_type_for_plugin;
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::services::{
     ensure_plugin_allowed_for_current_tier, ensure_plugin_catalog_write_access,
-    ensure_plugin_delete_access, filter_plugins_for_current_tier,
+    ensure_plugin_delete_access, filter_plugins_for_current_tier, load_plugin_default_inputs,
+    merge_plugin_input_defaults, save_plugin_default_inputs,
 };
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
@@ -52,6 +53,7 @@ pub(crate) async fn refresh_active_agent_plugin_tools(
                 "properties": {}
             })
         };
+        let default_input = load_plugin_default_inputs(db, &plugin_id).await?;
 
         plugin_metas.push(sentinel_tools::plugin_adapter::PluginToolMeta {
             plugin_id,
@@ -63,6 +65,7 @@ pub(crate) async fn refresh_active_agent_plugin_tools(
                 .unwrap_or("Agent plugin tool")
                 .to_string(),
             input_schema,
+            default_input,
             code,
             category: Some(plugin.metadata.category.clone()),
         });
@@ -406,6 +409,48 @@ pub async fn list_plugins(
         plugin.metadata.id.as_str()
     });
     Ok(CommandResponse::ok(plugins))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_plugin_default_input_config(
+    state: State<'_, TrafficAnalysisState>,
+    plugin_id: String,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    ensure_plugin_allowed_for_current_tier(&plugin_id)?;
+
+    let db = state.get_db_service();
+    let resolved_plugin_id = resolve_plugin_registry_id(db.as_ref(), &plugin_id)
+        .await?
+        .unwrap_or_else(|| plugin_id.clone());
+    let config = load_plugin_default_inputs(db.as_ref(), &resolved_plugin_id).await?;
+
+    Ok(CommandResponse::ok(config))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPluginDefaultInputConfigPayload {
+    pub plugin_id: String,
+    pub config: serde_json::Value,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn set_plugin_default_input_config(
+    state: State<'_, TrafficAnalysisState>,
+    payload: SetPluginDefaultInputConfigPayload,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    ensure_plugin_allowed_for_current_tier(&payload.plugin_id)?;
+
+    let db = state.get_db_service();
+    let resolved_plugin_id = resolve_plugin_registry_id(db.as_ref(), &payload.plugin_id)
+        .await?
+        .unwrap_or_else(|| payload.plugin_id.clone());
+    let saved =
+        save_plugin_default_inputs(db.as_ref(), &resolved_plugin_id, &payload.config).await?;
+
+    refresh_active_agent_plugin_tools(db.as_ref()).await?;
+
+    Ok(CommandResponse::ok(saved))
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1451,7 +1496,13 @@ pub async fn test_agent_plugin(
         severity,
     );
 
-    let result = crate::services::test_plugin_code(metadata, code, inputs)
+    let default_input = load_plugin_default_inputs(db.as_ref(), &plugin_id).await?;
+    let resolved_inputs = match inputs {
+        Some(value) => Some(merge_plugin_input_defaults(&default_input, &value)),
+        None => Some(default_input),
+    };
+
+    let result = crate::services::test_plugin_code(metadata, code, resolved_inputs)
         .await
         .map_err(|e| format!("Plugin test failed: {}", e))?;
 

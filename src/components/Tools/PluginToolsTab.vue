@@ -140,7 +140,6 @@
               <th class="w-1/12">启用</th>
               <th>名称</th>
               <th>版本</th>
-              <th>作者</th>
               <th>描述</th>
               <th>状态</th>
               <th>操作</th>
@@ -164,7 +163,6 @@
                 </div>
               </td>
               <td><span class="badge badge-ghost badge-sm">v{{ plugin.metadata.version }}</span></td>
-              <td><span class="badge badge-outline badge-xs">{{ plugin.metadata.author }}</span></td>
               <td class="text-sm">{{ plugin.metadata.description }}</td>
               <td>
                 <div class="flex flex-col gap-1">

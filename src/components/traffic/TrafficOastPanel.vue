@@ -1,22 +1,22 @@
 <template>
   <div class="flex h-full min-h-0 flex-col bg-base-100">
-    <div class="flex flex-wrap items-center gap-3 border-b border-base-300 bg-base-200 px-4 py-3">
+    <div class="flex flex-wrap items-center gap-2 border-b border-base-300 bg-base-200 px-3 py-2">
       <div class="min-w-0 flex-1">
         <h2 class="text-sm font-semibold">{{ $t('trafficAnalysis.oast.title') }}</h2>
         <p class="text-xs text-base-content/60">
           {{ $t('trafficAnalysis.oast.description') }}
         </p>
       </div>
-      <button class="btn btn-sm btn-primary" type="button" :disabled="creatingToken" @click="createToken">
+      <button class="btn btn-xs btn-primary min-h-8 px-2.5" type="button" :disabled="creatingToken" @click="createToken">
         <i :class="creatingToken ? 'fas fa-spinner fa-spin' : 'fas fa-plus'"></i>
         <span>{{ $t('trafficAnalysis.oast.createToken') }}</span>
       </button>
-      <button class="btn btn-sm btn-outline" type="button" :disabled="syncing" @click="syncRecords">
+      <button class="btn btn-xs btn-outline min-h-8 px-2.5" type="button" :disabled="syncing" @click="syncRecords">
         <i :class="syncing ? 'fas fa-spinner fa-spin' : 'fas fa-rotate'"></i>
         <span>{{ $t('trafficAnalysis.oast.sync') }}</span>
       </button>
       <button
-        class="btn btn-sm btn-outline"
+        class="btn btn-xs btn-outline min-h-8 px-2.5"
         type="button"
         :disabled="exporting || filteredRecords.length === 0"
         @click="exportRecords"
@@ -24,7 +24,7 @@
         <i :class="exporting ? 'fas fa-spinner fa-spin' : 'fas fa-file-export'"></i>
         <span>{{ $t('trafficAnalysis.oast.export') }}</span>
       </button>
-      <button class="btn btn-sm btn-ghost" type="button" @click="$emit('openConfig')">
+      <button class="btn btn-xs btn-ghost min-h-8 px-2.5" type="button" @click="$emit('openConfig')">
         <i class="fas fa-cog"></i>
         <span>{{ $t('trafficAnalysis.oast.openConfig') }}</span>
       </button>
@@ -44,15 +44,15 @@
       </div>
     </div>
 
-    <div v-else class="min-h-0 flex-1 overflow-auto p-4">
-      <div v-if="records.length === 0" class="rounded-2xl border border-dashed border-base-300 p-8 text-center">
+    <div v-else class="min-h-0 flex-1 overflow-auto p-3">
+      <div v-if="records.length === 0" class="rounded-[18px] border border-dashed border-base-300 p-6 text-center">
         <i class="fas fa-satellite-dish text-3xl text-base-content/30"></i>
         <p class="mt-3 text-sm font-medium">{{ $t('trafficAnalysis.oast.emptyTitle') }}</p>
         <p class="mt-1 text-xs text-base-content/60">{{ $t('trafficAnalysis.oast.emptyDesc') }}</p>
       </div>
 
-      <div v-else class="space-y-4">
-        <div class="flex flex-wrap items-center gap-3 rounded-2xl border border-base-300 bg-base-200/40 px-4 py-3">
+      <div v-else class="space-y-3">
+        <div class="flex flex-wrap items-center gap-2 rounded-[18px] border border-base-300 bg-base-200/40 px-3 py-2">
           <label class="min-w-0 flex-1">
             <span class="sr-only">{{ $t('trafficAnalysis.oast.searchPlaceholder') }}</span>
             <input
@@ -74,7 +74,7 @@
           <div class="join">
             <button
               type="button"
-              class="btn btn-sm join-item"
+              class="btn btn-xs join-item min-h-8"
               :class="hitFilter === 'all' ? 'btn-primary' : 'btn-outline'"
               @click="hitFilter = 'all'"
             >
@@ -82,7 +82,7 @@
             </button>
             <button
               type="button"
-              class="btn btn-sm join-item"
+              class="btn btn-xs join-item min-h-8"
               :class="hitFilter === 'hit' ? 'btn-primary' : 'btn-outline'"
               @click="hitFilter = 'hit'"
             >
@@ -90,7 +90,7 @@
             </button>
             <button
               type="button"
-              class="btn btn-sm join-item"
+              class="btn btn-xs join-item min-h-8"
               :class="hitFilter === 'pending' ? 'btn-primary' : 'btn-outline'"
               @click="hitFilter = 'pending'"
             >
@@ -99,7 +99,7 @@
           </div>
           <button
             type="button"
-            class="btn btn-sm btn-outline"
+            class="btn btn-xs btn-outline min-h-8 px-2.5"
             @click="eventSortOrder = eventSortOrder === 'desc' ? 'asc' : 'desc'"
           >
             <i :class="eventSortOrder === 'desc' ? 'fas fa-arrow-down-wide-short' : 'fas fa-arrow-up-short-wide'"></i>
@@ -110,7 +110,7 @@
           </span>
         </div>
 
-        <div v-if="filteredRecords.length === 0" class="rounded-2xl border border-dashed border-base-300 p-8 text-center">
+        <div v-if="filteredRecords.length === 0" class="rounded-[18px] border border-dashed border-base-300 p-6 text-center">
           <i class="fas fa-filter text-3xl text-base-content/30"></i>
           <p class="mt-3 text-sm font-medium">{{ $t('trafficAnalysis.oast.noFilteredResultsTitle') }}</p>
           <p class="mt-1 text-xs text-base-content/60">{{ $t('trafficAnalysis.oast.noFilteredResultsDesc') }}</p>
@@ -119,9 +119,9 @@
         <article
           v-for="record in filteredRecords"
           :key="record.token"
-          class="rounded-2xl border border-base-300 bg-base-100 shadow-sm"
+          class="rounded-[18px] border border-base-300 bg-base-100 shadow-sm"
         >
-          <div class="flex flex-wrap items-start gap-3 border-b border-base-300 bg-base-200/70 px-4 py-3">
+          <div class="flex flex-wrap items-start gap-2 border-b border-base-300 bg-base-200/70 px-3 py-2">
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-2">
                 <h3 class="truncate text-sm font-semibold">{{ record.label || record.token }}</h3>
@@ -173,9 +173,9 @@
             </div>
           </div>
 
-          <div class="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+          <div class="grid gap-3 px-3 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
             <section class="space-y-2 text-xs">
-              <div class="rounded-xl border border-base-300 bg-base-200/40 p-3">
+              <div class="rounded-[14px] border border-base-300 bg-base-200/40 p-2.5">
                 <div class="font-semibold">{{ $t('trafficAnalysis.oast.payloads') }}</div>
                 <div class="mt-2 space-y-2">
                   <div>
@@ -190,7 +190,7 @@
               </div>
             </section>
 
-            <section class="space-y-3">
+            <section class="space-y-2.5">
               <div class="flex items-center justify-between">
                 <div>
                   <h4 class="text-sm font-medium">{{ $t('trafficAnalysis.oast.events') }}</h4>
@@ -241,15 +241,15 @@
                 </div>
               </div>
 
-              <div v-if="buildFilteredEvents(record).length === 0" class="rounded-xl border border-dashed border-base-300 p-4 text-xs text-base-content/50">
+              <div v-if="buildFilteredEvents(record).length === 0" class="rounded-[14px] border border-dashed border-base-300 p-3 text-xs text-base-content/50">
                 {{ $t('trafficAnalysis.oast.noEvents') }}
               </div>
 
-              <div v-else class="space-y-2">
+              <div v-else class="space-y-1.5">
                 <div
                   v-for="event in buildFilteredEvents(record)"
                   :key="`${record.token}-${event.time}-${event.url}`"
-                  class="rounded-xl border border-base-300 bg-base-200/30 p-3 text-xs"
+                  class="rounded-[14px] border border-base-300 bg-base-200/30 p-2.5 text-xs"
                 >
                   <div class="flex flex-wrap items-center justify-between gap-2">
                     <div class="flex flex-wrap items-center gap-2">
@@ -314,6 +314,7 @@ import type {
 } from './proxyConfigurationTypes'
 import { createDefaultTrafficOastConfig } from './proxyConfigurationTypes'
 import type { ProxyRequest } from './proxyHistoryTypes'
+import { setTrafficOastRecordCountFromRecords } from './trafficOastRecordCount'
 
 const { t } = useI18n()
 
@@ -426,6 +427,7 @@ function pruneSelectedEventKeys(items: TrafficOastRecord[]) {
 
 function applyRecords(items: TrafficOastRecord[]) {
   records.value = sortRecords(items)
+  setTrafficOastRecordCountFromRecords(records.value)
   pruneSelectedEventKeys(records.value)
 }
 

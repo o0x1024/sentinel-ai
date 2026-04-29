@@ -1,5 +1,6 @@
 import { parseStoredHeaderEntries } from './http/headers'
 import type { ProxyHistoryViewMode, ProxyRequest } from './proxyHistoryTypes'
+import { hasEditedRequest } from './proxyHistoryFormattingSupport'
 
 export type TrafficContextEvidenceSource = 'query' | 'body' | 'header' | 'cookie' | 'path' | 'unknown'
 
@@ -91,21 +92,21 @@ export function findTrafficContextEvidenceSelectionRangeBySearchTerms(
 }
 
 function getEffectiveRequestUrl(request: ProxyRequest, viewMode: ProxyHistoryViewMode): string {
-  if (viewMode === 'edited' && request.was_edited && request.edited_url) {
+  if (viewMode === 'edited' && hasEditedRequest(request) && request.edited_url) {
     return request.edited_url
   }
   return request.url
 }
 
 function getEffectiveRequestHeaders(request: ProxyRequest, viewMode: ProxyHistoryViewMode): string {
-  if (viewMode === 'edited' && request.was_edited && request.edited_request_headers) {
+  if (viewMode === 'edited' && hasEditedRequest(request) && request.edited_request_headers) {
     return request.edited_request_headers
   }
   return request.request_headers || ''
 }
 
 function getEffectiveRequestBody(request: ProxyRequest, viewMode: ProxyHistoryViewMode): string {
-  if (viewMode === 'edited' && request.was_edited && request.edited_request_body) {
+  if (viewMode === 'edited' && hasEditedRequest(request) && request.edited_request_body) {
     return request.edited_request_body
   }
   return request.request_body || ''

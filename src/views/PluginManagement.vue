@@ -160,6 +160,7 @@
           @toggle-selection="toggleRegularPluginSelection"
           @toggle-favorite="togglePluginFavorite"
           @test-plugin="testPlugin"
+          @configure-defaults="openDefaultConfigDialog"
           @advanced-test="openAdvancedDialog"
           @toggle-plugin="togglePlugin"
           @view-code="viewPluginCode"
@@ -193,6 +194,7 @@
       :advanced-error="advancedError"
       :advanced-result="advancedResult"
       :advanced-form="advancedForm"
+      :advanced-input-schema="advancedInputSchema"
       :is-advanced-agent="isAdvancedAgent"
       :sorted-runs="sortedRuns"
       @copy-review-code="copyReviewCode"
@@ -218,6 +220,19 @@
       @close-advanced-dialog="closeAdvancedDialog"
       @refer-test-result-to-ai="referTestResultToAi"
     />
+
+    <PluginDefaultConfigDialog
+      :open="defaultConfigDialogOpen"
+      :plugin="defaultConfigPlugin"
+      :model-value="defaultConfigText"
+      :schema="defaultConfigSchema"
+      :loading="defaultConfigLoading"
+      :saving="defaultConfigSaving"
+      :error="defaultConfigError"
+      @update:model-value="defaultConfigText = $event"
+      @close="closeDefaultConfigDialog"
+      @save="submitDefaultConfigDialog"
+    />
   </div>
 </template>
 
@@ -236,6 +251,7 @@ import PluginListSection from '@/components/PluginManagement/PluginListSection.v
 import PluginReviewSection from '@/components/PluginManagement/PluginReviewSection.vue'
 import PluginStoreSection from '@/components/PluginManagement/PluginStoreSection.vue'
 import PluginDialogs from '@/components/PluginManagement/PluginDialogs.vue'
+import PluginDefaultConfigDialog from '@/components/PluginManagement/PluginDefaultConfigDialog.vue'
 import {
   buildAiValidationReport,
   combineAiValidationResults,
@@ -251,6 +267,10 @@ import {
   getFeatureEntitlements,
   useFeatureEntitlementsState,
 } from '@/services/featureEntitlements'
+import {
+  buildResolvedPluginDefaultConfig,
+  savePluginDefaultConfig,
+} from '@/services/pluginDefaultConfig'
 import type {
   PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult,
   CommandResponse, BatchToggleResult, NewPluginMetadata, AdvancedForm
@@ -349,6 +369,14 @@ const advancedForm = ref<AdvancedForm>({
   headersText: '{"User-Agent":"Sentinel-AdvTest/1.0"}', bodyText: '',
   agent_inputs_text: '{}', runs: 1, concurrency: 1
 })
+const advancedInputSchema = ref<any>({ type: 'object', properties: {} })
+const defaultConfigDialogOpen = ref(false)
+const defaultConfigPlugin = ref<PluginRecord | null>(null)
+const defaultConfigSchema = ref<any>({ type: 'object', properties: {} })
+const defaultConfigText = ref('{}')
+const defaultConfigLoading = ref(false)
+const defaultConfigSaving = ref(false)
+const defaultConfigError = ref('')
 
 let pluginChangedUnlisten: UnlistenFn | null = null
 
@@ -1509,11 +1537,75 @@ const closeTestResultDialog = () => {
   testResult.value = null
 }
 
+const openDefaultConfigDialog = async (plugin: PluginRecord) => {
+  defaultConfigDialogOpen.value = true
+  defaultConfigPlugin.value = plugin
+  defaultConfigLoading.value = true
+  defaultConfigSaving.value = false
+  defaultConfigError.value = ''
+  defaultConfigSchema.value = { type: 'object', properties: {} }
+  defaultConfigText.value = '{}'
+
+  try {
+    const schemaResp = await invoke<CommandResponse<any>>('get_plugin_input_schema', {
+      pluginId: plugin.metadata.id,
+    })
+    const schema = schemaResp.success && schemaResp.data
+      ? schemaResp.data
+      : { type: 'object', properties: {} }
+
+    defaultConfigSchema.value = schema
+    const resolvedConfig = await buildResolvedPluginDefaultConfig(plugin.metadata.id, schema)
+    defaultConfigText.value = JSON.stringify(resolvedConfig, null, 2)
+  } catch (error) {
+    defaultConfigError.value = error instanceof Error ? error.message : '加载插件默认配置失败'
+  } finally {
+    defaultConfigLoading.value = false
+  }
+}
+
+const closeDefaultConfigDialog = () => {
+  defaultConfigDialogOpen.value = false
+  defaultConfigPlugin.value = null
+  defaultConfigSchema.value = { type: 'object', properties: {} }
+  defaultConfigText.value = '{}'
+  defaultConfigError.value = ''
+}
+
+const submitDefaultConfigDialog = async () => {
+  if (!defaultConfigPlugin.value) return
+
+  let parsed: Record<string, any>
+  try {
+    const raw = defaultConfigText.value.trim()
+    parsed = raw ? JSON.parse(raw) : {}
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('插件默认配置必须是 JSON 对象')
+    }
+  } catch (error) {
+    defaultConfigError.value = error instanceof Error ? error.message : '默认配置 JSON 格式错误'
+    return
+  }
+
+  defaultConfigSaving.value = true
+  defaultConfigError.value = ''
+  try {
+    const saved = await savePluginDefaultConfig(defaultConfigPlugin.value.metadata.id, parsed)
+    defaultConfigText.value = JSON.stringify(saved, null, 2)
+    closeDefaultConfigDialog()
+  } catch (error) {
+    defaultConfigError.value = error instanceof Error ? error.message : '保存插件默认配置失败'
+  } finally {
+    defaultConfigSaving.value = false
+  }
+}
+
 // Advanced Test methods
 const openAdvancedDialog = async (plugin: PluginRecord) => {
   advancedPlugin.value = plugin
   advancedError.value = ''
   advancedResult.value = null
+  advancedInputSchema.value = { type: 'object', properties: {} }
   
   const isAgent = ['agent', 'intruder'].includes(plugin.metadata.main_category)
   if (isAgent) {
@@ -1522,8 +1614,9 @@ const openAdvancedDialog = async (plugin: PluginRecord) => {
         pluginId: plugin.metadata.id
       })
       if (schemaResp.success && schemaResp.data) {
-        const skeleton = buildSkeletonFromSchema(schemaResp.data)
-        advancedForm.value.agent_inputs_text = JSON.stringify(skeleton, null, 2)
+        advancedInputSchema.value = schemaResp.data
+        const resolvedConfig = await buildResolvedPluginDefaultConfig(plugin.metadata.id, schemaResp.data)
+        advancedForm.value.agent_inputs_text = JSON.stringify(resolvedConfig, null, 2)
       } else {
         advancedForm.value.agent_inputs_text = '{}'
       }
@@ -1540,28 +1633,7 @@ const closeAdvancedDialog = () => {
   advancedPlugin.value = null
   advancedError.value = ''
   advancedResult.value = null
-}
-
-const buildSkeletonFromSchema = (schema: any): any => {
-  const t = String(schema?.type || '').toLowerCase()
-  if (t === 'object' || (!t && schema?.properties)) {
-    const props = schema?.properties || {}
-    const result: Record<string, any> = {}
-    for (const key of Object.keys(props)) {
-      const propSchema = props[key]
-      if (propSchema?.default !== undefined) {
-        result[key] = propSchema.default
-      } else {
-        result[key] = buildSkeletonFromSchema(propSchema)
-      }
-    }
-    return result
-  }
-  if (t === 'array') return schema?.items ? [buildSkeletonFromSchema(schema.items)] : []
-  if (t === 'string') return ''
-  if (t === 'number' || t === 'integer') return 0
-  if (t === 'boolean') return false
-  return {}
+  advancedInputSchema.value = { type: 'object', properties: {} }
 }
 
 const runAdvancedTest = async () => {

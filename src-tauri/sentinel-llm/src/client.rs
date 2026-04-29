@@ -81,8 +81,19 @@ impl LlmClient {
 
     fn apply_generation_settings<M>(
         &self,
+        builder: rig::agent::AgentBuilder<M>,
+    ) -> Result<rig::agent::AgentBuilder<M>>
+    where
+        M: rig::completion::CompletionModel,
+    {
+        self.apply_generation_settings_with_params(builder, None)
+    }
+
+    fn apply_generation_settings_with_params<M>(
+        &self,
         mut builder: rig::agent::AgentBuilder<M>,
-    ) -> rig::agent::AgentBuilder<M>
+        base_params: Option<serde_json::Value>,
+    ) -> Result<rig::agent::AgentBuilder<M>>
     where
         M: rig::completion::CompletionModel,
     {
@@ -92,7 +103,7 @@ impl LlmClient {
         if let Some(max_tokens) = self.config.max_tokens {
             builder = builder.max_tokens(max_tokens as u64);
         }
-        builder
+        self.config.apply_extra_body(builder, base_params)
     }
 
     /// 简单调用 LLM，返回完整响应
@@ -284,6 +295,7 @@ impl LlmClient {
 
         let mut builder =
             deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        builder = self.config.apply_extra_headers(builder)?;
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -294,7 +306,7 @@ impl LlmClient {
             .map_err(|e| anyhow::anyhow!("Failed to build generic client: {}", e))?;
 
         let builder = client.agent(model).preamble(preamble);
-        let agent = self.apply_generation_settings(builder).build();
+        let agent = self.apply_generation_settings(builder)?.build();
         self.execute_chat(agent, user_message, chat_history, timeout)
             .await
     }
@@ -319,26 +331,27 @@ impl LlmClient {
                 "Using Chat Completions API with custom base URL: {}",
                 base_url
             );
-            let client: openai::CompletionsClient = openai::Client::builder()
+            let builder = openai::Client::builder()
                 .api_key(api_key)
-                .base_url(base_url)
+                .base_url(base_url);
+            let client: openai::CompletionsClient = self.config.apply_extra_headers(builder)?
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
                 .completions_api();
 
             let builder = client.agent(model).preamble(preamble);
-            let agent = self.apply_generation_settings(builder).build();
+            let agent = self.apply_generation_settings(builder)?.build();
             self.execute_chat(agent, user_message, chat_history, timeout)
                 .await
         } else {
             info!("Using Responses API for official OpenAI");
-            let client: openai::Client = openai::Client::builder()
-                .api_key(api_key)
+            let builder = openai::Client::builder().api_key(api_key);
+            let client: openai::Client = self.config.apply_extra_headers(builder)?
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?;
 
             let builder = client.agent(model).preamble(preamble);
-            let agent = self.apply_generation_settings(builder).build();
+            let agent = self.apply_generation_settings(builder)?.build();
             self.execute_chat(agent, user_message, chat_history, timeout)
                 .await
         }
@@ -363,6 +376,7 @@ impl LlmClient {
 
         let mut builder =
             moonshot::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        builder = self.config.apply_extra_headers(builder)?;
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -372,11 +386,10 @@ impl LlmClient {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build Moonshot client: {:?}", e))?;
 
-        let mut builder = client.agent(model).preamble(preamble);
-        if let Some(params) = self.moonshot_thinking_params(model) {
-            builder = builder.additional_params(params);
-        }
-        let agent = self.apply_generation_settings(builder).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = self
+            .apply_generation_settings_with_params(builder, self.moonshot_thinking_params(model))?
+            .build();
         self.execute_chat(agent, user_message, chat_history, timeout)
             .await
     }
@@ -396,6 +409,7 @@ impl LlmClient {
 
         let mut builder =
             anthropic::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        builder = self.config.apply_extra_headers(builder)?;
 
         // 检查是否设置了自定义 base_url
         if let Ok(base_url) = std::env::var("ANTHROPIC_API_BASE") {
@@ -413,7 +427,7 @@ impl LlmClient {
             .agent(model)
             .preamble(preamble)
             .max_tokens(self.config.get_max_tokens() as u64);
-        let agent = self.apply_generation_settings(builder).build();
+        let agent = self.apply_generation_settings(builder)?.build();
         self.execute_chat(agent, user_message, chat_history, timeout)
             .await
     }
@@ -430,11 +444,13 @@ impl LlmClient {
         let client = gemini::Client::from_env();
         let gen_cfg = GenerationConfig::default();
         let cfg = AdditionalParameters::default().with_config(gen_cfg);
-        let builder = client
-            .agent(model)
-            .preamble(preamble)
-            .additional_params(serde_json::to_value(cfg).unwrap());
-        let agent = self.apply_generation_settings(builder).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = self
+            .apply_generation_settings_with_params(
+                builder,
+                Some(serde_json::to_value(cfg).unwrap()),
+            )?
+            .build();
         self.execute_chat(agent, user_message, chat_history, timeout)
             .await
     }
@@ -450,7 +466,7 @@ impl LlmClient {
         use rig::providers::ollama;
         let client = ollama::Client::from_env();
         let builder = client.agent(model).preamble(preamble);
-        let agent = self.apply_generation_settings(builder).build();
+        let agent = self.apply_generation_settings(builder)?.build();
         self.execute_chat(agent, user_message, chat_history, timeout)
             .await
     }
@@ -471,6 +487,7 @@ impl LlmClient {
 
         let mut builder =
             deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        builder = self.config.apply_extra_headers(builder)?;
 
         // Use custom base_url if configured
         if let Some(base_url) = &self.config.base_url {
@@ -483,7 +500,7 @@ impl LlmClient {
             .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
 
         let builder = client.agent(model).preamble(preamble);
-        let agent = self.apply_generation_settings(builder).build();
+        let agent = self.apply_generation_settings(builder)?.build();
         self.execute_chat(agent, user_message, chat_history, timeout)
             .await
     }
@@ -497,9 +514,16 @@ impl LlmClient {
         timeout: std::time::Duration,
     ) -> Result<String> {
         use rig::providers::openrouter;
-        let client = openrouter::Client::from_env();
+        let api_key = std::env::var("OPENROUTER_API_KEY")
+            .map_err(|_| anyhow::anyhow!("OPENROUTER_API_KEY not set"))?;
+        let builder = openrouter::Client::builder().api_key(api_key);
+        let client = self
+            .config
+            .apply_extra_headers(builder)?
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build OpenRouter client: {:?}", e))?;
         let builder = client.agent(model).preamble(preamble);
-        let agent = self.apply_generation_settings(builder).build();
+        let agent = self.apply_generation_settings(builder)?.build();
         self.execute_chat(agent, user_message, chat_history, timeout)
             .await
     }
@@ -513,9 +537,16 @@ impl LlmClient {
         timeout: std::time::Duration,
     ) -> Result<String> {
         use rig::providers::xai;
-        let client = xai::Client::from_env();
+        let api_key =
+            std::env::var("XAI_API_KEY").map_err(|_| anyhow::anyhow!("XAI_API_KEY not set"))?;
+        let builder = xai::Client::builder().api_key(api_key);
+        let client = self
+            .config
+            .apply_extra_headers(builder)?
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build xAI client: {:?}", e))?;
         let builder = client.agent(model).preamble(preamble);
-        let agent = self.apply_generation_settings(builder).build();
+        let agent = self.apply_generation_settings(builder)?.build();
         self.execute_chat(agent, user_message, chat_history, timeout)
             .await
     }
@@ -529,9 +560,16 @@ impl LlmClient {
         timeout: std::time::Duration,
     ) -> Result<String> {
         use rig::providers::groq;
-        let client = groq::Client::from_env();
+        let api_key =
+            std::env::var("GROQ_API_KEY").map_err(|_| anyhow::anyhow!("GROQ_API_KEY not set"))?;
+        let builder = groq::Client::builder().api_key(api_key);
+        let client = self
+            .config
+            .apply_extra_headers(builder)?
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build Groq client: {:?}", e))?;
         let builder = client.agent(model).preamble(preamble);
-        let agent = self.apply_generation_settings(builder).build();
+        let agent = self.apply_generation_settings(builder)?.build();
         self.execute_chat(agent, user_message, chat_history, timeout)
             .await
     }

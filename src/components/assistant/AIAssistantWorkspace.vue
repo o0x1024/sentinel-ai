@@ -130,6 +130,7 @@ import UserForcedRulesModal from '@/components/UserForcedRulesModal.vue'
 import TurnLogsModal from '@/components/Agent/TurnLogsModal.vue'
 import { AgentTabs, AgentView } from '@/components/Agent'
 import type { AiTurnLogSummaryEntry } from '@/api/aiLogs'
+import type { ReferencedTraffic, ReferencedAsset } from '@/types/agentReferences'
 import { useRoleManagement } from '@/composables/useRoleManagement'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import { dialog } from '@/composables/useDialog'
@@ -137,30 +138,6 @@ import type { AiConversationSummary } from '@/components/Agent/conversationTypes
 import { pickLatestConversation } from '@/components/Agent/agentConversationSessionSupport'
 import { buildFocusedMessageQuery, readFocusLocationState } from '@/components/Agent/focusLocationSupport'
 import { isAssistantPresentationTarget, type AssistantPresentationTarget } from '@/services/assistantPresentation'
-
-interface ReferencedTraffic {
-  id: number
-  url: string
-  method: string
-  host: string
-  status_code: number
-  request_headers?: string
-  request_body?: string
-  response_headers?: string
-  response_body?: string
-}
-
-interface ReferencedAsset {
-  id: string
-  name: string
-  value: string
-  asset_type: string
-  risk_level?: string
-  status?: string
-  description?: string
-  tags?: string[]
-  metadata?: Record<string, any>
-}
 
 type PendingTrafficReference = {
   requests: ReferencedTraffic[]

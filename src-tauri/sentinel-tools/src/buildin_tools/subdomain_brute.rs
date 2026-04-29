@@ -1197,7 +1197,10 @@ mod tests {
             "8.8.8.8".to_string(),
         ]);
 
-        assert_eq!(resolvers, vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()]);
+        assert_eq!(
+            resolvers,
+            vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()]
+        );
     }
 
     #[test]

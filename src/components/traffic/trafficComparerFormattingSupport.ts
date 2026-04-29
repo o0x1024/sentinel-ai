@@ -2,6 +2,7 @@ import { parseHttpMessageDocument } from '@/components/http-editor/httpDocument'
 import { parseRawHttpRequest } from '@/components/traffic/intruder/http'
 import type { HttpExchangeRequest } from './http/model'
 import { buildAbsoluteUrl, endpointFromUrl } from './http/url'
+import { formatTrafficJsonBody } from './trafficJsonFormattingSupport'
 import type {
   TrafficCompareMeta,
   TrafficComparePayload,
@@ -12,14 +13,7 @@ import type { TrafficMessageViewTab } from './trafficDisplaySettings'
 const normalizeText = (text: string): string => text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 
 const tryFormatJson = (body: string): string => {
-  const trimmed = body.trim()
-  if (!trimmed) return body
-
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2)
-  } catch {
-    return body
-  }
+  return formatTrafficJsonBody(body)
 }
 
 export function formatComparerText(text: string, viewMode: TrafficMessageViewTab): string {

@@ -9323,6 +9323,7 @@ dependencies = [
  "async-stream",
  "chrono",
  "futures",
+ "http 1.4.0",
  "rig-core",
  "sentinel-tools",
  "serde",

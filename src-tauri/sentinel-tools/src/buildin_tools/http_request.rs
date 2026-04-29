@@ -11,8 +11,15 @@ use crate::output_storage::StoredOutputArtifact;
 /// HTTP request arguments
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct HttpRequestArgs {
-    /// Target URL
-    pub url: String,
+    /// Target URL. Optional when referenced_traffic_id or referenced_traffic_index is provided by the agent runtime.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Referenced traffic history id to replay with its captured URL, method, body, and request headers.
+    #[serde(default)]
+    pub referenced_traffic_id: Option<i64>,
+    /// 1-based referenced traffic index from the current user message to replay.
+    #[serde(default)]
+    pub referenced_traffic_index: Option<usize>,
     /// HTTP method (GET, POST, PUT, DELETE, etc.)
     #[serde(default = "default_method")]
     pub method: String,
@@ -128,7 +135,19 @@ impl Tool for HttpRequestTool {
         let start_time = Instant::now();
 
         // Parse URL
-        let url = reqwest::Url::parse(&args.url)
+        let target_url = args
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                HttpRequestError::InvalidUrl(
+                    "url is required unless the agent runtime resolves referenced traffic"
+                        .to_string(),
+                )
+            })?;
+
+        let url = reqwest::Url::parse(target_url)
             .map_err(|e| HttpRequestError::InvalidUrl(e.to_string()))?;
 
         // Build request
@@ -222,7 +241,7 @@ impl Tool for HttpRequestTool {
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
         Ok(HttpRequestOutput {
-            url: args.url,
+            url: target_url.to_string(),
             status_code,
             status_text,
             headers,

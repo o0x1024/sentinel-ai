@@ -7,6 +7,7 @@ import type { ProxyRequest } from './proxyHistoryTypes'
 import {
   formatRequestRaw,
   formatResponseRaw,
+  hasEditedRequest,
   hasEditedResponse,
 } from './proxyHistoryFormattingSupport'
 
@@ -29,7 +30,7 @@ function inferProtocol(url: string, fallbackProtocol?: string): 'http' | 'https'
 }
 
 function buildRequestTransferRequest(request: ProxyRequest, viewMode: 'original' | 'edited'): HttpExchangeRequest {
-  const useEdited = viewMode === 'edited' && request.was_edited
+  const useEdited = viewMode === 'edited' && hasEditedRequest(request)
   const url = useEdited && request.edited_url ? request.edited_url : request.url
   const method = useEdited && request.edited_method ? request.edited_method : request.method
   const headers = parseStoredHeaderEntries(useEdited ? request.edited_request_headers : request.request_headers)
@@ -69,7 +70,7 @@ export function buildRequestVersionComparePayload(
   request: ProxyRequest,
   labels: CompareVersionLabels,
 ): TrafficComparePayload | null {
-  if (!request.was_edited) return null
+  if (!hasEditedRequest(request)) return null
 
   const originalRequest = buildRequestTransferRequest(request, 'original')
   const editedRequest = buildRequestTransferRequest(request, 'edited')
@@ -101,7 +102,7 @@ export function buildResponseVersionComparePayload(
   request: ProxyRequest,
   labels: CompareVersionLabels,
 ): TrafficComparePayload | null {
-  if (!request.was_edited || !hasEditedResponse(request)) return null
+  if (!hasEditedResponse(request)) return null
 
   const protocol = inferProtocol(request.url, request.scheme)
 
@@ -127,9 +128,9 @@ export function buildResponseVersionComparePayload(
 }
 
 export function canCompareRequestVersions(request: ProxyRequest | null): boolean {
-  return !!request?.was_edited
+  return !!request && hasEditedRequest(request)
 }
 
 export function canCompareResponseVersions(request: ProxyRequest | null): boolean {
-  return !!request?.was_edited && hasEditedResponse(request)
+  return !!request && hasEditedResponse(request)
 }

@@ -2,6 +2,7 @@ export type TrafficSendType = 'request' | 'response' | 'both'
 
 export interface ReferencedTraffic {
   id: number
+  db_request_id?: number | null
   url: string
   method: string
   host: string
@@ -11,6 +12,12 @@ export interface ReferencedTraffic {
   request_body?: string
   response_headers?: string
   response_body?: string
+  response_body_preview?: string
+  response_body_truncated?: boolean
+  response_body_available?: boolean
+  response_size?: number
+  response_time?: number
+  response_content_type?: string
   sendType?: TrafficSendType
 }
 

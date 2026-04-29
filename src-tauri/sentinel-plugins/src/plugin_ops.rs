@@ -28,13 +28,13 @@ use crate::monitor_progress::{emit_plugin_monitor_progress, PluginMonitorProgres
 use crate::network_scan::op_scan_ports;
 use crate::runtime_config::get_plugin_runtime_settings;
 use crate::runtime_events::emit_active_probe_event;
+use crate::service_probe::op_get_service_probe_capabilities;
+use crate::service_probe_runtime::op_probe_services;
+use crate::types::{Confidence, Finding, Severity};
 use crate::{
     cancel_active_probe, complete_active_probe, enqueue_active_probe, fail_active_probe,
     mark_active_probe_running, ActiveProbeRequest,
 };
-use crate::service_probe::op_get_service_probe_capabilities;
-use crate::service_probe_runtime::op_probe_services;
-use crate::types::{Confidence, Finding, Severity};
 
 /// 插件执行上下文（用于收集插件发现的漏洞）
 #[derive(Clone, Default)]

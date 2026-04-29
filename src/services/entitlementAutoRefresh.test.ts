@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { attemptEntitlementAutoRefresh } from './entitlementAutoRefresh'
 import { resetEntitlementRefreshRuntimeState, markEntitlementRefreshFailure } from './entitlementRefreshState'
 
-const licenseOnlyEntitlements = {
-  tier: 'licensed',
+const pendingServerActivationEntitlements = {
+  tier: 'free',
   is_licensed: false,
-  has_local_license: true,
-  access_source: 'license_only',
+  has_local_license: false,
+  access_source: 'free',
   has_valid_entitlement_token: false,
   entitlement_feature_ids: [],
   entitlement_expires_at: null,
@@ -23,10 +23,11 @@ const licenseOnlyEntitlements = {
 }
 
 const fullEntitlements = {
-  ...licenseOnlyEntitlements,
+  ...pendingServerActivationEntitlements,
   tier: 'pro',
   is_licensed: true,
-  access_source: 'entitlement_token',
+  has_local_license: true,
+  access_source: 'server_activation',
   has_valid_entitlement_token: true,
   can_access_all_plugins: true,
   can_access_bug_bounty: true,
@@ -71,14 +72,14 @@ describe('attemptEntitlementAutoRefresh', () => {
     resetEntitlementRefreshRuntimeState()
   })
 
-  it('refreshes entitlement token after local license activation', async () => {
+  it('refreshes the server activation token when missing', async () => {
     let entitlementsReads = 0
     let tokenReads = 0
 
     global.testUtils.mockInvoke.mockImplementation((command: string) => {
       if (command === 'get_app_entitlements') {
         entitlementsReads += 1
-        return Promise.resolve(entitlementsReads >= 2 ? fullEntitlements : licenseOnlyEntitlements)
+        return Promise.resolve(entitlementsReads >= 2 ? fullEntitlements : pendingServerActivationEntitlements)
       }
 
       if (command === 'get_entitlement_token_status') {
@@ -119,7 +120,7 @@ describe('attemptEntitlementAutoRefresh', () => {
 
     global.testUtils.mockInvoke.mockImplementation((command: string) => {
       if (command === 'get_app_entitlements') {
-        return Promise.resolve(licenseOnlyEntitlements)
+        return Promise.resolve(pendingServerActivationEntitlements)
       }
 
       if (command === 'get_entitlement_token_status') {

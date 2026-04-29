@@ -135,6 +135,7 @@
         :key="getFieldPathKey(childField.path)"
         :field="childField"
         :params="params"
+        :default-params="defaultParams"
         :json-editor-values="jsonEditorValues"
         :field-errors="fieldErrors"
         :expanded-hint-fields="expandedHintFields"
@@ -196,6 +197,7 @@ const props = withDefaults(
   defineProps<{
     field: EditableField
     params: Record<string, any>
+    defaultParams?: Record<string, any>
     jsonEditorValues: Record<string, string>
     fieldErrors: Record<string, string>
     expandedHintFields: Record<string, boolean>
@@ -203,6 +205,7 @@ const props = withDefaults(
     depth?: number
   }>(),
   {
+    defaultParams: () => ({}),
     showOnlyChanged: false,
     depth: 0,
   }
@@ -222,9 +225,39 @@ const displayedHint = computed(() => {
   return getCollapsedHint(fullHint.value)
 })
 
+const getInheritedDefaultValue = () => {
+  const pluginDefaultValue = getValueAtPath(props.defaultParams, props.field.path)
+  return pluginDefaultValue === undefined ? props.field.defaultValue : pluginDefaultValue
+}
+
+const hasPluginDefaultValue = () =>
+  getValueAtPath(props.defaultParams, props.field.path) !== undefined
+
+const formatDefaultPlaceholderValue = (value: unknown) => {
+  if (value === undefined || value === null) {
+    return ''
+  }
+
+  if (props.field.secret) {
+    return '********'
+  }
+
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+const getExplicitValue = () => getValueAtPath(props.params, props.field.path)
+
 const getEffectiveValue = () => {
-  const explicitValue = getValueAtPath(props.params, props.field.path)
-  return explicitValue === undefined ? props.field.defaultValue : explicitValue
+  const explicitValue = getExplicitValue()
+  return explicitValue === undefined ? getInheritedDefaultValue() : explicitValue
 }
 
 const resetField = () => {
@@ -238,7 +271,7 @@ const toggleHintExpanded = () => {
 }
 
 const getStringValue = () => {
-  const value = getEffectiveValue()
+  const value = getExplicitValue()
   return value === undefined || value === null ? '' : String(value)
 }
 
@@ -252,12 +285,22 @@ const setStringValue = (value: string) => {
 }
 
 const getStringPlaceholder = () =>
-  props.field.defaultValue !== undefined
-    ? String(props.field.defaultValue)
-    : t('bugBounty.monitor.usePluginDefaultParamValue')
+  (() => {
+    const inheritedDefaultValue = getInheritedDefaultValue()
+    if (inheritedDefaultValue === undefined) {
+      return t('bugBounty.monitor.usePluginDefaultParamValue')
+    }
+
+    const placeholder = formatDefaultPlaceholderValue(inheritedDefaultValue)
+    if (placeholder.trim()) {
+      return placeholder
+    }
+
+    return props.field.secret ? '********' : t('bugBounty.monitor.usePluginDefaultParamValue')
+  })()
 
 const getEnumIndex = () => {
-  const currentValue = getValueAtPath(props.params, props.field.path)
+  const currentValue = getEffectiveValue()
   if (currentValue === undefined) {
     return ''
   }
@@ -284,14 +327,24 @@ const setEnumValue = (rawValue: string) => {
 }
 
 const getNumberTextValue = () => {
-  const value = getEffectiveValue()
+  const value = getExplicitValue()
   return value === undefined || value === null ? '' : String(value)
 }
 
 const getNumberPlaceholder = () =>
-  props.field.defaultValue !== undefined
-    ? String(props.field.defaultValue)
-    : t('bugBounty.monitor.usePluginDefaultParamValue')
+  (() => {
+    const inheritedDefaultValue = getInheritedDefaultValue()
+    if (inheritedDefaultValue === undefined) {
+      return t('bugBounty.monitor.usePluginDefaultParamValue')
+    }
+
+    const placeholder = formatDefaultPlaceholderValue(inheritedDefaultValue)
+    if (placeholder.trim()) {
+      return placeholder
+    }
+
+    return props.field.secret ? '********' : t('bugBounty.monitor.usePluginDefaultParamValue')
+  })()
 
 const setNumberValue = (rawValue: string) => {
   const value = rawValue.trim()
@@ -368,8 +421,9 @@ const getArrayLinesValue = () => {
 }
 
 const getArrayPlaceholder = () => {
-  if (Array.isArray(props.field.defaultValue) && props.field.defaultValue.length > 0) {
-    return props.field.defaultValue.map(item => String(item)).join('\n')
+  const inheritedDefaultValue = getInheritedDefaultValue()
+  if (Array.isArray(inheritedDefaultValue) && inheritedDefaultValue.length > 0) {
+    return inheritedDefaultValue.map(item => String(item)).join('\n')
   }
   return t('bugBounty.monitor.pluginParamArrayPlaceholder')
 }
@@ -405,11 +459,19 @@ const setArrayLinesValue = (rawValue: string) => {
   setValueAtPath(props.params, props.field.path, parsedItems)
 }
 
-const getJsonEditorText = () => props.jsonEditorValues[pathKey.value] ?? ''
+const getJsonEditorText = () => {
+  if (Object.prototype.hasOwnProperty.call(props.jsonEditorValues, pathKey.value)) {
+    return props.jsonEditorValues[pathKey.value]
+  }
+
+  const value = getEffectiveValue()
+  return value === undefined ? '' : JSON.stringify(value, null, 2)
+}
 
 const getJsonPlaceholder = () => {
-  if (props.field.defaultValue !== undefined) {
-    return JSON.stringify(props.field.defaultValue, null, 2)
+  const inheritedDefaultValue = getInheritedDefaultValue()
+  if (inheritedDefaultValue !== undefined) {
+    return JSON.stringify(inheritedDefaultValue, null, 2)
   }
   return '{}'
 }

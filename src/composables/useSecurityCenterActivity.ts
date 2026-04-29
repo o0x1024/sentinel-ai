@@ -88,16 +88,20 @@ function persistState() {
     return
   }
 
-  window.localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      baselineSeeded: baselineSeeded.value,
-      legacyMigrated: legacyMigrated.value,
-      lastViewedAt: lastViewedAt.value,
-      readFindingIds: readFindingIds.value,
-      readWorkbenchCaseIds: readWorkbenchCaseIds.value,
-    } satisfies SecurityCenterActivityState),
-  )
+  try {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        baselineSeeded: baselineSeeded.value,
+        legacyMigrated: legacyMigrated.value,
+        lastViewedAt: lastViewedAt.value,
+        readFindingIds: readFindingIds.value,
+        readWorkbenchCaseIds: readWorkbenchCaseIds.value,
+      } satisfies SecurityCenterActivityState),
+    )
+  } catch (error) {
+    console.warn('[useSecurityCenterActivity] Failed to persist state:', error)
+  }
 }
 
 function toTimestamp(value: string | null | undefined) {

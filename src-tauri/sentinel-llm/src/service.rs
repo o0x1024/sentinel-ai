@@ -61,6 +61,12 @@ impl AiService {
         if let Some(max_turns) = self.config.max_turns {
             config = config.with_max_turns(max_turns);
         }
+        if let Some(extra_headers) = self.config.extra_headers.clone() {
+            config = config.with_extra_headers(extra_headers);
+        }
+        if let Some(extra_body) = self.config.extra_body.clone() {
+            config = config.with_extra_body(extra_body);
+        }
         config.with_timeout(120)
     }
 

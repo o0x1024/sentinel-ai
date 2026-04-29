@@ -199,6 +199,10 @@ struct ChatRequest {
     #[serde(default)]
     enable_tenth_man_rule: Option<bool>,
     #[serde(default)]
+    current_browser_shell_direct_write_enabled: Option<bool>,
+    #[serde(default)]
+    current_browser_shell_session_id: Option<String>,
+    #[serde(default)]
     current_terminal_session_fingerprint: Option<String>,
     #[serde(default)]
     current_terminal_session_id: Option<String>,
@@ -332,6 +336,10 @@ struct SessionChatRequest {
     timeout_secs: Option<u64>,
     #[serde(default)]
     enable_tenth_man_rule: Option<bool>,
+    #[serde(default)]
+    current_browser_shell_direct_write_enabled: Option<bool>,
+    #[serde(default)]
+    current_browser_shell_session_id: Option<String>,
     #[serde(default)]
     current_terminal_session_fingerprint: Option<String>,
     #[serde(default)]
@@ -1683,6 +1691,8 @@ async fn run_agent_execution(
     max_iterations: Option<usize>,
     timeout_secs: Option<u64>,
     enable_tenth_man_rule: Option<bool>,
+    active_browser_shell_direct_write_enabled: Option<bool>,
+    active_browser_shell_session_id: Option<&str>,
     active_terminal_session_id: Option<&str>,
     active_terminal_session_fingerprint: Option<&str>,
 ) -> Result<String, String> {
@@ -1715,6 +1725,9 @@ async fn run_agent_execution(
         model: model_name,
         system_prompt: system_prompt.unwrap_or_default().to_string(),
         task: task.to_string(),
+        active_browser_shell_direct_write_enabled: active_browser_shell_direct_write_enabled
+            .unwrap_or(false),
+        active_browser_shell_session_id: active_browser_shell_session_id.map(|v| v.to_string()),
         active_terminal_session_fingerprint: active_terminal_session_fingerprint
             .map(|v| v.to_string()),
         active_terminal_session_id: active_terminal_session_id.map(|v| v.to_string()),
@@ -1730,6 +1743,7 @@ async fn run_agent_execution(
         tenth_man_config: None,
         document_attachments: None,
         image_attachments: None,
+        referenced_traffic: None,
         persist_messages: true,
         subagent_run_id: None,
         context_policy: None,
@@ -3361,6 +3375,14 @@ async fn bridge_invoke(
                             timeout_secs,
                             enable_tenth_man_rule,
                             v.config.as_ref().and_then(|c| {
+                                c.get("current_browser_shell_direct_write_enabled")
+                                    .and_then(|x| x.as_bool())
+                            }),
+                            v.config.as_ref().and_then(|c| {
+                                c.get("current_browser_shell_session_id")
+                                    .and_then(|x| x.as_str())
+                            }),
+                            v.config.as_ref().and_then(|c| {
                                 c.get("current_terminal_session_id")
                                     .and_then(|x| x.as_str())
                             }),
@@ -3576,6 +3598,8 @@ async fn chat(State(state): State<GatewayAppState>, Json(payload): Json<ChatRequ
             payload.max_iterations,
             payload.timeout_secs,
             payload.enable_tenth_man_rule,
+            payload.current_browser_shell_direct_write_enabled,
+            payload.current_browser_shell_session_id.as_deref(),
             payload.current_terminal_session_id.as_deref(),
             payload.current_terminal_session_fingerprint.as_deref(),
         )
@@ -3690,6 +3714,9 @@ async fn session_chat(
         max_iterations: payload.max_iterations,
         timeout_secs: payload.timeout_secs,
         enable_tenth_man_rule: payload.enable_tenth_man_rule,
+        current_browser_shell_direct_write_enabled: payload
+            .current_browser_shell_direct_write_enabled,
+        current_browser_shell_session_id: payload.current_browser_shell_session_id,
         current_terminal_session_fingerprint: payload.current_terminal_session_fingerprint,
         current_terminal_session_id: payload.current_terminal_session_id,
     };
@@ -3954,6 +3981,8 @@ async fn chat_stream(
                 max_iterations,
                 timeout_secs,
                 enable_tenth_man_rule,
+                payload.current_browser_shell_direct_write_enabled,
+                payload.current_browser_shell_session_id.as_deref(),
                 payload.current_terminal_session_id.as_deref(),
                 payload.current_terminal_session_fingerprint.as_deref(),
             )

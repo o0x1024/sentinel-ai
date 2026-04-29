@@ -24,6 +24,8 @@ export interface UiToolConfigPayload {
   allowed_tools?: string[]
 }
 
+export type TeamToolPolicyRole = 'commander' | 'solver' | 'observer' | 'harness'
+
 const dedupeToolIds = (items: string[]) => {
   const seen = new Set<string>()
   const out: string[] = []
@@ -105,6 +107,17 @@ const unionToolIds = (...groups: Array<string[] | undefined>) => {
   return dedupeToolIds(groups.flatMap((group) => group || []))
 }
 
+const readTeamRoleToolPolicy = (
+  toolPolicyMatrix: Record<string, any>,
+  role: TeamToolPolicyRole,
+) => {
+  const rolePolicy = toolPolicyMatrix[role]
+  if (!rolePolicy || typeof rolePolicy !== 'object' || Array.isArray(rolePolicy)) {
+    throw new Error(`Team tool policy matrix requires a ${role} policy.`)
+  }
+  return rolePolicy as Record<string, any>
+}
+
 export const buildRuntimeToolConfigForExecution = (
   config: UiToolConfigPayload,
   options?: {
@@ -167,5 +180,41 @@ export const buildRuntimeToolConfigForExecution = (
     fixed_tools: unionToolIds(fixedTools, [WEB_SEARCH_TOOL_ID]),
     disabled_tools: disabledTools,
     allowed_tools: nextAllowedTools,
+  }
+}
+
+export const buildRuntimeToolConfigForTeamRole = (
+  config: UiToolConfigPayload,
+  toolPolicyMatrix: Record<string, any>,
+  role: TeamToolPolicyRole,
+  options?: {
+    webSearchEnabled?: boolean
+  },
+) => {
+  const baseRuntimeConfig = buildRuntimeToolConfigForExecution(config, options)
+  const rolePolicy = readTeamRoleToolPolicy(toolPolicyMatrix, role)
+  const roleTools = normalizeToolIdList(rolePolicy.tools)
+  const disabledTools = normalizeToolIdList(baseRuntimeConfig.disabled_tools)
+  const baseStrategy = baseRuntimeConfig.selection_strategy
+  const baseManualTools = baseStrategy
+    && typeof baseStrategy === 'object'
+    && !Array.isArray(baseStrategy)
+    && Array.isArray(baseStrategy.Manual)
+      ? normalizeToolIdList(baseStrategy.Manual)
+      : []
+  const agentToolScope = unionToolIds(
+    normalizeToolIdList(baseRuntimeConfig.fixed_tools),
+    baseManualTools,
+    normalizeToolIdList(baseRuntimeConfig.allowed_tools),
+  ).filter(toolId => !disabledTools.includes(toolId))
+  const effectiveTools = roleTools.filter(toolId => agentToolScope.includes(toolId))
+
+  return {
+    enabled: baseRuntimeConfig.enabled && effectiveTools.length > 0,
+    selection_strategy: { Manual: effectiveTools },
+    max_tools: Math.max(Number(baseRuntimeConfig.max_tools) || 1, effectiveTools.length || 1),
+    fixed_tools: [],
+    disabled_tools: disabledTools,
+    allowed_tools: effectiveTools,
   }
 }

@@ -1,179 +1,41 @@
 <template>
   <div class="space-y-4">
-    <div class="flex justify-between items-center">
+    <div class="flex justify-between items-center gap-3">
       <div class="alert alert-info flex-1 mr-4">
         <i class="fas fa-info-circle"></i>
         <span>{{ infoText }}</span>
       </div>
-      <div v-if="sourceFilter === 'builtin'" class="join">
-        <button @click="viewMode = 'card'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': viewMode === 'card'}]">
-          <i class="fas fa-th-large"></i>
-        </button>
-        <button @click="viewMode = 'list'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': viewMode === 'list'}]">
-          <i class="fas fa-list"></i>
-        </button>
-      </div>
-    </div>
-
-    <div v-if="sourceFilter === 'builtin'" class="card bg-base-100 border border-base-300 shadow-sm">
-      <div class="card-body gap-3">
-        <div
-          v-if="focusedMemoryId"
-          class="rounded-lg border border-info/30 bg-info/10 px-3 py-2"
+      <div v-if="sourceFilter === 'builtin'" class="flex items-center gap-2">
+        <button
+          class="btn btn-sm btn-outline btn-primary"
+          @click="showBrowserShellBridgeModal = true"
         >
-          <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <div class="text-sm text-base-content/75 break-all">
-              当前已定位到 memory:
-              <code class="ml-1 text-info">{{ focusedMemoryId }}</code>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <button class="btn btn-xs btn-outline" @click="copyMemoryId(focusedMemoryId)">
-                <i class="fas fa-copy mr-1"></i>
-                复制 ID
-              </button>
-              <button
-                v-if="focusedMemoryDiagnostics && canOpenOriginConversation(focusedMemoryDiagnostics.record)"
-                class="btn btn-xs btn-outline btn-secondary"
-                @click="openOriginConversation(focusedMemoryDiagnostics.record)"
-              >
-                <i class="fas fa-crosshairs mr-1"></i>
-                定位到对话消息
-              </button>
-              <button class="btn btn-xs btn-outline btn-info" @click="clearFocusedMemory">
-                清除定位
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h3 class="card-title text-base">
-              <i class="fas fa-memory text-info mr-2"></i>
-              Memory Diagnostics
-            </h3>
-            <p class="text-sm text-base-content/70">
-              查看 durable memory 的 canonical 记录和 projection health。
-            </p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <label class="label cursor-pointer gap-2 py-0">
-              <span class="label-text text-sm">仅问题</span>
-              <input v-model="memoryDiagnosticsOnlyIssues" type="checkbox" class="toggle toggle-warning toggle-sm" />
-            </label>
-            <button
-              class="btn btn-sm btn-outline"
-              :class="{ 'btn-disabled': memoryDiagnosticsLoading }"
-              @click="refreshMemoryDiagnostics"
-            >
-              <i :class="['fas', memoryDiagnosticsLoading ? 'fa-spinner fa-spin' : 'fa-sync-alt']"></i>
-              刷新
-            </button>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap gap-2 text-xs">
-          <span class="badge badge-ghost">记录 {{ memoryDiagnostics.length }}</span>
-          <span class="badge badge-success">可检索 {{ memoryDiagnosticsReadyCount }}</span>
-          <span class="badge badge-warning">异常 {{ memoryDiagnosticsIssueCount }}</span>
-        </div>
-
-        <div v-if="memoryDiagnosticsLoading" class="flex items-center gap-2 text-sm text-base-content/70">
-          <span class="loading loading-spinner loading-sm"></span>
-          <span>正在加载 memory diagnostics...</span>
-        </div>
-        <div v-else-if="memoryDiagnostics.length === 0" class="text-sm text-base-content/60">
-          当前没有可显示的 durable memory diagnostics。
-        </div>
-        <div v-else class="overflow-x-auto">
-          <table class="table table-sm">
-            <thead>
-              <tr>
-                <th>Memory</th>
-                <th>类型</th>
-                <th>来源</th>
-                <th>Projection</th>
-                <th>状态</th>
-                <th class="w-24">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="item in memoryDiagnostics"
-                :id="`memory-diagnostic-${item.record.id}`"
-                :key="item.record.id"
-                :class="item.record.id === focusedMemoryId ? 'bg-info/10' : ''"
-              >
-                <td class="max-w-md">
-                  <div class="font-medium truncate">{{ item.record.title || item.record.id }}</div>
-                  <div class="text-xs text-base-content/60 line-clamp-2 break-all">
-                    {{ item.record.text }}
-                  </div>
-                </td>
-                <td>
-                  <div class="flex flex-wrap gap-1">
-                    <span class="badge badge-ghost badge-sm">{{ item.record.kind }}</span>
-                    <span class="badge badge-ghost badge-sm">{{ item.record.scope }}</span>
-                  </div>
-                </td>
-                <td>
-                  <div class="text-xs">{{ item.record.source }}</div>
-                  <div class="text-[11px] text-base-content/50">
-                    {{ formatTimestamp(item.record.updated_at_ms) }}
-                  </div>
-                  <div
-                    v-if="item.record.origin_execution_id"
-                    class="mt-1 text-[11px] text-base-content/50 break-all"
-                  >
-                    execution:
-                    <code>{{ item.record.origin_execution_id }}</code>
-                  </div>
-                </td>
-                <td>
-                  <div class="flex flex-wrap gap-1">
-                    <span :class="projectionBadgeClass(item.projection?.lexical_indexed)">lexical</span>
-                    <span :class="projectionBadgeClass(item.projection?.vector_indexed)">vector</span>
-                    <span :class="projectionBadgeClass(item.projection?.skill_projected)">skill</span>
-                  </div>
-                </td>
-                <td class="max-w-xs">
-                  <div class="flex flex-wrap gap-1 mb-1">
-                    <span :class="item.retrievable_projection_ready ? 'badge badge-success badge-sm' : 'badge badge-warning badge-sm'">
-                      {{ item.retrievable_projection_ready ? 'retrievable' : 'degraded' }}
-                    </span>
-                    <span v-if="item.projection_issue" class="badge badge-warning badge-sm">issue</span>
-                  </div>
-                  <div v-if="item.projection?.last_error" class="text-[11px] text-warning break-all">
-                    {{ item.projection.last_error }}
-                  </div>
-                </td>
-                <td>
-                  <div class="flex items-center gap-1">
-                    <button
-                      class="btn btn-ghost btn-xs"
-                      :title="`复制 ${item.record.id}`"
-                      @click="copyMemoryId(item.record.id)"
-                    >
-                      <i class="fas fa-copy"></i>
-                    </button>
-                    <button
-                      v-if="canOpenOriginConversation(item.record)"
-                      class="btn btn-ghost btn-xs"
-                      title="定位到来源会话中的消息"
-                      @click="openOriginConversation(item.record)"
-                    >
-                      <i class="fas fa-crosshairs"></i>
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <i class="fas fa-terminal"></i>
+          <span>Browser Shell</span>
+        </button>
+        <button
+          class="btn btn-sm btn-outline"
+          :class="{ 'btn-info': focusedMemoryId }"
+          @click="openMemoryDiagnosticsModal"
+        >
+          <i class="fas fa-memory"></i>
+          <span>Memory Diagnostics</span>
+          <span class="badge badge-ghost badge-sm">记录 {{ memoryDiagnostics.length }}</span>
+          <span class="badge badge-success badge-sm">可检索 {{ memoryDiagnosticsReadyCount }}</span>
+          <span class="badge badge-warning badge-sm">异常 {{ memoryDiagnosticsIssueCount }}</span>
+        </button>
+        <div class="join">
+          <button @click="viewMode = 'card'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': viewMode === 'card'}]">
+            <i class="fas fa-th-large"></i>
+          </button>
+          <button @click="viewMode = 'list'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': viewMode === 'list'}]">
+            <i class="fas fa-list"></i>
+          </button>
         </div>
       </div>
     </div>
-    
-    <!-- 分类筛选 -->
+
+    <!-- 来源与分类筛选 -->
     <div class="flex flex-wrap gap-2 mb-4">
       <button 
         @click="selectBuiltinCategory('')"
@@ -192,14 +54,14 @@
       </button>
       <button
         @click="selectSourceFilter('workflow')"
-        :class="['btn btn-sm', sourceFilter === 'workflow' ? 'btn-secondary' : 'btn-ghost']"
+        :class="['btn btn-sm', props.sourceFilter === 'workflow' ? 'btn-secondary' : 'btn-ghost']"
       >
         <i class="fas fa-project-diagram mr-1"></i>
         工作流工具 ({{ workflowCount }})
       </button>
       <button
         @click="selectSourceFilter('plugin')"
-        :class="['btn btn-sm', sourceFilter === 'plugin' ? 'btn-accent' : 'btn-ghost']"
+        :class="['btn btn-sm', props.sourceFilter === 'plugin' ? 'btn-accent' : 'btn-ghost']"
       >
         <i class="fas fa-plug mr-1"></i>
         插件工具 ({{ pluginCount }})
@@ -276,6 +138,15 @@
                     <i class="fas fa-shield-alt"></i>
                   </button>
                   <button
+                    v-if="tool.name === 'browser_shell'"
+                    @click="showBrowserShellBridgeModal = true"
+                    class="btn btn-primary btn-sm"
+                    title="打开 Browser Shell Bridge"
+                  >
+                    <i class="fas fa-terminal mr-1"></i>
+                    Bridge
+                  </button>
+                  <button
                     v-if="tool.name === 'search_exploit'"
                     @click="showExploitDbModal = true"
                     class="btn btn-secondary btn-sm"
@@ -286,7 +157,7 @@
                   </button>
                   <!-- Regular Tools -->
                   <button 
-                    v-if="tool.name !== 'shell'"
+                    v-if="tool.name !== 'shell' && tool.name !== 'browser_shell'"
                     @click="openTestModal(tool)"
                     class="btn btn-primary btn-sm"
                     title="测试工具"
@@ -362,6 +233,14 @@
                       <i class="fas fa-shield-alt"></i>
                     </button>
                     <button
+                      v-if="tool.name === 'browser_shell'"
+                      @click="showBrowserShellBridgeModal = true"
+                      class="btn btn-primary btn-xs"
+                      title="打开 Browser Shell Bridge"
+                    >
+                      <i class="fas fa-terminal"></i>
+                    </button>
+                    <button
                       v-if="tool.name === 'search_exploit'"
                       @click="showExploitDbModal = true"
                       class="btn btn-secondary btn-xs"
@@ -371,7 +250,7 @@
                     </button>
                     <!-- Regular Tools -->
                     <button 
-                      v-if="tool.name !== 'shell'"
+                      v-if="tool.name !== 'shell' && tool.name !== 'browser_shell'"
                       @click="openTestModal(tool)"
                       class="btn btn-primary btn-xs"
                       title="测试工具"
@@ -421,6 +300,183 @@
     <!-- Shell 终端模态框 -->
     <ShellTerminal v-model="showShellTerminal" />
 
+    <BrowserShellBridgeModal
+      v-model="showBrowserShellBridgeModal"
+      @open-tool-test="openBrowserShellToolTest"
+    />
+
+    <AppDialog :class="['modal', { 'modal-open': showMemoryDiagnosticsModal }]">
+      <div class="modal-box w-11/12 max-w-6xl" v-show="showMemoryDiagnosticsModal">
+        <div class="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 class="font-bold text-lg flex items-center gap-2">
+              <i class="fas fa-memory text-info"></i>
+              <span>Memory Diagnostics</span>
+            </h3>
+            <p class="text-sm text-base-content/70 mt-1">
+              查看 durable memory 的 canonical 记录和 projection health。
+            </p>
+          </div>
+          <button class="btn btn-sm btn-ghost btn-circle" @click="closeMemoryDiagnosticsModal">
+            <i class="fas fa-times text-lg"></i>
+          </button>
+        </div>
+
+        <div class="space-y-4 max-h-[75vh] overflow-y-auto pr-2">
+          <div
+            v-if="focusedMemoryId"
+            class="rounded-lg border border-info/30 bg-info/10 px-3 py-2"
+          >
+            <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div class="text-sm text-base-content/75 break-all">
+                当前已定位到 memory:
+                <code class="ml-1 text-info">{{ focusedMemoryId }}</code>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button class="btn btn-xs btn-outline" @click="copyMemoryId(focusedMemoryId)">
+                  <i class="fas fa-copy mr-1"></i>
+                  复制 ID
+                </button>
+                <button
+                  v-if="focusedMemoryDiagnostics && canOpenOriginConversation(focusedMemoryDiagnostics.record)"
+                  class="btn btn-xs btn-outline btn-secondary"
+                  @click="openOriginConversation(focusedMemoryDiagnostics.record)"
+                >
+                  <i class="fas fa-crosshairs mr-1"></i>
+                  定位到对话消息
+                </button>
+                <button class="btn btn-xs btn-outline btn-info" @click="clearFocusedMemory">
+                  清除定位
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div class="flex flex-wrap gap-2 text-xs">
+              <span class="badge badge-ghost">记录 {{ memoryDiagnostics.length }}</span>
+              <span class="badge badge-success">可检索 {{ memoryDiagnosticsReadyCount }}</span>
+              <span class="badge badge-warning">异常 {{ memoryDiagnosticsIssueCount }}</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <label class="label cursor-pointer gap-2 py-0">
+                <span class="label-text text-sm">仅问题</span>
+                <input v-model="memoryDiagnosticsOnlyIssues" type="checkbox" class="toggle toggle-warning toggle-sm" />
+              </label>
+              <button
+                class="btn btn-sm btn-outline"
+                :class="{ 'btn-disabled': memoryDiagnosticsLoading }"
+                @click="refreshMemoryDiagnostics"
+              >
+                <i :class="['fas', memoryDiagnosticsLoading ? 'fa-spinner fa-spin' : 'fa-sync-alt']"></i>
+                刷新
+              </button>
+            </div>
+          </div>
+
+          <div v-if="memoryDiagnosticsLoading" class="flex items-center gap-2 text-sm text-base-content/70">
+            <span class="loading loading-spinner loading-sm"></span>
+            <span>正在加载 memory diagnostics...</span>
+          </div>
+          <div v-else-if="memoryDiagnostics.length === 0" class="text-sm text-base-content/60">
+            当前没有可显示的 durable memory diagnostics。
+          </div>
+          <div v-else class="overflow-x-auto">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th>Memory</th>
+                  <th>类型</th>
+                  <th>来源</th>
+                  <th>Projection</th>
+                  <th>状态</th>
+                  <th class="w-24">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="item in memoryDiagnostics"
+                  :id="`memory-diagnostic-${item.record.id}`"
+                  :key="item.record.id"
+                  :class="item.record.id === focusedMemoryId ? 'bg-info/10' : ''"
+                >
+                  <td class="max-w-md">
+                    <div class="font-medium truncate">{{ item.record.title || item.record.id }}</div>
+                    <div class="text-xs text-base-content/60 line-clamp-2 break-all">
+                      {{ item.record.text }}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="flex flex-wrap gap-1">
+                      <span class="badge badge-ghost badge-sm">{{ item.record.kind }}</span>
+                      <span class="badge badge-ghost badge-sm">{{ item.record.scope }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="text-xs">{{ item.record.source }}</div>
+                    <div class="text-[11px] text-base-content/50">
+                      {{ formatTimestamp(item.record.updated_at_ms) }}
+                    </div>
+                    <div
+                      v-if="item.record.origin_execution_id"
+                      class="mt-1 text-[11px] text-base-content/50 break-all"
+                    >
+                      execution:
+                      <code>{{ item.record.origin_execution_id }}</code>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="flex flex-wrap gap-1">
+                      <span :class="projectionBadgeClass(item.projection?.lexical_indexed)">lexical</span>
+                      <span :class="projectionBadgeClass(item.projection?.vector_indexed)">vector</span>
+                      <span :class="projectionBadgeClass(item.projection?.skill_projected)">skill</span>
+                    </div>
+                  </td>
+                  <td class="max-w-xs">
+                    <div class="flex flex-wrap gap-1 mb-1">
+                      <span :class="item.retrievable_projection_ready ? 'badge badge-success badge-sm' : 'badge badge-warning badge-sm'">
+                        {{ item.retrievable_projection_ready ? 'retrievable' : 'degraded' }}
+                      </span>
+                      <span v-if="item.projection_issue" class="badge badge-warning badge-sm">issue</span>
+                    </div>
+                    <div v-if="item.projection?.last_error" class="text-[11px] text-warning break-all">
+                      {{ item.projection.last_error }}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="flex items-center gap-1">
+                      <button
+                        class="btn btn-ghost btn-xs"
+                        :title="`复制 ${item.record.id}`"
+                        @click="copyMemoryId(item.record.id)"
+                      >
+                        <i class="fas fa-copy"></i>
+                      </button>
+                      <button
+                        v-if="canOpenOriginConversation(item.record)"
+                        class="btn btn-ghost btn-xs"
+                        title="定位到来源会话中的消息"
+                        @click="openOriginConversation(item.record)"
+                      >
+                        <i class="fas fa-crosshairs"></i>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn" @click="closeMemoryDiagnosticsModal">关闭</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop bg-black/50" @click="closeMemoryDiagnosticsModal">
+        <button>close</button>
+      </form>
+    </AppDialog>
+
   </div>
 </template>
 
@@ -428,7 +484,9 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
+import AppDialog from '@/components/AppDialog.vue'
 import { dialog } from '@/composables/useDialog'
+import BrowserShellBridgeModal from './BrowserShellBridgeModal.vue'
 import ShellConfigModal from './ShellConfigModal.vue'
 import ShellTerminal from './ShellTerminal.vue'
 import UnifiedToolTest from './UnifiedToolTest.vue'
@@ -530,7 +588,9 @@ const viewMode = ref('list')
 const showTestModal = ref(false)
 const showShellConfigModal = ref(false)
 const showShellTerminal = ref(false)
+const showBrowserShellBridgeModal = ref(false)
 const showExploitDbModal = ref(false)
+const showMemoryDiagnosticsModal = ref(false)
 const testingTool = ref<any>(null)
 const testingToolInitialParams = ref<Record<string, unknown> | null>(null)
 const selectedCategory = ref('')
@@ -620,6 +680,7 @@ function getToolIcon(toolName: string) {
   const iconMap: Record<string, string> = {
     'ask_user_question': 'fas fa-list-check',
     'browser': 'fas fa-window-maximize',
+    'browser_shell': 'fas fa-terminal',
     'tool_search': 'fas fa-magnifying-glass',
     'shell': 'fas fa-terminal',
     'interactive_shell': 'fas fa-terminal',
@@ -737,6 +798,15 @@ async function refreshMemoryDiagnostics() {
   await fetchMemoryDiagnostics()
 }
 
+async function openMemoryDiagnosticsModal() {
+  showMemoryDiagnosticsModal.value = true
+  await fetchMemoryDiagnostics()
+}
+
+function closeMemoryDiagnosticsModal() {
+  showMemoryDiagnosticsModal.value = false
+}
+
 async function refresh() {
   await fetchTools()
   await fetchMemoryDiagnostics()
@@ -773,6 +843,16 @@ function openExploitDbToolTest(payload: { action: 'get'; edb_id: number }) {
   }
 
   openTestModal(exploitTool, payload)
+}
+
+function openBrowserShellToolTest(initialParams: Record<string, unknown>) {
+  const browserShellTool = tools.value.find(tool => tool.name === 'browser_shell')
+  if (!browserShellTool) {
+    dialog.toast.error('未找到 browser_shell 工具')
+    return
+  }
+
+  openTestModal(browserShellTool, initialParams)
 }
 
 function projectionBadgeClass(ok: boolean | undefined) {
@@ -841,6 +921,9 @@ defineExpose({ refresh })
 onMounted(() => {
   void fetchTools()
   void fetchMemoryDiagnostics()
+  if (focusedMemoryId.value) {
+    showMemoryDiagnosticsModal.value = true
+  }
 })
 
 watch(memoryDiagnosticsOnlyIssues, () => {
@@ -855,8 +938,12 @@ watch(sourceFilter, (next) => {
 
 watch(focusedMemoryId, (next) => {
   if (next && memoryDiagnosticsOnlyIssues.value) {
+    showMemoryDiagnosticsModal.value = true
     memoryDiagnosticsOnlyIssues.value = false
     return
+  }
+  if (next) {
+    showMemoryDiagnosticsModal.value = true
   }
   if (sourceFilter.value === 'builtin') {
     void fetchMemoryDiagnostics()

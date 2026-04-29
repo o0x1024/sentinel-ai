@@ -105,6 +105,13 @@
       </div>
 
       <div class="row">
+        <label>
+          <input id="shellCaptureEnabled" type="checkbox" />
+          启用第三方 Shell 桥接
+        </label>
+      </div>
+
+      <div class="row">
         <label for="bridgeUrl">Bridge 地址</label>
         <input id="bridgeUrl" type="text" />
       </div>
@@ -113,6 +120,8 @@
         <div id="status" class="status warn">未连接</div>
         <div class="meta" id="lastSeen">最近连接时间：-</div>
       </div>
+
+      <div class="meta" id="shellSessions">第三方 Shell 会话：0</div>
 
       <div class="btn-row">
         <button id="save" class="primary">保存配置</button>

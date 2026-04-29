@@ -21,9 +21,17 @@ const messageStub = defineComponent({
       type: Object,
       required: true,
     },
+    showActions: {
+      type: Boolean,
+      default: false,
+    },
   },
   setup(props) {
-    return () => h('div', { class: 'message-block-stub' }, String((props.message as AgentMessage).content || ''))
+    return () => h('div', {
+      class: 'message-block-stub',
+      'data-message-id': String((props.message as AgentMessage).id),
+      'data-show-actions': String(props.showActions),
+    }, String((props.message as AgentMessage).content || ''))
   },
 })
 
@@ -121,6 +129,40 @@ describe('MessageFlow', () => {
 
     expect(scrollIntoViewSpy).not.toHaveBeenCalled()
     expect(wrapper.emitted('message-focused')).toBeUndefined()
+
+    wrapper.unmount()
+  })
+
+  it('shows actions on the latest assistant final message only after execution ends', async () => {
+    const wrapper = mount(MessageFlow, {
+      props: {
+        messages: sampleMessages,
+        isExecuting: false,
+        isStreaming: false,
+      },
+      global: {
+        stubs: {
+          MessageBlock: messageStub,
+        },
+      },
+      attachTo: document.body,
+    })
+
+    await nextTick()
+
+    const blocks = wrapper.findAll('.message-block-stub')
+    expect(blocks[0].attributes('data-show-actions')).toBe('false')
+    expect(blocks[1].attributes('data-show-actions')).toBe('true')
+
+    await wrapper.setProps({ isExecuting: true })
+    await nextTick()
+
+    expect(wrapper.findAll('.message-block-stub')[1].attributes('data-show-actions')).toBe('false')
+
+    await wrapper.setProps({ isExecuting: false, isStreaming: true })
+    await nextTick()
+
+    expect(wrapper.findAll('.message-block-stub')[1].attributes('data-show-actions')).toBe('false')
 
     wrapper.unmount()
   })

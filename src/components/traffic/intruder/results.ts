@@ -6,6 +6,7 @@ import type {
   IntruderResultsWindowState,
 } from './types'
 import { getIntruderResultColumnValue } from './analysis'
+import { setLocalStorageItem } from '@/utils/browserStorage'
 
 const STORAGE_KEY_PREFIX = 'intruder-results-window'
 
@@ -149,7 +150,7 @@ export function getIntruderResultsStorageKey(workspaceId: string): string {
 }
 
 export function saveIntruderResultsWindowState(state: IntruderResultsWindowState): void {
-  localStorage.setItem(getIntruderResultsStorageKey(state.workspaceId), JSON.stringify(state))
+  setLocalStorageItem(getIntruderResultsStorageKey(state.workspaceId), JSON.stringify(state))
 }
 
 export function loadIntruderResultsWindowState(workspaceId: string): IntruderResultsWindowState | null {

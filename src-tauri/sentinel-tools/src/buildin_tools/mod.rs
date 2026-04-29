@@ -1,6 +1,7 @@
 pub mod agent_control_tool;
 pub mod ask_user_question;
 pub mod browser;
+pub mod browser_shell;
 mod file_context;
 pub mod file_edit;
 pub mod file_read;
@@ -36,6 +37,7 @@ pub mod web_search;
 pub use agent_control_tool::{CloseAgentTool, ListAgentsTool, SpawnAgentTool, WaitAgentsTool};
 pub use ask_user_question::AskUserQuestionTool;
 pub use browser::BrowserTool;
+pub use browser_shell::{set_browser_shell_handler, BrowserShellTool};
 pub use file_edit::FileEditTool;
 pub use file_read::FileReadTool;
 pub use file_write::FileWriteTool;
@@ -71,6 +73,7 @@ use rig::tool::ToolSet;
 pub fn create_buildin_toolset() -> ToolSet {
     let mut toolset = ToolSet::default();
     toolset.add_tool(BrowserTool::default());
+    toolset.add_tool(BrowserShellTool::default());
     toolset.add_tool(HttpRequestTool::default());
     toolset.add_tool(AskUserQuestionTool::new());
     toolset.add_tool(GlobTool);
@@ -115,6 +118,7 @@ pub fn create_contest_toolset() -> ToolSet {
 pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
     let tools: Vec<Box<dyn rig::tool::ToolDyn>> = vec![
         Box::new(BrowserTool::default()),
+        Box::new(BrowserShellTool::default()),
         Box::new(HttpRequestTool::default()),
         Box::new(AskUserQuestionTool::new()),
         Box::new(GlobTool),
@@ -154,6 +158,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
 pub async fn get_contest_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
     let tools: Vec<Box<dyn rig::tool::ToolDyn>> = vec![
         Box::new(BrowserTool::default()),
+        Box::new(BrowserShellTool::default()),
         Box::new(HttpRequestTool::default()),
         Box::new(RouteDiscoveryTool),
         Box::new(ShellTool::new()),

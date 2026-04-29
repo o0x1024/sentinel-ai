@@ -7,34 +7,34 @@
   >
     <div v-if="filteredPackets.length > 0" class="relative" :style="{ height: totalHeight + 'px', minWidth: '900px' }">
       <div class="sticky top-0 z-10 flex bg-base-200 border-b border-base-300" :style="{ height: headerHeight + 'px' }">
-        <div class="flex items-center justify-center px-2 border-r border-base-300 relative column-header" :style="{ width: columnWidths.mark + 'px' }">
+        <div class="flex items-center justify-center px-1.5 border-r border-base-300 relative column-header" :style="{ width: columnWidths.mark + 'px' }">
           <div class="column-resize-handle" @mousedown="onStartColumnResize($event, 'mark')"></div>
         </div>
-        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.no + 'px' }">
+        <div class="flex items-center px-1.5 border-r border-base-300 text-[11px] font-semibold relative column-header" :style="{ width: columnWidths.no + 'px' }">
           {{ $t('trafficAnalysis.packetCapture.table.no') }}
           <div class="column-resize-handle" @mousedown="onStartColumnResize($event, 'no')"></div>
         </div>
-        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.time + 'px' }">
+        <div class="flex items-center px-1.5 border-r border-base-300 text-[11px] font-semibold relative column-header" :style="{ width: columnWidths.time + 'px' }">
           {{ $t('trafficAnalysis.packetCapture.table.time') }}
           <div class="column-resize-handle" @mousedown="onStartColumnResize($event, 'time')"></div>
         </div>
-        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.source + 'px' }">
+        <div class="flex items-center px-1.5 border-r border-base-300 text-[11px] font-semibold relative column-header" :style="{ width: columnWidths.source + 'px' }">
           {{ $t('trafficAnalysis.packetCapture.table.source') }}
           <div class="column-resize-handle" @mousedown="onStartColumnResize($event, 'source')"></div>
         </div>
-        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.dest + 'px' }">
+        <div class="flex items-center px-1.5 border-r border-base-300 text-[11px] font-semibold relative column-header" :style="{ width: columnWidths.dest + 'px' }">
           {{ $t('trafficAnalysis.packetCapture.table.destination') }}
           <div class="column-resize-handle" @mousedown="onStartColumnResize($event, 'dest')"></div>
         </div>
-        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.protocol + 'px' }">
+        <div class="flex items-center px-1.5 border-r border-base-300 text-[11px] font-semibold relative column-header" :style="{ width: columnWidths.protocol + 'px' }">
           {{ $t('trafficAnalysis.packetCapture.table.protocol') }}
           <div class="column-resize-handle" @mousedown="onStartColumnResize($event, 'protocol')"></div>
         </div>
-        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.length + 'px' }">
+        <div class="flex items-center px-1.5 border-r border-base-300 text-[11px] font-semibold relative column-header" :style="{ width: columnWidths.length + 'px' }">
           {{ $t('trafficAnalysis.packetCapture.table.length') }}
           <div class="column-resize-handle" @mousedown="onStartColumnResize($event, 'length')"></div>
         </div>
-        <div class="flex-1 flex items-center px-2 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.info') }}</div>
+        <div class="flex-1 flex items-center px-1.5 text-[11px] font-semibold">{{ $t('trafficAnalysis.packetCapture.table.info') }}</div>
       </div>
 
       <div
@@ -51,22 +51,22 @@
         @click="onSelectPacket(item.data)"
         @contextmenu.prevent="onShowContextMenu($event, item.data)"
       >
-        <div class="flex items-center justify-center px-2 border-r border-base-300" :style="{ width: columnWidths.mark + 'px' }">
+        <div class="flex items-center justify-center px-1.5 border-r border-base-300" :style="{ width: columnWidths.mark + 'px' }">
           <i v-if="markedPackets.has(item.data.id)" class="fas fa-bookmark text-warning text-xs"></i>
         </div>
-        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.no + 'px' }">{{ item.data.id }}</div>
-        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.time + 'px' }">{{ formatTime(item.data.timestamp) }}</div>
-        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs truncate" :style="{ width: columnWidths.source + 'px' }">{{ item.data.src }}</div>
-        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs truncate" :style="{ width: columnWidths.dest + 'px' }">{{ item.data.dst }}</div>
-        <div class="flex items-center px-2 border-r border-base-300" :style="{ width: columnWidths.protocol + 'px' }">
-          <span class="badge badge-sm" :class="getProtocolBadgeClass(item.data.protocol)">{{ item.data.protocol }}</span>
+        <div class="flex items-center px-1.5 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.no + 'px' }">{{ item.data.id }}</div>
+        <div class="flex items-center px-1.5 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.time + 'px' }">{{ formatTime(item.data.timestamp) }}</div>
+        <div class="flex items-center px-1.5 border-r border-base-300 font-mono text-xs truncate" :style="{ width: columnWidths.source + 'px' }">{{ item.data.src }}</div>
+        <div class="flex items-center px-1.5 border-r border-base-300 font-mono text-xs truncate" :style="{ width: columnWidths.dest + 'px' }">{{ item.data.dst }}</div>
+        <div class="flex items-center px-1.5 border-r border-base-300" :style="{ width: columnWidths.protocol + 'px' }">
+          <span class="badge badge-xs" :class="getProtocolBadgeClass(item.data.protocol)">{{ item.data.protocol }}</span>
         </div>
-        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.length + 'px' }">{{ item.data.length }}</div>
-        <div class="flex-1 flex items-center px-2 text-xs truncate">{{ item.data.info }}</div>
+        <div class="flex items-center px-1.5 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.length + 'px' }">{{ item.data.length }}</div>
+        <div class="flex-1 flex items-center px-1.5 text-xs truncate">{{ item.data.info }}</div>
       </div>
     </div>
 
-    <div v-if="filteredPackets.length === 0" class="flex flex-col items-center justify-center h-full text-base-content/50 py-12">
+    <div v-if="filteredPackets.length === 0" class="flex h-full flex-col items-center justify-center py-10 text-base-content/50">
       <template v-if="isLoading">
         <span class="loading loading-spinner loading-lg mb-4"></span>
         <p>{{ $t('trafficAnalysis.packetCapture.emptyState.loadingInterfaces') }}</p>

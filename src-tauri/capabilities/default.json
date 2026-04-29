@@ -26,6 +26,16 @@
       "description": "Capability for standalone help center window",
       "windows": ["help-center"],
       "permissions": ["core:default", "core:window:allow-close"]
+    },
+    {
+      "identifier": "intruder-results-window",
+      "description": "Capability for standalone intruder results windows",
+      "windows": ["intruder-results-*"],
+      "permissions": [
+        "core:default",
+        "core:window:allow-close",
+        "core:window:allow-destroy"
+      ]
     }
   ]
 }

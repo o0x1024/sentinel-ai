@@ -1,7 +1,7 @@
 <template>
   <div v-if="selectedRequest" class="flex-1 flex min-h-0 overflow-hidden relative">
     <div
-      v-if="isLoadingSelectedRequest"
+      v-if="isLoadingSelectedRequest || isStagingDetailContent"
       class="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-md border border-base-300 bg-base-100/95 px-2 py-1 text-xs text-base-content/70 shadow-sm pointer-events-none"
     >
       <span class="loading loading-spinner loading-xs text-primary"></span>
@@ -14,16 +14,14 @@
       >
         <div class="flex min-w-0 items-center gap-2">
           <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.request') }}</h4>
-          <div v-if="selectedRequest.was_edited" class="dropdown dropdown-bottom">
-            <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
-              <span :class="requestViewMode === 'edited' ? 'text-warning' : ''">{{ requestViewModeLabel }}</span>
-              <i class="fas fa-chevron-down text-xs"></i>
-            </label>
-            <ul tabindex="0" class="dropdown-content z-[1] menu p-1 shadow-lg bg-base-100 rounded-box w-40 border border-base-300">
-              <li><a :class="{ active: requestViewMode === 'original' }" @click="$emit('update:requestViewMode', 'original')">{{ $t('trafficAnalysis.history.detailsPanel.originalRequest') }}</a></li>
-              <li><a :class="{ active: requestViewMode === 'edited' }" @click="$emit('update:requestViewMode', 'edited')"><span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedRequest') }}</span></a></li>
-            </ul>
-          </div>
+          <TrafficVariantSwitch
+            v-if="hasEditedRequest(selectedRequest)"
+            :model-value="requestViewMode"
+            :active-label="requestViewModeLabel"
+            :original-label="$t('trafficAnalysis.history.detailsPanel.originalRequest')"
+            :edited-label="$t('trafficAnalysis.history.detailsPanel.editedRequest')"
+            @update:model-value="$emit('update:requestViewMode', $event)"
+          />
           <span v-if="!immersiveDrillModeEnabled && !isRequestPaneCompact" class="badge badge-xs badge-ghost" :title="$t('trafficAnalysis.history.detailsPanel.scheme')">{{ requestSchemeLabel }}</span>
           <span v-if="!immersiveDrillModeEnabled && !isRequestPaneCompact" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ requestHttpVersion }}</span>
         </div>
@@ -93,16 +91,34 @@
       </div>
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'request')">
         <div key="history-request-viewer" class="h-full min-h-0">
+          <TrafficMessageReader
+            v-if="requestTab !== 'hex' && requestUsesPlainTextReader"
+            key="history-request-reader"
+            ref="requestSurface"
+            :model-value="requestDisplayContent"
+            custom-context-menu
+            show-search-bar
+            :state-key="buildHistoryRequestStateKey(selectedRequest?.id, requestTab, requestViewMode)"
+            :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+            :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+            :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+            :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+            :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+            :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+            :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+            :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+            @contextmenu="showDetailContextMenu($event, 'request')"
+          />
           <HttpMessageSurface
-            v-if="requestTab !== 'hex'"
+            v-else-if="requestTab !== 'hex'"
             key="history-request-text"
             ref="requestSurface"
-            :model-value="requestContent"
+            :model-value="requestDisplayContent"
             readonly
             message-type="request"
             custom-context-menu
             show-search-bar
-            :display-mode="resolveTrafficTextDisplayMode(requestTab)"
+            :display-mode="resolveTrafficTextDisplayMode(effectiveRequestTab)"
             :state-key="buildHistoryRequestStateKey(selectedRequest?.id, requestTab, requestViewMode)"
             :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
             :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
@@ -119,7 +135,7 @@
             v-else
             key="history-request-hex"
             ref="requestSurface"
-            :model-value="stringToHex(requestRawContent)"
+            :model-value="requestHexContent"
             custom-context-menu
             show-search-bar
             :state-key="buildHistoryRequestStateKey(selectedRequest?.id, 'hex', requestViewMode)"
@@ -146,16 +162,14 @@
         <div class="flex min-w-0 items-center gap-2">
           <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.response') }}</h4>
           <span v-if="isResponseCompressed(selectedRequest)" class="badge badge-xs badge-info" title="响应已自动解压"><i class="fas fa-file-archive mr-1"></i>{{ $t('trafficAnalysis.history.detailsPanel.decompressed') }}</span>
-          <div v-if="selectedRequest.was_edited && hasEditedResponse(selectedRequest)" class="dropdown dropdown-bottom">
-            <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
-              <span :class="responseViewMode === 'edited' ? 'text-warning' : ''">{{ responseViewModeLabel }}</span>
-              <i class="fas fa-chevron-down text-xs"></i>
-            </label>
-            <ul tabindex="0" class="dropdown-content z-[1] menu p-1 shadow-lg bg-base-100 rounded-box w-40 border border-base-300">
-              <li><a :class="{ active: responseViewMode === 'original' }" @click="$emit('update:responseViewMode', 'original')">{{ $t('trafficAnalysis.history.detailsPanel.originalResponse') }}</a></li>
-              <li><a :class="{ active: responseViewMode === 'edited' }" @click="$emit('update:responseViewMode', 'edited')"><span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedResponse') }}</span></a></li>
-            </ul>
-          </div>
+          <TrafficVariantSwitch
+            v-if="hasEditedResponse(selectedRequest)"
+            :model-value="responseViewMode"
+            :active-label="responseViewModeLabel"
+            :original-label="$t('trafficAnalysis.history.detailsPanel.originalResponse')"
+            :edited-label="$t('trafficAnalysis.history.detailsPanel.editedResponse')"
+            @update:model-value="$emit('update:responseViewMode', $event)"
+          />
           <span v-if="!immersiveDrillModeEnabled && !isResponsePaneCompact" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ responseHttpVersion }}</span>
         </div>
         <div class="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto">
@@ -166,7 +180,7 @@
             @update:model-value="$emit('update:responseTab', $event as ProxyHistoryResponseTab)"
           />
           <TrafficMessageDisplayControls
-            v-if="responseTab !== 'render'"
+            v-if="responseTab !== 'render' || responseUsesPlainTextReader"
             :mode-label="''"
             :compact="isResponsePaneCompact"
             :show-line-endings="false"
@@ -176,16 +190,34 @@
       <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event, 'response')">
         <div key="history-response-viewer" class="h-full min-h-0">
           <TrafficResponseRenderPane
-            v-if="responseTab === 'render'"
+            v-if="responseTab === 'render' && !responseUsesPlainTextReader"
             key="history-response-render"
             :body="responseBodyText"
             :content-type="responseContentType"
           />
           <TrafficMessageReader
+            v-else-if="responseTab !== 'hex' && responseUsesPlainTextReader"
+            key="history-response-reader"
+            ref="responseSurface"
+            :model-value="responseDisplayContent"
+            custom-context-menu
+            show-search-bar
+            :state-key="buildHistoryResponseStateKey(selectedRequest?.id, responseTab, responseViewMode)"
+            :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
+            :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
+            :search-previous-title="$t('trafficAnalysis.history.detailsPanel.search.previous')"
+            :search-case-sensitive-title="$t('trafficAnalysis.history.detailsPanel.search.caseSensitive')"
+            :search-regexp-title="$t('trafficAnalysis.history.detailsPanel.search.regexp')"
+            :search-clear-title="$t('trafficAnalysis.history.detailsPanel.search.clear')"
+            :search-no-matches-text="$t('trafficAnalysis.history.detailsPanel.search.noMatches')"
+            :search-invalid-regexp-text="$t('trafficAnalysis.history.detailsPanel.search.invalidRegexp')"
+            @contextmenu="showDetailContextMenu($event, 'response')"
+          />
+          <TrafficMessageReader
             v-else-if="responseTab === 'hex'"
             key="history-response-hex"
             ref="responseSurface"
-            :model-value="stringToHex(responseRawContent)"
+            :model-value="responseHexContent"
             custom-context-menu
             show-search-bar
             :state-key="buildHistoryResponseStateKey(selectedRequest?.id, 'hex', responseViewMode)"
@@ -204,12 +236,12 @@
             v-else
             key="history-response-text"
             ref="responseSurface"
-            :model-value="responseContent"
+            :model-value="responseDisplayContent"
             readonly
             message-type="response"
             custom-context-menu
             show-search-bar
-            :display-mode="resolveTrafficTextDisplayMode(responseTab)"
+            :display-mode="resolveTrafficTextDisplayMode(effectiveResponseTab)"
             :state-key="buildHistoryResponseStateKey(selectedRequest?.id, responseTab, responseViewMode)"
             :search-placeholder="$t('trafficAnalysis.history.detailsPanel.search.placeholder')"
             :search-next-title="$t('trafficAnalysis.history.detailsPanel.search.next')"
@@ -235,7 +267,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   formatProxyHistorySchemeLabel,
@@ -245,12 +277,22 @@ import {
   formatRequest,
   formatRequestRaw,
   formatResponse,
+  formatResponseRawFast,
   formatResponseRaw,
   getResponseContentType,
+  hasEditedRequest,
   hasEditedResponse,
   isResponseCompressed,
-  stringToHex,
 } from './proxyHistoryFormattingSupport'
+import {
+  isLargeHistoryRequestPayload,
+  isLargeHistoryResponsePayload,
+} from './proxyHistoryLargePayloadSupport'
+import {
+  convertTextToHexChunk,
+  HEX_VIEW_CHUNK_SIZE,
+  shouldChunkHexView,
+} from './trafficHexViewSupport'
 import {
   findTrafficContextEvidenceSelectionRange,
   findTrafficContextEvidenceSelectionRangeBySearchTerms,
@@ -263,6 +305,7 @@ import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import TrafficMessageDisplayControls from '@/components/traffic/TrafficMessageDisplayControls.vue'
 import TrafficMessageViewTabs from '@/components/traffic/TrafficMessageViewTabs.vue'
 import TrafficResponseRenderPane from './TrafficResponseRenderPane.vue'
+import TrafficVariantSwitch from './TrafficVariantSwitch.vue'
 import { useTrafficDisplaySettings } from './trafficDisplaySettings'
 import { resolveStoredTrafficResponseBodyText } from './trafficResponseDecodingSupport'
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
@@ -297,6 +340,16 @@ const responseSurface = ref<{
 const pendingEvidenceLocation = ref<string | null>(null)
 const pendingEvidenceSearchTerm = ref<string | null>(null)
 const lastAutoFocusedEvidenceKey = ref('')
+const requestLargeContentReady = ref(true)
+const responseLargeContentReady = ref(true)
+const requestHexContent = ref('')
+const responseHexContent = ref('')
+const requestHexPending = ref(false)
+const responseHexPending = ref(false)
+let requestLargeContentFrameId: number | null = null
+let responseLargeContentFrameId: number | null = null
+let requestHexFrameId: number | null = null
+let responseHexFrameId: number | null = null
 const requestViewTabs = computed(() => [
   { value: 'pretty', label: t('trafficAnalysis.history.detailsPanel.tabs.pretty'), shortLabel: locale.value.startsWith('zh') ? '格式' : 'Fmt' },
   { value: 'raw', label: t('trafficAnalysis.history.detailsPanel.tabs.raw'), shortLabel: locale.value.startsWith('zh') ? '原始' : 'Raw' },
@@ -326,17 +379,52 @@ const responseViewModeLabel = computed(() => {
     ? t('trafficAnalysis.history.detailsPanel.originalResponse')
     : t('trafficAnalysis.history.detailsPanel.editedResponse')
 })
+const requestUsesPlainTextReader = computed(() =>
+  isLargeHistoryRequestPayload(props.selectedRequest, props.requestViewMode),
+)
+const responseUsesPlainTextReader = computed(() =>
+  isLargeHistoryResponsePayload(props.selectedRequest, props.responseViewMode),
+)
+const effectiveRequestTab = computed(() =>
+  requestUsesPlainTextReader.value && props.requestTab === 'pretty' ? 'raw' : props.requestTab,
+)
+const effectiveResponseTab = computed(() =>
+  responseUsesPlainTextReader.value && (props.responseTab === 'pretty' || props.responseTab === 'render')
+    ? 'raw'
+    : props.responseTab,
+)
+const isStagingLargePayload = computed(() =>
+  (requestUsesPlainTextReader.value && !requestLargeContentReady.value)
+  || (responseUsesPlainTextReader.value && !responseLargeContentReady.value),
+)
+const isStagingDetailContent = computed(() =>
+  isStagingLargePayload.value
+  || (props.requestTab === 'hex' && requestHexPending.value)
+  || (props.responseTab === 'hex' && responseHexPending.value),
+)
 
 const requestRawContent = computed(() =>
-  props.selectedRequest ? formatRequestRaw(props.selectedRequest, props.requestViewMode) : '',
+  props.selectedRequest && (!requestUsesPlainTextReader.value || requestLargeContentReady.value)
+    ? formatRequestRaw(props.selectedRequest, props.requestViewMode)
+    : '',
 )
 const requestContent = computed(() =>
-  props.selectedRequest ? formatRequest(props.selectedRequest, props.requestTab, props.requestViewMode) : '',
+  props.selectedRequest && (!requestUsesPlainTextReader.value || requestLargeContentReady.value)
+    ? (
+        effectiveRequestTab.value === 'raw'
+          ? requestRawContent.value
+          : formatRequest(props.selectedRequest, props.requestTab, props.requestViewMode)
+      )
+    : '',
+)
+const requestDisplayContent = computed(() =>
+  effectiveRequestTab.value === 'raw' ? requestRawContent.value : requestContent.value,
 )
 const responseBodyText = computed(() => {
+  if (responseUsesPlainTextReader.value || !responseLargeContentReady.value) return ''
   if (!props.selectedRequest) return ''
 
-  const useEdited = props.responseViewMode === 'edited' && props.selectedRequest.was_edited
+  const useEdited = props.responseViewMode === 'edited' && hasEditedResponse(props.selectedRequest)
   const headers = useEdited && props.selectedRequest.edited_response_headers
     ? props.selectedRequest.edited_response_headers
     : props.selectedRequest.response_headers
@@ -348,13 +436,28 @@ const responseBodyText = computed(() => {
 })
 const responseRawContent = computed(() =>
   props.selectedRequest
-    ? formatResponseRaw(props.selectedRequest, props.responseViewMode, { bodyText: responseBodyText.value })
+    ? (
+        responseUsesPlainTextReader.value && !responseLargeContentReady.value
+          ? ''
+          : responseUsesPlainTextReader.value
+          ? formatResponseRawFast(props.selectedRequest, props.responseViewMode)
+          : formatResponseRaw(props.selectedRequest, props.responseViewMode, { bodyText: responseBodyText.value })
+      )
     : '',
 )
 const responseContent = computed(() =>
   props.selectedRequest
-    ? formatResponse(props.selectedRequest, props.responseTab, props.responseViewMode, { bodyText: responseBodyText.value })
+    ? (
+        responseUsesPlainTextReader.value && !responseLargeContentReady.value
+          ? ''
+          : responseUsesPlainTextReader.value
+          ? responseRawContent.value
+          : formatResponse(props.selectedRequest, props.responseTab, props.responseViewMode, { bodyText: responseBodyText.value })
+      )
     : '',
+)
+const responseDisplayContent = computed(() =>
+  effectiveResponseTab.value === 'raw' ? responseRawContent.value : responseContent.value,
 )
 const responseContentType = computed(() =>
   props.selectedRequest ? getResponseContentType(props.selectedRequest, props.responseViewMode) : '',
@@ -383,7 +486,7 @@ const contextEvidenceHighlights = computed<TrafficContextEvidenceHighlight[]>(()
 const contextEvidencePane = computed(() => props.contextEvidencePane || 'request')
 const contextEvidenceSearchTerms = computed(() => props.contextEvidenceSearchTerms || [])
 const activeSurfaceContent = computed(() =>
-  contextEvidencePane.value === 'response' ? responseContent.value : requestContent.value,
+  contextEvidencePane.value === 'response' ? responseDisplayContent.value : requestDisplayContent.value,
 )
 
 function getEvidenceSourceLabel(source: TrafficContextEvidenceSource) {
@@ -401,6 +504,142 @@ function getEvidenceSourceLabel(source: TrafficContextEvidenceSource) {
     default:
       return 'Other'
   }
+}
+
+function scheduleRequestLargeContent() {
+  if (requestLargeContentFrameId !== null) {
+    cancelAnimationFrame(requestLargeContentFrameId)
+    requestLargeContentFrameId = null
+  }
+
+  if (!requestUsesPlainTextReader.value) {
+    requestLargeContentReady.value = true
+    return
+  }
+
+  requestLargeContentReady.value = false
+  requestLargeContentFrameId = requestAnimationFrame(() => {
+    requestLargeContentReady.value = true
+    requestLargeContentFrameId = null
+  })
+}
+
+function scheduleResponseLargeContent() {
+  if (responseLargeContentFrameId !== null) {
+    cancelAnimationFrame(responseLargeContentFrameId)
+    responseLargeContentFrameId = null
+  }
+
+  if (!responseUsesPlainTextReader.value) {
+    responseLargeContentReady.value = true
+    return
+  }
+
+  responseLargeContentReady.value = false
+  responseLargeContentFrameId = requestAnimationFrame(() => {
+    responseLargeContentReady.value = true
+    responseLargeContentFrameId = null
+  })
+}
+
+function cancelRequestHexRender() {
+  if (requestHexFrameId !== null) {
+    cancelAnimationFrame(requestHexFrameId)
+    requestHexFrameId = null
+  }
+  requestHexPending.value = false
+}
+
+function cancelResponseHexRender() {
+  if (responseHexFrameId !== null) {
+    cancelAnimationFrame(responseHexFrameId)
+    responseHexFrameId = null
+  }
+  responseHexPending.value = false
+}
+
+function scheduleRequestHexRender() {
+  cancelRequestHexRender()
+
+  if (props.requestTab !== 'hex') {
+    requestHexContent.value = ''
+    return
+  }
+
+  const source = requestRawContent.value
+  if (!source) {
+    requestHexContent.value = ''
+    return
+  }
+
+  if (!shouldChunkHexView(source)) {
+    requestHexContent.value = convertTextToHexChunk(source, 0, source.length)
+    return
+  }
+
+  requestHexContent.value = ''
+  requestHexPending.value = true
+  const parts: string[] = []
+  let offset = 0
+
+  const renderChunk = () => {
+    const nextOffset = Math.min(offset + HEX_VIEW_CHUNK_SIZE, source.length)
+    parts.push(convertTextToHexChunk(source, offset, nextOffset))
+    offset = nextOffset
+
+    if (offset >= source.length) {
+      requestHexContent.value = parts.join('')
+      requestHexPending.value = false
+      requestHexFrameId = null
+      return
+    }
+
+    requestHexFrameId = requestAnimationFrame(renderChunk)
+  }
+
+  requestHexFrameId = requestAnimationFrame(renderChunk)
+}
+
+function scheduleResponseHexRender() {
+  cancelResponseHexRender()
+
+  if (props.responseTab !== 'hex') {
+    responseHexContent.value = ''
+    return
+  }
+
+  const source = responseRawContent.value
+  if (!source) {
+    responseHexContent.value = ''
+    return
+  }
+
+  if (!shouldChunkHexView(source)) {
+    responseHexContent.value = convertTextToHexChunk(source, 0, source.length)
+    return
+  }
+
+  responseHexContent.value = ''
+  responseHexPending.value = true
+  const parts: string[] = []
+  let offset = 0
+
+  const renderChunk = () => {
+    const nextOffset = Math.min(offset + HEX_VIEW_CHUNK_SIZE, source.length)
+    parts.push(convertTextToHexChunk(source, offset, nextOffset))
+    offset = nextOffset
+
+    if (offset >= source.length) {
+      responseHexContent.value = parts.join('')
+      responseHexPending.value = false
+      responseHexFrameId = null
+      return
+    }
+
+    responseHexFrameId = requestAnimationFrame(renderChunk)
+  }
+
+  responseHexFrameId = requestAnimationFrame(renderChunk)
 }
 
 async function focusEvidenceHighlight(item: TrafficContextEvidenceHighlight) {
@@ -470,6 +709,58 @@ function applyPendingEvidenceSelection() {
 watch(
   () => [
     props.selectedRequest?.id || 0,
+    props.requestTab,
+    props.requestViewMode,
+    requestUsesPlainTextReader.value,
+  ] as const,
+  () => {
+    scheduleRequestLargeContent()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [
+    props.selectedRequest?.id || 0,
+    props.responseTab,
+    props.responseViewMode,
+    responseUsesPlainTextReader.value,
+  ] as const,
+  () => {
+    scheduleResponseLargeContent()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [
+    props.selectedRequest?.id || 0,
+    props.requestTab,
+    props.requestViewMode,
+    requestRawContent.value,
+  ] as const,
+  () => {
+    scheduleRequestHexRender()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [
+    props.selectedRequest?.id || 0,
+    props.responseTab,
+    props.responseViewMode,
+    responseRawContent.value,
+  ] as const,
+  () => {
+    scheduleResponseHexRender()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [
+    props.selectedRequest?.id || 0,
     contextEvidencePane.value,
     (props.contextEvidenceMatchedLocations || []).join('|'),
     (props.contextEvidenceSearchTerms || []).join('|'),
@@ -513,4 +804,15 @@ watch(
     applyPendingEvidenceSelection()
   },
 )
+
+onUnmounted(() => {
+  if (requestLargeContentFrameId !== null) {
+    cancelAnimationFrame(requestLargeContentFrameId)
+  }
+  if (responseLargeContentFrameId !== null) {
+    cancelAnimationFrame(responseLargeContentFrameId)
+  }
+  cancelRequestHexRender()
+  cancelResponseHexRender()
+})
 </script>

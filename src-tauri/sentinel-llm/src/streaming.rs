@@ -190,8 +190,19 @@ impl StreamingLlmClient {
 
     fn apply_generation_settings<M>(
         &self,
+        builder: rig::agent::AgentBuilder<M>,
+    ) -> Result<rig::agent::AgentBuilder<M>>
+    where
+        M: rig::completion::CompletionModel,
+    {
+        self.apply_generation_settings_with_params(builder, None)
+    }
+
+    fn apply_generation_settings_with_params<M>(
+        &self,
         mut builder: rig::agent::AgentBuilder<M>,
-    ) -> rig::agent::AgentBuilder<M>
+        base_params: Option<serde_json::Value>,
+    ) -> Result<rig::agent::AgentBuilder<M>>
     where
         M: rig::completion::CompletionModel,
     {
@@ -201,7 +212,7 @@ impl StreamingLlmClient {
         if let Some(max_tokens) = self.config.max_tokens {
             builder = builder.max_tokens(max_tokens as u64);
         }
-        builder
+        self.config.apply_extra_body(builder, base_params)
     }
 
     fn moonshot_thinking_params(&self, model: &str) -> Option<serde_json::Value> {
@@ -913,6 +924,7 @@ impl StreamingLlmClient {
 
         let mut builder =
             deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        builder = self.config.apply_extra_headers(builder)?;
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -925,7 +937,7 @@ impl StreamingLlmClient {
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let builder = client.agent(model).preamble(preamble);
         let agent = self
-            .apply_generation_settings(builder)
+            .apply_generation_settings(builder)?
             .tool_server_handle(tool_server_handle)
             .build();
 
@@ -960,30 +972,35 @@ impl StreamingLlmClient {
                 "Using Chat Completions API with custom base URL: {}",
                 base_url
             );
-            let client: openai::CompletionsClient = openai::Client::builder()
+            let builder = openai::Client::builder()
                 .api_key(api_key)
-                .base_url(base_url)
+                .base_url(base_url);
+            let client: openai::CompletionsClient = self
+                .config
+                .apply_extra_headers(builder)?
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
                 .completions_api();
 
             let builder = client.agent(model).preamble(preamble);
             let agent = self
-                .apply_generation_settings(builder)
+                .apply_generation_settings(builder)?
                 .tool_server_handle(tool_server_handle)
                 .build();
             self.execute_stream(agent, user_message, chat_history, timeout, on_content)
                 .await
         } else {
             info!("Using Responses API for official OpenAI");
-            let client: openai::Client = openai::Client::builder()
-                .api_key(api_key)
+            let builder = openai::Client::builder().api_key(api_key);
+            let client: openai::Client = self
+                .config
+                .apply_extra_headers(builder)?
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?;
 
             let builder = client.agent(model).preamble(preamble);
             let agent = self
-                .apply_generation_settings(builder)
+                .apply_generation_settings(builder)?
                 .tool_server_handle(tool_server_handle)
                 .build();
             self.execute_stream(agent, user_message, chat_history, timeout, on_content)
@@ -1013,9 +1030,12 @@ impl StreamingLlmClient {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("base_url is required for minimal compat mode"))?;
 
-        let client: openai::CompletionsClient = openai::Client::builder()
+        let builder = openai::Client::builder()
             .api_key(api_key)
-            .base_url(base_url)
+            .base_url(base_url);
+        let client: openai::CompletionsClient = self
+            .config
+            .apply_extra_headers(builder)?
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
             .completions_api();
@@ -1050,6 +1070,7 @@ impl StreamingLlmClient {
 
         let mut builder =
             moonshot::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        builder = self.config.apply_extra_headers(builder)?;
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -1060,12 +1081,9 @@ impl StreamingLlmClient {
             .map_err(|e| anyhow::anyhow!("Failed to build Moonshot client: {:?}", e))?;
 
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let mut builder = client.agent(model).preamble(preamble);
-        if let Some(params) = self.moonshot_thinking_params(model) {
-            builder = builder.additional_params(params);
-        }
+        let builder = client.agent(model).preamble(preamble);
         let agent = self
-            .apply_generation_settings(builder)
+            .apply_generation_settings_with_params(builder, self.moonshot_thinking_params(model))?
             .tool_server_handle(tool_server_handle)
             .build();
 
@@ -1093,6 +1111,7 @@ impl StreamingLlmClient {
 
         let mut builder =
             anthropic::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        builder = self.config.apply_extra_headers(builder)?;
 
         if let Ok(base_url) = std::env::var("ANTHROPIC_API_BASE") {
             if !base_url.is_empty() {
@@ -1110,7 +1129,7 @@ impl StreamingLlmClient {
             .preamble(preamble)
             .max_tokens(self.config.get_max_tokens() as u64);
         let agent = self
-            .apply_generation_settings(builder)
+            .apply_generation_settings(builder)?
             .tool_server_handle(tool_server_handle)
             .build();
 
@@ -1137,12 +1156,12 @@ impl StreamingLlmClient {
         let cfg = AdditionalParameters::default().with_config(gen_cfg);
 
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let builder = client
-            .agent(model)
-            .preamble(preamble)
-            .additional_params(serde_json::to_value(cfg).unwrap());
+        let builder = client.agent(model).preamble(preamble);
         let agent = self
-            .apply_generation_settings(builder)
+            .apply_generation_settings_with_params(
+                builder,
+                Some(serde_json::to_value(cfg).unwrap()),
+            )?
             .tool_server_handle(tool_server_handle)
             .build();
 
@@ -1171,6 +1190,7 @@ impl StreamingLlmClient {
 
         let mut builder =
             deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        builder = self.config.apply_extra_headers(builder)?;
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -1183,7 +1203,7 @@ impl StreamingLlmClient {
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let builder = client.agent(model).preamble(preamble);
         let agent = self
-            .apply_generation_settings(builder)
+            .apply_generation_settings(builder)?
             .tool_server_handle(tool_server_handle)
             .build();
 
@@ -1210,7 +1230,7 @@ impl StreamingLlmClient {
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let builder = client.agent(model).preamble(preamble);
         let agent = self
-            .apply_generation_settings(builder)
+            .apply_generation_settings(builder)?
             .tool_server_handle(tool_server_handle)
             .build();
 
@@ -1232,12 +1252,19 @@ impl StreamingLlmClient {
         F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::openrouter;
-        let client = openrouter::Client::from_env();
+        let api_key = std::env::var("OPENROUTER_API_KEY")
+            .map_err(|_| anyhow::anyhow!("OPENROUTER_API_KEY not set"))?;
+        let builder = openrouter::Client::builder().api_key(api_key);
+        let client = self
+            .config
+            .apply_extra_headers(builder)?
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build OpenRouter client: {:?}", e))?;
 
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let builder = client.agent(model).preamble(preamble);
         let agent = self
-            .apply_generation_settings(builder)
+            .apply_generation_settings(builder)?
             .tool_server_handle(tool_server_handle)
             .build();
 
@@ -1259,12 +1286,19 @@ impl StreamingLlmClient {
         F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::xai;
-        let client = xai::Client::from_env();
+        let api_key =
+            std::env::var("XAI_API_KEY").map_err(|_| anyhow::anyhow!("XAI_API_KEY not set"))?;
+        let builder = xai::Client::builder().api_key(api_key);
+        let client = self
+            .config
+            .apply_extra_headers(builder)?
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build xAI client: {:?}", e))?;
 
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let builder = client.agent(model).preamble(preamble);
         let agent = self
-            .apply_generation_settings(builder)
+            .apply_generation_settings(builder)?
             .tool_server_handle(tool_server_handle)
             .build();
 
@@ -1286,12 +1320,19 @@ impl StreamingLlmClient {
         F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::groq;
-        let client = groq::Client::from_env();
+        let api_key =
+            std::env::var("GROQ_API_KEY").map_err(|_| anyhow::anyhow!("GROQ_API_KEY not set"))?;
+        let builder = groq::Client::builder().api_key(api_key);
+        let client = self
+            .config
+            .apply_extra_headers(builder)?
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build Groq client: {:?}", e))?;
 
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let builder = client.agent(model).preamble(preamble);
         let agent = self
-            .apply_generation_settings(builder)
+            .apply_generation_settings(builder)?
             .tool_server_handle(tool_server_handle)
             .build();
 
@@ -1502,7 +1543,8 @@ impl StreamingLlmClient {
                     let err_text = e.to_string();
                     let content_tail = Self::tail_preview(&content, 200);
                     error!(
-                        "LLM stream error after {} chunks (content_len={}, emitted_output={}, tool_call_count={}, tail={:?}): {}",
+                        "LLM stream error for conversation_id={} after {} chunks (content_len={}, emitted_output={}, tool_call_count={}, tail={:?}): {}",
+                        self.config.conversation_id.as_deref().unwrap_or("N/A"),
                         chunk_count,
                         content.len(),
                         emitted_output,

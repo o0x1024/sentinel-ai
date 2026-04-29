@@ -3,6 +3,7 @@
 //! 根据任务内容选择相关工具，避免将所有工具传给 LLM 造成 token 浪费。
 
 mod catalog;
+pub(crate) mod tool_server_catalog;
 mod types;
 
 use anyhow::Result;
@@ -24,9 +25,8 @@ pub use types::{
     ToolUsageStats,
 };
 
-use self::catalog::{
-    build_default_tools, extract_mcp_tool_tags, extract_workflow_tags, score_skill_match,
-};
+use self::catalog::{extract_mcp_tool_tags, extract_workflow_tags, score_skill_match};
+use self::tool_server_catalog::build_builtin_tool_metadata;
 
 /// 全局工具使用记录
 static TOOL_USAGE_RECORDS: Lazy<Arc<RwLock<Vec<ToolUsageRecord>>>> =
@@ -45,7 +45,7 @@ impl ToolRouter {
     /// 创建新的工具路由器
     pub fn new() -> Self {
         Self {
-            all_tools: build_default_tools(),
+            all_tools: Vec::new(),
             workflow_tools: Vec::new(),
             mcp_tools: Vec::new(),
             plugin_tools: Vec::new(),
@@ -59,6 +59,7 @@ impl ToolRouter {
     ) -> Self {
         let mut router = Self::new();
         router.db_service = db_service.cloned();
+        router.all_tools = router.load_builtin_tools_from_server().await;
 
         // 加载工作流工具
         if let Some(db) = db_service {
@@ -181,7 +182,7 @@ impl ToolRouter {
             ToolSelectionStrategy::Skills(_allowed_groups) => {
                 if !self.is_skills_enabled().await {
                     tracing::info!("Skills tool disabled via config; returning no tools.");
-                    return Ok(self.merge_always_available_tools(vec![]));
+                    return Ok(self.merge_always_available_tools(vec![], &config.disabled_tools));
                 }
                 // Skills mode default toolset
                 let mut base_tools = vec![
@@ -208,7 +209,7 @@ impl ToolRouter {
             ToolSelectionStrategy::Deferred => self.select_deferred_core_tools(config),
         };
 
-        Ok(self.merge_always_available_tools(selected))
+        Ok(self.merge_always_available_tools(selected, &config.disabled_tools))
     }
 
     /// Plan tools with full selection plan (supports Skills context injection)
@@ -228,8 +229,10 @@ impl ToolRouter {
 
         match &config.selection_strategy {
             ToolSelectionStrategy::Deferred => {
-                let tool_ids =
-                    self.merge_always_available_tools(self.select_deferred_core_tools(config));
+                let tool_ids = self.merge_always_available_tools(
+                    self.select_deferred_core_tools(config),
+                    &config.disabled_tools,
+                );
                 Ok(ToolSelectionPlan {
                     tool_ids,
                     injected_system_prompt: self.build_deferred_prompt_injection().await,
@@ -267,7 +270,7 @@ impl ToolRouter {
                 }
                 let injected = self.build_skills_prompt_injection(Some(task)).await;
                 Ok(ToolSelectionPlan {
-                    tool_ids: self.merge_always_available_tools(all),
+                    tool_ids: self.merge_always_available_tools(all, &config.disabled_tools),
                     injected_system_prompt: injected,
                     selected_skill: None,
                 })
@@ -431,12 +434,19 @@ impl ToolRouter {
         tools
     }
 
-    fn merge_always_available_tools(&self, selected: Vec<String>) -> Vec<String> {
+    fn merge_always_available_tools(
+        &self,
+        selected: Vec<String>,
+        disabled_tools: &[String],
+    ) -> Vec<String> {
         let mut merged = std::collections::HashSet::new();
         for id in selected {
             merged.insert(id);
         }
         for tool in self.get_all_available_tools() {
+            if disabled_tools.contains(&tool.id) {
+                continue;
+            }
             if tool.always_available {
                 merged.insert(tool.id);
             }
@@ -699,6 +709,12 @@ impl ToolRouter {
         Ok(workflow_tools)
     }
 
+    async fn load_builtin_tools_from_server(&self) -> Vec<ToolMetadata> {
+        let tool_server = sentinel_tools::get_tool_server();
+        tool_server.init_builtin_tools().await;
+        build_builtin_tool_metadata(tool_server.list_tools().await)
+    }
+
     /// 添加自定义工具（用于 MCP、插件等）
     pub fn add_tool(&mut self, metadata: ToolMetadata) {
         self.all_tools.push(metadata);
@@ -958,6 +974,7 @@ impl ToolRouter {
     ) -> Self {
         let mut router = Self::new();
         router.db_service = db_service.cloned();
+        router.all_tools = router.load_builtin_tools_from_server().await;
 
         // 加载工作流工具
         if let Some(db) = db_service {
@@ -1557,7 +1574,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_keyword_matching() {
-        let router = ToolRouter::new();
+        let router = ToolRouter::new_with_all_tools(None).await;
         let config = ToolConfig {
             enabled: true,
             selection_strategy: ToolSelectionStrategy::Keyword,
@@ -1575,7 +1592,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_manual_selection() {
-        let router = ToolRouter::new();
+        let router = ToolRouter::new_with_all_tools(None).await;
         let config = ToolConfig {
             enabled: true,
             selection_strategy: ToolSelectionStrategy::Manual(vec!["http_request".to_string()]),
@@ -1589,13 +1606,14 @@ mod tests {
             .select_tools("any task", &config, None)
             .await
             .unwrap();
-        assert_eq!(selected.len(), 1);
         assert!(selected.contains(&"http_request".to_string()));
+        assert!(selected.contains(&"ask_user_question".to_string()));
+        assert!(selected.contains(&"tool_search".to_string()));
     }
 
     #[tokio::test]
     async fn test_disabled_tools() {
-        let router = ToolRouter::new();
+        let router = ToolRouter::new_with_all_tools(None).await;
         let config = ToolConfig {
             enabled: true,
             selection_strategy: ToolSelectionStrategy::All,
@@ -1610,11 +1628,12 @@ mod tests {
             .await
             .unwrap();
         assert!(!selected.contains(&"shell".to_string()));
+        assert!(selected.contains(&"ask_user_question".to_string()));
     }
 
     #[tokio::test]
     async fn test_deferred_plan_includes_tool_search_and_prompt() {
-        let router = ToolRouter::new();
+        let router = ToolRouter::new_with_all_tools(None).await;
         let config = ToolConfig {
             enabled: true,
             selection_strategy: ToolSelectionStrategy::Deferred,

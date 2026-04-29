@@ -2,11 +2,11 @@
   <section class="flex h-full min-h-0 rounded-r-lg border border-l-0 border-base-300 bg-base-100">
     <div class="min-w-0 flex-1 overflow-hidden">
       <div v-if="activeTab === 'payloads'" class="flex h-full min-h-0 flex-col">
-        <div class="border-b border-base-300 px-4 py-3">
+        <div class="border-b border-base-300 px-3 py-2">
           <h3 class="text-sm font-semibold">{{ $t('trafficAnalysis.intruder.sections.payloads') }}</h3>
         </div>
 
-        <div class="space-y-4 overflow-auto p-4 text-sm">
+        <div class="space-y-3 overflow-auto p-3 text-sm">
           <label class="form-control">
             <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.payloadPosition') }}</span>
             <select v-model="selectedPayloadSetId" class="select select-bordered select-sm">
@@ -37,7 +37,7 @@
             </select>
           </label>
 
-          <div class="grid grid-cols-2 gap-3 text-xs text-base-content/70">
+          <div class="grid grid-cols-2 gap-2.5 text-xs text-base-content/70">
             <div>
               <div>{{ $t('trafficAnalysis.intruder.labels.payloadCount') }}</div>
               <div class="mt-1 font-semibold text-base-content">{{ activePayloadCount }}</div>
@@ -49,7 +49,7 @@
           </div>
 
           <div class="rounded-lg border border-base-300">
-            <div class="border-b border-base-300 bg-base-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
+            <div class="border-b border-base-300 bg-base-200 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-base-content/70">
               {{ $t('trafficAnalysis.intruder.labels.payloadConfiguration') }}
             </div>
 
@@ -64,7 +64,7 @@
               @apply-template="emit('applyPayloadTemplate', activePayloadSet.id, $event)"
             />
 
-            <div v-else-if="activePayloadSet?.payloadType === 'bruteForcer'" class="grid gap-3 p-4">
+            <div v-else-if="activePayloadSet?.payloadType === 'bruteForcer'" class="grid gap-2.5 p-3">
               <p class="text-sm text-base-content/70">
                 {{ $t('trafficAnalysis.intruder.help.bruteForcerHint') }}
               </p>
@@ -80,7 +80,7 @@
                 />
               </label>
 
-              <div class="grid gap-3 md:grid-cols-2">
+              <div class="grid gap-2.5 md:grid-cols-2">
                 <label class="form-control">
                   <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.bruteForceMinLength') }}</span>
                   <input
@@ -111,7 +111,7 @@
               @update="updateActivePayloadSet($event)"
             />
 
-            <div v-else-if="activePayloadSet?.payloadType === 'extensionGenerated'" class="grid gap-3 p-4">
+            <div v-else-if="activePayloadSet?.payloadType === 'extensionGenerated'" class="grid gap-2.5 p-3">
               <label class="form-control">
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.extensionPlugin') }}</span>
                 <select
@@ -139,7 +139,7 @@
 
               <div class="flex flex-wrap gap-2">
                 <button
-                  class="btn btn-sm btn-ghost"
+                  class="btn btn-sm btn-ghost min-h-8 px-2.5"
                   type="button"
                   :disabled="!activePayloadSet.pluginId"
                   @click="openPluginConfigDialog"
@@ -147,7 +147,7 @@
                   {{ $t('trafficAnalysis.intruder.actions.configurePlugin') }}
                 </button>
                 <button
-                  class="btn btn-sm btn-primary"
+                  class="btn btn-sm btn-primary min-h-8 px-2.5"
                   type="button"
                   :disabled="!activePayloadSet.pluginId || pluginPreviewLoading"
                   @click="generatePluginPayloadPreview"
@@ -157,7 +157,7 @@
                 </button>
               </div>
 
-              <div class="grid grid-cols-2 gap-3 text-xs text-base-content/70">
+              <div class="grid grid-cols-2 gap-2.5 text-xs text-base-content/70">
                 <div>
                   <div>{{ $t('trafficAnalysis.intruder.labels.cachedPayloads') }}</div>
                   <div class="mt-1 font-semibold text-base-content">{{ activePayloadCount }}</div>
@@ -172,15 +172,15 @@
 
               <textarea
                 :value="activePayloadSet.payloadsText"
-                class="h-56 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none"
+                class="h-48 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none"
                 :placeholder="$t('trafficAnalysis.intruder.placeholders.generatedPayloads')"
                 readonly
               ></textarea>
             </div>
 
-            <div v-else-if="activePayloadSet?.payloadType === 'runtimeFile'" class="grid gap-3 p-4">
+            <div v-else-if="activePayloadSet?.payloadType === 'runtimeFile'" class="grid gap-2.5 p-3">
               <div class="flex items-center gap-2">
-                <button class="btn btn-sm btn-ghost" type="button" @click="loadPayloadFile">
+                <button class="btn btn-sm btn-ghost min-h-8 px-2.5" type="button" @click="loadPayloadFile">
                   {{ $t('trafficAnalysis.intruder.actions.loadFile') }}
                 </button>
                 <input
@@ -193,12 +193,12 @@
               </div>
               <textarea
                 :value="activePayloadSet?.payloadsText || ''"
-                class="h-56 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none"
+                class="h-48 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none"
                 readonly
               ></textarea>
             </div>
 
-            <div v-else-if="activePayloadSet?.payloadType === 'numbers'" class="grid gap-3 p-4 md:grid-cols-2">
+            <div v-else-if="activePayloadSet?.payloadType === 'numbers'" class="grid gap-2.5 p-3 md:grid-cols-2">
               <label class="form-control">
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.numberFrom') }}</span>
                 <input
@@ -239,7 +239,7 @@
               </label>
             </div>
 
-            <div v-else-if="activePayloadSet?.payloadType === 'dates'" class="grid gap-3 p-4 md:grid-cols-2">
+            <div v-else-if="activePayloadSet?.payloadType === 'dates'" class="grid gap-2.5 p-3 md:grid-cols-2">
               <label class="form-control">
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.dateFrom') }}</span>
                 <input
@@ -282,19 +282,19 @@
               </label>
             </div>
 
-            <div v-else-if="activePayloadSet?.payloadType === 'characterList'" class="grid gap-3 p-4">
+            <div v-else-if="activePayloadSet?.payloadType === 'characterList'" class="grid gap-2.5 p-3">
               <label class="form-control">
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.characters') }}</span>
                 <textarea
                   :value="activePayloadSet.characterList"
-                  class="h-40 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none transition focus:border-primary"
+                  class="h-32 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none transition focus:border-primary"
                   :placeholder="$t('trafficAnalysis.intruder.placeholders.characterList')"
                   @input="updateActivePayloadSet({ characterList: ($event.target as HTMLTextAreaElement).value })"
                 ></textarea>
               </label>
             </div>
 
-            <div v-else-if="activePayloadSet?.payloadType === 'nullPayloads'" class="grid gap-3 p-4 md:grid-cols-2">
+            <div v-else-if="activePayloadSet?.payloadType === 'nullPayloads'" class="grid gap-2.5 p-3 md:grid-cols-2">
               <label class="form-control">
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.nullCount') }}</span>
                 <input
@@ -318,12 +318,12 @@
               </label>
             </div>
 
-            <div v-else-if="activePayloadSet?.payloadType === 'characterSubstitution'" class="grid gap-3 p-4">
+            <div v-else-if="activePayloadSet?.payloadType === 'characterSubstitution'" class="grid gap-2.5 p-3">
               <label class="form-control">
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.sourcePayloads') }}</span>
                 <textarea
                   :value="activePayloadSet.substitutionSource"
-                  class="h-32 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none transition focus:border-primary"
+                  class="h-28 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none transition focus:border-primary"
                   :placeholder="$t('trafficAnalysis.intruder.placeholders.substitutionSource')"
                   @input="updateActivePayloadSet({ substitutionSource: ($event.target as HTMLTextAreaElement).value })"
                 ></textarea>
@@ -332,19 +332,19 @@
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.substitutionRules') }}</span>
                 <textarea
                   :value="activePayloadSet.substitutionRules"
-                  class="h-28 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none transition focus:border-primary"
+                  class="h-24 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none transition focus:border-primary"
                   :placeholder="$t('trafficAnalysis.intruder.placeholders.substitutionRules')"
                   @input="updateActivePayloadSet({ substitutionRules: ($event.target as HTMLTextAreaElement).value })"
                 ></textarea>
               </label>
             </div>
 
-            <div v-else-if="activePayloadSet?.payloadType === 'usernameGenerator'" class="grid gap-3 p-4">
+            <div v-else-if="activePayloadSet?.payloadType === 'usernameGenerator'" class="grid gap-2.5 p-3">
               <label class="form-control">
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.firstNames') }}</span>
                 <textarea
                   :value="activePayloadSet.usernameFirstNames"
-                  class="h-24 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none transition focus:border-primary"
+                  class="h-20 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none transition focus:border-primary"
                   :placeholder="$t('trafficAnalysis.intruder.placeholders.usernameFirstNames')"
                   @input="updateActivePayloadSet({ usernameFirstNames: ($event.target as HTMLTextAreaElement).value })"
                 ></textarea>
@@ -353,7 +353,7 @@
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.lastNames') }}</span>
                 <textarea
                   :value="activePayloadSet.usernameLastNames"
-                  class="h-24 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none transition focus:border-primary"
+                  class="h-20 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none transition focus:border-primary"
                   :placeholder="$t('trafficAnalysis.intruder.placeholders.usernameLastNames')"
                   @input="updateActivePayloadSet({ usernameLastNames: ($event.target as HTMLTextAreaElement).value })"
                 ></textarea>
@@ -362,7 +362,7 @@
                 <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.usernameFormats') }}</span>
                 <textarea
                   :value="activePayloadSet.usernameFormats"
-                  class="h-24 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none transition focus:border-primary"
+                  class="h-20 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none transition focus:border-primary"
                   :placeholder="$t('trafficAnalysis.intruder.placeholders.usernameFormats')"
                   @input="updateActivePayloadSet({ usernameFormats: ($event.target as HTMLTextAreaElement).value })"
                 ></textarea>
@@ -385,10 +385,10 @@
           />
 
           <div class="rounded-lg border border-base-300">
-            <div class="border-b border-base-300 bg-base-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
+            <div class="border-b border-base-300 bg-base-200 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-base-content/70">
               {{ $t('trafficAnalysis.intruder.labels.payloadEncoding') }}
             </div>
-            <div class="space-y-3 p-4">
+            <div class="space-y-2.5 p-3">
               <p class="text-sm text-base-content/70">
                 {{ $t('trafficAnalysis.intruder.help.payloadEncodingHint') }}
               </p>
@@ -419,11 +419,11 @@
       </div>
 
       <div v-else-if="activeTab === 'resourcePool'" class="flex h-full min-h-0 flex-col">
-        <div class="border-b border-base-300 px-4 py-3">
+        <div class="border-b border-base-300 px-3 py-2">
           <h3 class="text-sm font-semibold">{{ $t('trafficAnalysis.intruder.sections.resourcePool') }}</h3>
         </div>
 
-        <div class="space-y-4 overflow-auto p-4 text-sm">
+        <div class="space-y-3 overflow-auto p-3 text-sm">
           <IntruderResourcePoolPanel
             :pools="resourcePoolPresets"
             :selected-pool-id="selectedResourcePoolId"
@@ -444,11 +444,11 @@
       </div>
 
       <div v-else class="flex h-full min-h-0 flex-col">
-        <div class="border-b border-base-300 px-4 py-3">
+        <div class="border-b border-base-300 px-3 py-2">
           <h3 class="text-sm font-semibold">{{ $t('trafficAnalysis.intruder.sections.settings') }}</h3>
         </div>
 
-        <div class="space-y-4 overflow-auto p-4 text-sm">
+        <div class="space-y-3 overflow-auto p-3 text-sm">
           <IntruderPluginProcessorPanel
             :title="$t('trafficAnalysis.intruder.labels.requestProcessing')"
             :description="$t('trafficAnalysis.intruder.help.requestProcessingHint')"
@@ -459,7 +459,7 @@
           />
 
           <div class="flex justify-end">
-            <button class="btn btn-sm btn-primary" type="button" :disabled="requestProcessingPreviewLoading" @click="openRequestPreviewDialog">
+            <button class="btn btn-sm btn-primary min-h-8 px-2.5" type="button" :disabled="requestProcessingPreviewLoading" @click="openRequestPreviewDialog">
               <span v-if="requestProcessingPreviewLoading" class="loading loading-spinner loading-xs"></span>
               {{ $t('trafficAnalysis.intruder.actions.previewProcessedRequest') }}
             </button>
@@ -530,9 +530,9 @@
       </div>
     </div>
 
-    <div class="flex w-12 flex-col border-l border-base-300 bg-base-200">
+    <div class="flex w-11 flex-col border-l border-base-300 bg-base-200">
       <button
-        class="flex-1 border-b border-base-300 px-1 text-xs font-medium tracking-wide transition"
+        class="flex-1 border-b border-base-300 px-0.5 text-[11px] font-medium tracking-wide transition"
         :class="activeTab === 'payloads' ? 'bg-base-100 text-primary' : 'text-base-content/70 hover:bg-base-300'"
         type="button"
         @click="$emit('update:activeTab', 'payloads')"
@@ -540,7 +540,7 @@
         <span class="side-label">{{ $t('trafficAnalysis.intruder.sections.payloads') }}</span>
       </button>
       <button
-        class="flex-1 border-b border-base-300 px-1 text-xs font-medium tracking-wide transition"
+        class="flex-1 border-b border-base-300 px-0.5 text-[11px] font-medium tracking-wide transition"
         :class="activeTab === 'resourcePool' ? 'bg-base-100 text-primary' : 'text-base-content/70 hover:bg-base-300'"
         type="button"
         @click="$emit('update:activeTab', 'resourcePool')"
@@ -548,7 +548,7 @@
         <span class="side-label">{{ $t('trafficAnalysis.intruder.sections.resourcePool') }}</span>
       </button>
       <button
-        class="flex-1 px-1 text-xs font-medium tracking-wide transition"
+        class="flex-1 px-0.5 text-[11px] font-medium tracking-wide transition"
         :class="activeTab === 'settings' ? 'bg-base-100 text-primary' : 'text-base-content/70 hover:bg-base-300'"
         type="button"
         @click="$emit('update:activeTab', 'settings')"
@@ -599,16 +599,16 @@
       <div v-if="requestProcessingPreviewLoading" class="flex items-center justify-center py-10">
         <span class="loading loading-spinner loading-lg"></span>
       </div>
-      <div v-else-if="requestProcessingPreviewError" class="rounded-lg border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">
+      <div v-else-if="requestProcessingPreviewError" class="rounded-lg border border-error/30 bg-error/10 px-3 py-2.5 text-sm text-error">
         {{ requestProcessingPreviewError }}
       </div>
-      <div v-else class="space-y-4">
-        <div class="space-y-3">
+      <div v-else class="space-y-3">
+        <div class="space-y-2.5">
           <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">
             {{ $t('trafficAnalysis.intruder.labels.requestProcessingDiff') }}
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-3">
+          <div class="grid gap-2.5 sm:grid-cols-3">
             <div class="rounded-lg border border-base-300 bg-base-200/40 px-3 py-2">
               <div class="text-[11px] font-medium uppercase tracking-wide text-base-content/60">
                 {{ $t('trafficAnalysis.intruder.labels.requestLine') }}
@@ -655,7 +655,7 @@
             </div>
           </div>
 
-          <div class="space-y-3 rounded-lg border border-base-300 bg-base-100 p-3">
+          <div class="space-y-2.5 rounded-lg border border-base-300 bg-base-100 p-2.5">
             <div class="flex items-center justify-between gap-3">
               <div class="text-sm font-medium">{{ $t('trafficAnalysis.intruder.labels.requestLine') }}</div>
               <div class="badge badge-outline badge-sm" :class="getDiffBadgeClass(requestPreviewDiff.requestLineChanged ? 'changed' : 'same')">
@@ -663,14 +663,14 @@
               </div>
             </div>
 
-            <div class="grid gap-3 lg:grid-cols-2">
+            <div class="grid gap-2.5 lg:grid-cols-2">
               <label class="form-control gap-2">
                 <span class="label-text text-xs font-medium text-base-content/70">
                   {{ $t('trafficAnalysis.intruder.labels.requestProcessingOriginal') }}
                 </span>
                 <textarea
                   :value="requestPreviewDiff.requestLineBefore"
-                  class="h-20 w-full resize-none rounded-lg border border-base-300 bg-base-200/40 p-3 font-mono text-xs leading-6 outline-none"
+                    class="h-16 w-full resize-none rounded-lg border border-base-300 bg-base-200/40 p-2.5 font-mono text-xs leading-6 outline-none"
                   readonly
                 ></textarea>
               </label>
@@ -680,14 +680,14 @@
                 </span>
                 <textarea
                   :value="requestPreviewDiff.requestLineAfter"
-                  class="h-20 w-full resize-none rounded-lg border border-base-300 bg-base-200/40 p-3 font-mono text-xs leading-6 outline-none"
+                    class="h-16 w-full resize-none rounded-lg border border-base-300 bg-base-200/40 p-2.5 font-mono text-xs leading-6 outline-none"
                   readonly
                 ></textarea>
               </label>
             </div>
           </div>
 
-          <div class="space-y-3 rounded-lg border border-base-300 bg-base-100 p-3">
+          <div class="space-y-2.5 rounded-lg border border-base-300 bg-base-100 p-2.5">
             <div class="flex items-center justify-between gap-3">
               <div class="text-sm font-medium">{{ $t('trafficAnalysis.intruder.labels.headerChanges') }}</div>
               <div class="text-xs text-base-content/60">
@@ -697,7 +697,7 @@
 
             <div
               v-if="!requestPreviewDiff.headerChanges.length"
-              class="rounded-lg border border-dashed border-base-300 bg-base-200/50 px-4 py-3 text-sm text-base-content/60"
+              class="rounded-lg border border-dashed border-base-300 bg-base-200/50 px-3 py-2.5 text-sm text-base-content/60"
             >
               {{ $t('trafficAnalysis.intruder.empty.noHeaderChanges') }}
             </div>
@@ -705,7 +705,7 @@
             <div
               v-for="change in requestPreviewDiff.headerChanges"
               :key="change.id"
-              class="space-y-2 rounded-lg border border-base-300 bg-base-200/30 p-3"
+              class="space-y-1.5 rounded-lg border border-base-300 bg-base-200/30 p-2.5"
             >
               <div class="flex items-center justify-between gap-3">
                 <div class="text-sm font-medium">{{ change.label }}</div>
@@ -714,14 +714,14 @@
                 </div>
               </div>
 
-              <div class="grid gap-3 lg:grid-cols-2">
+              <div class="grid gap-2.5 lg:grid-cols-2">
                 <label class="form-control gap-2">
                   <span class="label-text text-xs font-medium text-base-content/70">
                     {{ $t('trafficAnalysis.intruder.labels.requestProcessingOriginal') }}
                   </span>
                   <textarea
                     :value="change.before"
-                    class="h-20 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none"
+                    class="h-16 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none"
                     readonly
                   ></textarea>
                 </label>
@@ -731,7 +731,7 @@
                   </span>
                   <textarea
                     :value="change.after"
-                    class="h-20 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-3 font-mono text-xs leading-6 outline-none"
+                    class="h-16 w-full resize-none rounded-lg border border-base-300 bg-base-100 p-2.5 font-mono text-xs leading-6 outline-none"
                     readonly
                   ></textarea>
                 </label>
@@ -1090,6 +1090,7 @@ import { useI18n } from 'vue-i18n'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { dialog } from '@/composables/useDialog'
+import { buildResolvedPluginDefaultConfig } from '@/services/pluginDefaultConfig'
 import IntruderAppDictionaryPanel from './IntruderAppDictionaryPanel.vue'
 import IntruderAttackResultsSettingsPanel from './IntruderAttackResultsSettingsPanel.vue'
 import IntruderAutoPausePanel from './IntruderAutoPausePanel.vue'
@@ -1318,17 +1319,28 @@ function handlePayloadTypeChange(payloadType: IntruderPayloadSet['payloadType'])
   updateActivePayloadSet(patch)
 }
 
-function handlePluginChange(pluginId: string) {
+async function handlePluginChange(pluginId: string) {
+  let pluginConfig = '{}'
+
+  if (pluginId) {
+    await ensurePluginSchema(pluginId)
+    try {
+      const resolvedConfig = await buildResolvedPluginDefaultConfig(
+        pluginId,
+        pluginSchemaCache.value[pluginId],
+      )
+      pluginConfig = JSON.stringify(resolvedConfig, null, 2)
+    } catch (error) {
+      console.error(`Failed to load default config for plugin ${pluginId}`, error)
+    }
+  }
+
   updateActivePayloadSet({
     pluginId,
     pluginPresetName: '',
-    pluginConfig: '{}',
+    pluginConfig,
     payloadsText: '',
   })
-
-  if (pluginId) {
-    void ensurePluginSchema(pluginId)
-  }
 }
 
 async function ensurePluginSchema(pluginId: string) {

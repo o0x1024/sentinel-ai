@@ -81,10 +81,10 @@ describe('LicenseEntitlementAdminPanel', () => {
     storeEntitlementTokenFromAdmin.mockReset()
     clearEntitlementTokenFromAdmin.mockReset()
 
-    getFeatureEntitlements.mockResolvedValue({
-      has_local_license: true,
-      access_source: 'license_only',
-    })
+	    getFeatureEntitlements.mockResolvedValue({
+	      has_local_license: true,
+	      access_source: 'server_activation',
+	    })
     refreshFeatureEntitlements.mockResolvedValue(undefined)
     refreshEntitlementTokenStatus.mockResolvedValue(tokenStatusState.value)
     getEntitlementRefreshConfig.mockResolvedValue({

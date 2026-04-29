@@ -5,6 +5,8 @@
       <slot name="actions" />
     </div>
 
+    <slot name="body-top" />
+
     <div v-if="items.length > 0" class="space-y-3">
       <div class="flex flex-col gap-2 lg:flex-row lg:items-center">
         <label class="input input-bordered input-sm flex items-center gap-2 lg:flex-1">

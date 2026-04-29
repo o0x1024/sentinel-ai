@@ -5,7 +5,7 @@ const formatTimestamp = (timestamp: number | null) => (timestamp == null ? '' : 
 const formatDuration = (seconds: number) => `${seconds}s`
 
 describe('licenseActivationViewState', () => {
-  it('describes the missing local license path as a single upgrade flow', () => {
+  it('describes the missing server activation path as a single activation flow', () => {
     expect(buildLicenseActivationViewState({
       hasLocalLicense: false,
       isDebugAccess: false,
@@ -31,16 +31,16 @@ describe('licenseActivationViewState', () => {
       formatTimestamp,
       formatDuration,
     })).toMatchObject({
-      dialogTitle: '完成升级',
-      dialogSubtitle: '输入许可证密钥以完成当前设备的升级。',
-      upgradeEntryLabel: '完成升级',
+      dialogTitle: '服务端激活',
+      dialogSubtitle: '连接授权服务，完成当前设备激活。',
+      upgradeEntryLabel: '服务端激活',
       statusBadgeLabel: '未激活',
       featureAccessTone: 'alert-warning',
-      featureAccessText: '当前未激活本地 license。release 环境下高级功能不可用。',
+      featureAccessText: '当前未完成服务端激活。release 环境下付费功能不可用。',
     })
   })
 
-  it('describes a ready feature access state without leaking backend token wording', () => {
+  it('describes a ready server authorization state', () => {
     expect(buildLicenseActivationViewState({
       hasLocalLicense: true,
       isDebugAccess: false,
@@ -67,17 +67,17 @@ describe('licenseActivationViewState', () => {
       formatDuration,
     })).toMatchObject({
       dialogTitle: '检查授权状态',
-      dialogSubtitle: '当前授权已就绪，可在这里查看高级功能同步状态。',
+      dialogSubtitle: '当前授权已就绪，可在这里查看服务端授权状态。',
       upgradeEntryLabel: '检查授权状态',
       statusBadgeLabel: '已就绪',
       featureAccessTone: 'alert-success',
-      featureAccessText: '高级功能权限已就绪，过期时间：ts:200',
-      featureAccessSummary: '高级功能同步已完成，权限过期时间：ts:200',
-      refreshRuntimeText: '最近一次自动同步成功时间：ts:120',
+      featureAccessText: '服务端授权已就绪，过期时间：ts:200',
+      featureAccessSummary: '服务端授权有效，过期时间：ts:200',
+      refreshRuntimeText: '最近一次自动续期成功时间：ts:120',
     })
   })
 
-  it('surfaces refresh cooldowns and failures when local license exists but access is still incomplete', () => {
+  it('surfaces refresh cooldowns and failures when server authorization is incomplete', () => {
     expect(buildLicenseActivationViewState({
       hasLocalLicense: true,
       isDebugAccess: false,
@@ -104,14 +104,14 @@ describe('licenseActivationViewState', () => {
       formatDuration,
     })).toMatchObject({
       dialogTitle: '检查授权状态',
-      dialogSubtitle: '本地授权已完成，系统会继续自动补齐高级功能权限。',
-      upgradeEntryLabel: '完成升级',
+      dialogSubtitle: '当前授权令牌不可用，系统会继续从服务端刷新。',
+      upgradeEntryLabel: '服务端激活',
       statusBadgeLabel: '待完成',
       featureAccessTone: 'alert-info',
-      featureAccessText: '已激活本地 license，但高级功能权限已过期。高价值功能仍会受限。',
-      featureAccessSummary: '本地 license 已激活，但当前高级功能权限不可用：高级功能权限已过期',
+      featureAccessText: '服务端授权不可用：服务端授权已过期。付费功能仍会受限。',
+      featureAccessSummary: '当前服务端授权不可用：服务端授权已过期',
       refreshRuntimeText: '自动刷新冷却中，下次重试300s。',
-      refreshServiceHint: '服务端自动同步尚未配置。请让管理员在 设置 > 安全 > 高级功能权限同步管理 中配置刷新服务。',
+      refreshServiceHint: '服务端激活尚未配置。请让管理员在 设置 > 安全 > 高级功能权限同步管理 中配置刷新服务。',
     })
   })
 })

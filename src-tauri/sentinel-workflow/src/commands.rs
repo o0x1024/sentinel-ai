@@ -11,6 +11,7 @@ use crate::edge_mapping::{
     EDGE_SOURCE_SCOPE_INPUT, EDGE_SOURCE_SCOPE_OUTPUT,
 };
 use crate::engine::{WorkflowDefinition, WorkflowEngine, WorkflowMetadata, WorkflowStep};
+use crate::plugin_default_inputs::{load_plugin_default_inputs, merge_plugin_default_inputs};
 use rig::tool::ToolSet;
 use sentinel_db::core::models::rag_config::RagConfig as CoreRagConfig;
 use sentinel_db::Database;
@@ -476,8 +477,12 @@ pub async fn execute_workflow_steps(
                         }
                     }
 
-                    // 构建输入参数
-                    let input_value = serde_json::json!(resolved_inputs);
+                    // 构建输入参数，并注入插件管理中保存的默认输入配置。
+                    let raw_input_value = serde_json::json!(resolved_inputs);
+                    let default_inputs =
+                        load_plugin_default_inputs(db_clone.as_ref(), plugin_id).await;
+                    let input_value =
+                        merge_plugin_default_inputs(&default_inputs, &raw_input_value);
 
                     match pm.execute_agent(plugin_id, &input_value).await {
                         Ok((findings, output)) => {

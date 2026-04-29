@@ -9,7 +9,7 @@ use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
 use super::AgentExecuteParams;
 use crate::agents::apply_sentinel_execution_outcome;
 use crate::agents::executor::message_store::{
-    build_assistant_session_stats_metadata, save_assistant_message,
+    build_assistant_session_stats_metadata, mark_first_response_ms, save_assistant_message,
 };
 use crate::agents::executor::utils::cleanup_container_context_async;
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
@@ -46,6 +46,8 @@ pub async fn execute_agent_simple(
     let reasoning_content_for_stream = reasoning_content.clone();
     let usage_data = Arc::new(Mutex::new(None::<(u32, u32)>));
     let usage_data_for_stream = usage_data.clone();
+    let first_response_ms = Arc::new(Mutex::new(None::<i64>));
+    let first_response_ms_for_stream = first_response_ms.clone();
 
     let result = client
         .stream_completion(Some(&system_prompt), &params.task, |content| {
@@ -54,6 +56,10 @@ pub async fn execute_agent_simple(
             }
             match content {
                 StreamContent::Text(text) => {
+                    mark_first_response_ms(
+                        first_response_ms_for_stream.as_ref(),
+                        execution_started_at_ms,
+                    );
                     let _ = app.emit(
                         "agent:chunk",
                         &serde_json::json!({
@@ -64,6 +70,10 @@ pub async fn execute_agent_simple(
                     );
                 }
                 StreamContent::Reasoning(reasoning) => {
+                    mark_first_response_ms(
+                        first_response_ms_for_stream.as_ref(),
+                        execution_started_at_ms,
+                    );
                     if let Ok(mut buf) = reasoning_content_for_stream.lock() {
                         buf.push_str(&reasoning);
                     }
@@ -113,6 +123,7 @@ pub async fn execute_agent_simple(
             };
             let session_metadata = build_assistant_session_stats_metadata(
                 Some(chrono::Utc::now().timestamp_millis() - execution_started_at_ms),
+                first_response_ms.lock().ok().and_then(|guard| *guard),
                 Some(input_tokens),
                 Some(output_tokens),
             );

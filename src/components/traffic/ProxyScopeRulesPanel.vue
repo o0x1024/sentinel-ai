@@ -291,6 +291,7 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import { createDefaultProxyScopeRule, type ProxyScopeRule } from './proxyConfigurationTypes'
+import { buildProxyScopeRuleFromUrl } from './proxyScopeRuleUrlSupport'
 
 type ScopeListType = 'include' | 'exclude'
 
@@ -435,13 +436,7 @@ async function pasteUrl(type: ScopeListType) {
     dialogMode.value = type
     editingIndex.value = -1
     dialogOpenedFromPaste.value = true
-    editingRule.value = {
-      enabled: true,
-      protocol: parsed.protocol.replace(':', '').toLowerCase() || 'any',
-      host_or_ip_range: parsed.hostname,
-      port: parsed.port,
-      file: parsed.pathname || '/',
-    }
+    editingRule.value = buildProxyScopeRuleFromUrl(parsed)
     dialogRef.value?.showModal()
   } catch (error) {
     console.error('[ProxyScopeRulesPanel] Failed to paste scope URL:', error)
@@ -483,12 +478,7 @@ function parseScopeRulesFromText(type: ScopeListType, text: string): ProxyScopeR
     .map(line => {
       try {
         const parsed = new URL(line)
-        return normalizeImportedRule({
-          protocol: parsed.protocol.replace(':', '').toLowerCase() || 'any',
-          host_or_ip_range: parsed.hostname,
-          port: parsed.port,
-          file: parsed.pathname || '/',
-        })
+        return normalizeImportedRule(buildProxyScopeRuleFromUrl(parsed))
       } catch {
         return normalizeImportedRule({
           host_or_ip_range: line,

@@ -2,9 +2,11 @@
   <section class="active-probe-floating-shell" :style="shellStyle">
     <button
       v-if="collapsed"
+      ref="collapsedButtonRef"
       type="button"
       class="active-probe-edge-tab"
-      @click="emit('toggleCollapsed')"
+      @click="handleCollapsedButtonClick"
+      @mousedown="startCollapsedButtonDrag"
     >
       <span class="active-probe-edge-label">主动探测</span>
       <span v-if="selectedCooldownKeyLabel" class="active-probe-edge-filter" :title="selectedCooldownKey || ''">
@@ -62,15 +64,15 @@
           </div>
           <div class="active-probe-stat-card">
             <p class="active-probe-stat-card__label">Completed</p>
-            <p class="active-probe-stat-card__value">{{ completedCount }}</p>
+            <p class="active-probe-stat-card__value">{{ derivedState.completedCount }}</p>
           </div>
           <div class="active-probe-stat-card">
             <p class="active-probe-stat-card__label">Failed</p>
-            <p class="active-probe-stat-card__value">{{ failedCount }}</p>
+            <p class="active-probe-stat-card__value">{{ derivedState.failedCount }}</p>
           </div>
         </div>
 
-        <div v-if="pluginOptions.length > 1" class="mt-3 flex flex-wrap items-center gap-2">
+        <div v-if="derivedState.pluginOptions.length > 1" class="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
             class="btn btn-xs rounded-full"
@@ -80,7 +82,7 @@
             全部插件
           </button>
           <button
-            v-for="pluginId in pluginOptions"
+            v-for="pluginId in derivedState.pluginOptions"
             :key="pluginId"
             type="button"
             class="btn btn-xs rounded-full"
@@ -91,7 +93,7 @@
           </button>
         </div>
 
-        <div v-if="hotPaths.length" class="mt-3 space-y-2">
+        <div v-if="derivedState.hotPaths.length" class="mt-3 space-y-2">
           <div class="flex items-center justify-between gap-3">
             <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/48">
               Hot Paths
@@ -106,10 +108,10 @@
                 清除筛选
               </button>
               <button
-                v-if="selectedCooldownKey && latestFilteredTrafficRequestId"
+                v-if="selectedCooldownKey && derivedState.latestFilteredTrafficRequestId"
                 type="button"
                 class="btn btn-outline btn-xs rounded-full"
-                @click="emit('openHistoryByTrafficRequestId', latestFilteredTrafficRequestId)"
+                @click="emit('openHistoryByTrafficRequestId', derivedState.latestFilteredTrafficRequestId)"
               >
                 打开最近历史
               </button>
@@ -117,7 +119,7 @@
           </div>
           <div class="flex flex-wrap gap-2">
             <button
-              v-for="group in hotPaths"
+              v-for="group in derivedState.hotPaths"
               :key="group.key"
               type="button"
               class="active-probe-hot-key"
@@ -135,12 +137,12 @@
           <div class="flex items-center justify-between gap-2">
             <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/48">Queue</p>
             <p class="text-[11px] text-base-content/45">
-              {{ filteredPendingEntries.length }} pending / {{ filteredRunningEntries.length }} running
+              {{ derivedState.filteredPendingCount }} pending / {{ derivedState.filteredRunningCount }} running
             </p>
           </div>
 
           <p
-            v-if="filteredPendingEntries.length === 0 && filteredRunningEntries.length === 0"
+            v-if="derivedState.filteredPendingCount === 0 && derivedState.filteredRunningCount === 0"
             class="rounded-[20px] border border-base-300/60 bg-base-100/90 px-4 py-4 text-[11px] text-base-content/55"
           >
             当前筛选下没有待执行或正在执行的主动探测请求。
@@ -148,60 +150,74 @@
 
           <div v-else class="space-y-2">
             <article
-              v-for="entry in [...filteredRunningEntries, ...filteredPendingEntries]"
-              :key="`queue:${entry.request_id}`"
+              v-for="item in derivedState.visibleQueueEntries"
+              :key="`queue:${item.entry.request_id}`"
               class="active-probe-item"
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
                   <div class="flex min-w-0 items-center gap-2">
-                    <span class="active-probe-phase">{{ formatPhase(entry.phase) }}</span>
+                    <span class="active-probe-phase">{{ item.phaseLabel }}</span>
                     <span class="truncate text-[11px] font-medium text-base-content/72">
-                      {{ entry.method }} {{ formatPath(entry.url) }}
+                      {{ item.entry.method }} {{ item.pathLabel }}
                     </span>
                   </div>
-                  <p class="mt-1 truncate text-[11px] text-base-content/55">{{ formatQueueMeta(entry) }}</p>
+                  <p class="mt-1 truncate text-[11px] text-base-content/55">{{ item.queueMeta }}</p>
                 </div>
                 <div class="shrink-0 text-right">
-                  <p class="text-[11px] font-medium text-base-content/68">{{ entry.plugin_id }}</p>
+                  <p class="text-[11px] font-medium text-base-content/68">{{ item.entry.plugin_id }}</p>
                   <p class="mt-1 text-[10px] text-base-content/45">
-                    {{ formatUrlSummary(entry.url) }}
+                    {{ item.urlSummary }}
                   </p>
                 </div>
               </div>
 
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <button
-                  v-if="entry.traffic_request_id"
+                  v-if="item.entry.traffic_request_id"
                   type="button"
                   class="btn btn-xs btn-outline rounded-full"
-                  @click="openPreview(entry)"
+                  @click="openPreview(item.entry)"
                 >
                   <i class="fas fa-eye"></i>
                   <span>预览请求/响应</span>
                 </button>
                 <button
-                  v-if="entry.traffic_request_id && previewRequestMap[entry.traffic_request_id]"
+                  v-if="item.entry.traffic_request_id && previewRequestMap[item.entry.traffic_request_id]"
                   type="button"
                   class="btn btn-xs btn-ghost rounded-full"
-                  @click="emit('openHistory', previewRequestMap[entry.traffic_request_id]!.id)"
+                  @click="emit('openHistory', previewRequestMap[item.entry.traffic_request_id]!.id)"
                 >
                   <i class="fas fa-arrow-up-right-from-square"></i>
                   <span>打开详情</span>
                 </button>
               </div>
             </article>
+            <p
+              v-if="derivedState.queueHiddenCount > 0"
+              class="rounded-[18px] border border-dashed border-base-300/65 bg-base-100/75 px-3 py-2 text-[11px] text-base-content/52"
+            >
+              仅渲染前 {{ derivedState.visibleQueueEntries.length }} 条队列记录，剩余 {{ derivedState.queueHiddenCount }} 条未展开显示。
+            </p>
+            <button
+              v-if="derivedState.queueHiddenCount > 0"
+              type="button"
+              class="btn btn-sm btn-outline rounded-full"
+              @click="showMoreQueueEntries"
+            >
+              继续展开 {{ Math.min(queuePageSize, derivedState.queueHiddenCount) }} 条队列记录
+            </button>
           </div>
         </div>
 
         <div class="mt-4 space-y-3">
           <div class="flex items-center justify-between gap-2">
             <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/48">Recent</p>
-            <p class="text-[11px] text-base-content/45">{{ filteredRecentEntries.length }} recent</p>
+            <p class="text-[11px] text-base-content/45">{{ derivedState.filteredRecentCount }} recent</p>
           </div>
 
           <p
-            v-if="filteredRecentEntries.length === 0"
+            v-if="derivedState.filteredRecentCount === 0"
             class="rounded-[20px] border border-base-300/60 bg-base-100/90 px-4 py-4 text-[11px] text-base-content/55"
           >
             还没有最近完成、失败或取消的主动探测记录。
@@ -209,49 +225,63 @@
 
           <div v-else class="space-y-2">
             <article
-              v-for="entry in filteredRecentEntries"
-              :key="`recent:${entry.request_id}`"
+              v-for="item in derivedState.visibleRecentEntries"
+              :key="`recent:${item.entry.request_id}`"
               class="active-probe-item"
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
                   <div class="flex min-w-0 items-center gap-2">
-                    <span class="active-probe-phase">{{ formatPhase(entry.phase) }}</span>
+                    <span class="active-probe-phase">{{ item.phaseLabel }}</span>
                     <span class="truncate text-[11px] font-medium text-base-content/72">
-                      {{ entry.method }} {{ formatPath(entry.url) }}
+                      {{ item.entry.method }} {{ item.pathLabel }}
                     </span>
                   </div>
-                  <p class="mt-1 truncate text-[11px] text-base-content/55">{{ formatRecentMeta(entry) }}</p>
+                  <p class="mt-1 truncate text-[11px] text-base-content/55">{{ item.recentMeta }}</p>
                 </div>
                 <div class="shrink-0 text-right">
-                  <p class="text-[11px] font-medium text-base-content/68">{{ entry.plugin_id }}</p>
+                  <p class="text-[11px] font-medium text-base-content/68">{{ item.entry.plugin_id }}</p>
                   <p class="mt-1 text-[10px] text-base-content/45">
-                    {{ formatTime(entry.finished_at || entry.updated_at) }}
+                    {{ item.finishedTimeLabel }}
                   </p>
                 </div>
               </div>
 
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <button
-                  v-if="entry.traffic_request_id"
+                  v-if="item.entry.traffic_request_id"
                   type="button"
                   class="btn btn-xs btn-outline rounded-full"
-                  @click="openPreview(entry)"
+                  @click="openPreview(item.entry)"
                 >
                   <i class="fas fa-eye"></i>
                   <span>预览请求/响应</span>
                 </button>
                 <button
-                  v-if="entry.traffic_request_id && previewRequestMap[entry.traffic_request_id]"
+                  v-if="item.entry.traffic_request_id && previewRequestMap[item.entry.traffic_request_id]"
                   type="button"
                   class="btn btn-xs btn-ghost rounded-full"
-                  @click="emit('openHistory', previewRequestMap[entry.traffic_request_id]!.id)"
+                  @click="emit('openHistory', previewRequestMap[item.entry.traffic_request_id]!.id)"
                 >
                   <i class="fas fa-arrow-up-right-from-square"></i>
                   <span>打开详情</span>
                 </button>
               </div>
             </article>
+            <p
+              v-if="derivedState.recentHiddenCount > 0"
+              class="rounded-[18px] border border-dashed border-base-300/65 bg-base-100/75 px-3 py-2 text-[11px] text-base-content/52"
+            >
+              仅渲染最近 {{ derivedState.visibleRecentEntries.length }} 条记录，剩余 {{ derivedState.recentHiddenCount }} 条未展开显示。
+            </p>
+            <button
+              v-if="derivedState.recentHiddenCount > 0"
+              type="button"
+              class="btn btn-sm btn-outline rounded-full"
+              @click="showMoreRecentEntries"
+            >
+              继续展开 {{ Math.min(recentPageSize, derivedState.recentHiddenCount) }} 条 Recent 记录
+            </button>
           </div>
         </div>
       </div>
@@ -330,10 +360,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { CSSProperties, PropType } from 'vue'
 import AppModal from '@/components/AppModal.vue'
+import { setLocalStorageItem } from '@/utils/browserStorage'
 import { formatRequestRaw, formatResponseRaw } from './proxyHistoryFormattingSupport'
+import {
+  ACTIVE_PROBE_COLLAPSED_POSITION_STORAGE_KEY,
+  clampActiveProbeCollapsedPosition,
+  loadStoredActiveProbeCollapsedPosition,
+} from './trafficActiveProbeCollapsedPosition'
+import {
+  ACTIVE_PROBE_INITIAL_QUEUE_LIMIT,
+  ACTIVE_PROBE_INITIAL_RECENT_LIMIT,
+  ACTIVE_PROBE_QUEUE_PAGE_SIZE,
+  ACTIVE_PROBE_RECENT_PAGE_SIZE,
+  buildActiveProbePanelDerivedState,
+  formatCooldownKeyLabel,
+} from './trafficActiveProbePanelSupport'
 import type { ProxyRequest } from './proxyHistoryTypes'
 import type { ActiveProbeQueueEntry } from './trafficActiveProbeTypes'
 
@@ -393,11 +437,37 @@ const panelWidth = ref(loadStoredPanelWidth())
 const panelHeight = ref(loadStoredPanelHeight())
 const panelResizeState = ref<{ startX: number; startWidth: number } | null>(null)
 const panelHeightResizeState = ref<{ startY: number; startHeight: number } | null>(null)
+const collapsedButtonRef = ref<HTMLButtonElement | null>(null)
+const collapsedPosition = ref(loadStoredActiveProbeCollapsedPosition())
+const collapsedButtonDragState = ref<{
+  startX: number
+  startY: number
+  offsetX: number
+  offsetY: number
+  width: number
+  height: number
+  moved: boolean
+} | null>(null)
+const suppressCollapsedButtonClick = ref(false)
 const selectedPluginId = ref<string | null>(null)
 const selectedCooldownKey = ref<string | null>(null)
 const previewEntry = ref<ActiveProbeQueueEntry | null>(null)
+const visibleQueueLimit = ref(ACTIVE_PROBE_INITIAL_QUEUE_LIMIT)
+const visibleRecentLimit = ref(ACTIVE_PROBE_INITIAL_RECENT_LIMIT)
 
-const shellStyle = computed(() => props.shellStyle)
+const shellStyle = computed(() => {
+  if (!collapsed.value || !collapsedPosition.value) {
+    return props.shellStyle
+  }
+
+  return {
+    ...props.shellStyle,
+    left: `${collapsedPosition.value.left}px`,
+    top: `${collapsedPosition.value.top}px`,
+    right: 'auto',
+    bottom: 'auto',
+  } satisfies CSSProperties
+})
 const pendingEntries = computed(() => props.pendingEntries)
 const runningEntries = computed(() => props.runningEntries)
 const recentEntries = computed(() => props.recentEntries)
@@ -406,63 +476,27 @@ const collapsed = computed(() => props.collapsed)
 const previewRequestMap = computed(() => props.previewRequestMap)
 const loadingTrafficRequestId = computed(() => props.loadingTrafficRequestId)
 
-const allEntries = computed(() => [
-  ...runningEntries.value,
-  ...pendingEntries.value,
-  ...recentEntries.value,
-])
-
-const pluginOptions = computed(() => {
-  const values = new Set(allEntries.value.map(entry => entry.plugin_id).filter(Boolean))
-  return [...values].sort()
-})
-
 const selectedCooldownKeyLabel = computed(() => (
   selectedCooldownKey.value ? formatCooldownKeyLabel(selectedCooldownKey.value) : ''
 ))
+const queuePageSize = ACTIVE_PROBE_QUEUE_PAGE_SIZE
+const recentPageSize = ACTIVE_PROBE_RECENT_PAGE_SIZE
 
 const panelStyle = computed(() => ({
   width: `${clampPanelWidth(panelWidth.value, viewportWidth.value)}px`,
   height: `${clampPanelHeight(panelHeight.value, viewportHeight.value)}px`,
 }))
 
-const filteredPendingEntries = computed(() => filterEntries(pendingEntries.value))
-const filteredRunningEntries = computed(() => filterEntries(runningEntries.value))
-const filteredRecentEntries = computed(() => filterEntries(recentEntries.value))
-
-const completedCount = computed(() => recentEntries.value.filter(entry => entry.phase === 'completed').length)
-const failedCount = computed(() => recentEntries.value.filter(entry => entry.phase === 'failed').length)
-
-const hotPaths = computed(() => {
-  const map = new Map<string, { key: string; label: string; pending: number; running: number; recent: number }>()
-  for (const entry of allEntries.value) {
-    const existing = map.get(entry.cooldown_key) || {
-      key: entry.cooldown_key,
-      label: formatCooldownKeyLabel(entry.cooldown_key),
-      pending: 0,
-      running: 0,
-      recent: 0,
-    }
-    if (entry.phase === 'queued' || entry.phase === 'scheduled') {
-      existing.pending += 1
-    } else if (entry.phase === 'running') {
-      existing.running += 1
-    } else {
-      existing.recent += 1
-    }
-    map.set(entry.cooldown_key, existing)
-  }
-  return [...map.values()]
-    .sort((left, right) => (
-      (right.pending + right.running + right.recent) - (left.pending + left.running + left.recent)
-    ))
-    .slice(0, 4)
-})
-
-const latestFilteredTrafficRequestId = computed(() => (
-  [...filteredRunningEntries.value, ...filteredPendingEntries.value, ...filteredRecentEntries.value]
-    .find(entry => entry.traffic_request_id)?.traffic_request_id || ''
-))
+const derivedState = computed(() => buildActiveProbePanelDerivedState({
+  collapsed: collapsed.value,
+  pendingEntries: pendingEntries.value,
+  runningEntries: runningEntries.value,
+  recentEntries: recentEntries.value,
+  selectedPluginId: selectedPluginId.value,
+  selectedCooldownKey: selectedCooldownKey.value,
+  visibleQueueLimit: visibleQueueLimit.value,
+  visibleRecentLimit: visibleRecentLimit.value,
+}))
 
 const previewRequest = computed(() => {
   const trafficRequestId = previewEntry.value?.traffic_request_id
@@ -481,6 +515,10 @@ watch(collapsed, isCollapsed => {
   if (isCollapsed) {
     stopPanelResize()
     stopPanelHeightResize()
+    resetVisibleEntryLimits()
+    void nextTick(() => {
+      syncCollapsedPositionWithinViewport()
+    })
   }
 })
 
@@ -491,114 +529,21 @@ watch(previewEntry, entry => {
   emit('ensurePreview', entry.traffic_request_id)
 })
 
-function filterEntries(entries: ActiveProbeQueueEntry[]) {
-  return entries.filter(entry => {
-    if (selectedPluginId.value && entry.plugin_id !== selectedPluginId.value) {
-      return false
-    }
-    if (selectedCooldownKey.value && entry.cooldown_key !== selectedCooldownKey.value) {
-      return false
-    }
-    return true
-  })
+watch([selectedPluginId, selectedCooldownKey], () => {
+  resetVisibleEntryLimits()
+})
+
+function resetVisibleEntryLimits() {
+  visibleQueueLimit.value = ACTIVE_PROBE_INITIAL_QUEUE_LIMIT
+  visibleRecentLimit.value = ACTIVE_PROBE_INITIAL_RECENT_LIMIT
 }
 
-function parseTime(value?: string | null): number {
-  if (!value) {
-    return 0
-  }
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) ? parsed : 0
+function showMoreQueueEntries() {
+  visibleQueueLimit.value += ACTIVE_PROBE_QUEUE_PAGE_SIZE
 }
 
-function formatPhase(phase: ActiveProbeQueueEntry['phase']) {
-  switch (phase) {
-    case 'queued':
-      return 'Queued'
-    case 'scheduled':
-      return 'Scheduled'
-    case 'running':
-      return 'Running'
-    case 'completed':
-      return 'Completed'
-    case 'failed':
-      return 'Failed'
-    case 'cancelled':
-      return 'Cancelled'
-  }
-}
-
-function formatPath(rawUrl: string) {
-  try {
-    const parsed = new URL(rawUrl)
-    return `${parsed.pathname || '/'}${parsed.search || ''}`
-  } catch {
-    return rawUrl
-  }
-}
-
-function formatCooldownKeyLabel(key: string) {
-  if (!key) {
-    return 'global'
-  }
-  return key.length > 44 ? `${key.slice(0, 41)}...` : key
-}
-
-function formatUrlSummary(rawUrl: string) {
-  try {
-    const parsed = new URL(rawUrl)
-    return `${parsed.host}${parsed.pathname}`
-  } catch {
-    return rawUrl
-  }
-}
-
-function formatTime(value?: string | null) {
-  if (!value) {
-    return '--'
-  }
-  const parsed = parseTime(value)
-  if (!parsed) {
-    return value
-  }
-  return new Date(parsed).toLocaleTimeString()
-}
-
-function formatDuration(value?: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) ? `${value} ms` : '--'
-}
-
-function formatQueueMeta(entry: ActiveProbeQueueEntry) {
-  const waits = []
-  if (typeof entry.total_wait_ms === 'number') {
-    waits.push(`wait ${entry.total_wait_ms} ms`)
-  }
-  waits.push(`depth ${entry.queue_depth}`)
-  waits.push(`slots ${entry.active_slots}/${entry.max_concurrent_per_host}`)
-  if (entry.target_name) {
-    waits.push(`target ${entry.target_name}`)
-  }
-  return waits.join(' · ')
-}
-
-function formatRecentMeta(entry: ActiveProbeQueueEntry) {
-  const parts = []
-  if (typeof entry.status === 'number' && entry.status > 0) {
-    parts.push(`status ${entry.status}`)
-  }
-  if (typeof entry.response_elapsed_ms === 'number') {
-    parts.push(`elapsed ${entry.response_elapsed_ms} ms`)
-  }
-  if (entry.reason) {
-    parts.push(entry.reason)
-  }
-  if (entry.error) {
-    parts.push(entry.error)
-  }
-  if (parts.length === 0) {
-    parts.push(`updated ${formatTime(entry.updated_at)}`)
-  }
-  return parts.join(' · ')
+function showMoreRecentEntries() {
+  visibleRecentLimit.value += ACTIVE_PROBE_RECENT_PAGE_SIZE
 }
 
 function openPreview(entry: ActiveProbeQueueEntry) {
@@ -721,19 +666,137 @@ function stopPanelHeightResize() {
   window.removeEventListener('mouseup', stopPanelHeightResize)
 }
 
+function persistCollapsedPosition() {
+  if (!collapsedPosition.value) {
+    return
+  }
+
+  setLocalStorageItem(
+    ACTIVE_PROBE_COLLAPSED_POSITION_STORAGE_KEY,
+    JSON.stringify(collapsedPosition.value),
+  )
+}
+
+function syncCollapsedPositionWithinViewport() {
+  if (!collapsed.value || !collapsedButtonRef.value) {
+    return
+  }
+
+  const rect = collapsedButtonRef.value.getBoundingClientRect()
+  const nextPosition = clampActiveProbeCollapsedPosition({
+    position: collapsedPosition.value ?? {
+      left: rect.left,
+      top: rect.top,
+    },
+    viewportWidth: viewportWidth.value,
+    viewportHeight: viewportHeight.value,
+    width: rect.width,
+    height: rect.height,
+  })
+
+  collapsedPosition.value = nextPosition
+  persistCollapsedPosition()
+}
+
+function startCollapsedButtonDrag(event: MouseEvent) {
+  if (!collapsedButtonRef.value) {
+    return
+  }
+
+  const rect = collapsedButtonRef.value.getBoundingClientRect()
+  collapsedPosition.value = clampActiveProbeCollapsedPosition({
+    position: {
+      left: rect.left,
+      top: rect.top,
+    },
+    viewportWidth: viewportWidth.value,
+    viewportHeight: viewportHeight.value,
+    width: rect.width,
+    height: rect.height,
+  })
+  collapsedButtonDragState.value = {
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+    width: rect.width,
+    height: rect.height,
+    moved: false,
+  }
+  suppressCollapsedButtonClick.value = false
+  document.body.style.cursor = 'grabbing'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('mousemove', handleCollapsedButtonDrag)
+  window.addEventListener('mouseup', stopCollapsedButtonDrag)
+  event.preventDefault()
+}
+
+function handleCollapsedButtonDrag(event: MouseEvent) {
+  const state = collapsedButtonDragState.value
+  if (!state) {
+    return
+  }
+
+  if (!state.moved && (
+    Math.abs(event.clientX - state.startX) >= 3
+    || Math.abs(event.clientY - state.startY) >= 3
+  )) {
+    state.moved = true
+  }
+
+  collapsedPosition.value = clampActiveProbeCollapsedPosition({
+    position: {
+      left: event.clientX - state.offsetX,
+      top: event.clientY - state.offsetY,
+    },
+    viewportWidth: viewportWidth.value,
+    viewportHeight: viewportHeight.value,
+    width: state.width,
+    height: state.height,
+  })
+}
+
+function stopCollapsedButtonDrag() {
+  if (!collapsedButtonDragState.value) {
+    return
+  }
+
+  suppressCollapsedButtonClick.value = collapsedButtonDragState.value.moved
+  collapsedButtonDragState.value = null
+  persistCollapsedPosition()
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  window.removeEventListener('mousemove', handleCollapsedButtonDrag)
+  window.removeEventListener('mouseup', stopCollapsedButtonDrag)
+}
+
+function handleCollapsedButtonClick() {
+  if (suppressCollapsedButtonClick.value) {
+    suppressCollapsedButtonClick.value = false
+    return
+  }
+
+  emit('toggleCollapsed')
+}
+
 function handleWindowResize() {
   viewportWidth.value = window.innerWidth
   viewportHeight.value = window.innerHeight
   panelHeight.value = clampPanelHeight(panelHeight.value, viewportHeight.value)
+  syncCollapsedPositionWithinViewport()
 }
 
 onMounted(() => {
   window.addEventListener('resize', handleWindowResize)
+  void nextTick(() => {
+    syncCollapsedPositionWithinViewport()
+  })
 })
 
 onUnmounted(() => {
   stopPanelResize()
   stopPanelHeightResize()
+  stopCollapsedButtonDrag()
   window.removeEventListener('resize', handleWindowResize)
 })
 </script>
@@ -753,6 +816,12 @@ onUnmounted(() => {
   background: rgb(255 255 255 / 0.94);
   padding: 0.8rem 1rem;
   box-shadow: 0 18px 40px rgb(15 23 42 / 0.14);
+  cursor: grab;
+  user-select: none;
+}
+
+.active-probe-edge-tab:active {
+  cursor: grabbing;
 }
 
 .active-probe-edge-label {

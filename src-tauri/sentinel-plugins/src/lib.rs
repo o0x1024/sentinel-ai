@@ -38,16 +38,16 @@ mod service_probe_native;
 mod service_probe_runtime;
 pub mod types;
 
+pub use active_probe_scheduler::{
+    cancel_active_probe, complete_active_probe, enqueue_active_probe, fail_active_probe,
+    get_active_probe_queue_snapshot, mark_active_probe_running, ActiveProbeDispatchGrant,
+    ActiveProbeQueueEntry, ActiveProbeQueuePhase, ActiveProbeQueueSnapshot, ActiveProbeRequest,
+};
 pub use dictionary_runtime::init_dictionary_pool;
 pub use error::{PluginError, Result};
 pub use executor::{ExecutorStats, PluginExecutor};
 pub use monitor_progress::{
     emit_plugin_monitor_progress, MonitorProgressContext, PluginMonitorProgressUpdate,
-};
-pub use active_probe_scheduler::{
-    cancel_active_probe, complete_active_probe, enqueue_active_probe, fail_active_probe,
-    get_active_probe_queue_snapshot, mark_active_probe_running, ActiveProbeDispatchGrant,
-    ActiveProbeQueueEntry, ActiveProbeQueuePhase, ActiveProbeQueueSnapshot, ActiveProbeRequest,
 };
 pub use plugin::{
     get_input_schema_from_code, get_output_schema_from_code, PluginManager, PluginRecord,

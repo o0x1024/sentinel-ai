@@ -304,10 +304,63 @@
       </h3>
       <div class="grid grid-cols-2 gap-4">
         <!-- Agent plugin inputs -->
-        <div v-if="isAdvancedAgent" class="form-control col-span-2">
-          <label class="label"><span class="label-text">{{ $t('plugins.agentInputs', '插件入参 (JSON)') }}</span></label>
-          <textarea :value="advancedForm.agent_inputs_text" @input="$emit('update:advancedForm', { ...advancedForm, agent_inputs_text: ($event.target as HTMLTextAreaElement).value })"
-            class="textarea textarea-bordered font-mono text-xs h-32" placeholder='{"target":"https://example.com"}'></textarea>
+        <div v-if="isAdvancedAgent" class="form-control col-span-2 space-y-3">
+          <div class="flex items-center justify-between gap-3">
+            <label class="label py-0"><span class="label-text">{{ $t('plugins.agentInputs', '插件入参') }}</span></label>
+            <div class="tabs tabs-boxed tabs-sm">
+              <button
+                type="button"
+                class="tab"
+                :class="{ 'tab-active': advancedInputEditorMode === 'form' }"
+                @click="advancedInputEditorMode = 'form'"
+              >
+                {{ $t('plugins.formMode', '图形化') }}
+              </button>
+              <button
+                type="button"
+                class="tab"
+                :class="{ 'tab-active': advancedInputEditorMode === 'json' }"
+                @click="advancedInputEditorMode = 'json'"
+              >
+                {{ $t('plugins.jsonMode', 'JSON') }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="advancedInputEditorMode === 'form' && hasAdvancedEditableSchema" class="space-y-3 rounded-lg border border-base-300/70 bg-base-100/70 p-3">
+            <div class="text-xs text-base-content/60">
+              {{ $t('plugins.formModeHint', '优先使用图形化配置；只有在复杂场景下再切换到 JSON。') }}
+            </div>
+            <MonitorPluginParamsField
+              v-for="field in advancedEditableFields"
+              :key="getFieldPathKey(field.path)"
+              :field="field"
+              :params="advancedInputParams"
+              :json-editor-values="advancedInputJsonEditorValues"
+              :field-errors="advancedInputFieldErrors"
+              :expanded-hint-fields="advancedInputExpandedHintFields"
+            />
+          </div>
+
+          <template v-else-if="advancedInputEditorMode === 'json'">
+            <textarea
+              :value="advancedInputRawText"
+              @input="handleAdvancedInputJsonChange(($event.target as HTMLTextAreaElement).value)"
+              class="textarea textarea-bordered font-mono text-xs h-40"
+              placeholder='{"target":"https://example.com"}'
+            ></textarea>
+            <div class="text-xs text-base-content/60">
+              {{ $t('plugins.advancedJsonHint', '高级模式：直接编辑插件默认配置 JSON。') }}
+            </div>
+          </template>
+
+          <div v-else class="rounded-lg border border-base-300 bg-base-200 p-3 text-sm text-base-content/70">
+            {{ $t('plugins.noEditablePluginParams', '当前插件没有可图形化编辑的参数，可切换到 JSON 模式。') }}
+          </div>
+
+          <div v-if="advancedInputLocalError" class="text-sm text-error">
+            {{ advancedInputLocalError }}
+          </div>
         </div>
         <!-- Traffic analysis inputs -->
         <template v-else>
@@ -464,6 +517,12 @@ import { ref, computed, watch, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
 import JsonViewer from '@/components/Tools/JsonViewer.vue'
+import MonitorPluginParamsField from '@/components/BugBounty/MonitorPluginParamsField.vue'
+import {
+  buildEditableFields,
+  cloneValue,
+  getFieldPathKey,
+} from '@/components/BugBounty/monitorPluginParamsSupport'
 import type { PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult, AdvancedRunStat, AdvancedForm } from './types'
 import { agentsCategories, intruderCategories, trafficCategories } from './types'
 
@@ -498,6 +557,7 @@ const props = defineProps<{
   advancedError: string
   advancedResult: AdvancedTestResult | null
   advancedForm: AdvancedForm
+  advancedInputSchema: any
   isAdvancedAgent: boolean
   sortedRuns: AdvancedRunStat[]
 }>()
@@ -608,6 +668,87 @@ const getSeverityBadgeClass = (severity: string): string => {
 
 // JSON view states for each run
 const runJsonViewStates = reactive<Record<number, boolean>>({})
+const advancedInputEditorMode = ref<'form' | 'json'>('form')
+const advancedInputRawText = ref('{}')
+const advancedInputLocalError = ref('')
+const advancedInputParams = ref<Record<string, any>>({})
+const advancedInputFieldErrors = reactive<Record<string, string>>({})
+const advancedInputJsonEditorValues = reactive<Record<string, string>>({})
+const advancedInputExpandedHintFields = reactive<Record<string, boolean>>({})
+const initializedAdvancedPluginId = ref('')
+const advancedEditableFields = computed(() => buildEditableFields(props.advancedInputSchema))
+const hasAdvancedEditableSchema = computed(() => advancedEditableFields.value.length > 0)
+
+const clearAdvancedInputEditorErrors = () => {
+  advancedInputLocalError.value = ''
+  for (const key of Object.keys(advancedInputFieldErrors)) {
+    delete advancedInputFieldErrors[key]
+  }
+  for (const key of Object.keys(advancedInputJsonEditorValues)) {
+    delete advancedInputJsonEditorValues[key]
+  }
+}
+
+const normalizeAdvancedInputObject = (value: unknown) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  return cloneValue(value as Record<string, any>)
+}
+
+const parseAdvancedInputJsonObject = (raw: string) => {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return {}
+  }
+
+  const parsed = JSON.parse(trimmed)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('插件入参必须是 JSON 对象')
+  }
+  return normalizeAdvancedInputObject(parsed)
+}
+
+const applyAdvancedInputParsedConfig = (config: Record<string, any>) => {
+  advancedInputParams.value = normalizeAdvancedInputObject(config)
+}
+
+const serializeAdvancedInputParams = () => normalizeAdvancedInputObject(advancedInputParams.value)
+
+const syncAdvancedInputTextToParent = (nextText: string) => {
+  if (props.advancedForm.agent_inputs_text === nextText) {
+    return
+  }
+
+  emit('update:advancedForm', {
+    ...props.advancedForm,
+    agent_inputs_text: nextText,
+  })
+}
+
+const initializeAdvancedInputEditor = () => {
+  clearAdvancedInputEditorErrors()
+  initializedAdvancedPluginId.value = props.advancedPlugin?.metadata?.id || ''
+
+  let parsedConfig: Record<string, any> = {}
+  try {
+    parsedConfig = props.advancedForm.agent_inputs_text.trim()
+      ? parseAdvancedInputJsonObject(props.advancedForm.agent_inputs_text)
+      : {}
+  } catch {
+    advancedInputLocalError.value = '插件入参 JSON 无法解析'
+  }
+
+  applyAdvancedInputParsedConfig(parsedConfig)
+  advancedInputRawText.value = JSON.stringify(parsedConfig, null, 2)
+  advancedInputEditorMode.value = hasAdvancedEditableSchema.value ? 'form' : 'json'
+}
+
+const handleAdvancedInputJsonChange = (value: string) => {
+  advancedInputLocalError.value = ''
+  advancedInputRawText.value = value
+  syncAdvancedInputTextToParent(value)
+}
 
 // Copy run output to clipboard
 async function copyRunOutput(run: AdvancedRunStat) {
@@ -625,6 +766,70 @@ async function copyRunOutput(run: AdvancedRunStat) {
 function toggleRunJsonView(runIndex: number) {
   runJsonViewStates[runIndex] = !runJsonViewStates[runIndex]
 }
+
+watch(
+  () => [props.advancedPlugin?.metadata?.id, props.advancedForm.agent_inputs_text, props.advancedInputSchema] as const,
+  () => {
+    const pluginId = props.advancedPlugin?.metadata?.id || ''
+
+    if (!props.isAdvancedAgent || !pluginId) {
+      initializedAdvancedPluginId.value = ''
+      advancedInputLocalError.value = ''
+      return
+    }
+
+    if (
+      pluginId === initializedAdvancedPluginId.value
+      && props.advancedForm.agent_inputs_text === advancedInputRawText.value
+    ) {
+      return
+    }
+
+    initializeAdvancedInputEditor()
+  },
+  { immediate: true }
+)
+
+watch(advancedInputEditorMode, (mode, previousMode) => {
+  if (!props.isAdvancedAgent || mode === previousMode) {
+    return
+  }
+
+  if (mode === 'json') {
+    try {
+      clearAdvancedInputEditorErrors()
+      const nextText = JSON.stringify(serializeAdvancedInputParams(), null, 2)
+      advancedInputRawText.value = nextText
+      syncAdvancedInputTextToParent(nextText)
+    } catch {
+      advancedInputLocalError.value = '无法将当前图形化配置转换为 JSON'
+    }
+    return
+  }
+
+  try {
+    const parsed = parseAdvancedInputJsonObject(advancedInputRawText.value)
+    clearAdvancedInputEditorErrors()
+    applyAdvancedInputParsedConfig(parsed)
+    syncAdvancedInputTextToParent(JSON.stringify(parsed, null, 2))
+  } catch (error) {
+    advancedInputLocalError.value = error instanceof Error ? error.message : '插件入参 JSON 无法解析'
+  }
+})
+
+watch(
+  advancedInputParams,
+  value => {
+    if (!props.isAdvancedAgent || advancedInputEditorMode.value !== 'form') {
+      return
+    }
+
+    const nextText = JSON.stringify(normalizeAdvancedInputObject(value), null, 2)
+    advancedInputRawText.value = nextText
+    syncAdvancedInputTextToParent(nextText)
+  },
+  { deep: true }
+)
 
 // Dialog methods
 const showReviewDetailDialog = () => reviewDetailDialogRef.value?.showModal()

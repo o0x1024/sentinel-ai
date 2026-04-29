@@ -7,7 +7,7 @@ const entitlementsState = ref({
   tier: 'licensed',
   is_licensed: false,
   has_local_license: true,
-  access_source: 'license_only',
+  access_source: 'server_activation',
   has_valid_entitlement_token: false,
   entitlement_feature_ids: [],
   entitlement_expires_at: null,
@@ -102,7 +102,7 @@ describe('LicenseActivation', () => {
     })
   })
 
-  it('keeps refresh service configuration out of the activation dialog', async () => {
+  it('keeps admin refresh fields out of the activation dialog', async () => {
     const wrapper = mount(LicenseActivation, {
       global: {
         stubs: {
@@ -122,7 +122,7 @@ describe('LicenseActivation', () => {
     expect(wrapper.text()).not.toContain('保存自动刷新配置')
     expect(wrapper.text()).not.toContain('写入 Token')
     expect(wrapper.text()).not.toContain('清除 Token')
-    expect(wrapper.text()).toContain('服务端同步配置')
+    expect(wrapper.text()).toContain('服务端激活配置')
 
     wrapper.unmount()
   })

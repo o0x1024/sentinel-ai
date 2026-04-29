@@ -68,6 +68,8 @@ pub struct SubagentParentContext {
     pub api_key: Option<String>,
     pub api_base: Option<String>,
     pub system_prompt: String,
+    pub active_browser_shell_direct_write_enabled: bool,
+    pub active_browser_shell_session_id: Option<String>,
     pub active_terminal_session_fingerprint: Option<String>,
     pub active_terminal_session_id: Option<String>,
     pub tool_config: ToolConfig,
@@ -729,9 +731,13 @@ async fn run_task(task_id: String) {
         model: pending_data.parent.model,
         system_prompt,
         task: task_with_context,
+        active_browser_shell_direct_write_enabled: pending_data
+            .parent
+            .active_browser_shell_direct_write_enabled,
         active_terminal_session_fingerprint: pending_data
             .parent
             .active_terminal_session_fingerprint,
+        active_browser_shell_session_id: pending_data.parent.active_browser_shell_session_id,
         active_terminal_session_id: pending_data.parent.active_terminal_session_id,
         rig_provider: pending_data.parent.rig_provider,
         api_key: pending_data.parent.api_key,
@@ -743,6 +749,7 @@ async fn run_task(task_id: String) {
         tenth_man_config: None,
         document_attachments: None,
         image_attachments: None,
+        referenced_traffic: None,
         persist_messages: false,
         subagent_run_id: Some(task_id.clone()),
         context_policy: Some(subagent_context_policy()),

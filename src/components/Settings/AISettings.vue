@@ -402,12 +402,40 @@
                     <span class="badge badge-sm badge-info">{{ t('settings.ai.optional') }}</span>
                   </span>
                 </label>
-                <textarea 
-                  class="textarea textarea-bordered font-mono text-sm h-24"
-                  :placeholder="t('settings.ai.customHeadersPlaceholder')"
-                  v-model="customHeadersJson"
-                  @blur="saveCustomHeaders"
-                ></textarea>
+                <div class="space-y-2">
+                  <div
+                    v-for="row in customHeaderRows"
+                    :key="row.id"
+                    class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_2.5rem] gap-2"
+                  >
+                    <input
+                      type="text"
+                      class="input input-bordered input-sm font-mono"
+                      :placeholder="t('settings.ai.customHeaderKeyPlaceholder')"
+                      v-model="row.key"
+                      @blur="saveCustomHeaders"
+                    />
+                    <input
+                      type="text"
+                      class="input input-bordered input-sm font-mono"
+                      :placeholder="t('settings.ai.customHeaderValuePlaceholder')"
+                      v-model="row.value"
+                      @blur="saveCustomHeaders"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm text-error"
+                      :title="t('settings.ai.removeCustomHeader')"
+                      @click="removeCustomHeaderRow(row.id)"
+                    >
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                  <button type="button" class="btn btn-outline btn-sm" @click="addCustomHeaderRow">
+                    <i class="fas fa-plus"></i>
+                    {{ t('settings.ai.addCustomHeader') }}
+                  </button>
+                </div>
                 <label class="label">
                   <span class="label-text-alt text-base-content/60">
                     {{ t('settings.ai.customHeadersDescription') }}
@@ -416,6 +444,32 @@
                 <div v-if="customHeadersError" class="alert alert-error mt-2">
                   <i class="fas fa-exclamation-triangle"></i>
                   <span>{{ customHeadersError }}</span>
+                </div>
+              </div>
+
+              <!-- Extra request body -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text flex items-center gap-2">
+                    {{ t('settings.ai.extraBody') }}
+                    <span class="badge badge-sm badge-info">{{ t('settings.ai.optional') }}</span>
+                  </span>
+                </label>
+                <textarea
+                  class="textarea textarea-bordered font-mono text-sm min-h-28"
+                  :placeholder="t('settings.ai.extraBodyPlaceholder')"
+                  v-model="extraBodyJson"
+                  @blur="saveExtraBody"
+                  spellcheck="false"
+                ></textarea>
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.extraBodyDescription') }}
+                  </span>
+                </label>
+                <div v-if="extraBodyError" class="alert alert-error mt-2">
+                  <i class="fas fa-exclamation-triangle"></i>
+                  <span>{{ extraBodyError }}</span>
                 </div>
               </div>
             </div>
@@ -589,6 +643,15 @@
                   </label>
                   <textarea class="textarea textarea-bordered font-mono text-sm h-24"
                     placeholder='{"X-Custom-Header": "value"}' v-model="customProvider.extra_headers_json"></textarea>
+                </div>
+
+                <!-- 额外请求体 -->
+                <div class="form-control md:col-span-2">
+                  <label class="label">
+                    <span class="label-text">{{ t('settings.ai.extraBody') }}</span>
+                  </label>
+                  <textarea class="textarea textarea-bordered font-mono text-sm h-24"
+                    :placeholder="t('settings.ai.extraBodyPlaceholder')" v-model="customProvider.extra_body_json"></textarea>
                 </div>
 
                 <!-- 超时设置 -->
@@ -913,11 +976,16 @@ import SearchableSelect from '@/components/SearchableSelect.vue'
 import EditableSelect from '@/components/EditableSelect.vue'
 import { getModelVisionCapability, type ModelVisionCapability } from '@/services/aiModelCapabilities'
 import {
+  buildExtraHeadersFromInputRows,
+  createExtraHeaderInputRows,
+  formatExtraBodyJson,
+  type ExtraHeaderInputRow,
   getEnabledProviders,
   getProviderIcon,
   getProviderModels,
   getProviderName,
   needsApiKey,
+  parseExtraBodyJson,
   rigProviderOptions,
 } from './aiSettingsProviderSupport'
 import {
@@ -1117,6 +1185,12 @@ const customProviderValidationError = computed(() => {
       return '额外请求头 JSON 格式无效'
     }
   }
+  const extraBodyResult = parseExtraBodyJson(p.extra_body_json || '')
+  if (extraBodyResult.ok === false) {
+    return extraBodyResult.reason === 'invalid-json'
+      ? t('settings.ai.extraBodyInvalidJson')
+      : t('settings.ai.extraBodyMustBeObject')
+  }
   return ''
 })
 
@@ -1216,22 +1290,45 @@ const rigProviderLocal = computed({
 })
 
 // 自定义请求头
-const customHeadersJson = ref('')
+type CustomHeaderRow = ExtraHeaderInputRow & { id: string }
+
+let customHeaderRowId = 0
+const customHeaderRows = ref<CustomHeaderRow[]>([])
 const customHeadersError = ref('')
+const extraBodyJson = ref('')
+const extraBodyError = ref('')
+
+const createCustomHeaderRow = (row: ExtraHeaderInputRow = { key: '', value: '' }): CustomHeaderRow => ({
+  id: `custom-header-${customHeaderRowId += 1}`,
+  key: row.key,
+  value: row.value,
+})
 
 // 加载自定义 headers
 const loadCustomHeaders = () => {
   customHeadersError.value = ''
   const provider = selectedProviderConfig.value
-  if (provider && provider.extra_headers) {
-    try {
-      customHeadersJson.value = JSON.stringify(provider.extra_headers, null, 2)
-    } catch (e) {
-      customHeadersJson.value = ''
-    }
-  } else {
-    customHeadersJson.value = ''
+  const rows = createExtraHeaderInputRows(provider?.extra_headers)
+  customHeaderRows.value = rows.length > 0
+    ? rows.map((row) => createCustomHeaderRow(row))
+    : [createCustomHeaderRow()]
+}
+
+const loadExtraBody = () => {
+  extraBodyError.value = ''
+  extraBodyJson.value = formatExtraBodyJson(selectedProviderConfig.value?.extra_body)
+}
+
+const addCustomHeaderRow = () => {
+  customHeaderRows.value.push(createCustomHeaderRow())
+}
+
+const removeCustomHeaderRow = (rowId: string) => {
+  customHeaderRows.value = customHeaderRows.value.filter((row) => row.id !== rowId)
+  if (customHeaderRows.value.length === 0) {
+    customHeaderRows.value = [createCustomHeaderRow()]
   }
+  saveCustomHeaders()
 }
 
 // 保存自定义 headers
@@ -1243,52 +1340,70 @@ const saveCustomHeaders = () => {
     return
   }
 
-  // 如果为空，清除 extra_headers
-  if (!customHeadersJson.value.trim()) {
-    const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
-    if (updatedConfig.providers[providerKey]) {
-      updatedConfig.providers[providerKey].extra_headers = undefined
-      emit('update:aiConfig', updatedConfig)
+  const result = buildExtraHeadersFromInputRows(customHeaderRows.value)
+  if (result.ok === false) {
+    if (result.reason === 'missing-key') {
+      customHeadersError.value = t('settings.ai.customHeaderKeyRequired')
+      return
     }
-    saveAiConfig()
+    customHeadersError.value = t('settings.ai.customHeaderDuplicateKey').replace('{key}', result.key || '')
     return
   }
 
-  // 验证 JSON 格式
-  try {
-    const headers = JSON.parse(customHeadersJson.value)
-    
-    // 验证是否为对象
-    if (typeof headers !== 'object' || headers === null || Array.isArray(headers)) {
-      customHeadersError.value = t('settings.ai.customHeadersMustBeObject')
-      return
-    }
-
-    // 验证所有值都是字符串
-    for (const [key, value] of Object.entries(headers)) {
-      if (typeof value !== 'string') {
-        customHeadersError.value = `${t('settings.ai.customHeadersValueMustBeString').replace('{key}', key)}`
-        return
-      }
-    }
-
-    // 保存到配置
-    const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
-    if (updatedConfig.providers[providerKey]) {
-      updatedConfig.providers[providerKey].extra_headers = headers
-      emit('update:aiConfig', updatedConfig)
-    }
-    saveAiConfig()
-    
-  } catch (e) {
-    customHeadersError.value = t('settings.ai.invalidJsonFormat') + ': ' + (e as Error).message
+  const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
+  const headers = result.headers
+  if (!updatedConfig.providers[providerKey]) {
+    return
   }
+
+  if (Object.keys(headers).length > 0) {
+    updatedConfig.providers[providerKey].extra_headers = headers
+  } else {
+    delete updatedConfig.providers[providerKey].extra_headers
+  }
+  emit('update:aiConfig', updatedConfig)
+  saveAiConfig()
 }
 
-// 监听选中的提供商变化，加载其自定义 headers
+const saveExtraBody = () => {
+  extraBodyError.value = ''
+  const providerKey = selectedAiProvider.value
+
+  if (!providerKey || !props.aiConfig.providers || !props.aiConfig.providers[providerKey]) {
+    return
+  }
+
+  const result = parseExtraBodyJson(extraBodyJson.value)
+  if (result.ok === false) {
+    extraBodyError.value = result.reason === 'invalid-json'
+      ? t('settings.ai.extraBodyInvalidJson')
+      : t('settings.ai.extraBodyMustBeObject')
+    return
+  }
+
+  const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
+  if (!updatedConfig.providers[providerKey]) {
+    return
+  }
+
+  if (result.body && Object.keys(result.body).length > 0) {
+    updatedConfig.providers[providerKey].extra_body = result.body
+  } else {
+    delete updatedConfig.providers[providerKey].extra_body
+  }
+  emit('update:aiConfig', updatedConfig)
+  saveAiConfig()
+}
+
+// 监听选中的提供商变化，加载其自定义 headers 和 extra_body
 watch(() => props.selectedAiProvider, () => {
   loadCustomHeaders()
+  loadExtraBody()
 }, { immediate: true })
+
+watch(() => selectedProviderConfig.value?.extra_body, () => {
+  loadExtraBody()
+}, { deep: true })
 
 // 默认 Provider 选择
 const defaultProviderLocal = ref('')

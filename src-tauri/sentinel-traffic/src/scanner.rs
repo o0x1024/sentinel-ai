@@ -6,14 +6,15 @@
 //! - 收集 Finding 并去重
 
 use crate::history_cache::{HttpRequestRecord, ProxyHistoryCache};
-use crate::scope::{url_is_in_scope, ProxyScopeRule};
+use crate::history_record_builder::build_http_history_record;
+use crate::scope::{ProxyScopeRule, url_is_in_scope};
 use crate::{Finding, InterceptFilterRule, RequestContext, ResponseContext, Result, TrafficError};
 use sentinel_db::DatabaseService;
-use sentinel_plugins::{types::HttpTransaction, PluginExecutor};
+use sentinel_plugins::{PluginExecutor, types::HttpTransaction};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::Emitter;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
 /// 扫描任务（从 proxy.rs 导入）
@@ -363,7 +364,10 @@ impl ScanPipeline {
                             }
 
                             if !restart_success {
-                                error!("Plugin {} failed to restart after 3 attempts, skipping execution", plugin_id_clone);
+                                error!(
+                                    "Plugin {} failed to restart after 3 attempts, skipping execution",
+                                    plugin_id_clone
+                                );
                                 return;
                             }
                         }
@@ -547,7 +551,10 @@ impl ScanPipeline {
                             }
 
                             if !restart_success {
-                                error!("Plugin {} failed to restart after 3 attempts, skipping execution", plugin_id_clone);
+                                error!(
+                                    "Plugin {} failed to restart after 3 attempts, skipping execution",
+                                    plugin_id_clone
+                                );
                                 return;
                             }
                         }
@@ -1200,152 +1207,13 @@ impl ScanPipeline {
     /// 记录请求/响应到历史缓存
     async fn record_to_history_cache(&self, req_ctx: &RequestContext, resp_ctx: &ResponseContext) {
         if let Some(cache) = &self.history_cache {
-            use url::Url;
-
-            let start_time = req_ctx.timestamp;
-            let end_time = resp_ctx.timestamp;
-            let response_time = (end_time - start_time).num_milliseconds().max(0);
-
             debug!(
                 "Recording request to cache: url={}, req_body_len={}, resp_body_len={}",
                 req_ctx.url,
                 req_ctx.body.len(),
                 resp_ctx.body.len()
             );
-
-            // 解析 URL
-            let parsed_url = Url::parse(&req_ctx.url).ok();
-            let host = parsed_url
-                .as_ref()
-                .and_then(|u| u.host_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let scheme = parsed_url
-                .as_ref()
-                .map(|u| u.scheme())
-                .unwrap_or("http")
-                .to_string();
-
-            // 序列化请求头和响应头
-            let request_headers = serde_json::to_string(&req_ctx.headers).ok();
-            let response_headers = serde_json::to_string(&resp_ctx.headers).ok();
-
-            // 转换请求体和响应体为 String
-            let request_body = if req_ctx.body.is_empty() {
-                None
-            } else {
-                match String::from_utf8(req_ctx.body.clone()) {
-                    Ok(s) => Some(s),
-                    Err(_) => {
-                        use base64::{engine::general_purpose, Engine as _};
-                        Some(format!(
-                            "[BASE64]{}",
-                            general_purpose::STANDARD.encode(&req_ctx.body)
-                        ))
-                    }
-                }
-            };
-
-            let response_body = if resp_ctx.body.is_empty() {
-                None
-            } else {
-                match String::from_utf8(resp_ctx.body.clone()) {
-                    Ok(s) => Some(s),
-                    Err(_) => {
-                        use base64::{engine::general_purpose, Engine as _};
-                        Some(format!(
-                            "[BASE64]{}",
-                            general_purpose::STANDARD.encode(&resp_ctx.body)
-                        ))
-                    }
-                }
-            };
-
-            let response_size = resp_ctx.body.len() as i64;
-
-            // 处理 edited 字段
-            let (
-                was_edited,
-                edited_method,
-                edited_url,
-                edited_request_headers,
-                edited_request_body,
-            ) = if req_ctx.was_edited {
-                let edited_headers_str = req_ctx.edited_headers.as_ref().map(|h| {
-                    h.iter()
-                        .map(|(k, v)| format!("{}: {}", k, v))
-                        .collect::<Vec<_>>()
-                        .join("\r\n")
-                });
-                let edited_body_str = req_ctx
-                    .edited_body
-                    .as_ref()
-                    .and_then(|b| String::from_utf8(b.clone()).ok());
-                (
-                    true,
-                    req_ctx.edited_method.clone(),
-                    req_ctx.edited_url.clone(),
-                    edited_headers_str,
-                    edited_body_str,
-                )
-            } else {
-                (false, None, None, None, None)
-            };
-
-            let (edited_response_headers, edited_response_body, edited_status_code) =
-                if resp_ctx.was_edited {
-                    let edited_headers_str = resp_ctx.edited_headers.as_ref().map(|h| {
-                        h.iter()
-                            .map(|(k, v)| format!("{}: {}", k, v))
-                            .collect::<Vec<_>>()
-                            .join("\r\n")
-                    });
-                    let edited_body_str = resp_ctx
-                        .edited_body
-                        .as_ref()
-                        .and_then(|b| String::from_utf8(b.clone()).ok());
-                    (
-                        edited_headers_str,
-                        edited_body_str,
-                        resp_ctx.edited_status.map(|s| s as i32),
-                    )
-                } else {
-                    (None, None, None)
-                };
-
-            let record = HttpRequestRecord {
-                id: 0,
-                db_request_id: None,
-                traffic_request_id: Some(req_ctx.id.clone()),
-                origin_kind: None,
-                origin_ref_id: None,
-                parent_request_id: None,
-                source_draft_revision_id: None,
-                url: req_ctx.url.clone(),
-                host,
-                scheme,
-                http_version_observed: resp_ctx
-                    .http_version
-                    .clone()
-                    .or_else(|| req_ctx.http_version.clone()),
-                method: req_ctx.method.clone(),
-                status_code: resp_ctx.status as i32,
-                request_headers,
-                request_body,
-                response_headers,
-                response_body: response_body.clone(),
-                response_size,
-                response_time,
-                timestamp: req_ctx.timestamp,
-                was_edited,
-                edited_request_headers,
-                edited_request_body,
-                edited_method,
-                edited_url,
-                edited_response_headers,
-                edited_response_body,
-                edited_status_code,
-            };
+            let record = build_http_history_record(req_ctx, resp_ctx);
 
             let inserted_id = cache.add_http_request(record.clone()).await;
             debug!(
@@ -1425,7 +1293,7 @@ impl FindingDeduplicator {
         &self,
         finding: &Finding,
         db: &Arc<DatabaseService>,
-    ) -> Result<()> {
+    ) -> Result<sentinel_db::TrafficVulnerabilityInsertResult> {
         use sentinel_db::TrafficFinding;
 
         let traffic_finding = TrafficFinding {
@@ -1451,8 +1319,9 @@ impl FindingDeduplicator {
             created_at: finding.created_at,
         };
 
-        db.insert_traffic_vulnerability(&traffic_finding).await?;
-        Ok(())
+        Ok(db
+            .insert_traffic_vulnerability_deduped(&traffic_finding)
+            .await?)
     }
 
     /// 启动去重服务
@@ -1500,7 +1369,7 @@ impl FindingDeduplicator {
                     Ok(false) => {
                         // 数据库不存在，插入新记录
                         match self.insert_finding_to_db(&finding, db).await {
-                            Ok(_) => {
+                            Ok(sentinel_db::TrafficVulnerabilityInsertResult::Inserted) => {
                                 self.cache.write().await.insert(signature.clone());
                                 info!(
                                     "New finding inserted to DB: {} - {} (signature: {})",
@@ -1514,6 +1383,14 @@ impl FindingDeduplicator {
                                         error!("Failed to send finding event: {}", e);
                                     }
                                 }
+                            }
+                            Ok(sentinel_db::TrafficVulnerabilityInsertResult::Duplicate) => {
+                                self.cache.write().await.insert(signature.clone());
+                                info!(
+                                    "Finding duplicate detected during DB insert, updated hit count: {} (signature: {})",
+                                    finding.title,
+                                    &signature[..8.min(signature.len())]
+                                );
                             }
                             Err(e) => {
                                 error!("Failed to insert vulnerability: {}", e);

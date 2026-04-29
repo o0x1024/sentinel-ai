@@ -251,31 +251,32 @@ pub async fn get_dictionary_entries(
         return Ok(vec![]);
     };
 
-    let rows: Vec<(String, f64, Option<String>, Option<String>)> =
-        if let Some(limit_val) = limit.map(i64::from) {
-            #[cfg(feature = "db-postgres")]
+    let rows: Vec<(String, f64, Option<String>, Option<String>)> = if let Some(limit_val) =
+        limit.map(i64::from)
+    {
+        #[cfg(feature = "db-postgres")]
             let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2";
-            #[cfg(not(feature = "db-postgres"))]
+        #[cfg(not(feature = "db-postgres"))]
             let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC LIMIT ?";
 
-            sqlx::query_as(query)
-                .bind(&dict_id)
-                .bind(limit_val)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?
-        } else {
-            #[cfg(feature = "db-postgres")]
+        sqlx::query_as(query)
+            .bind(&dict_id)
+            .bind(limit_val)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?
+    } else {
+        #[cfg(feature = "db-postgres")]
             let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC";
-            #[cfg(not(feature = "db-postgres"))]
+        #[cfg(not(feature = "db-postgres"))]
             let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC";
 
-            sqlx::query_as(query)
-                .bind(&dict_id)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?
-        };
+        sqlx::query_as(query)
+            .bind(&dict_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?
+    };
 
     Ok(rows
         .into_iter()

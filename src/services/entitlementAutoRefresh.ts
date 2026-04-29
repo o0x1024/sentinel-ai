@@ -20,7 +20,7 @@ export interface EntitlementAutoRefreshOptions {
 export type EntitlementAutoRefreshOutcome =
   | {
       status: 'skipped'
-      reason: 'no_local_license' | 'debug' | 'cooldown' | 'not_needed'
+      reason: 'debug' | 'cooldown' | 'not_needed'
     }
   | {
       status: 'success'
@@ -40,10 +40,6 @@ export async function attemptEntitlementAutoRefresh(
   options: EntitlementAutoRefreshOptions = {},
 ): Promise<EntitlementAutoRefreshOutcome> {
   const entitlements = await refreshFeatureEntitlements()
-
-  if (!entitlements.has_local_license) {
-    return { status: 'skipped', reason: 'no_local_license' }
-  }
 
   if (entitlements.access_source === 'debug') {
     return { status: 'skipped', reason: 'debug' }

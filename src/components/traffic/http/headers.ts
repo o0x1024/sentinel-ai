@@ -76,21 +76,25 @@ export function parseStoredHeaderEntries(rawHeaders?: string): HttpHeaderEntry[]
       )
     }
   } catch {
-    return rawHeaders
-      .split(/\r\n|\r|\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) => {
-        const separatorIndex = line.indexOf(':')
-        if (separatorIndex <= 0) {
-          return { name: '', value: line }
+    const parsedHeaders: HttpHeaderEntry[] = []
+
+    for (const line of rawHeaders.split(/\r\n|\r|\n/).map((entry) => entry.trim()).filter((entry) => entry.length > 0)) {
+      const separatorIndex = line.indexOf(':')
+      if (separatorIndex <= 0) {
+        const previousHeader = parsedHeaders[parsedHeaders.length - 1]
+        if (previousHeader) {
+          previousHeader.value = `${previousHeader.value}\n${line}`
         }
-        return {
-          name: line.slice(0, separatorIndex).trim(),
-          value: line.slice(separatorIndex + 1).trim(),
-        }
+        continue
+      }
+
+      parsedHeaders.push({
+        name: line.slice(0, separatorIndex).trim(),
+        value: line.slice(separatorIndex + 1).trim(),
       })
-      .filter((header) => header.name.length > 0)
+    }
+
+    return parsedHeaders
   }
 
   return []

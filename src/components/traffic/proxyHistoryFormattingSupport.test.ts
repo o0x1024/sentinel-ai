@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { formatRequestRaw, formatResponse, formatResponseRaw } from './proxyHistoryFormattingSupport'
+import {
+  formatRequestRaw,
+  formatResponse,
+  formatResponseRaw,
+  formatResponseRawFast,
+  hasEditedRequest,
+  hasEditedResponse,
+} from './proxyHistoryFormattingSupport'
 import type { ProxyRequest } from './proxyHistoryTypes'
 
 const createRequest = (overrides: Partial<ProxyRequest> = {}): ProxyRequest => ({
@@ -55,5 +62,26 @@ describe('proxyHistoryFormattingSupport', () => {
     expect(text).not.toContain('[BASE64]')
     expect(text).not.toContain('[Binary data')
     expect(text).not.toContain('First 200 characters:')
+  })
+
+  it('keeps the stored response body untouched in fast raw mode', () => {
+    const text = formatResponseRawFast(createRequest({
+      status_code: 200,
+      response_headers: JSON.stringify([
+        { name: 'content-type', value: 'image/png' },
+      ]),
+      response_body: '[BASE64]aGVsbG8=',
+    }))
+
+    expect(text).toContain('content-type: image/png\n')
+    expect(text).toContain('[BASE64]aGVsbG8=')
+    expect(text).not.toContain('hello')
+  })
+
+  it('treats nullish history records as not edited', () => {
+    expect(hasEditedRequest(null)).toBe(false)
+    expect(hasEditedRequest(undefined)).toBe(false)
+    expect(hasEditedResponse(null)).toBe(false)
+    expect(hasEditedResponse(undefined)).toBe(false)
   })
 })

@@ -264,7 +264,12 @@ impl TasksTool {
         "Use it to create or revise a multi-step plan, mark progress, record step results, ",
         "and recover existing tasks across sessions. Call action='get_list' before creating new items ",
         "to avoid duplicates. Actions: add_items, update_status, get_list, reset, replan, update_item, ",
-        "delete_item, insert_item, cleanup. Use this for execution tracking, not as a general note store."
+        "delete_item, insert_item, cleanup. Use this for execution tracking, not as a general note store. ",
+        "Progress must be updated incrementally: when a step is started, make it in_progress; ",
+        "as soon as that step is completed or fails, immediately call update_status with completed or failed ",
+        "and include the result/evidence before starting unrelated work or writing the final answer. ",
+        "Do not wait until the end to batch-update all tasks; the task list must reflect the real execution state throughout the run. ",
+        "When one in_progress item reaches a terminal status, the next item is advanced automatically."
     );
 }
 

@@ -2,18 +2,20 @@ use std::sync::Arc;
 
 use sentinel_db::{Database, DatabaseService};
 use sentinel_traffic::{
-    CertificateService, InterceptFilterRule as TrafficInterceptFilterRule, PendingInterceptRequest,
-    PendingInterceptResponse, PendingInterceptWebSocketMessage, PluginManager, PluginMetadata,
-    PluginRecord, PluginStatus, ProxyScopeRule, ProxyService, ScanTask,
+    CertificateService, InterceptFilterRule as TrafficInterceptFilterRule,
+    MatchReplaceRule as TrafficMatchReplaceRule, PendingInterceptRequest, PendingInterceptResponse,
+    PendingInterceptWebSocketMessage, PluginManager, PluginMetadata, PluginRecord, PluginStatus,
+    ProxyScopeRule, ProxyService, ScanTask,
 };
 use tauri::AppHandle;
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
 
 use crate::services::system_agents::{
-    behavior_extension::BrowserBehaviorEvent, BehaviorExtensionEventStore,
+    behavior_extension::BrowserBehaviorEvent, BehaviorExtensionEventStore, BrowserShellStore,
     TrafficBehaviorSignalSettings, TrafficContextExtractionSettings,
     TRAFFIC_BEHAVIOR_SIGNAL_SETTINGS_KEY, TRAFFIC_CONTEXT_EXTRACTION_SETTINGS_KEY,
 };
+use crate::services::{load_plugin_default_inputs, merge_plugin_input_defaults};
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -84,6 +86,7 @@ pub struct TrafficAnalysisState {
     pub history_cache: Arc<sentinel_traffic::ProxyHistoryCache>,
     pub request_filter_rules: Arc<RwLock<Vec<TrafficInterceptFilterRule>>>,
     pub response_filter_rules: Arc<RwLock<Vec<TrafficInterceptFilterRule>>>,
+    pub match_replace_rules: Arc<RwLock<Vec<TrafficMatchReplaceRule>>>,
     pub dedupe_cache: Arc<RwLock<std::collections::HashSet<String>>>,
     pub exclude_self_traffic: Arc<RwLock<bool>>,
     pub scope_include_rules: Arc<RwLock<Vec<ProxyScopeRule>>>,
@@ -91,6 +94,7 @@ pub struct TrafficAnalysisState {
     pub plugin_scanning_enabled: Arc<RwLock<bool>>,
     pub behavior_signal_settings: Arc<RwLock<TrafficBehaviorSignalSettings>>,
     pub behavior_extension_events: Arc<RwLock<BehaviorExtensionEventStore>>,
+    pub browser_shell_store: Arc<RwLock<BrowserShellStore>>,
     pub context_extraction_settings: Arc<RwLock<TrafficContextExtractionSettings>>,
 }
 
@@ -117,6 +121,7 @@ impl Clone for TrafficAnalysisState {
             history_cache: self.history_cache.clone(),
             request_filter_rules: self.request_filter_rules.clone(),
             response_filter_rules: self.response_filter_rules.clone(),
+            match_replace_rules: self.match_replace_rules.clone(),
             dedupe_cache: self.dedupe_cache.clone(),
             exclude_self_traffic: self.exclude_self_traffic.clone(),
             scope_include_rules: self.scope_include_rules.clone(),
@@ -124,6 +129,7 @@ impl Clone for TrafficAnalysisState {
             plugin_scanning_enabled: self.plugin_scanning_enabled.clone(),
             behavior_signal_settings: self.behavior_signal_settings.clone(),
             behavior_extension_events: self.behavior_extension_events.clone(),
+            browser_shell_store: self.browser_shell_store.clone(),
             context_extraction_settings: self.context_extraction_settings.clone(),
         }
     }
@@ -165,6 +171,7 @@ impl TrafficAnalysisState {
             history_cache: Arc::new(sentinel_traffic::ProxyHistoryCache::with_defaults()),
             request_filter_rules: Arc::new(RwLock::new(Vec::new())),
             response_filter_rules: Arc::new(RwLock::new(Vec::new())),
+            match_replace_rules: Arc::new(RwLock::new(Vec::new())),
             dedupe_cache: Arc::new(RwLock::new(std::collections::HashSet::new())),
             exclude_self_traffic: Arc::new(RwLock::new(true)),
             scope_include_rules: Arc::new(RwLock::new(Vec::new())),
@@ -176,6 +183,7 @@ impl TrafficAnalysisState {
             behavior_extension_events: Arc::new(
                 RwLock::new(BehaviorExtensionEventStore::default()),
             ),
+            browser_shell_store: Arc::new(RwLock::new(BrowserShellStore::default())),
             context_extraction_settings: Arc::new(RwLock::new(
                 TrafficContextExtractionSettings::default(),
             )),
@@ -208,6 +216,10 @@ impl TrafficAnalysisState {
 
     pub fn get_behavior_extension_events(&self) -> Arc<RwLock<BehaviorExtensionEventStore>> {
         self.behavior_extension_events.clone()
+    }
+
+    pub fn get_browser_shell_store(&self) -> Arc<RwLock<BrowserShellStore>> {
+        self.browser_shell_store.clone()
     }
 
     pub fn get_context_extraction_settings(&self) -> Arc<RwLock<TrafficContextExtractionSettings>> {
@@ -373,9 +385,12 @@ impl TrafficAnalysisState {
         String,
     > {
         let resolved_plugin_id = ensure_execution_plugin_loaded(self, plugin_id).await?;
+        let default_inputs =
+            load_plugin_default_inputs(self.db_service.as_ref(), &resolved_plugin_id).await?;
+        let resolved_inputs = merge_plugin_input_defaults(&default_inputs, inputs);
 
         self.plugin_manager
-            .execute_agent(&resolved_plugin_id, inputs)
+            .execute_agent(&resolved_plugin_id, &resolved_inputs)
             .await
             .map_err(|e| {
                 format!(

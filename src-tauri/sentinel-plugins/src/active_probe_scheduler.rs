@@ -62,6 +62,11 @@ pub struct ActiveProbeQueueSnapshot {
     pub recent: Vec<ActiveProbeQueueEntry>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveProbeQueueEventPayload {
+    pub entries: Vec<ActiveProbeQueueEntry>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ActiveProbeRequest {
     pub plugin_id: String,
@@ -158,14 +163,20 @@ fn jitter_ms(range: [u64; 2]) -> u64 {
     }
 
     let span = upper - lower + 1;
-    let seed = Utc::now().timestamp_nanos_opt().unwrap_or_default().unsigned_abs();
+    let seed = Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_default()
+        .unsigned_abs();
     lower + (seed % span)
 }
 
 fn sort_waiters(group: &mut ActiveProbeGroupState) {
     group.waiters.sort_by(|left, right| {
         if right.request.probe_priority != left.request.probe_priority {
-            return right.request.probe_priority.cmp(&left.request.probe_priority);
+            return right
+                .request
+                .probe_priority
+                .cmp(&left.request.probe_priority);
         }
         left.sequence.cmp(&right.sequence)
     });
@@ -230,19 +241,17 @@ fn build_entry(
     }
 }
 
-fn emit_entry(entry: &ActiveProbeQueueEntry) {
-    emit_active_probe_queue_event(entry);
-}
-
 fn emit_entries(entries: Vec<ActiveProbeQueueEntry>) {
-    for entry in entries {
-        emit_entry(&entry);
+    if entries.is_empty() {
+        return;
     }
+    emit_active_probe_queue_event(&ActiveProbeQueueEventPayload { entries });
 }
 
 fn waiter_entry_updates(group: &mut ActiveProbeGroupState) -> Vec<WaiterEntryUpdate> {
     sort_waiters(group);
-    group.waiters
+    group
+        .waiters
         .iter()
         .enumerate()
         .map(|(index, waiter)| WaiterEntryUpdate {
@@ -361,9 +370,10 @@ fn promote_waiters_locked(
             group.active_slots += 1;
             group.next_dispatch_at = Some(
                 dispatch_at
-                    + chrono::Duration::milliseconds(
-                        effective_cooldown_ms(&waiter.request, adaptive_penalty_ms) as i64,
-                    ),
+                    + chrono::Duration::milliseconds(effective_cooldown_ms(
+                        &waiter.request,
+                        adaptive_penalty_ms,
+                    ) as i64),
             );
 
             scheduled_waiters.push(ScheduledWaiter {
@@ -434,12 +444,17 @@ pub fn enqueue_active_probe(
         .map(|group| group.waiters.len() as u32)
         .unwrap_or(0);
     let entry = build_entry(&request, adaptive_penalty_ms, queue_depth);
-    state.entries.insert(request.request_id.clone(), entry.clone());
+    state
+        .entries
+        .insert(request.request_id.clone(), entry.clone());
 
     let sequence = state.sequence;
     state.sequence += 1;
 
-    let group = state.groups.entry(request.cooldown_key.clone()).or_default();
+    let group = state
+        .groups
+        .entry(request.cooldown_key.clone())
+        .or_default();
     group.waiters.push(QueuedWaiter {
         request: request.clone(),
         sequence,
@@ -447,7 +462,10 @@ pub fn enqueue_active_probe(
     });
 
     let mut updates = vec![entry];
-    updates.extend(refresh_waiter_entries_locked(&mut state, &request.cooldown_key));
+    updates.extend(refresh_waiter_entries_locked(
+        &mut state,
+        &request.cooldown_key,
+    ));
     updates.extend(promote_waiters_locked(&mut state, &request.cooldown_key));
     drop(state);
 
@@ -468,7 +486,7 @@ pub fn mark_active_probe_running(request_id: &str) -> Option<ActiveProbeQueueEnt
         .unwrap_or_else(now_rfc3339);
     let entry = entry.clone();
     drop(state);
-    emit_entry(&entry);
+    emit_entries(vec![entry.clone()]);
     Some(entry)
 }
 
@@ -595,7 +613,10 @@ pub fn fail_active_probe(
     )
 }
 
-pub fn cancel_active_probe(request_id: &str, reason: Option<String>) -> Option<ActiveProbeQueueEntry> {
+pub fn cancel_active_probe(
+    request_id: &str,
+    reason: Option<String>,
+) -> Option<ActiveProbeQueueEntry> {
     let mut state = scheduler_state()
         .lock()
         .expect("active probe scheduler poisoned");

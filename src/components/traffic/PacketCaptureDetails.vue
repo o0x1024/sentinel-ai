@@ -35,11 +35,11 @@
       </div>
     </div>
 
-    <div class="w-1/2 overflow-auto p-2 bg-base-200/30">
-      <div class="tabs tabs-boxed bg-base-200 mb-2">
-        <a class="tab tab-sm" :class="{ 'tab-active': hexViewMode === 'hex' }" @click="$emit('update:hexViewMode', 'hex')">Hex</a>
-        <a class="tab tab-sm" :class="{ 'tab-active': hexViewMode === 'ascii' }" @click="$emit('update:hexViewMode', 'ascii')">ASCII</a>
-        <a class="tab tab-sm" :class="{ 'tab-active': hexViewMode === 'raw' }" @click="$emit('update:hexViewMode', 'raw')">Raw</a>
+    <div class="w-1/2 overflow-auto bg-base-200/30 p-1.5">
+      <div class="tabs tabs-boxed tabs-xs mb-1.5 bg-base-200">
+        <a class="tab tab-xs" :class="{ 'tab-active': hexViewMode === 'hex' }" @click="$emit('update:hexViewMode', 'hex')">Hex</a>
+        <a class="tab tab-xs" :class="{ 'tab-active': hexViewMode === 'ascii' }" @click="$emit('update:hexViewMode', 'ascii')">ASCII</a>
+        <a class="tab tab-xs" :class="{ 'tab-active': hexViewMode === 'raw' }" @click="$emit('update:hexViewMode', 'raw')">Raw</a>
       </div>
       <PacketCaptureByteView
         class="text-xs font-mono"

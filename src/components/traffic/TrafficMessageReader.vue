@@ -7,7 +7,7 @@
     <textarea
       ref="textArea"
       class="traffic-message-reader-textarea"
-      :value="modelValue"
+      :value="displayValue"
       :wrap="textareaWrapMode"
       readonly
       spellcheck="false"
@@ -92,6 +92,10 @@ import {
   TRAFFIC_MESSAGE_TEXT_LINE_HEIGHT,
   useTrafficDisplaySettings,
 } from './trafficDisplaySettings'
+import {
+  shouldProgressivelyRenderTrafficMessage,
+  TRAFFIC_MESSAGE_READER_PROGRESSIVE_CHUNK_SIZE,
+} from './trafficMessageReaderProgressiveSupport'
 
 const scrollStateCache = new Map<string, { top: number; left: number }>()
 const MAX_SCROLL_STATE_CACHE_SIZE = 100
@@ -143,9 +147,12 @@ const searchCaseSensitive = ref(false)
 const searchRegexp = ref(false)
 const totalSearchMatches = ref(0)
 const activeSearchMatch = ref(0)
+const displayValue = ref('')
+const isProgressivePending = ref(false)
 const readerThemeMode = ref<'burp-light' | 'burp-dark'>(isDarkHttpEditorTheme() ? 'burp-dark' : 'burp-light')
 const { settings } = useTrafficDisplaySettings()
 let themeObserver: MutationObserver | null = null
+let progressiveFrameId: number | null = null
 
 const readerStyle = computed(() => ({
   height: props.height,
@@ -196,7 +203,7 @@ function getSearchMatches(content: string): SearchMatch[] {
 const hasInvalidSearchQuery = computed(() => {
   if (!searchQuery.value || !props.showSearchBar) return false
   try {
-    void getSearchMatches(props.modelValue)
+    void getSearchMatches(displayValue.value)
     return false
   } catch {
     return true
@@ -222,7 +229,7 @@ function updateSearchMetrics() {
   }
 
   try {
-    const matches = getSearchMatches(props.modelValue)
+    const matches = getSearchMatches(displayValue.value)
     totalSearchMatches.value = matches.length
 
     if (!textArea.value || matches.length === 0) {
@@ -258,7 +265,7 @@ function applySelection(from: number, to: number) {
 function navigateToMatch(direction: 'next' | 'previous') {
   if (!canNavigateSearchResults.value || !textArea.value) return false
 
-  const matches = getSearchMatches(props.modelValue)
+  const matches = getSearchMatches(displayValue.value)
   if (matches.length === 0) return false
 
   const selectionStart = textArea.value.selectionStart
@@ -371,14 +378,59 @@ function restoreScrollState() {
   textArea.value.scrollLeft = state.left
 }
 
+function cancelProgressiveRender() {
+  if (progressiveFrameId !== null) {
+    cancelAnimationFrame(progressiveFrameId)
+    progressiveFrameId = null
+  }
+  isProgressivePending.value = false
+}
+
+function syncDisplayValue(value: string) {
+  cancelProgressiveRender()
+
+  if (!shouldProgressivelyRenderTrafficMessage(value)) {
+    displayValue.value = value
+    return
+  }
+
+  displayValue.value = ''
+  isProgressivePending.value = true
+  let offset = 0
+  const parts: string[] = []
+
+  const appendChunk = () => {
+    const nextOffset = Math.min(offset + TRAFFIC_MESSAGE_READER_PROGRESSIVE_CHUNK_SIZE, value.length)
+    parts.push(value.slice(offset, nextOffset))
+    displayValue.value = parts.join('')
+    offset = nextOffset
+
+    if (offset >= value.length) {
+      isProgressivePending.value = false
+      progressiveFrameId = null
+      return
+    }
+
+    progressiveFrameId = requestAnimationFrame(appendChunk)
+  }
+
+  progressiveFrameId = requestAnimationFrame(appendChunk)
+}
+
 watch([searchQuery, searchCaseSensitive, searchRegexp], () => {
   updateSearchMetrics()
 })
 
-watch(() => props.modelValue, async () => {
+watch(displayValue, async () => {
   await nextTick()
   updateSearchMetrics()
-  restoreScrollState()
+  if (!isProgressivePending.value) {
+    restoreScrollState()
+  }
+})
+
+watch(() => props.modelValue, (newValue) => {
+  syncDisplayValue(newValue)
 })
 
 watch(() => props.stateKey, (newKey, oldKey) => {
@@ -391,6 +443,7 @@ watch(() => props.stateKey, (newKey, oldKey) => {
 })
 
 onMounted(() => {
+  syncDisplayValue(props.modelValue)
   restoreScrollState()
   updateSearchMetrics()
 
@@ -412,6 +465,7 @@ onActivated(() => {
 })
 
 onUnmounted(() => {
+  cancelProgressiveRender()
   saveScrollState()
   if (themeObserver) {
     themeObserver.disconnect()
@@ -422,7 +476,7 @@ onUnmounted(() => {
 defineExpose({
   focus: () => textArea.value?.focus(),
   focusSearch: focusSearchInput,
-  getContent: () => props.modelValue,
+  getContent: () => displayValue.value,
   getSelectionRange: () => ({
     from: textArea.value?.selectionStart ?? 0,
     to: textArea.value?.selectionEnd ?? 0,

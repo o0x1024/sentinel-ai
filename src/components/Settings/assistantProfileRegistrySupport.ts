@@ -104,4 +104,8 @@ export const normalizeAssistantProfileDraft = (profile: AssistantProfileOption):
   defaultManualTools: normalizeToolIds(profile.defaultManualTools),
   defaultTeamOrchestrationPresetId: profile.defaultTeamOrchestrationPresetId?.trim() || null,
   defaultTeamRecoveryPresetId: profile.defaultTeamRecoveryPresetId?.trim() || null,
+  defaultTeamProfileId: profile.defaultTeamProfileId?.trim() || null,
+  teamRole: ['assistant', 'commander', 'solver', 'observer'].includes(profile.teamRole || '')
+    ? profile.teamRole
+    : 'assistant',
 })

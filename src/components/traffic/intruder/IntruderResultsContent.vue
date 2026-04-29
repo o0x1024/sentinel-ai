@@ -45,114 +45,123 @@
         />
       </div>
 
-      <div class="flex items-center justify-end border-b border-base-300 px-6 py-2">
-        <details class="dropdown dropdown-end">
-          <summary class="btn btn-sm btn-ghost">
-            <i class="fas fa-columns"></i>
-            {{ $t('trafficAnalysis.intruder.labels.columns') }}
-          </summary>
-          <div class="dropdown-content z-10 mt-2 w-72 rounded-lg border border-base-300 bg-base-100 p-3 shadow-xl">
-            <div class="mb-3 flex gap-2">
-              <button class="btn btn-xs btn-ghost" type="button" @click="selectAllColumns">
-                {{ $t('trafficAnalysis.intruder.actions.selectAll') }}
+      <div class="min-h-0 flex-1 overflow-hidden">
+        <div class="flex h-72 flex-col border-b border-base-300">
+          <div class="relative z-30 flex-none border-b border-base-300 bg-base-100/95 px-3 py-2 backdrop-blur">
+            <div class="relative flex justify-end">
+              <button
+                type="button"
+                class="inline-flex h-8 w-auto flex-none items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2.5 text-sm font-medium text-base-content shadow-sm hover:bg-base-200"
+                @click.stop="toggleColumnChooser"
+              >
+                <i class="fas fa-columns"></i>
+                <span>{{ $t('trafficAnalysis.intruder.labels.columns') }}</span>
               </button>
-              <button class="btn btn-xs btn-ghost" type="button" @click="showBaseColumnsOnly">
-                {{ $t('trafficAnalysis.intruder.actions.baseOnly') }}
-              </button>
-              <button class="btn btn-xs btn-ghost" type="button" @click="resetVisibleColumns">
-                {{ $t('trafficAnalysis.intruder.actions.reset') }}
-              </button>
-            </div>
-            <div class="space-y-2">
-              <div v-for="column in chooserColumns" :key="`column-toggle-${column.key}`" class="flex items-center gap-2 text-sm">
-                <input
-                  :checked="visibleColumnKeys.includes(column.key)"
-                  type="checkbox"
-                  class="checkbox checkbox-xs"
-                  @change="toggleVisibleColumn(column.key, ($event.target as HTMLInputElement).checked)"
-                />
-                <span class="min-w-0 flex-1 truncate">{{ column.label }}</span>
-                <button
-                  class="btn btn-ghost btn-xs"
-                  type="button"
-                  :disabled="getVisibleColumnIndex(column.key) <= 0"
-                  @click="moveColumn(column.key, 'up')"
-                >
-                  <i class="fas fa-arrow-up"></i>
-                </button>
-                <button
-                  class="btn btn-ghost btn-xs"
-                  type="button"
-                  :disabled="getVisibleColumnIndex(column.key) === -1 || getVisibleColumnIndex(column.key) >= visibleColumnKeys.length - 1"
-                  @click="moveColumn(column.key, 'down')"
-                >
-                  <i class="fas fa-arrow-down"></i>
-                </button>
+              <div
+                v-if="columnChooserOpen"
+                class="absolute right-0 top-full z-[90] mt-2 max-h-[min(28rem,calc(100vh-12rem))] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border border-base-300 bg-base-100 p-3 shadow-xl"
+                @click.stop
+              >
+                <div class="mb-3 flex flex-wrap gap-2">
+                  <button class="btn btn-xs btn-ghost" type="button" @click="selectAllColumns">
+                    {{ $t('trafficAnalysis.intruder.actions.selectAll') }}
+                  </button>
+                  <button class="btn btn-xs btn-ghost" type="button" @click="showBaseColumnsOnly">
+                    {{ $t('trafficAnalysis.intruder.actions.baseOnly') }}
+                  </button>
+                  <button class="btn btn-xs btn-ghost" type="button" @click="resetVisibleColumns">
+                    {{ $t('trafficAnalysis.intruder.actions.reset') }}
+                  </button>
+                </div>
+                <div class="space-y-1.5">
+                  <div v-for="column in chooserColumns" :key="`column-toggle-${column.key}`" class="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded px-1 py-1 text-sm hover:bg-base-200/70">
+                    <input
+                      :checked="visibleColumnKeys.includes(column.key)"
+                      type="checkbox"
+                      class="checkbox checkbox-xs"
+                      @change="toggleVisibleColumn(column.key, ($event.target as HTMLInputElement).checked)"
+                    />
+                    <span class="min-w-0 truncate" :title="column.label">{{ column.label }}</span>
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      type="button"
+                      :disabled="getVisibleColumnIndex(column.key) <= 0"
+                      @click="moveColumn(column.key, 'up')"
+                    >
+                      <i class="fas fa-arrow-up"></i>
+                    </button>
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      type="button"
+                      :disabled="getVisibleColumnIndex(column.key) === -1 || getVisibleColumnIndex(column.key) >= visibleColumnKeys.length - 1"
+                      @click="moveColumn(column.key, 'down')"
+                    >
+                      <i class="fas fa-arrow-down"></i>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        </details>
-      </div>
-
-      <div class="min-h-0 flex-1 overflow-hidden">
-        <div class="h-72 overflow-auto border-b border-base-300">
-          <table class="table table-pin-rows table-sm">
-            <thead>
-              <tr>
-                <th v-for="column in displayedColumns" :key="column.key">
-                  <button class="font-semibold" type="button" @click="toggleSort(column.key)">
-                    {{ column.label }} {{ renderSortMarker(column.key) }}
-                  </button>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="result in visibleResults"
-                :key="result.id"
-                class="cursor-pointer"
-                :class="{ 'bg-primary/10': result.id === selectedResultId }"
-                @click="$emit('selectResult', result.id)"
-                @contextmenu.prevent="showResultContextMenu($event, result.id)"
-              >
-                <td v-for="column in displayedColumns" :key="`${result.id}-${column.key}`">
-                  <template v-if="column.key === 'index'">
-                    <span class="font-mono">{{ result.index - 1 }}</span>
-                    <span v-if="result.isBaseline" class="ml-2 badge badge-outline badge-xs">{{ $t('trafficAnalysis.intruder.labels.baseline') }}</span>
-                  </template>
-                  <span
-                    v-else-if="column.kind === 'match'"
-                    class="badge badge-xs"
-                    :class="getColumnBadgeClass(result, column.key)"
-                  >
-                    {{ getColumnDisplayValue(result, column.key) }}
-                  </span>
-                  <span
-                    v-else-if="column.key === 'payloadSummary'"
-                    class="block max-w-64 truncate font-mono text-[11px]"
-                    :title="String(getColumnDisplayValue(result, column.key))"
-                  >
-                    {{ getColumnDisplayValue(result, column.key) }}
-                  </span>
-                  <span
-                    v-else-if="column.key === 'error' || column.kind === 'extract'"
-                    class="block max-w-56 truncate font-mono text-[11px]"
-                    :title="String(getColumnDisplayValue(result, column.key))"
-                  >
-                    {{ getColumnDisplayValue(result, column.key) }}
-                  </span>
-                  <span v-else class="font-mono text-[11px]">
-                    {{ getColumnDisplayValue(result, column.key) }}
-                  </span>
-                </td>
-              </tr>
-              <tr v-if="!visibleResults.length">
-                <td :colspan="displayedColumns.length" class="py-10 text-center text-sm text-base-content/60">
-                  {{ $t('trafficAnalysis.intruder.empty.noResults') }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div class="min-h-0 flex-1 overflow-auto">
+            <table class="table table-pin-rows table-sm">
+              <thead>
+                <tr>
+                  <th v-for="column in displayedColumns" :key="column.key">
+                    <button class="font-semibold" type="button" @click="toggleSort(column.key)">
+                      {{ column.label }} {{ renderSortMarker(column.key) }}
+                    </button>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="result in visibleResults"
+                  :key="result.id"
+                  class="cursor-pointer"
+                  :class="{ 'bg-primary/10': result.id === selectedResultId }"
+                  @click="$emit('selectResult', result.id)"
+                  @contextmenu.prevent="showResultContextMenu($event, result.id)"
+                >
+                  <td v-for="column in displayedColumns" :key="`${result.id}-${column.key}`">
+                    <template v-if="column.key === 'index'">
+                      <span class="font-mono">{{ result.index - 1 }}</span>
+                      <span v-if="result.isBaseline" class="ml-2 badge badge-outline badge-xs">{{ $t('trafficAnalysis.intruder.labels.baseline') }}</span>
+                    </template>
+                    <span
+                      v-else-if="column.kind === 'match'"
+                      class="badge badge-xs"
+                      :class="getColumnBadgeClass(result, column.key)"
+                    >
+                      {{ getColumnDisplayValue(result, column.key) }}
+                    </span>
+                    <span
+                      v-else-if="column.key === 'payloadSummary'"
+                      class="block max-w-64 truncate font-mono text-[11px]"
+                      :title="String(getColumnDisplayValue(result, column.key))"
+                    >
+                      {{ getColumnDisplayValue(result, column.key) }}
+                    </span>
+                    <span
+                      v-else-if="column.key === 'error' || column.kind === 'extract'"
+                      class="block max-w-56 truncate font-mono text-[11px]"
+                      :title="String(getColumnDisplayValue(result, column.key))"
+                    >
+                      {{ getColumnDisplayValue(result, column.key) }}
+                    </span>
+                    <span v-else class="font-mono text-[11px]">
+                      {{ getColumnDisplayValue(result, column.key) }}
+                    </span>
+                  </td>
+                </tr>
+                <tr v-if="!visibleResults.length">
+                  <td :colspan="displayedColumns.length" class="py-10 text-center text-sm text-base-content/60">
+                    {{ $t('trafficAnalysis.intruder.empty.noResults') }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div
@@ -356,6 +365,7 @@ const { t } = useI18n()
 const { enabledTargets } = useTrafficSendTargets()
 const { settings } = useTrafficDisplaySettings()
 const activeView = ref<'results' | 'positions'>('results')
+const columnChooserOpen = ref(false)
 const resultContextMenu = ref({
   visible: false,
   x: 0,
@@ -480,6 +490,23 @@ function toggleSort(key: string) {
     key,
     direction: props.sort.key === key && props.sort.direction === 'asc' ? 'desc' : 'asc',
   })
+}
+
+function closeColumnChooser() {
+  columnChooserOpen.value = false
+  document.removeEventListener('click', closeColumnChooser)
+}
+
+function toggleColumnChooser() {
+  if (columnChooserOpen.value) {
+    closeColumnChooser()
+    return
+  }
+
+  columnChooserOpen.value = true
+  setTimeout(() => {
+    document.addEventListener('click', closeColumnChooser)
+  }, 0)
 }
 
 function toggleVisibleColumn(key: string, checked: boolean) {
@@ -651,6 +678,7 @@ function handleResultContextMenuAction(action: () => void | Promise<void>) {
 }
 
 onUnmounted(() => {
+  document.removeEventListener('click', closeColumnChooser)
   document.removeEventListener('click', hideResultContextMenu)
   document.removeEventListener('contextmenu', hideResultContextMenu)
 })

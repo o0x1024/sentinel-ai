@@ -6,6 +6,7 @@ import type {
   ReferencedTraffic,
 } from '@/types/agentReferences'
 import { useTerminal } from '@/composables/useTerminal'
+import { useBrowserShell } from '@/composables/useBrowserShell'
 
 export const takeOverConversationExecution = async (params: {
   appendPartialAssistantMessage: (message: {
@@ -108,6 +109,7 @@ export const executeConversationTask = async (params: {
     onConversationListRefresh: () => void
     onCurrentConversationTitleChange: (title: string) => void
   }) => void
+  skipAutoRename?: boolean
   onConversationListRefresh: () => void
   onCurrentConversationTitleChange: (title: string) => void
   runAgentExecute: (request: {
@@ -115,6 +117,8 @@ export const executeConversationTask = async (params: {
       attachments?: unknown[]
       conversation_id: string
       context_mode: 'claude-like' | 'codex-like' | 'sentinel-like'
+      current_browser_shell_direct_write_enabled?: boolean
+      current_browser_shell_session_id?: string
       current_terminal_session_fingerprint?: string
       current_terminal_session_id?: string
       display_content?: string
@@ -124,6 +128,7 @@ export const executeConversationTask = async (params: {
       force_tasks: boolean
       message_id: null
       model_override?: string
+      persist_messages?: boolean
       referenced_assets?: ReferencedAsset[]
       referenced_files?: ReferencedFile[]
       referenced_messages?: ReferencedConversationMessage[]
@@ -134,6 +139,7 @@ export const executeConversationTask = async (params: {
     task: string
   }) => Promise<any>
   runtimeToolConfig: unknown
+  persistMessages?: boolean
   usedAssets: ReferencedAsset[]
   usedAttachments: unknown[]
   usedDocuments: ProcessedDocumentResult[]
@@ -142,18 +148,26 @@ export const executeConversationTask = async (params: {
   usedTraffic: ReferencedTraffic[]
 }): Promise<any> => {
   const terminal = useTerminal()
+  const browserShell = useBrowserShell()
   const currentTerminalSessionId = terminal.currentSessionId.value?.trim() || undefined
   const currentTerminalSessionFingerprint =
     terminal.currentSessionFingerprint.value?.trim() || undefined
+  const currentBrowserShellSessionId = browserShell.currentSessionId.value?.trim() || undefined
+  const currentBrowserShellDirectWriteEnabled =
+    currentBrowserShellSessionId && browserShell.directWriteEnabled.value === true
+      ? true
+      : undefined
 
-  params.maybeAutoRenameConversation({
-    convId: params.conversationId,
-    currentConversationId: params.conversationId,
-    defaultTitle: params.defaultConversationTitle,
-    firstMessage: params.firstMessage,
-    onConversationListRefresh: params.onConversationListRefresh,
-    onCurrentConversationTitleChange: params.onCurrentConversationTitleChange,
-  })
+  if (!params.skipAutoRename) {
+    params.maybeAutoRenameConversation({
+      convId: params.conversationId,
+      currentConversationId: params.conversationId,
+      defaultTitle: params.defaultConversationTitle,
+      firstMessage: params.firstMessage,
+      onConversationListRefresh: params.onConversationListRefresh,
+      onCurrentConversationTitleChange: params.onCurrentConversationTitleChange,
+    })
+  }
 
   return params.runAgentExecute({
     task: params.fullTask,
@@ -161,6 +175,8 @@ export const executeConversationTask = async (params: {
       attachments: params.usedAttachments.length > 0 ? params.usedAttachments : undefined,
       conversation_id: params.conversationId,
       context_mode: params.assistantContextMode,
+      current_browser_shell_direct_write_enabled: currentBrowserShellDirectWriteEnabled,
+      current_browser_shell_session_id: currentBrowserShellSessionId,
       current_terminal_session_fingerprint: currentTerminalSessionFingerprint,
       current_terminal_session_id: currentTerminalSessionId,
       display_content: params.displayContent,
@@ -170,6 +186,7 @@ export const executeConversationTask = async (params: {
       force_tasks: params.forceTasks,
       message_id: null,
       model_override: buildAssistantModelOverride(params.assistantSelectedModel),
+      persist_messages: params.persistMessages,
       referenced_assets: params.usedAssets.length > 0 ? params.usedAssets : undefined,
       referenced_files: params.usedFiles.length > 0 ? params.usedFiles : undefined,
       referenced_messages: params.usedMessages.length > 0 ? params.usedMessages : undefined,

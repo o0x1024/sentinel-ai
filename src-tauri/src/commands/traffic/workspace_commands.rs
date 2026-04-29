@@ -209,8 +209,8 @@ where
         return Ok(T::default());
     }
 
-    let bytes = fs::read(path)
-        .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
     serde_json::from_slice::<T>(&bytes)
         .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))
 }
@@ -319,8 +319,7 @@ mod tests {
     use super::{
         read_json_file, resolve_traffic_workbench_dir_from_root, write_json_file,
         PersistedAttackWorkspaceStore, PersistedIntruderWorkspaceSessionStore,
-        PersistedReplayRunStore, PersistedTrafficDraftStore,
-        TRAFFIC_WORKBENCH_DIR,
+        PersistedReplayRunStore, PersistedTrafficDraftStore, TRAFFIC_WORKBENCH_DIR,
     };
     use tempfile::tempdir;
 
@@ -331,7 +330,10 @@ mod tests {
             resolve_traffic_workbench_dir_from_root(temp.path()).expect("resolve workbench dir");
 
         assert!(workbench_dir.exists());
-        assert_eq!(workbench_dir.file_name().and_then(|name| name.to_str()), Some(TRAFFIC_WORKBENCH_DIR));
+        assert_eq!(
+            workbench_dir.file_name().and_then(|name| name.to_str()),
+            Some(TRAFFIC_WORKBENCH_DIR)
+        );
     }
 
     #[test]
@@ -394,8 +396,7 @@ mod tests {
         };
 
         write_json_file(&path, &input).expect("write");
-        let restored: PersistedIntruderWorkspaceSessionStore =
-            read_json_file(&path).expect("read");
+        let restored: PersistedIntruderWorkspaceSessionStore = read_json_file(&path).expect("read");
 
         assert_eq!(restored.active_workspace_id.as_deref(), Some("workspace-1"));
         assert_eq!(restored.workspaces.len(), 1);

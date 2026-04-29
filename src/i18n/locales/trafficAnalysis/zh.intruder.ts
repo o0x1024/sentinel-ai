@@ -299,6 +299,7 @@ export default {
     clearPositionSymbol: '清除 $',
     syncPayloadSets: '同步载荷集',
     addPayloadSet: '新增载荷集',
+    clearAll: '清除全部',
     addDictionarySource: '添加字典',
     addDefaultDictionarySource: '添加默认字典',
     clearDictionarySources: '清空字典来源',
@@ -362,6 +363,11 @@ export default {
     copyRequest: '复制请求',
     copyAsCurl: '复制为 cURL',
     openInBrowser: '在浏览器中打开',
+  },
+  tabContextMenu: {
+    deleteCurrent: '删除当前',
+    deleteOthers: '删除其它',
+    deleteAll: '删除所有',
   },
   attackTypes: {
     sniper: '狙击手',
@@ -546,6 +552,8 @@ export default {
     presetImportFailed: '导入插件配置预设失败',
     presetExported: '插件配置预设已导出',
     presetExportFailed: '导出插件配置预设失败',
+    confirmClearAllWorkspaces: '确认清除全部工作区？',
+    confirmClearAllWorkspacesMessage: '这会停止并移除全部 {count} 个爆破器工作区。',
     payloadFileLoadFailed: '载荷文件加载失败',
     defaultDictionaryUnavailable: '当前没有配置 {type} 类型的默认字典',
     resultsExported: '结果已导出',

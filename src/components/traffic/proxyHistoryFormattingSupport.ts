@@ -3,6 +3,7 @@ import { parseStoredHeaderEntries } from './http/headers'
 import { normalizeProxyHistoryHttpVersion } from './proxyHistoryHttpSupport'
 import { getProxyHistoryDerived } from './proxyHistoryDerivedSupport'
 import { getProxyHistoryRequestPath } from './proxyHistoryTableSupport'
+import { formatTrafficJsonBody } from './trafficJsonFormattingSupport'
 import {
   getDisplayResponseBody,
   isImageResponseContentType,
@@ -207,12 +208,7 @@ const formatHeaderBlock = (headersJsonOrRaw: string | undefined, opts: { skipHos
 }
 
 const formatJsonBody = (body: string): string => {
-  if (!body) return ''
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2)
-  } catch {
-    return body
-  }
+  return formatTrafficJsonBody(body)
 }
 
 export const formatRequest = (
@@ -227,7 +223,7 @@ export const formatRequest = (
     return formatRequestRaw(request, viewMode)
   }
 
-  const useEdited = viewMode === 'edited' && request.was_edited
+  const useEdited = viewMode === 'edited' && hasEditedRequest(request)
   const method = useEdited && request.edited_method ? request.edited_method : request.method
   const url = useEdited && request.edited_url ? request.edited_url : request.url
   const headers = useEdited && request.edited_request_headers ? request.edited_request_headers : request.request_headers
@@ -251,7 +247,7 @@ export const formatRequestRaw = (
   request: ProxyRequest,
   viewMode: ProxyHistoryViewMode = 'edited',
 ): string => {
-  const useEdited = viewMode === 'edited' && request.was_edited
+  const useEdited = viewMode === 'edited' && hasEditedRequest(request)
   const method = useEdited && request.edited_method ? request.edited_method : request.method
   const url = useEdited && request.edited_url ? request.edited_url : request.url
   const headers = useEdited && request.edited_request_headers ? request.edited_request_headers : request.request_headers
@@ -273,7 +269,7 @@ export const getResponseContentType = (
   request: ProxyRequest,
   viewMode: ProxyHistoryViewMode = 'edited',
 ): string => {
-  const useEdited = viewMode === 'edited' && request.was_edited
+  const useEdited = viewMode === 'edited' && hasEditedResponse(request)
   const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
 
   if (headers) {
@@ -296,7 +292,7 @@ export const formatResponse = (
     return formatResponseRaw(request, viewMode)
   }
 
-  const useEdited = viewMode === 'edited' && request.was_edited
+  const useEdited = viewMode === 'edited' && hasEditedResponse(request)
   const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code
   const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
   const storedBody = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
@@ -314,11 +310,7 @@ export const formatResponse = (
     if (isImageResponseContentType(contentType)) {
       result += displayBody
     } else if (bodyFormat === 'json') {
-      try {
-        result += JSON.stringify(JSON.parse(displayBody), null, 2)
-      } catch {
-        result += displayBody
-      }
+      result += formatTrafficJsonBody(displayBody)
     } else if (bodyFormat === 'html' || bodyFormat === 'xml' || bodyFormat === 'text') {
       result += displayBody
     } else {
@@ -350,7 +342,7 @@ export const formatResponseRaw = (
   viewMode: ProxyHistoryViewMode = 'edited',
   options: ResponseFormattingOptions = {},
 ): string => {
-  const useEdited = viewMode === 'edited' && request.was_edited
+  const useEdited = viewMode === 'edited' && hasEditedResponse(request)
   const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code
   const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
   const storedBody = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
@@ -365,8 +357,37 @@ export const formatResponseRaw = (
   return result
 }
 
-export const hasEditedResponse = (request: ProxyRequest): boolean =>
-  Boolean(request.edited_response_headers || request.edited_response_body || request.edited_status_code)
+export const formatResponseRawFast = (
+  request: ProxyRequest,
+  viewMode: ProxyHistoryViewMode = 'edited',
+): string => {
+  const useEdited = viewMode === 'edited' && hasEditedResponse(request)
+  const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code
+  const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers
+  const storedBody = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body
+
+  let result = `${getStartLineHttpVersion(request)} ${statusCode} ${getHarStatusText(statusCode)}\n`
+  result += formatHeaderBlock(headers)
+  if (storedBody) {
+    result += `\n${storedBody}`
+  }
+  return result
+}
+
+export const hasEditedRequest = (request: ProxyRequest | null | undefined): boolean =>
+  Boolean(request && (
+    request.edited_method
+    || request.edited_url
+    || request.edited_request_headers
+    || request.edited_request_body
+  ))
+
+export const hasEditedResponse = (request: ProxyRequest | null | undefined): boolean =>
+  Boolean(request && (
+    request.edited_response_headers
+    || request.edited_response_body
+    || request.edited_status_code
+  ))
 
 export const stringToHex = (str: string): string => {
   let hex = ''
@@ -383,6 +404,6 @@ export const getResponseBody = (
   request: ProxyRequest,
   viewMode: ProxyHistoryViewMode = 'edited',
 ): string => {
-  const useEdited = viewMode === 'edited' && request.was_edited
+  const useEdited = viewMode === 'edited' && hasEditedResponse(request)
   return (useEdited && request.edited_response_body ? request.edited_response_body : request.response_body) || ''
 }

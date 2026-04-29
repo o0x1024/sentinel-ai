@@ -1,14 +1,14 @@
 <template>
   <div class="flex h-full min-h-0 flex-col bg-base-100">
     <div
-      class="flex items-center gap-2 border-b border-base-300"
-      :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_TOP_BAR_CLASS : 'bg-base-200 px-2 py-1'"
+      class="flex items-center gap-1.5 border-b border-base-300"
+      :class="immersiveDrillModeEnabled ? IMMERSIVE_TRAFFIC_TOP_BAR_CLASS : 'bg-base-200 px-1.5 py-0.5'"
     >
       <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         <div
           v-for="item in items"
           :key="item.id"
-          class="flex items-center gap-2 rounded border border-base-300 px-3 py-1.5 text-sm"
+          class="flex items-center gap-1.5 rounded border border-base-300 px-2.5 py-1 text-sm"
           :class="activeItemId === item.id ? 'bg-base-100 border-primary' : 'bg-base-200 hover:bg-base-300'"
         >
           <button class="truncate" type="button" :title="item.name" @click="activeItemId = item.id">
@@ -28,7 +28,7 @@
     <div v-if="showDraftComposer" class="flex min-h-0 flex-1 flex-col">
       <div
         class="border-b border-base-300"
-        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2.5 py-1.5 backdrop-blur-sm' : 'bg-base-200 px-3 py-2'"
+        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2 py-1 backdrop-blur-sm' : 'bg-base-200 px-2.5 py-1.5'"
       >
         <div class="flex flex-wrap items-center gap-2">
           <span class="font-semibold text-sm">{{ $t('trafficAnalysis.comparer.draft.title') }}</span>
@@ -63,7 +63,7 @@
 
       <div class="grid min-h-0 flex-1 gap-px bg-base-300 md:grid-cols-2">
         <div class="flex min-h-0 flex-col bg-base-100">
-          <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
+          <div class="border-b border-base-300 bg-base-200 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-base-content/70">
             {{ draft.leftLabel }}
           </div>
           <div class="min-h-0 flex-1" @contextmenu.capture.prevent="showDraftContextMenu($event, 'left')">
@@ -90,7 +90,7 @@
         </div>
 
         <div class="flex min-h-0 flex-col bg-base-100">
-          <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
+          <div class="border-b border-base-300 bg-base-200 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-base-content/70">
             {{ draft.rightLabel }}
           </div>
           <div class="min-h-0 flex-1" @contextmenu.capture.prevent="showDraftContextMenu($event, 'right')">
@@ -126,7 +126,7 @@
       <div
         ref="compareToolbarRef"
         class="flex flex-wrap items-center gap-2 border-b border-base-300"
-        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2.5 py-1.5 backdrop-blur-sm' : 'bg-base-200 px-3 py-2'"
+        :class="immersiveDrillModeEnabled ? 'bg-base-200/75 px-2 py-1 backdrop-blur-sm' : 'bg-base-200 px-2.5 py-1.5'"
       >
         <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ compareSourceLabel }}</span>
         <span :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ compareKindLabel }}</span>
@@ -187,7 +187,7 @@
         <span v-if="!isCompareToolbarCompact" :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">{{ $t('trafficAnalysis.comparer.labels.similarity') }}: {{ diffSummary.similarity }}%</span>
       </div>
 
-      <div class="min-h-0 flex-1" :class="immersiveDrillModeEnabled ? 'p-2' : 'p-4'" @contextmenu.capture.prevent="showContextMenu($event)">
+      <div class="min-h-0 flex-1" :class="immersiveDrillModeEnabled ? 'p-1.5' : 'p-2.5'" @contextmenu.capture.prevent="showContextMenu($event)">
         <CodeDiffViewer
           v-if="compareRenderMode === 'diff'"
           :left-text="displayedLeftText"
@@ -206,9 +206,9 @@
           :search-invalid-regexp-text="$t('trafficAnalysis.messageSearch.invalidRegexp')"
           @contextmenu="showContextMenu($event)"
         />
-        <div v-else class="grid h-full min-h-0 gap-px rounded-lg border border-base-300 bg-base-300 md:grid-cols-2">
+        <div v-else class="grid h-full min-h-0 gap-px rounded-[10px] border border-base-300 bg-base-300 md:grid-cols-2">
           <div class="flex min-h-0 flex-col bg-base-100" @contextmenu.capture.prevent="showContextMenu($event)">
-            <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
+            <div class="border-b border-base-300 bg-base-200 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-base-content/70">
               {{ currentItem.leftLabel }}
             </div>
             <div class="min-h-0 flex-1">
@@ -235,7 +235,7 @@
             </div>
           </div>
           <div class="flex min-h-0 flex-col bg-base-100" @contextmenu.capture.prevent="showContextMenu($event)">
-            <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
+            <div class="border-b border-base-300 bg-base-200 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-base-content/70">
               {{ currentItem.rightLabel }}
             </div>
             <div class="min-h-0 flex-1">

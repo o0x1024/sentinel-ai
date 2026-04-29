@@ -548,6 +548,8 @@ async fn generate_team_v3_execution_plan_with_main_agent(
         model: model.to_string(),
         system_prompt: build_team_v3_planner_system_prompt(main_agent_id),
         task: planner_prompt,
+        active_browser_shell_direct_write_enabled: false,
+        active_browser_shell_session_id: None,
         active_terminal_session_fingerprint: None,
         active_terminal_session_id: None,
         rig_provider: rig_provider.to_string(),
@@ -560,6 +562,7 @@ async fn generate_team_v3_execution_plan_with_main_agent(
         tenth_man_config: None,
         document_attachments: None,
         image_attachments: None,
+        referenced_traffic: None,
         persist_messages: false,
         subagent_run_id: None,
         context_policy: Some(ContextPolicy {

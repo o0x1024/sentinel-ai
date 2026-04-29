@@ -69,7 +69,7 @@ const lineWrapToggleTitle = computed(() => (
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 0.125rem;
+  gap: 0.1rem;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: thin;
@@ -82,13 +82,13 @@ const lineWrapToggleTitle = computed(() => (
 .traffic-display-mode-badge {
   display: inline-flex;
   align-items: center;
-  height: 1.65rem;
-  padding: 0 0.55rem;
+  height: 1.45rem;
+  padding: 0 0.45rem;
   border: 1px solid oklch(var(--b3));
   border-radius: 999px;
   background: oklch(var(--b2) / 0.55);
   color: oklch(var(--bc) / 0.72);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -98,8 +98,8 @@ const lineWrapToggleTitle = computed(() => (
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.9rem;
-  height: 1.9rem;
+  width: 1.7rem;
+  height: 1.7rem;
   border: none;
   border-radius: 0.4rem;
   background: transparent;
@@ -118,7 +118,7 @@ const lineWrapToggleTitle = computed(() => (
 }
 
 .traffic-display-control-label {
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   line-height: 1;
 }
 </style>

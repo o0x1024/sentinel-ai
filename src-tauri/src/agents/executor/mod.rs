@@ -20,13 +20,20 @@ use self::run_simple::execute_agent_simple;
 use self::run_with_tools::execute_agent_with_tools;
 use self::tool_bias::build_tool_search_runtime_context;
 
+mod browser_shell_frame_compactor;
+mod browser_shell_handler;
 mod file_tool_state;
+mod http_request_override;
 pub mod message_store;
+mod question_override;
 pub mod run_simple;
 pub mod run_with_tools;
 mod run_with_tools_support;
+mod shell_override;
 mod skill_loaded_events;
+mod team_runtime_log_context;
 mod tenth_man_hypothesis;
+mod terminal_override;
 mod terminal_session_store;
 mod tool_activation_events;
 mod tool_bias;
@@ -35,9 +42,11 @@ mod tool_feedback;
 mod tool_progress;
 mod tool_search_override;
 pub mod tool_trace_store;
+mod traffic_response_read_tool;
 pub mod types;
 pub mod utils;
 
+pub(crate) use browser_shell_handler::build_browser_shell_handler;
 pub use tool_exec::{
     execute_builtin_tool, execute_mcp_tool, execute_plugin_tool, execute_workflow_tool,
 };
@@ -54,6 +63,8 @@ pub struct AgentExecuteParams {
     pub model: String,
     pub system_prompt: String,
     pub task: String,
+    pub active_browser_shell_direct_write_enabled: bool,
+    pub active_browser_shell_session_id: Option<String>,
     pub active_terminal_session_fingerprint: Option<String>,
     pub active_terminal_session_id: Option<String>,
     pub rig_provider: String,
@@ -66,6 +77,7 @@ pub struct AgentExecuteParams {
     pub tenth_man_config: Option<TenthManConfig>,
     pub document_attachments: Option<Vec<DocumentAttachmentInfo>>,
     pub image_attachments: Option<serde_json::Value>,
+    pub referenced_traffic: Option<Vec<serde_json::Value>>,
     pub persist_messages: bool,
     pub subagent_run_id: Option<String>,
     pub context_policy: Option<ContextPolicy>,
@@ -97,6 +109,8 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         api_key: params.api_key.clone(),
         api_base: params.api_base.clone(),
         system_prompt: params.system_prompt.clone(),
+        active_browser_shell_direct_write_enabled: params.active_browser_shell_direct_write_enabled,
+        active_browser_shell_session_id: params.active_browser_shell_session_id.clone(),
         active_terminal_session_fingerprint: params.active_terminal_session_fingerprint.clone(),
         active_terminal_session_id: params.active_terminal_session_id.clone(),
         tool_config: params.tool_config.clone().unwrap_or_default(),
@@ -128,8 +142,13 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         Box::pin(async move { build_tool_search_runtime_context(&app_handle, &execution_id).await })
     }));
 
+    use sentinel_tools::buildin_tools::set_browser_shell_handler;
     use sentinel_tools::buildin_tools::set_sops_app_handle;
     use sentinel_tools::buildin_tools::tasks::set_tasks_app_handle;
+    set_browser_shell_handler(browser_shell_handler::build_browser_shell_handler(
+        app_handle.clone(),
+    ))
+    .await;
     set_sops_app_handle(app_handle.clone()).await;
     set_tasks_app_handle(app_handle.clone()).await;
 

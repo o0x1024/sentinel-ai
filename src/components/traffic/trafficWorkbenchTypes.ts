@@ -29,6 +29,7 @@ export interface TrafficWorkbenchRequestContext {
   statusCode: number | null
   variant: TrafficWorkbenchRequestVariant
   hasEditedVariant: boolean
+  hasEditedResponseVariant: boolean
   mode: 'preview' | 'draft' | 'workspace'
   modeLabel: string
 }

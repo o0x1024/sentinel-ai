@@ -65,8 +65,8 @@
             />
         </div>
 
-        <div class="flex items-center justify-between px-3 py-1 bg-base-200 text-xs text-base-content/70 border-t border-base-300">
-            <div class="flex items-center gap-4">
+        <div class="flex items-center justify-between border-t border-base-300 bg-base-200 px-2 py-0.5 text-xs text-base-content/70">
+            <div class="flex items-center gap-3">
                 <span v-if="selectedInterface">
                     <i class="fas fa-ethernet mr-1"></i>
                     {{ selectedInterfaceDisplayName }}
@@ -75,7 +75,7 @@
                     <i class="fas fa-circle animate-pulse mr-1"></i>{{ $t('trafficAnalysis.packetCapture.statusBar.capturing') }}
                 </span>
             </div>
-            <div class="flex items-center gap-4">
+            <div class="flex items-center gap-3">
                 <span v-if="selectedPacketSummary">{{ $t('trafficAnalysis.packetCapture.statusBar.selected') }}: #{{ selectedPacketSummary.id }}</span>
                 <span>{{ $t('trafficAnalysis.packetCapture.statusBar.captured') }}: {{ packets.length }} {{ $t('trafficAnalysis.packetCapture.statusBar.packets') }}</span>
             </div>
@@ -189,8 +189,8 @@ const extractFilter = reactive({
 
 // 虚拟滚动相关
 const scrollContainer = ref<{ scrollContainerEl: HTMLElement | null } | null>(null)
-const rowHeight = 28 // 每行高度
-const headerHeight = 32 // 表头高度
+const rowHeight = 26 // 每行高度
+const headerHeight = 30 // 表头高度
 const scrollTop = ref(0)
 const containerHeight = ref(300)
 const bufferSize = 5 // 缓冲区大小

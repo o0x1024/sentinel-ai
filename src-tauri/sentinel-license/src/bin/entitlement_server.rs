@@ -176,13 +176,6 @@ async fn refresh_entitlement(
             .or(request.machine_id.as_deref()),
     )?;
 
-    if !request.license_present.unwrap_or(false) {
-        return Err(ApiError::forbidden(
-            "local_license_required",
-            "local license is required before entitlement refresh",
-        ));
-    }
-
     let customer = state
         .store
         .get_customer(customer_id)

@@ -213,9 +213,7 @@ fn normalize_dns_monitor_target_asset_types(values: &[String]) -> Vec<String> {
             "root_domain" => "domain_root".to_string(),
             "subdomain_level_1" | "first_level_subdomain" => "domain_level_1".to_string(),
             "subdomain_level_2" | "second_level_subdomain" => "domain_level_2".to_string(),
-            "subdomain_level_3_plus" | "third_level_subdomain" => {
-                "domain_level_3_plus".to_string()
-            }
+            "subdomain_level_3_plus" | "third_level_subdomain" => "domain_level_3_plus".to_string(),
             _ => value,
         })
         .collect()
@@ -505,10 +503,9 @@ impl ChangeMonitorConfig {
                 const PRIMARY_SERVICE_MONITOR: &str = "service_monitor";
                 const FALLBACK_SERVICE_PROBE: &str = "service_probe";
 
-                let preferred_primary = if service_fallbacks
-                    .iter()
-                    .any(|fallback| normalize_monitor_plugin_id(&fallback.plugin_id) == PRIMARY_SERVICE_MONITOR)
-                {
+                let preferred_primary = if service_fallbacks.iter().any(|fallback| {
+                    normalize_monitor_plugin_id(&fallback.plugin_id) == PRIMARY_SERVICE_MONITOR
+                }) {
                     PRIMARY_SERVICE_MONITOR
                 } else {
                     FALLBACK_SERVICE_PROBE

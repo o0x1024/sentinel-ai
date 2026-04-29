@@ -2,53 +2,58 @@ import { parseStoredHeaderEntries } from '../../http/headers'
 import type { HttpExchangeRequest, HttpReplayResponse } from '../../http/model'
 import { endpointFromUrl } from '../../http/url'
 import { normalizeProxyHistoryHttpVersion } from '../../proxyHistoryHttpSupport'
-import { formatResponseRaw, getHarStatusText } from '../../proxyHistoryFormattingSupport'
+import {
+  formatResponseRaw,
+  getHarStatusText,
+  hasEditedRequest,
+  hasEditedResponse,
+} from '../../proxyHistoryFormattingSupport'
 import type { ProxyRequest } from '../../proxyHistoryTypes'
 import type { TrafficWorkbenchSource } from '../../trafficWorkbenchTypes'
 import type { HistorySnapshot, HistorySnapshotVariant } from '../model/historySnapshot'
 
 function resolveVariantUrl(request: ProxyRequest, variant: HistorySnapshotVariant) {
-  return variant === 'edited' && request.was_edited && request.edited_url
+  return variant === 'edited' && hasEditedRequest(request) && request.edited_url
     ? request.edited_url
     : request.url
 }
 
 function resolveVariantMethod(request: ProxyRequest, variant: HistorySnapshotVariant) {
-  return variant === 'edited' && request.was_edited && request.edited_method
+  return variant === 'edited' && hasEditedRequest(request) && request.edited_method
     ? request.edited_method
     : request.method
 }
 
 function resolveVariantHeaders(request: ProxyRequest, variant: HistorySnapshotVariant) {
   return parseStoredHeaderEntries(
-    variant === 'edited' && request.was_edited
+    variant === 'edited' && hasEditedRequest(request)
       ? request.edited_request_headers
       : request.request_headers,
   )
 }
 
 function resolveVariantBody(request: ProxyRequest, variant: HistorySnapshotVariant) {
-  const body = variant === 'edited' && request.was_edited
+  const body = variant === 'edited' && hasEditedRequest(request)
     ? request.edited_request_body
     : request.request_body
   return body || ''
 }
 
 function resolveVariantStatusCode(request: ProxyRequest, variant: HistorySnapshotVariant) {
-  const statusCode = variant === 'edited' && request.was_edited && request.edited_status_code
+  const statusCode = variant === 'edited' && hasEditedResponse(request) && request.edited_status_code
     ? request.edited_status_code
     : request.status_code
   return Number.isFinite(statusCode) ? statusCode : null
 }
 
 function resolveVariantResponseHeaders(request: ProxyRequest, variant: HistorySnapshotVariant) {
-  return variant === 'edited' && request.was_edited && request.edited_response_headers
+  return variant === 'edited' && hasEditedResponse(request) && request.edited_response_headers
     ? request.edited_response_headers
     : request.response_headers
 }
 
 function resolveVariantResponseBody(request: ProxyRequest, variant: HistorySnapshotVariant) {
-  return variant === 'edited' && request.was_edited && request.edited_response_body
+  return variant === 'edited' && hasEditedResponse(request) && request.edited_response_body
     ? request.edited_response_body
     : request.response_body
 }

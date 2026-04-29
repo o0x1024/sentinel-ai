@@ -40,7 +40,7 @@ const emit = defineEmits<{
 .traffic-message-view-tabs {
   display: inline-flex;
   align-items: stretch;
-  gap: 0.15rem;
+  gap: 0.1rem;
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
@@ -51,8 +51,8 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  height: 2rem;
-  padding: 0 0.8rem;
+  height: 1.75rem;
+  padding: 0 0.65rem;
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;
@@ -64,8 +64,9 @@ const emit = defineEmits<{
 }
 
 .traffic-message-view-tabs.compact .traffic-message-view-tab {
-  padding: 0 0.55rem;
-  font-size: 0.75rem;
+  height: 1.6rem;
+  padding: 0 0.5rem;
+  font-size: 0.72rem;
 }
 
 .traffic-message-view-tab:hover {

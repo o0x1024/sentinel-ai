@@ -244,7 +244,9 @@ async fn persist_replay_result_to_history(
 
     match db.insert_proxy_request(&db_record).await {
         Ok(db_request_id) => {
-            cache.set_http_request_db_id(history_request_id, db_request_id).await;
+            cache
+                .set_http_request_db_id(history_request_id, db_request_id)
+                .await;
             (Some(history_request_id), Some(db_request_id))
         }
         Err(error) => {
@@ -284,6 +286,14 @@ pub async fn start_traffic_analysis_internal(
         tracing::info!(
             "Loaded traffic scope exclude rules into runtime: {:?}",
             config.scope_exclude_rules
+        );
+    }
+    {
+        let mut match_replace_rules = state.match_replace_rules.write().await;
+        *match_replace_rules = config.match_replace_rules.clone();
+        tracing::info!(
+            "Loaded {} match-replace rules into runtime",
+            match_replace_rules.len()
         );
     }
 
@@ -402,6 +412,7 @@ pub async fn start_traffic_analysis_internal(
         pending_websocket_tx: Some(intercept_websocket_pending_tx),
         request_filter_rules: state.request_filter_rules.clone(),
         response_filter_rules: state.response_filter_rules.clone(),
+        match_replace_rules: state.match_replace_rules.clone(),
     };
 
     // 创建代理服务（支持拦截）

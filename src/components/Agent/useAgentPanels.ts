@@ -1,7 +1,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { AgentTask } from '@/types/agentTask'
 
-export type RightPanelKey = 'tasks' | 'html' | 'terminal' | 'team'
+export type RightPanelKey = 'tasks' | 'html' | 'terminal' | 'browser-shell' | 'team'
 
 interface TaskSourceOption {
   key: string
@@ -67,9 +67,11 @@ export const useAgentPanels = (params: {
   deactivateRightPanel: (panel: RightPanelKey) => void
   error: ComputedRef<string | null>
   handleCloseHtmlPanel: () => void
+  handleCloseBrowserShell: () => void
   handleCloseTasks: () => void
   handleCloseTerminal: () => void
   handleRenderHtml: (htmlContent: string) => void
+  handleToggleBrowserShell: () => void
   handleTaskSourceChange: (sourceKey: string) => void
   handleToggleHtmlPanel: () => void
   handleToggleTasks: () => void
@@ -217,6 +219,9 @@ export const useAgentPanels = (params: {
       params.terminalClose()
       return
     }
+    if (panel === 'browser-shell') {
+      return
+    }
     params.isTeamWorkspaceActive.value = false
   }
 
@@ -224,6 +229,9 @@ export const useAgentPanels = (params: {
     if (activePanel !== 'tasks') params.tasksClose()
     if (activePanel !== 'html') isHtmlPanelActive.value = false
     if (activePanel !== 'terminal') params.terminalClose()
+    if (activePanel !== 'browser-shell') {
+      // browser-shell panel is driven only by activeRightPanel
+    }
     if (activePanel !== 'team') params.isTeamWorkspaceActive.value = false
   }
 
@@ -285,6 +293,7 @@ export const useAgentPanels = (params: {
   const handleCloseTasks = () => deactivateRightPanel('tasks')
   const handleCloseHtmlPanel = () => deactivateRightPanel('html')
   const handleCloseTerminal = () => deactivateRightPanel('terminal')
+  const handleCloseBrowserShell = () => deactivateRightPanel('browser-shell')
 
   const handleToggleTasks = () => {
     if (activeRightPanel.value === 'tasks') {
@@ -311,6 +320,14 @@ export const useAgentPanels = (params: {
     }
     activateRightPanel('terminal')
     params.terminalOpen()
+  }
+
+  const handleToggleBrowserShell = () => {
+    if (activeRightPanel.value === 'browser-shell') {
+      deactivateRightPanel('browser-shell')
+      return
+    }
+    activateRightPanel('browser-shell')
   }
 
   const clampWidth = (width: number, minWidth: number, maxWidth: number) => {
@@ -502,10 +519,12 @@ export const useAgentPanels = (params: {
     clearTasksForCurrentContext,
     deactivateRightPanel,
     error,
+    handleCloseBrowserShell,
     handleCloseHtmlPanel,
     handleCloseTasks,
     handleCloseTerminal,
     handleRenderHtml,
+    handleToggleBrowserShell,
     handleTaskSourceChange,
     handleToggleHtmlPanel,
     handleToggleTasks,

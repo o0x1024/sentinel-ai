@@ -2,21 +2,40 @@ const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:18931'
 const DEFAULT_SETTINGS = {
   enabled: true,
   bridgeUrl: DEFAULT_BRIDGE_URL,
+  shellCaptureEnabled: true,
   lastHealthOk: false,
   lastHealthAt: null,
   lastError: '',
 }
 
+function isExtensionContextInvalidated(error) {
+  return String(error || '').includes('Extension context invalidated')
+}
+
 async function getSettings() {
-  const stored = await chrome.storage.sync.get(DEFAULT_SETTINGS)
-  return { ...DEFAULT_SETTINGS, ...stored }
+  try {
+    const stored = await chrome.storage.sync.get(DEFAULT_SETTINGS)
+    return { ...DEFAULT_SETTINGS, ...stored }
+  } catch (error) {
+    if (isExtensionContextInvalidated(error)) {
+      return { ...DEFAULT_SETTINGS }
+    }
+    throw error
+  }
 }
 
 async function setSettings(patch) {
-  const current = await getSettings()
-  const next = { ...current, ...patch }
-  await chrome.storage.sync.set(next)
-  return next
+  try {
+    const current = await getSettings()
+    const next = { ...current, ...patch }
+    await chrome.storage.sync.set(next)
+    return next
+  } catch (error) {
+    if (isExtensionContextInvalidated(error)) {
+      return { ...DEFAULT_SETTINGS, ...patch }
+    }
+    throw error
+  }
 }
 
 async function postEvents(events) {
@@ -30,7 +49,7 @@ async function postEvents(events) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       browser: 'chrome',
-      extensionVersion: chrome.runtime.getManifest().version,
+      extensionVersion: chrome.runtime?.getManifest?.().version || 'unknown',
       events,
     }),
   })
@@ -119,6 +138,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     void postEvents(message.events || [])
       .then(data => sendResponse({ ok: true, data }))
       .catch(async error => {
+        if (isExtensionContextInvalidated(error)) {
+          sendResponse({ ok: false, error: 'Extension context invalidated' })
+          return
+        }
         await setSettings({
           lastHealthOk: false,
           lastError: String(error),
@@ -129,20 +152,44 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === 'sentinel:get-settings') {
-    void getSettings().then(settings => sendResponse({ ok: true, settings }))
+    void getSettings()
+      .then(settings => sendResponse({ ok: true, settings }))
+      .catch(error => {
+        if (isExtensionContextInvalidated(error)) {
+          sendResponse({ ok: false, error: 'Extension context invalidated' })
+          return
+        }
+        sendResponse({ ok: false, error: String(error) })
+      })
     return true
   }
 
   if (message?.type === 'sentinel:update-settings') {
-    void setSettings(message.patch || {}).then(settings => sendResponse({ ok: true, settings }))
+    void setSettings(message.patch || {})
+      .then(settings => sendResponse({ ok: true, settings }))
+      .catch(error => {
+        if (isExtensionContextInvalidated(error)) {
+          sendResponse({ ok: false, error: 'Extension context invalidated' })
+          return
+        }
+        sendResponse({ ok: false, error: String(error) })
+      })
     return true
   }
 
   if (message?.type === 'sentinel:ping-bridge') {
-    void pingBridge().then(async () => {
-      const settings = await getSettings()
-      sendResponse({ ok: true, settings })
-    })
+    void pingBridge()
+      .then(async () => {
+        const settings = await getSettings()
+        sendResponse({ ok: true, settings })
+      })
+      .catch(error => {
+        if (isExtensionContextInvalidated(error)) {
+          sendResponse({ ok: false, error: 'Extension context invalidated' })
+          return
+        }
+        sendResponse({ ok: false, error: String(error) })
+      })
     return true
   }
 

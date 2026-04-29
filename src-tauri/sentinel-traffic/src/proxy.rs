@@ -6,8 +6,12 @@
 //! - 请求/响应 tee（异步扫描队列）
 //! - 忽略上游证书验证（用于抓取证书异常的站点）
 
+use crate::header_utils::{append_request_headers, append_response_headers, merge_header_value};
 use crate::intercept_rules::should_intercept_response;
 use crate::intercept_tracking::InterceptTracking;
+use crate::match_replace::{
+    apply_request_match_replace_rules, apply_response_match_replace_rules, MatchReplaceRule,
+};
 use crate::scope::{url_is_in_scope, ProxyScopeRule};
 use crate::{ProxyStats, RequestContext, ResponseContext, Result, TrafficError};
 use brotli::Decompressor;
@@ -456,6 +460,8 @@ pub struct InterceptState {
     pub request_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
     /// 响应拦截过滤规则
     pub response_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
+    /// 请求/响应匹配替换规则
+    pub match_replace_rules: Arc<RwLock<Vec<MatchReplaceRule>>>,
 }
 
 /// Upstream proxy 配置
@@ -515,6 +521,8 @@ pub struct ProxyConfig {
     pub scope_include_rules: Vec<ProxyScopeRule>,
     #[serde(default)]
     pub scope_exclude_rules: Vec<ProxyScopeRule>,
+    #[serde(default)]
+    pub match_replace_rules: Vec<MatchReplaceRule>,
 }
 
 fn default_bypass_threshold() -> u32 {
@@ -538,6 +546,7 @@ impl Default for ProxyConfig {
             exclude_self_traffic: true,
             scope_include_rules: Vec::new(),
             scope_exclude_rules: Vec::new(),
+            match_replace_rules: Vec::new(),
         }
     }
 }
@@ -795,26 +804,6 @@ impl TrafficProxyHandler {
         authority.map(|auth| auth.split(':').next().unwrap_or(&auth).to_string())
     }
 
-    /// 合并重复 header，避免同名 header（如 Cookie）被覆盖丢失
-    fn merge_header(headers: &mut HashMap<String, String>, name: &str, value: &str) {
-        match headers.get_mut(name) {
-            Some(existing) => {
-                let delimiter = if name.eq_ignore_ascii_case("cookie") {
-                    "; "
-                } else if name.eq_ignore_ascii_case("set-cookie") {
-                    "\n"
-                } else {
-                    ", "
-                };
-                existing.push_str(delimiter);
-                existing.push_str(value);
-            }
-            None => {
-                headers.insert(name.to_string(), value.to_string());
-            }
-        }
-    }
-
     /// Check if a request should be intercepted based on filter rules
     /// Returns true if the request should be intercepted, false if it should be skipped
     async fn should_intercept_request(
@@ -934,7 +923,7 @@ impl TrafficProxyHandler {
             } else if let Some((key, value)) = line.split_once(':') {
                 let key = key.trim().to_string();
                 let value = value.trim().to_string();
-                headers.insert(key, value);
+                merge_header_value(&mut headers, &key, &value);
             }
         }
 
@@ -958,9 +947,7 @@ impl TrafficProxyHandler {
         let mut builder = Request::builder().method(method).uri(new_uri);
 
         // 添加头部
-        for (key, value) in headers {
-            builder = builder.header(&key, &value);
-        }
+        builder = append_request_headers(builder, &headers);
 
         // 构建带 body 的请求
         let body = if body_content.is_empty() {
@@ -1005,7 +992,7 @@ impl TrafficProxyHandler {
             } else if let Some((key, value)) = line.split_once(':') {
                 let key = key.trim().to_string();
                 let value = value.trim().to_string();
-                headers.insert(key, value);
+                merge_header_value(&mut headers, &key, &value);
             }
         }
 
@@ -1016,9 +1003,7 @@ impl TrafficProxyHandler {
         let mut builder = Response::builder().status(status_code);
 
         // 添加头部
-        for (key, value) in headers {
-            builder = builder.header(&key, &value);
-        }
+        builder = append_response_headers(builder, &headers);
 
         // 构建带 body 的响应
         let body = if body_content.is_empty() {
@@ -1175,7 +1160,7 @@ impl TrafficProxyHandler {
         let mut headers = std::collections::HashMap::new();
         for (name, value) in req.headers().iter() {
             if let Ok(v) = value.to_str() {
-                Self::merge_header(&mut headers, name.as_str(), v);
+                merge_header_value(&mut headers, name.as_str(), v);
             }
         }
 
@@ -1220,17 +1205,12 @@ impl TrafficProxyHandler {
             url
         );
 
-        // 创建新的请求用于转发（包含原始 body）
-        // hudsucker::Body 实现了 From<Full<Bytes>>
-        let new_body = Body::from(Full::new(body_bytes.clone()));
-        let new_req = Request::from_parts(parts, new_body);
-
-        let req_ctx = RequestContext {
+        let mut req_ctx = RequestContext {
             id,
-            method,
-            url,
-            http_version,
-            headers,
+            method: method.clone(),
+            url: url.clone(),
+            http_version: http_version.clone(),
+            headers: headers.clone(),
             body: body_vec,
             content_type,
             query_params,
@@ -1243,6 +1223,66 @@ impl TrafficProxyHandler {
             edited_body: None,
         };
 
+        let match_replace_rules = match &self.intercept_state {
+            Some(intercept_state) => intercept_state.match_replace_rules.read().await.clone(),
+            None => Vec::new(),
+        };
+
+        if let Some(edited) = apply_request_match_replace_rules(
+            &match_replace_rules,
+            &method,
+            &url,
+            &headers,
+            body_bytes.as_ref(),
+            http_version.as_deref(),
+            &self.config.scope_include_rules,
+            &self.config.scope_exclude_rules,
+        ) {
+            let mut edited_headers = edited.headers.clone();
+            edited_headers.remove("content-length");
+            edited_headers.remove("Content-Length");
+            edited_headers.remove("transfer-encoding");
+            edited_headers.remove("Transfer-Encoding");
+            edited_headers.insert("content-length".to_string(), edited.body.len().to_string());
+
+            let edited_body = if edited.body.len() > self.config.max_request_body_size {
+                edited.body[..self.config.max_request_body_size].to_vec()
+            } else {
+                edited.body.clone()
+            };
+
+            req_ctx.was_edited = true;
+            req_ctx.edited_method = Some(edited.method.clone());
+            req_ctx.edited_url = Some(edited.url.clone());
+            req_ctx.edited_headers = Some(edited_headers.clone());
+            req_ctx.edited_body = Some(edited_body);
+
+            let method = hyper::Method::from_bytes(edited.method.as_bytes()).map_err(|error| {
+                TrafficError::Proxy(format!("Invalid rewritten request method: {}", error))
+            })?;
+            let uri = edited.url.parse::<hyper::Uri>().map_err(|error| {
+                TrafficError::Proxy(format!("Invalid rewritten request URI: {}", error))
+            })?;
+
+            let mut builder = Request::builder()
+                .method(method)
+                .uri(uri)
+                .version(parts.version);
+            builder = append_request_headers(builder, &edited_headers);
+
+            let new_body = Body::from(Full::new(Bytes::from(edited.body)));
+            let new_req = builder.body(new_body).map_err(|error| {
+                TrafficError::Proxy(format!("Failed to build rewritten request: {}", error))
+            })?;
+
+            return Ok((req_ctx, new_req));
+        }
+
+        // 创建新的请求用于转发（包含原始 body）
+        // hudsucker::Body 实现了 From<Full<Bytes>>
+        let new_body = Body::from(Full::new(body_bytes.clone()));
+        let new_req = Request::from_parts(parts, new_body);
+
         Ok((req_ctx, new_req))
     }
 
@@ -1250,6 +1290,7 @@ impl TrafficProxyHandler {
     async fn build_response_context(
         &self,
         request_id: String,
+        request_url: &str,
         res: Response<Body>,
     ) -> Result<(ResponseContext, Response<Body>)> {
         let http_version = Self::format_http_version(res.version());
@@ -1261,7 +1302,7 @@ impl TrafficProxyHandler {
         let mut headers = std::collections::HashMap::new();
         for (name, value) in res.headers().iter() {
             if let Ok(v) = value.to_str() {
-                Self::merge_header(&mut headers, name.as_str(), v);
+                merge_header_value(&mut headers, name.as_str(), v);
             }
         }
 
@@ -1343,18 +1384,13 @@ impl TrafficProxyHandler {
             request_id
         );
 
-        // 创建新的响应用于转发（使用压缩后的原始数据，保持原样转发）
-        // hudsucker::Body 实现了 From<Full<Bytes>>
-        let new_body = Body::from(Full::new(body_bytes.clone()));
-        let new_res = Response::from_parts(parts, new_body);
-
         // 但保存到数据库和扫描器的是解压后的数据
-        let resp_ctx = ResponseContext {
+        let mut resp_ctx = ResponseContext {
             request_id,
             status,
             http_version,
-            headers,
-            body: body_vec, // 保存解压后的数据
+            headers: headers.clone(),
+            body: body_vec.clone(), // 保存解压后的数据
             content_type,
             timestamp: chrono::Utc::now(),
             was_edited: false,
@@ -1362,6 +1398,62 @@ impl TrafficProxyHandler {
             edited_headers: None,
             edited_body: None,
         };
+
+        let match_replace_rules = match &self.intercept_state {
+            Some(intercept_state) => intercept_state.match_replace_rules.read().await.clone(),
+            None => Vec::new(),
+        };
+
+        if let Some(edited) = apply_response_match_replace_rules(
+            &match_replace_rules,
+            request_url,
+            &headers,
+            &body_vec,
+            &self.config.scope_include_rules,
+            &self.config.scope_exclude_rules,
+        ) {
+            let mut edited_headers = edited.headers.clone();
+            if edited.body_is_plain_text {
+                edited_headers.remove("content-length");
+                edited_headers.remove("Content-Length");
+                edited_headers.remove("content-encoding");
+                edited_headers.remove("Content-Encoding");
+                edited_headers.remove("transfer-encoding");
+                edited_headers.remove("Transfer-Encoding");
+                edited_headers.insert("content-length".to_string(), edited.body.len().to_string());
+            }
+
+            let edited_body = if edited.body.len() > self.config.max_response_body_size {
+                edited.body[..self.config.max_response_body_size].to_vec()
+            } else {
+                edited.body.clone()
+            };
+
+            resp_ctx.was_edited = true;
+            resp_ctx.edited_status = Some(status);
+            resp_ctx.edited_headers = Some(edited_headers.clone());
+            resp_ctx.edited_body = Some(edited_body);
+
+            let mut builder = Response::builder().status(status).version(parts.version);
+            builder = append_response_headers(builder, &edited_headers);
+
+            let response_body = if edited.body_is_plain_text {
+                Bytes::from(edited.body)
+            } else {
+                body_bytes.clone()
+            };
+            let new_body = Body::from(Full::new(response_body));
+            let new_res = builder.body(new_body).map_err(|error| {
+                TrafficError::Proxy(format!("Failed to build rewritten response: {}", error))
+            })?;
+
+            return Ok((resp_ctx, new_res));
+        }
+
+        // 创建新的响应用于转发（使用压缩后的原始数据，保持原样转发）
+        // hudsucker::Body 实现了 From<Full<Bytes>>
+        let new_body = Body::from(Full::new(body_bytes.clone()));
+        let new_res = Response::from_parts(parts, new_body);
 
         Ok((resp_ctx, new_res))
     }
@@ -1413,7 +1505,7 @@ impl TrafficProxyHandler {
         let mut headers = std::collections::HashMap::new();
         for (name, value) in res.headers().iter() {
             if let Ok(v) = value.to_str() {
-                Self::merge_header(&mut headers, name.as_str(), v);
+                merge_header_value(&mut headers, name.as_str(), v);
             }
         }
 
@@ -1893,9 +1985,10 @@ impl HttpHandler for TrafficProxyHandler {
                                                                     modified_req.headers().iter()
                                                                 {
                                                                     if let Ok(v) = value.to_str() {
-                                                                        edited_headers.insert(
-                                                                            name.to_string(),
-                                                                            v.to_string(),
+                                                                        merge_header_value(
+                                                                            &mut edited_headers,
+                                                                            name.as_str(),
+                                                                            v,
                                                                         );
                                                                     }
                                                                 }
@@ -2008,7 +2101,7 @@ impl HttpHandler for TrafficProxyHandler {
         let mut response_headers = std::collections::HashMap::new();
         for (name, value) in res.headers().iter() {
             if let Ok(v) = value.to_str() {
-                response_headers.insert(name.to_string(), v.to_string());
+                merge_header_value(&mut response_headers, name.as_str(), v);
             }
         }
 
@@ -2071,7 +2164,10 @@ impl HttpHandler for TrafficProxyHandler {
                     }
 
                     // 非流式响应：使用原有的全量缓冲逻辑
-                    match self.build_response_context(request_id.clone(), res).await {
+                    match self
+                        .build_response_context(request_id.clone(), &req_ctx.url, res)
+                        .await
+                    {
                         Ok((mut resp_ctx, new_res)) => {
                             debug!(
                                 "Response captured: request_id={}, status={}, body_size={}, conn_key={}",
@@ -2183,9 +2279,10 @@ impl HttpHandler for TrafficProxyHandler {
                                                                         if let Ok(v) =
                                                                             value.to_str()
                                                                         {
-                                                                            edited_headers.insert(
-                                                                                name.to_string(),
-                                                                                v.to_string(),
+                                                                            merge_header_value(
+                                                                                &mut edited_headers,
+                                                                                name.as_str(),
+                                                                                v,
                                                                             );
                                                                         }
                                                                     }

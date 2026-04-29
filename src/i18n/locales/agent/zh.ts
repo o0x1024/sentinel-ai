@@ -592,6 +592,7 @@ export default {
   ragCitationIndicator: 'RAG引用指示器',
   knowledgeBaseCited: '已引用知识库 ({count} 处引用)',
   noKnowledgeBaseCitations: '无知识库引用',
+  sessionStatsFirstResponse: '首字响应速度',
   sessionStatsTotalTokens: '本轮消耗',
   sessionStatsInputOutput: '输入 {input} / 输出 {output}',
   sessionStatsTokenRate: '输出速度',

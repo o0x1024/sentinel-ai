@@ -45,6 +45,8 @@ const USER_FORCED_RULES_BLOCK_MARKER: &str = "[User Forced Rules]";
 pub struct ContextBuildInput {
     pub app_handle: AppHandle,
     pub execution_id: String,
+    pub active_browser_shell_direct_write_enabled: bool,
+    pub active_browser_shell_session_id: Option<String>,
     pub active_terminal_session_fingerprint: Option<String>,
     pub active_terminal_session_id: Option<String>,
     pub base_system_prompt: String,
@@ -173,6 +175,14 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             "\n\n[SystemContext: Current Execution ID is '{}'. Use this for tasks tool calls.]",
             input.execution_id
         ));
+        system_prompt.push_str(
+            "\n\n[TaskProgressContract]\n\
+            - Use the `tasks` tool as a live progress ledger for multi-step work.\n\
+            - When a step starts, it should be `in_progress`.\n\
+            - As soon as a step completes or fails, immediately call `tasks` with `action: \"update_status\"`, set it to `completed` or `failed`, and record the result/evidence.\n\
+            - Do not batch task status updates at the end; the list must reflect actual progress throughout execution.\n\
+            - Before the final answer, only verify that no task remains `pending` or `in_progress`."
+        );
     }
 
     if policy.include_stuck_resolution_rule {
@@ -412,6 +422,35 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
+    if let Some(browser_shell_session_id) = input
+        .active_browser_shell_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        system_prompt.push_str(
+            "\n\n[Browser Shell Session]\n\
+            - A third-party browser WebSocket shell session is already selected for this conversation.\n\
+            - Prefer the `browser_shell` tool when the task should operate inside that captured browser terminal.\n\
+            - If the user asks to use the current browser shell / browser terminal / third-party shell, do not use local `shell`, `interactive_shell`, or DOM `browser` actions for that command.\n\
+            - Reuse the selected browser shell session unless the user explicitly asks for a different one.\n\
+            - Do not invent, guess, or rotate browser shell session IDs yourself.",
+        );
+        system_prompt.push_str(&format!(
+            "\n- Active browser shell session id: {}",
+            browser_shell_session_id
+        ));
+        if input.active_browser_shell_direct_write_enabled {
+            system_prompt.push_str(
+                "\n- The user has explicitly authorized direct execution on this browser shell session.\n- When you intentionally send input to this selected browser shell session, you may set `browser_shell.requires_approval=false`.\n- Do not use direct execution on a different browser shell session unless the user re-authorizes it.",
+            );
+        } else {
+            system_prompt.push_str(
+                "\n- Browser shell writes still require approval. Keep `browser_shell.requires_approval=true` unless the user explicitly authorizes direct execution.",
+            );
+        }
+    }
+
     let task_lower = input.task.to_lowercase();
     let is_binary_security_task = [
         "pwn",
@@ -443,6 +482,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         - Use one-shot `shell` only for commands that should finish on their own and return output promptly.\n\
         - If a command starts a server, watcher, log follower, dev process, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive.\nexample: starting a dev server should be `shell {\"command\":\"npm run dev\",\"run_in_background\":true}` instead of a foreground `shell {\"command\":\"npm run dev\"}`.\nexample: following logs should be `shell {\"command\":\"docker logs -f api\",\"run_in_background\":true}`; if you need to interact with the live process, use `interactive_shell` instead.\n\
         - Use `interactive_shell` for iterative terminal work, REPLs, TUIs, debugger sessions, or when you need to inspect a live long-running process interactively.\n\
+        - Use `browser_shell` when the target terminal is a third-party browser WebSocket shell captured by the Sentinel Chrome extension. Prefer `browser_shell` over Playwright-style `browser` actions when you need the actual terminal stream rather than the page DOM.\n\
         - Never leave the conversation blocked on a long-lived foreground shell command.",
     );
 

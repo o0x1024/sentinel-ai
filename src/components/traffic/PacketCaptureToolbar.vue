@@ -1,8 +1,8 @@
 <template>
-  <div class="flex items-center gap-2 p-3 bg-base-200 border-b border-base-300">
+  <div class="flex items-center gap-1 border-b border-base-300 bg-base-200 px-2 py-1.5">
     <select
       :value="selectedInterface"
-      class="select select-sm select-bordered min-w-56"
+      class="select select-sm select-bordered min-w-48"
       :disabled="isCapturing"
       @change="$emit('update:selectedInterface', ($event.target as HTMLSelectElement).value)"
     >
@@ -12,36 +12,36 @@
       </option>
     </select>
 
-    <button class="btn btn-sm" :class="isCapturing ? 'btn-error' : 'btn-success'" @click="onToggleCapture" :disabled="!selectedInterface && !isCapturing">
+    <button class="btn btn-xs min-h-7" :class="isCapturing ? 'btn-error' : 'btn-success'" @click="onToggleCapture" :disabled="!selectedInterface && !isCapturing">
       <i :class="isCapturing ? 'fas fa-stop' : 'fas fa-play'" class="mr-1"></i>
       {{ isCapturing ? $t('trafficAnalysis.packetCapture.toolbar.stop') : $t('trafficAnalysis.packetCapture.toolbar.start') }}
     </button>
 
-    <button class="btn btn-sm btn-ghost" @click="onClearPackets" :disabled="packetCount === 0">
+    <button class="btn btn-xs btn-ghost min-h-7" @click="onClearPackets" :disabled="packetCount === 0">
       <i class="fas fa-trash mr-1"></i>
       {{ $t('trafficAnalysis.packetCapture.toolbar.clear') }}
     </button>
 
-    <div class="divider divider-horizontal mx-0"></div>
+    <div class="divider divider-horizontal mx-0 my-0"></div>
 
-    <button class="btn btn-sm btn-ghost" @click="onOpenPcapFile" :disabled="isCapturing">
+    <button class="btn btn-xs btn-ghost min-h-7" @click="onOpenPcapFile" :disabled="isCapturing">
       <i class="fas fa-folder-open mr-1"></i>
       {{ $t('trafficAnalysis.packetCapture.toolbar.open') }}
     </button>
 
-    <button class="btn btn-sm btn-ghost" @click="onSavePcapFile" :disabled="packetCount === 0">
+    <button class="btn btn-xs btn-ghost min-h-7" @click="onSavePcapFile" :disabled="packetCount === 0">
       <i class="fas fa-save mr-1"></i>
       {{ $t('trafficAnalysis.packetCapture.toolbar.save') }}
     </button>
 
-    <button class="btn btn-sm btn-ghost" @click="onOpenExtractDialog" :disabled="packetCount === 0">
+    <button class="btn btn-xs btn-ghost min-h-7" @click="onOpenExtractDialog" :disabled="packetCount === 0">
       <i class="fas fa-file-export mr-1"></i>
       {{ $t('trafficAnalysis.packetCapture.toolbar.export') }}
     </button>
 
-    <div class="divider divider-horizontal mx-0"></div>
+    <div class="divider divider-horizontal mx-0 my-0"></div>
 
-    <button class="btn btn-sm btn-ghost" @click="onOpenFilterDialog">
+    <button class="btn btn-xs btn-ghost min-h-7" @click="onOpenFilterDialog">
       <i class="fas fa-sliders-h mr-1"></i>
       {{ $t('trafficAnalysis.packetCapture.toolbar.advancedFilter') }}
     </button>

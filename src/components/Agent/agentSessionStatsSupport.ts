@@ -1,5 +1,6 @@
 export interface AgentSessionStats {
   duration_ms: number
+  first_response_ms?: number | null
   input_tokens: number
   output_tokens: number
   total_tokens: number
@@ -19,11 +20,13 @@ const toNonNegativeInteger = (value: unknown): number | null => {
 export function buildAgentSessionStats(input: {
   startedAt: unknown
   endedAt: unknown
+  firstResponseAt?: unknown
   inputTokens: unknown
   outputTokens: unknown
 }): AgentSessionStats | null {
   const startedAt = toPositiveNumber(input.startedAt)
   const endedAt = toPositiveNumber(input.endedAt)
+  const firstResponseAt = toPositiveNumber(input.firstResponseAt)
   const inputTokens = toNonNegativeInteger(input.inputTokens)
   const outputTokens = toNonNegativeInteger(input.outputTokens)
 
@@ -36,6 +39,10 @@ export function buildAgentSessionStats(input: {
 
   return {
     duration_ms: durationMs,
+    first_response_ms:
+      firstResponseAt != null && firstResponseAt >= startedAt
+        ? Math.max(1, Math.round(firstResponseAt - startedAt))
+        : null,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     total_tokens: totalTokens,

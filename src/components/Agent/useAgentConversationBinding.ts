@@ -15,7 +15,11 @@ import {
 const CONVERSATION_BINDING_SAVE_DEBOUNCE_MS = 300
 
 export const useAgentConversationBinding = (params: {
+  bindBrowserShellSession: (sessionId: string | null) => void
+  setBrowserShellDirectWriteEnabled: (enabled: boolean) => void
   conversationId: Ref<string | null>
+  currentBrowserShellDirectWriteEnabled: Ref<boolean>
+  currentBrowserShellSessionId: Ref<string | null>
   activeTeamSessionId: Ref<string | null>
   assistantSelectedModel: Ref<string>
   defaultAssistantProfileId: Ref<string>
@@ -34,6 +38,8 @@ export const useAgentConversationBinding = (params: {
   setProfileId: (profileId: string) => void
   setRunMode: (runMode: 'assistant' | 'team') => void
   toConversationBinding: (extras?: {
+    browserShellDirectWriteEnabled?: boolean
+    browserShellSessionId?: string | null
     selectedModel?: string | null
     toolsEnabled?: boolean
     toolConfig?: UiToolConfigPayload | null
@@ -107,6 +113,8 @@ export const useAgentConversationBinding = (params: {
 
   const applyConversationBindingState = (binding: AssistantConversationBinding | null) => {
     params.applyConversationBinding(binding)
+    params.bindBrowserShellSession(binding?.browserShellSessionId?.trim() || null)
+    params.setBrowserShellDirectWriteEnabled(binding?.browserShellDirectWriteEnabled === true)
     const boundProfile = binding?.profileId ? params.getAssistantProfileOption(binding.profileId) : null
     const profileToolConfig = boundProfile
       ? buildProfileToolConfigDefault(
@@ -142,6 +150,8 @@ export const useAgentConversationBinding = (params: {
 
   const applyDefaultAssistantProfile = () => {
     params.resetSessionSettings()
+    params.bindBrowserShellSession(null)
+    params.setBrowserShellDirectWriteEnabled(false)
     const defaultProfileId = params.defaultAssistantProfileId.value.trim()
     if (!defaultProfileId) return
     const defaultProfile = params.getAssistantProfileOption(defaultProfileId)
@@ -190,6 +200,8 @@ export const useAgentConversationBinding = (params: {
 
   const persistConversationBinding = async (targetConversationId: string) => {
     const binding = params.toConversationBinding({
+      browserShellDirectWriteEnabled: params.currentBrowserShellDirectWriteEnabled.value,
+      browserShellSessionId: params.currentBrowserShellSessionId.value,
       selectedModel: params.assistantSelectedModel.value,
       toolsEnabled: params.toolsEnabled.value,
       toolConfig: params.toolConfig.value,

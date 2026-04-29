@@ -55,7 +55,7 @@ describe('proxyRepeaterTabSupport', () => {
       'X-Test: 1',
       '',
       '{',
-      '  "alpha": true',
+      '  "alpha":true',
       '}',
     ].join('\n'))
   })

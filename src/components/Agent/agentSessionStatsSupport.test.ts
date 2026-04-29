@@ -10,10 +10,12 @@ describe('agentSessionStatsSupport', () => {
     expect(buildAgentSessionStats({
       startedAt: 1_000,
       endedAt: 5_000,
+      firstResponseAt: 1_650,
       inputTokens: 1_200,
       outputTokens: 400,
     })).toEqual({
       duration_ms: 4_000,
+      first_response_ms: 650,
       input_tokens: 1_200,
       output_tokens: 400,
       total_tokens: 1_600,

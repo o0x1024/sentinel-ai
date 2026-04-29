@@ -35,6 +35,18 @@ export interface ProxyRequest {
   edited_response_body?: string
   edited_status_code?: number
   has_full_details?: boolean
+  request_body_loaded?: boolean
+  response_body_loaded?: boolean
+  edited_request_body_loaded?: boolean
+  edited_response_body_loaded?: boolean
+}
+
+export interface ProxyRequestBodyChunk {
+  chunk: string
+  offset: number
+  next_offset: number
+  total_length: number
+  complete: boolean
 }
 
 export interface VirtualItem {

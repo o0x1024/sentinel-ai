@@ -11,7 +11,7 @@ import type { UiToolConfigPayload } from './toolConfigRuntime'
 export const DEFAULT_ASSISTANT_PROFILE_ID = 'assistant.default'
 export const DEFAULT_ASSISTANT_CONTEXT_MODE: AssistantContextMode = 'claude-like'
 export const DEFAULT_ASSISTANT_RUN_MODE: AssistantRunMode = 'assistant'
-export const ASSISTANT_CONVERSATION_BINDING_VERSION = 2
+export const ASSISTANT_CONVERSATION_BINDING_VERSION = 3
 
 export const createDefaultAssistantSessionSettings = (): AssistantSessionSettings => ({
   profileId: DEFAULT_ASSISTANT_PROFILE_ID,
@@ -113,14 +113,19 @@ export const useAssistantSessionSettings = () => {
   }
 
   const toConversationBinding = (extras?: {
+    browserShellDirectWriteEnabled?: boolean
+    browserShellSessionId?: string | null
     selectedModel?: string | null
     toolsEnabled?: boolean
     toolConfig?: UiToolConfigPayload | null
   }): AssistantConversationBinding => {
     const selectedModel = extras?.selectedModel?.trim()
+    const browserShellSessionId = extras?.browserShellSessionId?.trim()
     return {
       schemaVersion: ASSISTANT_CONVERSATION_BINDING_VERSION,
       ...sessionSettings.value,
+      browserShellDirectWriteEnabled: extras?.browserShellDirectWriteEnabled === true,
+      browserShellSessionId: browserShellSessionId || null,
       selectedModel: selectedModel || null,
       toolsEnabled: extras?.toolsEnabled,
       toolConfig: extras?.toolConfig ? buildPersistableToolConfig(extras.toolConfig) : null,

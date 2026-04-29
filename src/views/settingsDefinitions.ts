@@ -157,6 +157,7 @@ export const createDefaultCustomProvider = () => ({
   rig_provider: '',
   compat_mode: 'openai',
   extra_headers_json: '',
+  extra_body_json: '',
   timeout: 120,
   max_retries: 3,
 })

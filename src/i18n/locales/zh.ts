@@ -72,7 +72,7 @@ export default {
     searchPlaceholder: '搜索操作...',
     recipe: '配方',
     clearRecipe: '清空配方',
-    bake: '执行 BAKE!',
+    bake: '编解码',
     autoBake: '自动执行',
     input: '输入',
     chars: '长度',

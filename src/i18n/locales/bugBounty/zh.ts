@@ -927,6 +927,8 @@ export default {
     pluginParamsLoadFailed: '加载插件参数定义失败',
     pluginParamsJsonInvalid: 'JSON 格式无效，修正后才会生效',
     pluginParamDefaultValue: '默认值: {value}',
+    pluginParamPluginDefaultConfigured: '已配置插件默认值',
+    pluginParamSchemaDefaultConfigured: '已配置Schema默认值',
     pluginParamRange: '范围: {min} - {max}',
     pluginParamArrayPlaceholder: '每行一个值',
     usePluginDefaultParamValue: '留空使用插件默认值',

@@ -54,6 +54,7 @@ export interface MessageMetadata {
   duration_ms?: number
   session_stats?: {
     duration_ms: number
+    first_response_ms?: number | null
     input_tokens: number
     output_tokens: number
     total_tokens: number

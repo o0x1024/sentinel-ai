@@ -300,6 +300,7 @@ export default {
     syncPayloadSets: 'Sync payload sets',
     addPayloadSet: 'Add payload set',
     cloneTab: 'Clone tab',
+    clearAll: 'Clear all',
     startAttack: 'Start attack',
     stopAttack: 'Stop',
     clearResults: 'Clear results',
@@ -362,6 +363,11 @@ export default {
     copyRequest: 'Copy Request',
     copyAsCurl: 'Copy as cURL',
     openInBrowser: 'Open in Browser',
+  },
+  tabContextMenu: {
+    deleteCurrent: 'Delete current',
+    deleteOthers: 'Delete others',
+    deleteAll: 'Delete all',
   },
   attackTypes: {
     sniper: 'Sniper',
@@ -546,6 +552,8 @@ export default {
     presetImportFailed: 'Failed to import plugin preset',
     presetExported: 'Plugin preset exported',
     presetExportFailed: 'Failed to export plugin preset',
+    confirmClearAllWorkspaces: 'Clear all workspaces?',
+    confirmClearAllWorkspacesMessage: 'This stops and removes all {count} Intruder workspaces.',
     payloadFileLoadFailed: 'Failed to load payload file',
     defaultDictionaryUnavailable: 'No default dictionary is configured for type {type}',
     resultsExported: 'Results exported',

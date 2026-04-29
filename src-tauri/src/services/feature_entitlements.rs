@@ -36,15 +36,15 @@ pub fn get_free_tier_allowed_plugin_ids() -> Vec<String> {
 }
 
 pub fn build_app_entitlements() -> AppEntitlements {
-    let has_local_license = sentinel_license::is_licensed();
+    let is_server_activated = sentinel_license::is_licensed();
     let token_claims = sentinel_license::get_valid_entitlement_claims();
     let allowed_plugin_ids = get_free_tier_allowed_plugin_ids();
 
-    if cfg!(debug_assertions) && has_local_license {
+    if cfg!(debug_assertions) {
         return AppEntitlements {
             tier: "pro".to_string(),
             is_licensed: true,
-            has_local_license,
+            has_local_license: true,
             access_source: "debug".to_string(),
             has_valid_entitlement_token: false,
             entitlement_feature_ids: Vec::new(),
@@ -63,76 +63,23 @@ pub fn build_app_entitlements() -> AppEntitlements {
     }
 
     if let Some(claims) = token_claims {
-        let can_access_bug_bounty =
-            sentinel_license::has_feature_access(sentinel_license::LicensedFeature::BugBounty);
-        let can_access_all_plugins = sentinel_license::has_feature_access(
-            sentinel_license::LicensedFeature::PluginCatalogRead,
-        );
-        let can_manage_plugin_catalog = sentinel_license::has_feature_access(
-            sentinel_license::LicensedFeature::PluginCatalogWrite,
-        );
-        let can_delete_plugins = sentinel_license::has_feature_access(
-            sentinel_license::LicensedFeature::PluginCatalogDelete,
-        );
-        let can_add_plugins = can_manage_plugin_catalog;
-        let can_edit_plugins = can_manage_plugin_catalog;
-        let can_install_plugins = can_manage_plugin_catalog;
-        let can_review_plugins = can_manage_plugin_catalog;
-        let has_paid_access = has_local_license
-            && (can_access_bug_bounty
-                || can_access_all_plugins
-                || can_add_plugins
-                || can_edit_plugins
-                || can_delete_plugins
-                || can_install_plugins
-                || can_review_plugins);
-        let effective_tier = if has_paid_access {
-            claims.tier.clone()
-        } else if has_local_license {
-            "licensed".to_string()
-        } else {
-            "free".to_string()
-        };
-
         return AppEntitlements {
-            tier: effective_tier,
-            is_licensed: has_paid_access,
-            has_local_license,
-            access_source: "entitlement_token".to_string(),
+            tier: claims.tier.clone(),
+            is_licensed: is_server_activated,
+            has_local_license: is_server_activated,
+            access_source: "server_activation".to_string(),
             has_valid_entitlement_token: true,
             entitlement_feature_ids: claims.feature_ids.clone(),
             entitlement_expires_at: Some(claims.expires_at),
             entitlement_license_id: claims.license_id.clone(),
-            can_access_all_plugins,
-            can_access_bug_bounty,
-            can_manage_plugin_catalog,
-            can_add_plugins,
-            can_edit_plugins,
-            can_delete_plugins,
-            can_install_plugins,
-            can_review_plugins,
-            allowed_plugin_ids,
-        };
-    }
-
-    if has_local_license {
-        return AppEntitlements {
-            tier: "licensed".to_string(),
-            is_licensed: false,
-            has_local_license,
-            access_source: "license_only".to_string(),
-            has_valid_entitlement_token: false,
-            entitlement_feature_ids: Vec::new(),
-            entitlement_expires_at: None,
-            entitlement_license_id: None,
-            can_access_all_plugins: false,
-            can_access_bug_bounty: false,
-            can_manage_plugin_catalog: false,
-            can_add_plugins: false,
-            can_edit_plugins: false,
-            can_delete_plugins: false,
-            can_install_plugins: false,
-            can_review_plugins: false,
+            can_access_all_plugins: is_server_activated,
+            can_access_bug_bounty: is_server_activated,
+            can_manage_plugin_catalog: is_server_activated,
+            can_add_plugins: is_server_activated,
+            can_edit_plugins: is_server_activated,
+            can_delete_plugins: is_server_activated,
+            can_install_plugins: is_server_activated,
+            can_review_plugins: is_server_activated,
             allowed_plugin_ids,
         };
     }
@@ -180,7 +127,7 @@ pub fn ensure_bug_bounty_access() -> Result<(), String> {
     if sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::BugBounty)
         .is_err()
     {
-        return Err("漏洞赏金功能需要有效的本地授权和 entitlement token".to_string());
+        return Err("漏洞赏金功能需要完成服务端激活".to_string());
     }
 
     Err("漏洞赏金功能仅对付费版开放".to_string())
@@ -196,7 +143,7 @@ pub fn ensure_plugin_catalog_write_access() -> Result<(), String> {
     )
     .is_err()
     {
-        return Err("新增、上传、安装或更新插件需要有效的本地授权和 entitlement token".to_string());
+        return Err("新增、上传、安装或更新插件需要完成服务端激活".to_string());
     }
 
     Err("免费版不支持新增、上传、安装或更新插件".to_string())
@@ -212,7 +159,7 @@ pub fn ensure_plugin_delete_access() -> Result<(), String> {
     )
     .is_err()
     {
-        return Err("删除插件需要有效的本地授权和 entitlement token".to_string());
+        return Err("删除插件需要完成服务端激活".to_string());
     }
 
     Err("免费版不支持删除插件".to_string())
@@ -226,7 +173,7 @@ pub fn ensure_plugin_allowed_for_current_tier(plugin_id: &str) -> Result<(), Str
     if sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::PluginCatalogRead)
         .is_err()
     {
-        return Err("访问非白名单插件需要有效的本地授权和 entitlement token".to_string());
+        return Err("访问非白名单插件需要完成服务端激活".to_string());
     }
 
     Err(format!(

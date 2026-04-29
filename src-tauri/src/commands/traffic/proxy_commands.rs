@@ -42,6 +42,7 @@ fn default_listener_config(port: u16) -> ProxyConfig {
         exclude_self_traffic: true,
         scope_include_rules: Vec::new(),
         scope_exclude_rules: Vec::new(),
+        match_replace_rules: Vec::new(),
     }
 }
 
@@ -173,6 +174,14 @@ pub async fn save_proxy_config(
         tracing::info!(
             "Updated traffic scope exclude rules to: {:?}",
             config.scope_exclude_rules
+        );
+    }
+    {
+        let mut match_replace_rules = state.match_replace_rules.write().await;
+        *match_replace_rules = config.match_replace_rules.clone();
+        tracing::info!(
+            "Updated traffic match-replace rules to: {}",
+            match_replace_rules.len()
         );
     }
 

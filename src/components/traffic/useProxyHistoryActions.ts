@@ -5,6 +5,7 @@ import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { dialog } from '@/composables/useDialog'
 import { openTrafficAssistantPanel } from '@/services/trafficAssistantWorkspace'
+import type { ReferencedTraffic, TrafficSendType } from '@/types/agentReferences'
 import type { HttpExchangeRequest } from './http/model'
 import { parseStoredHeaderEntries } from './http/headers'
 import { clearProxyHistoryDerivedCache } from './proxyHistoryDerivedSupport'
@@ -15,12 +16,16 @@ import {
 import {
   formatRequestRaw,
   formatResponseRaw,
+  getResponseContentType,
   getHarStatusText,
+  hasEditedRequest,
+  hasEditedResponse,
 } from './proxyHistoryFormattingSupport'
 import {
   buildRequestVersionComparePayload,
   buildResponseVersionComparePayload,
 } from './trafficHistoryComparerSupport'
+import { buildProxyHistoryRangeSelectionIds } from './proxyHistorySelectionChangeSupport'
 import type {
   ProxyHistoryRequestTab,
   ProxyHistoryViewMode,
@@ -49,7 +54,10 @@ type DetailContextMenuState = {
   pane: 'request' | 'response'
 }
 
-type SendType = 'request' | 'response' | 'both'
+type SendType = TrafficSendType
+
+const REQUEST_RESPONSE_PREVIEW_LIMIT = 4096
+const RESPONSE_PREVIEW_LIMIT = 8192
 
 type Params = {
   contextMenu: Ref<ContextMenuState>
@@ -58,6 +66,7 @@ type Params = {
   selectedRequests: Ref<Set<number>>
   isMultiSelectMode: Ref<boolean>
   filteredRequests: Ref<ProxyRequest[]>
+  orderedRequests: Ref<ProxyRequest[]>
   requests: Ref<ProxyRequest[]>
   stats: Ref<ProxyHistoryStats>
   requestTab: Ref<ProxyHistoryRequestTab>
@@ -73,7 +82,7 @@ type Params = {
   emitCreateAttackWorkspace: (request: HttpExchangeRequest) => void
   emitOpenDraftCompare: (payload: TrafficComparerDraftRequestInput) => void
   emitOpenCompare: (payload: TrafficComparePayload) => void
-  emitSendToAssistant: (requests: ProxyRequest[]) => void
+  emitSendToAssistant: (requests: ReferencedTraffic[]) => void
   emitAddFilterRule: (rule: { matchType: string; condition: string; relationship?: string }) => void
   fetchRequestDetails: (requestId: number) => Promise<ProxyRequest | null>
   updateStats: () => void
@@ -81,6 +90,89 @@ type Params = {
 }
 
 const buildHeaders = (request: ProxyRequest) => parseStoredHeaderEntries(request.request_headers)
+
+const binaryResponseContentTypes = [
+  'application/octet-stream',
+  'application/pdf',
+  'application/zip',
+  'application/x-gzip',
+  'application/x-tar',
+  'audio/',
+  'font/',
+  'image/',
+  'video/',
+]
+
+const isBinaryResponse = (contentType: string, body?: string) => {
+  const normalized = contentType.toLowerCase()
+  return Boolean(
+    body?.startsWith('[BASE64]')
+    || binaryResponseContentTypes.some((item) => normalized.includes(item)),
+  )
+}
+
+const buildResponseBodyPreview = (
+  request: ProxyRequest,
+  body: string | undefined,
+  contentType: string,
+  limit: number,
+) => {
+  if (!body) {
+    return {
+      preview: undefined,
+      truncated: false,
+      available: request.response_size <= 0,
+    }
+  }
+
+  if (isBinaryResponse(contentType, body)) {
+    return {
+      preview: `[Binary response omitted: ${contentType || 'unknown content type'}, ${request.response_size || body.length} bytes]`,
+      truncated: true,
+      available: true,
+    }
+  }
+
+  return {
+    preview: body.length > limit ? body.slice(0, limit) : body,
+    truncated: body.length > limit,
+    available: true,
+  }
+}
+
+const buildReferencedTrafficPayload = (request: ProxyRequest, type: SendType): ReferencedTraffic => {
+  const useEditedRequest = hasEditedRequest(request)
+  const useEditedResponse = hasEditedResponse(request)
+  const responseBody = useEditedResponse && request.edited_response_body
+    ? request.edited_response_body
+    : request.response_body
+  const responseContentType = getResponseContentType(request, useEditedResponse ? 'edited' : 'original')
+  const responsePreview = buildResponseBodyPreview(
+    request,
+    responseBody,
+    responseContentType,
+    type === 'request' ? REQUEST_RESPONSE_PREVIEW_LIMIT : RESPONSE_PREVIEW_LIMIT,
+  )
+
+  return {
+    id: request.id,
+    db_request_id: request.db_request_id ?? null,
+    url: useEditedRequest && request.edited_url ? request.edited_url : request.url,
+    method: useEditedRequest && request.edited_method ? request.edited_method : request.method,
+    host: request.host,
+    status_code: useEditedResponse && request.edited_status_code ? request.edited_status_code : request.status_code,
+    request_headers: useEditedRequest && request.edited_request_headers ? request.edited_request_headers : request.request_headers,
+    request_body: useEditedRequest && request.edited_request_body ? request.edited_request_body : request.request_body,
+    response_headers: useEditedResponse && request.edited_response_headers ? request.edited_response_headers : request.response_headers,
+    response_body_preview: responsePreview.preview,
+    response_body_truncated: responsePreview.truncated,
+    response_body_available: responsePreview.available,
+    response_size: request.response_size,
+    response_time: request.response_time,
+    response_content_type: responseContentType,
+    sendType: type,
+  }
+}
 
 const buildCurlCommand = (request: ProxyRequest) => {
   let curl = `curl -X ${request.method} '${request.url}'`
@@ -105,6 +197,7 @@ export const useProxyHistoryActions = (params: Params) => {
   }
 
   const needsFullRequestDetails = (request: ProxyRequest) => request.has_full_details === false
+  let selectionAnchorRequestId: number | null = null
 
   const resolveRequestDetails = async (request: ProxyRequest | null): Promise<ProxyRequest | null> => {
     if (!request) return null
@@ -117,6 +210,28 @@ export const useProxyHistoryActions = (params: Params) => {
 
   const clearSelection = () => {
     params.selectedRequests.value.clear()
+    selectionAnchorRequestId = null
+  }
+
+  const getSelectedRequests = () =>
+    params.orderedRequests.value.filter((request) => params.selectedRequests.value.has(request.id))
+
+  const getContextActionRequests = () => {
+    const request = params.contextMenu.value.request
+    if (!request) {
+      return []
+    }
+
+    if (params.selectedRequests.value.size > 1 && params.selectedRequests.value.has(request.id)) {
+      return getSelectedRequests()
+    }
+
+    return [request]
+  }
+
+  const resetMultiSelection = () => {
+    clearSelection()
+    params.isMultiSelectMode.value = false
   }
 
   const closeDetails = () => {
@@ -159,6 +274,7 @@ export const useProxyHistoryActions = (params: Params) => {
   }
 
   const selectRequest = (request: ProxyRequest) => {
+    selectionAnchorRequestId = request.id
     if (params.selectedRequest.value?.id === request.id) {
       if (params.keepDetailsOpenOnRepeatSelect === false) {
         closeDetails()
@@ -166,11 +282,17 @@ export const useProxyHistoryActions = (params: Params) => {
       return
     }
 
+    const detailsWereClosed = !params.selectedRequest.value
     params.selectedRequest.value = request
     params.requestTab.value = 'pretty'
     params.responseTab.value = 'pretty'
-    const containerHeight = params.mainContainer.value?.clientHeight || 600
-    params.topPanelHeight.value = Math.floor(containerHeight * 0.4)
+    if (detailsWereClosed) {
+      const containerHeight = params.mainContainer.value?.clientHeight || 600
+      const maxTopPanelHeight = Math.max(160, containerHeight - 220)
+      if (params.topPanelHeight.value < 160 || params.topPanelHeight.value > maxTopPanelHeight) {
+        params.topPanelHeight.value = Math.floor(containerHeight * 0.4)
+      }
+    }
   }
 
   const showContextMenu = (event: MouseEvent, request: ProxyRequest) => {
@@ -289,27 +411,54 @@ export const useProxyHistoryActions = (params: Params) => {
   }
 
   const createDraft = async () => {
-    const request = await resolveRequestDetails(params.contextMenu.value.request)
-    if (!request) return
-    params.emitCreateDraft(buildHttpExchangeRequestFromHistory(request))
+    const requests = getContextActionRequests()
+    if (requests.length === 0) return
+    const detailedRequests = await resolveRequestDetailsBatch(requests)
+    detailedRequests.forEach((request) => {
+      params.emitCreateDraft(buildHttpExchangeRequestFromHistory(request))
+    })
+    if (detailedRequests.length > 1) {
+      dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToRepeater', {
+        count: detailedRequests.length,
+      }))
+      resetMultiSelection()
+    }
     hideContextMenu()
   }
 
   const createAttackWorkspace = async () => {
-    const request = await resolveRequestDetails(params.contextMenu.value.request)
-    if (!request) return
-    params.emitCreateAttackWorkspace(buildHttpExchangeRequestFromHistory(request))
+    const requests = getContextActionRequests()
+    if (requests.length === 0) return
+    const detailedRequests = await resolveRequestDetailsBatch(requests)
+    detailedRequests.forEach((request) => {
+      params.emitCreateAttackWorkspace(buildHttpExchangeRequestFromHistory(request))
+    })
+    if (detailedRequests.length > 1) {
+      dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToIntruder', {
+        count: detailedRequests.length,
+      }))
+      resetMultiSelection()
+    }
     hideContextMenu()
   }
 
   const openDraftCompare = async () => {
-    const request = await resolveRequestDetails(params.contextMenu.value.request)
-    if (!request) return
-    params.emitOpenDraftCompare({
-      request: buildHttpExchangeRequestFromHistory(request),
-      name: request.host || request.url,
-      label: params.t('trafficAnalysis.history.detailsPanel.request'),
+    const requests = getContextActionRequests()
+    if (requests.length === 0) return
+    const detailedRequests = await resolveRequestDetailsBatch(requests)
+    detailedRequests.forEach((request) => {
+      params.emitOpenDraftCompare({
+        request: buildHttpExchangeRequestFromHistory(request),
+        name: request.host || request.url,
+        label: params.t('trafficAnalysis.history.detailsPanel.request'),
+      })
     })
+    if (detailedRequests.length > 1) {
+      dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchRequestsToComparer', {
+        count: detailedRequests.length,
+      }))
+      resetMultiSelection()
+    }
     hideContextMenu()
   }
 
@@ -453,12 +602,23 @@ export const useProxyHistoryActions = (params: Params) => {
     }
   }
 
-  const toggleSelectRequest = (request: ProxyRequest) => {
+  const toggleSelectRequest = (request: ProxyRequest, event?: MouseEvent | Event) => {
+    if (event && 'shiftKey' in event && event.shiftKey) {
+      params.isMultiSelectMode.value = true
+      const anchorRequestId = selectionAnchorRequestId ?? params.selectedRequest.value?.id ?? request.id
+      buildProxyHistoryRangeSelectionIds(params.orderedRequests.value, anchorRequestId, request.id).forEach((id) => {
+        params.selectedRequests.value.add(id)
+      })
+      selectionAnchorRequestId = request.id
+      return
+    }
+
     if (params.selectedRequests.value.has(request.id)) {
       params.selectedRequests.value.delete(request.id)
     } else {
       params.selectedRequests.value.add(request.id)
     }
+    selectionAnchorRequestId = request.id
   }
 
   const selectAllVisible = () => {
@@ -470,18 +630,73 @@ export const useProxyHistoryActions = (params: Params) => {
   const isRequestSelected = (request: ProxyRequest) => params.selectedRequests.value.has(request.id)
 
   const sendSelectedToAssistant = async (type: SendType = 'request') => {
-    const selected = params.filteredRequests.value.filter((request) => params.selectedRequests.value.has(request.id))
+    const selected = getSelectedRequests()
     if (selected.length === 0) {
       dialog.toast.warning('请先选择要发送的请求')
       return
     }
     const detailedSelected = await resolveRequestDetailsBatch(selected)
     openTrafficAssistantPanel()
-    await tauriEmit('traffic:send-to-assistant', { requests: detailedSelected, type })
-    params.emitSendToAssistant(detailedSelected)
+    const referencedTraffic = detailedSelected.map((request) => buildReferencedTrafficPayload(request, type))
+    await tauriEmit('traffic:send-to-assistant', { requests: referencedTraffic, type })
+    params.emitSendToAssistant(referencedTraffic)
     dialog.toast.success(`已发送 ${detailedSelected.length} 条请求到 AI 助手`)
-    clearSelection()
-    params.isMultiSelectMode.value = false
+    resetMultiSelection()
+  }
+
+  const sendSelectedToDraft = async () => {
+    const selected = getSelectedRequests()
+    if (selected.length === 0) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noSelectionForSend'))
+      return
+    }
+
+    const detailedSelected = await resolveRequestDetailsBatch(selected)
+    detailedSelected.forEach((request) => {
+      params.emitCreateDraft(buildHttpExchangeRequestFromHistory(request))
+    })
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToRepeater', {
+      count: detailedSelected.length,
+    }))
+    resetMultiSelection()
+  }
+
+  const sendSelectedToComparer = async () => {
+    const selected = getSelectedRequests()
+    if (selected.length === 0) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noSelectionForComparer'))
+      return
+    }
+
+    const detailedSelected = await resolveRequestDetailsBatch(selected)
+    detailedSelected.forEach((request) => {
+      params.emitOpenDraftCompare({
+        request: buildHttpExchangeRequestFromHistory(request),
+        name: request.host || request.url,
+        label: params.t('trafficAnalysis.history.detailsPanel.request'),
+      })
+    })
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchRequestsToComparer', {
+      count: detailedSelected.length,
+    }))
+    resetMultiSelection()
+  }
+
+  const sendSelectedToIntruder = async () => {
+    const selected = getSelectedRequests()
+    if (selected.length === 0) {
+      dialog.toast.warning(params.t('trafficAnalysis.history.messages.noSelectionForSend'))
+      return
+    }
+
+    const detailedSelected = await resolveRequestDetailsBatch(selected)
+    detailedSelected.forEach((request) => {
+      params.emitCreateAttackWorkspace(buildHttpExchangeRequestFromHistory(request))
+    })
+    dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToIntruder', {
+      count: detailedSelected.length,
+    }))
+    resetMultiSelection()
   }
 
   const sendSelectedRequestVersionsToComparer = async () => {
@@ -503,8 +718,7 @@ export const useProxyHistoryActions = (params: Params) => {
 
     payloads.forEach((payload) => params.emitOpenCompare(payload))
     dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToComparer', { count: payloads.length }))
-    clearSelection()
-    params.isMultiSelectMode.value = false
+    resetMultiSelection()
   }
 
   const sendSelectedResponseVersionsToComparer = async () => {
@@ -526,15 +740,15 @@ export const useProxyHistoryActions = (params: Params) => {
 
     payloads.forEach((payload) => params.emitOpenCompare(payload))
     dialog.toast.success(params.t('trafficAnalysis.history.messages.sentBatchToComparer', { count: payloads.length }))
-    clearSelection()
-    params.isMultiSelectMode.value = false
+    resetMultiSelection()
   }
 
   const sendSingleToAssistant = async (request: ProxyRequest, type: SendType = 'request') => {
     const detailedRequest = (await resolveRequestDetails(request)) || request
+    const referencedTraffic = buildReferencedTrafficPayload(detailedRequest, type)
     openTrafficAssistantPanel()
-    await tauriEmit('traffic:send-to-assistant', { requests: [detailedRequest], type })
-    params.emitSendToAssistant([detailedRequest])
+    await tauriEmit('traffic:send-to-assistant', { requests: [referencedTraffic], type })
+    params.emitSendToAssistant([referencedTraffic])
     dialog.toast.success('已发送请求到 AI 助手')
   }
 
@@ -573,7 +787,9 @@ export const useProxyHistoryActions = (params: Params) => {
 
       let content = ''
       if (filePath.endsWith('.json')) {
-        content = JSON.stringify(detailedSelected.map((request) => ({
+        content = JSON.stringify(detailedSelected.map((request) => {
+          const isEdited = hasEditedRequest(request) || hasEditedResponse(request)
+          return {
           id: request.id,
           url: request.url,
           method: request.method,
@@ -588,10 +804,12 @@ export const useProxyHistoryActions = (params: Params) => {
           response_size: request.response_size,
           response_time: request.response_time,
           timestamp: request.timestamp,
-          was_edited: request.was_edited,
-        })), null, 2)
+          was_edited: isEdited,
+          }
+        }), null, 2)
       } else {
         detailedSelected.forEach((request, index) => {
+          const isEdited = hasEditedRequest(request) || hasEditedResponse(request)
           if (index > 0) {
             content += `\n\n${'='.repeat(80)}\n\n`
           }
@@ -600,7 +818,7 @@ export const useProxyHistoryActions = (params: Params) => {
           content += `# Method: ${request.method}\n`
           content += `# Status: ${request.status_code || 'N/A'}\n`
           content += `# Timestamp: ${request.timestamp}\n`
-          if (request.was_edited) {
+          if (isEdited) {
             content += '# Modified: Yes\n'
           }
           content += '\n'
@@ -618,8 +836,7 @@ export const useProxyHistoryActions = (params: Params) => {
         count: detailedSelected.length,
         type: typeText,
       }))
-      clearSelection()
-      params.isMultiSelectMode.value = false
+      resetMultiSelection()
     } catch (error) {
       console.error('Export failed:', error)
       dialog.toast.error(params.t('trafficAnalysis.history.export.failed', { error: String(error) }))
@@ -703,8 +920,7 @@ export const useProxyHistoryActions = (params: Params) => {
 
       await writeTextFile(filePath, JSON.stringify(har, null, 2))
       dialog.toast.success(params.t('trafficAnalysis.history.messages.exportSuccess'))
-      clearSelection()
-      params.isMultiSelectMode.value = false
+      resetMultiSelection()
     } catch (error) {
       console.error('HAR export failed:', error)
       dialog.toast.error(params.t('trafficAnalysis.history.export.failed', { error: String(error) }))
@@ -758,6 +974,9 @@ export const useProxyHistoryActions = (params: Params) => {
     sendRequestToAssistantFromMenu,
     sendSelectedRequestVersionsToComparer,
     sendSelectedResponseVersionsToComparer,
+    sendSelectedToComparer,
+    sendSelectedToDraft,
+    sendSelectedToIntruder,
     sendSelectedToAssistant,
     openDraftCompare,
     createAttackWorkspace,

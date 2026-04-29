@@ -1,7 +1,26 @@
 <template>
   <div class="card bg-transparent shadow-none">
     <div class="card-body gap-4 px-0 py-0">
-      <div v-if="loading" class="flex items-center justify-center py-10">
+      <div class="tabs tabs-boxed w-fit bg-base-200/70">
+        <button
+          class="tab"
+          :class="activeRegistryTab === 'agents' ? 'tab-active' : ''"
+          @click="activeRegistryTab = 'agents'"
+        >
+          Agent Profiles
+        </button>
+        <button
+          class="tab"
+          :class="activeRegistryTab === 'teams' ? 'tab-active' : ''"
+          @click="activeRegistryTab = 'teams'"
+        >
+          Team Profiles
+        </button>
+      </div>
+
+      <TeamProfileRegistryPanel v-if="activeRegistryTab === 'teams'" />
+
+      <div v-else-if="loading" class="flex items-center justify-center py-10">
         <span class="loading loading-spinner loading-lg" />
       </div>
 
@@ -16,7 +35,46 @@
           @select="selectedProfileId = $event"
         >
           <template #actions>
-            <button class="btn btn-xs btn-outline" @click="createProfile">新增 Agent</button>
+            <div class="flex items-center gap-2">
+              <button class="btn btn-xs btn-outline" @click="showAiAgentCreator = !showAiAgentCreator">
+                AI 创建
+              </button>
+              <button class="btn btn-xs btn-outline" @click="createProfile">新增 Agent</button>
+            </div>
+          </template>
+
+          <template #body-top>
+            <div
+              v-if="showAiAgentCreator"
+              class="rounded-lg border border-primary/30 bg-primary/5 p-3"
+            >
+              <label class="form-control">
+                <span class="label-text mb-2 text-xs font-semibold">描述你要创建的 Agent</span>
+                <textarea
+                  v-model.trim="aiAgentDescription"
+                  class="textarea textarea-bordered min-h-[92px] text-sm"
+                  placeholder="例如：创建一个专门做漏洞复盘的审查型 Agent，默认启用工具和 10th Man。"
+                  :disabled="isAiCreatingAgent"
+                />
+              </label>
+              <div class="mt-3 flex items-center justify-end gap-2">
+                <button
+                  class="btn btn-xs btn-ghost"
+                  :disabled="isAiCreatingAgent"
+                  @click="showAiAgentCreator = false"
+                >
+                  取消
+                </button>
+                <button
+                  class="btn btn-xs btn-primary"
+                  :disabled="isAiCreatingAgent || !aiAgentDescription.trim()"
+                  @click="createProfileWithAi"
+                >
+                  <span v-if="isAiCreatingAgent" class="loading loading-spinner loading-xs" />
+                  创建
+                </button>
+              </div>
+            </div>
           </template>
         </AgentListPanel>
 
@@ -186,6 +244,16 @@
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label class="form-control">
+                  <span class="label-text mb-2">Team 角色</span>
+                  <select v-model="selectedProfile.teamRole" class="select select-bordered">
+                    <option value="assistant">Assistant</option>
+                    <option value="commander">Commander</option>
+                    <option value="solver">Solver</option>
+                    <option value="observer">Observer</option>
+                  </select>
+                </label>
+
+                <label class="form-control">
                   <span class="label-text mb-2">上下文模式</span>
                   <select v-model="selectedProfile.contextMode" class="select select-bordered">
                     <option value="claude-like">claude-like</option>
@@ -204,6 +272,23 @@
               </div>
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label class="form-control">
+                  <span class="label-text mb-2">默认 Team Profile（Team 模式）</span>
+                  <select
+                    v-model="selectedProfile.defaultTeamProfileId"
+                    class="select select-bordered"
+                  >
+                    <option :value="null">使用默认 Team Profile</option>
+                    <option
+                      v-for="teamProfile in teamProfileOptions"
+                      :key="teamProfile.id"
+                      :value="teamProfile.id"
+                    >
+                      {{ teamProfile.name }}
+                    </option>
+                  </select>
+                </label>
+
                 <label class="form-control">
                   <span class="label-text mb-2">Team 编排模板（可选）</span>
                   <select
@@ -263,6 +348,7 @@ import type { UiToolConfigPayload } from '@/components/Agent/toolConfigRuntime'
 import AssistantAgentOverviewPanel from '@/components/Settings/assistant-agent/AssistantAgentOverviewPanel.vue'
 import SystemAgentAutoSaveStatusBar from '@/components/Settings/system-agent/SystemAgentAutoSaveStatusBar.vue'
 import SystemAgentDetailLayout from '@/components/Settings/system-agent/SystemAgentDetailLayout.vue'
+import TeamProfileRegistryPanel from '@/components/Settings/TeamProfileRegistryPanel.vue'
 import {
   ASSISTANT_AGENT_LIST_FILTER_OPTIONS,
   getAssistantAgentModelBadge,
@@ -287,21 +373,34 @@ const {
   isLoadingAssistantProfiles,
   isSavingDefaultAssistantProfile,
   isSavingAssistantProfiles,
+  loadTeamProfiles,
   loadDefaultAssistantProfile,
   loadAssistantProfiles,
   profileOptions,
   saveAssistantProfiles,
   saveDefaultAssistantProfile,
+  teamProfileOptions,
 } = useAssistantProfiles()
 
 type WorkspaceTabKey = 'overview' | 'config'
+type RegistryTabKey = 'agents' | 'teams'
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
+
+interface AiCreatedAssistantProfileResponse {
+  profile: AssistantProfileOption
+  provider: string
+  model: string
+}
 
 const draftProfiles = ref<AssistantProfileOption[]>([])
 const draftDefaultAssistantProfileId = ref('')
 const selectedProfileId = ref('')
+const activeRegistryTab = ref<RegistryTabKey>('agents')
 const activeWorkspaceTab = ref<WorkspaceTabKey>('overview')
 const aiConfig = ref<any | null>(null)
+const showAiAgentCreator = ref(false)
+const aiAgentDescription = ref('')
+const isAiCreatingAgent = ref(false)
 const selectedProfileModelDatalistId = 'assistant-profile-default-model-options'
 const autoSaveState = ref<AutoSaveState>('idle')
 const suspendAutoSave = ref(false)
@@ -493,6 +592,10 @@ const selectedProfileMetaItems = computed(() => {
       value: selectedProfile.value.id,
     },
     {
+      label: 'Team 角色',
+      value: selectedProfile.value.teamRole || 'assistant',
+    },
+    {
       label: '运行模式',
       value: selectedProfile.value.runMode,
     },
@@ -529,14 +632,17 @@ const assistantListItems = computed<AgentListItemViewModel[]>(() =>
       badges,
       searchText: [
         profile.runMode,
+        profile.teamRole || 'assistant',
         profile.contextMode,
         profile.defaultModel || '',
+        profile.defaultTeamProfileId || '',
         profile.defaultTeamOrchestrationPresetId || '',
         profile.defaultTeamRecoveryPresetId || '',
       ].join(' '),
       filterKeys: [
         ...(draftDefaultAssistantProfileId.value === profile.id ? ['default'] : []),
         profile.runMode === 'team' ? 'team' : 'assistant',
+        profile.teamRole || 'assistant',
         profile.defaultModel?.trim() ? 'model-override' : 'model-global',
         profile.defaultToolsEnabled ? 'tools-on' : 'tools-off',
       ],
@@ -625,7 +731,16 @@ const reloadProfiles = async () => {
       loadDefaultAssistantProfile(true),
       loadAiConfig(),
     ])
+    try {
+      await loadTeamProfiles(true)
+    } catch (error) {
+      console.error('Failed to load team profiles:', error)
+      dialog.toast.error('Team Profile 加载失败')
+    }
     resetDraftState(profileOptions.value)
+  } catch (error) {
+    console.error('Failed to load assistant profiles:', error)
+    dialog.toast.error('交互型 Agent 配置加载失败')
   } finally {
     suspendAutoSave.value = false
   }
@@ -716,6 +831,7 @@ const createProfile = () => {
     id,
     label: `Custom ${nextIndex}`,
     description: '自定义交互型 Agent',
+    teamRole: 'assistant',
     defaultModel: null,
     defaultRagEnabled: false,
     defaultWebSearchEnabled: false,
@@ -728,12 +844,47 @@ const createProfile = () => {
     defaultManualTools: [],
     defaultTeamOrchestrationPresetId: null,
     defaultTeamRecoveryPresetId: null,
+    defaultTeamProfileId: null,
     contextMode: 'claude-like',
     runMode: 'assistant',
   }
   draftProfiles.value.push(profile)
   selectedProfileId.value = profile.id
   syncSelectedProfileModelDraft(profile)
+}
+
+const createProfileWithAi = async () => {
+  const description = aiAgentDescription.value.trim()
+  if (!description || isAiCreatingAgent.value) return
+
+  clearAutoSaveTimer()
+  suspendAutoSave.value = true
+  isAiCreatingAgent.value = true
+  try {
+    const result = await invoke<AiCreatedAssistantProfileResponse>(
+      'ai_create_assistant_profile_from_description',
+      { request: { description } }
+    )
+    await Promise.all([
+      loadAssistantProfiles(true),
+      loadDefaultAssistantProfile(true),
+      loadTeamProfiles(true),
+    ])
+    resetDraftState(profileOptions.value, { preserveStatus: true })
+    selectedProfileId.value = result.profile.id
+    syncSelectedProfileModelDraft(result.profile)
+    aiAgentDescription.value = ''
+    showAiAgentCreator.value = false
+    autoSaveState.value = 'saved'
+    dialog.toast.success(`AI 已创建 Agent：${result.profile.label}`)
+  } catch (error) {
+    console.error('Failed to create assistant profile with AI:', error)
+    autoSaveState.value = 'error'
+    dialog.toast.error('AI 创建 Agent 失败')
+  } finally {
+    isAiCreatingAgent.value = false
+    suspendAutoSave.value = false
+  }
 }
 
 const removeSelectedProfile = () => {

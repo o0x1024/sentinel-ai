@@ -2196,40 +2196,43 @@ pub async fn monitor_trigger_task(
                 last_attempt_label = attempt_label.clone();
                 last_attempt_plugin_id = candidate.plugin_id.clone();
 
-                let resolved_targets =
-                    match collect_monitor_target_payload_for_plugin(&db_clone, &task_clone, &candidate)
-                        .await
-                    {
-                        Ok(value) => value,
-                        Err(error) => {
-                            last_failure_reason = error.clone();
-                            tracing::error!(
-                                "Failed to resolve targets for plugin {} in task {}: {}",
-                                candidate.plugin_id,
-                                task_clone.name,
-                                error
-                            );
-                            emit_monitor_task_log(
-                                &app_clone,
-                                &build_monitor_task_log_event(
-                                    &task_clone,
-                                    attempt_label.as_str(),
-                                    "manual_trigger",
-                                    "failed",
-                                    index + 1,
-                                    total_steps,
-                                    None,
-                                    0,
-                                    total_imported,
-                                    format!(
-                                        "Plugin {} target resolution failed: {}",
-                                        attempt_label, error
-                                    ),
+                let resolved_targets = match collect_monitor_target_payload_for_plugin(
+                    &db_clone,
+                    &task_clone,
+                    &candidate,
+                )
+                .await
+                {
+                    Ok(value) => value,
+                    Err(error) => {
+                        last_failure_reason = error.clone();
+                        tracing::error!(
+                            "Failed to resolve targets for plugin {} in task {}: {}",
+                            candidate.plugin_id,
+                            task_clone.name,
+                            error
+                        );
+                        emit_monitor_task_log(
+                            &app_clone,
+                            &build_monitor_task_log_event(
+                                &task_clone,
+                                attempt_label.as_str(),
+                                "manual_trigger",
+                                "failed",
+                                index + 1,
+                                total_steps,
+                                None,
+                                0,
+                                total_imported,
+                                format!(
+                                    "Plugin {} target resolution failed: {}",
+                                    attempt_label, error
                                 ),
-                            );
-                            continue;
-                        }
-                    };
+                            ),
+                        );
+                        continue;
+                    }
+                };
                 let plugin_targets = &resolved_targets.targets;
 
                 if cancel_requested_task_ids
@@ -2361,7 +2364,8 @@ pub async fn monitor_trigger_task(
                 }
 
                 if let Some(output) = &result.output {
-                    let runtime_plugin_label = monitor_plugin_runtime_label(&candidate, Some(output));
+                    let runtime_plugin_label =
+                        monitor_plugin_runtime_label(&candidate, Some(output));
                     if let Some(plugin_error) = extract_plugin_failure(output) {
                         last_failure_reason =
                             normalize_monitor_error_message(plugin_error.as_str());
@@ -2463,8 +2467,12 @@ pub async fn monitor_trigger_task(
                 continue;
             }
 
-            let plugin = selected_plugin.as_ref().expect("selected plugin must exist");
-            let result = selected_result.as_ref().expect("selected result must exist");
+            let plugin = selected_plugin
+                .as_ref()
+                .expect("selected plugin must exist");
+            let result = selected_result
+                .as_ref()
+                .expect("selected result must exist");
             let resolved_targets = selected_resolved_targets
                 .as_ref()
                 .expect("selected targets must exist");

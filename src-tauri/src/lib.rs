@@ -33,6 +33,7 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use services::{
     ai::AiServiceManager,
     database::DatabaseService,
+    load_plugin_default_inputs,
     system_agents::{ensure_default_system_agent_profiles, start_behavior_extension_bridge},
     SystemAgentRuntime,
 };
@@ -723,6 +724,11 @@ pub fn run() {
                 ));
                 handle.manage(enrichment_service);
 
+                sentinel_tools::buildin_tools::set_browser_shell_handler(
+                    crate::agents::executor::build_browser_shell_handler(handle.clone()),
+                )
+                .await;
+
                 sentinel_tools::buildin_tools::plugin_authoring::register_plugin_authoring_executor(
                     std::sync::Arc::new({
                         let app_handle = handle.clone();
@@ -944,6 +950,12 @@ pub fn run() {
                                             "properties": {}
                                         })
                                     };
+                                    let default_input = load_plugin_default_inputs(
+                                        db_plugin.as_ref(),
+                                        &id,
+                                    )
+                                    .await
+                                    .unwrap_or_else(|_| serde_json::json!({}));
 
                                     tracing::debug!("Plugin {} input_schema: {:?}", id, input_schema);
 
@@ -952,6 +964,7 @@ pub fn run() {
                                         name: p.metadata.name.clone(),
                                         description: description_str.to_string(),
                                         input_schema,
+                                        default_input,
                                         code,
                                         category: Some(p.metadata.category.clone()),
                                     });
@@ -990,9 +1003,15 @@ pub fn run() {
             commands::agent_task_commands::get_agent_tasks,
             commands::assistant_profile_commands::list_assistant_profiles,
             commands::assistant_profile_commands::get_assistant_profile,
+            commands::assistant_profile_commands::ai_create_assistant_profile_from_description,
             commands::assistant_profile_commands::save_assistant_profiles,
             commands::assistant_profile_commands::get_default_assistant_profile_id,
             commands::assistant_profile_commands::save_default_assistant_profile_id,
+            commands::assistant_profile_commands::list_team_profiles,
+            commands::assistant_profile_commands::ai_create_team_profile_from_description,
+            commands::assistant_profile_commands::save_team_profiles,
+            commands::assistant_profile_commands::get_default_team_profile_id,
+            commands::assistant_profile_commands::save_default_team_profile_id,
             ai::save_ai_message,
             ai::cancel_ai_stream,
             ai::cancel_shell_execution,
@@ -1423,6 +1442,8 @@ pub fn run() {
             traffic::batch_enable_plugins,
             traffic::batch_disable_plugins,
             traffic::list_plugins,
+            traffic::get_plugin_default_input_config,
+            traffic::set_plugin_default_input_config,
             traffic::intruder_list_plugins,
             traffic::intruder_generate_payloads,
             traffic::intruder_process_payload,
@@ -1442,6 +1463,8 @@ pub fn run() {
             traffic::export_findings_html,
             traffic::list_proxy_requests,
             traffic::get_proxy_request,
+            traffic::get_proxy_request_preview,
+            traffic::get_proxy_request_response_body_chunk,
             traffic::resolve_proxy_history_request_id_by_db_request_id,
             traffic::load_traffic_draft_store,
             traffic::save_traffic_draft_store,
@@ -1482,6 +1505,11 @@ pub fn run() {
             traffic::get_traffic_behavior_signal_settings,
             traffic::get_traffic_behavior_extension_installation,
             traffic::copy_traffic_behavior_extension_to_directory,
+            traffic::list_traffic_browser_shell_sessions,
+            traffic::get_traffic_browser_shell_frames,
+            traffic::queue_traffic_browser_shell_write,
+            traffic::respond_traffic_browser_shell_write,
+            traffic::list_traffic_browser_shell_write_requests,
             traffic::read_traffic_clipboard_text,
             traffic::set_traffic_behavior_signal_settings,
             traffic::get_traffic_oast_config,
@@ -1798,6 +1826,29 @@ pub fn run() {
             commands::team_v3_api::team_v3_list_blackboard_entries,
             commands::team_v3_api::team_v3_submit_plan_revision,
             commands::team_v3_api::team_v3_review_plan_revision,
+            // Team V4 commands
+            commands::team_v4_schema::team_v4_ensure_schema,
+            commands::team_v4_api::team_v4_create_run,
+            commands::team_v4_api::team_v4_get_run,
+            commands::team_v4_api::team_v4_list_runs,
+            commands::team_v4_api::team_v4_update_run_state,
+            commands::team_v4_api::team_v4_register_agent,
+            commands::team_v4_api::team_v4_list_agents,
+            commands::team_v4_api::team_v4_create_task,
+            commands::team_v4_api::team_v4_list_tasks,
+            commands::team_v4_api::team_v4_append_event,
+            commands::team_v4_api::team_v4_list_events,
+            commands::team_v4_api::team_v4_create_context_snapshot,
+            commands::team_v4_api::team_v4_list_memories,
+            commands::team_v4_api::team_v4_create_memory_candidate,
+            commands::team_v4_api::team_v4_accept_memory,
+            commands::team_v4_api::team_v4_start_harness_run,
+            commands::team_v4_api::team_v4_list_harness_runs,
+            commands::team_v4_api::team_v4_heartbeat_harness_run,
+            commands::team_v4_api::team_v4_checkpoint_harness_run,
+            commands::team_v4_api::team_v4_cancel_harness_run,
+            commands::team_v4_api::team_v4_resume_harness_run,
+            commands::team_v4_bootstrap::team_v4_start_assistant_run,
         ])
         .run(context)
         .expect("Failed to start Tauri application");

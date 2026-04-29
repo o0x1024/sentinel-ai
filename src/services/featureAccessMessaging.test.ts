@@ -14,7 +14,7 @@ describe('getFeatureAccessIssueMessage', () => {
       expiresInSeconds: null,
       deviceMatched: false,
       backendError: null,
-    })).toBe('缺少高级功能权限')
+    })).toBe('缺少服务端授权')
   })
 
   it('preserves backend error detail while hiding entitlement terminology', () => {
@@ -29,6 +29,6 @@ describe('getFeatureAccessIssueMessage', () => {
       expiresInSeconds: null,
       deviceMatched: false,
       backendError: 'customer revoked',
-    })).toBe('高级功能权限不可用：customer revoked')
+    })).toBe('服务端授权不可用：customer revoked')
   })
 })

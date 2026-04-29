@@ -141,6 +141,13 @@
           :open-filter-dialog="openHistoryFilterDialog"
           :toggle-multi-select-mode="toggleMultiSelectMode"
           :select-all-visible="selectAllVisible"
+          :show-send-to-repeater="enabledTargets.draft"
+          :show-send-to-comparer="enabledTargets.compare"
+          :show-send-to-intruder="enabledTargets.attackWorkspace"
+          :send-selected-to-draft="sendSelectedToDraft"
+          :send-selected-to-comparer="sendSelectedToComparer"
+          :send-selected-to-intruder="sendSelectedToIntruder"
+          :send-selected-to-assistant="sendSelectedToAssistant"
           :export-selected-to-file="exportSelectedToFile"
           :export-as-har="exportAsHar"
           :generate-candidates-from-filtered="generateCandidatesFromFiltered"
@@ -262,6 +269,8 @@ import {
 } from './proxyHistoryHttpSupport'
 import {
   getColumnValue,
+  hasEditedRequest,
+  hasEditedResponse,
   getMethodClass,
   getStatusClass,
   getStatusText,
@@ -283,6 +292,8 @@ import {
   translateProxyHistoryColumns,
 } from './proxyHistoryTableSupport'
 import { classifyProxyHistoryRequestIdStep } from './proxyHistoryListStepSupport'
+import { buildProxyHistorySelectionChangeKey } from './proxyHistorySelectionChangeSupport'
+import { resolveProxyHistoryResponseBodyLoadVariant } from './proxyHistoryResponseBodyLoadingSupport'
 import type {
   Column,
   ProxyHistoryFilterConfig,
@@ -298,6 +309,7 @@ import type {
   WebSocketMessage,
 } from './proxyHistoryTypes'
 import type { ProxyScopeRule } from './proxyConfigurationTypes'
+import type { ReferencedTraffic } from '@/types/agentReferences'
 import { useProxyHistoryActions } from './useProxyHistoryActions'
 import { useProxyHistoryData } from './useProxyHistoryData'
 import { useProxyHistoryDerivedList } from './useProxyHistoryDerivedList'
@@ -338,7 +350,7 @@ const emit = defineEmits<{
   (e: 'createAttackWorkspace', request: HttpExchangeRequest): void
   (e: 'openDraftCompare', payload: TrafficComparerDraftRequestInput): void
   (e: 'openCompare', payload: TrafficComparePayload): void
-  (e: 'sendToAssistant', requests: ProxyRequest[]): void
+  (e: 'sendToAssistant', requests: ReferencedTraffic[]): void
   (e: 'addFilterRule', rule: { matchType: string; condition: string; relationship?: string }): void
   (e: 'addToBasket', payload: { request: HttpExchangeRequest; requestId?: number; title: string; host: string }): void
   (e: 'selectionChange', request: ProxyRequest | null): void
@@ -429,6 +441,7 @@ const requestTab = ref<ProxyHistoryRequestTab>('pretty')
 const responseTab = ref<ProxyHistoryResponseTab>('pretty')
 const requestViewMode = ref<ProxyHistoryViewMode>('edited')
 const responseViewMode = ref<ProxyHistoryViewMode>('edited')
+const RESPONSE_BODY_CHUNK_SIZE = 64 * 1024
 const certErrorInfo = ref<{ host: string; url: string; error?: string } | null>(null)
 const showHistoryFilterDialog = ref(false)
 const showContextCandidateDialog = ref(false)
@@ -448,6 +461,8 @@ let scrollFrameId: number | null = null
 let pendingScrollTop = 0
 let prefetchTimer: number | null = null
 let isPrefetching = false
+let responseBodyLoadSession = 0
+let lastEmittedSelectionChangeKey = ''
 const AUTO_FOLLOW_TOP_THRESHOLD = itemHeight
 const savedScrollTop = ref(0)
 
@@ -478,6 +493,16 @@ const {
   sortState,
 })
 const totalHeight = computed(() => sortedRequests.value.length * itemHeight + headerHeight)
+const navigableRequests = computed(() =>
+  sortedRequests.value.filter(request => request.status_code !== 0),
+)
+const navigableRequestIndexById = computed(() => {
+  const indexById = new Map<number, number>()
+  navigableRequests.value.forEach((request, index) => {
+    indexById.set(request.id, index)
+  })
+  return indexById
+})
 const selectedContextCandidates = computed<TrafficContextDictionaryCandidate[]>(() => {
   if (!contextCandidateResult.value) {
     return []
@@ -510,7 +535,9 @@ const visibleRows = computed<VisibleRow[]>(() =>
 
 const {
   cleanupDataRuntime,
+  fetchRequestPreview,
   fetchRequestDetails,
+  fetchRequestResponseBodyChunk,
   formatWsTime,
   getWsActiveTab,
   getWsMessagesForConnection,
@@ -576,6 +603,9 @@ const {
   selectRequest,
   sendSelectedRequestVersionsToComparer,
   sendSelectedResponseVersionsToComparer,
+  sendSelectedToComparer,
+  sendSelectedToDraft,
+  sendSelectedToIntruder,
   sendSelectedToAssistant,
   sendRequestToAssistantFromMenu,
   openDraftCompare,
@@ -592,6 +622,7 @@ const {
   selectedRequests,
   isMultiSelectMode,
   filteredRequests,
+  orderedRequests: sortedRequests,
   requests,
   stats,
   requestTab,
@@ -1472,6 +1503,34 @@ function shouldHandleHistoryWorkbenchShortcut(event: KeyboardEvent) {
   return true
 }
 
+function shouldExitHistoryMultiSelect(event: KeyboardEvent) {
+  if (
+    event.key !== 'Escape'
+    || !isMultiSelectMode.value
+    || !mainContainer.value
+    || mainContainer.value.offsetParent === null
+  ) {
+    return false
+  }
+
+  if (isEditableKeyboardTarget(event.target)) {
+    return false
+  }
+
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement) {
+    if (isEditableKeyboardTarget(activeElement)) {
+      return false
+    }
+
+    if (activeElement !== document.body && !mainContainer.value.contains(activeElement)) {
+      return false
+    }
+  }
+
+  return true
+}
+
 function scrollRequestRowIntoView(requestId: number) {
   if (!scrollContainer.value) {
     return
@@ -1505,20 +1564,20 @@ function scrollRequestRowIntoView(requestId: number) {
 }
 
 function navigateHistorySelection(direction: -1 | 1) {
-  const navigableRequests = sortedRequests.value.filter(request => request.status_code !== 0)
-  if (navigableRequests.length === 0) {
+  const requests = navigableRequests.value
+  if (requests.length === 0) {
     return false
   }
 
   const currentIndex = selectedRequest.value
-    ? navigableRequests.findIndex(request => request.id === selectedRequest.value?.id)
+    ? navigableRequestIndexById.value.get(selectedRequest.value.id) ?? -1
     : -1
 
   const nextIndex = currentIndex < 0
-    ? (direction > 0 ? 0 : navigableRequests.length - 1)
-    : Math.min(navigableRequests.length - 1, Math.max(0, currentIndex + direction))
+    ? (direction > 0 ? 0 : requests.length - 1)
+    : Math.min(requests.length - 1, Math.max(0, currentIndex + direction))
 
-  const nextRequest = navigableRequests[nextIndex]
+  const nextRequest = requests[nextIndex]
   if (!nextRequest) {
     return false
   }
@@ -1533,6 +1592,14 @@ function navigateHistorySelection(direction: -1 | 1) {
 
 function handleKeydown(event: KeyboardEvent) {
   if (event.defaultPrevented || event.repeat) {
+    return
+  }
+
+  if (shouldExitHistoryMultiSelect(event)) {
+    event.preventDefault()
+    event.stopPropagation()
+    clearSelection()
+    isMultiSelectMode.value = false
     return
   }
 
@@ -1582,7 +1649,7 @@ async function openRequestById(
 
   let nextRequest = requests.value.find(request => request.id === requestId) || null
   if (!nextRequest || nextRequest.has_full_details === false) {
-    nextRequest = await fetchRequestDetails(requestId) || nextRequest
+    nextRequest = await fetchRequestPreview(requestId) || nextRequest
   }
 
   if (!nextRequest) {
@@ -1703,6 +1770,68 @@ function removeMatchingRecords(rule: { matchType: string; condition: string; rel
   }
 }
 
+function shouldLoadPreviewDetails(request: ProxyRequest | null) {
+  if (!request || request.has_full_details) {
+    return false
+  }
+
+  if (request.request_body_loaded === false) {
+    return true
+  }
+
+  if (hasEditedRequest(request) && request.edited_request_body_loaded === false) {
+    return true
+  }
+
+  return false
+}
+
+async function loadSelectedResponseBody() {
+  const request = selectedRequest.value
+  if (!request) {
+    return
+  }
+
+  const variant = resolveProxyHistoryResponseBodyLoadVariant(request, responseViewMode.value)
+  if (!variant) {
+    return
+  }
+
+  const session = ++responseBodyLoadSession
+  let offset = 0
+  let assembled = ''
+
+  while (true) {
+    const chunk = await fetchRequestResponseBodyChunk(request.id, variant, offset, RESPONSE_BODY_CHUNK_SIZE)
+    if (!chunk) {
+      return
+    }
+
+    if (responseBodyLoadSession !== session || selectedRequest.value?.id !== request.id) {
+      return
+    }
+
+    assembled += chunk.chunk
+    offset = chunk.next_offset
+    selectedRequest.value = {
+      ...selectedRequest.value,
+      ...(variant === 'edited'
+        ? {
+            edited_response_body: assembled,
+            edited_response_body_loaded: chunk.complete,
+          }
+        : {
+            response_body: assembled,
+            response_body_loaded: chunk.complete,
+          }),
+    }
+
+    if (chunk.complete) {
+      return
+    }
+  }
+}
+
 onMounted(async () => {
   await loadScopeRules()
   await setupEventListeners()
@@ -1736,8 +1865,18 @@ onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown)
 })
 
-watch(selectedRequest, async () => {
-  emit('selectionChange', selectedRequest.value)
+watch(
+  () => buildProxyHistorySelectionChangeKey(selectedRequest.value),
+  async (nextKey) => {
+    if (nextKey === lastEmittedSelectionChangeKey) {
+      return
+    }
+    lastEmittedSelectionChangeKey = nextKey
+    emit('selectionChange', selectedRequest.value)
+  },
+)
+
+watch(() => selectedRequest.value?.id ?? null, async () => {
   if (selectedRequestEvidence.value && selectedRequest.value?.id !== selectedRequestEvidence.value.requestId) {
     selectedRequestEvidence.value = null
   }
@@ -1761,24 +1900,50 @@ watch(
 )
 
 watch(
-  () => [selectedRequest.value?.id, selectedRequest.value?.has_full_details] as const,
-  async ([requestId, hasFullDetails]) => {
-    if (!requestId || hasFullDetails !== false) {
+  () => [
+    selectedRequest.value?.id,
+    selectedRequest.value?.has_full_details,
+    selectedRequest.value?.request_body_loaded,
+    selectedRequest.value?.edited_request_body_loaded,
+    hasEditedRequest(selectedRequest.value),
+  ] as const,
+  async ([requestId]) => {
+    const request = selectedRequest.value
+    if (!requestId || !shouldLoadPreviewDetails(request)) {
       isSelectedRequestLoading.value = false
       return
     }
 
     isSelectedRequestLoading.value = true
     try {
-      const detailedRequest = await fetchRequestDetails(requestId)
-      if (detailedRequest && selectedRequest.value?.id === requestId) {
-        selectedRequest.value = detailedRequest
+      const previewRequest = await fetchRequestPreview(requestId)
+      if (previewRequest && selectedRequest.value?.id === requestId) {
+        selectedRequest.value = previewRequest
       }
     } finally {
       if (selectedRequest.value?.id === requestId) {
         isSelectedRequestLoading.value = false
       }
     }
+  },
+)
+
+watch(
+  () => [
+    selectedRequest.value?.id,
+    selectedRequest.value?.has_full_details,
+    selectedRequest.value?.response_body_loaded,
+    selectedRequest.value?.edited_response_body_loaded,
+    hasEditedResponse(selectedRequest.value),
+    responseViewMode.value,
+  ] as const,
+  async () => {
+    if (!resolveProxyHistoryResponseBodyLoadVariant(selectedRequest.value, responseViewMode.value)) {
+      responseBodyLoadSession += 1
+      return
+    }
+
+    await loadSelectedResponseBody()
   },
 )
 

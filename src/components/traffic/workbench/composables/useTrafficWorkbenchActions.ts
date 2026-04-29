@@ -44,6 +44,8 @@ export function useTrafficWorkbenchActions(options: {
   pendingRepeaterRequest: Ref<HttpExchangeRequest | undefined>
   pendingIntruderWorkspaceId: Ref<string | undefined>
   pendingIntruderRequest: Ref<HttpExchangeRequest | undefined>
+  queueComparerComparison: (payload: TrafficComparePayload) => void
+  queueComparerDraftRequest: (payload: TrafficComparerDraftRequestInput) => void
   workbenchMetaTitleMap: Record<WorkbenchTool, string>
 }) {
   const {
@@ -59,6 +61,8 @@ export function useTrafficWorkbenchActions(options: {
     pendingRepeaterRequest,
     pendingIntruderWorkspaceId,
     pendingIntruderRequest,
+    queueComparerComparison,
+    queueComparerDraftRequest,
     workbenchMetaTitleMap,
   } = options
 
@@ -141,28 +145,20 @@ export function useTrafficWorkbenchActions(options: {
     markSession('comparer', source)
     if (mainStageRef.value?.hasComparer()) {
       mainStageRef.value.addComparison(payload)
-      openWorkbenchTool('comparer')
       return
     }
 
-    openWorkbenchTool('comparer')
-    requestAnimationFrame(() => {
-      mainStageRef.value?.addComparison(payload)
-    })
+    queueComparerComparison(payload)
   }
 
   function pushDraftToComparer(payload: TrafficComparerDraftRequestInput, source: TrafficWorkbenchSource) {
     markSession('comparer', source)
     if (mainStageRef.value?.hasComparer()) {
       mainStageRef.value.addDraftRequest(payload)
-      openWorkbenchTool('comparer')
       return
     }
 
-    openWorkbenchTool('comparer')
-    requestAnimationFrame(() => {
-      mainStageRef.value?.addDraftRequest(payload)
-    })
+    queueComparerDraftRequest(payload)
   }
 
   function selectDraftRecord(draftId: string) {

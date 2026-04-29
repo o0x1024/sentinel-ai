@@ -158,6 +158,7 @@ import {
 } from './settingsAiSupport'
 import { emitAiConfigUpdated } from '@/services/aiConfigEvents'
 import { inferModelSupportsVision } from '@/services/aiModelCapabilities'
+import { parseExtraBodyJson } from '@/components/Settings/aiSettingsProviderSupport'
 import { applyDatabaseTypeDefaults } from './settingsDatabaseSupport'
 import { createSettingsSecurityActions } from './settingsSecuritySupport'
 import {
@@ -724,6 +725,11 @@ const testCustomProvider = async () => {
         return
       }
     }
+    const extraBodyResult = parseExtraBodyJson(customProvider.extra_body_json || '')
+    if (extraBodyResult.ok === false) {
+      dialog.toast.error(extraBodyResult.reason === 'invalid-json' ? 'extra_body JSON 格式无效' : 'extra_body 必须是 JSON 对象')
+      return
+    }
     
     const request = {
       name: customProvider.name.trim(),
@@ -732,6 +738,7 @@ const testCustomProvider = async () => {
       model_id: customProvider.model_id.trim(),
       compat_mode: customProvider.compat_mode,
       extra_headers: Object.keys(extraHeaders).length > 0 ? extraHeaders : null,
+      extra_body: extraBodyResult.body && Object.keys(extraBodyResult.body).length > 0 ? extraBodyResult.body : null,
       timeout: customProvider.timeout || 120,
     }
     
@@ -764,6 +771,11 @@ const addCustomProvider = async () => {
         return
       }
     }
+    const extraBodyResult = parseExtraBodyJson(customProvider.extra_body_json || '')
+    if (extraBodyResult.ok === false) {
+      dialog.toast.error(extraBodyResult.reason === 'invalid-json' ? 'extra_body JSON 格式无效' : 'extra_body 必须是 JSON 对象')
+      return
+    }
     
     const providerName = customProvider.name.trim()
     const displayName = customProvider.display_name.trim() || providerName
@@ -776,6 +788,7 @@ const addCustomProvider = async () => {
       model_id: customProvider.model_id.trim(),
       compat_mode: customProvider.compat_mode,
       extra_headers: Object.keys(extraHeaders).length > 0 ? extraHeaders : null,
+      extra_body: extraBodyResult.body && Object.keys(extraBodyResult.body).length > 0 ? extraBodyResult.body : null,
       timeout: customProvider.timeout || 120,
       max_retries: customProvider.max_retries || 3,
     }
@@ -791,6 +804,7 @@ const addCustomProvider = async () => {
     customProvider.model_id = ''
     customProvider.compat_mode = 'openai'
     customProvider.extra_headers_json = ''
+    customProvider.extra_body_json = ''
     customProvider.timeout = 120
     customProvider.max_retries = 3
     

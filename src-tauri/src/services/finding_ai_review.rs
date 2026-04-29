@@ -116,11 +116,13 @@ pub async fn run_finding_ai_review(
         .get_traffic_vulnerability_by_id(finding_id)
         .await?
         .ok_or_else(|| anyhow!("未找到对应漏洞: {}", finding_id))?;
-    let evidence = db_service.get_traffic_evidence_by_vuln_id(finding_id).await?;
+    let evidence = db_service
+        .get_traffic_evidence_by_vuln_id(finding_id)
+        .await?;
 
     let prompt_input = build_prompt_input(&finding, &evidence);
-    let prompt_json =
-        serde_json::to_string_pretty(&prompt_input).context("Failed to serialize AI review input")?;
+    let prompt_json = serde_json::to_string_pretty(&prompt_input)
+        .context("Failed to serialize AI review input")?;
 
     let llm_config = ai_manager.resolve_generation_llm_config(None, None).await?;
     let provider = llm_config.provider.clone();
@@ -204,8 +206,8 @@ fn build_prompt_input(
         .iter()
         .filter(|item| item.location != "ai_review" && item.location != "system_agent_feedback")
         .collect::<Vec<_>>();
-    let primary_evidence_id = select_primary_prompt_evidence(&filtered_evidence)
-        .map(|item| item.id.as_str());
+    let primary_evidence_id =
+        select_primary_prompt_evidence(&filtered_evidence).map(|item| item.id.as_str());
 
     FindingAiReviewPromptInput {
         finding: FindingAiReviewPromptFinding {
@@ -250,7 +252,9 @@ fn select_primary_prompt_evidence<'a>(
             evidence.iter().copied().find(|item| {
                 !matches!(
                     item.location.as_str(),
-                    "system_agent_verification" | "system_agent_context" | "system_agent_observation"
+                    "system_agent_verification"
+                        | "system_agent_context"
+                        | "system_agent_observation"
                 )
             })
         })
@@ -506,7 +510,10 @@ mod tests {
         let secondary = prompt.related_evidence.first().expect("secondary evidence");
 
         assert_eq!(primary.request_body.as_deref(), Some(primary_body.as_str()));
-        assert_eq!(primary.response_body.as_deref(), Some(primary_body.as_str()));
+        assert_eq!(
+            primary.response_body.as_deref(),
+            Some(primary_body.as_str())
+        );
         assert!(secondary.request_body.as_deref().unwrap_or_default().len() < 5000);
         assert!(secondary.response_body.as_deref().unwrap_or_default().len() < 5000);
     }

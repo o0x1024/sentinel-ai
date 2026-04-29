@@ -26,11 +26,12 @@ vi.mock('./proxyHistoryFormattingSupport', () => ({
   formatRequest: () => 'formatted request',
   formatRequestRaw: () => 'raw request',
   formatResponse: () => 'formatted response',
+  formatResponseRawFast: () => 'raw response',
   formatResponseRaw: () => 'raw response',
   getResponseContentType: () => 'application/json',
+  hasEditedRequest: () => false,
   hasEditedResponse: () => false,
   isResponseCompressed: () => false,
-  stringToHex: (value: string) => `hex:${value}`,
 }))
 
 vi.mock('./trafficContextEvidenceHighlightSupport', () => ({

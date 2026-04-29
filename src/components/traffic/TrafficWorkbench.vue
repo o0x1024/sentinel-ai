@@ -1,9 +1,9 @@
 <template>
-  <div class="traffic-workbench flex h-[calc(100vh-var(--app-navbar-height,4rem))] flex-col px-2 py-2">
+  <div class="traffic-workbench flex h-[calc(100vh-var(--app-navbar-height,4rem))] flex-col px-1.5 py-1.5">
     <div ref="workspaceStageRef" class="relative min-h-0 flex-1">
-      <div class="grid h-full min-h-0 gap-2" :style="workbenchGridStyle">
-        <div ref="leftColumnRef" class="grid min-h-0 min-w-0 gap-2" :style="leftColumnStyle">
-          <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[18px] border border-base-300/70 shadow-[0_18px_44px_rgba(15,23,42,0.08)]">
+      <div class="grid h-full min-h-0 gap-1.5" :style="workbenchGridStyle">
+        <div ref="leftColumnRef" class="grid min-h-0 min-w-0 gap-1.5" :style="leftColumnStyle">
+          <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[16px] border border-base-300/70 shadow-[0_14px_32px_rgba(15,23,42,0.08)]">
             <TrafficHistoryWorkbench
               ref="proxyHistoryRef"
               class="h-full overflow-auto"
@@ -54,8 +54,8 @@
           @mousedown="startWorkbenchPanelResize('history', $event)"
         ></div>
 
-        <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[18px] border border-base-300/70 shadow-[0_18px_44px_rgba(15,23,42,0.08)]">
-          <div class="h-full min-h-0 p-2">
+        <section class="workbench-solid-surface min-h-0 min-w-0 overflow-hidden rounded-[16px] border border-base-300/70 shadow-[0_14px_32px_rgba(15,23,42,0.08)]">
+          <div class="h-full min-h-0 p-1.5">
             <TrafficWorkbenchMainStage
               ref="mainStageRef"
               :workbench-open="workbenchOpen"
@@ -155,9 +155,11 @@ import type {
   TrafficWorkbenchToolSession,
 } from './trafficWorkbenchTypes'
 import type { RepeaterActiveTabState, RepeaterTabStats } from './proxyRepeaterTypes'
+import type { TrafficComparerDraftRequestInput, TrafficComparePayload } from './transfers'
 import { useActiveProbeQueue } from './useActiveProbeQueue'
 import { useTrafficWorkbenchBasket } from './useTrafficWorkbenchBasket'
 import { useTrafficWorkbenchSessions } from './useTrafficWorkbenchSessions'
+import { hasEditedRequest, hasEditedResponse } from './proxyHistoryFormattingSupport'
 import { useTrafficWorkbenchActions } from './workbench/composables/useTrafficWorkbenchActions'
 import { useActiveProbePreview } from './workbench/composables/useActiveProbePreview'
 import { useTrafficWorkbenchHistoryNavigation } from './workbench/composables/useTrafficWorkbenchHistoryNavigation'
@@ -169,6 +171,11 @@ import {
   getHistorySource,
 } from './workbench/services/sourceSupport'
 import { useTrafficWorkbenchStore } from './workbench/stores/useTrafficWorkbenchStore'
+import {
+  refreshTrafficOastRecordCount,
+  resetTrafficOastRecordCount,
+  useTrafficOastRecordCount,
+} from './trafficOastRecordCount'
 import { immersiveDrillModeEnabled } from '@/services/immersiveDrillMode'
 import { closeTopmostImmersiveTool } from '@/services/immersiveToolCoordinator'
 import {
@@ -222,6 +229,8 @@ const pendingRepeaterRequest = ref<HttpExchangeRequest | undefined>(undefined)
 const pendingRepeaterDraftId = ref<string | undefined>(undefined)
 const pendingIntruderRequest = ref<HttpExchangeRequest | undefined>(undefined)
 const pendingIntruderWorkspaceId = ref<string | undefined>(undefined)
+const pendingComparerPayloads = ref<TrafficComparePayload[]>([])
+const pendingComparerDraftRequests = ref<TrafficComparerDraftRequestInput[]>([])
 const selectedHistoryRequest = ref<ProxyRequest | null>(null)
 const activeRequestContext = ref<TrafficWorkbenchRequestContext | null>(null)
 const repeaterEditedTabCount = ref(0)
@@ -240,6 +249,7 @@ const {
 const { basketItems, addRequest, removeItem, clear } = useTrafficWorkbenchBasket()
 const { sessions, markSession, clearSessionCount } = useTrafficWorkbenchSessions()
 const workbenchState = useTrafficWorkbenchStore()
+const { oastRecordCount } = useTrafficOastRecordCount()
 const packetCaptureStatus = usePacketCaptureStatusStore()
 const persistence = useTrafficWorkbenchPersistence(workbenchState)
 const {
@@ -344,13 +354,6 @@ const hasReplayHistory = computed(() => workbenchState.replay.replayRuns.value.l
 
 const toolChips = computed(() => [
   {
-    tool: 'capture' as const,
-    label: t('trafficAnalysis.tabs.capture', '抓包'),
-    shortLabel: t('trafficAnalysis.tabs.capture', '抓包'),
-    icon: 'fas fa-wave-square',
-    count: sessions.value.capture.count,
-  },
-  {
     tool: 'repeater' as const,
     label: t('trafficAnalysis.tabs.repeater', '重放器'),
     shortLabel: t('trafficAnalysis.tabs.repeater', '重放器'),
@@ -376,7 +379,7 @@ const toolChips = computed(() => [
     label: t('trafficAnalysis.tabs.oast', 'OAST'),
     shortLabel: t('trafficAnalysis.tabs.oast', 'OAST'),
     icon: 'fas fa-satellite-dish',
-    count: sessions.value.oast.count,
+    count: oastRecordCount.value,
   },
 ])
 const workbenchMetaTitleMap = {
@@ -421,6 +424,12 @@ const {
   pendingRepeaterRequest,
   pendingIntruderWorkspaceId,
   pendingIntruderRequest,
+  queueComparerComparison: payload => {
+    pendingComparerPayloads.value.push(payload)
+  },
+  queueComparerDraftRequest: payload => {
+    pendingComparerDraftRequests.value.push(payload)
+  },
   workbenchMetaTitleMap,
 })
 
@@ -495,6 +504,23 @@ function openWorkbenchTool(tool: WorkbenchTool) {
   workbenchToolsMounted.value = true
 }
 
+function flushPendingComparerTransfers() {
+  const mainStage = mainStageRef.value
+  if (!mainStage?.hasComparer()) {
+    return
+  }
+
+  for (const payload of pendingComparerPayloads.value) {
+    mainStage.addComparison(payload)
+  }
+  pendingComparerPayloads.value = []
+
+  for (const payload of pendingComparerDraftRequests.value) {
+    mainStage.addDraftRequest(payload)
+  }
+  pendingComparerDraftRequests.value = []
+}
+
 function hydratePersistence() {
   if (!hydrationPromise) {
     hydrationPromise = persistence.hydrate()
@@ -515,6 +541,10 @@ async function handleOpenWorkbenchTool(tool: WorkbenchTool) {
   }
   clearSessionCount(tool)
   openWorkbenchTool(tool)
+  if (tool === 'comparer') {
+    await nextTick()
+    flushPendingComparerTransfers()
+  }
 }
 
 async function openCaptureWorkbench() {
@@ -547,19 +577,19 @@ function syncHistorySnapshot(
 }
 
 function resolveHistoryVariantUrl(request: ProxyRequest, variant: TrafficWorkbenchRequestVariant) {
-  return variant === 'edited' && request.was_edited && request.edited_url
+  return variant === 'edited' && hasEditedRequest(request) && request.edited_url
     ? request.edited_url
     : request.url
 }
 
 function resolveHistoryVariantMethod(request: ProxyRequest, variant: TrafficWorkbenchRequestVariant) {
-  return variant === 'edited' && request.was_edited && request.edited_method
+  return variant === 'edited' && hasEditedRequest(request) && request.edited_method
     ? request.edited_method
     : request.method
 }
 
 function resolveHistoryVariantStatusCode(request: ProxyRequest, variant: TrafficWorkbenchRequestVariant) {
-  const statusCode = variant === 'edited' && request.was_edited && request.edited_status_code
+  const statusCode = variant === 'edited' && hasEditedResponse(request) && request.edited_status_code
     ? request.edited_status_code
     : request.status_code
   return Number.isFinite(statusCode) ? statusCode : null
@@ -582,7 +612,8 @@ function buildActiveRequestContext(
     path: `${parsedUrl.pathname}${parsedUrl.search}`,
     statusCode: resolveHistoryVariantStatusCode(request, variant),
     variant,
-    hasEditedVariant: Boolean(request.was_edited),
+    hasEditedVariant: hasEditedRequest(request),
+    hasEditedResponseVariant: hasEditedResponse(request),
     mode,
     modeLabel: resolveRequestContextModeLabel(mode),
   }
@@ -604,12 +635,12 @@ function handleHistorySelectionChange(request: ProxyRequest | null) {
     return
   }
 
-  previewHistoryRequest(request, request.was_edited ? 'edited' : 'original')
+  previewHistoryRequest(request, hasEditedRequest(request) || hasEditedResponse(request) ? 'edited' : 'original')
 }
 
 function handleSwitchActiveRequestVariant(variant: TrafficWorkbenchRequestVariant) {
   const request = selectedHistoryRequest.value
-  if (!request || !request.was_edited) {
+  if (!request || (!hasEditedRequest(request) && !hasEditedResponse(request))) {
     return
   }
   previewHistoryRequest(request, variant)
@@ -809,6 +840,9 @@ defineExpose<TrafficAnalysisViewHandle>({
 
 onMounted(() => {
   void hydratePersistence()
+  void refreshTrafficOastRecordCount().catch(error => {
+    console.error('[TrafficWorkbench] Failed to load OAST record count:', error)
+  })
   if (immersiveDrillModeEnabled.value) {
     showImmersiveTrafficHistory()
   }
@@ -870,7 +904,7 @@ watchEffect(() => {
     repeaterCount: workbenchState.counts.value.drafts,
     intruderCount: intruderOpenWorkspaceCount.value,
     comparerCount: sessions.value.comparer.count,
-    oastCount: sessions.value.oast.count,
+    oastCount: oastRecordCount.value,
     controlInterceptCount: controlInterceptCount.value,
     basketCount: basketItems.value.length,
   })
@@ -892,6 +926,7 @@ onUnmounted(() => {
     unlistenScanFinding()
     unlistenScanFinding = null
   }
+  resetTrafficOastRecordCount()
   resetImmersiveTrafficDockState()
 })
 </script>
