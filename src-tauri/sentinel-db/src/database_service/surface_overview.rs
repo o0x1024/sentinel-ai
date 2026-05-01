@@ -7,7 +7,8 @@ use sqlx::{Database, Encode, QueryBuilder, Type};
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
 use crate::database_service::sqlx_compat::{MySql, Postgres};
-use crate::database_service::surface::SurfaceOverview;
+use crate::database_service::surface::{SurfaceAssetFilter, SurfaceOverview};
+use crate::database_service::surface_asset_query::push_surface_asset_filters;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct SurfaceOverviewCountsRow {
@@ -83,7 +84,7 @@ impl DatabaseService {
         }
     }
 
-    async fn get_surface_asset_type_counts(
+    async fn get_surface_asset_type_counts_for_program(
         &self,
         program_id: Option<&str>,
     ) -> Result<HashMap<String, i32>> {
@@ -120,6 +121,56 @@ impl DatabaseService {
                 let mut query_builder = QueryBuilder::<Postgres>::new(sql);
                 Self::push_program_filter(&mut query_builder, program_id);
                 query_builder.push(" GROUP BY asset_type");
+                query_builder
+                    .build_query_as::<SurfaceAssetTypeCountRow>()
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.asset_type, row.count as i32))
+            .collect())
+    }
+
+    pub async fn count_surface_assets_by_type(
+        &self,
+        filter: &SurfaceAssetFilter,
+    ) -> Result<HashMap<String, i32>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let sql = r#"
+            SELECT asset_type, COUNT(*) AS count
+            FROM surface_assets
+            WHERE 1=1
+        "#;
+
+        let rows: Vec<SurfaceAssetTypeCountRow> = match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(sql);
+                push_surface_asset_filters(&mut query_builder, filter);
+                query_builder.push(" GROUP BY asset_type ORDER BY COUNT(*) DESC, asset_type ASC");
+                query_builder
+                    .build_query_as::<SurfaceAssetTypeCountRow>()
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder = QueryBuilder::<MySql>::new(sql);
+                push_surface_asset_filters(&mut query_builder, filter);
+                query_builder.push(" GROUP BY asset_type ORDER BY COUNT(*) DESC, asset_type ASC");
+                query_builder
+                    .build_query_as::<SurfaceAssetTypeCountRow>()
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder = QueryBuilder::<Postgres>::new(sql);
+                push_surface_asset_filters(&mut query_builder, filter);
+                query_builder.push(" GROUP BY asset_type ORDER BY COUNT(*) DESC, asset_type ASC");
                 query_builder
                     .build_query_as::<SurfaceAssetTypeCountRow>()
                     .fetch_all(pool)
@@ -172,7 +223,7 @@ impl DatabaseService {
 
     pub async fn get_surface_overview(&self, program_id: Option<&str>) -> Result<SurfaceOverview> {
         let counts = self.get_surface_overview_counts(program_id).await?;
-        let by_type = self.get_surface_asset_type_counts(program_id).await?;
+        let by_type = self.get_surface_asset_type_counts_for_program(program_id).await?;
         let total_relations = self.count_surface_relations_for_program(program_id).await?;
         let runs = self
             .list_surface_discovery_runs(program_id, Some(20))

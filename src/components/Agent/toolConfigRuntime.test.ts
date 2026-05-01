@@ -40,7 +40,7 @@ describe('toolConfigRuntime', () => {
     })
   })
 
-  it('applies Team solver tools as the intersection of profile tools and role tools', () => {
+  it('applies Team specialist tools as the intersection of profile tools and role tools', () => {
     const runtimeConfig = buildRuntimeToolConfigForTeamRole({
       enabled: true,
       selection_strategy: 'Manual',
@@ -50,10 +50,10 @@ describe('toolConfigRuntime', () => {
       manual_tools: ['file_read', 'shell'],
       allowed_tools: [],
     }, {
-      solver: {
+      specialist: {
         tools: ['file_read', 'http_request', 'shell'],
       },
-    }, 'solver')
+    }, 'specialist')
 
     expect(runtimeConfig).toMatchObject({
       enabled: true,
@@ -64,7 +64,7 @@ describe('toolConfigRuntime', () => {
     })
   })
 
-  it('disables Team solver tools when the role scope has no overlap with the profile tools', () => {
+  it('disables Team specialist tools when the role scope has no overlap with the profile tools', () => {
     const runtimeConfig = buildRuntimeToolConfigForTeamRole({
       enabled: true,
       selection_strategy: 'Manual',
@@ -74,10 +74,10 @@ describe('toolConfigRuntime', () => {
       manual_tools: ['interactive_shell', 'file_write', 'http_request'],
       allowed_tools: [],
     }, {
-      solver: {
+      specialist: {
         tools: ['shell', 'browser_shell'],
       },
-    }, 'solver')
+    }, 'specialist')
 
     expect(runtimeConfig.enabled).toBe(false)
     expect(runtimeConfig.selection_strategy).toEqual({ Manual: [] })
@@ -95,10 +95,10 @@ describe('toolConfigRuntime', () => {
       manual_tools: ['shell', 'interactive_shell'],
       allowed_tools: [],
     }, {
-      solver: {
+      specialist: {
         tools: ['shell'],
       },
-    }, 'solver')
+    }, 'specialist')
 
     expect(runtimeConfig.selection_strategy).toEqual({
       Manual: ['shell'],
@@ -116,10 +116,10 @@ describe('toolConfigRuntime', () => {
       manual_tools: [],
       allowed_tools: ['interactive_shell', 'shell', 'grep'],
     }, {
-      solver: {
+      specialist: {
         tools: ['shell', 'grep', 'http_request'],
       },
-    }, 'solver')
+    }, 'specialist')
 
     expect(runtimeConfig.selection_strategy).toEqual({
       Manual: ['shell', 'grep'],

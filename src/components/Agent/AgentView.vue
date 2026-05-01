@@ -37,7 +37,10 @@
         <AssistantWorkConfigPanel
           :available-models="assistantModelOptions"
           :context-mode="assistantSessionSettings.contextMode"
+          :execution-mode="assistantExecutionMode"
           :model-loading="isLoadingAssistantModels"
+          :parallel-judge-model="assistantParallelJudgeModel"
+          :parallel-selected-models="assistantParallelSelectedModels"
           :profile-id="assistantSessionSettings.profileId"
           :profile-loading="isLoadingAssistantProfiles"
           :profile-options="assistantProfileOptions"
@@ -45,7 +48,10 @@
           :selected-model="assistantSelectedModel"
           :tool-config="toolConfig"
           @update:context-mode="handleAssistantContextModeChange"
+          @update:execution-mode="setAssistantExecutionMode"
           @update:model="handleAssistantModelSelection"
+          @update:parallel-judge-model="setAssistantParallelJudgeModel"
+          @update:parallel-models="setAssistantParallelSelectedModels"
           @update:profile-id="handleAssistantProfileChange"
           @update:run-mode="handleAssistantRunModeChange"
           @update:tool-config="handleToolConfigUpdate"
@@ -419,7 +425,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, type Ref } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
@@ -659,7 +665,11 @@ const isSubagentPanelOpen = ref(false)
 const subagents = computed(() => agentEvents.subagents.value)
 const {
   assistantDefaultMaxContextTokens,
+  assistantExecutionMode,
+  assistantGlobalDefaultModel,
   assistantModelOptions,
+  assistantParallelJudgeModel,
+  assistantParallelSelectedModels,
   assistantSelectedModel,
   buildTeamToolPolicyFromUiConfig,
   defaultToolConfig,
@@ -670,6 +680,9 @@ const {
   loadAssistantModelOptions,
   loadToolConfig,
   setAssistantSelectedModel,
+  setAssistantExecutionMode,
+  setAssistantParallelJudgeModel,
+  setAssistantParallelSelectedModels,
   toolConfig,
   toolsEnabled,
 } = useAgentModelAndToolConfig({
@@ -906,6 +919,7 @@ const {
   isTaskPanelActive: computed(() => taskComposable.isTaskPanelActive.value),
   localError,
   parseTeamTaskExecutionId,
+  parallelTaskSources: computed(() => agentEvents.parallelTaskSources.value),
   propsShowTasks: props.showTasks,
   resetAgentError: () => {
     agentEvents.resetError()
@@ -958,6 +972,22 @@ watch(hasConnectedBrowserShellSessions, (hasConnected) => {
   if (!hasConnected && activeRightPanel.value === 'browser-shell') {
     deactivateRightPanel('browser-shell')
   }
+})
+
+const handleParallelTaskSourceFocus = (event: Event) => {
+  const sourceKey = String((event as CustomEvent)?.detail?.sourceKey || '').trim()
+  if (!sourceKey) return
+  handleTaskSourceChange(sourceKey)
+  activateRightPanel('tasks')
+  taskComposable.open()
+}
+
+onMounted(() => {
+  window.addEventListener('agent:parallel-task-source-focus', handleParallelTaskSourceFocus)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('agent:parallel-task-source-focus', handleParallelTaskSourceFocus)
 })
 
 // Handle retrieval toggle
@@ -1119,6 +1149,7 @@ const {
   currentBrowserShellDirectWriteEnabled,
   currentBrowserShellSessionId,
   activeTeamSessionId,
+  assistantGlobalDefaultModel,
   assistantSelectedModel,
   defaultAssistantProfileId,
   defaultToolConfig,
@@ -1222,11 +1253,11 @@ const startTeamV4AssistantRun = async (goal: string) => {
     conversationId: conversationId.value,
     profileId: assistantSessionSettings.value.profileId,
     teamProfileId: selectedTeamProfile.id,
-    commanderProfileId: selectedTeamProfile.commanderProfileId,
-    solverProfileIds: selectedTeamProfile.solverProfileIds,
-    observerProfileId: selectedTeamProfile.observerProfileId,
+    orchestratorProfileId: selectedTeamProfile.orchestratorProfileId,
+    specialistProfileIds: selectedTeamProfile.specialistProfileIds,
+    monitorProfileId: selectedTeamProfile.monitorProfileId,
     goal,
-    model: selectedTeamProfile.defaultModel || assistantSelectedModel.value || null,
+    model: selectedTeamProfile.defaultModel || null,
     contextMode: selectedTeamProfile.contextMode,
     toolPolicyMatrix: teamToolPolicyMatrix,
     memoryPolicy: teamMemoryPolicy,
@@ -1237,11 +1268,11 @@ const startTeamV4AssistantRun = async (goal: string) => {
 
   activeTeamV4RunId.value = bootstrap.run.id
   teamV4Run.value = bootstrap.run
-  teamV4Agents.value = [bootstrap.commander, bootstrap.observer, ...bootstrap.solvers]
-  teamV4Tasks.value = bootstrap.solverAssignments.map((assignment) => assignment.task)
+  teamV4Agents.value = [bootstrap.orchestrator, bootstrap.monitor, ...bootstrap.specialists]
+  teamV4Tasks.value = bootstrap.specialistAssignments.map((assignment) => assignment.task)
   teamV4Events.value = bootstrap.events
   teamV4Memories.value = []
-  teamV4HarnessRuns.value = bootstrap.solverAssignments.map((assignment) => assignment.harnessRun)
+  teamV4HarnessRuns.value = bootstrap.specialistAssignments.map((assignment) => assignment.harnessRun)
   teamSessionState.value = 'EXECUTING'
   isTeamWorkspaceActive.value = true
   activateRightPanel('team')
@@ -1260,9 +1291,9 @@ const startTeamV4AssistantRun = async (goal: string) => {
   }
   const summaryContent = [
     `Team v4 run started: ${bootstrap.run.id}`,
-    `Commander created ${bootstrap.solverAssignments.length} task assignment(s) for ${bootstrap.solvers.length} Solver(s).`,
-    'Observer is attached to filter noise and promote high value memory.',
-    `Harness lease active until ${bootstrap.solverAssignments[0]?.harnessRun.lease_expires_at || 'unknown'}.`,
+    `Orchestrator created ${bootstrap.specialistAssignments.length} task assignment(s) for ${bootstrap.specialists.length} Specialist(s).`,
+    'Monitor is attached to collect signals, evaluate quality, and trigger retry recommendations.',
+    `Harness lease active until ${bootstrap.specialistAssignments[0]?.harnessRun.lease_expires_at || 'unknown'}.`,
   ].join('\n')
   const assistantMessage: AgentMessage = {
     id: crypto.randomUUID(),
@@ -1270,10 +1301,10 @@ const startTeamV4AssistantRun = async (goal: string) => {
     content: summaryContent,
     timestamp: now + 1,
     metadata: {
-      kind: 'team_v4_commander_bootstrap',
-      team_member_id: bootstrap.commander.id,
-      team_member_name: bootstrap.commander.name,
-      team_member_role: 'commander',
+      kind: 'team_v4_orchestrator_bootstrap',
+      team_member_id: bootstrap.orchestrator.id,
+      team_member_name: bootstrap.orchestrator.name,
+      team_member_role: 'orchestrator',
       team_session_id: bootstrap.run.id,
       team_task_record_id: bootstrap.rootTask.id,
       team_task_key: bootstrap.rootTask.task_key,
@@ -1331,6 +1362,9 @@ const {
   agentSubagents: agentEvents.subagents,
   assistantModelOptions,
   assistantContextMode,
+  assistantExecutionMode,
+  assistantParallelJudgeModel,
+  assistantParallelSelectedModels,
   assistantSelectedModel,
   buildToolConfig: () => toolConfig.value as unknown as UiToolConfigPayload,
   clearAgentMessages: () => {

@@ -464,9 +464,12 @@ const transferMessages = computed<SecurityEvidenceTransferMessages>(() => ({
   triggerLabel: t('vulnerabilities.transfer.triggerLabel'),
   sendToRepeater: t('vulnerabilities.transfer.sendToRepeater'),
   sendToIntruder: t('vulnerabilities.transfer.sendToIntruder'),
+  sendToAssistant: t('vulnerabilities.transfer.sendToAssistant'),
   noTransferableRequest: t('vulnerabilities.transfer.noFindingTransferableRequest'),
   repeaterOpened: t('vulnerabilities.transfer.repeaterOpened'),
   intruderOpened: t('vulnerabilities.transfer.intruderOpened'),
+  assistantOpened: t('vulnerabilities.transfer.assistantOpened'),
+  assistantFailed: t('vulnerabilities.transfer.assistantFailed'),
   transferFailed: t('vulnerabilities.transfer.transferFailed', { error: '{error}' }),
 }))
 const detailTabs = computed<Array<{ id: DetailTabId; label: string }>>(() => {

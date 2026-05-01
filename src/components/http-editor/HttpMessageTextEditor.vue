@@ -33,6 +33,15 @@
         >
           <i class="fas fa-text-width"></i>
         </button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs editor-display-button"
+          :class="{ 'btn-active': settings.collapseHeaders }"
+          :title="headerCollapseToggleTitle"
+          @click="toggleHeaderCollapse"
+        >
+          <i class="fas fa-compress-alt"></i>
+        </button>
       </div>
     </div>
     <div ref="editorContainer" class="editor-container"></div>
@@ -124,6 +133,7 @@ import { useI18n } from 'vue-i18n'
 import { getHttpCodeThemeExtensions, isDarkHttpEditorTheme } from './httpEditorTheme'
 import { computeMinimalTextChange } from './httpEditorContentSync'
 import { createLineEndingIndicatorExtension, getDetectedLineEndingLabel } from './httpEditorDisplayExtensions'
+import { createHeaderCollapseExtension } from './httpEditorHeaderFold'
 import { createSearchHighlightExtension } from './httpEditorSearchHighlight'
 import { getHttpEditorLanguageExtensions, getHttpLanguageSignature } from './httpEditorHttpMode'
 import { useHttpEditorSyntaxWarmup } from './useHttpEditorSyntaxWarmup'
@@ -212,6 +222,7 @@ const readOnlyCompartment = new Compartment()
 const editableCompartment = new Compartment()
 const lineWrapCompartment = new Compartment()
 const lineEndingCompartment = new Compartment()
+const headerFoldCompartment = new Compartment()
 const languageCompartment = new Compartment()
 const themeCompartment = new Compartment()
 const markerCompartment = new Compartment()
@@ -234,6 +245,11 @@ const lineWrapToggleTitle = computed(() => (
   settings.value.wrapLongLines
     ? t('trafficAnalysis.httpEditor.toolbar.disableLineWrap')
     : t('trafficAnalysis.httpEditor.toolbar.enableLineWrap')
+))
+const headerCollapseToggleTitle = computed(() => (
+  settings.value.collapseHeaders
+    ? t('trafficAnalysis.httpEditor.toolbar.expandHeaders')
+    : t('trafficAnalysis.httpEditor.toolbar.collapseHeaders')
 ))
 const {
   forceVisibleSyntaxHighlight,
@@ -341,6 +357,14 @@ function getLineWrapExtension() {
 function getLineEndingExtension(content: string) {
   return settings.value.showLineEndings
     ? createLineEndingIndicatorExtension(getDetectedLineEndingLabel(content))
+    : []
+}
+
+function getHeaderFoldExtension() {
+  return props.messageType === 'request' || props.messageType === 'response'
+    ? createHeaderCollapseExtension(settings.value.collapseHeaders, count =>
+      t('trafficAnalysis.httpEditor.collapsedHeaders', { count }),
+    )
     : []
 }
 
@@ -744,6 +768,7 @@ function initEditor() {
       editableCompartment.of(EditorView.editable.of(!props.readonly)),
       lineWrapCompartment.of(getLineWrapExtension()),
       lineEndingCompartment.of(getLineEndingExtension(initialContent)),
+      headerFoldCompartment.of(getHeaderFoldExtension()),
     ],
   })
 
@@ -830,6 +855,13 @@ function updateLineEndings(enabled: boolean) {
   })
 }
 
+function updateHeaderFold() {
+  if (!editorView) return
+  editorView.dispatch({
+    effects: headerFoldCompartment.reconfigure(getHeaderFoldExtension()),
+  })
+}
+
 function updateTheme() {
   if (!editorView) return
   editorThemeMode.value = isDarkHttpEditorTheme() ? 'burp-dark' : 'burp-light'
@@ -890,6 +922,10 @@ function toggleLineEndingIndicators() {
   settings.value.showLineEndings = !settings.value.showLineEndings
 }
 
+function toggleHeaderCollapse() {
+  settings.value.collapseHeaders = !settings.value.collapseHeaders
+}
+
 defineExpose({
   focus: () => editorView?.focus(),
   focusSearch: focusSearchInput,
@@ -935,6 +971,7 @@ watch(searchRegexp, () => {
 watch(() => props.modelValue, (newVal) => {
   syncContentAndLanguage(newVal)
   updateLineEndings(settings.value.showLineEndings)
+  updateHeaderFold()
   updateTheme()
   updateSearchMetrics()
 })
@@ -972,6 +1009,7 @@ watch(
     const content = getEditorContent()
     syncContentAndLanguage(content)
     updateMarker()
+    updateHeaderFold()
     updateTheme()
   },
 )
@@ -982,6 +1020,10 @@ watch(() => settings.value.wrapLongLines, (enabled) => {
 
 watch(() => settings.value.showLineEndings, (enabled) => {
   updateLineEndings(enabled)
+})
+
+watch(() => settings.value.collapseHeaders, () => {
+  updateHeaderFold()
 })
 
 let themeObserver: MutationObserver | null = null
@@ -1186,6 +1228,19 @@ onUnmounted(() => {
   letter-spacing: 0.02em;
   pointer-events: none;
   user-select: none;
+}
+
+:deep(.cm-http-collapsed-headers) {
+  display: inline-flex;
+  align-items: center;
+  margin: 0.18rem 0;
+  padding: 0.16rem 0.45rem;
+  border: 1px solid rgba(125, 125, 125, 0.28);
+  border-radius: 0.35rem;
+  background: rgba(125, 125, 125, 0.12);
+  color: inherit;
+  font-size: 0.78em;
+  opacity: 0.75;
 }
 
 .http-code-editor.burp-light .editor-search-bar :deep(.input) {

@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { defineComponent, h, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ProxyRepeater from './ProxyRepeater.vue'
@@ -496,6 +496,83 @@ describe('ProxyRepeater', () => {
 
     const statsEvents = wrapper.emitted('tabStatsChanged')
     expect(statsEvents?.at(-1)?.[0]).toEqual({ editedTabCount: 1 })
+
+    wrapper.unmount()
+  })
+
+  it('sends the latest editor content even when tab state has not observed the edit yet', async () => {
+    const latestEditorContent = ref(
+      'POST /api/changed?fresh=1 HTTP/1.1\r\nHost: changed.example\r\nContent-Type: application/json\r\n\r\n{"edited":true}',
+    )
+    const HttpMessageSurfaceLatestContentStub = defineComponent({
+      name: 'HttpMessageSurface',
+      props: {
+        modelValue: {
+          type: String,
+          default: '',
+        },
+        stateKey: {
+          type: String,
+          default: '',
+        },
+      },
+      setup(props, { expose }) {
+        expose({
+          focus: vi.fn(),
+          getContent: () => props.stateKey.includes(':request:')
+            ? latestEditorContent.value
+            : props.modelValue,
+        })
+
+        return () => h('div', {
+          class: 'http-message-surface-stub',
+          'data-state-key': props.stateKey,
+          'data-testid': props.stateKey.includes(':request:') ? 'request-content' : 'response-content',
+        }, props.modelValue)
+      },
+    })
+
+    global.testUtils.mockInvoke.mockResolvedValueOnce({
+      success: true,
+      data: createReplayResult('response body', 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nresponse body'),
+    })
+
+    const wrapper = mount(ProxyRepeater, {
+      props: {
+        initialRequest: createInitialHttpExchangeRequest(),
+      },
+      global: createTrafficMessageViewTestGlobal({
+        appDialog: AppDialogStub,
+        httpMessageSurface: HttpMessageSurfaceLatestContentStub,
+        trafficMessageReader: TrafficMessageReaderStub,
+        trafficMessageViewTabs: TrafficMessageViewTabsStub,
+        stubs: {
+          TrafficResponseRenderPane: true,
+          TrafficContextMenuSections: true,
+        },
+      }),
+    })
+
+    await flushPromises()
+    await wrapper.get('button.btn-primary.btn-sm').trigger('click')
+    await flushPromises()
+
+    expect(global.testUtils.mockInvoke).toHaveBeenCalledWith('replay_raw_request', expect.objectContaining({
+      endpoint: expect.objectContaining({
+        host: 'changed.example',
+        port: 443,
+        scheme: 'https',
+      }),
+      request: expect.objectContaining({
+        method: 'POST',
+        target: '/api/changed?fresh=1',
+        bodyText: '{"edited":true}',
+        headers: expect.arrayContaining([
+          expect.objectContaining({ name: 'Host', value: 'changed.example' }),
+          expect.objectContaining({ name: 'Content-Type', value: 'application/json' }),
+        ]),
+      }),
+    }))
 
     wrapper.unmount()
   })

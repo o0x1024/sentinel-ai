@@ -394,6 +394,7 @@ export default {
       all: 'All',
       trafficAnalysis: 'Traffic Analysis Plugins',
       agents: 'Agent Tool Plugins',
+      bounty: 'Bug Bounty Plugins',
       builtinTools: 'Built-in Tool Plugins',
       mcpTools: 'MCP Tool Plugins',
       security: 'Security',

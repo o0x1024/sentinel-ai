@@ -424,7 +424,7 @@ const subCategories = computed<SubCategory[]>(() => {
       { value: 'report', label: t('plugins.trafficCategories.report', '报告'), icon: 'fas fa-file-alt' },
       { value: 'custom', label: t('plugins.trafficCategories.custom', '自定义'), icon: 'fas fa-wrench' }
     ]
-  } else if (store.newPluginMetadata.mainCategory === 'agent') {
+  } else if (store.newPluginMetadata.mainCategory === 'agent' || store.newPluginMetadata.mainCategory === 'bounty') {
     return [
       { value: 'recon', label: t('plugins.agentCategories.recon', '信息收集'), icon: 'fas fa-search' },
       { value: 'discovery', label: t('plugins.agentCategories.discovery', '目标发现'), icon: 'fas fa-compass' },
@@ -672,7 +672,7 @@ const handleFocusValidationIssue = (sectionKey: string, issueCode: string, messa
 
 // Handlers
 const handleInsertTemplate = async () => {
-  const isExecutionPlugin = ['agent', 'intruder'].includes(store.newPluginMetadata.mainCategory)
+  const isExecutionPlugin = ['agent', 'bounty', 'intruder'].includes(store.newPluginMetadata.mainCategory)
   try {
     const templateType = isExecutionPlugin ? 'agent' : 'traffic'
     // 使用完整的插件生成 prompt（包含任务说明、示例等）来提取模板代码
@@ -990,6 +990,7 @@ const handleCopyPlugin = async () => {
  * @name ${store.newPluginMetadata.name}
  * @version ${store.newPluginMetadata.version}
  * @author ${store.newPluginMetadata.author || 'Unknown'}
+ * @main_category ${store.newPluginMetadata.mainCategory}
  * @category ${backendCategory}
  * @default_severity ${store.newPluginMetadata.default_severity}
  * @tags ${tags.join(', ')}
@@ -1058,6 +1059,7 @@ const handleSavePlugin = async () => {
  * @name ${store.newPluginMetadata.name}
  * @version ${store.newPluginMetadata.version}
  * @author ${store.newPluginMetadata.author || 'Unknown'}
+ * @main_category ${store.newPluginMetadata.mainCategory}
  * @category ${backendCategory}
  * @default_severity ${store.newPluginMetadata.default_severity}
  * @tags ${tags.join(', ')}
@@ -1075,7 +1077,7 @@ const handleSavePlugin = async () => {
       author: store.newPluginMetadata.author || 'Unknown',
       main_category: store.newPluginMetadata.mainCategory,
       category: backendCategory,
-      monitor_type: store.newPluginMetadata.mainCategory === 'agent'
+      monitor_type: ['agent', 'bounty'].includes(store.newPluginMetadata.mainCategory)
         ? (store.newPluginMetadata.monitorType || null)
         : null,
       description: store.newPluginMetadata.description || '',
@@ -1133,7 +1135,7 @@ const handleCreateNewPlugin = async () => {
       author: store.newPluginMetadata.author || 'Unknown',
       main_category: store.newPluginMetadata.mainCategory,
       category: backendCategory,
-      monitor_type: store.newPluginMetadata.mainCategory === 'agent'
+      monitor_type: ['agent', 'bounty'].includes(store.newPluginMetadata.mainCategory)
         ? (store.newPluginMetadata.monitorType || null)
         : null,
       description: store.newPluginMetadata.description || '',
@@ -1191,7 +1193,7 @@ const handleSendAiMessage = async (message: string) => {
   try {
     // 使用插件编辑专用的接口文档（仅包含接口说明，不包含生成任务说明）
     // 这样 AI 会专注于编辑现有代码，而不是重新生成整个插件
-    const isExecutionPlugin = ['agent', 'intruder'].includes(store.newPluginMetadata.mainCategory)
+    const isExecutionPlugin = ['agent', 'bounty', 'intruder'].includes(store.newPluginMetadata.mainCategory)
     const interfaceDoc = await invoke<string>('get_plugin_interface_doc_api', {
       pluginType: isExecutionPlugin ? 'agent' : 'traffic'
     })
@@ -1642,7 +1644,7 @@ const handleTestPlugin = async () => {
   
   store.pluginTesting = true
   try {
-    const isExecutionPlugin = ['agent', 'intruder'].includes(store.editingPlugin.metadata.main_category)
+    const isExecutionPlugin = ['agent', 'bounty', 'intruder'].includes(store.editingPlugin.metadata.main_category)
     const command = isExecutionPlugin ? 'test_agent_plugin' : 'test_plugin'
     const resp = await invoke<CommandResponse<any>>(command, { 
       pluginId: store.editingPlugin.metadata.id,

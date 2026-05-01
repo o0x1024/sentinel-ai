@@ -1303,6 +1303,14 @@ pub async fn agent_execute(
                                 "Agent execution ended after cancellation for conversation: {}",
                                 conv_id
                             );
+                            emit_agent_execution_finished(
+                                &app_handle,
+                                &conv_id,
+                                AgentExecutionOutcome::Cancelled,
+                                None,
+                                None,
+                                Some("Execution cancelled by user".to_string()),
+                            );
                             return;
                         }
                         if attempted_model_vision {
@@ -1340,6 +1348,14 @@ pub async fn agent_execute(
                             tracing::info!(
                                 "Agent execution failed after cancellation for conversation: {}",
                                 conv_id
+                            );
+                            emit_agent_execution_finished(
+                                &app_handle,
+                                &conv_id,
+                                AgentExecutionOutcome::Cancelled,
+                                None,
+                                None,
+                                Some("Execution cancelled by user".to_string()),
                             );
                             return;
                         }
@@ -1397,7 +1413,22 @@ pub async fn agent_execute(
         )
         .await
         {
-            Ok(_) => {
+            Ok(response) => {
+                if is_conversation_cancelled(&conv_id) {
+                    tracing::info!(
+                        "Stream chat ended after cancellation for conversation: {}",
+                        conv_id
+                    );
+                    emit_agent_execution_finished(
+                        &app_handle,
+                        &conv_id,
+                        AgentExecutionOutcome::Cancelled,
+                        None,
+                        None,
+                        Some("Execution cancelled by user".to_string()),
+                    );
+                    return;
+                }
                 if attempted_model_vision {
                     if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
                         if let Err(e) = save_cached_model_vision_capability(
@@ -1418,9 +1449,32 @@ pub async fn agent_execute(
                         }
                     }
                 }
-                tracing::info!("Stream chat completed for conversation: {}", conv_id)
+                tracing::info!("Stream chat completed for conversation: {}", conv_id);
+                emit_agent_execution_finished(
+                    &app_handle,
+                    &conv_id,
+                    AgentExecutionOutcome::Succeeded,
+                    None,
+                    Some(response),
+                    None,
+                );
             }
             Err(e) => {
+                if is_conversation_cancelled(&conv_id) {
+                    tracing::info!(
+                        "Stream chat failed after cancellation for conversation: {}",
+                        conv_id
+                    );
+                    emit_agent_execution_finished(
+                        &app_handle,
+                        &conv_id,
+                        AgentExecutionOutcome::Cancelled,
+                        None,
+                        None,
+                        Some("Execution cancelled by user".to_string()),
+                    );
+                    return;
+                }
                 if attempted_model_vision {
                     if matches!(
                         classify_model_vision_capability_error(&e),
@@ -1446,7 +1500,15 @@ pub async fn agent_execute(
                         }
                     }
                 }
-                tracing::error!("Stream chat failed: {}", e)
+                tracing::error!("Stream chat failed: {}", e);
+                emit_agent_execution_finished(
+                    &app_handle,
+                    &conv_id,
+                    AgentExecutionOutcome::Failed,
+                    Some(e),
+                    None,
+                    None,
+                );
             }
         }
     });

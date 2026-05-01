@@ -938,17 +938,25 @@ pub fn run() {
                                     let description_str = p.metadata.description.as_deref().unwrap_or("Agent plugin tool");
                                     let code = db_plugin.get_plugin_code(&id).await.unwrap_or(None);
 
-                                    // 使用运行时调用获取 input_schema
-                                    let input_schema = if let Some(code_str) = &code {
-                                        sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
+                                    // 使用运行时调用获取 input_schema / output_schema
+                                    let (input_schema, output_schema) = if let Some(code_str) = &code {
+                                        let input_schema = sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
                                             code_str,
                                             p.metadata.clone(),
-                                        ).await
+                                        ).await;
+                                        let output_schema = sentinel_tools::plugin_adapter::PluginToolAdapter::get_output_schema_runtime_optional(
+                                            code_str,
+                                            p.metadata.clone(),
+                                        ).await;
+                                        (input_schema, output_schema)
                                     } else {
-                                        serde_json::json!({
-                                            "type": "object",
-                                            "properties": {}
-                                        })
+                                        (
+                                            serde_json::json!({
+                                                "type": "object",
+                                                "properties": {}
+                                            }),
+                                            None,
+                                        )
                                     };
                                     let default_input = load_plugin_default_inputs(
                                         db_plugin.as_ref(),
@@ -964,9 +972,9 @@ pub fn run() {
                                         name: p.metadata.name.clone(),
                                         description: description_str.to_string(),
                                         input_schema,
+                                        output_schema,
                                         default_input,
                                         code,
-                                        category: Some(p.metadata.category.clone()),
                                     });
                                 }
 
@@ -1014,6 +1022,12 @@ pub fn run() {
             commands::assistant_profile_commands::save_default_team_profile_id,
             ai::save_ai_message,
             ai::cancel_ai_stream,
+            commands::ai_parallel_commands::agent_execute_parallel,
+            commands::ai_parallel_commands::cancel_ai_parallel_model_run,
+            commands::ai_parallel_commands::cancel_ai_parallel_run,
+            commands::ai_parallel_commands::get_ai_parallel_run,
+            commands::ai_parallel_commands::record_ai_parallel_run_event,
+            commands::ai_parallel_commands::retry_ai_parallel_model_run,
             ai::cancel_shell_execution,
             ai_conversation_binding_support::get_ai_conversation_binding,
             ai_execution_state_support::get_ai_conversation,
@@ -1280,6 +1294,7 @@ pub fn run() {
             commands::surface_get_fingerprint_category_aggregation,
             commands::surface_list_fingerprint_assets,
             commands::surface_list_assets,
+            commands::surface_count_assets_by_type,
             commands::surface_list_inventory,
             commands::surface_get_inventory_facets,
             commands::surface_manual_import_assets,
@@ -1287,6 +1302,9 @@ pub fn run() {
             commands::surface_delete_asset,
             commands::surface_batch_delete_assets,
             commands::surface_delete_inventory,
+            commands::surface_mark_asset_viewed,
+            commands::surface_batch_mark_assets_viewed,
+            commands::surface_mark_inventory_viewed,
             commands::surface_list_relations,
             commands::surface_list_discovery_runs,
             commands::surface_get_topology,
@@ -1464,7 +1482,6 @@ pub fn run() {
             traffic::list_proxy_requests,
             traffic::get_proxy_request,
             traffic::get_proxy_request_preview,
-            traffic::get_proxy_request_response_body_chunk,
             traffic::resolve_proxy_history_request_id_by_db_request_id,
             traffic::load_traffic_draft_store,
             traffic::save_traffic_draft_store,
@@ -1607,6 +1624,7 @@ pub fn run() {
             commands::plugin_review_commands::get_favorited_plugins,
             commands::plugin_review_commands::get_plugin_review_statistics,
             commands::plugin_authoring_commands::plugin_authoring_execute,
+            commands::plugin_authoring_commands::render_agent_plugin_definition_command,
             // Notifications
             commands::notifications::send_notification,
             commands::notifications::create_notification_rule,

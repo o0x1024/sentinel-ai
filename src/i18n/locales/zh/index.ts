@@ -573,6 +573,7 @@ export default {
       all: '全部',
       trafficAnalysis: '流量分析插件',
       agents: 'Agent插件',
+      bounty: '漏洞赏金插件',
       security: '安全',
       automation: '自动化',
       reporting: '报告',

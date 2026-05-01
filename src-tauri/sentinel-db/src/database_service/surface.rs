@@ -43,6 +43,8 @@ pub struct SurfaceAssetRow {
     pub weak_password_flag: Option<bool>,
     pub expired_cert_flag: Option<bool>,
     pub exposed_to_internet_flag: Option<bool>,
+    pub viewed_at: Option<String>,
+    pub viewed_by: Option<String>,
     pub metadata_json: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -333,6 +335,7 @@ pub struct SurfaceAssetFilter {
     pub search: Option<String>,
     pub service_name: Option<String>,
     pub transport_protocol: Option<String>,
+    pub view_state: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -514,9 +517,9 @@ impl DatabaseService {
                         criticality, data_level, source, first_seen_at, last_seen_at, last_verified_at,
                         discovery_task_id, status, alive_status, confidence_score, fingerprint_confidence,
                         risk_score, risk_level, vulnerabilities_count, weak_password_flag,
-                        expired_cert_flag, exposed_to_internet_flag, metadata_json, created_at,
-                        updated_at, created_by, updated_by
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        expired_cert_flag, exposed_to_internet_flag, viewed_at, viewed_by,
+                        metadata_json, created_at, updated_at, created_by, updated_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                     .bind(&asset.id)
@@ -550,6 +553,8 @@ impl DatabaseService {
                     .bind(asset.weak_password_flag)
                     .bind(asset.expired_cert_flag)
                     .bind(asset.exposed_to_internet_flag)
+                    .bind(&asset.viewed_at)
+                    .bind(&asset.viewed_by)
                     .bind(&asset.metadata_json)
                     .bind(&asset.created_at)
                     .bind(&asset.updated_at)
@@ -567,9 +572,9 @@ impl DatabaseService {
                         criticality, data_level, source, first_seen_at, last_seen_at, last_verified_at,
                         discovery_task_id, status, alive_status, confidence_score, fingerprint_confidence,
                         risk_score, risk_level, vulnerabilities_count, weak_password_flag,
-                        expired_cert_flag, exposed_to_internet_flag, metadata_json, created_at,
-                        updated_at, created_by, updated_by
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        expired_cert_flag, exposed_to_internet_flag, viewed_at, viewed_by,
+                        metadata_json, created_at, updated_at, created_by, updated_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                     .bind(&asset.id)
@@ -603,6 +608,8 @@ impl DatabaseService {
                     .bind(asset.weak_password_flag)
                     .bind(asset.expired_cert_flag)
                     .bind(asset.exposed_to_internet_flag)
+                    .bind(&asset.viewed_at)
+                    .bind(&asset.viewed_by)
                     .bind(&asset.metadata_json)
                     .bind(&asset.created_at)
                     .bind(&asset.updated_at)
@@ -620,9 +627,9 @@ impl DatabaseService {
                         criticality, data_level, source, first_seen_at, last_seen_at, last_verified_at,
                         discovery_task_id, status, alive_status, confidence_score, fingerprint_confidence,
                         risk_score, risk_level, vulnerabilities_count, weak_password_flag,
-                        expired_cert_flag, exposed_to_internet_flag, metadata_json, created_at,
-                        updated_at, created_by, updated_by
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
+                        expired_cert_flag, exposed_to_internet_flag, viewed_at, viewed_by,
+                        metadata_json, created_at, updated_at, created_by, updated_by
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
                     "#,
                 )
                 .bind(&asset.id)
@@ -656,6 +663,8 @@ impl DatabaseService {
                 .bind(asset.weak_password_flag)
                 .bind(asset.expired_cert_flag)
                 .bind(asset.exposed_to_internet_flag)
+                .bind(&asset.viewed_at)
+                .bind(&asset.viewed_by)
                 .bind(&asset.metadata_json)
                 .bind(&asset.created_at)
                 .bind(&asset.updated_at)
@@ -685,8 +694,8 @@ impl DatabaseService {
                     last_verified_at = ?, discovery_task_id = ?, status = ?, alive_status = ?,
                     confidence_score = ?, fingerprint_confidence = ?, risk_score = ?, risk_level = ?,
                     vulnerabilities_count = ?, weak_password_flag = ?, expired_cert_flag = ?,
-                    exposed_to_internet_flag = ?, metadata_json = ?, updated_at = ?, created_by = ?,
-                    updated_by = ?
+                    exposed_to_internet_flag = ?, viewed_at = ?, viewed_by = ?, metadata_json = ?,
+                    updated_at = ?, created_by = ?, updated_by = ?
                 WHERE id = ?
                 "#,
             )
@@ -717,6 +726,8 @@ impl DatabaseService {
                 .bind(asset.weak_password_flag)
                 .bind(asset.expired_cert_flag)
                 .bind(asset.exposed_to_internet_flag)
+                .bind(&asset.viewed_at)
+                .bind(&asset.viewed_by)
                 .bind(&asset.metadata_json)
                 .bind(&asset.updated_at)
                 .bind(&asset.created_by)
@@ -734,8 +745,8 @@ impl DatabaseService {
                     last_verified_at = ?, discovery_task_id = ?, status = ?, alive_status = ?,
                     confidence_score = ?, fingerprint_confidence = ?, risk_score = ?, risk_level = ?,
                     vulnerabilities_count = ?, weak_password_flag = ?, expired_cert_flag = ?,
-                    exposed_to_internet_flag = ?, metadata_json = ?, updated_at = ?, created_by = ?,
-                    updated_by = ?
+                    exposed_to_internet_flag = ?, viewed_at = ?, viewed_by = ?, metadata_json = ?,
+                    updated_at = ?, created_by = ?, updated_by = ?
                 WHERE id = ?
                 "#,
             )
@@ -766,6 +777,8 @@ impl DatabaseService {
                 .bind(asset.weak_password_flag)
                 .bind(asset.expired_cert_flag)
                 .bind(asset.exposed_to_internet_flag)
+                .bind(&asset.viewed_at)
+                .bind(&asset.viewed_by)
                 .bind(&asset.metadata_json)
                 .bind(&asset.updated_at)
                 .bind(&asset.created_by)
@@ -783,9 +796,9 @@ impl DatabaseService {
                     last_verified_at = $16, discovery_task_id = $17, status = $18, alive_status = $19,
                     confidence_score = $20, fingerprint_confidence = $21, risk_score = $22, risk_level = $23,
                     vulnerabilities_count = $24, weak_password_flag = $25, expired_cert_flag = $26,
-                    exposed_to_internet_flag = $27, metadata_json = $28, updated_at = $29, created_by = $30,
-                    updated_by = $31
-                WHERE id = $32
+                    exposed_to_internet_flag = $27, viewed_at = $28, viewed_by = $29,
+                    metadata_json = $30, updated_at = $31, created_by = $32, updated_by = $33
+                WHERE id = $34
                 "#,
             )
                 .bind(&asset.display_name)
@@ -815,6 +828,8 @@ impl DatabaseService {
                 .bind(asset.weak_password_flag)
                 .bind(asset.expired_cert_flag)
                 .bind(asset.exposed_to_internet_flag)
+                .bind(&asset.viewed_at)
+                .bind(&asset.viewed_by)
                 .bind(&asset.metadata_json)
                 .bind(&asset.updated_at)
                 .bind(&asset.created_by)
@@ -826,6 +841,79 @@ impl DatabaseService {
         };
 
         Ok(rows > 0)
+    }
+
+    pub async fn mark_surface_assets_viewed(
+        &self,
+        asset_ids: &[String],
+        viewed_at: &str,
+        viewed_by: &str,
+    ) -> Result<usize> {
+        if asset_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let rows = match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(
+                    "UPDATE surface_assets SET viewed_at = ",
+                );
+                query_builder
+                    .push_bind(viewed_at.to_string())
+                    .push(", viewed_by = ")
+                    .push_bind(viewed_by.to_string())
+                    .push(" WHERE viewed_at IS NULL AND id IN (");
+                {
+                    let mut separated = query_builder.separated(", ");
+                    for asset_id in asset_ids {
+                        separated.push_bind(asset_id.clone());
+                    }
+                }
+                query_builder.push(")");
+                query_builder.build().execute(pool).await?.rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder =
+                    QueryBuilder::<MySql>::new("UPDATE surface_assets SET viewed_at = ");
+                query_builder
+                    .push_bind(viewed_at.to_string())
+                    .push(", viewed_by = ")
+                    .push_bind(viewed_by.to_string())
+                    .push(" WHERE viewed_at IS NULL AND id IN (");
+                {
+                    let mut separated = query_builder.separated(", ");
+                    for asset_id in asset_ids {
+                        separated.push_bind(asset_id.clone());
+                    }
+                }
+                query_builder.push(")");
+                query_builder.build().execute(pool).await?.rows_affected()
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder =
+                    QueryBuilder::<Postgres>::new("UPDATE surface_assets SET viewed_at = ");
+                query_builder
+                    .push_bind(viewed_at.to_string())
+                    .push(", viewed_by = ")
+                    .push_bind(viewed_by.to_string())
+                    .push(" WHERE viewed_at IS NULL AND id IN (");
+                {
+                    let mut separated = query_builder.separated(", ");
+                    for asset_id in asset_ids {
+                        separated.push_bind(asset_id.clone());
+                    }
+                }
+                query_builder.push(")");
+                query_builder.build().execute(pool).await?.rows_affected()
+            }
+        };
+
+        Ok(rows as usize)
     }
 
     pub async fn upsert_surface_asset(&self, asset: &SurfaceAssetRow) -> Result<SurfaceAssetRow> {

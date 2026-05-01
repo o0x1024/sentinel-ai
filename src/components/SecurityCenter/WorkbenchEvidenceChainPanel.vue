@@ -153,9 +153,12 @@ const transferMessages = computed(() => ({
   triggerLabel: wb('evidence.sendTo'),
   sendToRepeater: wb('evidence.sendToRepeater'),
   sendToIntruder: wb('evidence.sendToIntruder'),
+  sendToAssistant: wb('evidence.sendToAssistant'),
   noTransferableRequest: wb('evidence.noTransferableRequest'),
   repeaterOpened: wb('evidence.repeaterOpened'),
   intruderOpened: wb('evidence.intruderOpened'),
+  assistantOpened: wb('evidence.assistantOpened'),
+  assistantFailed: wb('evidence.assistantFailed'),
   transferFailed: wb('evidence.transferFailed', { error: '{error}' }),
 }))
 const rawPanelHeight = '18rem'

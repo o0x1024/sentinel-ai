@@ -90,8 +90,27 @@ export const buildAssistantModelOverride = (
     : undefined
 )
 
+const buildModelTarget = (modelKey?: string | null): { provider: string; model: string } | null => {
+  const [provider = '', ...modelParts] = String(modelKey || '').trim().split('/')
+  const model = modelParts.join('/').trim()
+  if (!provider.trim() || !model) return null
+  return {
+    provider: provider.trim(),
+    model,
+  }
+}
+
+const buildParallelModelTargets = (modelKeys: string[]) => (
+  modelKeys
+    .map(buildModelTarget)
+    .filter((item): item is { provider: string; model: string } => !!item)
+)
+
 export const executeConversationTask = async (params: {
   assistantContextMode: 'claude-like' | 'codex-like' | 'sentinel-like'
+  assistantExecutionMode?: 'single' | 'parallel'
+  assistantParallelJudgeModel?: string | null
+  assistantParallelSelectedModels?: string[]
   assistantSelectedModel?: string | null
   conversationId: string
   defaultConversationTitle: string
@@ -138,6 +157,15 @@ export const executeConversationTask = async (params: {
     }
     task: string
   }) => Promise<any>
+  runAgentExecuteParallel?: (request: {
+    request: {
+      config: Record<string, unknown>
+      aggregation_mode: 'manual' | 'judge'
+      judge_model?: { provider: string; model: string }
+      models: Array<{ provider: string; model: string }>
+      task: string
+    }
+  }) => Promise<any>
   runtimeToolConfig: unknown
   persistMessages?: boolean
   usedAssets: ReferencedAsset[]
@@ -169,9 +197,7 @@ export const executeConversationTask = async (params: {
     })
   }
 
-  return params.runAgentExecute({
-    task: params.fullTask,
-    config: {
+  const config = {
       attachments: params.usedAttachments.length > 0 ? params.usedAttachments : undefined,
       conversation_id: params.conversationId,
       context_mode: params.assistantContextMode,
@@ -193,6 +219,33 @@ export const executeConversationTask = async (params: {
       referenced_traffic: params.usedTraffic.length > 0 ? params.usedTraffic : undefined,
       timeout_secs: 300,
       tool_config: params.runtimeToolConfig,
-    },
+  }
+
+  const parallelTargets = buildParallelModelTargets(params.assistantParallelSelectedModels || [])
+  if (params.assistantExecutionMode === 'parallel') {
+    if (parallelTargets.length < 2) {
+      throw new Error('多模型并行执行至少需要选择两个模型。')
+    }
+    if (!params.runAgentExecuteParallel) {
+      throw new Error('Parallel agent execution command is not available.')
+    }
+    const judgeModel = buildModelTarget(params.assistantParallelJudgeModel)
+    return params.runAgentExecuteParallel({
+      request: {
+        task: params.fullTask,
+        config: {
+          ...config,
+          model_override: undefined,
+        },
+        models: parallelTargets,
+        aggregation_mode: judgeModel ? 'judge' : 'manual',
+        judge_model: judgeModel || undefined,
+      },
+    })
+  }
+
+  return params.runAgentExecute({
+    task: params.fullTask,
+    config,
   })
 }

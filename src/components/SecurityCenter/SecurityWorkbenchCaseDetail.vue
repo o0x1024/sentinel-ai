@@ -260,9 +260,12 @@ const transferMessages = computed(() => ({
   triggerLabel: wb('caseDetail.sendTo'),
   sendToRepeater: wb('caseDetail.sendToRepeater'),
   sendToIntruder: wb('caseDetail.sendToIntruder'),
+  sendToAssistant: wb('caseDetail.sendToAssistant'),
   noTransferableRequest: wb('evidence.noCaseTransferableRequest'),
   repeaterOpened: wb('evidence.repeaterOpened'),
   intruderOpened: wb('evidence.intruderOpened'),
+  assistantOpened: wb('evidence.assistantOpened'),
+  assistantFailed: wb('evidence.assistantFailed'),
   transferFailed: wb('evidence.transferFailed', { error: '{error}' }),
 }))
 

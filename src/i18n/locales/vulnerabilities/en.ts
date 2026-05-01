@@ -109,10 +109,13 @@ export default {
     triggerLabel: 'Send To',
     sendToRepeater: 'Send to Repeater',
     sendToIntruder: 'Send to Intruder',
+    sendToAssistant: 'Send to AI Assistant',
     noTransferableRequest: 'No raw request is available for this evidence.',
     noFindingTransferableRequest: 'No raw request is available for this finding.',
     repeaterOpened: 'Sent to Repeater',
     intruderOpened: 'Sent to Intruder',
+    assistantOpened: 'Sent to AI Assistant',
+    assistantFailed: 'Failed to send to AI Assistant',
     transferFailed: 'Failed to send request: {error}',
   },
   aiReview: {

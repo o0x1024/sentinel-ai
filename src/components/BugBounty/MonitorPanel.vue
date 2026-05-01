@@ -1018,7 +1018,7 @@ const refreshAvailablePluginsOnDropdownOpen = async () => {
 }
 
 const getPluginsByType = (monitorType: string) => {
-  const filtered = availablePlugins.value.filter((p: any) => p.monitor_type === monitorType)
+  const filtered = availablePlugins.value.filter((p: any) => p.monitor_type === monitorType && p.is_available !== false)
   console.log(`Plugins for ${monitorType}:`, filtered)
   return filtered
 }

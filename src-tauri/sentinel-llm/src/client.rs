@@ -334,7 +334,9 @@ impl LlmClient {
             let builder = openai::Client::builder()
                 .api_key(api_key)
                 .base_url(base_url);
-            let client: openai::CompletionsClient = self.config.apply_extra_headers(builder)?
+            let client: openai::CompletionsClient = self
+                .config
+                .apply_extra_headers(builder)?
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
                 .completions_api();
@@ -346,7 +348,9 @@ impl LlmClient {
         } else {
             info!("Using Responses API for official OpenAI");
             let builder = openai::Client::builder().api_key(api_key);
-            let client: openai::Client = self.config.apply_extra_headers(builder)?
+            let client: openai::Client = self
+                .config
+                .apply_extra_headers(builder)?
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?;
 

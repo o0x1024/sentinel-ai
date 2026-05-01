@@ -28,6 +28,16 @@
     >
       <i class="fas fa-text-width"></i>
     </button>
+    <button
+      v-if="showHeaderCollapse"
+      type="button"
+      class="traffic-display-control-button"
+      :class="{ active: settings.collapseHeaders }"
+      :title="headerCollapseToggleTitle"
+      @click="settings.collapseHeaders = !settings.collapseHeaders"
+    >
+      <i class="fas fa-compress-alt"></i>
+    </button>
   </div>
 </template>
 
@@ -40,11 +50,13 @@ withDefaults(defineProps<{
   modeLabel?: string
   showLineEndings?: boolean
   showLineWrap?: boolean
+  showHeaderCollapse?: boolean
   compact?: boolean
 }>(), {
   modeLabel: '',
   showLineEndings: true,
   showLineWrap: true,
+  showHeaderCollapse: true,
   compact: false,
 })
 
@@ -61,6 +73,12 @@ const lineWrapToggleTitle = computed(() => (
   settings.value.wrapLongLines
     ? t('trafficAnalysis.httpEditor.toolbar.disableLineWrap')
     : t('trafficAnalysis.httpEditor.toolbar.enableLineWrap')
+))
+
+const headerCollapseToggleTitle = computed(() => (
+  settings.value.collapseHeaders
+    ? t('trafficAnalysis.httpEditor.toolbar.expandHeaders')
+    : t('trafficAnalysis.httpEditor.toolbar.collapseHeaders')
 ))
 </script>
 

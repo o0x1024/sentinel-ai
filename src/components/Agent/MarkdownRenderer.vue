@@ -86,16 +86,17 @@ const markedOptions = {
   async: false as const,
 }
 
-// Store code blocks for copy/render functionality
-const codeBlocks = ref<{ code: string; lang: string }[]>([])
+// Store code blocks outside Vue reactivity because markdown rendering happens in a computed getter.
+type CodeBlock = { code: string; lang: string }
+let codeBlocks: CodeBlock[] = []
 
 // Custom renderer for code highlighting with action buttons
 const renderer = new marked.Renderer()
 renderer.code = ({ text, lang }: { text: string; lang?: string }) => {
   const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
   const highlighted = hljs.highlight(text, { language }).value
-  const blockIndex = codeBlocks.value.length
-  codeBlocks.value.push({ code: text, lang: language })
+  const blockIndex = codeBlocks.length
+  codeBlocks.push({ code: text, lang: language })
   
   // Show render button only for html/svg/xml
   const isRenderable = ['html', 'svg', 'xml'].includes(language.toLowerCase())
@@ -115,15 +116,9 @@ renderer.code = ({ text, lang }: { text: string; lang?: string }) => {
   </div>`
 }
 
-marked.use({ renderer })
-
-// Watch content changes to reset code blocks
-watch(() => props.content, () => {
-  codeBlocks.value = []
-}, { immediate: true })
-
 const renderedHtml = computed(() => {
   try {
+    codeBlocks = []
     let content = props.content
     
     // Highlight knowledge base citations [SOURCE n]
@@ -145,9 +140,13 @@ const renderedHtml = computed(() => {
     )
     
     // Use synchronous parsing with async: false
-    return marked.parse(content, markedOptions) as string
+    return marked.parse(content, {
+      ...markedOptions,
+      renderer,
+    }) as string
   } catch (e) {
     console.error('Markdown parsing error:', e)
+    codeBlocks = []
     return props.content
   }
 })
@@ -200,7 +199,7 @@ onMounted(() => {
 
 // Copy code to clipboard
 const copyCode = async (index: number) => {
-  const block = codeBlocks.value[index]
+  const block = codeBlocks[index]
   if (!block) return
   
   try {
@@ -213,7 +212,7 @@ const copyCode = async (index: number) => {
 
 // Render HTML code
 const renderHtmlCode = (index: number) => {
-  const block = codeBlocks.value[index]
+  const block = codeBlocks[index]
   if (!block) return
   
   emit('renderHtml', block.code)

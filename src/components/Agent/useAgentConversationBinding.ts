@@ -21,6 +21,7 @@ export const useAgentConversationBinding = (params: {
   currentBrowserShellDirectWriteEnabled: Ref<boolean>
   currentBrowserShellSessionId: Ref<string | null>
   activeTeamSessionId: Ref<string | null>
+  assistantGlobalDefaultModel: Ref<string>
   assistantSelectedModel: Ref<string>
   defaultAssistantProfileId: Ref<string>
   defaultToolConfig: Ref<UiToolConfigPayload>
@@ -66,8 +67,7 @@ export const useAgentConversationBinding = (params: {
   }
 
   const applyProfileModelDefault = (profile: AssistantProfileOption) => {
-    const defaultModel = profile.defaultModel?.trim()
-    if (!defaultModel) return
+    const defaultModel = profile.defaultModel?.trim() || params.assistantGlobalDefaultModel.value.trim()
     params.setAssistantSelectedModel(defaultModel, { persist: false })
   }
 

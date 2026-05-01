@@ -15,6 +15,14 @@ use crate::services::{
 };
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
+pub(crate) fn is_agent_tool_plugin_main_category(main_category: &str) -> bool {
+    main_category == "agent"
+}
+
+pub(crate) fn is_execution_plugin_main_category(main_category: &str) -> bool {
+    matches!(main_category, "agent" | "bounty" | "intruder")
+}
+
 pub(crate) async fn refresh_active_agent_plugin_tools(
     db: &DatabaseService,
 ) -> Result<usize, String> {
@@ -41,17 +49,28 @@ pub(crate) async fn refresh_active_agent_plugin_tools(
             .await
             .map_err(|e| format!("Failed to load plugin code for {}: {}", plugin_id, e))?;
 
-        let input_schema = if let Some(code_str) = &code {
-            sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
-                code_str,
-                plugin.metadata.clone(),
-            )
-            .await
+        let (input_schema, output_schema) = if let Some(code_str) = &code {
+            let input_schema =
+                sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
+                    code_str,
+                    plugin.metadata.clone(),
+                )
+                .await;
+            let output_schema =
+                sentinel_tools::plugin_adapter::PluginToolAdapter::get_output_schema_runtime_optional(
+                    code_str,
+                    plugin.metadata.clone(),
+                )
+                .await;
+            (input_schema, output_schema)
         } else {
-            serde_json::json!({
-                "type": "object",
-                "properties": {}
-            })
+            (
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+                None,
+            )
         };
         let default_input = load_plugin_default_inputs(db, &plugin_id).await?;
 
@@ -65,9 +84,9 @@ pub(crate) async fn refresh_active_agent_plugin_tools(
                 .unwrap_or("Agent plugin tool")
                 .to_string(),
             input_schema,
+            output_schema,
             default_input,
             code,
-            category: Some(plugin.metadata.category.clone()),
         });
     }
 
@@ -93,7 +112,7 @@ pub(crate) fn resolved_store_plugin_monitor_type(
         return Some(monitor_type);
     }
 
-    if main_category != "agent" {
+    if !matches!(main_category, "agent" | "bounty") {
         return None;
     }
 
@@ -290,7 +309,7 @@ pub async fn enable_plugin(
 
     tracing::info!("Plugin enabled in database: {}", plugin_id);
 
-    if main_category == "agent" {
+    if is_agent_tool_plugin_main_category(&main_category) {
         if let Err(e) = refresh_active_agent_plugin_tools(db.as_ref()).await {
             tracing::warn!(
                 "Failed to refresh active agent tools after enabling plugin {}: {}",
@@ -363,7 +382,7 @@ pub async fn disable_plugin(
 
     tracing::info!("Plugin disabled in database: {}", plugin_id);
 
-    if main_category == "agent" {
+    if is_agent_tool_plugin_main_category(&main_category) {
         if let Err(e) = refresh_active_agent_plugin_tools(db.as_ref()).await {
             tracing::warn!(
                 "Failed to refresh active agent tools after disabling plugin {}: {}",
@@ -817,7 +836,7 @@ pub async fn create_plugin_in_db(
     tracing::info!("Plugin created/updated in database: {}", plugin_id);
 
     let plugin_manager = state.get_plugin_manager();
-    if matches!(plugin.main_category.as_str(), "agent" | "intruder") {
+    if is_execution_plugin_main_category(plugin.main_category.as_str()) {
         let runtime_metadata = PluginMetadata {
             id: plugin.id.clone(),
             name: plugin.name.clone(),
@@ -945,7 +964,7 @@ pub async fn update_plugin(
         }
     }
 
-    if main_category == "agent" {
+    if is_agent_tool_plugin_main_category(&main_category) {
         let tool_server = sentinel_tools::tool_server::get_tool_server();
         let sanitized_id = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
         let tool_name = format!("plugin__{}", sanitized_id);
@@ -957,7 +976,7 @@ pub async fn update_plugin(
             name: plugin_name.clone(),
             version: "1.0.0".to_string(),
             author: None,
-            main_category: "agent".to_string(),
+            main_category: main_category.clone(),
             category: plugin_category
                 .clone()
                 .unwrap_or_else(|| "other".to_string()),
@@ -969,6 +988,12 @@ pub async fn update_plugin(
         };
         let input_schema =
             sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
+                &plugin_code,
+                plugin_metadata.clone(),
+            )
+            .await;
+        let output_schema =
+            sentinel_tools::plugin_adapter::PluginToolAdapter::get_output_schema_runtime_optional(
                 &plugin_code,
                 plugin_metadata,
             )
@@ -1002,8 +1027,7 @@ pub async fn update_plugin(
                 &plugin_name,
                 &plugin_description,
                 input_schema,
-                None,
-                plugin_category,
+                output_schema,
                 executor,
             )
             .await;
@@ -1075,10 +1099,10 @@ pub async fn test_plugin(
         let main_category = record.metadata.main_category.clone();
         let enabled = record.status == sentinel_plugins::PluginStatus::Enabled;
 
-        if main_category == "agent" {
+        if is_execution_plugin_main_category(&main_category) {
             return Ok(CommandResponse::ok(TestPluginResult {
                 success: false,
-                message: Some("该插件属于 Agent 工具类别，请使用 Agent 测试入口".to_string()),
+                message: Some("该插件属于执行型插件类别，请使用 Agent 测试入口".to_string()),
                 findings: None,
                 error: Some("WrongTestEndpoint".to_string()),
             }));
@@ -1453,7 +1477,7 @@ pub async fn test_agent_plugin(
 
     if !matches!(
         plugin_record.metadata.main_category.as_str(),
-        "agent" | "intruder"
+        "agent" | "bounty" | "intruder"
     ) {
         return Ok(CommandResponse::ok(AgentTestResult {
             success: false,

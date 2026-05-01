@@ -330,7 +330,7 @@ import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import type { PluginRecord, CommandResponse } from './types'
-import { agentsCategories, intruderCategories, trafficCategories } from './types'
+import { agentsCategories, bountyCategories, intruderCategories, trafficCategories } from './types'
 import { PluginStoreCache, ViewModeStorage } from '@/services/cache'
 
 // Store plugin interface
@@ -400,12 +400,14 @@ const viewMode = ref<'list' | 'card'>('list')
 
 const trafficCategoryKeys = new Set(trafficCategories)
 const agentCategoryKeys = new Set(agentsCategories)
+const bountyCategoryKeys = new Set(bountyCategories)
 const intruderCategoryKeys = new Set(intruderCategories)
 
 // Computed
 const storeMainCategories = computed(() => [
   { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件') },
   { value: 'agent', label: t('plugins.categories.agents', 'Agent插件') },
+  { value: 'bounty', label: t('plugins.categories.bounty', '漏洞赏金插件') },
   { value: 'intruder', label: t('plugins.categories.intruder', 'Intruder插件') },
 ])
 
@@ -466,6 +468,7 @@ const hasUpdate = (plugin: StorePlugin): boolean => {
 const getMainCategoryLabel = (mainCategory: string): string => {
   if (mainCategory === 'traffic') return t('plugins.categories.trafficAnalysis', 'Traffic Analysis Plugins')
   if (mainCategory === 'agent') return t('plugins.categories.agents', 'Agent Tool Plugins')
+  if (mainCategory === 'bounty') return t('plugins.categories.bounty', 'Bug Bounty Plugins')
   if (mainCategory === 'intruder') return t('plugins.categories.intruder', 'Intruder Plugins')
   return mainCategory
 }
@@ -473,6 +476,10 @@ const getMainCategoryLabel = (mainCategory: string): string => {
 const getSubCategoryLabel = (mainCategory: string, category: string): string => {
   if (trafficCategoryKeys.has(category) || mainCategory === 'traffic') {
     return t(`plugins.trafficCategories.${category}`, category)
+  }
+
+  if (bountyCategoryKeys.has(category) || mainCategory === 'bounty') {
+    return t(`plugins.agentCategories.${category}`, category)
   }
 
   if (agentCategoryKeys.has(category) || mainCategory === 'agent') {
@@ -489,6 +496,7 @@ const getSubCategoryLabel = (mainCategory: string, category: string): string => 
 const getMainCategoryBadgeClass = (mainCategory: string): string => {
   if (mainCategory === 'traffic') return 'badge-info'
   if (mainCategory === 'agent') return 'badge-warning'
+  if (mainCategory === 'bounty') return 'badge-accent'
   if (mainCategory === 'intruder') return 'badge-secondary'
   return 'badge-ghost'
 }

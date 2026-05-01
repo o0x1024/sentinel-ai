@@ -395,10 +395,10 @@ type BugBountyTab =
   | 'workflows'
   | 'monitor'
 
-const activeTab = ref<BugBountyTab>('programs')
+const activeTab = ref<BugBountyTab>('assets')
 const mountedTabs = ref<Record<BugBountyTab, boolean>>({
-  programs: true,
-  assets: false,
+  programs: false,
+  assets: true,
   'api-inventory': false,
   findings: false,
   knowledge: false,

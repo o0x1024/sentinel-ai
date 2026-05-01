@@ -13,6 +13,7 @@ const defaultSettings: TrafficDisplaySettings = {
   highlightResponseSyntax: true,
   wrapLongLines: true,
   showLineEndings: false,
+  collapseHeaders: false,
   prettyPrintByDefault: true,
   showSendToRepeater: true,
   showSendToComparer: true,

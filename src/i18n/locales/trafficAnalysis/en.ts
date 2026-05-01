@@ -55,11 +55,14 @@ export default {
     modePlain: 'Plain',
   },
   httpEditor: {
+    collapsedHeaders: '{count} headers collapsed',
     toolbar: {
       showLineEndings: 'Show line endings',
       hideLineEndings: 'Hide line endings',
       enableLineWrap: 'Enable line wrapping',
       disableLineWrap: 'Disable line wrapping',
+      collapseHeaders: 'Collapse headers',
+      expandHeaders: 'Expand headers',
     },
   },
   aiWorkspace: {
@@ -1054,6 +1057,7 @@ export default {
     highlightRequestSyntax: 'Highlight request syntax',
     highlightResponseSyntax: 'Highlight response syntax',
     prettyPrintByDefault: 'Pretty print by default',
+    collapseHeadersByDefault: 'Collapse headers by default',
     showSendToRepeater: 'Show "Send to Repeater"',
     showSendToComparer: 'Show "Send to Comparer"',
     showSendToIntruder: 'Show "Send to Intruder"',

@@ -7,10 +7,6 @@ export function isProxyRequestInScope(
   excludeRules: ProxyScopeRule[],
 ) {
   const enabledIncludeRules = includeRules.filter(rule => rule.enabled)
-  if (enabledIncludeRules.length === 0) {
-    return false
-  }
-
   const url = safeParseUrl(request.url)
   if (!url) {
     return false
@@ -18,6 +14,10 @@ export function isProxyRequestInScope(
 
   if (excludeRules.some(rule => rule.enabled && matchesProxyScopeRule(url, rule))) {
     return false
+  }
+
+  if (enabledIncludeRules.length === 0) {
+    return true
   }
 
   return enabledIncludeRules.some(rule => matchesProxyScopeRule(url, rule))
@@ -71,7 +71,17 @@ function matchesHost(hostname: string, pattern: string) {
     return false
   }
 
-  return wildcardPatternToRegExp(normalizedPattern).test(normalizedHost)
+  if (normalizedPattern === '*') {
+    return true
+  }
+
+  const wildcardSuffix = normalizedPattern.match(/^\*\.([a-z0-9.-]+)$/)
+  if (wildcardSuffix) {
+    const suffix = wildcardSuffix[1]
+    return normalizedHost === suffix || normalizedHost.endsWith(`.${suffix}`)
+  }
+
+  return exactOrRegexMatches(normalizedPattern, normalizedHost)
 }
 
 function matchesPort(url: URL, portPattern: string) {
@@ -81,7 +91,7 @@ function matchesPort(url: URL, portPattern: string) {
   }
 
   const effectivePort = url.port || (url.protocol === 'https:' ? '443' : '80')
-  return wildcardPatternToRegExp(normalizedPattern).test(effectivePort)
+  return exactOrRegexMatches(normalizedPattern, effectivePort)
 }
 
 function matchesPath(pathname: string, filePattern: string) {
@@ -90,11 +100,17 @@ function matchesPath(pathname: string, filePattern: string) {
     return true
   }
 
-  return wildcardPatternToRegExp(normalizedPattern.toLowerCase()).test(pathname.toLowerCase())
+  return exactOrRegexMatches(normalizedPattern.toLowerCase(), pathname.toLowerCase())
 }
 
-function wildcardPatternToRegExp(pattern: string) {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-  const source = `^${escaped.replace(/\*/g, '.*')}$`
-  return new RegExp(source, 'i')
+function exactOrRegexMatches(pattern: string, actual: string) {
+  if (actual.toLowerCase() === pattern.toLowerCase()) {
+    return true
+  }
+
+  try {
+    return new RegExp(pattern, 'i').test(actual)
+  } catch {
+    return false
+  }
 }

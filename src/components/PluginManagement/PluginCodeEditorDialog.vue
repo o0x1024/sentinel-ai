@@ -118,7 +118,7 @@
           </select>
         </div>
 
-        <div v-if="newPluginMetadata.mainCategory === 'agent'" class="form-control">
+        <div v-if="newPluginMetadata.mainCategory === 'agent' || newPluginMetadata.mainCategory === 'bounty'" class="form-control">
           <label class="label">
             <span class="label-text">{{ $t('plugins.monitorType', '监控调度分类') }}</span>
           </label>

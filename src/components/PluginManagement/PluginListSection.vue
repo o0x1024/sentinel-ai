@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- View Mode Toggle -->
-    <div v-if="selectedCategory === 'all'" class="mb-4 flex flex-wrap items-center gap-2">
+    <div class="mb-4 flex flex-wrap items-center gap-2">
       <button class="btn btn-sm" :class="pluginViewMode === 'favorited' ? 'btn-primary' : 'btn-ghost'"
         @click="$emit('update:pluginViewMode', 'favorited')">
         <i class="fas fa-star mr-1"></i>
@@ -55,7 +55,7 @@
       </button>
 
       <!-- Batch Toggle Buttons -->
-      <div v-if="selectedCategory === 'all'" class="ml-auto flex gap-2">
+      <div class="ml-auto flex gap-2">
         <button class="btn btn-sm btn-success" :disabled="filteredPlugins.length === 0 || pluginBatchProcessing"
           @click="$emit('batchEnable')">
           <span v-if="batchToggling" class="loading loading-spinner"></span>
@@ -256,7 +256,7 @@
             <td>
               <div class="flex gap-1 flex-wrap">
                 <!-- Favorite Button -->
-                <div v-if="isTrafficPluginType(plugin) || isAgentPluginType(plugin)" class="tooltip"
+                <div v-if="isTrafficPluginType(plugin) || isAgentPluginType(plugin) || isBountyPluginType(plugin)" class="tooltip"
                   :data-tip="isPluginFavorited(plugin) ? $t('plugins.unfavorite', '取消收藏') : $t('plugins.favorite', '收藏插件')">
                   <button class="btn btn-sm btn-ghost" :disabled="pluginBatchProcessing" @click="$emit('toggleFavorite', plugin)">
                     <i :class="isPluginFavorited(plugin) ? 'fas fa-star text-yellow-500' : 'far fa-star'"></i>
@@ -265,7 +265,7 @@
 
                 <!-- Test Plugin -->
                 <div class="tooltip"
-                  :data-tip="isAgentPluginType(plugin) ? '测试 Agent 工具 (analyze)' : '测试流量分析 (scan_request/scan_response)'">
+                  :data-tip="isAgentPluginType(plugin) || isBountyPluginType(plugin) ? '测试执行型插件 (analyze)' : '测试流量分析 (scan_request/scan_response)'">
                   <button class="btn btn-sm btn-outline" :disabled="pluginBatchProcessing" @click="$emit('testPlugin', plugin)">
                     <i class="fas fa-vial mr-1"></i>
                   </button>
@@ -278,7 +278,7 @@
                 </div>
 
                 <!-- Advanced Test -->
-                <div class="tooltip" :data-tip="isAgentPluginType(plugin) ? 'Agent 高级测试' : '流量分析高级测试'">
+                <div class="tooltip" :data-tip="isAgentPluginType(plugin) || isBountyPluginType(plugin) ? '执行型插件高级测试' : '流量分析高级测试'">
                   <button class="btn btn-sm btn-outline" :disabled="pluginBatchProcessing" @click="$emit('advancedTest', plugin)">
                     <i class="fas fa-gauge-high mr-1"></i>
                   </button>
@@ -352,7 +352,6 @@ import type { PluginRecord } from './types'
 import { useActiveTools } from '@/composables/useActiveTools'
 
 const props = defineProps<{
-  selectedCategory: string
   pluginViewMode: 'favorited' | 'all'
   filteredPlugins: PluginRecord[]
   paginatedPlugins: PluginRecord[]
@@ -382,6 +381,7 @@ const props = defineProps<{
   isPluginFavorited: (plugin: PluginRecord) => boolean
   isTrafficPluginType: (plugin: PluginRecord) => boolean
   isAgentPluginType: (plugin: PluginRecord) => boolean
+  isBountyPluginType: (plugin: PluginRecord) => boolean
   canDeletePlugins: boolean
   canViewPluginCode: boolean
 }>()

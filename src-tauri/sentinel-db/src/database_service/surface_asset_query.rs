@@ -406,6 +406,18 @@ pub(crate) fn push_surface_asset_filters<'args, DB>(
         query_builder.push_bind(normalized).push(")");
         query_builder.push(")");
     }
+    if let Some(view_state) = filter
+        .view_state
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        match view_state {
+            "new" => query_builder.push(" AND viewed_at IS NULL"),
+            "viewed" => query_builder.push(" AND viewed_at IS NOT NULL"),
+            _ => query_builder.push(" AND 1=0"),
+        };
+    }
     push_surface_asset_search_filters(query_builder, filter);
 }
 

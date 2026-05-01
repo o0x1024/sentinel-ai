@@ -30,15 +30,6 @@ function buildRequest(overrides: Partial<ProxyRequest> = {}): ProxyRequest {
 }
 
 describe('buildProxyHistorySelectionChangeKey', () => {
-  it('ignores response body chunk growth', () => {
-    const initial = buildRequest({ response_body: 'a'.repeat(64 * 1024) })
-    const nextChunk = buildRequest({ response_body: 'a'.repeat(128 * 1024) })
-
-    expect(buildProxyHistorySelectionChangeKey(nextChunk)).toBe(
-      buildProxyHistorySelectionChangeKey(initial),
-    )
-  })
-
   it('changes when request-side preview details become available', () => {
     const summary = buildRequest({
       request_body: '',

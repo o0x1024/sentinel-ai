@@ -44,7 +44,7 @@ pub async fn test_plugin_code(
 
             match metadata.main_category.as_str() {
                 "traffic" => execute_traffic_plugin(executor).await,
-                "agent" | "intruder" => {
+                "agent" | "bounty" | "intruder" => {
                     let input = inputs.unwrap_or_else(|| default_execution_input(&metadata));
                     execute_execution_plugin(executor, input).await
                 }

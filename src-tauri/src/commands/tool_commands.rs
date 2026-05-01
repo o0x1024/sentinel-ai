@@ -279,6 +279,7 @@ pub struct PortDef {
 async fn get_plugin_input_schema_async(
     plugin_id: &str,
     plugin_name: &str,
+    main_category: &str,
     code: &str,
 ) -> serde_json::Value {
     // 构建临时元数据
@@ -287,12 +288,12 @@ async fn get_plugin_input_schema_async(
         name: plugin_name.to_string(),
         version: "1.0.0".to_string(),
         author: None,
-        main_category: "agent".to_string(),
+        main_category: main_category.to_string(),
         category: "tool".to_string(),
         monitor_type: None,
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
-        description: Some(format!("Agent tool plugin: {}", plugin_name)),
+        description: Some(format!("Plugin tool: {}", plugin_name)),
         target_asset_types: Vec::new(),
     };
 
@@ -672,15 +673,15 @@ pub async fn build_node_catalog(
         );
     }
 
-    // Agent 插件工具节点 - 从数据库获取已启用的 Agent 工具插件
+    // 执行型插件工具节点 - 从数据库获取已启用的 Agent / Bounty 插件
     if let Ok(plugins) = traffic_state.list_plugins_internal().await {
         // 获取数据库服务用于查询插件代码
         let db_service = Some(traffic_state.get_db_service());
 
         for plugin in plugins {
-            // 只添加已启用的 Agent 类型插件
+            // 普通 Agent 工具策略只加载 agent；工作流目录需要包含 bounty 执行插件。
             if plugin.status == sentinel_traffic::PluginStatus::Enabled
-                && plugin.metadata.main_category == "agent"
+                && matches!(plugin.metadata.main_category.as_str(), "agent" | "bounty")
             {
                 // 获取插件代码并通过运行时获取 schema（优先），静态解析作为 fallback
                 let params_schema = if let Some(ref db) = db_service {
@@ -689,6 +690,7 @@ pub async fn build_node_catalog(
                         get_plugin_input_schema_async(
                             &plugin.metadata.id,
                             &plugin.metadata.name,
+                            &plugin.metadata.main_category,
                             &code,
                         )
                         .await
@@ -729,7 +731,7 @@ pub async fn build_node_catalog(
                 });
 
                 tracing::debug!(
-                    "Added Agent plugin node: plugin::{} - {}",
+                    "Added execution plugin node: plugin::{} - {}",
                     plugin.metadata.id,
                     plugin.metadata.name
                 );

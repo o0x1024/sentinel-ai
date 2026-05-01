@@ -61,7 +61,7 @@ const props = defineProps<{
   visible: boolean
   title: string
   programId?: string | null
-  statusFilter?: 'all' | 'active'
+  statusFilter?: 'all' | 'active' | 'new'
 }>()
 
 defineEmits<{
@@ -72,17 +72,7 @@ const { t } = useI18n()
 
 const loading = ref(false)
 const error = ref('')
-const assets = ref<any[]>([])
-const typeCounts = computed(() => {
-  const counts = new Map<string, number>()
-  for (const asset of assets.value) {
-    const type = String(asset.asset_type || 'unknown')
-    counts.set(type, (counts.get(type) || 0) + 1)
-  }
-  return [...counts.entries()]
-    .map(([type, count]) => ({ type, count }))
-    .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type))
-})
+const typeCounts = ref<Array<{ type: string; count: number }>>([])
 const totalCount = computed(() => typeCounts.value.reduce((sum, item) => sum + item.count, 0))
 
 const formatAssetType = (value?: string) => {
@@ -97,32 +87,26 @@ const loadAssets = async () => {
   try {
     loading.value = true
     error.value = ''
-    if (props.statusFilter === 'active') {
-      const rows = await invoke<any[]>('surface_list_assets', {
-        filter: {
-          program_id: props.programId || null,
-          asset_type: null,
-          status: 'active',
-          search: null,
-          limit: null,
-          offset: null,
-        },
-      })
-      assets.value = rows
-      return
-    }
-
-    const overview = await invoke<any>('surface_get_overview', {
-      programId: props.programId || null,
+    const counts = await invoke<Record<string, number>>('surface_count_assets_by_type', {
+      filter: {
+        program_id: props.programId || null,
+        asset_type: null,
+        status: props.statusFilter === 'active' ? 'active' : null,
+        view_state: props.statusFilter === 'new' ? 'new' : null,
+        search: null,
+        service_name: null,
+        transport_protocol: null,
+        limit: null,
+        offset: null,
+      },
     })
 
-    const byType = overview?.by_type || {}
-    assets.value = Object.entries(byType).flatMap(([asset_type, count]) =>
-      Array.from({ length: Number(count || 0) }, () => ({ asset_type })),
-    )
+    typeCounts.value = Object.entries(counts || {})
+      .map(([type, count]) => ({ type, count: Number(count || 0) }))
+      .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type))
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
-    assets.value = []
+    typeCounts.value = []
   } finally {
     loading.value = false
   }

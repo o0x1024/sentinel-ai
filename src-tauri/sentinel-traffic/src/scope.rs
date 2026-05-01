@@ -86,7 +86,8 @@ fn target_is_in_scope(
     include_rules: &[ProxyScopeRule],
     exclude_rules: &[ProxyScopeRule],
 ) -> bool {
-    let include_matches = include_rules.is_empty()
+    let has_enabled_include_rules = include_rules.iter().any(|rule| rule.enabled);
+    let include_matches = !has_enabled_include_rules
         || include_rules
             .iter()
             .filter(|rule| rule.enabled)
@@ -211,6 +212,45 @@ mod tests {
             "https://example.com/api/orders/1",
             &[],
             &[],
+        ));
+    }
+
+    #[test]
+    fn disabled_include_rules_allow_all() {
+        let include = vec![ProxyScopeRule {
+            enabled: false,
+            host_or_ip_range: "^console\\.volcengine\\.com$".to_string(),
+            ..Default::default()
+        }];
+
+        assert!(url_is_in_scope(
+            "https://api.other.com/orders",
+            &include,
+            &[],
+        ));
+    }
+
+    #[test]
+    fn disabled_include_rules_still_honor_exclude_rules() {
+        let include = vec![ProxyScopeRule {
+            enabled: false,
+            host_or_ip_range: "^console\\.volcengine\\.com$".to_string(),
+            ..Default::default()
+        }];
+        let exclude = vec![ProxyScopeRule {
+            host_or_ip_range: "^blocked\\.example\\.com$".to_string(),
+            ..Default::default()
+        }];
+
+        assert!(!url_is_in_scope(
+            "https://blocked.example.com/orders",
+            &include,
+            &exclude,
+        ));
+        assert!(url_is_in_scope(
+            "https://allowed.example.com/orders",
+            &include,
+            &exclude,
         ));
     }
 

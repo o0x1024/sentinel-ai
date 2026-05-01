@@ -2,8 +2,9 @@
 //!
 //! 管理多个 AI 提供商配置，从数据库加载配置并创建 AiService 实例。
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::AppHandle;
@@ -22,6 +23,34 @@ pub struct AiServiceManager {
     services: Arc<std::sync::RwLock<HashMap<String, AiServiceWrapper>>>,
     db: Arc<dyn Database + Send + Sync>,
     app_handle: Arc<std::sync::RwLock<Option<AppHandle>>>,
+}
+
+fn parse_provider_extra_body(provider_label: &str, value: Option<&Value>) -> Result<Option<Value>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    if !value.is_object() {
+        return Err(anyhow!(
+            "Provider '{}' extra_body must be a JSON object",
+            provider_label
+        ));
+    }
+    Ok(Some(value.clone()))
+}
+
+fn validate_provider_extra_body(provider_label: &str, value: &Option<Value>) -> Result<()> {
+    if let Some(value) = value {
+        if !value.is_object() {
+            return Err(anyhow!(
+                "Provider '{}' extra_body must be a JSON object",
+                provider_label
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// 包装 AiService 并添加应用特定功能
@@ -229,7 +258,10 @@ impl AiServiceManager {
                                 let extra_headers = provider_obj
                                     .get("extra_headers")
                                     .and_then(|v| serde_json::from_value(v.clone()).ok());
-                                let extra_body = provider_obj.get("extra_body").cloned();
+                                let extra_body = parse_provider_extra_body(
+                                    provider_name,
+                                    provider_obj.get("extra_body"),
+                                )?;
 
                                 return Ok(Some(AiConfig {
                                     provider: provider_name.to_string(),
@@ -438,6 +470,10 @@ impl AiServiceManager {
                         if default_model.is_empty() {
                             warn!("Provider {} has no default model configured, service may not work properly", provider_config.name);
                         }
+                        validate_provider_extra_body(
+                            &provider_config.name,
+                            &provider_config.extra_body,
+                        )?;
 
                         let api_base = provider_config.api_base.filter(|s| !s.is_empty());
                         let organization = provider_config.organization.filter(|s| !s.is_empty());

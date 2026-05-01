@@ -1,9 +1,9 @@
-import type { TeamV4SolverAssignment } from '@/types/teamRuntime'
+import type { TeamV4SpecialistAssignment } from '@/types/teamRuntime'
 
 export const runTeamV4AssignmentsWithDependencies = async <T>(
-  assignments: TeamV4SolverAssignment[],
-  maxSolvers: number,
-  worker: (assignment: TeamV4SolverAssignment, index: number) => Promise<T>,
+  assignments: TeamV4SpecialistAssignment[],
+  maxSpecialists: number,
+  worker: (assignment: TeamV4SpecialistAssignment, index: number) => Promise<T>,
 ) => {
   const idToIndex = new Map(assignments.map((assignment, index) => [assignment.task.id, index]))
   assignments.forEach((assignment) => {
@@ -19,7 +19,7 @@ export const runTeamV4AssignmentsWithDependencies = async <T>(
   const completed = new Set<string>()
   const running = new Set<string>()
   const pending = new Set(assignments.map((assignment) => assignment.task.id))
-  const concurrency = Math.max(1, Math.floor(maxSolvers))
+  const concurrency = Math.max(1, Math.floor(maxSpecialists))
   let rejected = false
 
   return new Promise<T[]>((resolve, reject) => {

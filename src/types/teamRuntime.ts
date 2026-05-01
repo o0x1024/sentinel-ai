@@ -13,7 +13,7 @@ export interface TeamV4Agent {
   id: string
   run_id: string
   profile_id?: string | null
-  role_type: 'commander' | 'solver' | 'observer' | 'harness'
+  role_type: 'orchestrator' | 'specialist' | 'monitor' | 'harness'
   name: string
   status: string
   model?: string | null
@@ -81,8 +81,8 @@ export interface TeamV4HarnessRun {
   updated_at: string
 }
 
-export interface TeamV4SolverAssignment {
-  solver: TeamV4Agent
+export interface TeamV4SpecialistAssignment {
+  specialist: TeamV4Agent
   task: TeamV4Task
   contextSnapshot: TeamV4ContextSnapshot
   harnessRun: TeamV4HarnessRun
@@ -96,7 +96,7 @@ export interface TeamV4Memory {
   content: string
   confidence: number
   source_event_ids: string[]
-  accepted_by_commander: boolean
+  accepted_by_orchestrator: boolean
   promoted_to_long_term: boolean
   metadata: Record<string, any>
   created_at: string
@@ -105,11 +105,11 @@ export interface TeamV4Memory {
 
 export interface TeamV4RunBootstrap {
   run: TeamV4Run
-  commander: TeamV4Agent
-  observer: TeamV4Agent
-  solver: TeamV4Agent
-  solvers: TeamV4Agent[]
-  solverAssignments: TeamV4SolverAssignment[]
+  orchestrator: TeamV4Agent
+  monitor: TeamV4Agent
+  specialist: TeamV4Agent
+  specialists: TeamV4Agent[]
+  specialistAssignments: TeamV4SpecialistAssignment[]
   rootTask: TeamV4Task
   contextSnapshot: TeamV4ContextSnapshot
   harnessRun: TeamV4HarnessRun
@@ -120,9 +120,9 @@ export interface TeamV4StartAssistantRunRequest {
   conversationId?: string | null
   profileId?: string | null
   teamProfileId?: string | null
-  commanderProfileId?: string | null
-  solverProfileIds?: string[] | null
-  observerProfileId?: string | null
+  orchestratorProfileId?: string | null
+  specialistProfileIds?: string[] | null
+  monitorProfileId?: string | null
   goal: string
   model?: string | null
   contextMode?: string | null

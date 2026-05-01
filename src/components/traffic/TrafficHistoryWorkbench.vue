@@ -293,7 +293,6 @@ import {
 } from './proxyHistoryTableSupport'
 import { classifyProxyHistoryRequestIdStep } from './proxyHistoryListStepSupport'
 import { buildProxyHistorySelectionChangeKey } from './proxyHistorySelectionChangeSupport'
-import { resolveProxyHistoryResponseBodyLoadVariant } from './proxyHistoryResponseBodyLoadingSupport'
 import type {
   Column,
   ProxyHistoryFilterConfig,
@@ -441,7 +440,6 @@ const requestTab = ref<ProxyHistoryRequestTab>('pretty')
 const responseTab = ref<ProxyHistoryResponseTab>('pretty')
 const requestViewMode = ref<ProxyHistoryViewMode>('edited')
 const responseViewMode = ref<ProxyHistoryViewMode>('edited')
-const RESPONSE_BODY_CHUNK_SIZE = 64 * 1024
 const certErrorInfo = ref<{ host: string; url: string; error?: string } | null>(null)
 const showHistoryFilterDialog = ref(false)
 const showContextCandidateDialog = ref(false)
@@ -461,7 +459,6 @@ let scrollFrameId: number | null = null
 let pendingScrollTop = 0
 let prefetchTimer: number | null = null
 let isPrefetching = false
-let responseBodyLoadSession = 0
 let lastEmittedSelectionChangeKey = ''
 const AUTO_FOLLOW_TOP_THRESHOLD = itemHeight
 const savedScrollTop = ref(0)
@@ -537,7 +534,6 @@ const {
   cleanupDataRuntime,
   fetchRequestPreview,
   fetchRequestDetails,
-  fetchRequestResponseBodyChunk,
   formatWsTime,
   getWsActiveTab,
   getWsMessagesForConnection,
@@ -1786,52 +1782,6 @@ function shouldLoadPreviewDetails(request: ProxyRequest | null) {
   return false
 }
 
-async function loadSelectedResponseBody() {
-  const request = selectedRequest.value
-  if (!request) {
-    return
-  }
-
-  const variant = resolveProxyHistoryResponseBodyLoadVariant(request, responseViewMode.value)
-  if (!variant) {
-    return
-  }
-
-  const session = ++responseBodyLoadSession
-  let offset = 0
-  let assembled = ''
-
-  while (true) {
-    const chunk = await fetchRequestResponseBodyChunk(request.id, variant, offset, RESPONSE_BODY_CHUNK_SIZE)
-    if (!chunk) {
-      return
-    }
-
-    if (responseBodyLoadSession !== session || selectedRequest.value?.id !== request.id) {
-      return
-    }
-
-    assembled += chunk.chunk
-    offset = chunk.next_offset
-    selectedRequest.value = {
-      ...selectedRequest.value,
-      ...(variant === 'edited'
-        ? {
-            edited_response_body: assembled,
-            edited_response_body_loaded: chunk.complete,
-          }
-        : {
-            response_body: assembled,
-            response_body_loaded: chunk.complete,
-          }),
-    }
-
-    if (chunk.complete) {
-      return
-    }
-  }
-}
-
 onMounted(async () => {
   await loadScopeRules()
   await setupEventListeners()
@@ -1925,25 +1875,6 @@ watch(
         isSelectedRequestLoading.value = false
       }
     }
-  },
-)
-
-watch(
-  () => [
-    selectedRequest.value?.id,
-    selectedRequest.value?.has_full_details,
-    selectedRequest.value?.response_body_loaded,
-    selectedRequest.value?.edited_response_body_loaded,
-    hasEditedResponse(selectedRequest.value),
-    responseViewMode.value,
-  ] as const,
-  async () => {
-    if (!resolveProxyHistoryResponseBodyLoadVariant(selectedRequest.value, responseViewMode.value)) {
-      responseBodyLoadSession += 1
-      return
-    }
-
-    await loadSelectedResponseBody()
   },
 )
 

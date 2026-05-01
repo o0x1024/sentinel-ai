@@ -97,7 +97,7 @@ describe('validateAiGeneratedPluginCode', () => {
 
     expect(result.errors).toEqual([{
       code: 'runtime_schema_execution_failed',
-      message: '运行时 get_input_schema 校验失败: Function not found: get_input_schema',
+      message: '运行时 schema contract 校验失败: Function not found: get_input_schema',
     }])
   })
 

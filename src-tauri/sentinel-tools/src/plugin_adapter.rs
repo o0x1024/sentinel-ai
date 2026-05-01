@@ -20,9 +20,9 @@ pub struct PluginToolMeta {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    pub output_schema: Option<Value>,
     pub default_input: Value,
     pub code: Option<String>,
-    pub category: Option<String>,
 }
 
 /// Plugin execution context
@@ -285,8 +285,7 @@ pub async fn load_plugin_tools_to_server(tool_server: &ToolServer, plugins: Vec<
                 &plugin_meta.name,
                 &plugin_meta.description,
                 plugin_meta.input_schema,
-                None,
-                plugin_meta.category,
+                plugin_meta.output_schema,
                 executor,
             )
             .await;
@@ -314,11 +313,11 @@ impl PluginToolAdapter {
             name: full_name,
             description: meta.description.clone(),
             input_schema: meta.input_schema.clone(),
-            output_schema: None,
+            output_schema: meta.output_schema.clone(),
             source: ToolSource::Plugin {
                 plugin_id: plugin_id.clone(),
             },
-            category: meta.category.clone().unwrap_or_else(|| "other".to_string()),
+            category: "plugin".to_string(),
             tags: Vec::new(),
             search_hint: None,
             exposure: "deferred".to_string(),
@@ -357,6 +356,31 @@ impl PluginToolAdapter {
                 );
                 // 返回默认空 schema
                 Self::default_schema()
+            }
+        }
+    }
+
+    /// Get plugin output schema via runtime call
+    pub async fn get_output_schema_runtime_optional(
+        code: &str,
+        metadata: sentinel_plugins::PluginMetadata,
+    ) -> Option<Value> {
+        tracing::info!(
+            "Getting optional output schema via runtime call for plugin: {}",
+            metadata.id
+        );
+
+        match sentinel_plugins::get_output_schema_from_code(code, metadata).await {
+            Ok(schema) => {
+                tracing::info!("Successfully got output schema from plugin runtime");
+                Some(schema)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Plugin output schema unavailable from runtime: {}",
+                    e
+                );
+                None
             }
         }
     }
@@ -406,6 +430,7 @@ mod tests {
             plugin_id: "test-plugin".to_string(),
             name: "Test Plugin".to_string(),
             code: "console.log('hello')".to_string(),
+            default_input: serde_json::json!({}),
         };
 
         register_plugin_context(ctx.clone()).await;
@@ -423,5 +448,31 @@ mod tests {
         let schema = PluginToolAdapter::default_schema();
         assert_eq!(schema.get("type").unwrap(), "object");
         assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn create_tool_def_preserves_output_schema() {
+        let output_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean",
+                    "description": "Whether execution succeeded"
+                }
+            }
+        });
+        let meta = PluginToolMeta {
+            plugin_id: "test-plugin".to_string(),
+            name: "Test Plugin".to_string(),
+            description: "Test plugin".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            output_schema: Some(output_schema.clone()),
+            default_input: serde_json::json!({}),
+            code: None,
+        };
+
+        let def = PluginToolAdapter::create_tool_def(&meta);
+
+        assert_eq!(def.output_schema, Some(output_schema));
     }
 }

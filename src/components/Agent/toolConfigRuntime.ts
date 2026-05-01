@@ -24,7 +24,7 @@ export interface UiToolConfigPayload {
   allowed_tools?: string[]
 }
 
-export type TeamToolPolicyRole = 'commander' | 'solver' | 'observer' | 'harness'
+export type TeamToolPolicyRole = 'orchestrator' | 'specialist' | 'monitor' | 'harness'
 
 const dedupeToolIds = (items: string[]) => {
   const seen = new Set<string>()

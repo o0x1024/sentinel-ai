@@ -51,6 +51,7 @@ impl DatabaseService {
             search: filter.search.clone(),
             service_name: filter.service_name.clone(),
             transport_protocol: filter.transport_protocol.clone(),
+            view_state: filter.view_state.clone(),
             limit: None,
             offset: None,
         };

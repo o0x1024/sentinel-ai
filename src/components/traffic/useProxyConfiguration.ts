@@ -100,9 +100,11 @@ export function useProxyConfiguration({
   const refreshTrigger = inject<any>('refreshTrigger', ref(0))
 
   const isSaving = ref(false)
-  const saveTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
+  const saveQueued = ref(false)
+  const saveAgainAfterCurrent = ref(false)
+  const localSettingsToastTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
   const isInitialLoad = ref(true)
-  const trafficOastSaveTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
+  const trafficOastSaveQueued = ref(false)
   const suppressTrafficOastAutoSave = ref(false)
   const lastSavedTrafficOastConfigSnapshot = ref('')
   const trafficOastAutoSaveState = ref<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle')
@@ -695,7 +697,7 @@ export function useProxyConfiguration({
     if (editingMatchReplaceIsNew.value) {
       matchReplaceRules.value.push({
         ...editingMatchReplace.value,
-        scope: 'In scope',
+        scope: onlyApplyToInScope.value ? 'In scope' : '',
         item: String(matchReplaceRules.value.length + 1),
       })
       selectedMatchReplaceIndex.value = matchReplaceRules.value.length - 1
@@ -704,6 +706,7 @@ export function useProxyConfiguration({
       matchReplaceRules.value[editingMatchReplaceIndex.value] = {
         ...existing,
         ...editingMatchReplace.value,
+        scope: onlyApplyToInScope.value ? 'In scope' : '',
       }
     }
 
@@ -844,6 +847,8 @@ export function useProxyConfiguration({
       } catch (error) {
         console.error('[ProxyConfiguration] Failed to save filter rules to localStorage:', error)
       }
+
+      dialog.toast.success('修改成功')
     } catch (error: any) {
       console.error('[ProxyConfiguration] Failed to save configuration:', error)
       dialog.toast.error(`保存配置失败: ${error}`)
@@ -855,13 +860,40 @@ export function useProxyConfiguration({
   const debouncedSave = () => {
     if (isInitialLoad.value) return
 
-    if (saveTimeout.value) {
-      clearTimeout(saveTimeout.value)
+    if (isSaving.value) {
+      saveAgainAfterCurrent.value = true
+      return
     }
 
-    saveTimeout.value = setTimeout(() => {
-      saveConfiguration()
-    }, 1000)
+    if (saveQueued.value) return
+
+    saveQueued.value = true
+    queueMicrotask(async () => {
+      saveQueued.value = false
+      if (isSaving.value) {
+        saveAgainAfterCurrent.value = true
+        return
+      }
+
+      await saveConfiguration()
+      if (saveAgainAfterCurrent.value && !isInitialLoad.value) {
+        saveAgainAfterCurrent.value = false
+        debouncedSave()
+      }
+    })
+  }
+
+  const debouncedLocalSettingsToast = () => {
+    if (isInitialLoad.value) return
+
+    if (localSettingsToastTimeout.value) {
+      clearTimeout(localSettingsToastTimeout.value)
+    }
+
+    localSettingsToastTimeout.value = setTimeout(() => {
+      dialog.toast.success('修改成功')
+      localSettingsToastTimeout.value = null
+    }, 0)
   }
 
   const resetToDefaults = () => {
@@ -1170,6 +1202,7 @@ export function useProxyConfiguration({
       applyLoadedTrafficOastConfig(response.data)
       trafficOastLastSavedAt.value = new Date().toISOString()
       trafficOastAutoSaveState.value = 'saved'
+      dialog.toast.success('修改成功')
     } catch (error: any) {
       if (buildTrafficOastConfigSnapshot(trafficOastConfig.value) !== requestSnapshot) {
         return
@@ -1186,13 +1219,13 @@ export function useProxyConfiguration({
       return
     }
 
-    if (trafficOastSaveTimeout.value) {
-      clearTimeout(trafficOastSaveTimeout.value)
-    }
+    if (trafficOastSaveQueued.value) return
 
-    trafficOastSaveTimeout.value = setTimeout(() => {
+    trafficOastSaveQueued.value = true
+    queueMicrotask(() => {
+      trafficOastSaveQueued.value = false
       void saveTrafficOastConfig()
-    }, 1000)
+    })
   }
 
   const testTrafficOastConfig = async () => {
@@ -1305,6 +1338,8 @@ export function useProxyConfiguration({
               ...rule,
             }))
           : createDefaultMatchReplaceRules()
+        onlyApplyToInScope.value = matchReplaceRules.value.length === 0
+          || matchReplaceRules.value.every(rule => rule.scope.trim().toLowerCase() === 'in scope')
         selectedMatchReplaceIndex.value = -1
         requestBodySizeMB.value = Math.round(configResponse.data.max_request_body_size / (1024 * 1024))
         responseBodySizeMB.value = Math.round(configResponse.data.max_response_body_size / (1024 * 1024))
@@ -1590,11 +1625,8 @@ export function useProxyConfiguration({
     if (unlistenProxyStatus) unlistenProxyStatus()
     if (unlistenFilterRule) unlistenFilterRule()
     if (unlistenBehaviorStatus) unlistenBehaviorStatus()
-    if (saveTimeout.value) {
-      clearTimeout(saveTimeout.value)
-    }
-    if (trafficOastSaveTimeout.value) {
-      clearTimeout(trafficOastSaveTimeout.value)
+    if (localSettingsToastTimeout.value) {
+      clearTimeout(localSettingsToastTimeout.value)
     }
   })
 
@@ -1618,6 +1650,7 @@ export function useProxyConfiguration({
     console.log('[ProxyConfiguration] Request intercept changed:', newValue)
     try {
       await invoke('set_request_intercept_enabled', { enabled: newValue })
+      dialog.toast.success('修改成功')
     } catch (error) {
       console.error('[ProxyConfiguration] Failed to set request intercept:', error)
     }
@@ -1629,6 +1662,7 @@ export function useProxyConfiguration({
     console.log('[ProxyConfiguration] Response intercept changed:', newValue)
     try {
       await invoke('set_response_intercept_enabled', { enabled: newValue })
+      dialog.toast.success('修改成功')
     } catch (error) {
       console.error('[ProxyConfiguration] Failed to set response intercept:', error)
     }
@@ -1637,12 +1671,14 @@ export function useProxyConfiguration({
   watch(requestRules, () => {
     if (isInitialLoad.value) return
     console.log('[ProxyConfiguration] Request rules changed, syncing to backend')
+    debouncedSave()
     syncFilterRulesToBackend()
   }, { deep: true })
 
   watch(responseRules, () => {
     if (isInitialLoad.value) return
     console.log('[ProxyConfiguration] Response rules changed, syncing to backend')
+    debouncedSave()
     syncFilterRulesToBackend()
   }, { deep: true })
 
@@ -1651,6 +1687,37 @@ export function useProxyConfiguration({
     console.log('[ProxyConfiguration] Match-replace rules changed, triggering auto-save')
     debouncedSave()
   }, { deep: true })
+
+  watch(onlyApplyToInScope, value => {
+    if (isInitialLoad.value) return
+
+    const nextScope = value ? 'In scope' : ''
+    let changed = false
+    matchReplaceRules.value.forEach(rule => {
+      if (rule.scope === nextScope) return
+      rule.scope = nextScope
+      changed = true
+    })
+
+    if (changed) {
+      debouncedSave()
+    }
+  })
+
+  watch(
+    [
+      autoFixNewlines,
+      autoUpdateContentLength,
+      autoUpdateResponseContentLength,
+      interceptClientToServer,
+      interceptServerToClient,
+      onlyInterceptInScope,
+      onlyApplyToInScope,
+      historyLogging,
+      interceptionState,
+    ],
+    debouncedLocalSettingsToast,
+  )
 
   watch(trafficOastConfig, () => {
     if (isInitialLoad.value || suppressTrafficOastAutoSave.value) return

@@ -7,6 +7,7 @@ use crate::services::{
 };
 use sentinel_core::global_proxy::create_client_with_proxy;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -87,6 +88,21 @@ const DERIVED_MODEL_CONFIG_KEYS: [&str; 3] = [
     "vision_capability_source",
     "vision_capability_evidence",
 ];
+
+fn validate_provider_extra_body(
+    provider_label: &str,
+    extra_body: &Option<Value>,
+) -> Result<(), String> {
+    if let Some(value) = extra_body {
+        if !value.is_object() {
+            return Err(format!(
+                "Provider '{}' extra_body must be a JSON object",
+                provider_label
+            ));
+        }
+    }
+    Ok(())
+}
 
 pub async fn cleanup_legacy_ai_config_keys(db: &DatabaseService) -> Result<usize, String> {
     let mut removed = 0usize;
@@ -335,6 +351,15 @@ pub async fn save_ai_config(
     let db_service = db.inner().clone();
     let mut config = config;
 
+    for (provider_key, provider) in &config.providers {
+        let provider_label = if provider.name.trim().is_empty() {
+            provider_key.as_str()
+        } else {
+            provider.name.as_str()
+        };
+        validate_provider_extra_body(provider_label, &provider.extra_body)?;
+    }
+
     for provider in config.providers.values_mut() {
         strip_derived_model_config_fields(&mut provider.models);
     }
@@ -459,6 +484,8 @@ pub async fn add_custom_provider(
         };
 
     let provider_id = request.name.clone();
+
+    validate_provider_extra_body(&request.display_name, &request.extra_body)?;
 
     // Check if already exists
     if providers.contains_key(&provider_id) {

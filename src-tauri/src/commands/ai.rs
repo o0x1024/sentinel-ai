@@ -822,6 +822,17 @@ pub(crate) fn emit_agent_execution_finished(
     response: Option<String>,
     message: Option<String>,
 ) {
+    if let Some(ai_manager) = app_handle.try_state::<Arc<AiServiceManager>>() {
+        crate::commands::ai_parallel_commands::record_parallel_child_finished(
+            app_handle,
+            ai_manager.inner().clone(),
+            execution_id,
+            outcome,
+            error.clone(),
+            response.clone(),
+        );
+    }
+
     let success = matches!(outcome, AgentExecutionOutcome::Succeeded);
     let finished_payload = AgentExecutionFinishedEvent {
         execution_id: execution_id.to_string(),

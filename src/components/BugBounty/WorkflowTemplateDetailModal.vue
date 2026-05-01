@@ -702,9 +702,9 @@ const loadPlugins = async () => {
     // list_plugins returns CommandResponse<Vec<PluginRecord>>, extract .data
     const response = await invoke('list_plugins') as { success: boolean; data?: any[]; error?: string }
     if (response.success && Array.isArray(response.data)) {
-      // Filter agent plugins (main_category === 'agent') and ensure valid metadata
+      // Filter execution plugins used by bounty workflows and ensure valid metadata.
       availablePlugins.value = response.data
-        .filter(p => p?.metadata?.id && p?.metadata?.main_category === 'agent')
+        .filter(p => p?.metadata?.id && ['agent', 'bounty'].includes(p?.metadata?.main_category))
         .map(p => ({
           id: p.metadata.id,
           name: p.metadata.name || p.metadata.id,

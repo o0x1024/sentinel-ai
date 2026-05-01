@@ -109,10 +109,13 @@ export default {
     triggerLabel: '发送到',
     sendToRepeater: '发送到重放器',
     sendToIntruder: '发送到爆破器',
+    sendToAssistant: '发送到 AI 助手',
     noTransferableRequest: '当前证据没有可发送的原始请求',
     noFindingTransferableRequest: '当前漏洞没有可发送的原始请求',
     repeaterOpened: '已发送到重放器',
     intruderOpened: '已发送到爆破器',
+    assistantOpened: '已发送到 AI 助手',
+    assistantFailed: '发送到 AI 助手失败',
     transferFailed: '发送请求失败: {error}',
   },
   aiReview: {

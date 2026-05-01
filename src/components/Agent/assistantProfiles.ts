@@ -6,7 +6,7 @@ export interface AssistantProfileOption {
   id: string
   label: string
   description: string
-  teamRole?: 'assistant' | 'commander' | 'solver' | 'observer'
+  teamRole?: 'assistant' | 'orchestrator' | 'specialist' | 'monitor'
   defaultModel?: string | null
   defaultRagEnabled?: boolean | null
   defaultWebSearchEnabled?: boolean | null
@@ -28,9 +28,9 @@ export interface TeamProfileOption {
   id: string
   name: string
   description: string
-  commanderProfileId: string
-  solverProfileIds: string[]
-  observerProfileId: string
+  orchestratorProfileId: string
+  specialistProfileIds: string[]
+  monitorProfileId: string
   defaultModel?: string | null
   contextMode: AssistantContextMode
   memoryPolicy: Record<string, any>
@@ -59,9 +59,9 @@ let loadDefaultTeamProfilePromise: Promise<void> | null = null
 
 const TOOL_SELECTION_STRATEGIES = new Set(['Keyword', 'LLM', 'Hybrid', 'Manual', 'All'])
 const DEFAULT_TEAM_ROLE_TOOLS: Record<string, string[]> = {
-  commander: ['ask_user_question'],
-  solver: ['interactive_shell', 'shell', 'file_read', 'grep', 'http_request', 'web_search'],
-  observer: ['tenth_man_review'],
+  orchestrator: ['ask_user_question'],
+  specialist: ['interactive_shell', 'shell', 'file_read', 'grep', 'http_request', 'web_search'],
+  monitor: ['tenth_man_review'],
 }
 
 const normalizeToolIds = (items: string[] | null | undefined) => {
@@ -81,7 +81,7 @@ const normalizeAssistantProfile = (profile: AssistantProfileOption): AssistantPr
   id: profile.id.trim(),
   label: profile.label.trim(),
   description: profile.description.trim(),
-  teamRole: ['assistant', 'commander', 'solver', 'observer'].includes(profile.teamRole || '')
+  teamRole: ['assistant', 'orchestrator', 'specialist', 'monitor'].includes(profile.teamRole || '')
     ? profile.teamRole
     : 'assistant',
   defaultModel: profile.defaultModel?.trim() || null,
@@ -124,9 +124,9 @@ const normalizeTeamProfile = (profile: TeamProfileOption): TeamProfileOption => 
   id: profile.id.trim(),
   name: profile.name.trim(),
   description: profile.description.trim(),
-  commanderProfileId: profile.commanderProfileId.trim(),
-  solverProfileIds: Array.from(new Set((profile.solverProfileIds || []).map(id => id.trim()).filter(Boolean))),
-  observerProfileId: profile.observerProfileId.trim(),
+  orchestratorProfileId: profile.orchestratorProfileId.trim(),
+  specialistProfileIds: Array.from(new Set((profile.specialistProfileIds || []).map(id => id.trim()).filter(Boolean))),
+  monitorProfileId: profile.monitorProfileId.trim(),
   defaultModel: profile.defaultModel?.trim() || null,
   contextMode: profile.contextMode || 'claude-like',
   memoryPolicy: normalizeJsonObject(profile.memoryPolicy),

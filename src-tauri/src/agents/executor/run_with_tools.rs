@@ -28,7 +28,9 @@ use super::AgentExecuteParams;
 use crate::agents::context_engineering::reflection::{
     record_execution_reflection, ExecutionOutcome,
 };
-use crate::agents::executor::message_store::{build_assistant_session_stats_metadata, mark_first_response_ms, save_assistant_message};
+use crate::agents::executor::message_store::{
+    build_assistant_session_stats_metadata, mark_first_response_ms, save_assistant_message,
+};
 use crate::agents::executor::skill_loaded_events::emit_and_persist_skill_loaded;
 use crate::agents::executor::team_runtime_log_context::{
     is_toolset_error_result, log_toolset_error_with_context, resolve_team_runtime_log_context,
@@ -591,6 +593,7 @@ pub async fn execute_agent_with_tools(
                             name,
                             arguments,
                         } => {
+                            mark_first_response_ms(first_response_ms_for_stream.as_ref(), execution_started_at_ms);
                             low_evidence_warning_flag.store(false, Ordering::SeqCst);
                             if let Ok(mut tracker) = hypothesis_tracker_for_stream.lock() {
                                 tracker.clear();

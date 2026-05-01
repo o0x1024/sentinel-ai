@@ -296,6 +296,7 @@ pub(crate) async fn collect_monitor_targets(
             search: None,
             service_name: None,
             transport_protocol: None,
+            view_state: None,
             limit: None,
             offset: None,
         },
@@ -560,6 +561,7 @@ where
                 search: base_filter.search.clone(),
                 service_name: base_filter.service_name.clone(),
                 transport_protocol: base_filter.transport_protocol.clone(),
+                view_state: base_filter.view_state.clone(),
                 limit: Some(MONITOR_TARGET_PAGE_SIZE),
                 offset: Some(offset),
             })
@@ -690,6 +692,7 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
             search: None,
             service_name: None,
             transport_protocol: None,
+            view_state: None,
             limit: None,
             offset: None,
         },

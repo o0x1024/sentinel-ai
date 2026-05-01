@@ -42,21 +42,9 @@ pub struct ProxyRequestDetailPreview {
     pub edited_response_body_loaded: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ProxyRequestBodyChunk {
-    pub chunk: String,
-    pub offset: usize,
-    pub next_offset: usize,
-    pub total_length: usize,
-    pub complete: bool,
-}
-
 fn build_proxy_request_preview(
     record: sentinel_traffic::HttpRequestRecord,
 ) -> ProxyRequestDetailPreview {
-    let response_body_loaded = record.response_body.is_none() || record.response_size <= 0;
-    let edited_response_body_loaded = record.edited_response_body.is_none();
-
     ProxyRequestDetailPreview {
         id: record.id,
         db_request_id: record.db_request_id,
@@ -74,7 +62,7 @@ fn build_proxy_request_preview(
         request_headers: record.request_headers,
         request_body: record.request_body,
         response_headers: record.response_headers,
-        response_body: None,
+        response_body: record.response_body,
         response_size: record.response_size,
         response_time: record.response_time,
         timestamp: record.timestamp,
@@ -84,13 +72,13 @@ fn build_proxy_request_preview(
         edited_method: record.edited_method,
         edited_url: record.edited_url,
         edited_response_headers: record.edited_response_headers,
-        edited_response_body: None,
+        edited_response_body: record.edited_response_body,
         edited_status_code: record.edited_status_code,
-        has_full_details: false,
+        has_full_details: true,
         request_body_loaded: true,
-        response_body_loaded,
+        response_body_loaded: true,
         edited_request_body_loaded: true,
-        edited_response_body_loaded,
+        edited_response_body_loaded: true,
     }
 }
 
@@ -137,7 +125,7 @@ pub async fn get_proxy_request(
     Ok(CommandResponse::ok(request))
 }
 
-/// 获取代理请求预览详情（请求侧完整，响应正文按需加载）
+/// 获取代理请求预览详情
 #[tauri::command]
 pub async fn get_proxy_request_preview(
     state: State<'_, TrafficAnalysisState>,
@@ -151,48 +139,6 @@ pub async fn get_proxy_request_preview(
         .map(build_proxy_request_preview);
 
     Ok(CommandResponse::ok(request))
-}
-
-/// 按需分块读取代理请求响应正文
-#[tauri::command]
-pub async fn get_proxy_request_response_body_chunk(
-    state: State<'_, TrafficAnalysisState>,
-    id: i64,
-    variant: String,
-    offset: usize,
-    limit: usize,
-) -> Result<CommandResponse<Option<ProxyRequestBodyChunk>>, String> {
-    let cache = state.get_history_cache();
-    let Some(request) = cache.get_http_request_by_id(id).await else {
-        return Ok(CommandResponse::ok(None));
-    };
-
-    let body = match variant.as_str() {
-        "original" => request.response_body.unwrap_or_default(),
-        "edited" => request.edited_response_body.unwrap_or_default(),
-        _ => {
-            return Err(format!(
-                "Unsupported proxy request response variant: {}",
-                variant
-            ));
-        }
-    };
-
-    let total_length = body.len();
-    let safe_offset = offset.min(total_length);
-    let next_offset = safe_offset.saturating_add(limit).min(total_length);
-    let chunk = body
-        .get(safe_offset..next_offset)
-        .unwrap_or_default()
-        .to_string();
-
-    Ok(CommandResponse::ok(Some(ProxyRequestBodyChunk {
-        chunk,
-        offset: safe_offset,
-        next_offset,
-        total_length,
-        complete: next_offset >= total_length,
-    })))
 }
 
 /// 根据数据库请求 ID 解析当前历史缓存里的请求 ID，不存在则从数据库加载到缓存

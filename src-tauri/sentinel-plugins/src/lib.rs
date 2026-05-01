@@ -29,6 +29,7 @@ mod monitor_progress;
 mod network_scan;
 pub mod plugin;
 pub mod plugin_engine;
+mod plugin_finding_sanitizer;
 pub mod plugin_ops;
 pub mod runtime_config;
 mod runtime_events;

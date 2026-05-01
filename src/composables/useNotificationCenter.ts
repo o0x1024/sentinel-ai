@@ -3,6 +3,10 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { Router } from 'vue-router'
 import i18n from '@/i18n'
+import {
+  NOTIFICATION_STORAGE_KEY,
+  persistNotificationItems,
+} from '@/composables/notificationCenterStorage'
 import { useNotificationPreferences } from '@/composables/useNotificationPreferences'
 import { useToast } from '@/composables/useToast'
 import type {
@@ -12,7 +16,6 @@ import type {
   NotificationSource,
 } from '@/types/notification'
 
-const STORAGE_KEY = 'sentinel-notification-center-items'
 const MAX_ITEMS = 120
 
 interface WorkflowRunCompletePayload {
@@ -91,7 +94,7 @@ function loadStoredItems(): AppNotificationItem[] {
   if (typeof window === 'undefined') return []
 
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(NOTIFICATION_STORAGE_KEY)
     if (!raw) return []
 
     const parsed = JSON.parse(raw)
@@ -115,7 +118,7 @@ function loadStoredItems(): AppNotificationItem[] {
 
 function persistItems() {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items.value))
+  persistNotificationItems(window.localStorage, items.value)
 }
 
 function getTranslator() {

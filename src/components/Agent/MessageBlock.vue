@@ -118,6 +118,16 @@
     </div>
   </div>
 
+  <div v-else-if="isParallelModelExecution" class="mb-2">
+    <ParallelModelResultPanel
+      v-if="parallelRun"
+      :run="parallelRun"
+    />
+    <div v-else class="rounded-lg border border-base-300 bg-base-100 px-4 py-3 text-sm text-base-content/60">
+      正在加载并行执行结果...
+    </div>
+  </div>
+
   <!-- Skill Loaded Message -->
   <div
     v-else-if="isSkillLoaded"
@@ -279,120 +289,10 @@
   />
 
   <!-- Tool Call Message - Collapsible Panel (only render if has content) -->
-  <div
+  <ToolCallMessagePanel
     v-else-if="message.type === 'tool_call' && hasToolCallContent"
-    class="tool-call-panel rounded-lg overflow-hidden bg-base-200 border-l-4"
-    :class="toolPanelBorderClass"
-  >
-    <!-- Panel Header (always visible) -->
-    <div
-      @click="toggleToolPanel"
-      class="tool-panel-header flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-base-300/50 transition-colors"
-    >
-      <!-- Expand/Collapse Icon -->
-      <i
-        :class="[
-          'fas transition-transform text-xs',
-          isToolPanelExpanded ? 'fa-chevron-down' : 'fa-chevron-right',
-        ]"
-      ></i>
-
-      <!-- Tool Name -->
-      <span class="font-mono text-sm font-semibold">{{ toolName || 'Tool' }}</span>
-
-      <span
-        v-if="fileVerificationStatus"
-        :class="['px-2 py-0.5 rounded-full text-xs font-medium', fileVerificationClass]"
-      >
-        {{ fileVerificationText }}
-      </span>
-
-      <!-- Status Badge -->
-      <span
-        v-if="toolStatus"
-        :class="[
-          'status-badge px-2 py-0.5 rounded-full text-xs font-medium ml-auto',
-          toolStatusClass,
-        ]"
-      >
-        {{ toolStatusText }}
-      </span>
-
-      <!-- Duration -->
-      <span v-if="duration" class="text-xs text-base-content/60">{{ duration }}</span>
-    </div>
-
-    <!-- Panel Content (collapsible) -->
-    <div v-show="isToolPanelExpanded" class="tool-panel-content">
-      <!-- Tool Arguments -->
-      <div v-if="hasToolArgs" class="border-t border-base-300">
-        <div
-          ref="argsBodyRef"
-          @click="toggleArgs"
-          :class="[
-            'px-4 py-3 bg-base-100 cursor-pointer transition-all relative',
-            isArgsExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden',
-          ]"
-        >
-          <div class="text-xs text-base-content/50 mb-2">📥 {{ t('agent.inputParameters') }}</div>
-          <pre
-            class="text-xs font-mono text-base-content/70 whitespace-pre-wrap break-words overflow-x-auto"
-            >{{ formattedArgs }}</pre
-          >
-
-          <!-- Expand hint overlay -->
-          <div
-            v-if="!isArgsExpanded && argsHasOverflow"
-            class="expand-hint absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-base-100 to-transparent flex items-end justify-center pb-1 pointer-events-none"
-          >
-            <span class="text-base-content/50 text-xs">点击展开</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Tool Result -->
-      <div v-if="hasToolResult" class="border-t border-base-300">
-        <div
-          ref="resultBodyRef"
-          @click="toggleResult"
-          :class="[
-            'px-4 py-3 bg-base-100 cursor-pointer transition-all relative',
-            isResultExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden',
-          ]"
-        >
-          <div class="text-xs text-base-content/50 mb-2">📤 {{ t('agent.executionResult') }}</div>
-          <pre
-            class="text-xs font-mono text-base-content/70 whitespace-pre-wrap break-words overflow-x-auto"
-            >{{ formattedToolResult }}</pre
-          >
-
-          <!-- Expand hint overlay -->
-          <div
-            v-if="!isResultExpanded && resultHasOverflow"
-            class="expand-hint absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-base-100 to-transparent flex items-end justify-center pb-1 pointer-events-none"
-          >
-            <span class="text-base-content/50 text-xs">点击展开</span>
-          </div>
-        </div>
-        <ToolRuntimeMeta :result="message.metadata?.tool_result" class="mx-4 mb-3" />
-        <StoredArtifactPanel
-          v-if="toolResultStoredArtifactViews.length > 0"
-          :artifacts="toolResultStoredArtifactViews"
-        />
-      </div>
-
-      <!-- Tool Call ID -->
-      <div
-        v-if="message.metadata?.tool_call_id"
-        class="px-4 py-2 border-t border-base-300 bg-base-100"
-      >
-        <span class="text-xs text-base-content/50">
-          {{ t('agent.toolCallId') }}:
-          <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
-        </span>
-      </div>
-    </div>
-  </div>
+    :message="message"
+  />
 
   <!-- Regular message block for non-tool-call messages (only render if has content) -->
   <div v-else-if="hasRegularMessageContent" class="message-container group relative max-w-full">
@@ -760,11 +660,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
+import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
+import {
+  normalizeParallelRun,
+  type ParallelRunState,
+} from '@/composables/agentParallelEventSupport'
 import type {
   ReferencedAsset,
   ReferencedConversationMessage,
@@ -776,8 +681,10 @@ import { formatJsonStringIfPossible, formatJsonValueIfPossible } from '@/utils/j
 import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
 import MemoryToolResult from './MemoryToolResult.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import ParallelModelResultPanel from './ParallelModelResultPanel.vue'
 import ShellToolResult from './ShellToolResult.vue'
 import StoredArtifactPanel from './StoredArtifactPanel.vue'
+import ToolCallMessagePanel from './ToolCallMessagePanel.vue'
 import ToolRuntimeMeta from './ToolRuntimeMeta.vue'
 import WebSearchToolResult from './WebSearchToolResult.vue'
 import {
@@ -814,15 +721,6 @@ const isEditing = ref(false)
 const editedContent = ref('')
 const editTextareaRef = ref<HTMLTextAreaElement | null>(null)
 
-// Tool panel collapse states
-const isToolPanelExpanded = ref(false)
-const isArgsExpanded = ref(false)
-const isResultExpanded = ref(false)
-const argsHasOverflow = ref(false)
-const resultHasOverflow = ref(false)
-const argsBodyRef = ref<HTMLElement | null>(null)
-const resultBodyRef = ref<HTMLElement | null>(null)
-
 // Summary panel collapse state
 const isSummaryPanelExpanded = ref(false)
 
@@ -830,71 +728,9 @@ const toggleDetails = () => {
   isExpanded.value = !isExpanded.value
 }
 
-const toggleToolPanel = () => {
-  isToolPanelExpanded.value = !isToolPanelExpanded.value
-  // Emit height change event after animation completes
-  setTimeout(() => {
-    emit('heightChanged')
-  }, 250)
-}
-
 const toggleSummaryPanel = () => {
   isSummaryPanelExpanded.value = !isSummaryPanelExpanded.value
 }
-
-const toggleArgs = () => {
-  isArgsExpanded.value = !isArgsExpanded.value
-  // Emit height change event
-  setTimeout(() => {
-    emit('heightChanged')
-  }, 50)
-}
-
-const toggleResult = () => {
-  isResultExpanded.value = !isResultExpanded.value
-  // Emit height change event
-  setTimeout(() => {
-    emit('heightChanged')
-  }, 50)
-}
-
-// Check if content overflows
-function checkArgsOverflow() {
-  nextTick(() => {
-    if (argsBodyRef.value) {
-      argsHasOverflow.value = argsBodyRef.value.scrollHeight > argsBodyRef.value.clientHeight
-    }
-  })
-}
-
-function checkResultOverflow() {
-  nextTick(() => {
-    if (resultBodyRef.value) {
-      resultHasOverflow.value = resultBodyRef.value.scrollHeight > resultBodyRef.value.clientHeight
-    }
-  })
-}
-
-// Check overflow on mount and when content changes
-onMounted(() => {
-  checkArgsOverflow()
-  checkResultOverflow()
-})
-
-// Watch for content changes
-watch(
-  () => props.message.metadata?.tool_args,
-  () => {
-    checkArgsOverflow()
-  }
-)
-
-watch(
-  () => props.message.metadata?.tool_result,
-  () => {
-    checkResultOverflow()
-  }
-)
 
 // 复制消息内容
 const handleCopy = async () => {
@@ -1134,6 +970,53 @@ const isToolsActivated = computed(() => {
   return props.message.type === 'system' && props.message.metadata?.kind === 'tools_activated'
 })
 
+const isParallelModelExecution = computed(() => {
+  return props.message.type === 'system' && props.message.metadata?.kind === 'parallel_model_execution'
+})
+
+const parallelRun = ref<ParallelRunState | null>(null)
+
+const loadParallelRun = async () => {
+  if (!isParallelModelExecution.value) {
+    parallelRun.value = null
+    return
+  }
+  const metadata = props.message.metadata as Record<string, any> | undefined
+  const embedded = metadata?.parallel_run
+  if (embedded) {
+    parallelRun.value = normalizeParallelRun(embedded)
+    return
+  }
+  const runId = String(metadata?.parallel_run_id || '').trim()
+  if (!runId) {
+    parallelRun.value = null
+    return
+  }
+  try {
+    const detail = await invoke('get_ai_parallel_run', {
+      request: {
+        parallel_run_id: runId,
+      },
+    })
+    parallelRun.value = normalizeParallelRun(detail)
+  } catch (error) {
+    parallelRun.value = normalizeParallelRun({
+      id: runId,
+      status: 'failed',
+      judge_status: 'not_requested',
+      items: [],
+    })
+  }
+}
+
+watch(
+  () => props.message.metadata,
+  () => {
+    void loadParallelRun()
+  },
+  { immediate: true, deep: true },
+)
+
 const isTeamDependencyReady = computed(() => {
   return props.message.type === 'system' && props.message.metadata?.kind === 'team_dependency_ready'
 })
@@ -1264,7 +1147,6 @@ const formatNumber = (num: number | undefined) => {
 const PREVIEW_MAX_DEPTH = 6
 const PREVIEW_MAX_ITEMS = 1000
 const PREVIEW_MAX_STRING = 4000
-const PREVIEW_MAX_CHARS_COLLAPSED = 8000
 const PREVIEW_MAX_CHARS_EXPANDED = 120000
 
 const truncatePreviewText = (text: string, maxChars: number) => {
@@ -1312,15 +1194,6 @@ const stringifyPreview = (value: any, maxChars: number) => {
   } catch {
     return String(value)
   }
-}
-
-const stringifyToolResultPreview = (value: any, maxChars: number) => {
-  const formattedJson = formatJsonValueIfPossible(value)
-  if (formattedJson) {
-    return truncatePreviewText(formattedJson, maxChars)
-  }
-
-  return stringifyPreview(value, maxChars)
 }
 
 const contentMayContainTable = (content: string) => {
@@ -1429,11 +1302,6 @@ const showHeader = computed(() => {
   return ['tool_result', 'progress'].includes(props.message.type)
 })
 
-// Tool panel styling - left border color (always orange/warning)
-const toolPanelBorderClass = computed(() => {
-  return 'border-l-warning' // Always use orange/warning color for tool calls
-})
-
 // Has tool args
 const hasToolArgs = computed(() => {
   return (
@@ -1472,27 +1340,13 @@ const hasRegularMessageContent = computed(() => {
 
 // Formatted args
 const formattedArgs = computed(() => {
-  const maxChars = isArgsExpanded.value ? PREVIEW_MAX_CHARS_EXPANDED : PREVIEW_MAX_CHARS_COLLAPSED
-  return stringifyPreview(props.message.metadata?.tool_args, maxChars)
-})
-
-// Formatted tool result
-const formattedToolResult = computed(() => {
-  const maxChars = isResultExpanded.value ? PREVIEW_MAX_CHARS_EXPANDED : PREVIEW_MAX_CHARS_COLLAPSED
-  return stringifyToolResultPreview(props.message.metadata?.tool_result, maxChars)
+  return stringifyPreview(props.message.metadata?.tool_args, PREVIEW_MAX_CHARS_EXPANDED)
 })
 
 const formattedStandaloneToolResult = computed(() => {
   const content = props.message.content || ''
   return formatJsonValueIfPossible(content) || content
 })
-
-const toolResultStoredArtifactViews = computed(() =>
-  buildStoredArtifactViews(
-    props.message.metadata?.tool_result,
-    props.message.metadata?.tracked_artifacts
-  )
-)
 
 const standaloneStoredArtifactViews = computed(() =>
   buildStoredArtifactViews(props.message.content, props.message.metadata?.tracked_artifacts)

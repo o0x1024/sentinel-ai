@@ -63,6 +63,8 @@ async fn upsert_surface_shell_asset(
         weak_password_flag: Some(false),
         expired_cert_flag: Some(false),
         exposed_to_internet_flag: Some(true),
+        viewed_at: None,
+        viewed_by: None,
         metadata_json: metadata.map(|value| value.to_string()),
         created_at: now.clone(),
         updated_at: now,

@@ -47,6 +47,8 @@ impl SurfaceGraphMigration {
                 weak_password_flag BOOLEAN DEFAULT FALSE,
                 expired_cert_flag BOOLEAN DEFAULT FALSE,
                 exposed_to_internet_flag BOOLEAN DEFAULT FALSE,
+                viewed_at TIMESTAMPTZ,
+                viewed_by TEXT,
                 metadata_json TEXT,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL,
@@ -322,6 +324,8 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_last_seen ON surface_assets(last_seen_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_discovery_task ON surface_assets(discovery_task_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_risk ON surface_assets(risk_score DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_viewed ON surface_assets(viewed_at)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_viewed_type ON surface_assets(program_id, viewed_at, asset_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_fqdn ON surface_domain_assets(fqdn)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_root ON surface_domain_assets(root_domain)",
             "CREATE INDEX IF NOT EXISTS idx_surface_ip_assets_ip ON surface_ip_assets(ip_address)",
@@ -366,6 +370,13 @@ impl SurfaceGraphMigration {
                     sqlx::query(sql).execute(mysql).await?;
                 }
             }
+        }
+
+        let surface_asset_alter_columns = [("viewed_at", "TIMESTAMPTZ"), ("viewed_by", "TEXT")];
+
+        for (column, column_type) in surface_asset_alter_columns {
+            Self::add_column_if_not_exists_runtime(pool, "surface_assets", column, column_type)
+                .await?;
         }
 
         let alter_columns = [
@@ -445,6 +456,8 @@ impl SurfaceGraphMigration {
                 weak_password_flag BOOLEAN DEFAULT FALSE,
                 expired_cert_flag BOOLEAN DEFAULT FALSE,
                 exposed_to_internet_flag BOOLEAN DEFAULT FALSE,
+                viewed_at TIMESTAMPTZ,
+                viewed_by TEXT,
                 metadata_json TEXT,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL,
@@ -724,6 +737,8 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_last_seen ON surface_assets(last_seen_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_discovery_task ON surface_assets(discovery_task_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_risk ON surface_assets(risk_score DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_viewed ON surface_assets(viewed_at)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_viewed_type ON surface_assets(program_id, viewed_at, asset_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_fqdn ON surface_domain_assets(fqdn)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_root ON surface_domain_assets(root_domain)",
             "CREATE INDEX IF NOT EXISTS idx_surface_ip_assets_ip ON surface_ip_assets(ip_address)",
@@ -755,6 +770,13 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_observations_type ON surface_observations(artifact_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_seeds_program ON surface_seeds(program_id)",
         ];
+
+        let surface_asset_alter_columns = [("viewed_at", "TIMESTAMPTZ"), ("viewed_by", "TEXT")];
+
+        for (column, column_type) in surface_asset_alter_columns {
+            Self::add_column_if_not_exists_postgres(pool, "surface_assets", column, column_type)
+                .await?;
+        }
 
         let alter_columns = [
             ("rule_id", "TEXT"),

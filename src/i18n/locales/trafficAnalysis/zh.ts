@@ -55,11 +55,14 @@ export default {
     modePlain: '纯文本',
   },
   httpEditor: {
+    collapsedHeaders: '已折叠 {count} 个 Headers',
     toolbar: {
       showLineEndings: '显示换行符号',
       hideLineEndings: '隐藏换行符号',
       enableLineWrap: '开启自动换行',
       disableLineWrap: '关闭自动换行',
+      collapseHeaders: '折叠 Headers',
+      expandHeaders: '展开 Headers',
     },
   },
   aiWorkspace: {
@@ -998,6 +1001,7 @@ export default {
     highlightRequestSyntax: '高亮请求语法',
     highlightResponseSyntax: '高亮响应语法',
     prettyPrintByDefault: '默认格式化显示',
+    collapseHeadersByDefault: '默认折叠 Headers',
     showSendToRepeater: '显示“发送到重放器”',
     showSendToComparer: '显示“发送到对比器”',
     showSendToIntruder: '显示“发送到爆破器”',

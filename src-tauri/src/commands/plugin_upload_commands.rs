@@ -5,7 +5,8 @@ use tauri::{AppHandle, State};
 
 use crate::commands::command_response_support::CommandResponse;
 use crate::commands::traffic::{
-    refresh_active_agent_plugin_tools, resolved_store_plugin_monitor_type, TrafficAnalysisState,
+    is_agent_tool_plugin_main_category, refresh_active_agent_plugin_tools,
+    resolved_store_plugin_monitor_type, TrafficAnalysisState,
 };
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::services::ensure_plugin_catalog_write_access;
@@ -92,7 +93,7 @@ pub async fn upload_plugin(
         );
     }
 
-    if metadata.main_category == "agent" {
+    if is_agent_tool_plugin_main_category(&metadata.main_category) {
         let refreshed = refresh_active_agent_plugin_tools(db.as_ref()).await?;
         tracing::info!(
             "Refreshed {} active agent plugin tools after uploading {}",
@@ -152,7 +153,7 @@ fn parse_uploaded_plugin(filename: &str, content: &str) -> Result<ParsedUploaded
         .cloned()
         .or_else(|| infer_main_category(content).map(str::to_string))
         .ok_or_else(|| {
-            "Unable to infer plugin type. Add `@main_category agent|traffic` or export `analyze` / `scan_transaction`.".to_string()
+            "Unable to infer plugin type. Add `@main_category traffic|agent|bounty|intruder` or export `analyze` / `scan_transaction`.".to_string()
         })?;
 
     let plugin_id = tags
@@ -321,7 +322,7 @@ fn capitalize_word(word: &str) -> String {
 
 fn default_category_for(main_category: &str) -> &'static str {
     match main_category {
-        "agent" => "custom",
+        "agent" | "bounty" => "custom",
         _ => "custom",
     }
 }

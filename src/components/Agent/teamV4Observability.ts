@@ -8,7 +8,7 @@ import type {
 export type TeamRunPhase =
   | 'planning'
   | 'scheduling'
-  | 'solver_running'
+  | 'specialist_running'
   | 'tool_running'
   | 'observing'
   | 'recovering'
@@ -93,50 +93,50 @@ const buildObservableEvent = (
   const type = event.event_type
 
   if (type === 'run_created') {
-    return toObservable(event, role, 'planning', 'info', 'Team run created', 'Commander is preparing the run.', 'Initializing Team runtime.')
+    return toObservable(event, role, 'planning', 'info', 'Team run created', 'Orchestrator is preparing the run.', 'Initializing Team runtime.')
   }
-  if (type === 'commander_planned') {
-    return toObservable(event, role, 'planning', 'info', 'Commander planned the run', 'Task graph and role assignments are ready.', 'Planning completed.')
+  if (type === 'orchestrator_planned') {
+    return toObservable(event, role, 'planning', 'info', 'Orchestrator planned the run', 'Task graph and role assignments are ready.', 'Planning completed.')
   }
-  if (type === 'commander_task_graph_planned') {
+  if (type === 'orchestrator_task_graph_planned') {
     const taskCount = Number(payload.taskCount || 0)
-    return toObservable(event, role, 'planning', 'success', 'Commander planned task graph', `${taskCount} task(s) assigned by solver capability and tool access.`, 'Task graph ready.')
+    return toObservable(event, role, 'planning', 'success', 'Orchestrator planned task graph', `${taskCount} task(s) assigned by specialist capability and tool access.`, 'Task graph ready.')
   }
-  if (type === 'solver_scheduler_started') {
-    return toObservable(event, role, 'scheduling', 'info', 'Solver scheduling started', `${actor} is dispatching tasks to solvers.`, 'Dispatching solver assignments.')
+  if (type === 'specialist_scheduler_started') {
+    return toObservable(event, role, 'scheduling', 'info', 'Specialist scheduling started', `${actor} is dispatching tasks to specialists.`, 'Dispatching specialist assignments.')
   }
-  if (type === 'solver_execution_started') {
-    return toObservable(event, role, 'solver_running', 'info', `${actor} started ${task}`, 'Solver is executing the assigned task.', 'Solver is running.')
+  if (type === 'specialist_execution_started') {
+    return toObservable(event, role, 'specialist_running', 'info', `${actor} started ${task}`, 'Specialist is executing the assigned task.', 'Specialist is running.')
   }
-  if (type === 'solver_text_started') {
-    return toObservable(event, role, 'solver_running', 'info', `${actor} is producing output`, `${actor} has started writing or reasoning for ${task}.`, 'Solver output is streaming.')
+  if (type === 'specialist_text_started') {
+    return toObservable(event, role, 'specialist_running', 'info', `${actor} is producing output`, `${actor} has started writing or reasoning for ${task}.`, 'Specialist output is streaming.')
   }
-  if (type === 'solver_tool_started') {
+  if (type === 'specialist_tool_started') {
     const toolName = String(payload.toolName || payload.tool_name || 'tool')
     return toObservable(event, role, 'tool_running', 'info', `${actor} called ${toolName}`, `${actor} is using ${toolName} for ${task}.`, 'Tool call in progress.', toolName)
   }
-  if (type === 'solver_tool_result') {
+  if (type === 'specialist_tool_result') {
     const toolName = String(payload.toolName || payload.tool_name || 'tool')
     const resultSummary = payloadText(payload.summary || payload.result || '')
     return toObservable(event, role, 'tool_running', 'success', `${toolName} returned`, resultSummary || `${actor} received a tool result.`, 'Tool returned a result.', toolName)
   }
-  if (type === 'solver_execution_completed') {
-    return toObservable(event, role, 'completed', 'success', `${actor} completed ${task}`, 'Solver finished the assigned task.', 'Solver completed.')
+  if (type === 'specialist_execution_completed') {
+    return toObservable(event, role, 'completed', 'success', `${actor} completed ${task}`, 'Specialist finished the assigned task.', 'Specialist completed.')
   }
-  if (type === 'solver_execution_failed') {
-    return toObservable(event, role, 'failed', 'error', `${actor} failed ${task}`, payloadText(payload.error || 'Solver failed.'), 'Solver failed.')
+  if (type === 'specialist_execution_failed') {
+    return toObservable(event, role, 'failed', 'error', `${actor} failed ${task}`, payloadText(payload.error || 'Specialist failed.'), 'Specialist failed.')
   }
-  if (type === 'observer_model_review_completed') {
-    return toObservable(event, role, 'observing', 'success', 'Observer review completed', 'Observer extracted evidence and risks from solver output.', 'Review completed.')
+  if (type === 'monitor_model_review_completed') {
+    return toObservable(event, role, 'observing', 'success', 'Monitor review completed', 'Monitor extracted evidence and risks from specialist output.', 'Review completed.')
   }
-  if (type === 'observer_model_review_failed') {
-    return toObservable(event, role, 'observing', 'warning', 'Observer review failed', payloadText(payload.error || 'Observer could not review output.'), 'Review failed.')
+  if (type === 'monitor_model_review_failed') {
+    return toObservable(event, role, 'observing', 'warning', 'Monitor review failed', payloadText(payload.error || 'Monitor could not review output.'), 'Review failed.')
   }
-  if (type === 'commander_recovery_decision') {
-    return toObservable(event, role, 'recovering', 'warning', 'Commander recovery decision', payloadText(payload.modelReason || payload.reason || payload.decision), 'Recovery path selected.')
+  if (type === 'orchestrator_recovery_decision') {
+    return toObservable(event, role, 'recovering', 'warning', 'Orchestrator recovery decision', payloadText(payload.modelReason || payload.reason || payload.decision), 'Recovery path selected.')
   }
-  if (type === 'solver_scheduler_completed') {
-    return toObservable(event, role, 'completed', 'success', 'Solver scheduling completed', 'All solver assignments finished.', 'Scheduling completed.')
+  if (type === 'specialist_scheduler_completed') {
+    return toObservable(event, role, 'completed', 'success', 'Specialist scheduling completed', 'All specialist assignments finished.', 'Scheduling completed.')
   }
   if (type === 'team_runtime_failed') {
     return toObservable(event, role, 'failed', 'error', 'Team run failed', payloadText(payload.error || 'Runtime failed.'), 'Run failed.')
@@ -179,7 +179,7 @@ const deriveAgentStatus = (
   if (latestEvent.phase === 'tool_running') {
     return { status: 'waiting_tool', detail: latestEvent.title }
   }
-  if (latestEvent.phase === 'solver_running') {
+  if (latestEvent.phase === 'specialist_running') {
     return { status: 'running', detail: latestEvent.progressHint }
   }
   if (latestEvent.phase === 'observing') {
@@ -206,7 +206,7 @@ const deriveRunPhase = (runState: string | undefined, activeEvent?: TeamObservab
   if (normalized === 'failed') return 'failed'
   if (normalized === 'cancelled') return 'cancelled'
   if (normalized === 'waiting_human') return 'waiting_user'
-  return activeEvent?.phase || (normalized === 'running' ? 'solver_running' : 'idle')
+  return activeEvent?.phase || (normalized === 'running' ? 'specialist_running' : 'idle')
 }
 
 export const deriveTeamV4Observability = (input: {

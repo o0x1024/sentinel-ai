@@ -138,6 +138,7 @@ import type { AiConversationSummary } from '@/components/Agent/conversationTypes
 import { pickLatestConversation } from '@/components/Agent/agentConversationSessionSupport'
 import { buildFocusedMessageQuery, readFocusLocationState } from '@/components/Agent/focusLocationSupport'
 import { isAssistantPresentationTarget, type AssistantPresentationTarget } from '@/services/assistantPresentation'
+import { consumePendingSecurityFindingAssistantAssets } from '@/components/SecurityCenter/securityFindingAssistantTransfer'
 
 type PendingTrafficReference = {
   requests: ReferencedTraffic[]
@@ -194,6 +195,7 @@ let unlistenAssets: UnlistenFn | null = null
 const setAgentViewRef = (sessionId: string, el: any | null) => {
   if (el) {
     agentViewRefs.value[sessionId] = el
+    void nextTick(drainPendingSecurityFindingReferences)
     void nextTick(flushPendingReferences)
     return
   }
@@ -217,6 +219,13 @@ function queueTrafficReferences(requests: ReferencedTraffic[], type: 'request' |
 function queueAssetReferences(assets: ReferencedAsset[]) {
   pendingAssetReferences.value.push(assets)
   void nextTick(flushPendingReferences)
+}
+
+function drainPendingSecurityFindingReferences() {
+  const assets = consumePendingSecurityFindingAssistantAssets()
+  if (assets.length > 0) {
+    queueAssetReferences(assets)
+  }
 }
 
 function flushPendingReferences() {
@@ -419,6 +428,8 @@ onMounted(async () => {
 
       queueAssetReferences(event.payload.assets)
     })
+
+    drainPendingSecurityFindingReferences()
   } catch (error) {
     console.error('Failed to initialize AI Assistant:', error)
   } finally {
@@ -443,6 +454,7 @@ onUnmounted(() => {
 
 onActivated(() => {
   if (props.active) {
+    drainPendingSecurityFindingReferences()
     void focusActiveAgentInput()
   }
 })
@@ -451,6 +463,7 @@ watch(
   () => props.active,
   (active) => {
     if (active) {
+      drainPendingSecurityFindingReferences()
       void focusActiveAgentInput()
       return
     }

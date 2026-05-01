@@ -55,6 +55,11 @@
             <input v-model="settings.prettyPrintByDefault" type="checkbox" class="checkbox checkbox-primary checkbox-sm" />
             <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.prettyPrintByDefault') }}</span>
           </label>
+
+          <label class="label cursor-pointer justify-start gap-3 py-1">
+            <input v-model="settings.collapseHeaders" type="checkbox" class="checkbox checkbox-primary checkbox-sm" />
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.collapseHeadersByDefault') }}</span>
+          </label>
         </div>
       </div>
     </section>
@@ -150,13 +155,36 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { dialog } from '@/composables/useDialog'
 import { useTrafficDisplaySettings } from './trafficDisplaySettings'
 
 const { settings, fontOptions, charsetOptions } = useTrafficDisplaySettings()
+const saveToastTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
 
 const selectedFontSummary = computed(() => {
   const font = fontOptions.find((option) => option.value === settings.value.fontFamily)
   return `${font?.label || 'Monospaced'} ${settings.value.fontSize}px`
+})
+
+watch(
+  settings,
+  () => {
+    if (saveToastTimeout.value) {
+      clearTimeout(saveToastTimeout.value)
+    }
+
+    saveToastTimeout.value = setTimeout(() => {
+      dialog.toast.success('修改成功')
+      saveToastTimeout.value = null
+    }, 0)
+  },
+  { deep: true },
+)
+
+onUnmounted(() => {
+  if (saveToastTimeout.value) {
+    clearTimeout(saveToastTimeout.value)
+  }
 })
 </script>

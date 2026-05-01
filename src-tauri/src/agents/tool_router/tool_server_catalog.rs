@@ -88,7 +88,11 @@ pub(crate) fn is_configurable_tool_name(tool_name: &str) -> bool {
 }
 
 pub(crate) fn convert_tool_info_to_metadata(tool: ToolInfo) -> ToolMetadata {
-    let category = parse_tool_category(&tool.category);
+    let category = if tool.source.starts_with("plugin::") {
+        ToolCategory::Plugin
+    } else {
+        parse_tool_category(&tool.category)
+    };
     let exposure = parse_tool_exposure(&tool.exposure);
     let policy = builtin_tool_policy(&tool.name);
 
@@ -112,4 +116,41 @@ pub(crate) fn build_builtin_tool_metadata(tools: Vec<ToolInfo>) -> Vec<ToolMetad
         .filter(|tool| is_configurable_tool_name(&tool.name))
         .map(convert_tool_info_to_metadata)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use sentinel_tools::dynamic_tool::ToolExecutionPolicy;
+
+    use super::*;
+
+    fn tool_info(source: &str, category: &str) -> ToolInfo {
+        ToolInfo {
+            name: "plugin__active_probe".to_string(),
+            description: "Agent plugin tool".to_string(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            output_schema: None,
+            source: source.to_string(),
+            category: category.to_string(),
+            tags: vec![],
+            search_hint: None,
+            exposure: "deferred".to_string(),
+            execution_policy: ToolExecutionPolicy::default(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn plugin_tool_metadata_uses_plugin_category_even_when_plugin_has_business_category() {
+        let metadata = convert_tool_info_to_metadata(tool_info("plugin::active_probe", "recon"));
+
+        assert_eq!(metadata.category, ToolCategory::Plugin);
+    }
+
+    #[test]
+    fn builtin_tool_metadata_preserves_registered_category() {
+        let metadata = convert_tool_info_to_metadata(tool_info("builtin", "network"));
+
+        assert_eq!(metadata.category, ToolCategory::Network);
+    }
 }

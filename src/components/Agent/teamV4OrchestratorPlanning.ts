@@ -1,5 +1,5 @@
 import { teamRuntimeApi } from '@/api/teamRuntime'
-import type { TeamV4Agent, TeamV4RunBootstrap, TeamV4SolverAssignment } from '@/types/teamRuntime'
+import type { TeamV4Agent, TeamV4RunBootstrap, TeamV4SpecialistAssignment } from '@/types/teamRuntime'
 import type { AssistantProfileOption } from './assistantProfiles'
 import {
   buildRuntimeToolConfigForTeamRole,
@@ -12,19 +12,19 @@ interface PlannedTask {
   title: string
   instruction: string
   acceptanceCriteria: string
-  solverId: string
+  specialistId: string
   requiredTools: string[]
   dependsOnTaskKeys: string[]
   priority: number
 }
 
-interface SolverCapability {
-  solver: TeamV4Agent
+interface SpecialistCapability {
+  specialist: TeamV4Agent
   profile: AssistantProfileOption
   tools: string[]
 }
 
-interface PlanTeamV4SolverAssignmentsParams {
+interface PlanTeamV4SpecialistAssignmentsParams {
   baselineToolConfig: UiToolConfigPayload
   getAssistantProfileOption: (profileId: string) => AssistantProfileOption | null
   goal: string
@@ -48,16 +48,16 @@ const parseJsonObject = (raw: string) => {
   const start = source.indexOf('{')
   const end = source.lastIndexOf('}')
   if (start < 0 || end <= start) {
-    throw new Error('Commander task plan did not return a JSON object.')
+    throw new Error('Orchestrator task plan did not return a JSON object.')
   }
   const parsed = JSON.parse(source.slice(start, end + 1))
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Commander task plan must be a JSON object.')
+    throw new Error('Orchestrator task plan must be a JSON object.')
   }
   return parsed as Record<string, any>
 }
 
-const buildSolverProfileToolConfig = (
+const buildSpecialistProfileToolConfig = (
   profile: AssistantProfileOption,
   baseline: UiToolConfigPayload,
 ): UiToolConfigPayload => {
@@ -75,36 +75,36 @@ const buildSolverProfileToolConfig = (
   }
 }
 
-const collectSolverCapabilities = (params: PlanTeamV4SolverAssignmentsParams): SolverCapability[] =>
-  params.teamRun.solvers.map((solver) => {
-    const profileId = solver.profile_id?.trim()
-    if (!profileId) throw new Error(`Team v4 solver ${solver.id} is missing profile_id.`)
+const collectSpecialistCapabilities = (params: PlanTeamV4SpecialistAssignmentsParams): SpecialistCapability[] =>
+  params.teamRun.specialists.map((specialist) => {
+    const profileId = specialist.profile_id?.trim()
+    if (!profileId) throw new Error(`Team v4 specialist ${specialist.id} is missing profile_id.`)
     const profile = params.getAssistantProfileOption(profileId)
-    if (!profile) throw new Error(`Team v4 solver profile not found: ${profileId}.`)
+    if (!profile) throw new Error(`Team v4 specialist profile not found: ${profileId}.`)
     const runtimeToolConfig = buildRuntimeToolConfigForTeamRole(
-      buildSolverProfileToolConfig(profile, params.baselineToolConfig),
+      buildSpecialistProfileToolConfig(profile, params.baselineToolConfig),
       params.teamToolPolicyMatrix,
-      'solver',
+      'specialist',
       {
         webSearchEnabled: params.webSearchEnabled,
       },
     )
     return {
-      solver,
+      specialist,
       profile,
       tools: normalizeToolIdList(runtimeToolConfig.allowed_tools),
     }
   })
 
-const buildPlanPrompt = (goal: string, capabilities: SolverCapability[]) => [
-  'You are the Team Commander. Create a concrete multi-task execution graph for the solvers.',
+const buildPlanPrompt = (goal: string, capabilities: SpecialistCapability[]) => [
+  'You are the Team Orchestrator. Create a concrete multi-task execution graph for the specialists.',
   'Return strict JSON only. Do not include markdown or prose outside JSON.',
   '',
   'Rules:',
   '- Create 1 to 6 tasks.',
   '- Each task must have a unique key using lowercase letters, numbers, underscore, or hyphen.',
-  '- Each task must choose exactly one solverId from the available solvers.',
-  '- requiredTools must be a subset of the chosen solver availableTools.',
+  '- Each task must choose exactly one specialistId from the available specialists.',
+  '- requiredTools must be a subset of the chosen specialist availableTools.',
   '- dependsOnTaskKeys may reference only earlier task keys.',
   '- Use parallel independent tasks when possible.',
   '',
@@ -114,9 +114,9 @@ const buildPlanPrompt = (goal: string, capabilities: SolverCapability[]) => [
   '    {',
   '      "key": "short_key",',
   '      "title": "task title",',
-  '      "instruction": "specific solver instruction",',
-  '      "acceptanceCriteria": "how commander can judge completion",',
-  '      "solverId": "solver id",',
+  '      "instruction": "specific specialist instruction",',
+  '      "acceptanceCriteria": "how orchestrator can judge completion",',
+  '      "specialistId": "specialist id",',
   '      "requiredTools": ["tool_id"],',
   '      "dependsOnTaskKeys": ["earlier_key"],',
   '      "priority": 0',
@@ -125,68 +125,68 @@ const buildPlanPrompt = (goal: string, capabilities: SolverCapability[]) => [
   '}',
   '',
   `User goal: ${goal}`,
-  `Available solvers: ${JSON.stringify(capabilities.map((item) => ({
-    solverId: item.solver.id,
-    name: item.solver.name,
-    profileId: item.solver.profile_id,
+  `Available specialists: ${JSON.stringify(capabilities.map((item) => ({
+    specialistId: item.specialist.id,
+    name: item.specialist.name,
+    profileId: item.specialist.profile_id,
     role: item.profile.teamRole,
-    contextMode: item.solver.context_mode,
+    contextMode: item.specialist.context_mode,
     availableTools: item.tools,
   })))}`,
 ].join('\n')
 
 const normalizeTaskKey = (value: unknown) => {
-  if (typeof value !== 'string') throw new Error('Commander task key must be a string.')
+  if (typeof value !== 'string') throw new Error('Orchestrator task key must be a string.')
   const key = value.trim()
   if (!/^[a-z0-9][a-z0-9_-]{1,40}$/.test(key)) {
-    throw new Error(`Invalid Commander task key: ${key}.`)
+    throw new Error(`Invalid Orchestrator task key: ${key}.`)
   }
   if (key === 'root') {
-    throw new Error('Commander task key root is reserved for the Team run container.')
+    throw new Error('Orchestrator task key root is reserved for the Team run container.')
   }
   return key
 }
 
 const readString = (value: unknown, field: string) => {
   if (typeof value !== 'string' || !value.trim()) {
-    throw new Error(`Commander task requires non-empty string field: ${field}.`)
+    throw new Error(`Orchestrator task requires non-empty string field: ${field}.`)
   }
   return value.trim()
 }
 
 const readStringArray = (value: unknown, field: string) => {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new Error(`Commander task requires string[] field: ${field}.`)
+    throw new Error(`Orchestrator task requires string[] field: ${field}.`)
   }
   return value.map((item) => item.trim()).filter(Boolean)
 }
 
-const parsePlan = (raw: string, capabilities: SolverCapability[]): PlannedTask[] => {
+const parsePlan = (raw: string, capabilities: SpecialistCapability[]): PlannedTask[] => {
   const parsed = parseJsonObject(raw)
   if (!Array.isArray(parsed.tasks) || parsed.tasks.length < 1 || parsed.tasks.length > 6) {
-    throw new Error('Commander task plan must contain 1 to 6 tasks.')
+    throw new Error('Orchestrator task plan must contain 1 to 6 tasks.')
   }
-  const solverTools = new Map(capabilities.map((item) => [item.solver.id, new Set(item.tools)]))
+  const specialistTools = new Map(capabilities.map((item) => [item.specialist.id, new Set(item.tools)]))
   const seenKeys = new Set<string>()
   return parsed.tasks.map((item, index) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      throw new Error(`Commander task ${index + 1} must be an object.`)
+      throw new Error(`Orchestrator task ${index + 1} must be an object.`)
     }
     const task = item as Record<string, unknown>
     const key = normalizeTaskKey(task.key)
-    if (seenKeys.has(key)) throw new Error(`Duplicate Commander task key: ${key}.`)
-    const solverId = readString(task.solverId, 'solverId')
-    const tools = solverTools.get(solverId)
-    if (!tools) throw new Error(`Commander task ${key} references unknown solverId: ${solverId}.`)
+    if (seenKeys.has(key)) throw new Error(`Duplicate Orchestrator task key: ${key}.`)
+    const specialistId = readString(task.specialistId, 'specialistId')
+    const tools = specialistTools.get(specialistId)
+    if (!tools) throw new Error(`Orchestrator task ${key} references unknown specialistId: ${specialistId}.`)
     const requiredTools = normalizeToolIdList(readStringArray(task.requiredTools, 'requiredTools'))
     const missingTools = requiredTools.filter((tool) => !tools.has(tool))
     if (missingTools.length > 0) {
-      throw new Error(`Commander task ${key} requires unavailable tools for ${solverId}: ${missingTools.join(', ')}.`)
+      throw new Error(`Orchestrator task ${key} requires unavailable tools for ${specialistId}: ${missingTools.join(', ')}.`)
     }
     const dependsOnTaskKeys = readStringArray(task.dependsOnTaskKeys, 'dependsOnTaskKeys')
     const invalidDependency = dependsOnTaskKeys.find((dependency) => !seenKeys.has(dependency))
     if (invalidDependency) {
-      throw new Error(`Commander task ${key} has invalid dependency: ${invalidDependency}.`)
+      throw new Error(`Orchestrator task ${key} has invalid dependency: ${invalidDependency}.`)
     }
     seenKeys.add(key)
     return {
@@ -194,7 +194,7 @@ const parsePlan = (raw: string, capabilities: SolverCapability[]): PlannedTask[]
       title: readString(task.title, 'title'),
       instruction: readString(task.instruction, 'instruction'),
       acceptanceCriteria: readString(task.acceptanceCriteria, 'acceptanceCriteria'),
-      solverId,
+      specialistId,
       requiredTools,
       dependsOnTaskKeys,
       priority: Math.max(0, Math.floor(Number(task.priority) || index)),
@@ -202,21 +202,21 @@ const parsePlan = (raw: string, capabilities: SolverCapability[]): PlannedTask[]
   })
 }
 
-export const planTeamV4SolverAssignments = async (
-  params: PlanTeamV4SolverAssignmentsParams,
-): Promise<TeamV4SolverAssignment[]> => {
-  const capabilities = collectSolverCapabilities(params)
-  const commanderContextMode = params.teamRun.commander.context_mode === 'codex-like'
-    || params.teamRun.commander.context_mode === 'sentinel-like'
-    ? params.teamRun.commander.context_mode
+export const planTeamV4SpecialistAssignments = async (
+  params: PlanTeamV4SpecialistAssignmentsParams,
+): Promise<TeamV4SpecialistAssignment[]> => {
+  const capabilities = collectSpecialistCapabilities(params)
+  const orchestratorContextMode = params.teamRun.orchestrator.context_mode === 'codex-like'
+    || params.teamRun.orchestrator.context_mode === 'sentinel-like'
+    ? params.teamRun.orchestrator.context_mode
     : 'claude-like'
   const contextSnapshot = await teamRuntimeApi.createContextSnapshot(params.teamRun.run.id, {
-    actorId: params.teamRun.commander.id,
+    actorId: params.teamRun.orchestrator.id,
     taskId: params.teamRun.rootTask.id,
-    roleType: 'commander',
+    roleType: 'orchestrator',
     sourceSequence: params.teamRun.events[params.teamRun.events.length - 1]?.sequence ?? null,
     policyJson: {
-      planningMode: 'model_task_graph_solver_tool_matching',
+      planningMode: 'model_task_graph_specialist_tool_matching',
     },
     sectionsJson: [
       {
@@ -225,31 +225,31 @@ export const planTeamV4SolverAssignments = async (
         content: params.goal,
       },
       {
-        id: 'solver_capabilities',
-        title: 'Solver Capabilities',
+        id: 'specialist_capabilities',
+        title: 'Specialist Capabilities',
         content: capabilities.map((item) => ({
-          solverId: item.solver.id,
-          name: item.solver.name,
-          profileId: item.solver.profile_id,
+          specialistId: item.specialist.id,
+          name: item.specialist.name,
+          profileId: item.specialist.profile_id,
           availableTools: item.tools,
         })),
       },
     ],
     tokenEstimate: 0,
   })
-  const executionId = `team-v4:${params.teamRun.run.id}:commander-task-plan`
+  const executionId = `team-v4:${params.teamRun.run.id}:orchestrator-task-plan`
   const rawPlan = await params.runModelExecution({
-    contextMode: commanderContextMode,
+    contextMode: orchestratorContextMode,
     executionId,
-    model: params.teamRun.commander.model?.trim() || null,
+    model: params.teamRun.orchestrator.model?.trim() || null,
     prompt: buildPlanPrompt(params.goal, capabilities),
-    roleLabel: 'Commander task planning',
+    roleLabel: 'Orchestrator task planning',
   })
   const plannedTasks = parsePlan(rawPlan, capabilities)
   const planEvent = await teamRuntimeApi.appendEvent(params.teamRun.run.id, {
-    actorId: params.teamRun.commander.id,
+    actorId: params.teamRun.orchestrator.id,
     taskId: params.teamRun.rootTask.id,
-    eventType: 'commander_task_graph_planned',
+    eventType: 'orchestrator_task_graph_planned',
     visibility: 'workspace',
     payload: {
       contextSnapshotId: contextSnapshot.id,
@@ -258,39 +258,39 @@ export const planTeamV4SolverAssignments = async (
       tasks: plannedTasks,
     },
   })
-  const solverById = new Map(params.teamRun.solvers.map((solver) => [solver.id, solver]))
+  const specialistById = new Map(params.teamRun.specialists.map((specialist) => [specialist.id, specialist]))
   const taskIdsByKey = new Map<string, string>()
   const leaseSecs = Math.max(30, Math.floor(Number(params.teamRun.run.policy_json?.harnessPolicy?.leaseSecs) || 600))
-  const assignments: TeamV4SolverAssignment[] = []
+  const assignments: TeamV4SpecialistAssignment[] = []
 
   for (const plannedTask of plannedTasks) {
-    const solver = solverById.get(plannedTask.solverId)
-    if (!solver) throw new Error(`Planned task references missing solver: ${plannedTask.solverId}.`)
+    const specialist = specialistById.get(plannedTask.specialistId)
+    if (!specialist) throw new Error(`Planned task references missing specialist: ${plannedTask.specialistId}.`)
     const task = await teamRuntimeApi.createTask(params.teamRun.run.id, {
       parentTaskId: params.teamRun.rootTask.id,
       taskKey: plannedTask.key,
       title: plannedTask.title,
       instruction: plannedTask.instruction,
       priority: plannedTask.priority,
-      assignedAgentId: solver.id,
+      assignedAgentId: specialist.id,
       dependsOn: plannedTask.dependsOnTaskKeys.map((key) => taskIdsByKey.get(key) as string),
       acceptanceCriteria: plannedTask.acceptanceCriteria,
       metadata: {
-        createdBy: params.teamRun.commander.id,
-        dispatchMode: 'commander_task_graph',
+        createdBy: params.teamRun.orchestrator.id,
+        dispatchMode: 'orchestrator_task_graph',
         requiredTools: plannedTask.requiredTools,
-        solverProfileId: solver.profile_id,
+        specialistProfileId: specialist.profile_id,
       },
     })
     taskIdsByKey.set(plannedTask.key, task.id)
     const context = await teamRuntimeApi.createContextSnapshot(params.teamRun.run.id, {
-      actorId: solver.id,
+      actorId: specialist.id,
       taskId: task.id,
-      roleType: 'solver',
+      roleType: 'specialist',
       sourceSequence: planEvent.sequence,
       policyJson: {
         inheritHistory: true,
-        planningMode: 'commander_task_graph',
+        planningMode: 'orchestrator_task_graph',
         requiredTools: plannedTask.requiredTools,
       },
       sectionsJson: [
@@ -301,24 +301,24 @@ export const planTeamV4SolverAssignments = async (
         },
         {
           id: 'assignment',
-          title: 'Commander Assignment',
+          title: 'Orchestrator Assignment',
           content: plannedTask,
         },
       ],
       tokenEstimate: 0,
     })
     const harnessRun = await teamRuntimeApi.startHarnessRun(params.teamRun.run.id, {
-      actorId: solver.id,
+      actorId: specialist.id,
       taskId: task.id,
       leaseSecs,
       metadata: {
         managedBy: 'harness',
         checkpointPolicy: 'event_sequence',
-        planningMode: 'commander_task_graph',
+        planningMode: 'orchestrator_task_graph',
       },
     })
     assignments.push({
-      solver,
+      specialist,
       task: {
         ...task,
         context_snapshot_id: context.id,

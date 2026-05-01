@@ -165,6 +165,7 @@ export interface SubCategory {
 export const mainCategories: Category[] = [
   { value: 'traffic', label: '流量分析插件', icon: 'fas fa-shield-alt' },
   { value: 'agent', label: 'Agent插件', icon: 'fas fa-robot' },
+  { value: 'bounty', label: '漏洞赏金插件', icon: 'fas fa-bug' },
   { value: 'intruder', label: 'Intruder插件', icon: 'fas fa-crosshairs' },
 ]
 
@@ -189,6 +190,8 @@ export const agentsCategories = [
   'reporter',   // Reporting (legacy)
   'custom'      // Custom
 ]
+
+export const bountyCategories = agentsCategories
 
 // Intruder plugin subcategories
 export const intruderCategories = [

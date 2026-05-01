@@ -32,19 +32,19 @@ fn parse_team_v4_execution_id(execution_id: &str) -> Option<TeamRuntimeLogContex
         .filter(|value| !value.is_empty());
     let agent_id = parts
         .windows(2)
-        .find(|window| window[0] == "solver" || window[0] == "agent")
+        .find(|window| window[0] == "specialist" || window[0] == "agent")
         .map(|window| window[1].trim().to_string())
         .filter(|value| !value.is_empty());
     let attempt_index = parts
         .windows(2)
         .find(|window| window[0] == "attempt")
         .and_then(|window| window[1].parse::<u32>().ok());
-    let phase = if parts.iter().any(|part| *part == "observer-review") {
-        "observer_review"
-    } else if parts.iter().any(|part| *part == "commander-replan") {
-        "commander_replan"
+    let phase = if parts.iter().any(|part| *part == "monitor-review") {
+        "monitor_review"
+    } else if parts.iter().any(|part| *part == "orchestrator-replan") {
+        "orchestrator_replan"
     } else {
-        "solver_execution"
+        "specialist_execution"
     };
 
     Some(TeamRuntimeLogContext {

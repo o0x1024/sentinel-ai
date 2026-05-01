@@ -60,6 +60,17 @@ pub async fn surface_list_assets(
 }
 
 #[tauri::command]
+pub async fn surface_count_assets_by_type(
+    db_service: State<'_, Arc<DatabaseService>>,
+    filter: SurfaceAssetFilter,
+) -> Result<std::collections::HashMap<String, i32>, String> {
+    db_service
+        .count_surface_assets_by_type(&filter)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn surface_list_inventory(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: SurfaceAssetFilter,

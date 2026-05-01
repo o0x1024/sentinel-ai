@@ -247,9 +247,9 @@
                   <span class="label-text mb-2">Team 角色</span>
                   <select v-model="selectedProfile.teamRole" class="select select-bordered">
                     <option value="assistant">Assistant</option>
-                    <option value="commander">Commander</option>
-                    <option value="solver">Solver</option>
-                    <option value="observer">Observer</option>
+                    <option value="orchestrator">Orchestrator</option>
+                    <option value="specialist">Specialist</option>
+                    <option value="monitor">Monitor</option>
                   </select>
                 </label>
 

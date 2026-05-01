@@ -67,6 +67,7 @@ impl DatabaseService {
                 search: None,
                 service_name: None,
                 transport_protocol: None,
+                view_state: None,
                 limit: None,
                 offset: None,
             })

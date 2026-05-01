@@ -237,6 +237,8 @@ pub async fn surface_manual_import_assets(
             exposed_to_internet_flag: internet_exposure
                 .as_ref()
                 .map(|value| matches!(value.as_str(), "internet" | "public")),
+            viewed_at: None,
+            viewed_by: None,
             metadata_json: Some(json!({ "import_mode": "manual" }).to_string()),
             created_at: now.clone(),
             updated_at: now.clone(),
@@ -310,6 +312,51 @@ pub async fn surface_delete_inventory(
 ) -> Result<usize, String> {
     db_service
         .delete_surface_inventory(&filter)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn surface_mark_asset_viewed(
+    db_service: State<'_, Arc<DatabaseService>>,
+    asset_id: String,
+) -> Result<usize, String> {
+    db_service
+        .mark_surface_assets_viewed(&[asset_id], &Utc::now().to_rfc3339(), "surface_inventory")
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn surface_batch_mark_assets_viewed(
+    db_service: State<'_, Arc<DatabaseService>>,
+    asset_ids: Vec<String>,
+) -> Result<usize, String> {
+    db_service
+        .mark_surface_assets_viewed(&asset_ids, &Utc::now().to_rfc3339(), "surface_inventory")
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn surface_mark_inventory_viewed(
+    db_service: State<'_, Arc<DatabaseService>>,
+    filter: SurfaceAssetFilter,
+) -> Result<usize, String> {
+    let mut view_filter = filter;
+    view_filter.limit = None;
+    view_filter.offset = None;
+
+    let asset_ids = db_service
+        .list_surface_assets(&view_filter)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|asset| asset.id)
+        .collect::<Vec<_>>();
+
+    db_service
+        .mark_surface_assets_viewed(&asset_ids, &Utc::now().to_rfc3339(), "surface_inventory")
         .await
         .map_err(|e| e.to_string())
 }

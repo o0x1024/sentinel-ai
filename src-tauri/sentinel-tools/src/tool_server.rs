@@ -1824,7 +1824,6 @@ impl ToolServer {
         description: &str,
         input_schema: Value,
         output_schema: Option<Value>,
-        category: Option<String>,
         executor: ToolExecutor,
     ) {
         let sanitized_id = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
@@ -1838,7 +1837,7 @@ impl ToolServer {
             source: ToolSource::Plugin {
                 plugin_id: plugin_id.to_string(),
             },
-            category: category.unwrap_or_else(|| "other".to_string()),
+            category: "plugin".to_string(),
             tags: Vec::new(),
             search_hint: None,
             exposure: "deferred".to_string(),

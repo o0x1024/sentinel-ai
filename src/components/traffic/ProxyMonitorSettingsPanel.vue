@@ -460,74 +460,6 @@
       </div>
     </div>
 
-    <div class="proxy-settings-card proxy-settings-card-wide card bg-base-100 shadow-xl">
-      <div class="card-body">
-        <h2 class="card-title text-base mb-3">
-          <i class="fas fa-search-plus mr-2"></i>
-          {{ $t('trafficAnalysis.proxyConfiguration.matchReplaceRules') }}
-        </h2>
-        <p class="text-sm text-base-content/70 mb-4">{{ $t('trafficAnalysis.proxyConfiguration.matchReplaceRulesDesc') }}</p>
-
-        <div class="form-control mb-3">
-          <label class="label cursor-pointer justify-start gap-2">
-            <input v-model="onlyApplyToInScope" type="checkbox" class="checkbox checkbox-sm" />
-            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.onlyApplyToInScope') }}</span>
-          </label>
-        </div>
-
-        <div class="proxy-settings-rule-editor flex gap-4">
-          <div class="flex flex-col gap-2 shrink-0">
-            <button class="btn btn-sm btn-outline w-24" @click="addMatchReplaceRule">{{ $t('trafficAnalysis.proxyConfiguration.add') }}</button>
-            <button class="btn btn-sm btn-outline w-24" :disabled="selectedMatchReplaceIndex === -1" @click="editMatchReplaceRule">{{ $t('trafficAnalysis.proxyConfiguration.edit') }}</button>
-            <button class="btn btn-sm btn-outline w-24" :disabled="selectedMatchReplaceIndex === -1" @click="removeMatchReplaceRule">{{ $t('trafficAnalysis.proxyConfiguration.remove') }}</button>
-            <button class="btn btn-sm btn-outline w-24" :disabled="selectedMatchReplaceIndex <= 0" @click="moveMatchReplaceRuleUp">{{ $t('trafficAnalysis.proxyConfiguration.moveUp') }}</button>
-            <button
-              class="btn btn-sm btn-outline w-24"
-              :disabled="selectedMatchReplaceIndex === -1 || selectedMatchReplaceIndex >= matchReplaceRules.length - 1"
-              @click="moveMatchReplaceRuleDown"
-            >
-              {{ $t('trafficAnalysis.proxyConfiguration.moveDown') }}
-            </button>
-          </div>
-
-          <div class="flex-1 overflow-x-auto border border-base-300 rounded">
-            <table class="table table-sm w-full">
-              <thead>
-                <tr>
-                  <th class="w-16">{{ $t('trafficAnalysis.proxyConfiguration.enabled') }}</th>
-                  <th>{{ $t('trafficAnalysis.proxyConfiguration.type') }}</th>
-                  <th>{{ $t('trafficAnalysis.proxyConfiguration.match') }}</th>
-                  <th>{{ $t('trafficAnalysis.proxyConfiguration.replace') }}</th>
-                  <th>{{ $t('trafficAnalysis.proxyConfiguration.comment') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="(rule, index) in matchReplaceRules"
-                  :key="index"
-                  :class="{ 'bg-primary/10': selectedMatchReplaceIndex === index }"
-                  class="cursor-pointer hover:bg-base-200"
-                  @click="selectedMatchReplaceIndex = index"
-                  @dblclick="editMatchReplaceRuleByIndex(index)"
-                >
-                  <td>
-                    <input v-model="rule.enabled" type="checkbox" class="checkbox checkbox-sm" @click.stop />
-                  </td>
-                  <td class="text-xs">{{ rule.type }}</td>
-                  <td class="font-mono text-xs max-w-xs truncate" :title="rule.match">{{ rule.match }}</td>
-                  <td class="text-xs max-w-xs truncate" :title="rule.replace">{{ rule.replace }}</td>
-                  <td class="text-xs">{{ rule.comment }}</td>
-                </tr>
-                <tr v-if="matchReplaceRules.length === 0">
-                  <td colspan="5" class="text-center text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.noRules') }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="proxy-settings-card card bg-base-100 shadow-xl">
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
@@ -726,15 +658,6 @@ const props = withDefaults(defineProps<{
   removeInputFieldLengthLimits: any
   removeJavaScriptFormValidation: any
   removeAllJavaScript: any
-  onlyApplyToInScope: any
-  matchReplaceRules: any
-  selectedMatchReplaceIndex: any
-  addMatchReplaceRule: Action
-  editMatchReplaceRule: Action
-  removeMatchReplaceRule: Action
-  moveMatchReplaceRuleUp: Action
-  moveMatchReplaceRuleDown: Action
-  editMatchReplaceRuleByIndex: Action
   tlsPassThroughRules: any
   selectedTlsPassThroughIndex: any
   addTlsPassThroughRule: Action
@@ -803,15 +726,6 @@ const {
   removeInputFieldLengthLimits,
   removeJavaScriptFormValidation,
   removeAllJavaScript,
-  onlyApplyToInScope,
-  matchReplaceRules,
-  selectedMatchReplaceIndex,
-  addMatchReplaceRule,
-  editMatchReplaceRule,
-  removeMatchReplaceRule,
-  moveMatchReplaceRuleUp,
-  moveMatchReplaceRuleDown,
-  editMatchReplaceRuleByIndex,
   tlsPassThroughRules,
   selectedTlsPassThroughIndex,
   addTlsPassThroughRule,

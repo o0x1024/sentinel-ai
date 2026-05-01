@@ -111,6 +111,7 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       sendTo: '发送到',
       sendToRepeater: '发送到重放器',
       sendToIntruder: '发送到爆破器',
+      sendToAssistant: '发送到 AI 助手',
       tabs: {
         overview: '案件概览',
         evidence: '请求与证据链',
@@ -158,6 +159,7 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       sendTo: '发送到',
       sendToRepeater: '发送到重放器',
       sendToIntruder: '发送到爆破器',
+      sendToAssistant: '发送到 AI 助手',
       rawExchange: '原始请求/响应',
       requestPanel: '请求详情',
       responsePanel: '响应详情',
@@ -171,6 +173,8 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       noCaseTransferableRequest: '当前案件没有可发送的原始请求',
       repeaterOpened: '已发送到重放器',
       intruderOpened: '已发送到爆破器',
+      assistantOpened: '已发送到 AI 助手',
+      assistantFailed: '发送到 AI 助手失败',
       transferFailed: '发送请求失败: {error}',
     },
     analysis: {
@@ -628,6 +632,7 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       sendTo: 'Send To',
       sendToRepeater: 'Send to Repeater',
       sendToIntruder: 'Send to Intruder',
+      sendToAssistant: 'Send to AI Assistant',
       tabs: {
         overview: 'Overview',
         evidence: 'Request & Evidence',
@@ -676,6 +681,7 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       sendTo: 'Send To',
       sendToRepeater: 'Send to Repeater',
       sendToIntruder: 'Send to Intruder',
+      sendToAssistant: 'Send to AI Assistant',
       rawExchange: 'Raw request / response',
       requestPanel: 'Request details',
       responsePanel: 'Response details',
@@ -689,6 +695,8 @@ const messages: Record<WorkbenchLocale, WorkbenchMessages> = {
       noCaseTransferableRequest: 'No raw request is available for this case.',
       repeaterOpened: 'Sent to Repeater',
       intruderOpened: 'Sent to Intruder',
+      assistantOpened: 'Sent to AI Assistant',
+      assistantFailed: 'Failed to send to AI Assistant',
       transferFailed: 'Failed to send request: {error}',
     },
     analysis: {

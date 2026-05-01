@@ -19,7 +19,10 @@ use crate::commands::traffic::plugin_commands::{
 };
 use crate::commands::traffic::TrafficAnalysisState;
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
-use crate::generators::{PluginValidator, ValidationResult};
+use crate::generators::{
+    parse_agent_plugin_definition, render_agent_plugin_definition, AgentPluginRenderContext,
+    PluginValidator, ValidationResult,
+};
 use crate::services::plugin_execution_test::{
     build_plugin_metadata, parse_plugin_severity, test_plugin_code, PluginExecutionTestResult,
 };
@@ -336,7 +339,11 @@ async fn generate_plugin_code(
     )
     .await?;
 
-    let code = extract_and_clean_code(&response);
+    let code = if uses_agent_tool_contract(&context.main_category) {
+        render_generated_agent_plugin(&response, context)?
+    } else {
+        extract_and_clean_code(&response)
+    };
     if code.trim().is_empty() {
         return Err(anyhow!("Generated plugin code is empty"));
     }
@@ -384,12 +391,45 @@ async fn build_generation_prompt(
         ));
     }
 
-    sections.push(
-        "Output only executable TypeScript code. Do not include explanations outside the code block."
-            .to_string(),
-    );
+    if uses_agent_tool_contract(&context.main_category) {
+        sections.push(
+            "Output exactly one plugin definition JSON object that matches the active Agent Tool Contract. Do not output TypeScript plugin wrappers, markdown, or prose."
+                .to_string(),
+        );
+    } else {
+        sections.push(
+            "Output only executable TypeScript code. Do not include explanations outside the code block."
+                .to_string(),
+        );
+    }
 
     Ok(sections.join("\n\n"))
+}
+
+fn render_generated_agent_plugin(
+    response: &str,
+    context: &PluginAuthoringContext,
+) -> Result<String> {
+    let definition = parse_agent_plugin_definition(response)?;
+    let render_context = AgentPluginRenderContext {
+        plugin_id: context.plugin_id.clone(),
+        name: context.name.clone(),
+        version: "1.0.0".to_string(),
+        author: context
+            .author
+            .clone()
+            .unwrap_or_else(|| "Sentinel AI".to_string()),
+        category: context.category.clone(),
+        default_severity: context.default_severity.clone(),
+        tags: vec!["ai-authored".to_string(), context.category.clone()],
+        description: context.description.clone(),
+    };
+
+    render_agent_plugin_definition(definition, &render_context)
+}
+
+fn uses_agent_tool_contract(main_category: &str) -> bool {
+    matches!(main_category, "agent" | "bounty")
 }
 
 async fn resolve_context_and_code(
@@ -593,7 +633,7 @@ async fn validate_category_code(
                 runtime_schema: None,
             })
         }
-        "agent" | "intruder" => {
+        "agent" | "bounty" | "intruder" => {
             let metadata = RuntimeSchemaValidationMetadata {
                 id: context.plugin_id.clone(),
                 name: context.name.clone(),

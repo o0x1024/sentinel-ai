@@ -1,5 +1,6 @@
 //! Plugin generation prompt commands
 
+use crate::generators::agent_contract_generation_instructions;
 use tauri::command;
 
 /// Get combined plugin generation prompt for AI
@@ -10,7 +11,7 @@ pub fn get_combined_plugin_prompt_api(
     _severity: String,
 ) -> Result<String, String> {
     match plugin_type.as_str() {
-        "agent" => Ok(get_agent_plugin_prompt()),
+        "agent" | "bounty" => Ok(get_agent_plugin_prompt()),
         "intruder" => Ok(get_intruder_plugin_prompt(&vuln_type)),
         _ => Ok(get_traffic_plugin_prompt()),
     }
@@ -156,7 +157,8 @@ Now generate the Traffic Scan Plugin.
 }
 
 fn get_agent_plugin_prompt() -> String {
-    r#"# Agent Tool Plugin Generation Task
+    format!(
+        r#"# Agent Tool Plugin Generation Task
 
 You are a professional security researcher and TypeScript developer. Your task is to generate high-quality Agent tool plugins for an AI-driven security testing system.
 
@@ -168,7 +170,7 @@ Agent tool plugins should:
 3. Follow the Agent tool plugin interface.
 4. Include appropriate error handling and validation.
 5. Use the `ToolOutput` interface to return structured results.
-6. **MUST export a `get_input_schema()` function to declare the input parameters' JSON Schema.**
+6. Follow the active Agent Tool Contract exactly.
 
 ## Key Principles
 
@@ -195,88 +197,7 @@ Agent tool plugins should:
 
 ---
 
-## Agent Tool Plugin Interface (Required Structure)
-
-The Agent tool plugin you generate **MUST** include the following structure:
-
-### 1. get_input_schema() Function (Required)
-
-Export a `get_input_schema()` function that returns a JSON Schema object describing the input parameters:
-
-```typescript
-/**
- * Export parameter schema function (Required)
- */
-export function get_input_schema() {
-    return {
-        type: "object",
-        required: ["target"],
-        properties: {
-            target: {
-                type: "string",
-                description: "Target URL or host address"
-            },
-            timeout: {
-                type: "integer",
-                default: 5000,
-                description: "Timeout in milliseconds"
-            }
-        }
-    };
-}
-
-globalThis.get_input_schema = get_input_schema;
-```
-
-### 2. TypeScript Interface and Implementation
-
-```typescript
-// Tool input interface
-interface ToolInput {
-    target: string;
-    timeout?: number;
-}
-
-// Tool output interface
-interface ToolOutput {
-    success: boolean;
-    data?: any;
-    error?: string;
-}
-
-// Main tool function
-export async function analyze(input: ToolInput): Promise<ToolOutput> {
-    try {
-        // Validate input
-        if (!input || !input.target) {
-            return {
-                success: false,
-                error: "Invalid input: target is required"
-            };
-        }
-        
-        // Implement your tool logic here
-        
-
-        
-        return {
-            success: true,
-            data: {
-                // Your tool results
-            },
-        };
-    } catch (error) {
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : String(error)
-        };
-    }
-}
-
-// **CRITICAL**: Export functions to globalThis
-globalThis.get_input_schema = get_input_schema;
-globalThis.analyze = analyze;
-```
+{contract_instructions}
 
 ### Available APIs
 
@@ -290,84 +211,16 @@ const crypto = require('crypto');
 
 // ❌ WRONG - Do NOT use import
 import * as fs from 'fs/promises';  // This will fail!
-
-
----
+```
 
 ## Output Format
 
-Return ONLY the TypeScript plugin code wrapped in a markdown code block:
-
-```typescript
-/**
- * Tool Plugin
- * @plugin tool_id
- * @name Tool Name
- * @version 1.0.0
- * @author Sentinel AI
- * @category category
- * @default_severity medium
- * @tags tag1, tag2
- * @description Tool description
- */
-
-interface ToolInput {
-    target: string;
-}
-
-interface ToolOutput {
-    success: boolean;
-    data?: any;
-    error?: string;
-}
-
-export function get_input_schema() {
-    return {
-        type: "object",
-        required: ["target"],
-        properties: {
-            target: {
-                type: "string",
-                description: "Target address"
-            }
-        }
-    };
-}
-
-export async function analyze(input: ToolInput): Promise<ToolOutput> {
-    try {
-        if (!input || !input.target) {
-            return { success: false, error: "target is required" };
-        }
-        
-        // Your tool logic
-        return {
-            success: true,
-            data: {}
-        };
-    } catch (error) {
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : String(error)
-        };
-    }
-}
-
-// **CRITICAL**: Must export functions to globalThis
-globalThis.get_input_schema = get_input_schema;
-globalThis.analyze = analyze;
-```
-
-**Requirements**:
-1. **MUST export a `get_input_schema()` function**.
-2. Include detailed comments explaining the tool logic.
-3. Use correct TypeScript types.
-4. Handle edge cases and errors gracefully.
-5. Return a structured `ToolOutput` with success/error status.
-6. **MUST bind both `get_input_schema` and `analyze` to globalThis**.
+Return only the plugin definition JSON described by the active contract. The Rust renderer will generate the final TypeScript file, schema exports, and `globalThis` bindings.
 
 Now generate the Agent Tool Plugin.
-"#.to_string()
+"#,
+        contract_instructions = agent_contract_generation_instructions()
+    )
 }
 
 fn get_intruder_plugin_prompt(category: &str) -> String {

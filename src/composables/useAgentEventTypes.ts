@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue'
 import type { AgentMessage } from '@/types/agent'
+import type { ParallelTaskSource } from '@/composables/useAgentParallelRunState'
 
 export interface AgentStartEvent {
   execution_id: string
@@ -223,6 +224,7 @@ export interface UseAgentEventsReturn {
   lastMessage: ComputedRef<AgentMessage | undefined>
   ragMetaInfo: Ref<RagMetaInfo | null>
   contextUsage: Ref<ContextUsageInfo | null>
+  parallelTaskSources: ComputedRef<ParallelTaskSource[]>
   clearMessages: () => void
   resetError: () => void
   stopExecution: () => void

@@ -34,6 +34,7 @@ export interface PluginCodeValidationResult {
 export interface PluginRuntimeSchemaValidationResult {
   success: boolean
   schema?: unknown
+  schemas?: Record<string, unknown> | null
   error?: string | null
   issueCode?: string | null
   issue_code?: string | null
@@ -91,6 +92,20 @@ export function validateAiGeneratedPluginCode(
     'get_input_schema_export',
     '缺少 `get_input_schema` 导出函数',
   )
+  if (metadata.mainCategory === 'agent' || metadata.mainCategory === 'bounty') {
+    formatRule(
+      hasPattern(normalizedCode, [/export\s+function\s+get_output_schema\b/, /export\s+const\s+get_output_schema\b/]),
+      errors,
+      'get_output_schema_export',
+      '缺少 `get_output_schema` 导出函数',
+    )
+    formatRule(
+      /globalThis\.get_output_schema\s*=/.test(normalizedCode),
+      errors,
+      'get_output_schema_global_binding',
+      '缺少 `globalThis.get_output_schema = get_output_schema` 绑定',
+    )
+  }
   formatRule(
     hasPattern(normalizedCode, [/export\s+async\s+function\s+analyze\b/, /export\s+function\s+analyze\b/]),
     errors,
@@ -244,7 +259,7 @@ export function normalizeRuntimeSchemaValidationResult(
     return {
       errors: [{
         code: result.issueCode ?? result.issue_code ?? 'runtime_schema_execution_failed',
-        message: `运行时 get_input_schema 校验失败: ${result.error || '未知错误'}`,
+        message: `运行时 schema contract 校验失败: ${result.error || '未知错误'}`,
       }],
       warnings: [],
     }
@@ -288,6 +303,9 @@ export function inferValidationIssueCode(
   }
   if (normalized.includes('get_input_schema')) {
     return normalized.includes('globalthis') ? 'get_input_schema_global_binding' : 'get_input_schema_export'
+  }
+  if (normalized.includes('get_output_schema')) {
+    return normalized.includes('globalthis') ? 'get_output_schema_global_binding' : 'get_output_schema_export'
   }
   if (normalized.includes('analyze')) {
     return normalized.includes('globalthis') ? 'analyze_global_binding' : 'analyze_export'

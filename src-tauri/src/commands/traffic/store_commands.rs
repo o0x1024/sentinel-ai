@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use super::plugin_commands::{
-    refresh_active_agent_plugin_tools, resolved_store_plugin_monitor_type,
+    is_agent_tool_plugin_main_category, refresh_active_agent_plugin_tools,
+    resolved_store_plugin_monitor_type,
 };
 use super::TrafficAnalysisState;
 use crate::commands::command_response_support::CommandResponse;
@@ -322,7 +323,7 @@ pub async fn install_store_plugin(
         tracing::warn!("Failed to update plugin cache: {}", e);
     }
 
-    if metadata.main_category == "agent" {
+    if is_agent_tool_plugin_main_category(&metadata.main_category) {
         let refreshed = refresh_active_agent_plugin_tools(db.as_ref()).await?;
         tracing::info!(
             "Refreshed {} active agent plugin tools after installing {}",
@@ -443,7 +444,7 @@ pub async fn update_store_plugin(
         tracing::warn!("Failed to update plugin cache: {}", e);
     }
 
-    if metadata.main_category == "agent" {
+    if is_agent_tool_plugin_main_category(&metadata.main_category) {
         let refreshed = refresh_active_agent_plugin_tools(db.as_ref()).await?;
         tracing::info!(
             "Refreshed {} active agent plugin tools after updating {}",

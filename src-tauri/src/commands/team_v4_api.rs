@@ -97,7 +97,7 @@ pub struct TeamV4Memory {
     pub content: String,
     pub confidence: f64,
     pub source_event_ids: Value,
-    pub accepted_by_commander: bool,
+    pub accepted_by_orchestrator: bool,
     pub promoted_to_long_term: bool,
     pub metadata: Value,
     pub created_at: String,
@@ -220,7 +220,7 @@ fn normalize_visibility(value: Option<String>) -> Result<String> {
 fn normalize_role_type(value: &str) -> Result<String> {
     let role_type = value.trim().to_lowercase();
     match role_type.as_str() {
-        "commander" | "solver" | "observer" | "harness" => Ok(role_type),
+        "orchestrator" | "specialist" | "monitor" | "harness" => Ok(role_type),
         _ => Err(anyhow!("unsupported Team V4 role type")),
     }
 }
@@ -1025,7 +1025,7 @@ async fn create_team_v4_memory_internal(
             sqlx::query(
                 r#"INSERT INTO team_v4_memories
                    (id, run_id, task_id, kind, content, confidence, source_event_ids,
-                    accepted_by_commander, promoted_to_long_term, metadata, created_at, updated_at)
+                    accepted_by_orchestrator, promoted_to_long_term, metadata, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
             )
             .bind(&id)
@@ -1047,7 +1047,7 @@ async fn create_team_v4_memory_internal(
             sqlx::query(
                 r#"INSERT INTO team_v4_memories
                    (id, run_id, task_id, kind, content, confidence, source_event_ids,
-                    accepted_by_commander, promoted_to_long_term, metadata, created_at, updated_at)
+                    accepted_by_orchestrator, promoted_to_long_term, metadata, created_at, updated_at)
                    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11, $12)"#,
             )
             .bind(&id)
@@ -1076,7 +1076,7 @@ async fn create_team_v4_memory_internal(
         content,
         confidence,
         source_event_ids,
-        accepted_by_commander: false,
+        accepted_by_orchestrator: false,
         promoted_to_long_term: false,
         metadata,
         created_at: now.clone(),
@@ -1372,7 +1372,7 @@ pub async fn team_v4_list_memories(
         DatabasePool::SQLite(pool) => {
             let rows = sqlx::query(
                 r#"SELECT id, run_id, task_id, kind, content, confidence, source_event_ids,
-                          accepted_by_commander, promoted_to_long_term, metadata, created_at, updated_at
+                          accepted_by_orchestrator, promoted_to_long_term, metadata, created_at, updated_at
                    FROM team_v4_memories WHERE run_id = ?
                    ORDER BY created_at ASC"#,
             )
@@ -1389,7 +1389,7 @@ pub async fn team_v4_list_memories(
             let rows = sqlx::query(
                 r#"SELECT id, run_id, task_id, kind, content, confidence,
                           source_event_ids::text as source_event_ids,
-                          accepted_by_commander, promoted_to_long_term,
+                          accepted_by_orchestrator, promoted_to_long_term,
                           metadata::text as metadata,
                           created_at::text as created_at, updated_at::text as updated_at
                    FROM team_v4_memories WHERE run_id = $1
@@ -1515,7 +1515,7 @@ pub async fn team_v4_create_memory_candidate(
         TeamV4AppendEventRequest {
             actor_id: None,
             task_id: memory.task_id.clone(),
-            event_type: "observer_memory_candidate".to_string(),
+            event_type: "monitor_memory_candidate".to_string(),
             visibility: Some("workspace".to_string()),
             payload: Some(json!({
                 "memory_id": memory.id,
@@ -1548,7 +1548,7 @@ pub async fn team_v4_accept_memory(
         DatabasePool::SQLite(pool) => {
             sqlx::query(
                 r#"UPDATE team_v4_memories
-                   SET accepted_by_commander = ?, promoted_to_long_term = ?, updated_at = ?
+                   SET accepted_by_orchestrator = ?, promoted_to_long_term = ?, updated_at = ?
                    WHERE id = ? AND run_id = ?"#,
             )
             .bind(true)
@@ -1561,7 +1561,7 @@ pub async fn team_v4_accept_memory(
             .map_err(|e| e.to_string())?;
             let row = sqlx::query(
                 r#"SELECT id, run_id, task_id, kind, content, confidence, source_event_ids,
-                          accepted_by_commander, promoted_to_long_term, metadata, created_at, updated_at
+                          accepted_by_orchestrator, promoted_to_long_term, metadata, created_at, updated_at
                    FROM team_v4_memories WHERE id = ?"#,
             )
             .bind(&memory_id)
@@ -1584,7 +1584,7 @@ pub async fn team_v4_accept_memory(
                 TeamV4AppendEventRequest {
                     actor_id: None,
                     task_id: memory.task_id.clone(),
-                    event_type: "commander_memory_accepted".to_string(),
+                    event_type: "orchestrator_memory_accepted".to_string(),
                     visibility: Some("workspace".to_string()),
                     payload: Some(json!({
                         "memory_id": memory.id,
@@ -1601,7 +1601,7 @@ pub async fn team_v4_accept_memory(
         DatabasePool::PostgreSQL(pool) => {
             sqlx::query(
                 r#"UPDATE team_v4_memories
-                   SET accepted_by_commander = $1, promoted_to_long_term = $2, updated_at = $3
+                   SET accepted_by_orchestrator = $1, promoted_to_long_term = $2, updated_at = $3
                    WHERE id = $4 AND run_id = $5"#,
             )
             .bind(true)
@@ -1615,7 +1615,7 @@ pub async fn team_v4_accept_memory(
             let row = sqlx::query(
                 r#"SELECT id, run_id, task_id, kind, content, confidence,
                           source_event_ids::text as source_event_ids,
-                          accepted_by_commander, promoted_to_long_term,
+                          accepted_by_orchestrator, promoted_to_long_term,
                           metadata::text as metadata,
                           created_at::text as created_at, updated_at::text as updated_at
                    FROM team_v4_memories WHERE id = $1"#,
@@ -1640,7 +1640,7 @@ pub async fn team_v4_accept_memory(
                 TeamV4AppendEventRequest {
                     actor_id: None,
                     task_id: memory.task_id.clone(),
-                    event_type: "commander_memory_accepted".to_string(),
+                    event_type: "orchestrator_memory_accepted".to_string(),
                     visibility: Some("workspace".to_string()),
                     payload: Some(json!({
                         "memory_id": memory.id,

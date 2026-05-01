@@ -475,21 +475,9 @@ const loading = ref(false)
 const selectedCategories = ref<string[]>([])
 const searchQuery = ref('')
 
-const categories = computed(() => {
-  const cats = new Set(allTools.value.map(t => t.category))
-  return Array.from(cats).sort()
-})
-
-// 所有分类（包括 Plugin，即使没有插件工具也显示）
 const allCategories = computed(() => {
-  const cats = new Set(allTools.value.map(t => t.category))
-  // 确保 Plugin 分类始终存在
-  cats.add('Plugin')
+  const cats = new Set(allTools.value.map(t => t.category.toLowerCase()))
   return Array.from(cats).sort()
-})
-
-const hasPluginTools = computed(() => {
-  return allTools.value.some(t => t.category === 'Plugin')
 })
 
 const shouldUseCheckboxSelection = computed(() => {

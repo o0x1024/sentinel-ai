@@ -10,6 +10,9 @@ use crate::commands::monitor_notification_support::{
     build_monitor_plugin_failure_event, build_monitor_task_summary_event,
     emit_monitor_plugin_failure, emit_monitor_task_summary, normalize_monitor_error_message,
 };
+use crate::commands::monitor_plugin_execution_support::{
+    execute_monitor_plugin, is_monitor_execution_plugin_category, normalize_plugin_registry_id,
+};
 use crate::commands::monitor_plugin_output_support::{
     extract_plugin_failure, extract_service_probe_engine_used,
 };
@@ -392,12 +395,14 @@ pub async fn monitor_start_scheduler(
 
     // Register Task Executor
     let db_service_clone = db_service.inner().clone();
+    let plugin_manager_for_executor = plugin_manager.inner().clone();
     let running_task_ids_for_executor = running_task_ids.clone();
     let cancel_requested_task_ids_for_executor = cancel_requested_task_ids.clone();
     let app_for_executor_clone = app_for_executor.clone();
     scheduler
         .set_task_executor(move |task| {
             let db = db_service_clone.clone();
+            let plugin_manager = plugin_manager_for_executor.clone();
             let scheduler = scheduler_for_executor.clone();
             let running_task_ids = running_task_ids_for_executor.clone();
             let cancel_requested_task_ids = cancel_requested_task_ids_for_executor.clone();
@@ -477,9 +482,6 @@ pub async fn monitor_start_scheduler(
                         );
                         return Ok(vec![]);
                     }
-
-                    // 3. Execute Plugins
-                    let tool_server = sentinel_tools::get_tool_server();
 
                     for (index, plugin) in plugins_to_run.iter().enumerate() {
                         let imported_before_plugin = total_imported;
@@ -702,7 +704,13 @@ pub async fn monitor_start_scheduler(
                                 execution_started_at.clone(),
                                 plugin_started_at,
                             );
-                            let result = tool_server.execute(&candidate.plugin_id, input).await;
+                            let result = execute_monitor_plugin(
+                                &db,
+                                &plugin_manager,
+                                &candidate.plugin_id,
+                                input,
+                            )
+                            .await;
                             heartbeat.stop().await;
 
                             if !result.success {
@@ -2017,9 +2025,6 @@ pub async fn monitor_trigger_task(
     // Execute the task immediately using the same logic as the scheduler
     tracing::info!("Executing task '{}' immediately...", task.name);
 
-    // Get executor
-    let tool_server = sentinel_tools::get_tool_server();
-
     let plugins_to_run = collect_monitor_plugins(&task);
 
     tracing::info!(
@@ -2334,7 +2339,13 @@ pub async fn monitor_trigger_task(
                     execution_started_at.clone(),
                     plugin_started_at,
                 );
-                let result = tool_server.execute(&candidate.plugin_id, input).await;
+                let result = execute_monitor_plugin(
+                    &db_clone,
+                    &plugin_manager_clone,
+                    &candidate.plugin_id,
+                    input,
+                )
+                .await;
                 heartbeat.stop().await;
 
                 if !result.success {
@@ -3890,6 +3901,7 @@ pub struct MonitorDiscoverAssetsResponse {
 #[tauri::command]
 pub async fn monitor_discover_and_import_assets(
     db_service: State<'_, Arc<DatabaseService>>,
+    plugin_manager: State<'_, Arc<sentinel_traffic::PluginManager>>,
     request: MonitorDiscoverAssetsRequest,
 ) -> Result<MonitorDiscoverAssetsResponse, String> {
     let run_id = Uuid::new_v4().to_string();
@@ -3929,12 +3941,14 @@ pub async fn monitor_discover_and_import_assets(
     );
     tracing::debug!("Plugin input: {:?}", request.plugin_input);
 
-    // Execute plugin using global tool server
-    let tool_server = sentinel_tools::get_tool_server();
-    tracing::info!("Executing plugin '{}' via ToolServer...", request.plugin_id);
-    let tool_result = tool_server
-        .execute(&request.plugin_id, request.plugin_input.clone())
-        .await;
+    tracing::info!("Executing plugin '{}' via PluginManager...", request.plugin_id);
+    let tool_result = execute_monitor_plugin(
+        db_service.inner(),
+        plugin_manager.inner(),
+        &request.plugin_id,
+        request.plugin_input.clone(),
+    )
+    .await;
 
     tracing::info!(
         "Plugin execution completed: success={}",
@@ -5112,9 +5126,9 @@ async fn resolve_monitor_type_from_metadata(
     tool_name: &str,
     category: &str,
 ) -> Result<Option<String>, String> {
-    let normalized_name = tool_name.strip_prefix("plugin__").unwrap_or(tool_name);
+    let normalized_name = normalize_plugin_registry_id(tool_name);
     let plugin_record = db_service
-        .get_plugin_from_registry(normalized_name)
+        .get_plugin_from_registry(&normalized_name)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -5122,7 +5136,7 @@ async fn resolve_monitor_type_from_metadata(
         if tool_name.starts_with("plugin__") {
             return Ok(None);
         }
-        return Ok(infer_monitor_type_for_plugin(normalized_name, category).map(str::to_string));
+        return Ok(infer_monitor_type_for_plugin(&normalized_name, category).map(str::to_string));
     };
 
     if let Some(monitor_type) = plugin_record
@@ -5134,7 +5148,7 @@ async fn resolve_monitor_type_from_metadata(
         return Ok(Some(monitor_type.to_string()));
     }
 
-    let Some(inferred_monitor_type) = infer_monitor_type_for_plugin(normalized_name, category)
+    let Some(inferred_monitor_type) = infer_monitor_type_for_plugin(&normalized_name, category)
     else {
         return Ok(None);
     };
@@ -5149,7 +5163,7 @@ async fn resolve_monitor_type_from_metadata(
     }
 
     let plugin_code = db_service
-        .get_plugin_code(normalized_name)
+        .get_plugin_code(&normalized_name)
         .await
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
@@ -5167,40 +5181,48 @@ async fn resolve_monitor_type_from_metadata(
 pub async fn monitor_get_available_plugins(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<MonitorPluginInfo>, String> {
-    let tool_server = sentinel_tools::get_tool_server();
-    let all_tools = tool_server.list_tools().await;
+    let all_plugins = db_service
+        .get_plugins_from_registry(Some("default"))
+        .await
+        .map_err(|error| format!("Failed to list plugins: {}", error))?;
 
     tracing::info!(
-        "Loading available plugins for monitoring, total tools: {}",
-        all_tools.len()
+        "Loading available plugins for monitoring, total plugins: {}",
+        all_plugins.len()
     );
 
     let mut plugins = Vec::new();
 
-    for tool in all_tools {
+    for plugin in all_plugins {
+        if !is_monitor_execution_plugin_category(&plugin.metadata.main_category) {
+            continue;
+        }
+
         tracing::debug!(
-            "Checking tool: name={}, category={}, enabled={}",
-            tool.name,
-            tool.category,
-            tool.enabled
+            "Checking monitor plugin: id={}, main_category={}, category={}, status={:?}",
+            plugin.metadata.id,
+            plugin.metadata.main_category,
+            plugin.metadata.category,
+            plugin.status
         );
 
-        let Some(monitor_type) =
-            resolve_monitor_type_from_metadata(db_service.inner(), &tool.name, &tool.category)
-                .await?
+        let Some(monitor_type) = resolve_monitor_type_from_metadata(
+            db_service.inner(),
+            &plugin.metadata.id,
+            &plugin.metadata.category,
+        )
+        .await?
         else {
             continue;
         };
 
-        // tracing::info!("Matched plugin: {} -> monitor_type={}", tool.name, monitor_type);
-
         plugins.push(MonitorPluginInfo {
-            id: tool.name.clone(),
-            name: tool.name.clone(),
-            category: tool.category.clone(),
+            id: plugin.metadata.id.clone(),
+            name: plugin.metadata.name.clone(),
+            category: plugin.metadata.category.clone(),
             monitor_type,
-            description: Some(tool.description.clone()),
-            is_available: tool.enabled,
+            description: plugin.metadata.description.clone(),
+            is_available: plugin.status == sentinel_plugins::PluginStatus::Enabled,
         });
     }
 
@@ -5211,14 +5233,22 @@ pub async fn monitor_get_available_plugins(
 
 /// Test if a plugin is available and working
 #[tauri::command]
-pub async fn monitor_test_plugin(plugin_id: String) -> Result<bool, String> {
-    let tool_server = sentinel_tools::get_tool_server();
+pub async fn monitor_test_plugin(
+    db_service: State<'_, Arc<DatabaseService>>,
+    plugin_id: String,
+) -> Result<bool, String> {
+    let normalized_plugin_id = normalize_plugin_registry_id(&plugin_id);
+    let plugin = db_service
+        .get_plugin_from_registry(&normalized_plugin_id)
+        .await
+        .map_err(|error| format!("Failed to query plugin '{}': {}", normalized_plugin_id, error))?;
 
-    // Try to check if plugin exists
-    let all_tools = tool_server.list_tools().await;
-    Ok(all_tools
-        .iter()
-        .any(|tool| tool.name == plugin_id && tool.enabled))
+    Ok(plugin
+        .map(|record| {
+            is_monitor_execution_plugin_category(&record.metadata.main_category)
+                && record.status == sentinel_plugins::PluginStatus::Enabled
+        })
+        .unwrap_or(false))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

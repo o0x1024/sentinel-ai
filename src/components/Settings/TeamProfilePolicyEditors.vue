@@ -50,12 +50,12 @@
           <span class="label-text mb-1">写入门禁</span>
           <select
             class="select select-bordered select-sm"
-            :value="memoryPolicy.observerGate || 'candidate_then_commander_accept'"
-            @change="updatePolicyField('memoryPolicy', 'observerGate', ($event.target as HTMLSelectElement).value)"
+            :value="memoryPolicy.monitorGate || 'candidate_then_orchestrator_accept'"
+            @change="updatePolicyField('memoryPolicy', 'monitorGate', ($event.target as HTMLSelectElement).value)"
           >
-            <option value="candidate_then_commander_accept">Observer 候选，Commander 确认</option>
-            <option value="observer_only">Observer 直接接受</option>
-            <option value="commander_only">仅 Commander 写入</option>
+            <option value="candidate_then_orchestrator_accept">Monitor 候选，Orchestrator 确认</option>
+            <option value="monitor_only">Monitor 直接接受</option>
+            <option value="orchestrator_only">仅 Orchestrator 写入</option>
           </select>
         </label>
         <label class="form-control">
@@ -143,14 +143,14 @@
       />
       <div v-if="modes.concurrencyPolicy === 'form'" class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <NumberField
-          label="最大并发 Solver"
-          :value="Number(concurrencyPolicy.maxSolvers || 1)"
-          @update:value="updatePolicyField('concurrencyPolicy', 'maxSolvers', $event)"
+          label="最大并发 Specialist"
+          :value="Number(concurrencyPolicy.maxSpecialists || 1)"
+          @update:value="updatePolicyField('concurrencyPolicy', 'maxSpecialists', $event)"
         />
         <NumberField
-          label="每 Solver 最大任务数"
-          :value="Number(concurrencyPolicy.maxTasksPerSolver || 1)"
-          @update:value="updatePolicyField('concurrencyPolicy', 'maxTasksPerSolver', $event)"
+          label="每 Specialist 最大任务数"
+          :value="Number(concurrencyPolicy.maxTasksPerSpecialist || 1)"
+          @update:value="updatePolicyField('concurrencyPolicy', 'maxTasksPerSpecialist', $event)"
         />
       </div>
       <JsonPolicyTextarea
@@ -169,14 +169,14 @@
       />
       <div v-if="modes.safetyPolicy === 'form'" class="grid grid-cols-1 gap-2">
         <BooleanPolicySwitch
-          label="Commander 禁止危险工具"
-          :checked="safetyPolicy.commanderNoDangerousTools === true"
-          @update:checked="updatePolicyField('safetyPolicy', 'commanderNoDangerousTools', $event)"
+          label="Orchestrator 禁止危险工具"
+          :checked="safetyPolicy.orchestratorNoDangerousTools === true"
+          @update:checked="updatePolicyField('safetyPolicy', 'orchestratorNoDangerousTools', $event)"
         />
         <BooleanPolicySwitch
-          label="Observer 只读"
-          :checked="safetyPolicy.observerReadOnly === true"
-          @update:checked="updatePolicyField('safetyPolicy', 'observerReadOnly', $event)"
+          label="Monitor 只读"
+          :checked="safetyPolicy.monitorReadOnly === true"
+          @update:checked="updatePolicyField('safetyPolicy', 'monitorReadOnly', $event)"
         />
         <BooleanPolicySwitch
           label="高风险工具需要审批"
@@ -206,7 +206,7 @@ import type { PropType } from 'vue'
 
 type PolicyKey = 'toolPolicyMatrix' | 'memoryPolicy' | 'harnessPolicy' | 'concurrencyPolicy' | 'safetyPolicy'
 type PolicyMode = 'form' | 'json'
-type ToolRoleKey = 'commander' | 'solver' | 'observer'
+type ToolRoleKey = 'orchestrator' | 'specialist' | 'monitor'
 
 interface ToolMetadata {
   id: string
@@ -233,9 +233,9 @@ const emit = defineEmits<{
 }>()
 
 const toolRoles: Array<{ key: ToolRoleKey; label: string; description: string }> = [
-  { key: 'commander', label: 'Commander', description: '规划、分发、恢复与汇总的工具白名单' },
-  { key: 'solver', label: 'Solver', description: '执行具体任务的工具白名单' },
-  { key: 'observer', label: 'Observer', description: '评审、证据提炼与记忆候选的工具白名单' },
+  { key: 'orchestrator', label: 'Orchestrator', description: '拆解、编排、恢复与汇总的工具白名单' },
+  { key: 'specialist', label: 'Specialist', description: '执行具体领域子任务的工具白名单' },
+  { key: 'monitor', label: 'Monitor', description: '指标采集、质量评估与重试建议的工具白名单' },
 ]
 
 const modes = reactive<Record<PolicyKey, PolicyMode>>({

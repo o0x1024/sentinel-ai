@@ -210,10 +210,11 @@ const loadPluginSchema = async (nextPluginId: string) => {
   loadError.value = ''
 
   try {
-    const response = await invoke<any>('get_tool_input_schema', { toolId: nextPluginId })
+    const response = await invoke<any>('get_plugin_input_schema', { pluginId: nextPluginId })
+    const responseSchema = response?.success ? response.data : response
     const resolvedSchema =
-      response && typeof response === 'object'
-        ? response
+      responseSchema && typeof responseSchema === 'object'
+        ? responseSchema
         : { type: 'object', properties: {} }
 
     schemaCache.set(nextPluginId, resolvedSchema)

@@ -6,8 +6,8 @@ const agent = (overrides: Partial<TeamV4Agent>): TeamV4Agent => ({
   id: 'agent-1',
   run_id: 'run-1',
   profile_id: 'assistant.default',
-  role_type: 'solver',
-  name: 'Solver 1',
+  role_type: 'specialist',
+  name: 'Specialist 1',
   status: 'idle',
   model: 'model',
   context_mode: 'claude-like',
@@ -43,7 +43,7 @@ const event = (overrides: Partial<TeamV4Event>): TeamV4Event => ({
   sequence: 1,
   actor_id: 'agent-1',
   task_id: 'task-1',
-  event_type: 'solver_execution_started',
+  event_type: 'specialist_execution_started',
   visibility: 'workspace',
   payload: {},
   created_at: '2026-04-28T08:00:00Z',
@@ -66,15 +66,15 @@ const harness = (overrides: Partial<TeamV4HarnessRun>): TeamV4HarnessRun => ({
 })
 
 describe('teamV4Observability', () => {
-  it('maps solver tool events into live activity and waiting_tool agent status', () => {
+  it('maps specialist tool events into live activity and waiting_tool agent status', () => {
     const state = deriveTeamV4Observability({
       agents: [agent({})],
       events: [
-        event({ sequence: 1, event_type: 'solver_execution_started' }),
+        event({ sequence: 1, event_type: 'specialist_execution_started' }),
         event({
           id: 'event-2',
           sequence: 2,
-          event_type: 'solver_tool_started',
+          event_type: 'specialist_tool_started',
           payload: {
             toolName: 'http_request',
           },
@@ -86,18 +86,18 @@ describe('teamV4Observability', () => {
     })
 
     expect(state.phase).toBe('tool_running')
-    expect(state.headline).toBe('Solver 1 called http_request')
+    expect(state.headline).toBe('Specialist 1 called http_request')
     expect(state.toolEvents).toHaveLength(1)
     expect(state.agentStates[0].status).toBe('waiting_tool')
   })
 
-  it('keeps failed solver events visible as the run headline', () => {
+  it('keeps failed specialist events visible as the run headline', () => {
     const state = deriveTeamV4Observability({
       agents: [agent({})],
       events: [
         event({
           sequence: 1,
-          event_type: 'solver_execution_failed',
+          event_type: 'specialist_execution_failed',
           payload: {
             error: 'Connection refused',
           },
@@ -109,7 +109,7 @@ describe('teamV4Observability', () => {
     })
 
     expect(state.phase).toBe('failed')
-    expect(state.headline).toBe('Solver 1 failed Root Task')
+    expect(state.headline).toBe('Specialist 1 failed Root Task')
     expect(state.detail).toBe('Connection refused')
     expect(state.agentStates[0].status).toBe('failed')
   })

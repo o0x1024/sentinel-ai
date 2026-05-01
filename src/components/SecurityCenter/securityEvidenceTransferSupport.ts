@@ -15,9 +15,12 @@ export interface SecurityEvidenceTransferMessages {
   triggerLabel: string
   sendToRepeater: string
   sendToIntruder: string
+  sendToAssistant: string
   noTransferableRequest: string
   repeaterOpened: string
   intruderOpened: string
+  assistantOpened: string
+  assistantFailed: string
   transferFailed: string
 }
 

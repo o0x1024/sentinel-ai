@@ -15,6 +15,15 @@ import {
 } from '@/utils/agentToolActivation'
 import { applyFileVerificationStatuses } from '@/components/Agent/fileVerificationSupport'
 import { buildAgentSessionStats } from '@/components/Agent/agentSessionStatsSupport'
+import {
+  appendParallelChunk,
+  applyParallelSessionStats,
+  appendParallelSystemEvent,
+  appendParallelToolCall,
+  appendParallelToolResult,
+} from '@/composables/agentParallelEventSupport'
+import { useAgentParallelRunState } from '@/composables/useAgentParallelRunState'
+import { schedulePersistParallelModelEvents } from '@/composables/agentParallelEventPersistence'
 import type { AgentTasksUpdatePayload } from '@/types/taskRuntime'
 import type {
   AgentChunkEvent,
@@ -78,6 +87,26 @@ export function useAgentEvents(
 
   // 工具调用追踪 Map: tool_call_id -> { tool_name, arguments, message_id, message_index }
   const toolCallTracker = new Map<string, { tool_name: string; arguments: any; message_id: string; message_index: number }>()
+  const parallelAgentChunkExecutions = new Set<string>()
+  const {
+    clearParallelRuns,
+    getParallelChild,
+    parallelRuns,
+    parallelTaskSources,
+    rememberParallelRun,
+    settleParallelRunIfDone,
+    upsertParallelRunMessage,
+  } = useAgentParallelRunState({
+    isExecuting,
+    markExecutionSettled: (id) => markExecutionSettled(id),
+    messages,
+    streamingContent,
+  })
+  const flushParallelChild = (child: ReturnType<typeof getParallelChild>) => {
+    if (!child) return
+    upsertParallelRunMessage(child.run)
+    schedulePersistParallelModelEvents(child.run, child.item)
+  }
 
   // Pending document attachments to inject into next user message
   const pendingDocumentAttachments = ref<any[]>([])
@@ -422,6 +451,7 @@ export function useAgentEvents(
     settledExecutionId.value = null
     executionStartedAt.value = null
     latestUsage.value = null
+    clearParallelRuns()
   }
 
   const resetError = () => {
@@ -432,6 +462,23 @@ export function useAgentEvents(
   const stopExecution = () => {
     console.log('[useAgentEvents] Stopping execution, current execution_id:', currentExecutionId.value)
     const executionToSuppress = currentExecutionId.value || getTargetId() || null
+    const targetId = getTargetId()
+    const activeParallelRun = targetId
+      ? Array.from(parallelRuns.values()).find((run) =>
+          run.parentConversationId === targetId &&
+          run.items.some((item) => item.status === 'pending' || item.status === 'running'),
+        )
+      : null
+    if (activeParallelRun) {
+      void invoke('cancel_ai_parallel_run', {
+        request: {
+          parallel_run_id: activeParallelRun.id,
+          parent_execution_id: activeParallelRun.parentConversationId,
+        },
+      }).catch((cancelError) => {
+        console.warn('[useAgentEvents] Failed to cancel parallel run:', cancelError)
+      })
+    }
     if (executionToSuppress) {
       suppressedExecutionId.value = executionToSuppress
     }
@@ -450,6 +497,23 @@ export function useAgentEvents(
   }
 
   const startListening = async () => {
+    const unlistenParallelRunStarted = await listen<any>('agent:parallel_run_started', (event) => {
+      const run = rememberParallelRun(event.payload)
+      if (!matchesTarget(run.parentConversationId)) return
+      markExecutionActive(run.parentConversationId)
+      startExecutionTiming()
+      upsertParallelRunMessage(run)
+    })
+    unlisteners.push(unlistenParallelRunStarted)
+
+    const unlistenParallelRunUpdated = await listen<any>('agent:parallel_run_updated', (event) => {
+      const run = rememberParallelRun(event.payload)
+      if (!matchesTarget(run.parentConversationId)) return
+      upsertParallelRunMessage(run)
+      settleParallelRunIfDone(run)
+    })
+    unlisteners.push(unlistenParallelRunUpdated)
+
     // 监听用户消息事件（从后端保存后推送）
     const unlistenUserMessage = await listen<{
       execution_id: string
@@ -752,6 +816,24 @@ export function useAgentEvents(
     // 监听 agent:chunk 事件
     const unlistenChunk = await listen<AgentChunkEvent>('agent:chunk', (event) => {
       const payload = event.payload
+      const parallelChild = getParallelChild(payload.execution_id)
+      if (parallelChild) {
+        parallelAgentChunkExecutions.add(payload.execution_id)
+        appendParallelChunk(
+          parallelChild.item,
+          payload.chunk_type,
+          payload.content,
+          {
+            inputTokens: payload.input_tokens,
+            outputTokens: payload.output_tokens,
+          },
+        )
+        flushParallelChild(parallelChild)
+        if (parallelChild.item.status === 'failed') {
+          settleParallelRunIfDone(parallelChild.run)
+        }
+        return
+      }
       if (!matchesTarget(payload.execution_id)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
@@ -861,6 +943,12 @@ export function useAgentEvents(
     // 监听 agent:tool_call 事件
     const unlistenToolCall = await listen<AgentToolCallEvent>('agent:tool_call', (event) => {
       const payload = event.payload
+      const parallelChild = getParallelChild(payload.execution_id)
+      if (parallelChild) {
+        appendParallelToolCall(parallelChild.item, payload.tool_name, payload.tool_input, payload.tool_id)
+        flushParallelChild(parallelChild)
+        return
+      }
       if (!matchesTarget(payload.execution_id)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
@@ -898,6 +986,24 @@ export function useAgentEvents(
     // 监听 agent:tool_call_complete 事件（新格式 - rig-core）
     const unlistenToolCallComplete = await listen<AgentToolCallCompleteEvent>('agent:tool_call_complete', (event) => {
       const payload = event.payload
+      const parallelChild = getParallelChild(payload.execution_id)
+      if (parallelChild) {
+        let parsedArgs: any = {}
+        try {
+          parsedArgs = JSON.parse(payload.arguments || '{}')
+        } catch (e) {
+          parsedArgs = { raw: payload.arguments }
+        }
+        toolCallTracker.set(payload.tool_call_id, {
+          tool_name: payload.tool_name,
+          arguments: parsedArgs,
+          message_id: '',
+          message_index: -1,
+        })
+        appendParallelToolCall(parallelChild.item, payload.tool_name, parsedArgs, payload.tool_call_id)
+        flushParallelChild(parallelChild)
+        return
+      }
       if (!matchesTarget(payload.execution_id)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
@@ -955,6 +1061,19 @@ export function useAgentEvents(
     // 监听 agent:tool_result 事件（旧格式兼容）
     const unlistenToolResult = await listen<AgentToolResultEvent>('agent:tool_result', (event) => {
       const payload = event.payload
+      const parallelChild = getParallelChild(payload.execution_id)
+      if (parallelChild) {
+        const nextPayload = payload as any
+        const callInfo = nextPayload.tool_call_id ? toolCallTracker.get(nextPayload.tool_call_id) : null
+        const toolName = payload.tool_name || callInfo?.tool_name || 'unknown'
+        const result = nextPayload.result ?? payload.tool_result ?? ''
+        const success = typeof nextPayload.success === 'boolean'
+          ? nextPayload.success
+          : inferToolSuccess(result)
+        appendParallelToolResult(parallelChild.item, toolName, result, success, nextPayload.tool_call_id)
+        flushParallelChild(parallelChild)
+        return
+      }
       if (!matchesTarget(payload.execution_id)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
@@ -1165,6 +1284,12 @@ export function useAgentEvents(
 
     const unlistenToolsActivated = await listen<AgentToolsActivatedEvent>('agent:tools_activated', (event) => {
       const payload = event.payload
+      const parallelChild = getParallelChild(payload.execution_id)
+      if (parallelChild) {
+        appendParallelSystemEvent(parallelChild.item, '工具已启用', buildToolsPreview(payload.tools))
+        flushParallelChild(parallelChild)
+        return
+      }
       if (!matchesTarget(payload.execution_id)) return
 
       messages.value.push({
@@ -1191,6 +1316,12 @@ export function useAgentEvents(
       skill_name: string
     }>('agent:skill_loaded', (event) => {
       const payload = event.payload
+      const parallelChild = getParallelChild(payload.execution_id)
+      if (parallelChild) {
+        appendParallelSystemEvent(parallelChild.item, '技能已加载', `${payload.skill_name} (${payload.skill_id})`)
+        flushParallelChild(parallelChild)
+        return
+      }
       if (!matchesTarget(payload.execution_id)) return
 
       messages.value.push({
@@ -1210,6 +1341,12 @@ export function useAgentEvents(
     // 监听 agent:tool_executed 事件
     const unlistenToolExecuted = await listen<AgentToolExecutedEvent>('agent:tool_executed', (event) => {
       const payload = event.payload
+      const parallelChild = getParallelChild(payload.execution_id)
+      if (parallelChild) {
+        appendParallelToolResult(parallelChild.item, payload.tool, payload.result, payload.success)
+        flushParallelChild(parallelChild)
+        return
+      }
       if (!matchesTarget(payload.execution_id)) return
 
       messages.value.push({
@@ -1237,6 +1374,16 @@ export function useAgentEvents(
       timestamp: number
     }>('agent:assistant_message_saved', (event) => {
       const payload = event.payload
+      const parallelChild = getParallelChild(payload.execution_id)
+      if (parallelChild) {
+        applyParallelSessionStats(parallelChild.item, payload.metadata?.session_stats)
+        parallelChild.item.content = payload.content || parallelChild.item.content
+        if (parallelChild.item.status === 'pending') {
+          parallelChild.item.status = 'running'
+        }
+        flushParallelChild(parallelChild)
+        return
+      }
       if (!matchesTarget(payload.execution_id)) return
 
       console.log('[useAgentEvents] Assistant message saved:', payload.message_id)
@@ -1362,7 +1509,26 @@ export function useAgentEvents(
     unlisteners.push(unlistenRagComplete)
 
     const unlistenExecutionFinished = await listen<AgentExecutionFinishedEvent>('agent:execution_finished', (event) => {
-      handleExecutionFinished(event.payload)
+      const payload = event.payload
+      const parallelChild = getParallelChild(payload.execution_id)
+      if (parallelChild) {
+        parallelChild.item.status = payload.outcome === 'cancelled'
+          ? 'cancelled'
+          : payload.success
+            ? 'succeeded'
+            : 'failed'
+        if (payload.response && payload.response.trim()) {
+          parallelChild.item.content = payload.response
+        }
+        parallelChild.item.completedAtMs = Date.now()
+        if (payload.error || payload.message) {
+          parallelChild.item.error = payload.error || payload.message || undefined
+        }
+        flushParallelChild(parallelChild)
+        settleParallelRunIfDone(parallelChild.run)
+        return
+      }
+      handleExecutionFinished(payload)
     })
     unlisteners.push(unlistenExecutionFinished)
 
@@ -1546,6 +1712,16 @@ export function useAgentEvents(
     // 兼容旧的 message_chunk 事件
     const unlistenOldChunk = await listen<OrderedMessageChunk>('message_chunk', (event) => {
       const chunk = event.payload
+      const parallelChild = getParallelChild(chunk.execution_id)
+      if (parallelChild) {
+        if (parallelAgentChunkExecutions.has(chunk.execution_id)) return
+        appendParallelChunk(parallelChild.item, chunk.chunk_type, chunk.content)
+        flushParallelChild(parallelChild)
+        if (parallelChild.item.status === 'failed') {
+          settleParallelRunIfDone(parallelChild.run)
+        }
+        return
+      }
       if (!matchesTarget(chunk.execution_id)) return
       if (isSettledActivityEvent(chunk.execution_id)) return
 
@@ -1775,6 +1951,7 @@ export function useAgentEvents(
     lastMessage,
     ragMetaInfo,
     contextUsage,
+    parallelTaskSources,
     clearMessages,
     resetError,
     stopExecution,

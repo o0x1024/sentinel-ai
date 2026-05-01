@@ -143,7 +143,7 @@
         </div>
         <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-base-content/50">
           <span v-if="memory.task_id">task: {{ taskTitle(memory.task_id) }}</span>
-          <span>{{ memory.accepted_by_commander ? 'accepted' : 'candidate' }}</span>
+          <span>{{ memory.accepted_by_orchestrator ? 'accepted' : 'candidate' }}</span>
           <span v-if="memory.promoted_to_long_term">long-term</span>
         </div>
         <div v-if="memoryEvidence(memory).length" class="mt-2 space-y-1">
@@ -175,8 +175,8 @@
             <div class="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-base-content/70">{{ memory.content }}</div>
           </div>
           <div class="flex flex-col items-end gap-1">
-            <span class="badge badge-xs" :class="memory.accepted_by_commander ? 'badge-success' : 'badge-warning'">
-              {{ memory.accepted_by_commander ? 'accepted' : 'candidate' }}
+            <span class="badge badge-xs" :class="memory.accepted_by_orchestrator ? 'badge-success' : 'badge-warning'">
+              {{ memory.accepted_by_orchestrator ? 'accepted' : 'candidate' }}
             </span>
             <span v-if="memory.promoted_to_long_term" class="badge badge-xs badge-primary">long-term</span>
           </div>
@@ -406,7 +406,7 @@ const evidenceMemories = computed(() =>
 )
 
 const acceptedMemoryCount = computed(() =>
-  props.memories.filter((memory) => memory.accepted_by_commander).length,
+  props.memories.filter((memory) => memory.accepted_by_orchestrator).length,
 )
 
 const promotedMemoryCount = computed(() =>
@@ -450,7 +450,7 @@ const phaseBadgeClass = (phase: string) => {
   if (phase === 'completed') return 'badge-success'
   if (phase === 'failed' || phase === 'cancelled') return 'badge-error'
   if (phase === 'waiting_user' || phase === 'recovering') return 'badge-warning'
-  if (phase === 'tool_running' || phase === 'solver_running' || phase === 'scheduling') return 'badge-info'
+  if (phase === 'tool_running' || phase === 'specialist_running' || phase === 'scheduling') return 'badge-info'
   return 'badge-ghost'
 }
 
@@ -466,7 +466,7 @@ const agentRuntimeStatus = (agent: TeamV4Agent) => {
     .reverse()
     .find((event) => event.actor_id === agent.id)
   const eventType = String(latestAgentEvent?.event_type || '').toLowerCase()
-  if (eventType.startsWith('solver_execution_')) {
+  if (eventType.startsWith('specialist_execution_')) {
     if (eventType.endsWith('_failed')) return 'failed'
     if (eventType.endsWith('_completed')) return 'completed'
     if (eventType.endsWith('_started') || eventType.endsWith('_heartbeat')) return 'running'

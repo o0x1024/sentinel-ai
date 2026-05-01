@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
 
-use crate::generators::validator::{PluginValidator, ValidationResult};
+use crate::generators::{
+    validate_agent_plugin_source_contract, validate_schema_object,
+    validator::{PluginValidator, ValidationResult},
+};
 use crate::services::database::DatabaseService;
 use sentinel_db::Database;
 use sentinel_plugins::{PluginMetadata, Severity};
@@ -34,6 +37,8 @@ pub struct RuntimeSchemaValidationMetadata {
 pub struct RuntimeSchemaValidationResult {
     pub success: bool,
     pub schema: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schemas: Option<serde_json::Value>,
     pub error: Option<String>,
     pub issue_code: Option<String>,
     pub warnings: Vec<String>,
@@ -580,7 +585,7 @@ pub async fn validate_plugin_code(code: String) -> Result<ValidationResult, Stri
     }
 }
 
-/// Validate plugin runtime get_input_schema execution from raw code and metadata
+/// Validate plugin runtime schema execution from raw code and metadata
 #[tauri::command]
 pub async fn validate_plugin_runtime_schema(
     code: String,
@@ -600,10 +605,15 @@ pub async fn validate_plugin_runtime_schema(
         target_asset_types: Vec::new(),
     };
 
+    if matches!(plugin_metadata.main_category.as_str(), "agent" | "bounty") {
+        return validate_agent_tool_runtime_contract(code, plugin_metadata).await;
+    }
+
     match sentinel_plugins::get_input_schema_from_code(&code, plugin_metadata).await {
         Ok(schema) => Ok(RuntimeSchemaValidationResult {
             success: true,
             schema: Some(schema),
+            schemas: None,
             error: None,
             issue_code: None,
             warnings: Vec::new(),
@@ -611,9 +621,85 @@ pub async fn validate_plugin_runtime_schema(
         Err(error) => Ok(RuntimeSchemaValidationResult {
             success: false,
             schema: None,
+            schemas: None,
             error: Some(error.to_string()),
             issue_code: Some("runtime_schema_execution_failed".to_string()),
             warnings: Vec::new(),
         }),
     }
+}
+
+async fn validate_agent_tool_runtime_contract(
+    code: String,
+    plugin_metadata: PluginMetadata,
+) -> Result<RuntimeSchemaValidationResult, String> {
+    let source_errors = validate_agent_plugin_source_contract(&code);
+    if !source_errors.is_empty() {
+        return Ok(RuntimeSchemaValidationResult {
+            success: false,
+            schema: None,
+            schemas: None,
+            error: Some(source_errors.join("; ")),
+            issue_code: Some("agent_tool_contract_validation_failed".to_string()),
+            warnings: Vec::new(),
+        });
+    }
+
+    let input_schema =
+        match sentinel_plugins::get_input_schema_from_code(&code, plugin_metadata.clone()).await {
+            Ok(schema) => schema,
+            Err(error) => {
+                return Ok(RuntimeSchemaValidationResult {
+                    success: false,
+                    schema: None,
+                    schemas: None,
+                    error: Some(error.to_string()),
+                    issue_code: Some("runtime_input_schema_execution_failed".to_string()),
+                    warnings: Vec::new(),
+                });
+            }
+        };
+
+    let output_schema =
+        match sentinel_plugins::get_output_schema_from_code(&code, plugin_metadata).await {
+            Ok(schema) => schema,
+            Err(error) => {
+                return Ok(RuntimeSchemaValidationResult {
+                    success: false,
+                    schema: Some(input_schema),
+                    schemas: None,
+                    error: Some(error.to_string()),
+                    issue_code: Some("runtime_output_schema_execution_failed".to_string()),
+                    warnings: Vec::new(),
+                });
+            }
+        };
+
+    let mut schema_errors = validate_schema_object(&input_schema, "input");
+    schema_errors.extend(validate_schema_object(&output_schema, "output"));
+    if !schema_errors.is_empty() {
+        return Ok(RuntimeSchemaValidationResult {
+            success: false,
+            schema: Some(input_schema.clone()),
+            schemas: Some(serde_json::json!({
+                "input": input_schema,
+                "output": output_schema,
+            })),
+            error: Some(schema_errors.join("; ")),
+            issue_code: Some("agent_tool_schema_validation_failed".to_string()),
+            warnings: Vec::new(),
+        });
+    }
+
+    Ok(RuntimeSchemaValidationResult {
+        success: true,
+        schema: Some(input_schema.clone()),
+        schemas: Some(serde_json::json!({
+            "input": input_schema,
+            "output": output_schema,
+        })),
+        error: None,
+        issue_code: None,
+        warnings: Vec::new(),
+    })
 }

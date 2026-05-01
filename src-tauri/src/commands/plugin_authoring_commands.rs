@@ -1,13 +1,39 @@
 use std::sync::Arc;
 
+use serde::Deserialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::command_response_support::CommandResponse;
+use crate::generators::{
+    parse_agent_plugin_definition, render_agent_plugin_definition, AgentPluginRenderContext,
+};
 use crate::services::{
     execute_plugin_authoring, AiServiceManager, PluginAuthoringRequest, PluginAuthoringResult,
     SystemAgentRuntime,
 };
 use crate::TrafficAnalysisState;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderAgentPluginDefinitionRequest {
+    pub definition: String,
+    pub metadata: RenderAgentPluginMetadata,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderAgentPluginMetadata {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub category: String,
+    pub main_category: String,
+    #[serde(alias = "default_severity")]
+    pub default_severity: String,
+    pub description: String,
+    pub tags_string: String,
+}
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_authoring_execute(
@@ -28,4 +54,45 @@ pub async fn plugin_authoring_execute(
     .map_err(|error| error.to_string())?;
 
     Ok(CommandResponse::ok(result))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn render_agent_plugin_definition_command(
+    request: RenderAgentPluginDefinitionRequest,
+) -> Result<CommandResponse<String>, String> {
+    if !matches!(request.metadata.main_category.as_str(), "agent" | "bounty") {
+        return Ok(CommandResponse::ok(request.definition));
+    }
+
+    let definition =
+        parse_agent_plugin_definition(&request.definition).map_err(|error| error.to_string())?;
+    let context = AgentPluginRenderContext {
+        plugin_id: request.metadata.id,
+        name: request.metadata.name,
+        version: request.metadata.version,
+        author: request.metadata.author,
+        category: request.metadata.category,
+        default_severity: request.metadata.default_severity,
+        tags: parse_tags(&request.metadata.tags_string),
+        description: request.metadata.description,
+    };
+    let code =
+        render_agent_plugin_definition(definition, &context).map_err(|error| error.to_string())?;
+
+    Ok(CommandResponse::ok(code))
+}
+
+fn parse_tags(tags_string: &str) -> Vec<String> {
+    let tags = tags_string
+        .split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    if tags.is_empty() {
+        vec!["ai-generated".to_string()]
+    } else {
+        tags
+    }
 }

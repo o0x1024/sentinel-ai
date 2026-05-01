@@ -33,14 +33,14 @@
       </button>
     </div>
 
-    <!-- Category Filter -->
+    <!-- Plugin Manager Tabs -->
     <div class="tabs tabs-boxed  flex-wrap gap-2">
-      <button v-for="cat in categories" :key="cat.value" class="tab"
+      <button v-for="cat in pluginManagementTabs" :key="cat.value" class="tab"
         :class="{ 'tab-active': selectedCategory === cat.value }" @click="selectedCategory = cat.value">
         <i :class="cat.icon" class="mr-2"></i>
         {{ cat.label }}
-        <span v-if="getCategoryCount(cat.value) > 0" class="ml-2 badge badge-sm">
-          {{ getCategoryCount(cat.value) }}
+        <span v-if="allPluginCount > 0" class="ml-2 badge badge-sm">
+          {{ allPluginCount }}
         </span>
       </button>
 
@@ -111,7 +111,6 @@
         <!-- Regular Plugin List -->
         <PluginListSection
           v-else
-          :selected-category="selectedCategory"
           :plugin-view-mode="pluginViewMode"
           :filtered-plugins="filteredPlugins"
           :paginated-plugins="paginatedPlugins"
@@ -141,6 +140,7 @@
           :is-plugin-favorited="isPluginFavorited"
           :is-traffic-plugin-type="isTrafficPluginType"
           :is-agent-plugin-type="isAgentPluginType"
+          :is-bounty-plugin-type="isBountyPluginType"
           :can-delete-plugins="canDeletePlugins"
           :can-view-plugin-code="canEditPlugins"
           @update:plugin-view-mode="pluginViewMode = $event"
@@ -153,7 +153,7 @@
           @batch-disable="batchDisableCurrent"
           @batch-enable-selected="batchEnableSelected"
           @batch-disable-selected="batchDisableSelected"
-          @batch-delete-selected="batchDeleteSelected"
+          @batch-delete-selected="openBatchDeleteSelectedDialog"
           @change-page-size="changePluginPageSize"
           @go-to-page="goToPluginPage"
           @toggle-select-all-current-page="toggleSelectAllCurrentPlugins"
@@ -180,6 +180,8 @@
       :upload-error="uploadError"
       :deleting-plugin="deletingPlugin"
       :deleting="deleting"
+      :batch-delete-count="batchDeleteTargetIds.length"
+      :batch-deleting="pluginBatchDeleting"
       :ai-prompt="aiPrompt"
       :ai-plugin-type="aiPluginType"
       :ai-plugin-category="aiPluginCategory"
@@ -205,6 +207,7 @@
       @handle-file-select="handleFileSelect"
       @upload-plugin="uploadPlugin"
       @delete-plugin="deletePlugin"
+      @confirm-batch-delete-selected="batchDeleteSelected"
       @update:ai-prompt="aiPrompt = $event"
       @update:ai-plugin-type="aiPluginType = $event"
       @update:ai-plugin-category="aiPluginCategory = $event"
@@ -215,6 +218,7 @@
       @close-review-detail-dialog="closeReviewDetailDialog"
       @close-upload-dialog="closeUploadDialog"
       @close-delete-dialog="closeDeleteDialog"
+      @close-batch-delete-dialog="closeBatchDeleteDialog"
       @close-ai-generate-dialog="closeAIGenerateDialog"
       @close-test-result-dialog="closeTestResultDialog"
       @close-advanced-dialog="closeAdvancedDialog"
@@ -275,7 +279,7 @@ import type {
   PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult,
   CommandResponse, BatchToggleResult, NewPluginMetadata, AdvancedForm
 } from '@/components/PluginManagement/types'
-import { trafficCategories, agentsCategories, mainCategories, intruderCategories } from '@/components/PluginManagement/types'
+import { trafficCategories, agentsCategories, bountyCategories, mainCategories, intruderCategories } from '@/components/PluginManagement/types'
 
 const { t } = useI18n()
 const pluginEditorStore = usePluginEditorStore()
@@ -323,6 +327,7 @@ const selectedTag = ref('')
 const selectedPluginIds = ref<string[]>([])
 const batchToggling = ref(false)
 const pluginBatchDeleting = ref(false)
+const batchDeleteTargetIds = ref<string[]>([])
 
 const isFreeTier = computed(() => entitlements.value.tier !== 'pro')
 const canAddPlugins = computed(() => entitlements.value.can_add_plugins)
@@ -382,6 +387,7 @@ let pluginChangedUnlisten: UnlistenFn | null = null
 
 const getDefaultAiPluginCategory = (pluginType: string): string => {
   if (pluginType === 'agent') return 'utility'
+  if (pluginType === 'bounty') return 'recon'
   if (pluginType === 'intruder') return 'payload_generator'
   return 'custom'
 }
@@ -391,6 +397,8 @@ watch(aiPluginType, (nextType) => {
     ? trafficCategories
     : nextType === 'agent'
       ? agentsCategories
+      : nextType === 'bounty'
+        ? bountyCategories
       : nextType === 'intruder'
         ? intruderCategories
         : []
@@ -401,16 +409,13 @@ watch(aiPluginType, (nextType) => {
 }, { immediate: true })
 
 // Computed Properties
-const categories = computed(() => [
+const pluginManagementTabs = computed(() => [
   { value: 'all', label: t('plugins.categories.all', '全部'), icon: 'fas fa-th' },
-  { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件'), icon: 'fas fa-shield-alt' },
-  { value: 'agents', label: t('plugins.categories.agents', 'Agent插件'), icon: 'fas fa-robot' },
-  { value: 'intruder', label: t('plugins.categories.intruder', 'Intruder插件'), icon: 'fas fa-crosshairs' },
 ])
 
 const resolvePluginMainCategory = (plugin: PluginRecord): string => {
   const mainCategory = (plugin.metadata.main_category || '').trim()
-  if (mainCategory === 'traffic' || mainCategory === 'agent' || mainCategory === 'intruder') {
+  if (mainCategory === 'traffic' || mainCategory === 'agent' || mainCategory === 'bounty' || mainCategory === 'intruder') {
     return mainCategory
   }
 
@@ -444,14 +449,10 @@ const isPluginVisibleForCurrentTier = (plugin: PluginRecord): boolean => {
   return allowedPluginIds.value.has(plugin.metadata.id)
 }
 
+const allPluginCount = computed(() => plugins.value.filter(isPluginVisibleForCurrentTier).length)
+
 const availableMainCategories = computed(() => {
-  const available = new Set(
-    plugins.value
-      .map(plugin => resolvePluginMainCategory(plugin))
-      .filter(Boolean)
-  )
   return mainCategories
-    .filter(category => available.has(category.value))
     .map(category => ({
       ...category,
       label: getMainCategoryLabel(category.value),
@@ -463,26 +464,14 @@ const matchesMainCategory = (plugin: PluginRecord, mainCategory: string): boolea
   return resolvePluginMainCategory(plugin) === mainCategory
 }
 
-const matchesSelectedCategory = (plugin: PluginRecord, category: string): boolean => {
-  if (!category || category === 'all') return true
-  if (category === 'traffic') return resolvePluginMainCategory(plugin) === 'traffic'
-  if (category === 'agents') return resolvePluginMainCategory(plugin) === 'agent'
-  if (category === 'intruder') return resolvePluginMainCategory(plugin) === 'intruder'
-  return plugin.metadata.category === category
-}
-
 const baseFilteredPlugins = computed(() => {
   let filtered = plugins.value.filter(isPluginVisibleForCurrentTier)
 
-  if (selectedCategory.value !== 'all') {
-    filtered = filtered.filter(plugin => matchesSelectedCategory(plugin, selectedCategory.value))
-  }
-
-  if (selectedCategory.value === 'all' && pluginViewMode.value === 'favorited') {
+  if (pluginViewMode.value === 'favorited') {
     filtered = filtered.filter(p => isPluginFavorited(p))
   }
 
-  if (selectedCategory.value === 'all' && selectedMainCategory.value) {
+  if (selectedMainCategory.value) {
     filtered = filtered.filter(p => matchesMainCategory(p, selectedMainCategory.value))
   }
 
@@ -550,7 +539,7 @@ const sortedRuns = computed(() => {
   return [...advancedResult.value.runs].sort((a, b) => a.run_index - b.run_index)
 })
 
-const isAdvancedAgent = computed(() => ['agent', 'intruder'].includes(advancedPlugin.value?.metadata?.main_category || ''))
+const isAdvancedAgent = computed(() => ['agent', 'bounty', 'intruder'].includes(advancedPlugin.value?.metadata?.main_category || ''))
 
 // Installed plugin IDs for store section
 const installedPluginIds = computed(() => (
@@ -577,6 +566,10 @@ const isAgentPluginType = (plugin: PluginRecord): boolean => {
   return mainCategory === 'agent' || mainCategory === 'intruder'
 }
 
+const isBountyPluginType = (plugin: PluginRecord): boolean => {
+  return resolvePluginMainCategory(plugin) === 'bounty'
+}
+
 const getStatusText = (status: string): string => {
   const map: Record<string, string> = { 'Enabled': t('plugins.enabled', '已启用'), 'Disabled': t('plugins.disabled', '已禁用'), 'Error': t('plugins.error', '错误') }
   return map[status] || status
@@ -585,6 +578,7 @@ const getStatusText = (status: string): string => {
 const getMainCategoryLabel = (mainCategory: string): string => {
   if (mainCategory === 'traffic') return t('plugins.categories.trafficAnalysis', 'Traffic Analysis Plugins')
   if (mainCategory === 'agent') return t('plugins.categories.agents', 'Agent Tool Plugins')
+  if (mainCategory === 'bounty') return t('plugins.categories.bounty', 'Bug Bounty Plugins')
   if (mainCategory === 'intruder') return t('plugins.categories.intruder', 'Intruder Plugins')
   return mainCategory
 }
@@ -597,6 +591,7 @@ const getMainCategoryIcon = (mainCategory: string): string => {
 const getMainCategoryBadgeClass = (mainCategory: string): string => {
   if (mainCategory === 'traffic') return 'badge-info'
   if (mainCategory === 'agent') return 'badge-warning'
+  if (mainCategory === 'bounty') return 'badge-accent'
   if (mainCategory === 'intruder') return 'badge-secondary'
   return 'badge-ghost'
 }
@@ -618,24 +613,18 @@ const getCategoryLabel = (category: string): string => {
     return t(`plugins.intruderCategories.${category}`, category)
   }
 
-  const cat = categories.value.find(c => c.value === category)
-  return cat ? cat.label : category
+  const mainCategory = mainCategories.find(c => c.value === category)
+  return mainCategory ? getMainCategoryLabel(mainCategory.value) : category
 }
 
 const getCategoryIcon = (category: string): string => {
-  const cat = categories.value.find(c => c.value === category)
-  if (cat) return cat.icon
+  const mainCategory = mainCategories.find(c => c.value === category)
+  if (mainCategory) return mainCategory.icon
   const icons: Record<string, string> = {
     'scanner': 'fas fa-radar', 'analyzer': 'fas fa-microscope', 'reporter': 'fas fa-file-alt',
     'sqli': 'fas fa-database', 'xss': 'fas fa-code', 'csrf': 'fas fa-shield-alt'
   }
   return icons[category] || 'fas fa-wrench'
-}
-
-const getCategoryCount = (category: string): number => {
-  const visiblePlugins = plugins.value.filter(isPluginVisibleForCurrentTier)
-  if (category === 'all') return visiblePlugins.length
-  return visiblePlugins.filter(plugin => matchesSelectedCategory(plugin, category)).length
 }
 
 const getReviewStatusText = (status: string): string => {
@@ -857,10 +846,27 @@ const batchDisableSelected = async () => {
   }
 }
 
-const batchDeleteSelected = async () => {
+const openBatchDeleteSelectedDialog = () => {
+  if (!canDeletePlugins.value) {
+    showToast(pluginRestrictionMessage.value, 'warning')
+    return
+  }
+
   const ids = [...selectedPluginIds.value]
   if (ids.length === 0) return
-  if (!window.confirm(t('plugins.batchDeleteConfirm', { count: ids.length }))) return
+
+  batchDeleteTargetIds.value = ids
+  pluginDialogsRef.value?.showBatchDeleteDialog()
+}
+
+const closeBatchDeleteDialog = () => {
+  if (pluginBatchDeleting.value) return
+  batchDeleteTargetIds.value = []
+}
+
+const batchDeleteSelected = async () => {
+  const ids = [...batchDeleteTargetIds.value]
+  if (ids.length === 0) return
 
   pluginBatchDeleting.value = true
   const failedIds: string[] = []
@@ -893,8 +899,11 @@ const batchDeleteSelected = async () => {
     if (failedIds.length > 0 && deletedCount === 0) {
       showToast(t('plugins.batchDeleteSelectedFailed', '批量删除插件失败'), 'error')
     }
+
+    pluginDialogsRef.value?.closeBatchDeleteDialog()
   } finally {
     pluginBatchDeleting.value = false
+    batchDeleteTargetIds.value = []
   }
 }
 
@@ -1324,6 +1333,8 @@ const generatePluginWithAI = async () => {
       ? 'traffic analysis'
       : aiPluginType.value === 'intruder'
         ? 'intruder'
+        : aiPluginType.value === 'bounty'
+          ? 'bug bounty'
         : 'agent tool'
     const userPrompt = `please generate ${pluginTypeDescription} plugin code for the "${aiPluginCategory.value}" category based on the following requirements:\n\n${aiPrompt.value}`
 
@@ -1388,6 +1399,30 @@ const generatePluginWithAI = async () => {
         default_severity: aiSeverity.value,
         description: aiPrompt.value,
         tagsString: `ai-generated, ${aiPluginType.value}, ${aiPluginCategory.value}`
+      }
+
+      if (metadata.mainCategory === 'agent' || metadata.mainCategory === 'bounty') {
+        const renderResponse = await invoke<CommandResponse<string>>('render_agent_plugin_definition_command', {
+          request: {
+            definition: generatedCode,
+            metadata: {
+              id: metadata.id,
+              name: metadata.name,
+              version: metadata.version,
+              author: metadata.author,
+              mainCategory: metadata.mainCategory,
+              category: metadata.category,
+              defaultSeverity: metadata.default_severity,
+              description: metadata.description,
+              tagsString: metadata.tagsString,
+            },
+          },
+        })
+
+        if (!renderResponse.success || !renderResponse.data) {
+          throw new Error(renderResponse.error || 'Failed to render agent plugin definition')
+        }
+        generatedCode = renderResponse.data
       }
 
       const gateResult = validateAiGeneratedPluginCode(generatedCode, metadata)
@@ -1474,7 +1509,7 @@ const referTestResultToAi = () => {
 // Test methods
 const testPlugin = async (plugin: PluginRecord) => {
   if (!plugin?.metadata?.id) return
-  const isAgentPlugin = ['agent', 'intruder'].includes(plugin.metadata.main_category)
+  const isAgentPlugin = ['agent', 'bounty', 'intruder'].includes(plugin.metadata.main_category)
   testing.value = true
   testResult.value = null
 
@@ -1607,7 +1642,7 @@ const openAdvancedDialog = async (plugin: PluginRecord) => {
   advancedResult.value = null
   advancedInputSchema.value = { type: 'object', properties: {} }
   
-  const isAgent = ['agent', 'intruder'].includes(plugin.metadata.main_category)
+  const isAgent = ['agent', 'bounty', 'intruder'].includes(plugin.metadata.main_category)
   if (isAgent) {
     try {
       const schemaResp = await invoke<CommandResponse<any>>('get_plugin_input_schema', {
@@ -1643,7 +1678,7 @@ const runAdvancedTest = async () => {
   advancedResult.value = null
 
   try {
-    const isAgent = ['agent', 'intruder'].includes(advancedPlugin.value.metadata.main_category)
+    const isAgent = ['agent', 'bounty', 'intruder'].includes(advancedPlugin.value.metadata.main_category)
     
     if (isAgent) {
       let inputs: Record<string, any> = {}

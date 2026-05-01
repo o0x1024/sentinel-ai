@@ -12,6 +12,7 @@ export interface TrafficDisplaySettings {
   highlightResponseSyntax: boolean
   wrapLongLines: boolean
   showLineEndings: boolean
+  collapseHeaders: boolean
   prettyPrintByDefault: boolean
   showSendToRepeater: boolean
   showSendToComparer: boolean
@@ -41,6 +42,7 @@ const DEFAULT_TRAFFIC_DISPLAY_SETTINGS: TrafficDisplaySettings = {
   highlightResponseSyntax: true,
   wrapLongLines: true,
   showLineEndings: false,
+  collapseHeaders: false,
   prettyPrintByDefault: true,
   showSendToRepeater: true,
   showSendToComparer: true,
@@ -110,6 +112,7 @@ function normalizeTrafficDisplaySettings(value?: Partial<TrafficDisplaySettings>
     highlightResponseSyntax: Boolean(normalized.highlightResponseSyntax),
     wrapLongLines: normalized.wrapLongLines !== false,
     showLineEndings: Boolean(normalized.showLineEndings),
+    collapseHeaders: Boolean(normalized.collapseHeaders),
     prettyPrintByDefault: Boolean(normalized.prettyPrintByDefault),
     showSendToRepeater: normalized.showSendToRepeater !== false,
     showSendToComparer: normalized.showSendToComparer !== false,

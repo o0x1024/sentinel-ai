@@ -1,5 +1,5 @@
 <template>
-  <div v-if="evidence && canTransfer" :class="dropdownClassName" @click.stop>
+  <div v-if="canShow" :class="dropdownClassName" @click.stop>
     <button ref="triggerRef" tabindex="0" type="button" :class="buttonClassName">
       {{ messages.triggerLabel }}
       <i class="fas fa-chevron-down text-[10px] opacity-70"></i>
@@ -8,14 +8,19 @@
       tabindex="0"
       class="dropdown-content menu z-[70] mt-2 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
     >
-      <li>
+      <li v-if="canTransfer">
         <button @click.stop="sendRequest('repeater')">
           {{ messages.sendToRepeater }}
         </button>
       </li>
-      <li>
+      <li v-if="canTransfer">
         <button @click.stop="sendRequest('intruder')">
           {{ messages.sendToIntruder }}
+        </button>
+      </li>
+      <li v-if="finding">
+        <button @click.stop="sendFindingToAssistant">
+          {{ messages.sendToAssistant }}
         </button>
       </li>
     </ul>
@@ -32,17 +37,20 @@ import {
   type SecurityEvidenceTransferMessages,
   type SecurityEvidenceTransferTarget,
 } from './securityEvidenceTransferSupport'
-import type { Evidence } from './vulnerabilityFindingTypes'
+import { queueSecurityFindingsForAssistant } from './securityFindingAssistantTransfer'
+import type { Evidence, Finding } from './vulnerabilityFindingTypes'
 
 const props = withDefaults(
   defineProps<{
     evidence?: Evidence | null
+    finding?: Finding | null
     size?: 'xs' | 'sm'
     direction?: 'up' | 'down'
     messages: SecurityEvidenceTransferMessages
   }>(),
   {
     evidence: null,
+    finding: null,
     size: 'xs',
     direction: 'up',
   }
@@ -54,6 +62,7 @@ const triggerRef = ref<HTMLButtonElement | null>(null)
 const canTransfer = computed(() =>
   props.evidence ? Boolean(buildHttpExchangeRequestFromSecurityEvidence(props.evidence)) : false
 )
+const canShow = computed(() => canTransfer.value || Boolean(props.finding))
 
 const dropdownClassName = computed(
   () => `dropdown dropdown-end ${props.direction === 'down' ? 'dropdown-bottom' : 'dropdown-top'}`
@@ -88,6 +97,23 @@ const sendRequest = async (target: SecurityEvidenceTransferTarget) => {
   } catch (error) {
     console.error('Failed to send security evidence request:', error)
     dialog.toast.error(formatTransferError(error))
+  }
+}
+
+const sendFindingToAssistant = async () => {
+  if (!props.finding) {
+    return
+  }
+
+  closeDropdown()
+
+  try {
+    queueSecurityFindingsForAssistant([props.finding])
+    await router.push('/ai-assistant')
+    dialog.toast.success(props.messages.assistantOpened)
+  } catch (error) {
+    console.error('Failed to send security finding to AI assistant:', error)
+    dialog.toast.error(props.messages.assistantFailed)
   }
 }
 </script>

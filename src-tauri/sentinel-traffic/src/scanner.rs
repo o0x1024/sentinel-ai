@@ -7,14 +7,14 @@
 
 use crate::history_cache::{HttpRequestRecord, ProxyHistoryCache};
 use crate::history_record_builder::build_http_history_record;
-use crate::scope::{ProxyScopeRule, url_is_in_scope};
+use crate::scope::{url_is_in_scope, ProxyScopeRule};
 use crate::{Finding, InterceptFilterRule, RequestContext, ResponseContext, Result, TrafficError};
 use sentinel_db::DatabaseService;
-use sentinel_plugins::{PluginExecutor, types::HttpTransaction};
+use sentinel_plugins::{types::HttpTransaction, PluginExecutor};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::Emitter;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
 /// 扫描任务（从 proxy.rs 导入）

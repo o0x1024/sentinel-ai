@@ -59,7 +59,7 @@
       resize-storage-key="traffic-proxy-config-modal-size"
       :min-width="1040"
       :min-height="720"
-      @close="$emit('closeProxySettings')"
+      @close="closeProxySettings"
     >
       <div class="flex h-full min-h-0 flex-col overflow-hidden">
         <div class="border-b border-base-300/70 px-6 py-4">
@@ -75,7 +75,7 @@
             <button
               type="button"
               class="btn btn-sm btn-ghost rounded-2xl"
-              @click="$emit('closeProxySettings')"
+              @click="closeProxySettings"
             >
               <i class="fas fa-times"></i>
             </button>
@@ -87,7 +87,9 @@
             v-if="proxySettingsOpen"
             ref="proxyConfigRef"
             class="h-full min-h-0"
+            :initial-panel-state="proxySettingsPanelState"
             @filterRuleAdded="$emit('filterRuleAdded', $event)"
+            @panelStateChanged="handleProxySettingsPanelStateChanged"
           />
         </div>
       </div>
@@ -177,6 +179,12 @@ import type { ActiveProbeQueueEntry } from '../../trafficActiveProbeTypes'
 import type { TrafficComparerDraftRequestInput, TrafficComparePayload } from '../../transfers'
 import type { TrafficWorkbenchBasketCandidateInput, TrafficWorkbenchBasketItem } from '../../trafficWorkbenchTypes'
 
+type ProxySettingsTabId = 'listeners' | 'analysis' | 'display'
+type ProxySettingsPanelState = {
+  activeTab: ProxySettingsTabId
+  scrollTops: Record<ProxySettingsTabId, number>
+}
+
 defineProps<{
   interceptDrawerOpen: boolean
   interceptDrawerStyle: Record<string, string>
@@ -197,7 +205,7 @@ defineProps<{
   startDrawerWidthResize: (drawer: 'intercept', event: MouseEvent) => void
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'openProxySettings'): void
   (e: 'closeInterceptDrawer'): void
   (e: 'openResponseInterceptionSettings'): void
@@ -224,6 +232,23 @@ defineEmits<{
 }>()
 
 const proxyConfigRef = ref<InstanceType<typeof ProxyConfiguration> | null>(null)
+const proxySettingsPanelState = ref<ProxySettingsPanelState | null>(null)
+
+function handleProxySettingsPanelStateChanged(state: ProxySettingsPanelState) {
+  proxySettingsPanelState.value = {
+    activeTab: state.activeTab,
+    scrollTops: { ...state.scrollTops },
+  }
+}
+
+function closeProxySettings() {
+  const snapshot = proxyConfigRef.value?.getSettingsPanelSnapshot?.()
+  if (snapshot) {
+    handleProxySettingsPanelStateChanged(snapshot)
+    proxyConfigRef.value?.persistSettingsPanelState?.()
+  }
+  emit('closeProxySettings')
+}
 
 function addRequestFilterRule(matchType: string, condition: string, relationship: string) {
   proxyConfigRef.value?.addRequestFilterRule(matchType, condition, relationship)

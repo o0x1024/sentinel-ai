@@ -30,9 +30,9 @@
         </button>
       </div>
       <div class="stat bg-base-200 rounded-lg">
-        <div class="stat-title">{{ t('bugBounty.surface.stats.activeAssets') }}</div>
-        <button class="stat-value text-success text-2xl text-left hover:underline" @click="openAssetStatsModal('active')">
-          {{ overview.active_assets }}
+        <div class="stat-title">{{ t('bugBounty.surface.stats.newAssets') }}</div>
+        <button class="stat-value text-info text-2xl text-left hover:underline" @click="openAssetStatsModal('new')">
+          {{ newAssetTotal }}
         </button>
       </div>
       <div class="stat bg-base-200 rounded-lg">
@@ -86,6 +86,18 @@
               <option value="inactive">{{ formatStatus('inactive') }}</option>
               <option value="unknown">{{ formatStatus('unknown') }}</option>
             </select>
+            <select v-model="viewStateFilter" class="select select-bordered select-sm">
+              <option value="">{{ t('bugBounty.surface.inventory.viewStates.all') }}</option>
+              <option value="new">{{ t('bugBounty.surface.inventory.viewStates.new') }}</option>
+              <option value="viewed">{{ t('bugBounty.surface.inventory.viewStates.viewed') }}</option>
+            </select>
+            <button
+              class="btn btn-outline btn-sm"
+              :disabled="!inventoryTotal || inventoryLoading || bulkDeleting"
+              @click="markFilteredAssetsViewed"
+            >
+              {{ t('bugBounty.surface.inventory.actions.markFilteredViewed') }}
+            </button>
             <select
               v-if="showServiceFacetFilters"
               v-model="serviceNameFilter"
@@ -130,6 +142,9 @@
             {{ t('bugBounty.surface.inventory.actions.selectionSummary', { selected: selectedAssetIds.length, page: inventoryItems.length, total: inventoryTotal }) }}
           </div>
           <div class="flex flex-wrap items-center gap-2">
+            <button class="btn btn-sm btn-outline" :disabled="!selectedAssetIds.length || inventoryLoading || bulkDeleting" @click="markSelectedAssetsViewed">
+              {{ t('bugBounty.surface.inventory.actions.markSelectedViewed') }}
+            </button>
             <button class="btn btn-sm btn-warning" :disabled="!selectedAssetIds.length || inventoryLoading || bulkDeleting" @click="deleteSelectedAssets">
               {{ t('bugBounty.surface.inventory.actions.deleteSelected') }}
             </button>
@@ -155,6 +170,7 @@
                 <th v-for="column in inventoryColumns" :key="column.key">
                   {{ column.label }}
                 </th>
+                <th>{{ t('bugBounty.surface.inventory.viewStates.column') }}</th>
                 <th class="w-48">{{ t('bugBounty.surface.inventory.actions.column') }}</th>
               </tr>
             </thead>
@@ -163,6 +179,7 @@
                 v-for="item in inventoryItems"
                 :key="item.asset.id"
                 class="cursor-pointer hover"
+                :class="isNewAsset(item.asset) ? 'bg-info/5' : ''"
                 @click="openAssetDetail(item.asset.id)"
               >
                 <td @click.stop>
@@ -199,6 +216,14 @@
                     {{ formatInventoryValue(item, column) }}
                   </span>
                 </td>
+                <td>
+                  <span
+                    class="badge badge-sm"
+                    :class="isNewAsset(item.asset) ? 'badge-info' : 'badge-outline'"
+                  >
+                    {{ formatViewState(item.asset) }}
+                  </span>
+                </td>
                 <td @click.stop>
                   <div class="flex flex-wrap gap-1">
                     <SurfaceIconButton
@@ -222,7 +247,7 @@
                 </td>
               </tr>
               <tr v-if="inventoryLoading">
-                <td :colspan="inventoryColumns.length + 2" class="py-8 text-center text-sm text-base-content/60">
+                <td :colspan="inventoryColumns.length + 3" class="py-8 text-center text-sm text-base-content/60">
                   <span class="loading loading-spinner loading-sm mr-2"></span>
                   {{ t('common.loading') }}
                 </td>
@@ -513,6 +538,7 @@ const selectedProgramId = ref(props.programId || '')
 const search = ref('')
 const assetTypeFilter = ref('')
 const statusFilter = ref('')
+const viewStateFilter = ref('')
 const serviceNameFilter = ref('')
 const transportProtocolFilter = ref('')
 const inventoryPage = ref(1)
@@ -521,6 +547,7 @@ const inventoryTotal = ref(0)
 const inventoryPageSize = ref(10)
 const inventoryPageInput = ref('1')
 const inventoryPageSizeOptions = [10, 20, 50, 100]
+const newAssetTotal = ref(0)
 const runPage = ref(1)
 const runPageSize = ref(10)
 const runPageInput = ref('1')
@@ -547,7 +574,7 @@ const selectedAssetId = ref<string | null>(null)
 const showRunDetailModal = ref(false)
 const selectedRunId = ref<string | null>(null)
 const showAssetStatsModal = ref(false)
-const assetStatsFilter = ref<'all' | 'active'>('all')
+const assetStatsFilter = ref<'all' | 'new'>('all')
 const selectedAssetIds = ref<string[]>([])
 const showEditModal = ref(false)
 const editingAsset = ref<any | null>(null)
@@ -599,7 +626,7 @@ const allCurrentPageSelected = computed(() =>
   currentPageAssetIds.value.every((id) => selectedAssetIdSet.value.has(id)),
 )
 const hasInventoryFilters = computed(() =>
-  Boolean(selectedProgramId.value || assetTypeFilter.value || statusFilter.value || search.value.trim()),
+  Boolean(selectedProgramId.value || assetTypeFilter.value || statusFilter.value || viewStateFilter.value || search.value.trim()),
 )
 const deleteAllActionLabel = computed(() =>
   hasInventoryFilters.value
@@ -707,6 +734,7 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
         program_id: programId,
         asset_type: assetTypeFilter.value || null,
         status: statusFilter.value || null,
+        view_state: viewStateFilter.value || null,
         search: search.value.trim() || null,
         service_name: serviceNameFilter.value || null,
         transport_protocol: transportProtocolFilter.value || null,
@@ -746,6 +774,7 @@ const loadInventoryFacets = async (programId = selectedProgramId.value || null) 
         program_id: programId,
         asset_type: assetTypeFilter.value || null,
         status: statusFilter.value || null,
+        view_state: viewStateFilter.value || null,
         search: search.value.trim() || null,
         service_name: null,
         transport_protocol: null,
@@ -763,6 +792,29 @@ const loadInventoryFacets = async (programId = selectedProgramId.value || null) 
   }
 }
 
+const loadNewAssetCount = async (programId = selectedProgramId.value || null) => {
+  try {
+    const response = await invoke<any>('surface_list_inventory', {
+      filter: {
+        program_id: programId,
+        asset_type: null,
+        status: null,
+        view_state: 'new',
+        search: null,
+        service_name: null,
+        transport_protocol: null,
+        limit: 0,
+        offset: 0,
+      },
+    })
+
+    newAssetTotal.value = Number(response?.total || 0)
+  } catch (error) {
+    console.error('Failed to load new surface asset count:', error)
+    newAssetTotal.value = 0
+  }
+}
+
 const loadAll = async () => {
   try {
     loading.value = true
@@ -773,6 +825,7 @@ const loadAll = async () => {
     ])
     await loadInventory(programId, false)
     await loadInventoryFacets(programId)
+    await loadNewAssetCount(programId)
 
     overview.value = overviewData
     runs.value = Array.isArray(runData) ? runData : []
@@ -795,6 +848,7 @@ const loadAll = async () => {
     assets.value = []
     inventoryTotal.value = 0
     inventoryItems.value = []
+    newAssetTotal.value = 0
     runs.value = []
     runPage.value = 1
     runPageInput.value = '1'
@@ -810,13 +864,51 @@ const refreshAll = async () => {
 }
 
 const assetStatsModalTitle = computed(() =>
-  assetStatsFilter.value === 'active'
-    ? t('bugBounty.surface.stats.activeAssets')
+  assetStatsFilter.value === 'new'
+    ? t('bugBounty.surface.stats.newAssets')
     : t('bugBounty.surface.stats.totalAssets'),
 )
 
-const openAssetDetail = (assetId?: string | null) => {
+const isNewAsset = (asset?: any) => !asset?.viewed_at
+
+const formatViewState = (asset?: any) =>
+  isNewAsset(asset)
+    ? t('bugBounty.surface.inventory.viewStates.new')
+    : t('bugBounty.surface.inventory.viewStates.viewed')
+
+const markAssetsViewedLocally = (assetIds: string[]) => {
+  if (!assetIds.length) return
+  const viewedAt = new Date().toISOString()
+  const idSet = new Set(assetIds)
+  for (const item of inventoryItems.value) {
+    if (item?.asset?.id && idSet.has(item.asset.id)) {
+      item.asset.viewed_at = item.asset.viewed_at || viewedAt
+      item.asset.viewed_by = item.asset.viewed_by || 'surface_inventory'
+    }
+  }
+  for (const asset of assets.value) {
+    if (asset?.id && idSet.has(asset.id)) {
+      asset.viewed_at = asset.viewed_at || viewedAt
+      asset.viewed_by = asset.viewed_by || 'surface_inventory'
+    }
+  }
+  newAssetTotal.value = Math.max(0, newAssetTotal.value - assetIds.length)
+}
+
+const openAssetDetail = async (assetId?: string | null) => {
   if (!assetId) return
+  const asset = inventoryItems.value.find((item) => item?.asset?.id === assetId)?.asset
+  if (isNewAsset(asset)) {
+    try {
+      await invoke('surface_mark_asset_viewed', { assetId })
+      markAssetsViewedLocally([assetId])
+      await loadNewAssetCount(selectedProgramId.value || null)
+    } catch (error) {
+      console.error('Failed to mark surface asset as viewed:', error)
+      toast.error(t('bugBounty.surface.inventory.actions.markViewedFailed'))
+      return
+    }
+  }
   showRunDetailModal.value = false
   showAssetStatsModal.value = false
   selectedRunId.value = null
@@ -835,7 +927,7 @@ const closeRunDetail = () => {
   selectedRunId.value = null
 }
 
-const openAssetStatsModal = (scope: 'all' | 'active') => {
+const openAssetStatsModal = (scope: 'all' | 'new') => {
   assetStatsFilter.value = scope
   showAssetStatsModal.value = true
 }
@@ -928,6 +1020,7 @@ const getInventoryFilterPayload = () => ({
   program_id: selectedProgramId.value || null,
   asset_type: assetTypeFilter.value || null,
   status: statusFilter.value || null,
+  view_state: viewStateFilter.value || null,
   search: search.value.trim() || null,
   service_name: serviceNameFilter.value || null,
   transport_protocol: transportProtocolFilter.value || null,
@@ -996,6 +1089,54 @@ const deleteAllFilteredAssets = async () => {
   } catch (error) {
     console.error('Failed to delete filtered surface inventory:', error)
     toast.error(t('bugBounty.surface.inventory.actions.deleteFailed'))
+  } finally {
+    bulkDeleting.value = false
+  }
+}
+
+const markSelectedAssetsViewed = async () => {
+  const newAssetIds = selectedAssetIds.value.filter((assetId) => {
+    const item = inventoryItems.value.find((row) => row?.asset?.id === assetId)
+    return isNewAsset(item?.asset)
+  })
+  if (!newAssetIds.length) {
+    toast.warning(t('bugBounty.surface.inventory.actions.noNewSelected'))
+    return
+  }
+
+  try {
+    bulkDeleting.value = true
+    const updated = await invoke<number>('surface_batch_mark_assets_viewed', { assetIds: newAssetIds })
+    markAssetsViewedLocally(newAssetIds)
+    await loadNewAssetCount(selectedProgramId.value || null)
+    toast.success(t('bugBounty.surface.inventory.actions.markViewedSuccess', { count: updated }))
+    clearSelection()
+    if (viewStateFilter.value === 'new') {
+      await loadAll()
+    }
+  } catch (error) {
+    console.error('Failed to mark selected surface assets as viewed:', error)
+    toast.error(t('bugBounty.surface.inventory.actions.markViewedFailed'))
+  } finally {
+    bulkDeleting.value = false
+  }
+}
+
+const markFilteredAssetsViewed = async () => {
+  if (!inventoryTotal.value) return
+  if (!(await dialog.confirm(t('bugBounty.surface.inventory.actions.confirmMarkFilteredViewed', { count: inventoryTotal.value })))) {
+    return
+  }
+
+  try {
+    bulkDeleting.value = true
+    const updated = await invoke<number>('surface_mark_inventory_viewed', { filter: getInventoryFilterPayload() })
+    toast.success(t('bugBounty.surface.inventory.actions.markViewedSuccess', { count: updated }))
+    clearSelection()
+    await loadAll()
+  } catch (error) {
+    console.error('Failed to mark filtered surface assets as viewed:', error)
+    toast.error(t('bugBounty.surface.inventory.actions.markViewedFailed'))
   } finally {
     bulkDeleting.value = false
   }
@@ -1101,6 +1242,7 @@ const buildExportFilterPayload = (exportType: SurfaceAssetExportType) => {
     program_id: selectedProgramId.value || null,
     asset_type: resolvedAssetType,
     status: statusFilter.value || null,
+    view_state: viewStateFilter.value || null,
     search: search.value.trim() || null,
     service_name: useServiceFacetFilters ? serviceNameFilter.value || null : null,
     transport_protocol: useServiceFacetFilters ? transportProtocolFilter.value || null : null,
@@ -1301,7 +1443,7 @@ watch(selectedProgramId, () => {
   loadAll()
 })
 
-watch([assetTypeFilter, statusFilter, serviceNameFilter, transportProtocolFilter], () => {
+watch([assetTypeFilter, statusFilter, viewStateFilter, serviceNameFilter, transportProtocolFilter], () => {
   reloadInventoryFromFirstPage()
 })
 

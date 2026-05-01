@@ -11,7 +11,7 @@ import type {
   PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult,
   CommandResponse, BatchToggleResult, ReviewStats, NewPluginMetadata, AdvancedForm
 } from './types'
-import { trafficCategories, agentsCategories } from './types'
+import { trafficCategories } from './types'
 
 export function usePluginManagement() {
   const { t } = useI18n()
@@ -127,6 +127,7 @@ export function usePluginManagement() {
     { value: 'all', label: t('plugins.categories.all', '全部'), icon: 'fas fa-th' },
     { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件'), icon: 'fas fa-shield-alt' },
     { value: 'agents', label: t('plugins.categories.agents', 'Agent插件'), icon: 'fas fa-robot' },
+    { value: 'bounty', label: t('plugins.categories.bounty', '漏洞赏金插件'), icon: 'fas fa-bug' },
   ])
 
   // Filtered Plugins
@@ -145,7 +146,11 @@ export function usePluginManagement() {
     } else if (selectedCategory.value === 'agents') {
       filtered = plugins.value.filter(p => {
         if (p.metadata.main_category === 'agent') return true
-        if (agentsCategories.includes(p.metadata.category)) return true
+        return false
+      })
+    } else if (selectedCategory.value === 'bounty') {
+      filtered = plugins.value.filter(p => {
+        if (p.metadata.main_category === 'bounty') return true
         return false
       })
     } else {
@@ -221,7 +226,7 @@ export function usePluginManagement() {
   })
 
   const isAdvancedAgent = computed(() => {
-    return advancedPlugin.value?.metadata?.main_category === 'agent'
+    return ['agent', 'bounty', 'intruder'].includes(advancedPlugin.value?.metadata?.main_category || '')
   })
 
   // Helper Functions
@@ -236,7 +241,11 @@ export function usePluginManagement() {
 
   const isAgentPluginType = (plugin: PluginRecord): boolean => {
     if (plugin.metadata.main_category === 'agent') return true
-    if (agentsCategories.includes(plugin.metadata.category)) return true
+    return false
+  }
+
+  const isBountyPluginType = (plugin: PluginRecord): boolean => {
+    if (plugin.metadata.main_category === 'bounty') return true
     return false
   }
 
@@ -285,7 +294,12 @@ export function usePluginManagement() {
     if (category === 'agents') {
       return plugins.value.filter(p => {
         if (p.metadata.main_category === 'agent') return true
-        if (agentsCategories.includes(p.metadata.category)) return true
+        return false
+      }).length
+    }
+    if (category === 'bounty') {
+      return plugins.value.filter(p => {
+        if (p.metadata.main_category === 'bounty') return true
         return false
       }).length
     }
@@ -418,7 +432,7 @@ export function usePluginManagement() {
     if (selectedCategory.value === 'traffic') {
       const cats = new Set(filteredPlugins.value.filter(p => !selectedSubCategory.value || p.metadata.category === selectedSubCategory.value).map(p => p.metadata.category))
       return Array.from(cats).sort()
-    } else if (selectedCategory.value === 'agents') {
+    } else if (selectedCategory.value === 'agents' || selectedCategory.value === 'bounty') {
       const cats = new Set(filteredPlugins.value.filter(p => !selectedSubCategory.value || p.metadata.category === selectedSubCategory.value).map(p => p.metadata.category))
       return Array.from(cats).sort()
     }
@@ -699,6 +713,7 @@ export function usePluginManagement() {
     isPluginFavorited,
     isTrafficPluginType,
     isAgentPluginType,
+    isBountyPluginType,
     getStatusText,
     getCategoryLabel,
     getCategoryIcon,

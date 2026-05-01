@@ -9,8 +9,11 @@ import {
 } from './toolConfigRuntime'
 import type { AssistantModelOption } from './agentDraftTypes'
 
-const ASSISTANT_MODEL_STORAGE_KEY = 'sentinel:agent:assistant-model'
+const ASSISTANT_EXECUTION_MODE_STORAGE_KEY = 'sentinel:agent:execution-mode'
+const ASSISTANT_PARALLEL_MODELS_STORAGE_KEY = 'sentinel:agent:parallel-models'
+const ASSISTANT_PARALLEL_JUDGE_MODEL_STORAGE_KEY = 'sentinel:agent:parallel-judge-model'
 const DEFAULT_MAX_CONTEXT_TOKENS = 128000
+export type AssistantExecutionMode = 'single' | 'parallel'
 
 const createBaseToolConfig = (): UiToolConfigPayload => ({
   enabled: true,
@@ -67,6 +70,10 @@ export const useAgentModelAndToolConfig = (params: {
   const toolsEnabled = ref(true)
   const assistantModelOptions = ref<AssistantModelOption[]>([])
   const assistantSelectedModel = ref('')
+  const assistantGlobalDefaultModel = ref('')
+  const assistantExecutionMode = ref<AssistantExecutionMode>('single')
+  const assistantParallelSelectedModels = ref<string[]>([])
+  const assistantParallelJudgeModel = ref('')
   const isLoadingAssistantModels = ref(false)
   const assistantProviderMaxContextMap = ref<Record<string, number>>({})
 
@@ -90,6 +97,7 @@ export const useAgentModelAndToolConfig = (params: {
         ? aiConfig.providers
         : {}
       const defaultModel = typeof aiConfig?.default_llm_model === 'string' ? aiConfig.default_llm_model : ''
+      assistantGlobalDefaultModel.value = defaultModel
       const options: AssistantModelOption[] = []
       const providerMaxContextMap: Record<string, number> = {}
 
@@ -161,14 +169,7 @@ export const useAgentModelAndToolConfig = (params: {
       assistantModelOptions.value = options
       assistantProviderMaxContextMap.value = providerMaxContextMap
 
-      let stored = ''
-      try {
-        stored = localStorage.getItem(ASSISTANT_MODEL_STORAGE_KEY) || ''
-      } catch {
-        stored = ''
-      }
-
-      const preferred = stored || assistantSelectedModel.value || defaultModel
+      const preferred = assistantSelectedModel.value || defaultModel
       if (preferred && options.some((item) => item.value === preferred)) {
         assistantSelectedModel.value = preferred
       } else if (defaultModel && options.some((item) => item.value === defaultModel)) {
@@ -178,33 +179,80 @@ export const useAgentModelAndToolConfig = (params: {
       } else {
         assistantSelectedModel.value = ''
       }
+
+      let storedMode = ''
+      let storedParallelModels: string[] = []
+      let storedJudgeModel = ''
+      try {
+        storedMode = localStorage.getItem(ASSISTANT_EXECUTION_MODE_STORAGE_KEY) || ''
+        storedJudgeModel = localStorage.getItem(ASSISTANT_PARALLEL_JUDGE_MODEL_STORAGE_KEY) || ''
+        const raw = localStorage.getItem(ASSISTANT_PARALLEL_MODELS_STORAGE_KEY) || '[]'
+        const parsed = JSON.parse(raw)
+        storedParallelModels = Array.isArray(parsed)
+          ? parsed.map((item) => String(item || '').trim()).filter(Boolean)
+          : []
+      } catch {
+        storedMode = ''
+        storedParallelModels = []
+        storedJudgeModel = ''
+      }
+      const availableValues = new Set(options.map((item) => item.value))
+      assistantExecutionMode.value = storedMode === 'parallel' ? 'parallel' : 'single'
+      assistantParallelSelectedModels.value = storedParallelModels.filter((item) => availableValues.has(item))
+      assistantParallelJudgeModel.value = availableValues.has(storedJudgeModel) ? storedJudgeModel : ''
     } catch (error) {
       console.warn('[useAgentModelAndToolConfig] Failed to load assistant model options:', error)
       assistantModelOptions.value = []
       assistantProviderMaxContextMap.value = {}
+      assistantGlobalDefaultModel.value = ''
     } finally {
       isLoadingAssistantModels.value = false
     }
   }
 
-  const setAssistantSelectedModel = (value: string, options?: { persist?: boolean }) => {
+  const setAssistantSelectedModel = (value: string, _options?: { persist?: boolean }) => {
     assistantSelectedModel.value = value
-    if (options?.persist === false) {
-      return
-    }
+  }
+
+  const handleAssistantModelChange = (value: string) => {
+    setAssistantSelectedModel(value)
+  }
+
+  const setAssistantExecutionMode = (value: AssistantExecutionMode) => {
+    assistantExecutionMode.value = value
     try {
-      if (value) {
-        localStorage.setItem(ASSISTANT_MODEL_STORAGE_KEY, value)
-      } else {
-        localStorage.removeItem(ASSISTANT_MODEL_STORAGE_KEY)
-      }
+      localStorage.setItem(ASSISTANT_EXECUTION_MODE_STORAGE_KEY, value)
     } catch {
       // ignore storage errors
     }
   }
 
-  const handleAssistantModelChange = (value: string) => {
-    setAssistantSelectedModel(value)
+  const setAssistantParallelSelectedModels = (values: string[]) => {
+    const available = new Set(assistantModelOptions.value.map((item) => item.value))
+    const normalized = Array.from(new Set(
+      values
+        .map((item) => String(item || '').trim())
+        .filter((item) => item.includes('/') && available.has(item)),
+    ))
+    assistantParallelSelectedModels.value = normalized
+    try {
+      localStorage.setItem(ASSISTANT_PARALLEL_MODELS_STORAGE_KEY, JSON.stringify(normalized))
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  const setAssistantParallelJudgeModel = (value: string) => {
+    assistantParallelJudgeModel.value = value
+    try {
+      if (value) {
+        localStorage.setItem(ASSISTANT_PARALLEL_JUDGE_MODEL_STORAGE_KEY, value)
+      } else {
+        localStorage.removeItem(ASSISTANT_PARALLEL_JUDGE_MODEL_STORAGE_KEY)
+      }
+    } catch {
+      // ignore storage errors
+    }
   }
 
   const buildTeamToolPolicyFromUiConfig = (config: UiToolConfigPayload) => {
@@ -259,7 +307,11 @@ export const useAgentModelAndToolConfig = (params: {
 
   return {
     assistantDefaultMaxContextTokens,
+    assistantExecutionMode,
+    assistantGlobalDefaultModel,
     assistantModelOptions,
+    assistantParallelJudgeModel,
+    assistantParallelSelectedModels,
     assistantSelectedModel,
     buildTeamToolPolicyFromUiConfig,
     defaultToolConfig,
@@ -270,6 +322,9 @@ export const useAgentModelAndToolConfig = (params: {
     loadAssistantModelOptions,
     loadToolConfig,
     setAssistantSelectedModel,
+    setAssistantExecutionMode,
+    setAssistantParallelJudgeModel,
+    setAssistantParallelSelectedModels,
     toolConfig,
     toolsEnabled,
   }

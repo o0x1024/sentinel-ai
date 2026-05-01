@@ -26,6 +26,7 @@ use x509_parser::parse_x509_certificate;
 use crate::dictionary_runtime;
 use crate::monitor_progress::{emit_plugin_monitor_progress, PluginMonitorProgressRequest};
 use crate::network_scan::op_scan_ports;
+use crate::plugin_finding_sanitizer::sanitize_response_body_for_evidence;
 use crate::runtime_config::get_plugin_runtime_settings;
 use crate::runtime_events::emit_active_probe_event;
 use crate::service_probe::op_get_service_probe_capabilities;
@@ -238,8 +239,11 @@ impl From<JsFinding> for Finding {
             .map(i32::from);
         let response_headers =
             response_ref.and_then(|resp| normalize_optional_string(resp.headers.clone()));
-        let response_body =
-            response_ref.and_then(|resp| normalize_optional_string(resp.body.clone()));
+        let response_body = response_ref
+            .and_then(|resp| normalize_optional_string(resp.body.clone()))
+            .and_then(|body| {
+                sanitize_response_body_for_evidence(response_headers.as_deref(), body)
+            });
 
         Finding {
             id: uuid::Uuid::new_v4().to_string(),

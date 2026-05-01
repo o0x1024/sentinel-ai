@@ -142,18 +142,18 @@
             <div class="mb-3 text-sm font-semibold">角色绑定</div>
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <label class="form-control">
-                <span class="label-text mb-2">Commander Profile</span>
-                <select v-model="selectedTeamProfile.commanderProfileId" class="select select-bordered">
-                  <option v-for="profile in commanderOptions" :key="profile.id" :value="profile.id">
+                <span class="label-text mb-2">Orchestrator Profile</span>
+                <select v-model="selectedTeamProfile.orchestratorProfileId" class="select select-bordered">
+                  <option v-for="profile in orchestratorOptions" :key="profile.id" :value="profile.id">
                     {{ profile.label }}
                   </option>
                 </select>
               </label>
 
               <label class="form-control">
-                <span class="label-text mb-2">Observer Profile</span>
-                <select v-model="selectedTeamProfile.observerProfileId" class="select select-bordered">
-                  <option v-for="profile in observerOptions" :key="profile.id" :value="profile.id">
+                <span class="label-text mb-2">Monitor Profile</span>
+                <select v-model="selectedTeamProfile.monitorProfileId" class="select select-bordered">
+                  <option v-for="profile in monitorOptions" :key="profile.id" :value="profile.id">
                     {{ profile.label }}
                   </option>
                 </select>
@@ -172,19 +172,19 @@
 
             <div class="mt-4">
               <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-base-content/60">
-                Solver Profiles
+                Specialist Profiles
               </div>
               <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
                 <label
-                  v-for="profile in solverOptions"
+                  v-for="profile in specialistOptions"
                   :key="profile.id"
                   class="flex items-center gap-2 rounded-lg border border-base-300 bg-base-200/30 px-3 py-2 text-sm"
                 >
                   <input
                     type="checkbox"
                     class="checkbox checkbox-sm"
-                    :checked="selectedTeamProfile.solverProfileIds.includes(profile.id)"
-                    @change="toggleSolverProfile(profile.id)"
+                    :checked="selectedTeamProfile.specialistProfileIds.includes(profile.id)"
+                    @change="toggleSpecialistProfile(profile.id)"
                   />
                   <span>{{ profile.label }}</span>
                 </label>
@@ -267,9 +267,9 @@ const assistantProfileById = computed(() => {
 const roleOptions = (role: AssistantProfileOption['teamRole']) =>
   profileOptions.value.filter(profile => profile.teamRole === role || profile.teamRole === 'assistant')
 
-const commanderOptions = computed(() => roleOptions('commander'))
-const solverOptions = computed(() => roleOptions('solver'))
-const observerOptions = computed(() => roleOptions('observer'))
+const orchestratorOptions = computed(() => roleOptions('orchestrator'))
+const specialistOptions = computed(() => roleOptions('specialist'))
+const monitorOptions = computed(() => roleOptions('monitor'))
 
 const selectedTeamProfile = computed(
   () => draftTeamProfiles.value.find(profile => profile.id === selectedTeamProfileId.value) || null
@@ -280,15 +280,15 @@ const selectedTeamProfileMetaItems = computed(() => {
   return [
     { label: 'Team ID', value: selectedTeamProfile.value.id },
     {
-      label: 'Commander',
-      value: assistantProfileById.value.get(selectedTeamProfile.value.commanderProfileId)?.label
-        || selectedTeamProfile.value.commanderProfileId,
+      label: 'Orchestrator',
+      value: assistantProfileById.value.get(selectedTeamProfile.value.orchestratorProfileId)?.label
+        || selectedTeamProfile.value.orchestratorProfileId,
     },
-    { label: 'Solvers', value: String(selectedTeamProfile.value.solverProfileIds.length) },
+    { label: 'Specialists', value: String(selectedTeamProfile.value.specialistProfileIds.length) },
     {
-      label: 'Observer',
-      value: assistantProfileById.value.get(selectedTeamProfile.value.observerProfileId)?.label
-        || selectedTeamProfile.value.observerProfileId,
+      label: 'Monitor',
+      value: assistantProfileById.value.get(selectedTeamProfile.value.monitorProfileId)?.label
+        || selectedTeamProfile.value.monitorProfileId,
     },
   ]
 })
@@ -298,7 +298,7 @@ const teamListItems = computed<AgentListItemViewModel[]>(() =>
     id: profile.id,
     title: profile.name || profile.id,
     description: profile.description,
-    metaLine: `${profile.contextMode} · ${profile.solverProfileIds.length} solver`,
+    metaLine: `${profile.contextMode} · ${profile.specialistProfileIds.length} specialist`,
     badges: [
       ...(draftDefaultTeamProfileId.value === profile.id ? [{ label: '默认', className: 'badge-primary' }] : []),
       { label: profile.contextMode, className: 'badge-outline' },
@@ -306,9 +306,9 @@ const teamListItems = computed<AgentListItemViewModel[]>(() =>
     searchText: [
       profile.name,
       profile.description,
-      profile.commanderProfileId,
-      profile.observerProfileId,
-      profile.solverProfileIds.join(' '),
+      profile.orchestratorProfileId,
+      profile.monitorProfileId,
+      profile.specialistProfileIds.join(' '),
     ].join(' '),
     filterKeys: [],
   }))
@@ -321,9 +321,9 @@ const canSaveTeamProfiles = computed(() =>
   && draftTeamProfiles.value.every(profile =>
     profile.id.trim()
     && profile.name.trim()
-    && profile.commanderProfileId.trim()
-    && profile.observerProfileId.trim()
-    && profile.solverProfileIds.length > 0
+    && profile.orchestratorProfileId.trim()
+    && profile.monitorProfileId.trim()
+    && profile.specialistProfileIds.length > 0
   )
 )
 
@@ -373,7 +373,7 @@ const clearAutoSaveTimer = () => {
 
 const cloneTeamProfile = (profile: TeamProfileOption): TeamProfileOption => ({
   ...profile,
-  solverProfileIds: [...profile.solverProfileIds],
+  specialistProfileIds: [...profile.specialistProfileIds],
   memoryPolicy: { ...profile.memoryPolicy },
   toolPolicyMatrix: { ...profile.toolPolicyMatrix },
   harnessPolicy: { ...profile.harnessPolicy },
@@ -482,24 +482,24 @@ const createTeamProfile = () => {
     id: `team.profile.custom.${index}`,
     name: `Custom Team ${index}`,
     description: '自定义 Team Profile',
-    commanderProfileId: commanderOptions.value[0]?.id || profileOptions.value[0]?.id || '',
-    solverProfileIds: [solverOptions.value[0]?.id || profileOptions.value[0]?.id || ''].filter(Boolean),
-    observerProfileId: observerOptions.value[0]?.id || profileOptions.value[0]?.id || '',
+    orchestratorProfileId: orchestratorOptions.value[0]?.id || profileOptions.value[0]?.id || '',
+    specialistProfileIds: [specialistOptions.value[0]?.id || profileOptions.value[0]?.id || ''].filter(Boolean),
+    monitorProfileId: monitorOptions.value[0]?.id || profileOptions.value[0]?.id || '',
     defaultModel: null,
     contextMode: 'claude-like',
     memoryPolicy: {
-      observerGate: 'candidate_then_commander_accept',
+      monitorGate: 'candidate_then_orchestrator_accept',
       shareScope: 'high_value_only',
       longTermMemory: true,
     },
     toolPolicyMatrix: {
-      commander: { tools: ['ask_user_question'] },
-      solver: { tools: ['interactive_shell', 'shell', 'file_read', 'grep', 'http_request', 'web_search'] },
-      observer: { tools: ['tenth_man_review'] },
+      orchestrator: { tools: ['ask_user_question'] },
+      specialist: { tools: ['interactive_shell', 'shell', 'file_read', 'grep', 'http_request', 'web_search'] },
+      monitor: { tools: ['tenth_man_review'] },
     },
     harnessPolicy: { heartbeatSecs: 30, leaseSecs: 600, checkpoint: 'event_sequence', allowResume: true },
-    concurrencyPolicy: { maxSolvers: 2, maxTasksPerSolver: 1 },
-    safetyPolicy: { commanderNoDangerousTools: true, observerReadOnly: true, requireApprovalForHighRiskTools: true },
+    concurrencyPolicy: { maxSpecialists: 2, maxTasksPerSpecialist: 1 },
+    safetyPolicy: { orchestratorNoDangerousTools: true, monitorReadOnly: true, requireApprovalForHighRiskTools: true },
   }
   draftTeamProfiles.value.push(profile)
   selectedTeamProfileId.value = profile.id
@@ -542,15 +542,15 @@ const markSelectedAsDefault = () => {
   draftDefaultTeamProfileId.value = selectedTeamProfile.value.id
 }
 
-const toggleSolverProfile = (profileId: string) => {
+const toggleSpecialistProfile = (profileId: string) => {
   if (!selectedTeamProfile.value) return
-  const current = new Set(selectedTeamProfile.value.solverProfileIds)
+  const current = new Set(selectedTeamProfile.value.specialistProfileIds)
   if (current.has(profileId)) {
     current.delete(profileId)
   } else {
     current.add(profileId)
   }
-  selectedTeamProfile.value.solverProfileIds = Array.from(current)
+  selectedTeamProfile.value.specialistProfileIds = Array.from(current)
 }
 
 onMounted(() => {

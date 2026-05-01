@@ -1,5 +1,6 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { AgentTask } from '@/types/agentTask'
+import type { ParallelTaskSource } from '@/composables/useAgentParallelRunState'
 
 export type RightPanelKey = 'tasks' | 'html' | 'terminal' | 'browser-shell' | 'team'
 
@@ -16,6 +17,13 @@ interface ScopedTaskEntry {
 }
 
 interface TeamTaskBucket {
+  key: string
+  label: string
+  tasks: AgentTask[]
+  updatedAt: number
+}
+
+interface ParallelTaskBucket {
   key: string
   label: string
   tasks: AgentTask[]
@@ -47,6 +55,7 @@ export const useAgentPanels = (params: {
     memberId?: string
   } | null
   propsShowTasks: boolean
+  parallelTaskSources?: ComputedRef<ParallelTaskSource[]>
   resetAgentError: () => void
   resolveAgentName: (agentId?: string | null) => string
   selectedTeamTaskAssigneeId: ComputedRef<string | null>
@@ -102,6 +111,9 @@ export const useAgentPanels = (params: {
   const isTaskExecutionInCurrentContext = (executionId: string) => {
     const convId = params.conversationId.value
     if (convId && executionId === convId) return true
+    if (convId && (params.parallelTaskSources?.value || []).some((source) =>
+      source.parentConversationId === convId && source.executionId === executionId,
+    )) return true
     const parsed = params.parseTeamTaskExecutionId(executionId)
     if (!parsed) return false
     return !!params.activeTeamSessionId.value && parsed.sessionId === params.activeTeamSessionId.value
@@ -146,23 +158,6 @@ export const useAgentPanels = (params: {
     return [...bucketMap.values()].sort((a, b) => b.updatedAt - a.updatedAt)
   })
 
-  const taskSourceOptions = computed<TaskSourceOption[]>(() => {
-    if (!params.teamWorkspaceAvailable.value || teamTaskBuckets.value.length === 0) return []
-    const allCount = teamTaskBuckets.value.reduce((acc, bucket) => acc + bucket.tasks.length, 0)
-    return [
-      {
-        key: TASK_SOURCE_ALL_KEY,
-        label: '全局',
-        count: allCount,
-      },
-      ...teamTaskBuckets.value.map((bucket) => ({
-        key: bucket.key,
-        label: bucket.label,
-        count: bucket.tasks.length,
-      })),
-    ]
-  })
-
   const buildLabeledTasks = (tasks: AgentTask[], label: string): AgentTask[] => {
     return tasks.map((task) => ({
       ...task,
@@ -189,6 +184,58 @@ export const useAgentPanels = (params: {
       .sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))
   })
 
+  const parallelTaskBuckets = computed<ParallelTaskBucket[]>(() => {
+    const convId = params.conversationId.value
+    if (!convId) return []
+    return (params.parallelTaskSources?.value || [])
+      .filter((source) => source.parentConversationId === convId)
+      .map((source) => {
+        const sourceTasks = params.getTasksForExecution(source.executionId)
+        return {
+          key: `parallel:${source.executionId}`,
+          label: source.label,
+          tasks: sourceTasks,
+          updatedAt: sourceTasks.reduce((latest, task) => Math.max(latest, Number(task.updated_at || 0)), 0),
+        }
+      })
+      .filter((bucket) => bucket.tasks.length > 0)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  })
+
+  const taskSourceOptions = computed<TaskSourceOption[]>(() => {
+    const buckets = params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value
+      ? teamTaskBuckets.value
+      : parallelTaskBuckets.value
+    if (buckets.length === 0) return []
+    const allCount = buckets.reduce((acc, bucket) => acc + bucket.tasks.length, 0)
+    return [
+      {
+        key: TASK_SOURCE_ALL_KEY,
+        label: params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value ? '全局' : '全部模型',
+        count: allCount,
+      },
+      ...buckets.map((bucket) => ({
+        key: bucket.key,
+        label: bucket.label,
+        count: bucket.tasks.length,
+      })),
+    ]
+  })
+
+  const parallelTasks = computed<AgentTask[]>(() => {
+    if (parallelTaskBuckets.value.length === 0) return []
+    const selected = selectedTaskSourceKey.value || TASK_SOURCE_ALL_KEY
+    if (selected !== TASK_SOURCE_ALL_KEY) {
+      return parallelTaskBuckets.value.find((bucket) => bucket.key === selected)?.tasks || []
+    }
+    if (parallelTaskBuckets.value.length === 1) {
+      return [...parallelTaskBuckets.value[0].tasks]
+    }
+    return parallelTaskBuckets.value
+      .flatMap((bucket) => buildLabeledTasks(bucket.tasks, bucket.label))
+      .sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))
+  })
+
   const conversationTasks = computed<AgentTask[]>(() => {
     const convId = params.conversationId.value
     if (!convId) return []
@@ -199,6 +246,7 @@ export const useAgentPanels = (params: {
     if (params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value) {
       if (teamTaskBuckets.value.length > 0) return teamTasks.value
     }
+    if (parallelTaskBuckets.value.length > 0) return parallelTasks.value
     return conversationTasks.value
   })
 
@@ -493,6 +541,11 @@ export const useAgentPanels = (params: {
     const convId = params.conversationId.value
     if (convId) {
       params.clearTasksForExecution(convId)
+      for (const source of params.parallelTaskSources?.value || []) {
+        if (source.parentConversationId === convId) {
+          params.clearTasksForExecution(source.executionId)
+        }
+      }
     }
     const sessionId = params.activeTeamSessionId.value
     if (!sessionId) return

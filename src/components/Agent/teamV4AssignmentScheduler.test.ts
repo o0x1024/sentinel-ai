@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { runTeamV4AssignmentsWithDependencies } from './teamV4AssignmentScheduler'
-import type { TeamV4SolverAssignment } from '@/types/teamRuntime'
+import type { TeamV4SpecialistAssignment } from '@/types/teamRuntime'
 
-const assignment = (id: string, dependsOn: string[] = []): TeamV4SolverAssignment => ({
-  solver: {
-    id: `solver-${id}`,
+const assignment = (id: string, dependsOn: string[] = []): TeamV4SpecialistAssignment => ({
+  specialist: {
+    id: `specialist-${id}`,
     run_id: 'run-1',
     profile_id: 'assistant.default',
-    role_type: 'solver',
-    name: `Solver ${id}`,
+    role_type: 'specialist',
+    name: `Specialist ${id}`,
     status: 'idle',
     model: null,
     context_mode: 'claude-like',
@@ -26,7 +26,7 @@ const assignment = (id: string, dependsOn: string[] = []): TeamV4SolverAssignmen
     instruction: id,
     status: 'ready',
     priority: 0,
-    assigned_agent_id: `solver-${id}`,
+    assigned_agent_id: `specialist-${id}`,
     depends_on: dependsOn,
     acceptance_criteria: null,
     context_snapshot_id: null,
@@ -37,9 +37,9 @@ const assignment = (id: string, dependsOn: string[] = []): TeamV4SolverAssignmen
   contextSnapshot: {
     id: `context-${id}`,
     run_id: 'run-1',
-    actor_id: `solver-${id}`,
+    actor_id: `specialist-${id}`,
     task_id: id,
-    role_type: 'solver',
+    role_type: 'specialist',
     source_sequence: 0,
     policy_json: {},
     sections_json: [],
@@ -49,7 +49,7 @@ const assignment = (id: string, dependsOn: string[] = []): TeamV4SolverAssignmen
   harnessRun: {
     id: `harness-${id}`,
     run_id: 'run-1',
-    actor_id: `solver-${id}`,
+    actor_id: `specialist-${id}`,
     task_id: id,
     status: 'running',
     lease_expires_at: null,

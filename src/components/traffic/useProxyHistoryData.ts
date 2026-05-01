@@ -1,14 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { Ref } from 'vue'
-import { getProxyRequestPreview, getProxyRequestResponseBodyChunk } from '@/api/trafficHistory'
+import { getProxyRequestPreview } from '@/api/trafficHistory'
 import { dialog } from '@/composables/useDialog'
 import { clearProxyHistoryDerivedCache, pruneProxyHistoryDerivedCache } from './proxyHistoryDerivedSupport'
 import { dedupeProxyHistoryRequests, mergeProxyHistoryRequests } from './proxyHistoryRequestStore'
 import type {
   ProxyHistoryWsTab,
   ProxyRequest,
-  ProxyRequestBodyChunk,
   WebSocketConnection,
   WebSocketMessage,
 } from './proxyHistoryTypes'
@@ -231,20 +230,6 @@ export const useProxyHistoryData = (params: Params) => {
     }
   }
 
-  const fetchRequestResponseBodyChunk = async (
-    requestId: number,
-    variant: 'original' | 'edited',
-    offset: number,
-    limit: number,
-  ): Promise<ProxyRequestBodyChunk | null> => {
-    try {
-      return await getProxyRequestResponseBodyChunk(requestId, variant, offset, limit)
-    } catch (error) {
-      console.error(`Failed to load response body chunk for #${requestId}:`, error)
-      return null
-    }
-  }
-
   const loadWsConnections = async () => {
     params.isLoadingWs.value = true
     try {
@@ -401,7 +386,6 @@ export const useProxyHistoryData = (params: Params) => {
     loadWsConnections,
     fetchRequestDetails,
     fetchRequestPreview,
-    fetchRequestResponseBodyChunk,
     refreshRequests,
     setWsActiveTab,
     setupEventListeners,

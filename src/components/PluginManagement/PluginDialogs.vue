@@ -172,6 +172,41 @@
     <form method="dialog" class="modal-backdrop"><button @click="closeDeleteDialog">close</button></form>
   </AppDialog>
 
+  <!-- Batch Delete Confirmation Dialog -->
+  <AppDialog ref="batchDeleteDialogRef" class="modal">
+    <div class="modal-box max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
+        <h3 class="font-bold text-lg">{{ $t('plugins.batchDeleteConfirmTitle', '确认批量删除') }}</h3>
+        <button
+          class="btn btn-sm btn-circle btn-ghost"
+          :disabled="batchDeleting"
+          @click="closeBatchDeleteDialog"
+        >
+          ✕
+        </button>
+      </div>
+      <p class="py-4">
+        {{ $t('plugins.batchDeleteConfirm', { count: batchDeleteCount }) }}
+      </p>
+      <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
+        <button class="btn btn-sm" :disabled="batchDeleting" @click="closeBatchDeleteDialog">
+          {{ $t('common.cancel', '取消') }}
+        </button>
+        <button
+          class="btn btn-error btn-sm"
+          :disabled="batchDeleting || batchDeleteCount === 0"
+          @click="$emit('confirmBatchDeleteSelected')"
+        >
+          <span v-if="batchDeleting" class="loading loading-spinner"></span>
+          {{ batchDeleting ? $t('plugins.deleting', '删除中...') : $t('common.delete', '删除') }}
+        </button>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+      <button :disabled="batchDeleting" @click="closeBatchDeleteDialog">close</button>
+    </form>
+  </AppDialog>
+
   <!-- AI Generate Plugin Dialog -->
   <AppDialog ref="aiGenerateDialogRef" class="modal">
     <div class="modal-box w-11/12 max-w-3xl">
@@ -190,6 +225,7 @@
             <select :value="aiPluginType" @change="$emit('update:aiPluginType', ($event.target as HTMLSelectElement).value)" class="select select-bordered select-sm">
               <option value="traffic">{{ $t('plugins.categories.trafficAnalysis', '流量分析插件') }}</option>
               <option value="agent">{{ $t('plugins.categories.agents', 'Agent插件') }}</option>
+              <option value="bounty">{{ $t('plugins.categories.bounty', '漏洞赏金插件') }}</option>
               <option value="intruder">{{ $t('plugins.categories.intruder', 'Intruder插件') }}</option>
             </select>
           </div>
@@ -524,7 +560,7 @@ import {
   getFieldPathKey,
 } from '@/components/BugBounty/monitorPluginParamsSupport'
 import type { PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult, AdvancedRunStat, AdvancedForm } from './types'
-import { agentsCategories, intruderCategories, trafficCategories } from './types'
+import { agentsCategories, bountyCategories, intruderCategories, trafficCategories } from './types'
 
 const { t } = useI18n()
 
@@ -540,6 +576,8 @@ const props = defineProps<{
   // Delete dialog
   deletingPlugin: PluginRecord | null
   deleting: boolean
+  batchDeleteCount: number
+  batchDeleting: boolean
   // AI Generate dialog
   aiPrompt: string
   aiPluginType: string
@@ -571,6 +609,7 @@ const emit = defineEmits<{
   'handleFileSelect': [event: Event]
   'uploadPlugin': []
   'deletePlugin': []
+  'confirmBatchDeleteSelected': []
   'update:aiPrompt': [value: string]
   'update:aiPluginType': [value: string]
   'update:aiPluginCategory': [value: string]
@@ -581,6 +620,7 @@ const emit = defineEmits<{
   'closeReviewDetailDialog': []
   'closeUploadDialog': []
   'closeDeleteDialog': []
+  'closeBatchDeleteDialog': []
   'closeAiGenerateDialog': []
   'closeTestResultDialog': []
   'closeAdvancedDialog': []
@@ -591,6 +631,7 @@ const emit = defineEmits<{
 const reviewDetailDialogRef = ref<HTMLDialogElement>()
 const uploadDialogRef = ref<HTMLDialogElement>()
 const deleteDialogRef = ref<HTMLDialogElement>()
+const batchDeleteDialogRef = ref<HTMLDialogElement>()
 const aiGenerateDialogRef = ref<HTMLDialogElement>()
 const testResultDialogRef = ref<HTMLDialogElement>()
 const advancedDialogRef = ref<HTMLDialogElement>()
@@ -607,6 +648,13 @@ const aiPluginCategoryOptions = computed(() => {
 
   if (props.aiPluginType === 'agent') {
     return agentsCategories.map(category => ({
+      value: category,
+      label: t(`plugins.agentCategories.${category}`, category),
+    }))
+  }
+
+  if (props.aiPluginType === 'bounty') {
+    return bountyCategories.map(category => ({
       value: category,
       label: t(`plugins.agentCategories.${category}`, category),
     }))
@@ -838,6 +886,8 @@ const showUploadDialog = () => uploadDialogRef.value?.showModal()
 const closeUploadDialog = () => { uploadDialogRef.value?.close(); emit('closeUploadDialog') }
 const showDeleteDialog = () => deleteDialogRef.value?.showModal()
 const closeDeleteDialog = () => { deleteDialogRef.value?.close(); emit('closeDeleteDialog') }
+const showBatchDeleteDialog = () => batchDeleteDialogRef.value?.showModal()
+const closeBatchDeleteDialog = () => { batchDeleteDialogRef.value?.close(); emit('closeBatchDeleteDialog') }
 const showAIGenerateDialog = () => aiGenerateDialogRef.value?.showModal()
 const closeAIGenerateDialog = () => { aiGenerateDialogRef.value?.close(); emit('closeAiGenerateDialog') }
 const showTestResultDialog = () => testResultDialogRef.value?.showModal()
@@ -853,6 +903,7 @@ defineExpose({
   showReviewDetailDialog, closeReviewDetailDialog,
   showUploadDialog, closeUploadDialog,
   showDeleteDialog, closeDeleteDialog,
+  showBatchDeleteDialog, closeBatchDeleteDialog,
   showAIGenerateDialog, closeAIGenerateDialog,
   showTestResultDialog, closeTestResultDialog,
   showAdvancedDialog, closeAdvancedDialog,

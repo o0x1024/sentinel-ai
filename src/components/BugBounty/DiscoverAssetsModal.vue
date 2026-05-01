@@ -62,7 +62,7 @@
           <select v-model="form.plugin_id" class="select select-bordered" :disabled="loadingPlugins">
             <option value="">{{ loadingPlugins ? t('common.loading') : t('bugBounty.monitor.selectPluginPlaceholder') }}</option>
             <optgroup v-for="category in pluginCategories" :key="category.name" :label="category.label">
-              <option v-for="plugin in category.plugins" :key="plugin.name" :value="plugin.name">
+              <option v-for="plugin in category.plugins" :key="plugin.id" :value="plugin.id">
                 {{ plugin.name }}
               </option>
             </optgroup>
@@ -280,7 +280,7 @@ const pluginCategories = computed<PluginCategory[]>(() => {
 })
 
 const selectedPlugin = computed(() => {
-  return availablePlugins.value.find(p => p.name === form.plugin_id)
+  return availablePlugins.value.find(p => p.id === form.plugin_id)
 })
 
 const isFormValid = computed(() => {
@@ -357,15 +357,15 @@ const loadPlugins = async () => {
   try {
     loadingPlugins.value = true
     
-    // Try to load from tool server first
-    const response = await invoke('list_tool_server_tools') as any[]
+    const response = await invoke('monitor_get_available_plugins') as any[]
     
-    // Filter plugins suitable for asset discovery - only show recon tools
+    // Filter plugins suitable for asset discovery.
     availablePlugins.value = response.filter(tool => {
       const category = tool.category?.toLowerCase() || ''
+      const monitorType = tool.monitor_type?.toLowerCase() || ''
       
-      // Only include recon (reconnaissance/discovery) tools
-      return category === 'recon'
+      return ['recon', 'discovery', 'monitor'].includes(category)
+        || ['dns', 'ip', 'web', 'service', 'port'].includes(monitorType)
     })
     
     // Sort by category and name
@@ -506,10 +506,11 @@ watch(() => form.plugin_id, async (pluginName) => {
   const plugin = availablePlugins.value.find(p => p.name === pluginName)
   if (!plugin) return
   
-  // Load plugin input schema from ToolServer
+  // Load plugin input schema from the plugin registry/runtime.
   try {
     loadingSchema.value = true
-    const schema = await invoke('get_tool_input_schema', { toolId: pluginName }) as any
+    const response = await invoke('get_plugin_input_schema', { pluginId: pluginName }) as any
+    const schema = response?.success ? response.data : null
     
     if (schema && schema.properties) {
       pluginInputSchema.value = schema

@@ -514,8 +514,8 @@ import TrafficVariantSwitch from './TrafficVariantSwitch.vue'
 import { IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS, IMMERSIVE_TRAFFIC_TOP_BAR_CLASS } from './immersiveTrafficUi'
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
 import { buildSourceRequestFromRawRequest } from '@/components/traffic/intruder/http'
-import type { HttpExchangeRequest, HttpHeaderEntry, HttpReplayResponse } from './http/model'
-import { findHeaderValue, serializeHeaderEntries } from './http/headers'
+import type { HttpExchangeRequest, HttpReplayResponse } from './http/model'
+import { findHeaderValue } from './http/headers'
 import { buildHttpExchangeRequestFromRawRequest } from './http/parser'
 import { buildHttpReplayResponseFromCommandResult, type RawReplayCommandResult } from './http/response'
 import type { TrafficComparePayload, TrafficComparerDraftRequestInput } from './transfers'
@@ -524,6 +524,7 @@ import { useTrafficSendTargets } from './trafficSendTargets'
 import { buildTrafficContextMenuSections } from './trafficContextMenuSectionSupport'
 import { buildTrafficRequestContextMenuSections } from './trafficRequestContextMenuSupport'
 import { formatRepeaterBytes as formatBytes, formatRepeaterResponseMeta, generateRepeaterId, getRepeaterStatusClass as getStatusClass } from './proxyRepeaterUiSupport';
+import { buildRepeaterAssistantTrafficData } from './proxyRepeaterAssistantTransferSupport'
 import { buildTrafficRequestActionMenuItems } from './trafficRequestActionMenuSupport'
 import { buildTrafficRequestSendMenuItems } from './trafficSendMenuSupport'
 import { buildRepeaterRequestVersionComparePayload, buildRepeaterResponseVersionComparePayload, canCompareRepeaterRequestVersions, canCompareRepeaterResponseVersions } from './trafficRepeaterComparerSupport'
@@ -1224,8 +1225,34 @@ function refocusRequestEditor() {
   })
 }
 
+function syncCurrentRequestEditorContentToTab() {
+  const tab = currentTab.value
+  if (!tab || tab.requestTab === 'hex') return
+
+  const editorContent = requestEditor.value?.getContent?.()
+  if (typeof editorContent !== 'string') return
+
+  const nextRawRequest = tab.requestTab === 'pretty'
+    ? convertRepeaterPrettyRequestToRaw(editorContent)
+    : editorContent
+  const nextPrettyRequest = tab.requestTab === 'pretty'
+    ? editorContent
+    : formatRepeaterPrettyRequest(editorContent)
+
+  if (tab.rawRequest !== nextRawRequest || tab.prettyRequest !== nextPrettyRequest) {
+    tab.rawRequest = nextRawRequest
+    tab.prettyRequest = nextPrettyRequest
+    tab.modified = true
+    tab.userEdited = true
+  }
+
+  syncRepeaterTabTargetFromRequest(tab, tab.rawRequest)
+}
+
 async function sendRequest() {
   if (!currentTab.value || currentTab.value.isSending) return;
+
+  syncCurrentRequestEditorContentToTab()
   
   if (!currentTab.value.targetHost || !currentTab.value.rawRequest.trim()) {
     dialog.toast.warning(t('trafficAnalysis.repeater.messages.fillTargetAndRequest'));
@@ -1655,53 +1682,7 @@ function compareCurrentResponseVersions() {
 
 async function sendRequestToAssistant() {
   if (!currentTab.value) return;
-  
-  // 从 rawRequest 解析请求信息
-  const lines = currentTab.value.rawRequest.split(/\r\n|\r|\n/);
-  const firstLine = lines[0];
-  const methodMatch = firstLine.match(/^(\w+)\s+(\S+)/);
-  const method = methodMatch ? methodMatch[1] : 'GET';
-  const path = methodMatch ? methodMatch[2] : '/';
-  
-  // 解析请求头
-  const requestHeaders: HttpHeaderEntry[] = [];
-  let inBody = false;
-  const bodyLines: string[] = [];
-  
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!inBody && line === '') {
-      inBody = true;
-      continue;
-    }
-    if (!inBody) {
-      const colonIndex = line.indexOf(':');
-      if (colonIndex > 0) {
-        requestHeaders.push({
-          name: line.substring(0, colonIndex).trim(),
-          value: line.substring(colonIndex + 1).trim(),
-        });
-      }
-    } else {
-      bodyLines.push(line);
-    }
-  }
-  
-  const requestBody = bodyLines.join('\n').trim();
-  const url = buildRepeaterFullUrl(currentTab.value);
-  
-  // 构建流量数据
-  const trafficData = {
-    id: Date.now(),
-    url,
-    method,
-    host: currentTab.value.targetHost,
-    status_code: currentTab.value.response?.statusCode || 0,
-    request_headers: serializeHeaderEntries(requestHeaders),
-    request_body: requestBody || undefined,
-    response_headers: currentTab.value.response ? serializeHeaderEntries(currentTab.value.response.headers) : undefined,
-    response_body: currentTab.value.response?.bodyText || undefined,
-  };
+  const trafficData = buildRepeaterAssistantTrafficData(currentTab.value)
   
   // 发送全局事件
   openTrafficAssistantPanel()

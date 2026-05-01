@@ -9,14 +9,14 @@ import type {
   AgentToolResultNewEvent,
 } from '@/composables/useAgentEventTypes'
 
-type SolverActivityStatus = 'running' | 'completed' | 'failed'
+type SpecialistActivityStatus = 'running' | 'completed' | 'failed'
 
-interface TeamV4SolverActivityProgressParams {
+interface TeamV4SpecialistActivityProgressParams {
   executionId: string
   messages: Ref<AgentMessage[]>
   runId: string
-  solverId: string
-  solverName: string
+  specialistId: string
+  specialistName: string
   taskId: string
   taskKey: string
   taskTitle: string
@@ -31,13 +31,13 @@ const summarizeToolResult = (payload: AgentToolResultEvent | AgentToolResultNewE
   return compact.length > 220 ? `${compact.slice(0, 220)}...` : compact
 }
 
-export const startTeamV4SolverActivityProgress = (params: TeamV4SolverActivityProgressParams) => {
+export const startTeamV4SpecialistActivityProgress = (params: TeamV4SpecialistActivityProgressParams) => {
   const messageId = crypto.randomUUID()
   const toolNamesByCallId = new Map<string, string>()
   const startedAt = Date.now()
   const unlisteners: UnlistenFn[] = []
   let disposed = false
-  let lastActivity = 'Waiting for solver output.'
+  let lastActivity = 'Waiting for specialist output.'
   let textChunkCount = 0
   let toolCallCount = 0
   let toolResultCount = 0
@@ -45,22 +45,22 @@ export const startTeamV4SolverActivityProgress = (params: TeamV4SolverActivityPr
 
   const recordEvent = (eventType: string, payload: Record<string, unknown>) => {
     void teamRuntimeApi.appendEvent(params.runId, {
-      actorId: params.solverId,
+      actorId: params.specialistId,
       taskId: params.taskId,
       eventType,
       visibility: 'workspace',
       payload,
     }).catch((error) => {
-      console.warn('[teamV4SolverActivityProgress] Failed to record observable event:', error)
+      console.warn('[teamV4SpecialistActivityProgress] Failed to record observable event:', error)
     })
   }
 
-  const writeMessage = (status: SolverActivityStatus = 'running') => {
+  const writeMessage = (status: SpecialistActivityStatus = 'running') => {
     if (disposed) return
     const elapsedSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000))
     const header = status === 'running'
-      ? `Solver activity: ${params.solverName} -> ${params.taskTitle} (${elapsedSeconds}s)`
-      : `Solver activity ${status}: ${params.solverName} -> ${params.taskTitle} (${elapsedSeconds}s)`
+      ? `Specialist activity: ${params.specialistName} -> ${params.taskTitle} (${elapsedSeconds}s)`
+      : `Specialist activity ${status}: ${params.specialistName} -> ${params.taskTitle} (${elapsedSeconds}s)`
     const content = [
       header,
       lastActivity,
@@ -82,12 +82,12 @@ export const startTeamV4SolverActivityProgress = (params: TeamV4SolverActivityPr
         content,
         timestamp: Date.now(),
         metadata: {
-          kind: 'team_v4_solver_activity',
+          kind: 'team_v4_specialist_activity',
           status,
           duration_ms: elapsedSeconds * 1000,
-          team_member_id: params.solverId,
-          team_member_name: params.solverName,
-          team_member_role: 'solver',
+          team_member_id: params.specialistId,
+          team_member_name: params.specialistName,
+          team_member_role: 'specialist',
           team_session_id: params.runId,
           team_task_record_id: params.taskId,
           team_task_key: params.taskKey,
@@ -115,14 +115,14 @@ export const startTeamV4SolverActivityProgress = (params: TeamV4SolverActivityPr
     textChunkCount += 1
     if (!recordedTextStarted) {
       recordedTextStarted = true
-      recordEvent('solver_text_started', {
+      recordEvent('specialist_text_started', {
         executionId: params.executionId,
         chunkType: payload.chunk_type,
       })
     }
     lastActivity = payload.chunk_type === 'reasoning'
-      ? 'Solver is reasoning.'
-      : 'Solver is writing an answer.'
+      ? 'Specialist is reasoning.'
+      : 'Specialist is writing an answer.'
     writeMessage()
   })
 
@@ -130,7 +130,7 @@ export const startTeamV4SolverActivityProgress = (params: TeamV4SolverActivityPr
     toolCallCount += 1
     toolNamesByCallId.set(payload.tool_call_id, payload.tool_name)
     lastActivity = `Calling tool: ${payload.tool_name}`
-    recordEvent('solver_tool_started', {
+    recordEvent('specialist_tool_started', {
       executionId: params.executionId,
       toolCallId: payload.tool_call_id,
       toolName: payload.tool_name,
@@ -147,7 +147,7 @@ export const startTeamV4SolverActivityProgress = (params: TeamV4SolverActivityPr
     lastActivity = summary
       ? `Tool result: ${toolName} -> ${summary}`
       : `Tool result: ${toolName}`
-    recordEvent('solver_tool_result', {
+    recordEvent('specialist_tool_result', {
       executionId: params.executionId,
       toolCallId: 'tool_call_id' in payload ? payload.tool_call_id : null,
       toolName,
@@ -161,11 +161,11 @@ export const startTeamV4SolverActivityProgress = (params: TeamV4SolverActivityPr
 
   return {
     complete() {
-      lastActivity = 'Solver execution completed.'
+      lastActivity = 'Specialist execution completed.'
       writeMessage('completed')
     },
     fail(error: string) {
-      lastActivity = `Solver execution failed: ${error}`
+      lastActivity = `Specialist execution failed: ${error}`
       writeMessage('failed')
     },
     dispose() {
