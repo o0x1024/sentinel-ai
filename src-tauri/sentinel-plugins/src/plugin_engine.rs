@@ -10,7 +10,8 @@
 //! 基于 deno_core 0.373.0 + deno_web 0.254.0
 
 use crate::error::{PluginError, Result};
-use crate::plugin_ops::{sentinel_plugin_ext, ActiveProbeEvent, PluginContext};
+use crate::plugin_context::PluginContext;
+use crate::plugin_ops::{sentinel_plugin_ext, ActiveProbeEvent};
 use crate::runtime_events::emit_active_probe_event;
 use crate::types::{Finding, PluginMetadata};
 #[cfg(feature = "plugin-ts-transpile")]
@@ -526,6 +527,8 @@ if (typeof get_metadata === 'function') {
             let op_state_borrow = op_state.borrow();
             let plugin_ctx = op_state_borrow.borrow::<PluginContext>().clone();
             plugin_ctx.set_plugin_id(Some(plugin_id.clone()));
+            plugin_ctx.set_plugin_main_category(Some(metadata.main_category.clone()));
+            plugin_ctx.set_monitor_type(metadata.monitor_type.clone());
         }
 
         debug!(
@@ -739,6 +742,28 @@ if (typeof get_metadata === 'function') {
         &mut self,
         input: &serde_json::Value,
     ) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
+        self.execute_agent_with_runtime_context(input, None, None)
+            .await
+    }
+
+    pub async fn execute_agent_with_runtime_context(
+        &mut self,
+        input: &serde_json::Value,
+        execution_context: Option<String>,
+        run_id: Option<String>,
+    ) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
+        {
+            let op_state = self.runtime.op_state();
+            let op_state_borrow = op_state.borrow();
+            let plugin_ctx = op_state_borrow.borrow::<PluginContext>().clone();
+            if let Some(execution_context) = execution_context {
+                plugin_ctx.set_execution_context(Some(execution_context));
+            }
+            if let Some(run_id) = run_id {
+                plugin_ctx.set_run_id(Some(run_id));
+            }
+        }
+
         // 依次尝试常见的Agent入口函数名称: analyze -> run -> execute
         if let Err(e1) = self.call_plugin_function("analyze", input).await {
             if let Err(e2) = self.call_plugin_function("run", input).await {

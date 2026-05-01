@@ -390,6 +390,18 @@ impl PluginManager {
         plugin_id: &str,
         input: &serde_json::Value,
     ) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
+        self.execute_execution_plugin(plugin_id, input, "agent_tool", None)
+            .await
+    }
+
+    /// 执行 analyze/run/execute 入口，并显式标记本次运行场景。
+    pub async fn execute_execution_plugin(
+        &self,
+        plugin_id: &str,
+        input: &serde_json::Value,
+        execution_context: &str,
+        run_id: Option<String>,
+    ) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
         // 验证插件是否存在且已启用，并获取代码与元数据
         let (metadata, code) = {
             let registry = self.registry.read().await;
@@ -414,6 +426,8 @@ impl PluginManager {
 
         // 使用 PluginEngine 执行 agent 入口
         let input_clone = input.clone();
+        let execution_context = execution_context.to_string();
+        let run_id = run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let result_pair = tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -423,7 +437,13 @@ impl PluginManager {
             rt.block_on(async move {
                 let mut engine = PluginEngine::new()?;
                 engine.load_plugin_with_metadata(&code, metadata).await?;
-                engine.execute_agent(&input_clone).await
+                engine
+                    .execute_agent_with_runtime_context(
+                        &input_clone,
+                        Some(execution_context),
+                        Some(run_id),
+                    )
+                    .await
             })
         })
         .await

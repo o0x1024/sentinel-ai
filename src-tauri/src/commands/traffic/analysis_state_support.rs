@@ -388,9 +388,24 @@ impl TrafficAnalysisState {
         let default_inputs =
             load_plugin_default_inputs(self.db_service.as_ref(), &resolved_plugin_id).await?;
         let resolved_inputs = merge_plugin_input_defaults(&default_inputs, inputs);
+        let execution_context = self
+            .plugin_manager
+            .get_plugin(&resolved_plugin_id)
+            .await
+            .map(|record| match record.metadata.main_category.as_str() {
+                "intruder" => "intruder_processor",
+                "bounty" => "bounty_workflow",
+                _ => "agent_tool",
+            })
+            .unwrap_or("agent_tool");
 
         self.plugin_manager
-            .execute_agent(&resolved_plugin_id, &resolved_inputs)
+            .execute_execution_plugin(
+                &resolved_plugin_id,
+                &resolved_inputs,
+                execution_context,
+                None,
+            )
             .await
             .map_err(|e| {
                 format!(

@@ -1230,6 +1230,7 @@ pub fn run() {
             commands::bounty_delete_workflow_template,
             commands::bounty_update_workflow_template,
             commands::bounty_run_workflow_template,
+            commands::cancel_workflow_run,
             commands::bounty_run_workflow_template_for_event,
             commands::bounty_list_change_event_workflow_runs,
             commands::bounty_retry_change_event_workflow_run,

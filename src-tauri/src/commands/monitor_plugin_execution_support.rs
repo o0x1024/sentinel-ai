@@ -88,13 +88,19 @@ pub(crate) async fn execute_monitor_plugin(
                 .register_plugin(normalized_plugin_id.clone(), metadata, true)
                 .await
                 .map_err(|error| {
-                    format!("Failed to register plugin '{}': {}", normalized_plugin_id, error)
+                    format!(
+                        "Failed to register plugin '{}': {}",
+                        normalized_plugin_id, error
+                    )
                 })?;
             plugin_manager
                 .set_plugin_code(normalized_plugin_id.clone(), code)
                 .await
                 .map_err(|error| {
-                    format!("Failed to cache plugin '{}': {}", normalized_plugin_id, error)
+                    format!(
+                        "Failed to cache plugin '{}': {}",
+                        normalized_plugin_id, error
+                    )
                 })?;
         } else if let Err(error) = plugin_manager.enable_plugin(&normalized_plugin_id).await {
             tracing::warn!(
@@ -104,8 +110,21 @@ pub(crate) async fn execute_monitor_plugin(
             );
         }
 
+        let run_id = input
+            .get("__monitorExecution")
+            .and_then(|value| value.as_object())
+            .and_then(|context| {
+                let task_id = context.get("task_id").and_then(|value| value.as_str())?;
+                let started_at = context
+                    .get("started_at")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("manual");
+                Some(format!("monitor:{task_id}:{started_at}"))
+            })
+            .unwrap_or_else(|| format!("monitor:{}", uuid::Uuid::new_v4()));
+
         let (findings, output) = plugin_manager
-            .execute_agent(&normalized_plugin_id, &input)
+            .execute_execution_plugin(&normalized_plugin_id, &input, "monitor_task", Some(run_id))
             .await
             .map_err(|error| {
                 format!(

@@ -15,7 +15,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use std::time::Instant;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
@@ -26,6 +25,9 @@ use x509_parser::parse_x509_certificate;
 use crate::dictionary_runtime;
 use crate::monitor_progress::{emit_plugin_monitor_progress, PluginMonitorProgressRequest};
 use crate::network_scan::op_scan_ports;
+use crate::plugin_context::PluginContext;
+use crate::plugin_fetch_context::{build_plugin_request_schedule, fetch_policy_kind_for_context};
+use crate::plugin_fetch_types::{FetchBody, FetchOptions, FetchResponse};
 use crate::plugin_finding_sanitizer::sanitize_response_body_for_evidence;
 use crate::runtime_config::get_plugin_runtime_settings;
 use crate::runtime_events::emit_active_probe_event;
@@ -34,81 +36,12 @@ use crate::service_probe_runtime::op_probe_services;
 use crate::types::{Confidence, Finding, Severity};
 use crate::{
     cancel_active_probe, complete_active_probe, enqueue_active_probe, fail_active_probe,
-    mark_active_probe_running, ActiveProbeRequest,
+    mark_active_probe_running, ActiveProbeRequest, PluginFetchPolicy,
 };
-
-/// 插件执行上下文（用于收集插件发现的漏洞）
-#[derive(Clone, Default)]
-pub struct PluginContext {
-    pub findings: Arc<Mutex<Vec<Finding>>>,
-    pub last_result: Arc<Mutex<Option<serde_json::Value>>>,
-    pub plugin_id: Arc<Mutex<Option<String>>>,
-    pub traffic_request_id: Arc<Mutex<Option<String>>>,
-    pub finding_sink: Arc<Mutex<Option<mpsc::UnboundedSender<Finding>>>>,
-}
-
-impl PluginContext {
-    pub fn new() -> Self {
-        Self {
-            findings: Arc::new(Mutex::new(Vec::new())),
-            last_result: Arc::new(Mutex::new(None)),
-            plugin_id: Arc::new(Mutex::new(None)),
-            traffic_request_id: Arc::new(Mutex::new(None)),
-            finding_sink: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    pub fn take_findings(&self) -> Vec<Finding> {
-        let mut findings = self.findings.lock().unwrap();
-        std::mem::take(&mut *findings)
-    }
-
-    pub fn take_last_result(&self) -> Option<serde_json::Value> {
-        let mut last = self.last_result.lock().unwrap();
-        std::mem::take(&mut *last)
-    }
-
-    pub fn set_plugin_id(&self, plugin_id: Option<String>) {
-        let mut current = self.plugin_id.lock().unwrap();
-        *current = plugin_id;
-    }
-
-    pub fn plugin_id(&self) -> Option<String> {
-        self.plugin_id.lock().unwrap().clone()
-    }
-
-    pub fn set_traffic_request_id(&self, request_id: Option<String>) {
-        let mut current = self.traffic_request_id.lock().unwrap();
-        *current = request_id;
-    }
-
-    pub fn traffic_request_id(&self) -> Option<String> {
-        self.traffic_request_id.lock().unwrap().clone()
-    }
-
-    pub fn set_finding_sink(&self, finding_sink: Option<mpsc::UnboundedSender<Finding>>) {
-        let mut current = self.finding_sink.lock().unwrap();
-        *current = finding_sink;
-    }
-
-    pub fn emit_finding(&self, finding: Finding) -> bool {
-        if let Some(sink) = self.finding_sink.lock().unwrap().clone() {
-            match sink.send(finding.clone()) {
-                Ok(_) => {
-                    let mut findings = self.findings.lock().unwrap();
-                    findings.push(finding);
-                    return true;
-                }
-                Err(error) => {
-                    warn!("Failed to stream finding to traffic pipeline: {}", error);
-                    return false;
-                }
-            }
-        }
-
-        false
-    }
-}
+use crate::{
+    cancel_plugin_request, complete_plugin_request, enqueue_plugin_request, fail_plugin_request,
+    mark_plugin_request_running, PluginFetchPolicyKind,
+};
 
 /// Finding 的 JavaScript 表示（用于序列化）
 /// 插件调用 op_emit_finding 时使用的简化结构
@@ -462,65 +395,6 @@ fn op_get_plugin_runtime_settings() -> crate::runtime_config::PluginRuntimeSetti
     get_plugin_runtime_settings()
 }
 
-/// Fetch request options from JavaScript
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum FetchBody {
-    Text { text: String },
-    Bytes { bytes: Vec<u8> },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FetchOptions {
-    #[serde(default)]
-    pub method: String,
-    #[serde(default)]
-    pub headers: std::collections::HashMap<String, String>,
-    #[serde(default)]
-    pub body: Option<FetchBody>,
-    #[serde(default)]
-    pub timeout: Option<u64>, // timeout in milliseconds
-    #[serde(default)]
-    pub redirect: Option<String>,
-    #[serde(default)]
-    pub max_redirects: Option<usize>,
-    #[serde(default)]
-    pub max_body_bytes: Option<usize>,
-    #[serde(default)]
-    pub request_id: Option<String>,
-    #[serde(default)]
-    pub active_probe: Option<ActiveProbeFetchOptions>,
-}
-
-/// Fetch response to JavaScript
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FetchResponse {
-    pub success: bool,
-    pub status: u16,
-    pub headers: std::collections::HashMap<String, String>,
-    pub body: String,
-    pub ok: bool,
-    pub redirected: bool,
-    pub final_url: String,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActiveProbeFetchOptions {
-    #[serde(default)]
-    pub probe_label: Option<String>,
-    #[serde(default)]
-    pub target_name: Option<String>,
-    #[serde(default)]
-    pub target_path: Option<String>,
-    #[serde(default)]
-    pub target_location: Option<String>,
-    #[serde(default)]
-    pub probe_value: Option<String>,
-    #[serde(default)]
-    pub technique: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveProbeRuntimeUpdate {
     #[serde(default)]
@@ -750,6 +624,31 @@ fn op_abort_fetch(#[string] request_id: String) -> bool {
     false
 }
 
+pub fn cancel_plugin_fetch_requests_by_run(run_id: &str, reason: &str) -> usize {
+    let kinds = [
+        PluginFetchPolicyKind::BountyFetch,
+        PluginFetchPolicyKind::MonitorFetch,
+        PluginFetchPolicyKind::AgentFetch,
+        PluginFetchPolicyKind::TrafficActiveProbe,
+        PluginFetchPolicyKind::PluginTestFetch,
+    ];
+    let mut cancelled = 0usize;
+
+    for kind in kinds {
+        let request_ids =
+            crate::cancel_plugin_requests_by_run(kind, run_id, Some(reason.to_string()));
+        cancelled += request_ids.len();
+        for request_id in request_ids {
+            let sender = fetch_abort_cache().lock().unwrap().remove(&request_id);
+            if let Some(sender) = sender {
+                let _ = sender.send(());
+            }
+        }
+    }
+
+    cancelled
+}
+
 /// Op: HTTP fetch (网络请求)
 #[op2(async)]
 #[serde]
@@ -794,6 +693,42 @@ async fn op_fetch(
     let plugin_ctx = {
         let op_state = state.borrow();
         op_state.borrow::<PluginContext>().clone()
+    };
+    let plugin_fetch_schedule = if active_probe.is_none() {
+        match fetch_policy_kind_for_context(&plugin_ctx) {
+            Ok(Some(kind)) => {
+                match build_plugin_request_schedule(&plugin_ctx, kind, &request_id, &method, &url) {
+                    Ok(schedule) => Some(schedule),
+                    Err(error) => {
+                        return FetchResponse {
+                            success: false,
+                            status: 0,
+                            headers: std::collections::HashMap::new(),
+                            body: String::new(),
+                            ok: false,
+                            redirected: false,
+                            final_url: url.clone(),
+                            error: Some(error),
+                        };
+                    }
+                }
+            }
+            Ok(None) => None,
+            Err(error) => {
+                return FetchResponse {
+                    success: false,
+                    status: 0,
+                    headers: std::collections::HashMap::new(),
+                    body: String::new(),
+                    ok: false,
+                    redirected: false,
+                    final_url: url.clone(),
+                    error: Some(error),
+                };
+            }
+        }
+    } else {
+        None
     };
     let client = match get_fetch_client(follow_redirects, max_redirects).await {
         Ok(c) => c,
@@ -863,11 +798,38 @@ async fn op_fetch(
             None
         };
 
+        let mut effective_timeout_ms = timeout_ms;
         if let Some(active_probe_request) = active_probe_request.as_ref() {
-            let dispatch_rx = enqueue_active_probe(active_probe_request.clone());
+            let dispatch_rx = match enqueue_active_probe(active_probe_request.clone()) {
+                Ok(dispatch_rx) => dispatch_rx,
+                Err(error) => {
+                    return FetchResponse {
+                        success: false,
+                        status: 0,
+                        headers: std::collections::HashMap::new(),
+                        body: String::new(),
+                        ok: false,
+                        redirected: false,
+                        final_url: url.clone(),
+                        error: Some(error),
+                    };
+                }
+            };
             let grant = tokio::select! {
                 dispatch_result = dispatch_rx => match dispatch_result {
-                    Ok(grant) => grant,
+                    Ok(Ok(grant)) => grant,
+                    Ok(Err(error)) => {
+                        return FetchResponse {
+                            success: false,
+                            status: 0,
+                            headers: std::collections::HashMap::new(),
+                            body: String::new(),
+                            ok: false,
+                            redirected: false,
+                            final_url: url.clone(),
+                            error: Some(error),
+                        };
+                    }
                     Err(_) => {
                         return FetchResponse {
                             success: false,
@@ -896,6 +858,7 @@ async fn op_fetch(
                 }
             };
 
+            effective_timeout_ms = grant.timeout_ms;
             if grant.total_wait_ms > 0 {
                 let wait = tokio::time::sleep(Duration::from_millis(grant.total_wait_ms));
                 tokio::pin!(wait);
@@ -920,6 +883,91 @@ async fn op_fetch(
             mark_active_probe_running(&request_id);
         }
 
+        if let Some(schedule) = plugin_fetch_schedule.as_ref() {
+            let policy = PluginFetchPolicy::for_kind(schedule.kind);
+            let dispatch_rx = match enqueue_plugin_request(schedule.clone(), policy) {
+                Ok(dispatch_rx) => dispatch_rx,
+                Err(error) => {
+                    return FetchResponse {
+                        success: false,
+                        status: 0,
+                        headers: std::collections::HashMap::new(),
+                        body: String::new(),
+                        ok: false,
+                        redirected: false,
+                        final_url: url.clone(),
+                        error: Some(error),
+                    };
+                }
+            };
+            let grant = tokio::select! {
+                dispatch_result = dispatch_rx => match dispatch_result {
+                    Ok(Ok(grant)) => grant,
+                    Ok(Err(error)) => {
+                        return FetchResponse {
+                            success: false,
+                            status: 0,
+                            headers: std::collections::HashMap::new(),
+                            body: String::new(),
+                            ok: false,
+                            redirected: false,
+                            final_url: url.clone(),
+                            error: Some(error),
+                        };
+                    }
+                    Err(_) => {
+                        return FetchResponse {
+                            success: false,
+                            status: 0,
+                            headers: std::collections::HashMap::new(),
+                            body: String::new(),
+                            ok: false,
+                            redirected: false,
+                            final_url: url.clone(),
+                            error: Some("Plugin request scheduler dropped dispatch grant".to_string()),
+                        };
+                    }
+                },
+                _ = &mut abort_rx => {
+                    cancel_plugin_request(schedule.kind, &request_id, Some("aborted while queued".to_string()));
+                    return FetchResponse {
+                        success: false,
+                        status: 0,
+                        headers: std::collections::HashMap::new(),
+                        body: String::new(),
+                        ok: false,
+                        redirected: false,
+                        final_url: url.clone(),
+                        error: Some("HTTP request aborted".to_string()),
+                    };
+                }
+            };
+
+            effective_timeout_ms = grant.timeout_ms;
+            if grant.total_wait_ms > 0 {
+                let wait = tokio::time::sleep(Duration::from_millis(grant.total_wait_ms));
+                tokio::pin!(wait);
+                tokio::select! {
+                    _ = &mut wait => {}
+                    _ = &mut abort_rx => {
+                        cancel_plugin_request(schedule.kind, &request_id, Some("aborted while scheduled".to_string()));
+                        return FetchResponse {
+                            success: false,
+                            status: 0,
+                            headers: std::collections::HashMap::new(),
+                            body: String::new(),
+                            ok: false,
+                            redirected: false,
+                            final_url: url.clone(),
+                            error: Some("HTTP request aborted".to_string()),
+                        };
+                    }
+                }
+            }
+
+            mark_plugin_request_running(schedule.kind, &request_id);
+        }
+
         let request_started_at = Instant::now();
         let request_future = async {
             let mut req_builder = match method.as_str() {
@@ -936,7 +984,7 @@ async fn op_fetch(
                 req_builder = req_builder.header(&key, &value);
             }
 
-            req_builder = req_builder.timeout(Duration::from_millis(timeout_ms));
+            req_builder = req_builder.timeout(Duration::from_millis(effective_timeout_ms));
 
             if let Some(body) = opts.body {
                 req_builder = match body {
@@ -1030,6 +1078,31 @@ async fn op_fetch(
                 cancel_active_probe(&request_id, Some("aborted while running".to_string()));
             } else {
                 fail_active_probe(
+                    &request_id,
+                    if response.status > 0 {
+                        Some(response.status)
+                    } else {
+                        None
+                    },
+                    response.error.clone(),
+                    response_elapsed_ms,
+                );
+            }
+        }
+        if let Some(schedule) = plugin_fetch_schedule.as_ref() {
+            let response_elapsed_ms = Some(request_started_at.elapsed().as_millis() as u64);
+            if response.success {
+                complete_plugin_request(schedule.kind, &request_id, Some(response.status), response_elapsed_ms);
+            } else if response
+                .error
+                .as_deref()
+                .map(|error| error.eq_ignore_ascii_case("HTTP request aborted"))
+                .unwrap_or(false)
+            {
+                cancel_plugin_request(schedule.kind, &request_id, Some("aborted while running".to_string()));
+            } else {
+                fail_plugin_request(
+                    schedule.kind,
                     &request_id,
                     if response.status > 0 {
                         Some(response.status)
@@ -1913,42 +1986,6 @@ async fn op_list_dictionaries(
     dictionary_runtime::list_dictionaries(dict_type, category).await
 }
 
-// ============================================================
-// 测试
-// ============================================================
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_severity() {
-        assert!(matches!(parse_severity("critical"), Severity::Critical));
-        assert!(matches!(parse_severity("HIGH"), Severity::High));
-        assert!(matches!(parse_severity("medium"), Severity::Medium));
-        assert!(matches!(parse_severity("low"), Severity::Low));
-        assert!(matches!(parse_severity("info"), Severity::Info));
-        assert!(matches!(parse_severity("unknown"), Severity::Medium));
-    }
-
-    #[test]
-    fn test_parse_confidence() {
-        assert!(matches!(parse_confidence("HIGH"), Confidence::High));
-        assert!(matches!(parse_confidence("medium"), Confidence::Medium));
-        assert!(matches!(parse_confidence("low"), Confidence::Low));
-        assert!(matches!(parse_confidence("unknown"), Confidence::Medium));
-    }
-
-    #[test]
-    fn test_build_active_probe_cooldown_key_uses_host_and_path() {
-        assert_eq!(
-            build_active_probe_cooldown_key("https://example.com:8443/api/items?id=1"),
-            "example.com:8443/api/items"
-        );
-        assert_eq!(
-            build_active_probe_cooldown_key("https://example.com"),
-            "example.com/"
-        );
-        assert_eq!(build_active_probe_cooldown_key("not-a-url"), "global");
-    }
-}
+#[path = "plugin_ops_tests.rs"]
+mod plugin_ops_tests;

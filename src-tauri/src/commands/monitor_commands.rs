@@ -36,7 +36,7 @@ use sentinel_db::{
     SurfaceObservationRow,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, State};
@@ -239,6 +239,7 @@ pub struct MonitorSchedulerState {
     pub initialized: bool,
     pub running_task_ids: Arc<RwLock<HashSet<String>>>,
     pub cancel_requested_task_ids: Arc<RwLock<HashSet<String>>>,
+    pub active_task_run_ids: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl MonitorSchedulerState {
@@ -248,6 +249,7 @@ impl MonitorSchedulerState {
             initialized: false,
             running_task_ids: Arc::new(RwLock::new(HashSet::new())),
             cancel_requested_task_ids: Arc::new(RwLock::new(HashSet::new())),
+            active_task_run_ids: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -336,6 +338,7 @@ pub async fn monitor_start_scheduler(
     let scheduler = state_guard.scheduler.clone();
     let running_task_ids = state_guard.running_task_ids.clone();
     let cancel_requested_task_ids = state_guard.cancel_requested_task_ids.clone();
+    let active_task_run_ids = state_guard.active_task_run_ids.clone();
     let app_for_executor = app.clone();
     let scheduler_for_executor = scheduler.clone();
     drop(state_guard);
@@ -398,6 +401,7 @@ pub async fn monitor_start_scheduler(
     let plugin_manager_for_executor = plugin_manager.inner().clone();
     let running_task_ids_for_executor = running_task_ids.clone();
     let cancel_requested_task_ids_for_executor = cancel_requested_task_ids.clone();
+    let active_task_run_ids_for_executor = active_task_run_ids.clone();
     let app_for_executor_clone = app_for_executor.clone();
     scheduler
         .set_task_executor(move |task| {
@@ -406,6 +410,7 @@ pub async fn monitor_start_scheduler(
             let scheduler = scheduler_for_executor.clone();
             let running_task_ids = running_task_ids_for_executor.clone();
             let cancel_requested_task_ids = cancel_requested_task_ids_for_executor.clone();
+            let active_task_run_ids = active_task_run_ids_for_executor.clone();
             let app_handle = app_for_executor_clone.clone();
             Box::pin(async move {
                 let task_id = task.id.clone();
@@ -417,6 +422,11 @@ pub async fn monitor_start_scheduler(
                 {
                     let mut cancel = cancel_requested_task_ids.write().await;
                     cancel.remove(&task_id);
+                }
+                {
+                    let run_id = format!("monitor:{task_id}:{execution_started_at}");
+                    let mut active_runs = active_task_run_ids.write().await;
+                    active_runs.insert(task_id.clone(), run_id);
                 }
 
                 let result: Result<Vec<sentinel_bounty::models::ChangeEvent>, String> = async {
@@ -1660,6 +1670,10 @@ pub async fn monitor_start_scheduler(
                     let mut cancel = cancel_requested_task_ids.write().await;
                     cancel.remove(&task_id);
                 }
+                {
+                    let mut active_runs = active_task_run_ids.write().await;
+                    active_runs.remove(&task_id);
+                }
 
                 result
             })
@@ -1686,6 +1700,24 @@ pub async fn monitor_stop_scheduler(
 ) -> Result<bool, String> {
     let state_guard = state.read().await;
     state_guard.scheduler.stop().await?;
+    let active_runs = state_guard
+        .active_task_run_ids
+        .read()
+        .await
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    for run_id in active_runs {
+        let cancelled = sentinel_plugins::cancel_plugin_fetch_requests_by_run(
+            &run_id,
+            "monitor scheduler stopped by user",
+        );
+        tracing::info!(
+            "Cancelled {} queued/running plugin fetch requests for monitor run {}",
+            cancelled,
+            run_id
+        );
+    }
 
     // Emit scheduler stopped event
     let _ = app.emit("monitor:scheduler-stopped", ());
@@ -1941,6 +1973,24 @@ pub async fn monitor_stop_task(
         let mut cancel = state_guard.cancel_requested_task_ids.write().await;
         cancel.insert(task_id.clone());
     }
+    let active_run_id = state_guard
+        .active_task_run_ids
+        .read()
+        .await
+        .get(&task_id)
+        .cloned();
+    if let Some(run_id) = active_run_id {
+        let cancelled = sentinel_plugins::cancel_plugin_fetch_requests_by_run(
+            &run_id,
+            "monitor task stopped by user",
+        );
+        tracing::info!(
+            "Cancelled {} queued/running plugin fetch requests for monitor task {} ({})",
+            cancelled,
+            task_id,
+            run_id
+        );
+    }
 
     tracing::info!("Stop requested for monitor task: {}", task_id);
     Ok(true)
@@ -2043,6 +2093,7 @@ pub async fn monitor_trigger_task(
     let scheduler = state_guard.scheduler.clone();
     let running_task_ids = state_guard.running_task_ids.clone();
     let cancel_requested_task_ids = state_guard.cancel_requested_task_ids.clone();
+    let active_task_run_ids = state_guard.active_task_run_ids.clone();
 
     tokio::spawn(async move {
         let execution_started_at = Utc::now().to_rfc3339();
@@ -2053,6 +2104,11 @@ pub async fn monitor_trigger_task(
         {
             let mut cancel = cancel_requested_task_ids.write().await;
             cancel.remove(&task_id_clone);
+        }
+        {
+            let run_id = format!("monitor:{task_id_clone}:{execution_started_at}");
+            let mut active_runs = active_task_run_ids.write().await;
+            active_runs.insert(task_id_clone.clone(), run_id);
         }
 
         tracing::info!(
@@ -3733,6 +3789,10 @@ pub async fn monitor_trigger_task(
             let mut cancel = cancel_requested_task_ids.write().await;
             cancel.remove(&task_id_clone);
         }
+        {
+            let mut active_runs = active_task_run_ids.write().await;
+            active_runs.remove(&task_id_clone);
+        }
     });
 
     tracing::info!("Task '{}' execution started in background", task_name);
@@ -3941,7 +4001,10 @@ pub async fn monitor_discover_and_import_assets(
     );
     tracing::debug!("Plugin input: {:?}", request.plugin_input);
 
-    tracing::info!("Executing plugin '{}' via PluginManager...", request.plugin_id);
+    tracing::info!(
+        "Executing plugin '{}' via PluginManager...",
+        request.plugin_id
+    );
     let tool_result = execute_monitor_plugin(
         db_service.inner(),
         plugin_manager.inner(),
@@ -5241,7 +5304,12 @@ pub async fn monitor_test_plugin(
     let plugin = db_service
         .get_plugin_from_registry(&normalized_plugin_id)
         .await
-        .map_err(|error| format!("Failed to query plugin '{}': {}", normalized_plugin_id, error))?;
+        .map_err(|error| {
+            format!(
+                "Failed to query plugin '{}': {}",
+                normalized_plugin_id, error
+            )
+        })?;
 
     Ok(plugin
         .map(|record| {

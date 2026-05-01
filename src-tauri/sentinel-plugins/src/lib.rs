@@ -28,9 +28,13 @@ pub mod executor;
 mod monitor_progress;
 mod network_scan;
 pub mod plugin;
+pub mod plugin_context;
 pub mod plugin_engine;
+mod plugin_fetch_context;
+mod plugin_fetch_types;
 mod plugin_finding_sanitizer;
 pub mod plugin_ops;
+pub mod request_scheduler;
 pub mod runtime_config;
 mod runtime_events;
 mod service_probe;
@@ -54,8 +58,16 @@ pub use plugin::{
     get_input_schema_from_code, get_output_schema_from_code, PluginManager, PluginRecord,
     PluginStatus,
 };
+pub use plugin_context::PluginContext;
 pub use plugin_engine::PluginEngine;
-pub use plugin_ops::{sentinel_plugin_ext, PluginContext};
+pub use plugin_ops::{cancel_plugin_fetch_requests_by_run, sentinel_plugin_ext};
+pub use request_scheduler::{
+    cancel_plugin_request, cancel_plugin_requests_by_run, complete_plugin_request,
+    enqueue_plugin_request, fail_plugin_request, get_plugin_request_queue_snapshot,
+    mark_plugin_request_running, PluginFetchPolicy, PluginFetchPolicyKind,
+    PluginRequestDispatchGrant, PluginRequestPhase, PluginRequestQueueEntry,
+    PluginRequestQueueSnapshot, PluginRequestScheduleRequest,
+};
 pub use runtime_config::{
     get_plugin_runtime_settings, set_plugin_runtime_settings, ActiveProbeRuntimeSettings,
     PluginRuntimeSettings,

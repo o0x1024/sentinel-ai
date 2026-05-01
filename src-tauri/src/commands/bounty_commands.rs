@@ -2598,6 +2598,39 @@ pub async fn bounty_run_workflow_template(
     .await
 }
 
+#[tauri::command]
+pub async fn cancel_workflow_run(
+    db_service: State<'_, Arc<DatabaseService>>,
+    app_handle: AppHandle,
+    execution_id: String,
+) -> Result<bool, String> {
+    ensure_bounty_feature()?;
+
+    let cancelled = sentinel_plugins::cancel_plugin_fetch_requests_by_run(
+        &execution_id,
+        "workflow run cancelled by user",
+    );
+    db_service
+        .update_workflow_run_status(
+            &execution_id,
+            "cancelled",
+            Some(Utc::now()),
+            Some("Workflow run cancelled by user"),
+        )
+        .await
+        .map_err(|error| format!("Failed to update workflow run status: {}", error))?;
+
+    let _ = app_handle.emit(
+        "workflow:run-cancelled",
+        &serde_json::json!({
+            "execution_id": execution_id,
+            "cancelled_requests": cancelled,
+        }),
+    );
+
+    Ok(true)
+}
+
 /// Execute workflow steps asynchronously
 pub(crate) async fn execute_workflow_steps(
     execution_id: String,
@@ -2621,6 +2654,17 @@ pub(crate) async fn execute_workflow_steps(
     let execution_order = topological_sort_steps(&steps);
 
     for step_id in execution_order {
+        if workflow_run_is_cancelled(&db, &execution_id).await {
+            let _ = app_handle.emit(
+                "workflow:run-cancelled",
+                &serde_json::json!({
+                    "execution_id": execution_id,
+                    "reason": "cancelled before next step",
+                }),
+            );
+            return "cancelled".to_string();
+        }
+
         let step = match step_map.get(&step_id) {
             Some(s) => *s,
             None => continue,
@@ -2653,6 +2697,7 @@ pub(crate) async fn execute_workflow_steps(
             &plugin_manager,
             &db,
             program_id.as_deref(),
+            &execution_id,
         )
         .await;
 
@@ -2746,7 +2791,9 @@ pub(crate) async fn execute_workflow_steps(
     }
 
     // Emit completion event
-    let status = if errors.is_empty() {
+    let status = if workflow_run_is_cancelled(&db, &execution_id).await {
+        "cancelled"
+    } else if errors.is_empty() {
         "completed"
     } else {
         "completed_with_errors"
@@ -2799,6 +2846,21 @@ pub(crate) async fn execute_workflow_steps(
     }
 
     status.to_string()
+}
+
+async fn workflow_run_is_cancelled(db: &Arc<DatabaseService>, execution_id: &str) -> bool {
+    db.get_workflow_run_detail(execution_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|detail| {
+            detail
+                .get("status")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .map(|status| status == "cancelled")
+        .unwrap_or(false)
 }
 
 /// Topological sort for step execution order
@@ -3181,6 +3243,7 @@ async fn execute_single_step(
     plugin_manager: &Arc<PluginManager>,
     db: &Arc<DatabaseService>,
     program_id: Option<&str>,
+    execution_id: &str,
 ) -> Result<serde_json::Value, String> {
     let plugin_id = step
         .plugin_id
@@ -3241,7 +3304,12 @@ async fn execute_single_step(
 
     // Execute plugin
     match plugin_manager
-        .execute_agent(plugin_id, &resolved_inputs)
+        .execute_execution_plugin(
+            plugin_id,
+            &resolved_inputs,
+            "bounty_workflow",
+            Some(execution_id.to_string()),
+        )
         .await
     {
         Ok((findings, output)) => {
