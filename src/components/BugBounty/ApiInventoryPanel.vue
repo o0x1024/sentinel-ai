@@ -83,13 +83,11 @@
           <select v-model="capabilityFilter" class="select select-bordered select-sm">
             <option value="all">{{ t('bugBounty.apiInventory.allCapabilities') }}</option>
             <option value="changed">{{ t('bugBounty.apiInventory.changedOnly') }}</option>
-            <option value="graphql">{{ t('bugBounty.apiInventory.withGraphql') }}</option>
-            <option value="openapi">{{ t('bugBounty.apiInventory.withOpenapi') }}</option>
             <option value="errors">{{ t('bugBounty.apiInventory.withErrors') }}</option>
           </select>
         </div>
 
-        <div class="mt-4 grid grid-cols-2 gap-4 xl:grid-cols-7">
+        <div class="mt-4 grid grid-cols-2 gap-4 xl:grid-cols-5">
           <div class="stat bg-base-200 rounded-lg p-3">
             <div class="stat-title text-xs">{{ t('bugBounty.apiInventory.targets') }}</div>
             <div class="stat-value text-lg">{{ filteredTargetCount }}</div>
@@ -110,15 +108,6 @@
             <div class="stat-title text-xs">{{ t('bugBounty.apiInventory.changes') }}</div>
             <div class="stat-value text-lg text-warning">{{ changedTargets }}</div>
           </div>
-          <div class="stat bg-base-200 rounded-lg p-3">
-            <div class="stat-title text-xs">{{ t('bugBounty.apiInventory.graphql') }}</div>
-            <div class="stat-value text-lg">{{ graphqlTargets }}</div>
-          </div>
-          <div class="stat bg-base-200 rounded-lg p-3">
-            <div class="stat-title text-xs">{{ t('bugBounty.apiInventory.openapi') }}</div>
-            <div class="stat-value text-lg">{{ openApiTargets }}</div>
-          </div>
-
         </div>
                   <span class="text-xs font-normal text-base-content/60">
                     {{ t('bugBounty.apiInventory.filterSummary', {
@@ -223,12 +212,6 @@
                         <span v-if="target.task_name" class="badge badge-ghost badge-sm">
                           {{ target.task_name }}
                         </span>
-                        <span v-if="target.graphql_endpoint" class="badge badge-info badge-sm">
-                          {{ t('bugBounty.apiInventory.graphql') }}
-                        </span>
-                        <span v-if="target.open_api_spec" class="badge badge-secondary badge-sm">
-                          {{ t('bugBounty.apiInventory.openapi') }}
-                        </span>
                       </div>
                     </div>
 
@@ -315,25 +298,13 @@
               </div>
             </div>
 
-            <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
               <div class="rounded-lg bg-base-200 p-3">
                 <div class="text-xs text-base-content/60">{{ t('bugBounty.apiInventory.targetStatus') }}</div>
                 <div class="mt-1">
                   <span class="badge badge-sm" :class="selectedDetail.success ? 'badge-success' : 'badge-error'">
                     {{ selectedDetail.success ? t('common.success') : t('common.failed') }}
                   </span>
-                </div>
-              </div>
-              <div class="rounded-lg bg-base-200 p-3">
-                <div class="text-xs text-base-content/60">{{ t('bugBounty.apiInventory.graphql') }}</div>
-                <div class="mt-1 break-all text-sm font-medium">
-                  {{ selectedDetail.graphql_endpoint || '-' }}
-                </div>
-              </div>
-              <div class="rounded-lg bg-base-200 p-3">
-                <div class="text-xs text-base-content/60">{{ t('bugBounty.apiInventory.openapi') }}</div>
-                <div class="mt-1 break-all text-sm font-medium">
-                  {{ selectedDetail.open_api_spec || '-' }}
                 </div>
               </div>
               <div class="rounded-lg bg-base-200 p-3">
@@ -367,10 +338,8 @@
                 <table class="table table-zebra">
                   <thead>
                     <tr>
-                      <th>{{ t('bugBounty.apiInventory.method') }}</th>
                       <th>{{ t('bugBounty.apiInventory.path') }}</th>
                       <th>{{ t('bugBounty.apiInventory.source') }}</th>
-                      <th>{{ t('bugBounty.apiInventory.statusCode') }}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -381,19 +350,8 @@
                       :class="selectedEndpointKey === endpointKeyOf(endpoint) ? 'bg-primary/10' : ''"
                       @click="selectEndpoint(endpoint)"
                     >
-                      <td>
-                        <span class="badge badge-sm badge-outline">{{ endpoint.method || 'ANY' }}</span>
-                      </td>
                       <td class="font-mono text-xs">{{ endpoint.path }}</td>
                       <td class="text-xs text-base-content/60">{{ endpoint.source || '-' }}</td>
-                      <td>
-                        <span
-                          class="badge badge-sm"
-                          :class="endpointStatusBadgeClass(endpoint)"
-                        >
-                          {{ endpoint.response_status ?? '-' }}
-                        </span>
-                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -408,23 +366,6 @@
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0">
                   <div class="font-medium">{{ selectedEndpoint.path }}</div>
-                  <div class="mt-2 flex flex-wrap gap-2 text-xs">
-                    <span class="badge badge-outline badge-sm">{{ selectedEndpoint.request_method || selectedEndpoint.method || 'GET' }}</span>
-                    <span class="badge badge-outline badge-sm" :class="endpointStatusBadgeClass(selectedEndpoint)">
-                      {{ selectedEndpoint.response_status ?? '-' }}
-                    </span>
-                    <span v-if="selectedEndpoint.response_content_type" class="badge badge-ghost badge-sm">
-                      {{ selectedEndpoint.response_content_type }}
-                    </span>
-                  </div>
-                </div>
-                <div class="text-right text-xs text-base-content/60">
-                  <div v-if="selectedEndpoint.response_fetched_at">
-                    {{ formatDateTime(selectedEndpoint.response_fetched_at) }}
-                  </div>
-                  <div v-if="typeof selectedEndpoint.response_size === 'number'">
-                    {{ t('bugBounty.apiInventory.responseSize') }}: {{ formatBytes(selectedEndpoint.response_size) }}
-                  </div>
                 </div>
               </div>
 
@@ -432,7 +373,7 @@
                 <div class="rounded-lg bg-base-200 p-3">
                   <div class="text-xs text-base-content/60">{{ t('bugBounty.apiInventory.requestUrl') }}</div>
                   <div class="mt-1 break-all font-mono text-xs">
-                    {{ selectedEndpoint.request_url || resolveEndpointUrl(selectedDetail.base_url, selectedEndpoint.path) }}
+                    {{ resolveEndpointUrl(selectedDetail.base_url, selectedEndpoint.path) }}
                   </div>
                 </div>
                 <div class="rounded-lg bg-base-200 p-3">
@@ -440,22 +381,6 @@
                   <div class="mt-1 text-sm font-medium">
                     {{ selectedEndpoint.source || '-' }}
                   </div>
-                </div>
-              </div>
-
-              <div v-if="selectedEndpoint.response_error" class="alert alert-warning mt-4">
-                <i class="fas fa-circle-exclamation"></i>
-                <span>{{ selectedEndpoint.response_error }}</span>
-              </div>
-
-              <div class="mt-4">
-                <div class="mb-2 text-sm font-medium">{{ t('bugBounty.apiInventory.responsePreview') }}</div>
-                <pre
-                  v-if="selectedEndpoint.response_preview"
-                  class="max-h-[24rem] overflow-auto rounded-lg bg-base-200 p-4 text-xs leading-5"
-                >{{ selectedEndpoint.response_preview }}</pre>
-                <div v-else class="rounded-lg bg-base-200 px-4 py-8 text-center text-sm text-base-content/60">
-                  {{ t('bugBounty.apiInventory.responseEmpty') }}
                 </div>
               </div>
             </div>
@@ -475,36 +400,16 @@ import { dialog } from '../../composables/useDialog'
 
 interface ApiInventoryEndpoint {
   path: string
-  method?: string | null
   source?: string | null
-  request_url?: string | null
-  request_method?: string | null
-  response_status?: number | null
-  response_content_type?: string | null
-  response_preview?: string | null
-  response_fetched_at?: string | null
-  response_error?: string | null
-  response_size?: number | null
 }
 
-interface RawApiInventoryEndpoint extends ApiInventoryEndpoint {
-  requestUrl?: string | null
-  requestMethod?: string | null
-  responseStatus?: number | null
-  responseContentType?: string | null
-  responsePreview?: string | null
-  responseFetchedAt?: string | null
-  responseError?: string | null
-  responseSize?: number | null
-}
+type RawApiInventoryEndpoint = ApiInventoryEndpoint
 
 interface ApiInventoryTargetSummary {
   program_id: string
   base_url: string
   success: boolean
   endpoint_count: number
-  graphql_endpoint?: string | null
-  open_api_spec?: string | null
   last_checked?: string | null
   observed_at: string
   run_id: string
@@ -521,8 +426,6 @@ interface ApiInventoryTargetDetail {
   base_url: string
   success: boolean
   endpoint_count: number
-  graphql_endpoint?: string | null
-  open_api_spec?: string | null
   last_checked?: string | null
   observed_at: string
   run_id: string
@@ -557,8 +460,6 @@ interface ApiInventoryListStats {
   successful_targets: number
   failed_targets: number
   changed_targets: number
-  graphql_targets: number
-  open_api_targets: number
 }
 
 interface ApiInventoryListResponse {
@@ -571,7 +472,7 @@ interface ApiInventoryListResponse {
 
 type StatusFilter = 'all' | 'success' | 'failed'
 type ExecutionModeFilter = 'all' | 'scheduler' | 'manual'
-type CapabilityFilter = 'all' | 'changed' | 'graphql' | 'openapi' | 'errors'
+type CapabilityFilter = 'all' | 'changed' | 'errors'
 type EndpointTab = 'all' | 'added' | 'removed'
 type SortBy = 'observed_desc' | 'endpoint_desc' | 'changes_desc' | 'base_url_asc'
 
@@ -607,8 +508,6 @@ const targetStats = ref<ApiInventoryListStats>({
   successful_targets: 0,
   failed_targets: 0,
   changed_targets: 0,
-  graphql_targets: 0,
-  open_api_targets: 0,
 })
 const selectedTargetKey = ref('')
 const selectedDetail = ref<ApiInventoryTargetDetail | null>(null)
@@ -631,22 +530,11 @@ const normalizeDeleteTarget = (target: RawApiInventoryDeleteTarget): ApiInventor
   return { program_id, base_url }
 }
 
-const endpointKeyOf = (endpoint: ApiInventoryEndpoint) => (
-  `${endpoint.request_method || endpoint.method || 'ANY'}::${endpoint.request_url || endpoint.path}::${endpoint.source || ''}`
-)
+const endpointKeyOf = (endpoint: ApiInventoryEndpoint) => `${endpoint.path}::${endpoint.source || ''}`
 
 const normalizeEndpoint = (endpoint: RawApiInventoryEndpoint): ApiInventoryEndpoint => ({
   path: endpoint.path,
-  method: endpoint.method ?? null,
   source: endpoint.source ?? null,
-  request_url: endpoint.request_url ?? endpoint.requestUrl ?? null,
-  request_method: endpoint.request_method ?? endpoint.requestMethod ?? null,
-  response_status: endpoint.response_status ?? endpoint.responseStatus ?? null,
-  response_content_type: endpoint.response_content_type ?? endpoint.responseContentType ?? null,
-  response_preview: endpoint.response_preview ?? endpoint.responsePreview ?? null,
-  response_fetched_at: endpoint.response_fetched_at ?? endpoint.responseFetchedAt ?? null,
-  response_error: endpoint.response_error ?? endpoint.responseError ?? null,
-  response_size: endpoint.response_size ?? endpoint.responseSize ?? null,
 })
 
 const normalizeTargetDetail = (detail: RawApiInventoryTargetDetail | null): ApiInventoryTargetDetail | null => {
@@ -704,14 +592,6 @@ const failedTargets = computed(() =>
 
 const changedTargets = computed(() =>
   targetStats.value.changed_targets,
-)
-
-const graphqlTargets = computed(() =>
-  targetStats.value.graphql_targets,
-)
-
-const openApiTargets = computed(() =>
-  targetStats.value.open_api_targets,
 )
 
 const visibleEndpoints = computed(() => {
@@ -782,8 +662,6 @@ const loadTargets = async (reset = true) => {
       successful_targets: 0,
       failed_targets: 0,
       changed_targets: 0,
-      graphql_targets: 0,
-      open_api_targets: 0,
     }
     await syncSelectedTargetWithFilters()
   } catch (error) {
@@ -799,8 +677,6 @@ const loadTargets = async (reset = true) => {
         successful_targets: 0,
         failed_targets: 0,
         changed_targets: 0,
-        graphql_targets: 0,
-        open_api_targets: 0,
       }
       selectedDetail.value = null
       selectedEndpointKey.value = ''
@@ -966,27 +842,12 @@ const formatDateTime = (value?: string | null) => {
   return parsed.toLocaleString()
 }
 
-const formatBytes = (value: number) => {
-  if (!Number.isFinite(value) || value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`
-}
-
 const resolveEndpointUrl = (baseUrl: string, path: string) => {
   try {
     return new URL(path, baseUrl).toString()
   } catch {
     return path
   }
-}
-
-const endpointStatusBadgeClass = (endpoint: ApiInventoryEndpoint) => {
-  const status = endpoint.response_status
-  if (typeof status !== 'number') return 'badge-ghost'
-  if (status >= 200 && status < 300) return 'badge-success'
-  if (status >= 300 && status < 400) return 'badge-info'
-  if (status >= 400 && status < 500) return 'badge-warning'
-  return 'badge-error'
 }
 
 watch(propSelectedProgramId, next => {

@@ -13,24 +13,7 @@ const API_SNAPSHOT_ARTIFACT_TYPE: &str = "api_snapshot";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiInventoryEndpointPayload {
     path: String,
-    method: Option<String>,
     source: Option<String>,
-    #[serde(rename = "requestUrl")]
-    request_url: Option<String>,
-    #[serde(rename = "requestMethod")]
-    request_method: Option<String>,
-    #[serde(rename = "responseStatus")]
-    response_status: Option<u16>,
-    #[serde(rename = "responseContentType")]
-    response_content_type: Option<String>,
-    #[serde(rename = "responsePreview")]
-    response_preview: Option<String>,
-    #[serde(rename = "responseFetchedAt")]
-    response_fetched_at: Option<String>,
-    #[serde(rename = "responseError")]
-    response_error: Option<String>,
-    #[serde(rename = "responseSize")]
-    response_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,10 +21,6 @@ struct ApiInventorySnapshotPayload {
     #[serde(rename = "baseUrl")]
     base_url: String,
     endpoints: Vec<ApiInventoryEndpointPayload>,
-    #[serde(rename = "graphqlEndpoint")]
-    graphql_endpoint: Option<String>,
-    #[serde(rename = "openApiSpec")]
-    open_api_spec: Option<String>,
     #[serde(rename = "lastChecked")]
     last_checked: String,
 }
@@ -65,8 +44,6 @@ pub struct ApiInventoryTargetSummary {
     pub base_url: String,
     pub success: bool,
     pub endpoint_count: usize,
-    pub graphql_endpoint: Option<String>,
-    pub open_api_spec: Option<String>,
     pub last_checked: Option<String>,
     pub observed_at: String,
     pub run_id: String,
@@ -84,8 +61,6 @@ pub struct ApiInventoryTargetDetail {
     pub base_url: String,
     pub success: bool,
     pub endpoint_count: usize,
-    pub graphql_endpoint: Option<String>,
-    pub open_api_spec: Option<String>,
     pub last_checked: Option<String>,
     pub observed_at: String,
     pub run_id: String,
@@ -125,8 +100,6 @@ pub struct ApiInventoryListStats {
     pub successful_targets: usize,
     pub failed_targets: usize,
     pub changed_targets: usize,
-    pub graphql_targets: usize,
-    pub open_api_targets: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,8 +209,6 @@ fn apply_inventory_filters(
         })
         .filter(|target| match capability.as_deref() {
             Some("changed") => has_changes(target),
-            Some("graphql") => target.graphql_endpoint.is_some(),
-            Some("openapi") => target.open_api_spec.is_some(),
             Some("errors") => target.error_message.is_some(),
             _ => true,
         })
@@ -276,14 +247,6 @@ fn build_inventory_stats(rows: &[ApiInventoryTargetSummary]) -> ApiInventoryList
         successful_targets: rows.iter().filter(|target| target.success).count(),
         failed_targets: rows.iter().filter(|target| !target.success).count(),
         changed_targets: rows.iter().filter(|target| has_changes(target)).count(),
-        graphql_targets: rows
-            .iter()
-            .filter(|target| target.graphql_endpoint.is_some())
-            .count(),
-        open_api_targets: rows
-            .iter()
-            .filter(|target| target.open_api_spec.is_some())
-            .count(),
     }
 }
 
@@ -331,10 +294,7 @@ fn observation_to_summary(
     let sample_endpoints = endpoints
         .iter()
         .take(8)
-        .map(|endpoint| match endpoint.method.as_deref() {
-            Some(method) if !method.trim().is_empty() => format!("{method} {}", endpoint.path),
-            _ => endpoint.path.clone(),
-        })
+        .map(|endpoint| endpoint.path.clone())
         .collect();
 
     ApiInventoryTargetSummary {
@@ -342,12 +302,6 @@ fn observation_to_summary(
         base_url: payload.base_url,
         success: payload.success,
         endpoint_count: endpoints.len(),
-        graphql_endpoint: snapshot
-            .as_ref()
-            .and_then(|value| value.graphql_endpoint.clone()),
-        open_api_spec: snapshot
-            .as_ref()
-            .and_then(|value| value.open_api_spec.clone()),
         last_checked: snapshot.map(|value| value.last_checked),
         observed_at: observation.observed_at.clone(),
         run_id: observation.run_id.clone(),
@@ -384,12 +338,6 @@ fn observation_to_detail(
         base_url: payload.base_url,
         success: payload.success,
         endpoint_count: endpoints.len(),
-        graphql_endpoint: snapshot
-            .as_ref()
-            .and_then(|value| value.graphql_endpoint.clone()),
-        open_api_spec: snapshot
-            .as_ref()
-            .and_then(|value| value.open_api_spec.clone()),
         last_checked: snapshot.map(|value| value.last_checked),
         observed_at: observation.observed_at.clone(),
         run_id: observation.run_id.clone(),
