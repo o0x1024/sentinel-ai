@@ -5,6 +5,11 @@
   >
     <div
       @click="toggleToolPanel"
+      @keydown.enter.prevent="toggleToolPanel"
+      @keydown.space.prevent="toggleToolPanel"
+      tabindex="0"
+      role="button"
+      :aria-expanded="isToolPanelExpanded ? 'true' : 'false'"
       class="tool-panel-header flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-base-300/50 transition-colors"
     >
       <i
@@ -41,6 +46,11 @@
         <div
           ref="argsBodyRef"
           @click="toggleArgs"
+          @keydown.enter.prevent="toggleArgs"
+          @keydown.space.prevent="toggleArgs"
+          tabindex="0"
+          role="button"
+          :aria-expanded="isArgsExpanded ? 'true' : 'false'"
           :class="[
             'px-4 py-3 bg-base-100 cursor-pointer transition-all relative',
             isArgsExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden',
@@ -62,6 +72,11 @@
         <div
           ref="resultBodyRef"
           @click="toggleResult"
+          @keydown.enter.prevent="toggleResult"
+          @keydown.space.prevent="toggleResult"
+          tabindex="0"
+          role="button"
+          :aria-expanded="isResultExpanded ? 'true' : 'false'"
           :class="[
             'px-4 py-3 bg-base-100 cursor-pointer transition-all relative',
             isResultExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden',
@@ -273,7 +288,7 @@ const duration = computed(() => {
 
 const fileVerificationStatus = computed(() => {
   const raw = props.message.metadata?.file_verification_status
-  return raw === 'verified' || raw === 'pending' ? raw : null
+  return raw === 'verified' || raw === 'pending' || raw === 'failed' ? raw : null
 })
 
 const fileVerificationText = computed(() => {
@@ -282,6 +297,8 @@ const fileVerificationText = computed(() => {
       return 'Artifact verified'
     case 'pending':
       return 'Verification pending'
+    case 'failed':
+      return 'Write failed'
     default:
       return ''
   }
@@ -293,6 +310,8 @@ const fileVerificationClass = computed(() => {
       return 'bg-success/15 text-success'
     case 'pending':
       return 'bg-warning/15 text-warning'
+    case 'failed':
+      return 'bg-error/15 text-error'
     default:
       return 'bg-base-300 text-base-content/60'
   }

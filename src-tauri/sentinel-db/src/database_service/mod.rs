@@ -1,5 +1,7 @@
 pub mod agent;
+pub mod agent_harness;
 pub mod ai;
+pub mod ai_tool_messages;
 pub mod asset;
 pub mod bounty;
 pub mod bounty_domain_support;
@@ -50,7 +52,11 @@ pub mod workflow;
 #[allow(unused_imports)]
 pub use agent::*;
 #[allow(unused_imports)]
+pub use agent_harness::*;
+#[allow(unused_imports)]
 pub use ai::*;
+#[allow(unused_imports)]
+pub use ai_tool_messages::*;
 #[allow(unused_imports)]
 pub use asset::*;
 #[allow(unused_imports)]

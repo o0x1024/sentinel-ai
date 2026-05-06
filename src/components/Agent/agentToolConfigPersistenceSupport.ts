@@ -8,7 +8,7 @@ export const buildPersistableToolConfig = (config: UiToolConfigPayload) => {
   return {
     disabled_tools: normalized.disabled_tools,
     enabled: normalized.enabled,
-    fixed_tools: normalized.fixed_tools,
+    preselected_tools: normalized.preselected_tools,
     max_tools: normalized.max_tools,
     selection_strategy: normalized.selection_strategy,
     allowed_tools: normalized.allowed_tools || [],

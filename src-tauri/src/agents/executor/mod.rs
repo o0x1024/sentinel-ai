@@ -60,6 +60,10 @@ pub use types::ToolCallRecord;
 #[derive(Debug, Clone)]
 pub struct AgentExecuteParams {
     pub execution_id: String,
+    /// Cancellation-token generation for this concrete execution attempt.
+    /// When present, executor loops must stop if a newer generation replaces
+    /// the token for the same execution_id.
+    pub cancellation_generation: Option<u64>,
     pub model: String,
     pub system_prompt: String,
     pub task: String,
@@ -67,6 +71,7 @@ pub struct AgentExecuteParams {
     pub active_browser_shell_session_id: Option<String>,
     pub active_terminal_session_fingerprint: Option<String>,
     pub active_terminal_session_id: Option<String>,
+    pub working_directory: Option<String>,
     pub rig_provider: String,
     pub api_key: Option<String>,
     pub api_base: Option<String>,
@@ -113,6 +118,7 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         active_browser_shell_session_id: params.active_browser_shell_session_id.clone(),
         active_terminal_session_fingerprint: params.active_terminal_session_fingerprint.clone(),
         active_terminal_session_id: params.active_terminal_session_id.clone(),
+        working_directory: params.working_directory.clone(),
         tool_config: params.tool_config.clone().unwrap_or_default(),
         max_iterations: params.max_iterations,
         timeout_secs: params.timeout_secs,

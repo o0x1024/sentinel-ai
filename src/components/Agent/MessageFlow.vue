@@ -26,7 +26,7 @@
           msg.metadata?.session_stats?.first_response_ms,
           msg.metadata?.session_stats?.total_tokens,
           msg.metadata?.session_stats?.tokens_per_second,
-          isExecuting && index === displayedMessages.length - 1,
+          isStreaming && index === displayedMessages.length - 1,
           isStreaming,
           msg.id === lastAssistantActionMessageId,
           focusedMessageId === msg.id,
@@ -42,7 +42,7 @@
       >
         <MessageBlock 
           :message="msg" 
-          :is-executing="isExecuting && index === displayedMessages.length - 1"
+          :is-executing="isStreaming && index === displayedMessages.length - 1"
           :show-actions="msg.id === lastAssistantActionMessageId"
           @focus-team-task="(taskId: string) => emit('focusTeamTask', taskId)"
           @resend="handleResend"

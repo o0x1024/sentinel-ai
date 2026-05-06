@@ -68,7 +68,8 @@ impl FileWriteTool {
         "Create a new text file or overwrite an existing one when explicitly allowed. ",
         "Use this for full-file generation or deliberate rewrites. ",
         "Set overwrite=true if the target file already exists. ",
-        "Use expected_hash to guard against stale writes; pass expected_hash=\"missing\" to require create-if-absent."
+        "Use expected_hash to guard against stale writes; pass expected_hash=\"missing\" to require create-if-absent. ",
+        "In agent runtime, overwriting an existing file requires a file_read of that file in the same execution before calling file_write."
     );
 }
 

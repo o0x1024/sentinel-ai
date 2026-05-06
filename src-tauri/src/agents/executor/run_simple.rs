@@ -41,6 +41,7 @@ pub async fn execute_agent_simple(
     let system_prompt = params.system_prompt.clone();
     let client = StreamingLlmClient::new(config);
     let execution_id = params.execution_id.clone();
+    let cancellation_generation = params.cancellation_generation;
     let app = app_handle.clone();
     let reasoning_content = Arc::new(Mutex::new(String::new()));
     let reasoning_content_for_stream = reasoning_content.clone();
@@ -51,7 +52,15 @@ pub async fn execute_agent_simple(
 
     let result = client
         .stream_completion(Some(&system_prompt), &params.task, |content| {
-            if crate::commands::ai::is_conversation_cancelled(&execution_id) {
+            if cancellation_generation
+                .map(|generation| {
+                    crate::commands::ai::is_conversation_generation_cancelled(
+                        &execution_id,
+                        generation,
+                    )
+                })
+                .unwrap_or_else(|| crate::commands::ai::is_conversation_cancelled(&execution_id))
+            {
                 return false;
             }
             match content {
@@ -64,6 +73,7 @@ pub async fn execute_agent_simple(
                         "agent:chunk",
                         &serde_json::json!({
                             "execution_id": execution_id,
+                            "generation": cancellation_generation,
                             "chunk_type": "text",
                             "content": text,
                         }),
@@ -81,6 +91,7 @@ pub async fn execute_agent_simple(
                         "agent:chunk",
                         &serde_json::json!({
                             "execution_id": execution_id,
+                            "generation": cancellation_generation,
                             "chunk_type": "reasoning",
                             "content": reasoning,
                         }),
@@ -131,6 +142,7 @@ pub async fn execute_agent_simple(
             save_assistant_message(
                 app_handle,
                 &params.execution_id,
+                params.cancellation_generation,
                 &response,
                 None,
                 final_reasoning_content,

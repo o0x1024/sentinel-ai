@@ -1,20 +1,31 @@
 <template>
   <div class="searchable-select relative" ref="containerRef">
-    <div 
+    <button
+      ref="triggerRef"
+      type="button"
       :class="[triggerClass, controlClass, { 'opacity-50 cursor-not-allowed': disabled }]"
+      :aria-expanded="isOpen && !disabled ? 'true' : 'false'"
+      :aria-haspopup="'listbox'"
+      :disabled="disabled"
       @click="toggleDropdown"
+      @keydown.enter.prevent="openDropdown"
+      @keydown.space.prevent="openDropdown"
+      @keydown.down.prevent="openDropdown"
+      @keydown.up.prevent="openDropdown(true)"
     >
       <i v-if="props.variant === 'toolbar'" class="fas fa-sparkles text-primary mr-2 mb-[1px]"></i>
       <span class="flex-1 truncate" :title="displayValue || placeholder">
         {{ displayValue || placeholder }}
       </span>
       <i class="fas fa-chevron-down text-[10px] ml-1.5 opacity-60 transition-transform" :class="{ 'rotate-180': isOpen }"></i>
-    </div>
+    </button>
     
     <!-- 下拉面板 -->
     <div 
       v-if="isOpen && !disabled"
+      ref="panelRef"
       class="absolute z-50 border rounded-xl shadow-2xl max-h-80 overflow-hidden flex flex-col"
+      role="listbox"
       :class="[panelPositionClass, panelVariantClass]"
       :style="panelStyle"
     >
@@ -30,7 +41,7 @@
           @keydown.down.prevent="navigateDown"
           @keydown.up.prevent="navigateUp"
           @keydown.enter.prevent="selectHighlighted"
-          @keydown.escape="closeDropdown"
+          @keydown.escape="() => closeDropdown()"
         />
       </div>
       
@@ -43,9 +54,13 @@
           </div>
           
           <!-- 实际选项 -->
-          <div v-else
-            class="px-2 py-1.5 my-0.5 rounded-lg cursor-pointer transition-colors flex flex-nowrap items-center gap-2 text-sm"
+          <button
+            v-else
+            type="button"
+            role="option"
+            class="w-full px-2 py-1.5 my-0.5 rounded-lg cursor-pointer transition-colors flex flex-nowrap items-center gap-2 text-sm text-left"
             :class="getOptionClass(option.value, index)"
+            :aria-selected="option.value === props.modelValue ? 'true' : 'false'"
             @click="selectOption(option)"
             @mouseenter="highlightedIndex = index"
           >
@@ -58,7 +73,7 @@
             <!-- Checked Indicator -->
             <i v-if="option.value === props.modelValue" class="fas fa-check text-xs ml-auto pl-2" :class="props.variant === 'toolbar' ? 'text-primary' : 'text-primary-content'"></i>
             <span v-else class="w-3 ml-auto pl-2"></span>
-          </div>
+          </button>
         </template>
         
         <!-- 无匹配结果 -->
@@ -114,6 +129,8 @@ const emit = defineEmits<{
 }>()
 
 const containerRef = ref<HTMLElement>()
+const triggerRef = ref<HTMLButtonElement>()
+const panelRef = ref<HTMLElement>()
 const searchInputRef = ref<HTMLInputElement>()
 const isOpen = ref(false)
 const searchQuery = ref('')
@@ -227,21 +244,44 @@ const initializeHighlight = () => {
 }
 
 // 打开/关闭下拉
-const toggleDropdown = () => {
-  if (props.disabled) return
-  isOpen.value = !isOpen.value
-  if (isOpen.value) {
-    updateTriggerWidth()
-    searchQuery.value = ''
-    initializeHighlight()
-    nextTick(() => {
-      searchInputRef.value?.focus()
-    })
-  }
+const focusSearchInput = () => {
+  nextTick(() => {
+    searchInputRef.value?.focus()
+  })
 }
 
-const closeDropdown = () => {
+const openDropdown = (highlightLast = false) => {
+  if (props.disabled) return
+  isOpen.value = true
+  updateTriggerWidth()
+  searchQuery.value = ''
+  initializeHighlight()
+  if (highlightLast) {
+    const next = getNextSelectableIndex(filteredOptions.value.length - 1, -1)
+    if (next !== -1) {
+      highlightedIndex.value = next
+    }
+  }
+  focusSearchInput()
+}
+
+const toggleDropdown = () => {
+  if (props.disabled) return
+  if (isOpen.value) {
+    closeDropdown()
+    return
+  }
+  openDropdown()
+}
+
+const closeDropdown = (restoreFocus = true) => {
   isOpen.value = false
+  searchQuery.value = ''
+  if (restoreFocus) {
+    nextTick(() => {
+      triggerRef.value?.focus()
+    })
+  }
 }
 
 // 选择选项
@@ -297,7 +337,7 @@ const getOptionClass = (value: string, index: number) => {
 // 点击外部关闭
 const handleClickOutside = (event: MouseEvent) => {
   if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
-    closeDropdown()
+    closeDropdown(false)
   }
 }
 

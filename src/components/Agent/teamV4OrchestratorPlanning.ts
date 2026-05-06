@@ -61,17 +61,17 @@ const buildSpecialistProfileToolConfig = (
   profile: AssistantProfileOption,
   baseline: UiToolConfigPayload,
 ): UiToolConfigPayload => {
-  const fixedTools = normalizeToolIdList(profile.defaultFixedTools)
+  const preselectedTools = normalizeToolIdList(profile.defaultPreselectedTools)
   const manualTools = normalizeToolIdList(profile.defaultManualTools)
   return {
     ...baseline,
     enabled: profile.defaultToolsEnabled === true,
     selection_strategy: profile.defaultToolSelectionStrategy || baseline.selection_strategy,
     max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || Number(baseline.max_tools) || 1)),
-    fixed_tools: fixedTools,
+    preselected_tools: preselectedTools,
     disabled_tools: normalizeToolIdList(profile.defaultDisabledTools),
     manual_tools: manualTools,
-    allowed_tools: normalizeToolIdList([...fixedTools, ...manualTools]),
+    allowed_tools: normalizeToolIdList([...preselectedTools, ...manualTools]),
   }
 }
 

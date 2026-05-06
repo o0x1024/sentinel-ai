@@ -527,7 +527,7 @@ if (typeof get_metadata === 'function') {
             let op_state_borrow = op_state.borrow();
             let plugin_ctx = op_state_borrow.borrow::<PluginContext>().clone();
             plugin_ctx.set_plugin_id(Some(plugin_id.clone()));
-            plugin_ctx.set_plugin_main_category(Some(metadata.main_category.clone()));
+            plugin_ctx.set_plugin_main_category(Some(metadata.main_category.to_string()));
             plugin_ctx.set_monitor_type(metadata.monitor_type.clone());
         }
 

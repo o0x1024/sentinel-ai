@@ -42,6 +42,7 @@ export interface AssistantSessionSettings {
   profileId: string
   contextMode: AssistantContextMode
   runMode: AssistantRunMode
+  workingDirectoryOverride: string
   ragEnabled: boolean
   webSearchEnabled: boolean
   tenthManEnabled: boolean

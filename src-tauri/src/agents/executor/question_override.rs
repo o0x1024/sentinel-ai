@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use sentinel_tools::buildin_tools::AskUserQuestionTool;
-use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolExecutor, ToolSource};
+use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolCategory, ToolExecutor, ToolSource};
 use sentinel_tools::ToolServer;
 
 pub(super) async fn build_ask_user_question_override_def(
@@ -48,7 +48,7 @@ pub(super) async fn build_ask_user_question_override_def(
         input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: "system".to_string(),
+        category: ToolCategory::System,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),

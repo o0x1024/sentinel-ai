@@ -545,6 +545,7 @@ async fn generate_team_v3_execution_plan_with_main_agent(
     let execution_id = format!("team-v3-planner:{}:{}", session_id, Uuid::new_v4());
     let planner_params = AgentExecuteParams {
         execution_id,
+        cancellation_generation: None,
         model: model.to_string(),
         system_prompt: build_team_v3_planner_system_prompt(main_agent_id),
         task: planner_prompt,
@@ -552,6 +553,7 @@ async fn generate_team_v3_execution_plan_with_main_agent(
         active_browser_shell_session_id: None,
         active_terminal_session_fingerprint: None,
         active_terminal_session_id: None,
+        working_directory: None,
         rig_provider: rig_provider.to_string(),
         api_key: provider_config.api_key.clone(),
         api_base: provider_config.api_base.clone(),

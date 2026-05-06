@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 use crate::dynamic_tool::{
-    create_executor, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
+    create_executor, DynamicToolDef, ToolCategory, ToolExecutionPolicy, ToolExecutor, ToolExposure,
+    ToolSource,
 };
 use crate::tool_server::ToolServer;
 
@@ -170,8 +171,8 @@ async fn execute_plugin_async(
         name: plugin_name.clone(),
         version: "1.0.0".to_string(),
         author: None,
-        main_category: "agent".to_string(),
-        category: "tool".to_string(),
+        main_category: sentinel_plugins::PluginMainCategory::Agent,
+        category: "tool".into(),
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
         description: Some(format!("Agent tool plugin: {}", plugin_name)),
@@ -317,10 +318,10 @@ impl PluginToolAdapter {
             source: ToolSource::Plugin {
                 plugin_id: plugin_id.clone(),
             },
-            category: "plugin".to_string(),
+            category: ToolCategory::Plugin,
             tags: Vec::new(),
             search_hint: None,
-            exposure: "deferred".to_string(),
+            exposure: ToolExposure::Deferred,
             execution_policy: ToolExecutionPolicy::default(),
             executor: create_plugin_executor(plugin_id),
         }
@@ -376,10 +377,7 @@ impl PluginToolAdapter {
                 Some(schema)
             }
             Err(e) => {
-                tracing::warn!(
-                    "Plugin output schema unavailable from runtime: {}",
-                    e
-                );
+                tracing::warn!("Plugin output schema unavailable from runtime: {}", e);
                 None
             }
         }

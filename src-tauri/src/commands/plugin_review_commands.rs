@@ -10,6 +10,7 @@ use crate::generators::{
     validator::{PluginValidator, ValidationResult},
 };
 use crate::services::database::DatabaseService;
+use crate::services::{PluginCategory, PluginMainCategory};
 use sentinel_db::Database;
 use sentinel_plugins::{PluginMetadata, Severity};
 
@@ -591,13 +592,15 @@ pub async fn validate_plugin_runtime_schema(
     code: String,
     metadata: RuntimeSchemaValidationMetadata,
 ) -> Result<RuntimeSchemaValidationResult, String> {
+    let main_category = PluginMainCategory::parse(&metadata.main_category)?;
+    let category = PluginCategory::parse_for_main_category(main_category, &metadata.category)?;
     let plugin_metadata = PluginMetadata {
         id: metadata.id,
         name: metadata.name,
         version: "1.0.0".to_string(),
         author: metadata.author,
-        main_category: metadata.main_category,
-        category: metadata.category,
+        main_category,
+        category,
         default_severity: parse_plugin_severity(metadata.default_severity.as_deref()),
         tags: vec![],
         description: metadata.description,
@@ -605,8 +608,11 @@ pub async fn validate_plugin_runtime_schema(
         target_asset_types: Vec::new(),
     };
 
-    if matches!(plugin_metadata.main_category.as_str(), "agent" | "bounty") {
-        return validate_agent_tool_runtime_contract(code, plugin_metadata).await;
+    match main_category {
+        PluginMainCategory::Agent | PluginMainCategory::Bounty => {
+            return validate_agent_tool_runtime_contract(code, plugin_metadata).await;
+        }
+        PluginMainCategory::Traffic | PluginMainCategory::Intruder => {}
     }
 
     match sentinel_plugins::get_input_schema_from_code(&code, plugin_metadata).await {

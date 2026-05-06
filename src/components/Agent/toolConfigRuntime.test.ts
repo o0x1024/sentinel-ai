@@ -11,7 +11,7 @@ describe('toolConfigRuntime', () => {
       enabled: true,
       selection_strategy: 'Manual',
       max_tools: 3,
-      fixed_tools: ['interactive_shell'],
+      preselected_tools: ['interactive_shell'],
       disabled_tools: [],
       manual_tools: ['browser__open', 'http_request'],
       allowed_tools: [],
@@ -27,7 +27,7 @@ describe('toolConfigRuntime', () => {
       enabled: true,
       selection_strategy: 'Manual',
       max_tools: 3,
-      fixed_tools: ['interactive_shell'],
+      preselected_tools: ['interactive_shell'],
       disabled_tools: [],
       manual_tools: ['http_request'],
       allowed_tools: [],
@@ -45,7 +45,7 @@ describe('toolConfigRuntime', () => {
       enabled: true,
       selection_strategy: 'Manual',
       max_tools: 6,
-      fixed_tools: ['interactive_shell'],
+      preselected_tools: ['interactive_shell'],
       disabled_tools: [],
       manual_tools: ['file_read', 'shell'],
       allowed_tools: [],
@@ -59,7 +59,7 @@ describe('toolConfigRuntime', () => {
       enabled: true,
       selection_strategy: { Manual: ['file_read', 'shell'] },
       max_tools: 6,
-      fixed_tools: [],
+      preselected_tools: [],
       allowed_tools: ['file_read', 'shell'],
     })
   })
@@ -69,7 +69,7 @@ describe('toolConfigRuntime', () => {
       enabled: true,
       selection_strategy: 'Manual',
       max_tools: 8,
-      fixed_tools: ['interactive_shell', 'file_write'],
+      preselected_tools: ['interactive_shell', 'file_write'],
       disabled_tools: [],
       manual_tools: ['interactive_shell', 'file_write', 'http_request'],
       allowed_tools: [],
@@ -81,7 +81,7 @@ describe('toolConfigRuntime', () => {
 
     expect(runtimeConfig.enabled).toBe(false)
     expect(runtimeConfig.selection_strategy).toEqual({ Manual: [] })
-    expect(runtimeConfig.fixed_tools).toEqual([])
+    expect(runtimeConfig.preselected_tools).toEqual([])
     expect(runtimeConfig.allowed_tools).toEqual([])
   })
 
@@ -90,7 +90,7 @@ describe('toolConfigRuntime', () => {
       enabled: true,
       selection_strategy: 'Manual',
       max_tools: 8,
-      fixed_tools: [],
+      preselected_tools: [],
       disabled_tools: [],
       manual_tools: ['shell', 'interactive_shell'],
       allowed_tools: [],
@@ -111,7 +111,7 @@ describe('toolConfigRuntime', () => {
       enabled: true,
       selection_strategy: 'Hybrid',
       max_tools: 8,
-      fixed_tools: ['interactive_shell'],
+      preselected_tools: ['interactive_shell'],
       disabled_tools: [],
       manual_tools: [],
       allowed_tools: ['interactive_shell', 'shell', 'grep'],
@@ -125,5 +125,27 @@ describe('toolConfigRuntime', () => {
       Manual: ['shell', 'grep'],
     })
     expect(runtimeConfig.allowed_tools).toEqual(['shell', 'grep'])
+  })
+
+  it('falls back to Team role tools when the profile has no explicit preselected tools', () => {
+    const runtimeConfig = buildRuntimeToolConfigForTeamRole({
+      enabled: true,
+      selection_strategy: 'Hybrid',
+      max_tools: 8,
+      preselected_tools: [],
+      disabled_tools: [],
+      manual_tools: [],
+      allowed_tools: [],
+    }, {
+      orchestrator: {
+        tools: ['ask_user_question', 'spawn_agent'],
+      },
+    }, 'orchestrator')
+
+    expect(runtimeConfig.enabled).toBe(true)
+    expect(runtimeConfig.selection_strategy).toEqual({
+      Manual: ['ask_user_question', 'spawn_agent'],
+    })
+    expect(runtimeConfig.allowed_tools).toEqual(['ask_user_question', 'spawn_agent'])
   })
 })

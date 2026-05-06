@@ -27,10 +27,11 @@
     <!-- Cards Grid -->
     <Transition name="slide-fade">
       <div v-if="isOpen" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 px-2 pb-2">
-        <div
+        <button
+          type="button"
           v-for="subagent in subagents"
           :key="subagent.id"
-          class="subagent-card group relative bg-base-100 border border-base-300 rounded-lg p-3 cursor-pointer transition-all hover:shadow-md hover:border-primary/50"
+          class="subagent-card group relative bg-base-100 border border-base-300 rounded-lg p-3 text-left transition-all hover:shadow-md hover:border-primary/50"
           :class="getCardClass(subagent.status)"
           @click="emit('viewDetails', subagent.id)"
         >
@@ -114,7 +115,7 @@
 
           <!-- Hover overlay -->
           <div class="absolute inset-0 bg-primary/5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
-        </div>
+        </button>
       </div>
     </Transition>
   </div>

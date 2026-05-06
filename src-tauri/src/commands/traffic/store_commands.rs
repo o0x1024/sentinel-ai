@@ -1,5 +1,5 @@
 use sentinel_db::Database;
-use sentinel_plugins::{PluginMetadata, Severity};
+use sentinel_plugins::{PluginCategory, PluginMainCategory, PluginMetadata, Severity};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
@@ -34,16 +34,7 @@ pub struct StorePluginListResponse {
 }
 
 fn plugin_download_candidates(download_url: &str) -> Vec<String> {
-    let mut candidates = vec![download_url.to_string()];
-
-    if download_url.contains("/plugins/passive/") {
-        let traffic_url = download_url.replacen("/plugins/passive/", "/plugins/traffic/", 1);
-        if traffic_url != download_url {
-            candidates.push(traffic_url);
-        }
-    }
-
-    candidates
+    vec![download_url.to_string()]
 }
 
 async fn download_plugin_source(
@@ -56,13 +47,6 @@ async fn download_plugin_source(
     for candidate in candidates {
         match client.get(&candidate).send().await {
             Ok(resp) if resp.status().is_success() => {
-                if candidate != download_url {
-                    tracing::info!(
-                        "Recovered plugin download using fallback URL: {} -> {}",
-                        download_url,
-                        candidate
-                    );
-                }
                 return resp
                     .text()
                     .await
@@ -259,8 +243,11 @@ pub async fn install_store_plugin(
         name: plugin.name.clone(),
         version: plugin.version,
         author: Some(plugin.author),
-        category: plugin.category,
-        main_category: plugin.main_category,
+        category: PluginCategory::parse_for_main_category(
+            PluginMainCategory::parse(&plugin.main_category)?,
+            &plugin.category,
+        )?,
+        main_category: PluginMainCategory::parse(&plugin.main_category)?,
         monitor_type: None,
         description: Some(plugin.description),
         default_severity: severity,
@@ -280,8 +267,8 @@ pub async fn install_store_plugin(
         name: metadata.name.clone(),
         version: metadata.version.clone(),
         author: metadata.author.clone(),
-        main_category: metadata.main_category.clone(),
-        category: metadata.category.clone(),
+        main_category: metadata.main_category.to_string(),
+        category: metadata.category.to_string(),
         description: metadata.description.clone(),
         default_severity: format!("{}", metadata.default_severity),
         tags: metadata.tags.clone(),
@@ -299,7 +286,7 @@ pub async fn install_store_plugin(
         monitor_type: resolved_store_plugin_monitor_type(
             existing_plugin.as_ref(),
             &metadata.id,
-            &metadata.main_category,
+            metadata.main_category,
             &metadata.category,
         ),
         target_asset_types: existing_plugin
@@ -323,7 +310,7 @@ pub async fn install_store_plugin(
         tracing::warn!("Failed to update plugin cache: {}", e);
     }
 
-    if is_agent_tool_plugin_main_category(&metadata.main_category) {
+    if is_agent_tool_plugin_main_category(metadata.main_category) {
         let refreshed = refresh_active_agent_plugin_tools(db.as_ref()).await?;
         tracing::info!(
             "Refreshed {} active agent plugin tools after installing {}",
@@ -384,8 +371,11 @@ pub async fn update_store_plugin(
         name: plugin.name.clone(),
         version: plugin.version,
         author: Some(plugin.author),
-        category: plugin.category,
-        main_category: plugin.main_category,
+        category: PluginCategory::parse_for_main_category(
+            PluginMainCategory::parse(&plugin.main_category)?,
+            &plugin.category,
+        )?,
+        main_category: PluginMainCategory::parse(&plugin.main_category)?,
         monitor_type: None,
         description: Some(plugin.description),
         default_severity: severity,
@@ -405,8 +395,8 @@ pub async fn update_store_plugin(
         name: metadata.name.clone(),
         version: metadata.version.clone(),
         author: metadata.author.clone(),
-        main_category: metadata.main_category.clone(),
-        category: metadata.category.clone(),
+        main_category: metadata.main_category.to_string(),
+        category: metadata.category.to_string(),
         description: metadata.description.clone(),
         default_severity: format!("{}", metadata.default_severity),
         tags: metadata.tags.clone(),
@@ -420,7 +410,7 @@ pub async fn update_store_plugin(
         monitor_type: resolved_store_plugin_monitor_type(
             existing_plugin.as_ref(),
             &metadata.id,
-            &metadata.main_category,
+            metadata.main_category,
             &metadata.category,
         ),
         target_asset_types: existing_plugin
@@ -444,7 +434,7 @@ pub async fn update_store_plugin(
         tracing::warn!("Failed to update plugin cache: {}", e);
     }
 
-    if is_agent_tool_plugin_main_category(&metadata.main_category) {
+    if is_agent_tool_plugin_main_category(metadata.main_category) {
         let refreshed = refresh_active_agent_plugin_tools(db.as_ref()).await?;
         tracing::info!(
             "Refreshed {} active agent plugin tools after updating {}",

@@ -10,7 +10,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::dynamic_tool::{
-    create_executor, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
+    create_executor, DynamicToolDef, ToolCategory, ToolExecutionPolicy, ToolExecutor, ToolExposure,
+    ToolSource,
 };
 use crate::tool_server::ToolServer;
 
@@ -174,10 +175,10 @@ impl WorkflowToolAdapter {
             source: ToolSource::Workflow {
                 workflow_id: workflow_id.clone(),
             },
-            category: "workflow".to_string(),
+            category: ToolCategory::Workflow,
             tags: Vec::new(),
             search_hint: None,
-            exposure: "deferred".to_string(),
+            exposure: ToolExposure::Deferred,
             execution_policy: ToolExecutionPolicy::default(),
             executor: create_workflow_executor(workflow_id),
         }

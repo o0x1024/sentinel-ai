@@ -17,6 +17,13 @@
       :ai-messages="store.aiChatMessages"
       :ai-streaming="store.aiChatStreaming"
       :ai-streaming-content="store.aiChatStreamingContent"
+      :ai-assistant-profile-id="store.aiAssistantProfileId"
+      :ai-assistant-profile-options="resolvedAssistantProfileOptions"
+      :ai-assistant-profile-default-label="resolvedDefaultAssistantProfileLabel"
+      :ai-assistant-profile-invalid="aiAssistantProfileInvalid"
+      :ai-assistant-effective-model-label="resolvedAiAssistantEffectiveModelLabel"
+      :ai-assistant-effective-model-source-label="resolvedAiAssistantEffectiveModelSourceLabel"
+      :ai-assistant-runtime-meta-text="resolvedAiAssistantRuntimeMetaText"
       :selected-code-ref="store.selectedCodeRef"
       :selected-test-result-ref="store.selectedTestResultRef"
       :plugin-testing="store.pluginTesting"
@@ -34,6 +41,7 @@
       @minimize="store.minimizeEditor"
       @toggle-ai-panel="store.showAiPanel = !store.showAiPanel"
       @send-ai-message="handleSendAiMessage"
+      @update-ai-assistant-profile-id="store.setAiAssistantProfileId($event)"
       @ai-quick-action="handleAiQuickAction"
       @apply-ai-code="handleApplyAiCode"
       @preview-ai-code="handlePreviewAiCode"
@@ -187,6 +195,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '../../composables/useDialog'
 import type { SubCategory, CodeReference, CommandResponse, PluginFixTaskResult, TestResult } from './types'
+import { useAssistantProfiles } from '@/components/Agent/assistantProfiles'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { EditorView, type ViewUpdate } from '@codemirror/view'
@@ -321,8 +330,113 @@ function applyDiffBlocks(currentCode: string, blocks: DiffBlock[]): { success: b
 
 const store = usePluginEditorStore()
 const { t } = useI18n()
+const {
+  defaultAssistantProfileId,
+  loadDefaultAssistantProfile,
+  loadAssistantProfiles,
+  profileOptions: assistantProfileOptions,
+} = useAssistantProfiles()
 const dialogRef = ref<InstanceType<typeof PluginCodeEditorDialog>>()
 const testResultDialogRef = ref<HTMLDialogElement>()
+const aiGlobalDefaultModel = ref('')
+
+void loadDefaultAssistantProfile()
+void loadAssistantProfiles()
+
+const loadAiGlobalDefaultModel = async () => {
+  try {
+    const aiConfig = await invoke<any>('get_ai_config')
+    aiGlobalDefaultModel.value = typeof aiConfig?.default_llm_model === 'string'
+      ? aiConfig.default_llm_model.trim()
+      : ''
+  } catch {
+    aiGlobalDefaultModel.value = ''
+  }
+}
+
+void loadAiGlobalDefaultModel()
+
+const aiAssistantProfileInvalid = computed(() =>
+  !!store.aiAssistantProfileId
+  && !assistantProfileOptions.value.some(profile => profile.id === store.aiAssistantProfileId),
+)
+
+const resolvedDefaultAssistantProfileLabel = computed(() => {
+  const defaultProfile = assistantProfileOptions.value.find(
+    profile => profile.id === defaultAssistantProfileId.value,
+  )
+  return defaultProfile?.label || defaultAssistantProfileId.value || '未配置'
+})
+
+const resolvedAssistantProfileOptions = computed(() => {
+  if (!aiAssistantProfileInvalid.value || !store.aiAssistantProfileId) {
+    return assistantProfileOptions.value
+  }
+  return [
+    {
+      id: store.aiAssistantProfileId,
+      label: `已失效: ${store.aiAssistantProfileId}`,
+      description: 'Stored plugin assistant profile is no longer available.',
+      contextMode: 'codex-like',
+      runMode: 'assistant',
+    },
+    ...assistantProfileOptions.value,
+  ]
+})
+
+const resolvedAiAssistantProfile = computed(() => {
+  const explicitProfileId = store.aiAssistantProfileId?.trim() || ''
+  if (explicitProfileId) {
+    return assistantProfileOptions.value.find(profile => profile.id === explicitProfileId) || null
+  }
+  return assistantProfileOptions.value.find(profile => profile.id === defaultAssistantProfileId.value) || null
+})
+
+const resolvedAiAssistantEffectiveModelLabel = computed(() => {
+  const runtimeModel = store.aiAssistantRuntimeModel?.trim() || ''
+  const runtimeProvider = store.aiAssistantRuntimeProvider?.trim() || ''
+  if (runtimeModel) {
+    return runtimeModel.includes('/') || !runtimeProvider
+      ? runtimeModel
+      : `${runtimeProvider}/${runtimeModel}`
+  }
+  if (aiAssistantProfileInvalid.value) {
+    return 'Agent Profile 已失效'
+  }
+  const profileModel = resolvedAiAssistantProfile.value?.defaultModel?.trim() || ''
+  if (profileModel) return profileModel
+  if (aiGlobalDefaultModel.value) return aiGlobalDefaultModel.value
+  return '未配置'
+})
+
+const resolvedAiAssistantEffectiveModelSourceLabel = computed(() => {
+  const runtimeSource = store.aiAssistantRuntimeModelSource?.trim() || ''
+  if (runtimeSource) {
+    return runtimeSource
+  }
+  if (aiAssistantProfileInvalid.value) {
+    return '配置失效'
+  }
+  const profileModel = resolvedAiAssistantProfile.value?.defaultModel?.trim() || ''
+  if (profileModel) {
+    return store.aiAssistantProfileId ? '显式 Profile 默认模型' : '默认 Profile 默认模型'
+  }
+  if (aiGlobalDefaultModel.value) {
+    return 'AI 全局默认模型'
+  }
+  return '未配置'
+})
+
+const resolvedAiAssistantRuntimeMetaText = computed(() => {
+  const lines = [
+    store.aiAssistantRuntimeProvider ? `provider: ${store.aiAssistantRuntimeProvider}` : '',
+    store.aiAssistantRuntimeModel ? `model: ${store.aiAssistantRuntimeModel}` : '',
+    store.aiAssistantRuntimeModelSource ? `model_source: ${store.aiAssistantRuntimeModelSource}` : '',
+    store.aiAssistantRuntimeProfileId ? `assistant_profile_id: ${store.aiAssistantRuntimeProfileId}` : '',
+    store.aiAssistantRuntimeTaskProfileId ? `task_profile_id: ${store.aiAssistantRuntimeTaskProfileId}` : '',
+  ].filter(Boolean)
+  return lines.join('\n')
+})
 
 // 测试结果状态
 const testResult = ref<TestResult | null>(null)
@@ -1164,6 +1278,17 @@ const handleCreateNewPlugin = async () => {
 
 const handleSendAiMessage = async (message: string) => {
   if (!message.trim() || store.aiChatStreaming) return
+
+  if (!defaultAssistantProfileId.value) {
+    await loadDefaultAssistantProfile()
+  }
+
+  if (aiAssistantProfileInvalid.value) {
+    dialog.error(t('plugins.invalidAgentProfileHint', '当前 Agent Profile 已失效，请重新选择。'))
+    return
+  }
+
+  store.clearAiAssistantRuntimeMeta()
   
   const latestCode = store.pluginCode
   const codeContext = store.selectedCodeRef?.code || null
@@ -1309,6 +1434,18 @@ ${interfaceDoc}
 Now, please assist based on the user's message and code context above.`
 
     let generatedContent = ''
+
+    const unlistenStart = await listen('plugin_assistant_start', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        store.setAiAssistantRuntimeMeta({
+          provider: event.payload.provider,
+          model: event.payload.model,
+          modelSource: event.payload.model_source,
+          profileId: event.payload.assistant_profile_id,
+          taskProfileId: event.payload.task_profile_id,
+        })
+      }
+    })
     
     const unlistenDelta = await listen('plugin_assistant_delta', (event: any) => {
       if (event.payload.stream_id === streamId) {
@@ -1321,6 +1458,7 @@ Now, please assist based on the user's message and code context above.`
       if (event.payload.stream_id === streamId) {
         generatedContent = event.payload.content || generatedContent
         finishAiChat(generatedContent)
+        unlistenStart()
         unlistenDelta()
         unlistenComplete()
         unlistenError()
@@ -1333,6 +1471,7 @@ Now, please assist based on the user's message and code context above.`
         store.aiChatMessages.push({ role: 'assistant', content: `❌ ${errorMsg}` })
         store.aiChatStreaming = false
         store.aiChatStreamingContent = ''
+        unlistenStart()
         unlistenDelta()
         unlistenComplete()
         unlistenError()
@@ -1347,7 +1486,9 @@ Now, please assist based on the user's message and code context above.`
         service_name: 'default',
         history: history,
         current_code: latestCode,
-        code_context: codeContext
+        code_context: codeContext,
+        assistant_profile_id: store.aiAssistantProfileId || null,
+        task_kind: 'plugin_edit'
       }
     })
   } catch (error) {

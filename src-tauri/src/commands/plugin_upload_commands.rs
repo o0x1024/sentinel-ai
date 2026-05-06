@@ -1,12 +1,12 @@
 use sentinel_db::{Database, TrafficPluginMetadata};
-use sentinel_plugins::{PluginMetadata, Severity};
+use sentinel_plugins::{PluginCategory, PluginMainCategory, PluginMetadata, Severity};
 use sentinel_traffic::ScanTask;
 use tauri::{AppHandle, State};
 
 use crate::commands::command_response_support::CommandResponse;
 use crate::commands::traffic::{
-    is_agent_tool_plugin_main_category, refresh_active_agent_plugin_tools,
-    resolved_store_plugin_monitor_type, TrafficAnalysisState,
+    is_agent_tool_plugin_main_category, is_traffic_scan_plugin_main_category,
+    refresh_active_agent_plugin_tools, resolved_store_plugin_monitor_type, TrafficAnalysisState,
 };
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::services::ensure_plugin_catalog_write_access;
@@ -26,6 +26,15 @@ pub async fn upload_plugin(
         .get_plugin_from_registry(&parsed.id)
         .await
         .map_err(|e| format!("Failed to load existing plugin metadata: {}", e))?;
+    let monitor_type = match parsed.monitor_type {
+        Some(monitor_type) => Some(monitor_type),
+        None => resolved_store_plugin_monitor_type(
+            existing_plugin.as_ref(),
+            &parsed.id,
+            parsed.main_category,
+            &parsed.category,
+        ),
+    };
 
     let metadata = PluginMetadata {
         id: parsed.id.clone(),
@@ -37,14 +46,7 @@ pub async fn upload_plugin(
         default_severity: parsed.default_severity,
         tags: parsed.tags,
         description: parsed.description,
-        monitor_type: parsed.monitor_type.or_else(|| {
-            resolved_store_plugin_monitor_type(
-                existing_plugin.as_ref(),
-                &parsed.id,
-                &parsed.main_category,
-                &parsed.category,
-            )
-        }),
+        monitor_type,
         target_asset_types: if parsed.target_asset_types.is_empty() {
             existing_plugin
                 .as_ref()
@@ -60,8 +62,8 @@ pub async fn upload_plugin(
         name: metadata.name.clone(),
         version: metadata.version.clone(),
         author: metadata.author.clone(),
-        main_category: metadata.main_category.clone(),
-        category: metadata.category.clone(),
+        main_category: metadata.main_category.to_string(),
+        category: metadata.category.to_string(),
         description: metadata.description.clone(),
         default_severity: metadata.default_severity.to_string(),
         tags: metadata.tags.clone(),
@@ -93,7 +95,7 @@ pub async fn upload_plugin(
         );
     }
 
-    if is_agent_tool_plugin_main_category(&metadata.main_category) {
+    if is_agent_tool_plugin_main_category(metadata.main_category) {
         let refreshed = refresh_active_agent_plugin_tools(db.as_ref()).await?;
         tracing::info!(
             "Refreshed {} active agent plugin tools after uploading {}",
@@ -102,7 +104,7 @@ pub async fn upload_plugin(
         );
     }
 
-    if metadata.main_category == "traffic" {
+    if is_traffic_scan_plugin_main_category(metadata.main_category) {
         let is_running = *state.get_is_running().read().await;
         if is_running {
             let scan_tx = state.get_scan_tx();
@@ -137,8 +139,8 @@ struct ParsedUploadedPlugin {
     name: String,
     version: String,
     author: Option<String>,
-    main_category: String,
-    category: String,
+    main_category: PluginMainCategory,
+    category: PluginCategory,
     default_severity: Severity,
     tags: Vec<String>,
     description: Option<String>,
@@ -148,13 +150,13 @@ struct ParsedUploadedPlugin {
 
 fn parse_uploaded_plugin(filename: &str, content: &str) -> Result<ParsedUploadedPlugin, String> {
     let tags = extract_doc_tags(content);
-    let inferred_main_category = tags
+    let main_category = tags
         .get("main_category")
-        .cloned()
-        .or_else(|| infer_main_category(content).map(str::to_string))
         .ok_or_else(|| {
-            "Unable to infer plugin type. Add `@main_category traffic|agent|bounty|intruder` or export `analyze` / `scan_transaction`.".to_string()
-        })?;
+            "Missing `@main_category`. Add `@main_category traffic|agent|bounty|intruder` in the plugin header."
+                .to_string()
+        })
+        .and_then(|value| PluginMainCategory::parse(value))?;
 
     let plugin_id = tags
         .get("plugin")
@@ -168,8 +170,11 @@ fn parse_uploaded_plugin(filename: &str, content: &str) -> Result<ParsedUploaded
 
     let category = tags
         .get("category")
-        .cloned()
-        .unwrap_or_else(|| default_category_for(&inferred_main_category).to_string());
+        .ok_or_else(|| {
+            "Missing `@category`. Add an explicit business category in the plugin header."
+                .to_string()
+        })
+        .and_then(|value| PluginCategory::parse_for_main_category(main_category, value))?;
 
     Ok(ParsedUploadedPlugin {
         id: plugin_id.clone(),
@@ -185,7 +190,7 @@ fn parse_uploaded_plugin(filename: &str, content: &str) -> Result<ParsedUploaded
             .get("author")
             .cloned()
             .filter(|value| !value.is_empty()),
-        main_category: inferred_main_category,
+        main_category,
         category,
         default_severity: parse_severity(tags.get("default_severity").map(String::as_str)),
         tags: split_csv(tags.get("tags")),
@@ -221,27 +226,6 @@ fn extract_doc_tags(content: &str) -> std::collections::HashMap<String, String> 
     }
 
     tags
-}
-
-fn infer_main_category(content: &str) -> Option<&'static str> {
-    if content.contains("scan_transaction")
-        || content.contains("globalThis.scan_transaction")
-        || content.contains("export async function scan_transaction")
-        || content.contains("export function scan_transaction")
-    {
-        return Some("traffic");
-    }
-
-    if content.contains("analyze(")
-        || content.contains("globalThis.analyze")
-        || content.contains("pluginGlobals.analyze")
-        || content.contains("export async function analyze")
-        || content.contains("export function analyze")
-    {
-        return Some("agent");
-    }
-
-    None
 }
 
 fn parse_severity(value: Option<&str>) -> Severity {
@@ -317,12 +301,5 @@ fn capitalize_word(word: &str) -> String {
             result
         }
         None => String::new(),
-    }
-}
-
-fn default_category_for(main_category: &str) -> &'static str {
-    match main_category {
-        "agent" | "bounty" => "custom",
-        _ => "custom",
     }
 }

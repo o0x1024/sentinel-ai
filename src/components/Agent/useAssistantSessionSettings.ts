@@ -11,12 +11,13 @@ import type { UiToolConfigPayload } from './toolConfigRuntime'
 export const DEFAULT_ASSISTANT_PROFILE_ID = 'assistant.default'
 export const DEFAULT_ASSISTANT_CONTEXT_MODE: AssistantContextMode = 'claude-like'
 export const DEFAULT_ASSISTANT_RUN_MODE: AssistantRunMode = 'assistant'
-export const ASSISTANT_CONVERSATION_BINDING_VERSION = 3
+export const ASSISTANT_CONVERSATION_BINDING_VERSION = 4
 
 export const createDefaultAssistantSessionSettings = (): AssistantSessionSettings => ({
   profileId: DEFAULT_ASSISTANT_PROFILE_ID,
   contextMode: DEFAULT_ASSISTANT_CONTEXT_MODE,
   runMode: DEFAULT_ASSISTANT_RUN_MODE,
+  workingDirectoryOverride: '',
   ragEnabled: false,
   webSearchEnabled: false,
   tenthManEnabled: false,
@@ -112,6 +113,12 @@ export const useAssistantSessionSettings = () => {
     })
   }
 
+  const setWorkingDirectoryOverride = (workingDirectoryOverride: string) => {
+    applySessionSettings({
+      workingDirectoryOverride: workingDirectoryOverride.trim(),
+    })
+  }
+
   const toConversationBinding = (extras?: {
     browserShellDirectWriteEnabled?: boolean
     browserShellSessionId?: string | null
@@ -142,6 +149,7 @@ export const useAssistantSessionSettings = () => {
       profileId: binding.profileId || DEFAULT_ASSISTANT_PROFILE_ID,
       contextMode: binding.contextMode || DEFAULT_ASSISTANT_CONTEXT_MODE,
       runMode: binding.runMode || DEFAULT_ASSISTANT_RUN_MODE,
+      workingDirectoryOverride: String(binding.workingDirectoryOverride || '').trim(),
       ragEnabled: binding.ragEnabled === true,
       webSearchEnabled: binding.webSearchEnabled === true,
       tenthManEnabled: binding.tenthManEnabled === true,
@@ -159,6 +167,7 @@ export const useAssistantSessionSettings = () => {
     setContextMode,
     setProfileId,
     setRunMode,
+    setWorkingDirectoryOverride,
     teamModeEnabled,
     tenthManEnabled,
     toConversationBinding,

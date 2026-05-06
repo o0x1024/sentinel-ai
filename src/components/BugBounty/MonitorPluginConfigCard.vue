@@ -9,25 +9,48 @@
           {{ introText }}
         </div>
 
-        <div class="form-control">
-          <label class="label py-1">
-            <span class="label-text-alt">
-              {{ depth === 0 ? t('bugBounty.monitor.primaryPlugin') : t('bugBounty.monitor.fallbackPlugin') }}
-            </span>
-          </label>
-          <select
-            v-model="plugin.plugin_id"
-            class="select select-sm select-bordered"
-            @focus="emit('refresh-plugins')"
-            @change="handlePluginChanged"
+        <div class="flex flex-wrap items-end gap-2">
+          <div class="form-control min-w-[18rem] flex-1">
+            <label class="label py-1">
+              <span class="label-text-alt">
+                {{ depth === 0 ? t('bugBounty.monitor.primaryPlugin') : t('bugBounty.monitor.fallbackPlugin') }}
+              </span>
+            </label>
+            <select
+              v-model="plugin.plugin_id"
+              class="select select-sm select-bordered"
+              @focus="emit('refresh-plugins')"
+              @change="handlePluginChanged"
+            >
+              <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+              <option v-for="p in pluginOptions" :key="p.id" :value="p.id">
+                {{ p.name }}
+              </option>
+            </select>
+          </div>
+
+          <button
+            type="button"
+            class="btn btn-xs btn-ghost mb-1"
+            :disabled="!plugin.plugin_id"
+            @click="contentExpanded = !contentExpanded"
           >
-            <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
-            <option v-for="p in pluginOptions" :key="p.id" :value="p.id">
-              {{ p.name }}
-            </option>
-          </select>
+            <i class="fas mr-1" :class="contentExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+            {{ contentExpanded ? t('common.collapse') : t('common.expand') }}
+          </button>
         </div>
 
+        <div v-if="plugin.plugin_id" v-show="!contentExpanded" class="flex flex-wrap items-center gap-2 text-xs text-base-content/60">
+          <span class="badge badge-sm badge-outline">{{ selectedPluginName }}</span>
+          <span v-if="plugin.fallback_plugins.length > 0">
+            {{ t('bugBounty.monitor.fallbackPlugins') }}: {{ plugin.fallback_plugins.length }}
+          </span>
+          <span v-if="hasCustomizedParams" class="text-primary">
+            {{ t('bugBounty.monitor.customParams') }}
+          </span>
+        </div>
+
+        <div v-show="contentExpanded" class="space-y-2">
         <div v-if="supportsServiceProbeEngine(plugin)" class="form-control">
           <label class="label py-1">
             <span class="label-text-alt">{{ t('bugBounty.monitor.serviceProbeEngine') }}</span>
@@ -75,14 +98,16 @@
           />
         </div>
 
-        <button class="btn btn-xs btn-ghost" @click="addFallbackPlugin">
+        <button type="button" class="btn btn-xs btn-ghost" @click="addFallbackPlugin">
           <i class="fas fa-plus mr-1"></i>
           {{ t('bugBounty.monitor.addFallback') }}
         </button>
+        </div>
       </div>
 
       <button
         v-if="canRemove"
+        type="button"
         class="btn btn-xs btn-ghost text-error"
         @click="emit('remove')"
       >
@@ -93,6 +118,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MonitorPluginParamsEditor from './MonitorPluginParamsEditor.vue'
 import MonitorSubdomainBruteConfig from './MonitorSubdomainBruteConfig.vue'
@@ -131,9 +157,25 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const contentExpanded = ref(!props.plugin.plugin_id)
+
+const selectedPluginName = computed(() => {
+  const selected = props.pluginOptions.find(plugin => plugin.id === props.plugin.plugin_id)
+  return selected?.name || props.plugin.plugin_id
+})
+
+const hasCustomizedParams = computed(() => {
+  const params = props.plugin.plugin_params
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    return false
+  }
+
+  return Object.keys(params).length > 0
+})
 
 const handlePluginChanged = () => {
   resetPluginForSelection(props.plugin)
+  contentExpanded.value = true
 }
 
 const handleServiceProbeEngineChange = (event: Event) => {
@@ -143,9 +185,19 @@ const handleServiceProbeEngineChange = (event: Event) => {
 
 const addFallbackPlugin = () => {
   props.plugin.fallback_plugins.push(createEmptyPluginConfig())
+  contentExpanded.value = true
 }
 
 const removeFallback = (index: number) => {
   props.plugin.fallback_plugins.splice(index, 1)
 }
+
+watch(
+  () => props.plugin.plugin_id,
+  (nextPluginId, previousPluginId) => {
+    if (nextPluginId !== previousPluginId) {
+      contentExpanded.value = true
+    }
+  },
+)
 </script>

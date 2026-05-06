@@ -15,7 +15,6 @@ import {
   createDefaultProxyListener,
   createDefaultTrafficBehaviorSignalSettings,
   createDefaultTrafficOastConfig,
-  createDefaultTrafficPluginRuntimeSettings,
   createDefaultRequestRules,
   createDefaultResponseRules,
   createDefaultTlsPassThroughRules,
@@ -31,10 +30,10 @@ import {
   type TrafficBehaviorSignalSettings,
   type TrafficOastConfig,
   type TrafficOastTestResult,
-  type TrafficPluginRuntimeSettings,
   type TlsPassThroughRule,
   type UpstreamProxyConfig,
 } from './proxyConfigurationTypes'
+import { useTrafficPluginRuntimeSettings } from './useTrafficPluginRuntimeSettings'
 
 type TranslateFn = (key: string, ...args: any[]) => string
 type FilterRuleAddedPayload = {
@@ -93,10 +92,7 @@ function buildRuntimeRulePayload(rules: InterceptionRule[]) {
   }))
 }
 
-export function useProxyConfiguration({
-  t,
-  emitFilterRuleAdded,
-}: UseProxyConfigurationOptions) {
+export function useProxyConfiguration({ t, emitFilterRuleAdded }: UseProxyConfigurationOptions) {
   const refreshTrigger = inject<any>('refreshTrigger', ref(0))
 
   const isSaving = ref(false)
@@ -120,14 +116,18 @@ export function useProxyConfiguration({
   const browserExtensionBundledWithApp = ref(false)
   const isCopyingBrowserExtension = ref(false)
   const behaviorSignalSettings = ref<TrafficBehaviorSignalSettings>(
-    createDefaultTrafficBehaviorSignalSettings(),
+    createDefaultTrafficBehaviorSignalSettings()
   )
   const lastSavedBehaviorSignalMode = ref<TrafficBehaviorSignalMode>('proxy_inferred')
   const trafficOastConfig = ref<TrafficOastConfig>(createDefaultTrafficOastConfig())
-  const trafficPluginRuntimeSettings = ref<TrafficPluginRuntimeSettings>(
-    createDefaultTrafficPluginRuntimeSettings(),
-  )
-  const isSavingTrafficPluginRuntimeSettings = ref(false)
+  const {
+    trafficPluginRuntimeSettings,
+    isSavingTrafficPluginRuntimeSettings,
+    loadTrafficPluginRuntimeSettings,
+    saveTrafficPluginRuntimeSettings,
+    resetTrafficPluginRuntimePolicies,
+    applyTrafficPluginRuntimePreset: applyTrafficPluginRuntimePresetToPolicies,
+  } = useTrafficPluginRuntimeSettings()
   const testingTrafficOastConfig = ref(false)
   const lastTrafficOastTestResult = ref<TrafficOastTestResult | null>(null)
 
@@ -153,9 +153,8 @@ export function useProxyConfiguration({
   const editingRule = ref<InterceptionRule>(createDefaultEditingRule())
 
   const currentMatchTypes = computed(() => {
-    const values = editingRuleType.value === 'request'
-      ? requestMatchTypeValues
-      : responseMatchTypeValues
+    const values =
+      editingRuleType.value === 'request' ? requestMatchTypeValues : responseMatchTypeValues
     return values.map(value => ({
       value,
       label: t(`trafficAnalysis.proxyConfiguration.matchTypes.${value}`),
@@ -185,37 +184,8 @@ export function useProxyConfiguration({
     requestTimeoutSecs: Math.min(60, Math.max(3, Math.round(config.requestTimeoutSecs || 3))),
   })
 
-  const normalizeTrafficPluginRuntimeSettings = (
-    settings: TrafficPluginRuntimeSettings,
-  ): TrafficPluginRuntimeSettings => {
-    const jitterStart = Math.min(
-      30000,
-      Math.max(0, Math.round(settings.activeProbe.jitterRange[0] || 0)),
-    )
-    const jitterEnd = Math.min(
-      30000,
-      Math.max(0, Math.round(settings.activeProbe.jitterRange[1] || 0)),
-    )
-
-    return {
-      activeProbe: {
-        jitterRange: jitterStart <= jitterEnd ? [jitterStart, jitterEnd] : [jitterEnd, jitterStart],
-        minHostCooldownMs: Math.min(
-          60000,
-          Math.max(0, Math.round(settings.activeProbe.minHostCooldownMs || 0)),
-        ),
-        maxConcurrentPerHost: Math.min(
-          16,
-          Math.max(1, Math.round(settings.activeProbe.maxConcurrentPerHost || 1)),
-        ),
-        timeoutMs: Math.min(60000, Math.max(1000, Math.round(settings.activeProbe.timeoutMs || 1000))),
-      },
-    }
-  }
-
-  const buildTrafficOastConfigSnapshot = (config: TrafficOastConfig) => JSON.stringify(
-    normalizeTrafficOastConfig(config),
-  )
+  const buildTrafficOastConfigSnapshot = (config: TrafficOastConfig) =>
+    JSON.stringify(normalizeTrafficOastConfig(config))
 
   const applyLoadedTrafficOastConfig = (config: TrafficOastConfig) => {
     suppressTrafficOastAutoSave.value = true
@@ -227,17 +197,6 @@ export function useProxyConfiguration({
     lastSavedTrafficOastConfigSnapshot.value = JSON.stringify(normalized)
     queueMicrotask(() => {
       suppressTrafficOastAutoSave.value = false
-    })
-  }
-
-  const applyLoadedTrafficPluginRuntimeSettings = (settings: TrafficPluginRuntimeSettings) => {
-    trafficPluginRuntimeSettings.value = normalizeTrafficPluginRuntimeSettings({
-      ...createDefaultTrafficPluginRuntimeSettings(),
-      ...settings,
-      activeProbe: {
-        ...createDefaultTrafficPluginRuntimeSettings().activeProbe,
-        ...(settings.activeProbe || {}),
-      },
     })
   }
 
@@ -550,9 +509,7 @@ export function useProxyConfiguration({
   }
 
   const saveRuleEdit = () => {
-    const rules = editingRuleType.value === 'request'
-      ? requestRules.value
-      : responseRules.value
+    const rules = editingRuleType.value === 'request' ? requestRules.value : responseRules.value
 
     if (editingRuleIsNew.value) {
       rules.push({ ...editingRule.value })
@@ -917,18 +874,26 @@ export function useProxyConfiguration({
   }
 
   async function exportCertInDer() {
-    const response = await invoke<CommandResponse<{ path: string }>>('export_ca_cert', { format: 'der' })
+    const response = await invoke<CommandResponse<{ path: string }>>('export_ca_cert', {
+      format: 'der',
+    })
     if (response.success && response.data) {
-      dialog.toast.success(`${t('trafficAnalysis.proxyConfiguration.certInDerFormat')}: ${response.data.path}`)
+      dialog.toast.success(
+        `${t('trafficAnalysis.proxyConfiguration.certInDerFormat')}: ${response.data.path}`
+      )
       return
     }
     throw new Error(response.error || 'Export failed')
   }
 
   async function exportKeyInDer() {
-    const response = await invoke<CommandResponse<{ path: string }>>('export_ca_key', { format: 'der' })
+    const response = await invoke<CommandResponse<{ path: string }>>('export_ca_key', {
+      format: 'der',
+    })
     if (response.success && response.data) {
-      dialog.toast.success(`${t('trafficAnalysis.proxyConfiguration.privateKeyInDerFormat')}: ${response.data.path}`)
+      dialog.toast.success(
+        `${t('trafficAnalysis.proxyConfiguration.privateKeyInDerFormat')}: ${response.data.path}`
+      )
       return
     }
     throw new Error(response.error || 'Export failed')
@@ -937,7 +902,9 @@ export function useProxyConfiguration({
   async function exportPkcs12() {
     const response = await invoke<CommandResponse<{ path: string }>>('export_ca_pkcs12', {})
     if (response.success && response.data) {
-      dialog.toast.success(`${t('trafficAnalysis.proxyConfiguration.certAndKeyInPkcs12')}: ${response.data.path}`)
+      dialog.toast.success(
+        `${t('trafficAnalysis.proxyConfiguration.certAndKeyInPkcs12')}: ${response.data.path}`
+      )
       return
     }
     throw new Error(response.error || 'Export failed')
@@ -1062,7 +1029,7 @@ export function useProxyConfiguration({
     try {
       console.log(
         '[ProxyConfiguration] Saving traffic analysis plugin enabled:',
-        trafficAnalysisPluginEnabled.value,
+        trafficAnalysisPluginEnabled.value
       )
       const response = await invoke<CommandResponse>('set_traffic_analysis_plugin_enabled', {
         enabled: trafficAnalysisPluginEnabled.value,
@@ -1073,9 +1040,7 @@ export function useProxyConfiguration({
       }
 
       dialog.toast.success(
-        trafficAnalysisPluginEnabled.value
-          ? '已启用流量分析插件扫描'
-          : '已禁用流量分析插件扫描',
+        trafficAnalysisPluginEnabled.value ? '已启用流量分析插件扫描' : '已禁用流量分析插件扫描'
       )
     } catch (error: any) {
       console.error('[ProxyConfiguration] Failed to save traffic analysis plugin enabled:', error)
@@ -1093,7 +1058,7 @@ export function useProxyConfiguration({
           payload: {
             mode: behaviorSignalSettings.value.mode,
           },
-        },
+        }
       )
 
       if (!response.success || !response.data) {
@@ -1105,7 +1070,7 @@ export function useProxyConfiguration({
       dialog.toast.success(
         behaviorSignalSettings.value.mode === 'browser_extension'
           ? '已切换为浏览器扩展增强模式'
-          : '已切换为代理侧弱行为推断模式',
+          : '已切换为代理侧弱行为推断模式'
       )
     } catch (error: any) {
       console.error('[ProxyConfiguration] Failed to save behavior signal settings:', error)
@@ -1114,69 +1079,12 @@ export function useProxyConfiguration({
     }
   }
 
-  const saveTrafficPluginRuntimeSettings = async () => {
-    isSavingTrafficPluginRuntimeSettings.value = true
-    try {
-      const payload = normalizeTrafficPluginRuntimeSettings(trafficPluginRuntimeSettings.value)
-      const response = await invoke<CommandResponse<TrafficPluginRuntimeSettings>>(
-        'set_traffic_plugin_runtime_settings',
-        {
-          payload: {
-            settings: payload,
-          },
-        },
-      )
-
-      if (!response.success || !response.data) {
-        throw new Error(response.error || '保存失败')
-      }
-
-      applyLoadedTrafficPluginRuntimeSettings(response.data)
-      dialog.toast.success('已保存插件运行时设置')
-    } catch (error: any) {
-      console.error('[ProxyConfiguration] Failed to save traffic plugin runtime settings:', error)
-      dialog.toast.error(`保存配置失败: ${error}`)
-    } finally {
-      isSavingTrafficPluginRuntimeSettings.value = false
-    }
-  }
-
   const resetTrafficPluginRuntimeSettings = async () => {
-    applyLoadedTrafficPluginRuntimeSettings(createDefaultTrafficPluginRuntimeSettings())
-    await saveTrafficPluginRuntimeSettings()
+    await resetTrafficPluginRuntimePolicies(['activeProbe'])
   }
 
-  const applyTrafficPluginRuntimePreset = (
-    preset: 'local_fast' | 'balanced' | 'conservative',
-  ) => {
-    const presets: Record<'local_fast' | 'balanced' | 'conservative', TrafficPluginRuntimeSettings> = {
-      local_fast: {
-        activeProbe: {
-          jitterRange: [0, 50],
-          minHostCooldownMs: 200,
-          maxConcurrentPerHost: 3,
-          timeoutMs: 6000,
-        },
-      },
-      balanced: {
-        activeProbe: {
-          jitterRange: [100, 300],
-          minHostCooldownMs: 500,
-          maxConcurrentPerHost: 2,
-          timeoutMs: 8000,
-        },
-      },
-      conservative: {
-        activeProbe: {
-          jitterRange: [300, 800],
-          minHostCooldownMs: 1200,
-          maxConcurrentPerHost: 1,
-          timeoutMs: 12000,
-        },
-      },
-    }
-
-    applyLoadedTrafficPluginRuntimeSettings(presets[preset])
+  const applyTrafficPluginRuntimePreset = (preset: 'local_fast' | 'balanced' | 'conservative') => {
+    applyTrafficPluginRuntimePresetToPolicies(preset, ['activeProbe'])
   }
 
   const saveTrafficOastConfig = async () => {
@@ -1237,7 +1145,7 @@ export function useProxyConfiguration({
           payload: {
             config: trafficOastConfig.value,
           },
-        },
+        }
       )
 
       if (!response.success || !response.data) {
@@ -1297,7 +1205,7 @@ export function useProxyConfiguration({
         'copy_traffic_behavior_extension_to_directory',
         {
           targetDirectory: selected,
-        },
+        }
       )
 
       if (!response.success || !response.data) {
@@ -1307,14 +1215,14 @@ export function useProxyConfiguration({
       dialog.toast.success(
         t('trafficAnalysis.proxyConfiguration.copyExtensionToDirectorySuccess', {
           path: response.data.copiedDirectory,
-        }),
+        })
       )
     } catch (error) {
       console.error('[ProxyConfiguration] Failed to copy browser extension to directory:', error)
       dialog.toast.error(
         t('trafficAnalysis.proxyConfiguration.copyExtensionToDirectoryFailed', {
           error: error instanceof Error ? error.message : String(error),
-        }),
+        })
       )
     } finally {
       isCopyingBrowserExtension.value = false
@@ -1325,7 +1233,8 @@ export function useProxyConfiguration({
     try {
       console.log('[ProxyConfiguration] Loading config...')
 
-      const configResponse = await invoke<CommandResponse<typeof proxyConfig.value>>('get_proxy_config')
+      const configResponse =
+        await invoke<CommandResponse<typeof proxyConfig.value>>('get_proxy_config')
       if (configResponse.success && configResponse.data) {
         proxyConfig.value = {
           ...createDefaultProxyConfig(),
@@ -1338,11 +1247,16 @@ export function useProxyConfiguration({
               ...rule,
             }))
           : createDefaultMatchReplaceRules()
-        onlyApplyToInScope.value = matchReplaceRules.value.length === 0
-          || matchReplaceRules.value.every(rule => rule.scope.trim().toLowerCase() === 'in scope')
+        onlyApplyToInScope.value =
+          matchReplaceRules.value.length === 0 ||
+          matchReplaceRules.value.every(rule => rule.scope.trim().toLowerCase() === 'in scope')
         selectedMatchReplaceIndex.value = -1
-        requestBodySizeMB.value = Math.round(configResponse.data.max_request_body_size / (1024 * 1024))
-        responseBodySizeMB.value = Math.round(configResponse.data.max_response_body_size / (1024 * 1024))
+        requestBodySizeMB.value = Math.round(
+          configResponse.data.max_request_body_size / (1024 * 1024)
+        )
+        responseBodySizeMB.value = Math.round(
+          configResponse.data.max_response_body_size / (1024 * 1024)
+        )
         proxyListeners.value[0].interface = `127.0.0.1:${configResponse.data.start_port}`
 
         if (configResponse.data.upstream_proxy) {
@@ -1360,38 +1274,32 @@ export function useProxyConfiguration({
       }
 
       const pluginEnabledResponse = await invoke<CommandResponse<boolean>>(
-        'get_traffic_analysis_plugin_enabled',
+        'get_traffic_analysis_plugin_enabled'
       )
       if (pluginEnabledResponse.success) {
         trafficAnalysisPluginEnabled.value = pluginEnabledResponse.data !== false
         console.log(
           '[ProxyConfiguration] Loaded traffic analysis plugin enabled:',
-          trafficAnalysisPluginEnabled.value,
+          trafficAnalysisPluginEnabled.value
         )
       }
 
       const behaviorSignalResponse = await invoke<CommandResponse<TrafficBehaviorSignalSettings>>(
-        'get_traffic_behavior_signal_settings',
+        'get_traffic_behavior_signal_settings'
       )
       if (behaviorSignalResponse.success && behaviorSignalResponse.data) {
         behaviorSignalSettings.value = behaviorSignalResponse.data
         lastSavedBehaviorSignalMode.value = behaviorSignalResponse.data.mode
         console.log(
           '[ProxyConfiguration] Loaded traffic behavior signal settings:',
-          behaviorSignalSettings.value,
+          behaviorSignalSettings.value
         )
       }
 
-      const trafficPluginRuntimeResponse = await invoke<CommandResponse<TrafficPluginRuntimeSettings>>(
-        'get_traffic_plugin_runtime_settings',
-      )
-      if (trafficPluginRuntimeResponse.success && trafficPluginRuntimeResponse.data) {
-        applyLoadedTrafficPluginRuntimeSettings(trafficPluginRuntimeResponse.data)
-      }
+      await loadTrafficPluginRuntimeSettings()
 
-      const trafficOastResponse = await invoke<CommandResponse<TrafficOastConfig>>(
-        'get_traffic_oast_config',
-      )
+      const trafficOastResponse =
+        await invoke<CommandResponse<TrafficOastConfig>>('get_traffic_oast_config')
       if (trafficOastResponse.success && trafficOastResponse.data) {
         applyLoadedTrafficOastConfig(trafficOastResponse.data)
         lastTrafficOastTestResult.value = null
@@ -1406,19 +1314,22 @@ export function useProxyConfiguration({
           browserExtensionBridgeUrl.value = extensionInstallationResponse.data.bridgeUrl
           browserExtensionDirectoryPath.value =
             extensionInstallationResponse.data.extensionDirectory
-          browserExtensionBundledWithApp.value =
-            extensionInstallationResponse.data.bundledWithApp
+          browserExtensionBundledWithApp.value = extensionInstallationResponse.data.bundledWithApp
         }
       } catch (error) {
-        console.warn('[ProxyConfiguration] Failed to load browser extension installation info:', error)
+        console.warn(
+          '[ProxyConfiguration] Failed to load browser extension installation info:',
+          error
+        )
       }
 
-      const statusResponse = await invoke<CommandResponse<{ running: boolean; port: number }>>('get_proxy_status')
+      const statusResponse =
+        await invoke<CommandResponse<{ running: boolean; port: number }>>('get_proxy_status')
       if (statusResponse.success && statusResponse.data) {
         const { running, port } = statusResponse.data
         if (running && port > 0) {
           const listenerIndex = proxyListeners.value.findIndex(
-            listener => listener.interface === `127.0.0.1:${port}`,
+            listener => listener.interface === `127.0.0.1:${port}`
           )
           if (listenerIndex !== -1) {
             proxyListeners.value[listenerIndex].running = true
@@ -1442,13 +1353,17 @@ export function useProxyConfiguration({
         console.log('[ProxyConfiguration] Master intercept:', interceptResponse.data)
       }
 
-      const requestInterceptResponse = await invoke<CommandResponse<boolean>>('get_request_intercept_enabled')
+      const requestInterceptResponse = await invoke<CommandResponse<boolean>>(
+        'get_request_intercept_enabled'
+      )
       if (requestInterceptResponse.success) {
         interceptRequests.value = Boolean(requestInterceptResponse.data)
         console.log('[ProxyConfiguration] Request intercept:', requestInterceptResponse.data)
       }
 
-      const responseInterceptResponse = await invoke<CommandResponse<boolean>>('get_response_intercept_enabled')
+      const responseInterceptResponse = await invoke<CommandResponse<boolean>>(
+        'get_response_intercept_enabled'
+      )
       if (responseInterceptResponse.success) {
         interceptResponses.value = Boolean(responseInterceptResponse.data)
         console.log('[ProxyConfiguration] Response intercept:', responseInterceptResponse.data)
@@ -1460,7 +1375,10 @@ export function useProxyConfiguration({
           const parsed = JSON.parse(savedRequestRules)
           if (Array.isArray(parsed) && parsed.length > 0) {
             requestRules.value = parsed
-            console.log('[ProxyConfiguration] Loaded request filter rules from localStorage:', parsed.length)
+            console.log(
+              '[ProxyConfiguration] Loaded request filter rules from localStorage:',
+              parsed.length
+            )
           }
         }
 
@@ -1469,7 +1387,10 @@ export function useProxyConfiguration({
           const parsed = JSON.parse(savedResponseRules)
           if (Array.isArray(parsed) && parsed.length > 0) {
             responseRules.value = parsed
-            console.log('[ProxyConfiguration] Loaded response filter rules from localStorage:', parsed.length)
+            console.log(
+              '[ProxyConfiguration] Loaded response filter rules from localStorage:',
+              parsed.length
+            )
           }
         }
       } catch (error) {
@@ -1502,7 +1423,9 @@ export function useProxyConfiguration({
         return
       }
 
-      console.warn(`[ProxyConfiguration] Failed to start proxy: ${response.error || 'port may be in use'}`)
+      console.warn(
+        `[ProxyConfiguration] Failed to start proxy: ${response.error || 'port may be in use'}`
+      )
     } catch (error: any) {
       console.warn('[ProxyConfiguration] Failed to start proxy:', error)
     }
@@ -1512,9 +1435,8 @@ export function useProxyConfiguration({
     console.log('[ProxyConfiguration] Received filter rule:', payload)
 
     const rules = payload.ruleType === 'request' ? requestRules.value : responseRules.value
-    const existingIndex = rules.findIndex(rule =>
-      rule.matchType === payload.rule.matchType &&
-      rule.condition === payload.rule.condition,
+    const existingIndex = rules.findIndex(
+      rule => rule.matchType === payload.rule.matchType && rule.condition === payload.rule.condition
     )
 
     if (existingIndex !== -1) {
@@ -1537,14 +1459,20 @@ export function useProxyConfiguration({
         ruleType: 'request',
         rules: requestPayload,
       })
-      console.log('[ProxyConfiguration] Request filter rules synced to backend:', requestPayload.length)
+      console.log(
+        '[ProxyConfiguration] Request filter rules synced to backend:',
+        requestPayload.length
+      )
 
       const responsePayload = buildRuntimeRulePayload(responseRules.value)
       await invoke('update_runtime_filter_rules', {
         ruleType: 'response',
         rules: responsePayload,
       })
-      console.log('[ProxyConfiguration] Response filter rules synced to backend:', responsePayload.length)
+      console.log(
+        '[ProxyConfiguration] Response filter rules synced to backend:',
+        responsePayload.length
+      )
     } catch (error) {
       console.error('[ProxyConfiguration] Failed to sync filter rules:', error)
     }
@@ -1553,7 +1481,7 @@ export function useProxyConfiguration({
   const addRequestFilterRule = (
     matchType: string,
     condition: string,
-    relationship: string = 'matches',
+    relationship: string = 'matches'
   ) => {
     const newRule = {
       enabled: true,
@@ -1577,7 +1505,9 @@ export function useProxyConfiguration({
   onMounted(async () => {
     await loadConfig()
 
-    console.log('[ProxyConfiguration] Configuration loaded, proxy auto-start is now handled by backend')
+    console.log(
+      '[ProxyConfiguration] Configuration loaded, proxy auto-start is now handled by backend'
+    )
 
     setTimeout(() => {
       isInitialLoad.value = false
@@ -1590,7 +1520,7 @@ export function useProxyConfiguration({
 
       if (payload.running && payload.port > 0) {
         const listenerIndex = proxyListeners.value.findIndex(
-          listener => listener.interface === `127.0.0.1:${payload.port}`,
+          listener => listener.interface === `127.0.0.1:${payload.port}`
         )
         if (listenerIndex !== -1) {
           proxyListeners.value[listenerIndex].running = true
@@ -1639,10 +1569,14 @@ export function useProxyConfiguration({
     }, 500)
   })
 
-  watch(proxyConfig, () => {
-    console.log('[ProxyConfiguration] Config changed, triggering auto-save')
-    debouncedSave()
-  }, { deep: true })
+  watch(
+    proxyConfig,
+    () => {
+      console.log('[ProxyConfiguration] Config changed, triggering auto-save')
+      debouncedSave()
+    },
+    { deep: true }
+  )
 
   watch(interceptRequests, async newValue => {
     if (isInitialLoad.value) return
@@ -1668,25 +1602,37 @@ export function useProxyConfiguration({
     }
   })
 
-  watch(requestRules, () => {
-    if (isInitialLoad.value) return
-    console.log('[ProxyConfiguration] Request rules changed, syncing to backend')
-    debouncedSave()
-    syncFilterRulesToBackend()
-  }, { deep: true })
+  watch(
+    requestRules,
+    () => {
+      if (isInitialLoad.value) return
+      console.log('[ProxyConfiguration] Request rules changed, syncing to backend')
+      debouncedSave()
+      syncFilterRulesToBackend()
+    },
+    { deep: true }
+  )
 
-  watch(responseRules, () => {
-    if (isInitialLoad.value) return
-    console.log('[ProxyConfiguration] Response rules changed, syncing to backend')
-    debouncedSave()
-    syncFilterRulesToBackend()
-  }, { deep: true })
+  watch(
+    responseRules,
+    () => {
+      if (isInitialLoad.value) return
+      console.log('[ProxyConfiguration] Response rules changed, syncing to backend')
+      debouncedSave()
+      syncFilterRulesToBackend()
+    },
+    { deep: true }
+  )
 
-  watch(matchReplaceRules, () => {
-    if (isInitialLoad.value) return
-    console.log('[ProxyConfiguration] Match-replace rules changed, triggering auto-save')
-    debouncedSave()
-  }, { deep: true })
+  watch(
+    matchReplaceRules,
+    () => {
+      if (isInitialLoad.value) return
+      console.log('[ProxyConfiguration] Match-replace rules changed, triggering auto-save')
+      debouncedSave()
+    },
+    { deep: true }
+  )
 
   watch(onlyApplyToInScope, value => {
     if (isInitialLoad.value) return
@@ -1716,21 +1662,25 @@ export function useProxyConfiguration({
       historyLogging,
       interceptionState,
     ],
-    debouncedLocalSettingsToast,
+    debouncedLocalSettingsToast
   )
 
-  watch(trafficOastConfig, () => {
-    if (isInitialLoad.value || suppressTrafficOastAutoSave.value) return
+  watch(
+    trafficOastConfig,
+    () => {
+      if (isInitialLoad.value || suppressTrafficOastAutoSave.value) return
 
-    const snapshot = buildTrafficOastConfigSnapshot(trafficOastConfig.value)
-    if (snapshot === lastSavedTrafficOastConfigSnapshot.value) {
-      return
-    }
+      const snapshot = buildTrafficOastConfigSnapshot(trafficOastConfig.value)
+      if (snapshot === lastSavedTrafficOastConfigSnapshot.value) {
+        return
+      }
 
-    trafficOastAutoSaveState.value = 'dirty'
-    lastTrafficOastTestResult.value = null
-    debouncedSaveTrafficOastConfig()
-  }, { deep: true })
+      trafficOastAutoSaveState.value = 'dirty'
+      lastTrafficOastTestResult.value = null
+      debouncedSaveTrafficOastConfig()
+    },
+    { deep: true }
+  )
 
   return {
     isSaving,
@@ -1881,6 +1831,7 @@ export function useProxyConfiguration({
     saveTrafficBehaviorSignalSettings,
     saveTrafficPluginRuntimeSettings,
     applyTrafficPluginRuntimePreset,
+    resetTrafficPluginRuntimePolicies,
     resetTrafficPluginRuntimeSettings,
     testTrafficOastConfig,
     copyBrowserExtensionBridgeUrl,

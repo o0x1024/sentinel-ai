@@ -724,7 +724,9 @@ const advancedInputFieldErrors = reactive<Record<string, string>>({})
 const advancedInputJsonEditorValues = reactive<Record<string, string>>({})
 const advancedInputExpandedHintFields = reactive<Record<string, boolean>>({})
 const initializedAdvancedPluginId = ref('')
-const advancedEditableFields = computed(() => buildEditableFields(props.advancedInputSchema))
+const advancedEditableFields = computed(() =>
+  buildEditableFields(props.advancedInputSchema, { hideInjectedMonitorFields: false })
+)
 const hasAdvancedEditableSchema = computed(() => advancedEditableFields.value.length > 0)
 
 const clearAdvancedInputEditorErrors = () => {

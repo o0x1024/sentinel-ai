@@ -860,9 +860,8 @@ impl DatabaseService {
 
         let rows = match runtime {
             DatabasePool::SQLite(pool) => {
-                let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(
-                    "UPDATE surface_assets SET viewed_at = ",
-                );
+                let mut query_builder =
+                    QueryBuilder::<sqlx::Sqlite>::new("UPDATE surface_assets SET viewed_at = ");
                 query_builder
                     .push_bind(viewed_at.to_string())
                     .push(", viewed_by = ")

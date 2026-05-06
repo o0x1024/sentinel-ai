@@ -11,10 +11,10 @@ export default {
     oast: 'OAST',
     proxifier: 'Proxifier',
     capture: 'Capture',
-    proxyConfig: 'Settings'
+    proxyConfig: 'Settings',
   },
   ariaLabels: {
-    trafficAnalysisTabs: 'Traffic analysis tabs'
+    trafficAnalysisTabs: 'Traffic analysis tabs',
   },
   tooltips: {
     control: 'Proxy Control',
@@ -25,7 +25,7 @@ export default {
     oast: 'OAST',
     proxifier: 'Proxifier',
     capture: 'Capture',
-    proxyConfig: 'Settings'
+    proxyConfig: 'Settings',
   },
   icons: {
     control: 'fa-sliders-h',
@@ -36,7 +36,7 @@ export default {
     oast: 'fa-satellite-dish',
     proxifier: 'fa-network-wired',
     capture: 'fa-broadcast-tower',
-    proxyConfig: 'fa-cog'
+    proxyConfig: 'fa-cog',
   },
   messageSearch: {
     placeholder: 'Search current content. Enter: next, Shift+Enter: previous',
@@ -49,7 +49,7 @@ export default {
     right: 'Right',
     clear: 'Clear search',
     noMatches: 'No matches',
-    invalidRegexp: 'Invalid regex'
+    invalidRegexp: 'Invalid regex',
   },
   messageReader: {
     modePlain: 'Plain',
@@ -70,8 +70,10 @@ export default {
     title: 'Traffic AI Assistant',
     panelBadge: 'Sidecar',
     immersiveBadge: 'Immersive Drill',
-    panelDescription: 'Keep the current traffic context on screen and continue asking from the side panel instead of jumping to the assistant menu.',
-    immersiveDescription: 'Expand into an immersive drill workspace when you need longer reasoning chains, repeated comparisons, and deeper follow-up.',
+    panelDescription:
+      'Keep the current traffic context on screen and continue asking from the side panel instead of jumping to the assistant menu.',
+    immersiveDescription:
+      'Expand into an immersive drill workspace when you need longer reasoning chains, repeated comparisons, and deeper follow-up.',
     expand: 'Enter Immersive Mode',
     collapse: 'Back to Side Panel',
     close: 'Close Assistant',
@@ -99,7 +101,8 @@ export default {
       title: 'Main Workspace',
       idleBadge: 'Workspace Idle',
       idleTitle: 'Select a request from history to preview it',
-      idleDescription: 'Editing or sending a request saves it to Repeater History. Sending to Intruder saves it to Intruder History.',
+      idleDescription:
+        'Editing or sending a request saves it to Repeater History. Sending to Intruder saves it to Intruder History.',
       previewHint: 'Editing or sending saves it to Repeater History',
       requestVariant: 'Request variant',
       originalVariant: 'Original',
@@ -109,9 +112,11 @@ export default {
       modeWorkspace: 'Workspace',
     },
     toolDescriptions: {
-      capture: 'View packet capture results in the same workspace instead of switching away from traffic analysis.',
+      capture:
+        'View packet capture results in the same workspace instead of switching away from traffic analysis.',
       repeater: 'Open precise single-request editing and replay only when needed.',
-      intruder: 'Run batch attack attempts inside the workspace without increasing the main screen density.',
+      intruder:
+        'Run batch attack attempts inside the workspace without increasing the main screen density.',
       comparer: 'Open comparisons temporarily when you need to inspect differences.',
       oast: 'Generate and track OAST tokens in one place instead of scattering them across tools.',
     },
@@ -119,11 +124,13 @@ export default {
     basket: {
       kicker: 'Request Basket',
       title: 'Request Basket',
-      description: 'Collect high-value requests first, then send them to Repeater or Intruder in batches.',
+      description:
+        'Collect high-value requests first, then send them to Repeater or Intruder in batches.',
       sendAllToRepeater: 'Send All to Repeater',
       sendAllToIntruder: 'Send All to Intruder',
       clear: 'Clear Basket',
-      empty: 'High-value requests from history and the intercept queue can be collected here for batch handling.',
+      empty:
+        'High-value requests from history and the intercept queue can be collected here for batch handling.',
       openSourceRequest: 'Open Source Request',
     },
     sidebar: {
@@ -141,7 +148,8 @@ export default {
       intruderStateMeta: 'History is managed by Intruder workspaces',
       clearToolHistory: 'Clear Tool History',
       clearToolHistoryConfirmTitle: 'Clear Tool History',
-      clearToolHistoryConfirmMessage: 'This will delete {count} Repeater, replay run, and Intruder history records. This cannot be undone.',
+      clearToolHistoryConfirmMessage:
+        'This will delete {count} Repeater, replay run, and Intruder history records. This cannot be undone.',
       clearToolHistoryConfirm: 'Clear History',
       clearToolHistorySuccess: 'Tool history cleared',
     },
@@ -251,7 +259,7 @@ export default {
     title: 'Intercept',
     status: {
       on: 'Intercept is on',
-      off: 'Intercept is off'
+      off: 'Intercept is off',
     },
     buttons: {
       turnOn: 'Turn on',
@@ -266,19 +274,19 @@ export default {
       edit: 'Edit',
       createDraft: 'Send to Repeater',
       openCompare: 'Send to Comparer',
-      createAttackWorkspace: 'Send to Intruder'
+      createAttackWorkspace: 'Send to Intruder',
     },
     stats: {
       proxyStatus: 'Proxy Status',
       running: 'Running',
       stopped: 'Stopped',
       port: 'Port',
-      interceptQueue: 'Intercept Queue'
+      interceptQueue: 'Intercept Queue',
     },
     tabs: {
       raw: 'Raw',
       pretty: 'Pretty',
-      hex: 'Hex'
+      hex: 'Hex',
     },
     requestLine: 'Request Line',
     statusLine: 'Status Line',
@@ -300,8 +308,9 @@ export default {
     },
     tooltip: {
       http: 'HTTP intercept status',
-      response: 'Response interception only becomes effective when both master intercept and response intercept are enabled.',
-      websocket: 'WebSocket intercept status'
+      response:
+        'Response interception only becomes effective when both master intercept and response intercept are enabled.',
+      websocket: 'WebSocket intercept status',
     },
     contextMenu: {
       createDraft: 'Send to Repeater',
@@ -321,7 +330,7 @@ export default {
       copyRequest: 'Copy Request',
       copyAsCurl: 'Copy as cURL',
       openInBrowser: 'Open in Browser',
-      copyRaw: 'Copy Raw Content'
+      copyRaw: 'Copy Raw Content',
     },
     filterDialog: {
       title: 'Add Intercept Filter Rule',
@@ -349,7 +358,7 @@ export default {
       cancel: 'Cancel',
       save: 'Save Rule',
       ruleAdded: 'Filter rule added successfully',
-      addFailed: 'Failed to add filter rule'
+      addFailed: 'Failed to add filter rule',
     },
     aiDialog: {
       title: 'AI Security Assistant',
@@ -362,8 +371,8 @@ export default {
       analyze: 'Analyze Security',
       explain: 'Explain Request',
       suggest: 'Suggest Payloads',
-      decode: 'Decode Parameters'
-    }
+      decode: 'Decode Parameters',
+    },
   },
   // Proxy Control Component
   control: {
@@ -373,7 +382,8 @@ export default {
     processing: 'Processing...',
     refreshStatus: 'Refresh Status',
     proxyConfig: 'Configure browser proxy to',
-    proxySettings: 'Proxy configuration and interception rules can be set in the Proxy Settings page',
+    proxySettings:
+      'Proxy configuration and interception rules can be set in the Proxy Settings page',
     stats: {
       proxyStatus: 'Proxy Status',
       running: 'Running',
@@ -387,8 +397,8 @@ export default {
       qpsDesc: 'Queries per second',
       requestStats: 'Request Statistics',
       http: 'HTTP',
-      https: 'HTTPS'
-    }
+      https: 'HTTPS',
+    },
   },
   intruder,
   // Proxy History Component
@@ -396,11 +406,11 @@ export default {
     title: 'Request History',
     emptyState: {
       noRequests: 'No request history',
-      selectInterface: 'Please select a network interface'
+      selectInterface: 'Please select a network interface',
     },
     websocket: {
       toServer: 'To Server',
-      fromServer: 'From Server'
+      fromServer: 'From Server',
     },
     contextMenu: {
       createDraft: 'Send to Repeater',
@@ -418,7 +428,7 @@ export default {
       filterByDomain: 'Domain',
       filterByUrl: 'URL',
       filterByMethod: 'Method',
-      filterByExtension: 'Extension'
+      filterByExtension: 'Extension',
     },
     certificateError: {
       title: 'Certificate Error',
@@ -430,20 +440,20 @@ export default {
         selfSigned: 'Self-signed certificate',
         untrusted: 'Certificate chain not trusted',
         hostnameMMismatch: 'Hostname mismatch',
-        weakSignature: 'Weak signature algorithm'
+        weakSignature: 'Weak signature algorithm',
       },
       actions: {
         trustCert: 'Trust Certificate',
         viewDetails: 'View Details',
         ignore: 'Continue',
-        stop: 'Stop Capture'
+        stop: 'Stop Capture',
       },
       tips: {
         installCA: 'Make sure Sentinel AI root CA is installed and trusted',
         checkCAInstallation: 'Check Certificate Installation',
         caNotTrusted: 'Root CA not trusted',
-        serverCertIssue: 'Target server certificate has issues'
-      }
+        serverCertIssue: 'Target server certificate has issues',
+      },
     },
     errors: {
       loadFailed: 'Failed to load request history',
@@ -454,7 +464,7 @@ export default {
       exportFailed: 'Export failed',
       networkError: 'Network error',
       timeout: 'Request timeout',
-      unknown: 'Unknown error'
+      unknown: 'Unknown error',
     },
     messages: {
       historyCleared: 'History cleared',
@@ -470,7 +480,7 @@ export default {
       sentBatchToComparer: 'Sent {count} comparisons to Comparer',
       noEditedRequestVersion: 'No edited request version available',
       noEditedResponseVersion: 'No edited response version available',
-      sentToAssistant: 'Sent to AI Assistant'
+      sentToAssistant: 'Sent to AI Assistant',
     },
     filterDialog: {
       shellTitle: 'Configure HTTP Proxy filter',
@@ -485,7 +495,8 @@ export default {
       commonSectionTitle: 'Common filters',
       commonSectionDescription: 'Show search, request type, status code, and content type first.',
       advancedSectionTitle: 'Advanced filters',
-      advancedSectionDescription: 'Lower-frequency but more precise conditions, expand when needed.',
+      advancedSectionDescription:
+        'Lower-frequency but more precise conditions, expand when needed.',
       expandAdvanced: 'Expand',
       collapseAdvanced: 'Collapse',
       bambdaUnavailable: 'Bambda mode is not available in the current history workbench.',
@@ -507,7 +518,8 @@ export default {
       showAll: 'Show all',
       hideAll: 'Hide all',
       revertChanges: 'Revert changes',
-      footerHint: 'Use the left actions for bulk toggles and the right actions to submit the current filter settings.',
+      footerHint:
+        'Use the left actions for bulk toggles and the right actions to submit the current filter settings.',
       checkboxes: {
         showOnlyInScope: 'Show only in-scope items',
         showOnlyWithParams: 'Show only parameterized requests',
@@ -536,13 +548,13 @@ export default {
           port: 'e.g. 8080',
           search: 'Search...',
           showExtensions: 'asp,aspx,jsp,php',
-          hideExtensions: 'js,gif,jpg,png,css'
+          hideExtensions: 'js,gif,jpg,png,css',
         },
         labels: {
           showOnly: 'Show only:',
-          hide: 'Hide:'
-        }
-      }
+          hide: 'Hide:',
+        },
+      },
     },
     table: {
       id: 'ID',
@@ -562,7 +574,7 @@ export default {
       ip: 'IP',
       listener: 'Listener',
       responseTimer: 'Response Time',
-      actions: 'Actions'
+      actions: 'Actions',
     },
     detailsPanel: {
       requestDetails: 'Request Details',
@@ -573,7 +585,7 @@ export default {
         raw: 'Raw',
         pretty: 'Pretty',
         hex: 'Hex',
-        render: 'Render'
+        render: 'Render',
       },
       request: 'Request',
       response: 'Response',
@@ -594,8 +606,8 @@ export default {
         regexp: 'Regular expression',
         clear: 'Clear search',
         noMatches: 'No matches',
-        invalidRegexp: 'Invalid regex'
-      }
+        invalidRegexp: 'Invalid regex',
+      },
     },
     // ProxifierProxies Component
     proxifierProxies: {
@@ -603,16 +615,16 @@ export default {
       table: {
         name: 'Name',
         port: 'Port',
-        type: 'Type'
+        type: 'Type',
       },
       emptyState: {
-        noProxies: 'No proxy servers'
+        noProxies: 'No proxy servers',
       },
       buttons: {
         add: 'Add...',
         edit: 'Edit...',
         remove: 'Remove',
-        proxyChains: 'Proxy Chains...'
+        proxyChains: 'Proxy Chains...',
       },
       description: 'Multiple proxy servers can be chained:',
       dialog: {
@@ -620,39 +632,39 @@ export default {
         editTitle: 'Edit Proxy',
         host: {
           label: 'Host Address',
-          placeholder: '127.0.0.1 or proxy.example.com'
+          placeholder: '127.0.0.1 or proxy.example.com',
         },
         port: {
           label: 'Port',
-          placeholder: '8080'
+          placeholder: '8080',
         },
         type: {
           label: 'Proxy Type',
           http: 'HTTP',
           https: 'HTTPS',
-          socks5: 'SOCKS5'
+          socks5: 'SOCKS5',
         },
         auth: 'Authentication (Optional)',
         username: {
           label: 'Username',
-          placeholder: 'Optional'
+          placeholder: 'Optional',
         },
         password: {
           label: 'Password',
-          placeholder: 'Optional'
+          placeholder: 'Optional',
         },
         buttons: {
           cancel: 'Cancel',
-          save: 'Save'
-        }
-      }
+          save: 'Save',
+        },
+      },
     },
     toolbar: {
       filter: 'Filter',
       clear: 'Clear',
       refresh: 'Refresh',
       export: 'Export',
-      searchPlaceholder: 'Search requests...'
+      searchPlaceholder: 'Search requests...',
     },
     protocol: {
       all: 'All',
@@ -707,7 +719,7 @@ export default {
       compressionEnabled: 'Response Body Compression',
       compressionHelp: 'Auto-compress response bodies larger than 1KB to save storage',
       configSaved: 'Configuration saved',
-      configSaveFailed: 'Failed to save configuration: {error}'
+      configSaveFailed: 'Failed to save configuration: {error}',
     },
   },
   // Proxy Repeater Component
@@ -763,7 +775,7 @@ export default {
       raw: 'Raw',
       hex: 'Hex',
       render: 'Render',
-      clickSendToSendRequest: 'Click "Send Request" to send the request'
+      clickSendToSendRequest: 'Click "Send Request" to send the request',
     },
     tabContextMenu: {
       closeTab: 'Close Tab',
@@ -773,7 +785,7 @@ export default {
       deleteOthers: 'Delete others',
       deleteAll: 'Delete all',
       closeLeft: 'Close Tabs to the Left',
-      closeRight: 'Close Tabs to the Right'
+      closeRight: 'Close Tabs to the Right',
     },
     messages: {
       requestCancelled: 'Request cancelled',
@@ -809,16 +821,17 @@ export default {
       confirmCloseTab: 'Confirm close tab?',
       confirmCloseTabMessage: 'This tab has unsaved content. Are you sure you want to close it?',
       confirmCloseAllTabs: 'Confirm close all tabs?',
-      confirmCloseAllTabsMessage: 'Some tabs have unsaved content. Are you sure you want to close all tabs?',
+      confirmCloseAllTabsMessage:
+        'Some tabs have unsaved content. Are you sure you want to close all tabs?',
       tabRestored: 'Restored {count} tab(s)',
       tabsSaved: 'Tabs auto-saved',
-      saveTabsFailed: 'Failed to save tabs'
+      saveTabsFailed: 'Failed to save tabs',
     },
     types: {
       request: 'request',
       response: 'response',
-      both: 'traffic'
-    }
+      both: 'traffic',
+    },
   },
   // Packet Capture Component
   capture: {
@@ -835,7 +848,7 @@ export default {
       advancedFilter: 'Advanced Filter',
       filterInput: 'Filter Input',
       statistics: 'Statistics',
-      advancedFiltering: 'Advanced Filtering'
+      advancedFiltering: 'Advanced Filtering',
     },
     table: {
       time: 'Time',
@@ -844,13 +857,13 @@ export default {
       protocol: 'Protocol',
       length: 'Length',
       info: 'Info',
-      no: 'No.'
+      no: 'No.',
     },
     statusBar: {
       capturing: 'Capturing',
       selected: 'Selected',
       captured: 'captured',
-      packets: 'packets'
+      packets: 'packets',
     },
     contextMenu: {
       mark: 'Mark',
@@ -871,7 +884,7 @@ export default {
       summary: 'Summary',
       copySource: 'Source Address',
       copyDestination: 'Destination Address',
-      filterByValue: 'Filter by this value'
+      filterByValue: 'Filter by this value',
     },
     emptyStates: {
       gettingInterfaces: 'Getting interface list...',
@@ -879,13 +892,13 @@ export default {
       installNpcap: 'Windows systems require Npcap driver for network packet capture',
       downloadNpcap: 'Download Npcap',
       selectAndStart: 'Select interface and click start capture',
-      waitingForPackets: 'Waiting for packets...'
+      waitingForPackets: 'Waiting for packets...',
     },
     hexView: {
       hex: 'Hex',
       ascii: 'ASCII',
-      raw: 'Raw'
-    }
+      raw: 'Raw',
+    },
   },
   // Packet Capture Component (new structure)
   packetCapture: {
@@ -900,7 +913,7 @@ export default {
       advancedFilter: 'Advanced Filter',
       advancedFilterBadge: 'Advanced',
       filterPlaceholder: 'Filter packets...',
-      filtering: 'Filtering'
+      filtering: 'Filtering',
     },
     table: {
       no: 'No.',
@@ -909,13 +922,13 @@ export default {
       destination: 'Destination',
       protocol: 'Protocol',
       length: 'Length',
-      info: 'Info'
+      info: 'Info',
     },
     statusBar: {
       capturing: 'Capturing',
       selected: 'Selected',
       captured: 'captured',
-      packets: 'packets'
+      packets: 'packets',
     },
     emptyState: {
       loadingInterfaces: 'Getting interface list...',
@@ -923,7 +936,7 @@ export default {
       npcapRequired: 'Windows systems require Npcap driver for network packet capture',
       downloadNpcap: 'Download Npcap',
       selectAndStart: 'Select interface and click start capture',
-      waitingForPackets: 'Waiting for packets...'
+      waitingForPackets: 'Waiting for packets...',
     },
     contextMenu: {
       mark: 'Mark',
@@ -945,7 +958,7 @@ export default {
       copySource: 'Source Address',
       copyDestination: 'Destination Address',
       filterThisValue: 'Filter by this value',
-      hex: 'Hex'
+      hex: 'Hex',
     },
     filterDialog: {
       title: 'Advanced Filter',
@@ -961,7 +974,7 @@ export default {
       tcpFlags: 'TCP Flags',
       reset: 'Reset',
       cancel: 'Cancel',
-      apply: 'Apply'
+      apply: 'Apply',
     },
     streamDialog: {
       ascii: 'ASCII',
@@ -970,7 +983,7 @@ export default {
       clientToServer: 'Client → Server',
       serverToClient: 'Server → Client',
       packets: 'packets',
-      close: 'Close'
+      close: 'Close',
     },
     extractDialog: {
       title: 'File Extraction',
@@ -1016,13 +1029,14 @@ export default {
       close: 'Close',
       saveSelectedFiles: 'Save Selected Files',
       selectedFiles: 'Selected Files',
-      selectedSize: 'Selected Size'
-    }
+      selectedSize: 'Selected Size',
+    },
   },
   // Proxy Configuration Component
   configuration: {
     title: 'Proxy Listeners',
-    description: 'Configure proxy listeners to receive HTTP requests from browsers. You need to configure your browser to use one of these listeners as a proxy server.',
+    description:
+      'Configure proxy listeners to receive HTTP requests from browsers. You need to configure your browser to use one of these listeners as a proxy server.',
     table: {
       select: 'Select',
       running: 'Running',
@@ -1031,8 +1045,8 @@ export default {
       redirect: 'Redirect',
       certificate: 'Certificate',
       tlsProtocol: 'TLS Protocol',
-      supportHttp2: 'Support HTTP/2'
-    }
+      supportHttp2: 'Support HTTP/2',
+    },
   },
   // Proxy Configuration Component (new structure)
   proxyConfiguration: {
@@ -1041,15 +1055,18 @@ export default {
     settingsTabDisplay: 'Display',
     settingsTabAdvanced: 'Advanced',
     proxyListenersTitle: 'Proxy Listeners',
-    proxyListenersDescription: 'Configure proxy listeners to receive HTTP requests from browsers. You need to configure your browser to use one of these listeners as a proxy server.',
+    proxyListenersDescription:
+      'Configure proxy listeners to receive HTTP requests from browsers. You need to configure your browser to use one of these listeners as a proxy server.',
     autoStartProxy: 'Auto-start proxy on application launch',
-    autoStartProxyDesc: 'When enabled, the proxy listener will start automatically when the application launches, without requiring manual intervention',
+    autoStartProxyDesc:
+      'When enabled, the proxy listener will start automatically when the application launches, without requiring manual intervention',
     trafficAnalysisSettings: 'Traffic Analysis Settings',
     trafficAnalysisSettingsDesc: 'Configure traffic analysis scanning and filtering options',
     httpMessageDisplayTitle: 'HTTP message display',
     httpMessageDisplayDesc: 'Use these settings to control how HTTP messages are displayed.',
     sendTargetsTitle: 'Send targets',
-    sendTargetsDesc: 'Control which traffic windows expose request send actions in menus and toolbars.',
+    sendTargetsDesc:
+      'Control which traffic windows expose request send actions in menus and toolbars.',
     characterSetsTitle: 'Character sets',
     characterSetsDesc: 'Use these settings to control how raw HTTP messages are displayed.',
     userSettingBadge: 'User setting',
@@ -1066,11 +1083,14 @@ export default {
     displayAsRawBytes: 'Display as raw bytes',
     useSpecificCharset: 'Use a specific character set',
     excludeSelfTraffic: 'Exclude self traffic from scanning',
-    excludeSelfTrafficDesc: 'When enabled, HTTP requests from this application will not be scanned by traffic analysis plugins, but will still appear in traffic history',
+    excludeSelfTrafficDesc:
+      'When enabled, HTTP requests from this application will not be scanned by traffic analysis plugins, but will still appear in traffic history',
     enableTrafficAnalysisPlugin: 'Enable traffic analysis plugin scanning',
-    enableTrafficAnalysisPluginDesc: 'When enabled, traffic analysis plugins will automatically scan captured traffic for potential security vulnerabilities',
+    enableTrafficAnalysisPluginDesc:
+      'When enabled, traffic analysis plugins will automatically scan captured traffic for potential security vulnerabilities',
     trafficScopeRules: 'Traffic scope',
-    trafficScopeRulesDesc: 'Only traffic matching include rules and not matching exclude rules will be captured into history and processed by follow-up analysis. Leave both lists empty to process all traffic.',
+    trafficScopeRulesDesc:
+      'Only traffic matching include rules and not matching exclude rules will be captured into history and processed by follow-up analysis. Leave both lists empty to process all traffic.',
     scopeIncludeTitle: 'Include in scope',
     scopeExcludeTitle: 'Exclude from scope',
     scopeIncludeEmpty: 'No include rules. When exclude is also empty, all traffic is in scope.',
@@ -1079,7 +1099,8 @@ export default {
     editScopeIncludeRule: 'Edit include-scope rule',
     addScopeExcludeRule: 'Add URL to exclude from scope',
     editScopeExcludeRule: 'Edit exclude-scope rule',
-    scopeRuleDialogDesc: 'Match protocol, host or IP range, port, and file path. Leave a field blank to match any value.',
+    scopeRuleDialogDesc:
+      'Match protocol, host or IP range, port, and file path. Leave a field blank to match any value.',
     scopeProtocolAny: 'Any',
     scopeHostOrIpRange: 'Host / IP range',
     scopeHostOrIpRangePlaceholder: 'Enter regex, wildcard, CIDR, IP range, or leave blank',
@@ -1091,11 +1112,14 @@ export default {
     loadScopeRulesSuccess: 'Imported {count} scope rule(s)',
     loadScopeRulesFailed: 'Failed to load scope rules',
     behaviorSignalSource: 'Behavior signal source',
-    behaviorSignalSourceDesc: 'Choose how the logic analysis agent derives user behavior context. The default mode works without any browser extension.',
+    behaviorSignalSourceDesc:
+      'Choose how the logic analysis agent derives user behavior context. The default mode works without any browser extension.',
     behaviorSourceProxyInferred: 'Default: Proxy-derived weak behavior inference',
-    behaviorSourceProxyInferredDesc: 'Infer behavior sessions from traffic timing, request sequence, referer, paths, and parameter patterns. No browser extension is required.',
+    behaviorSourceProxyInferredDesc:
+      'Infer behavior sessions from traffic timing, request sequence, referer, paths, and parameter patterns. No browser extension is required.',
     behaviorSourceBrowserExtension: 'Enhanced: Browser extension behavior capture',
-    behaviorSourceBrowserExtensionDesc: 'Use browser extension events as an extra semantic signal for complex workflows. If the extension is unavailable, the system still falls back to proxy-derived inference.',
+    behaviorSourceBrowserExtensionDesc:
+      'Use browser extension events as an extra semantic signal for complex workflows. If the extension is unavailable, the system still falls back to proxy-derived inference.',
     browserExtensionConnected: 'Extension connected',
     browserExtensionDisconnected: 'Extension not connected',
     browserExtensionBridgeUrl: 'Local bridge URL',
@@ -1111,7 +1135,70 @@ export default {
     copyExtensionToDirectoryFailed: 'Failed to copy browser extension: {error}',
     copyFailed: 'Copy failed',
     pluginRuntimeTitle: 'Plugin runtime',
-    pluginRuntimeDesc: 'Configure global runtime defaults for traffic plugins. These values directly control active probe scheduling and timeout behavior, and plugins cannot override them.',
+    pluginRuntimeDesc:
+      'Configure global runtime defaults for the unified Rust fetch scheduler. These values directly control throttling, concurrency, queueing, and timeouts for plugin-initiated requests.',
+    pluginRuntimeActiveProbeOnlyDesc:
+      'This page now configures only Traffic Active Probe. The unified fetch scheduler for other plugin types has moved to Plugin Management.',
+    pluginRuntimeFetchHint:
+      'Saving applies immediately to the shared request scheduler. Active probes, bounty workflows, monitor tasks, agent tools, and plugin tests each read their own policy from here.',
+    pluginRuntimeActiveProbeOnlyHint:
+      'Saving updates only the active probe policy here; adjust Bounty, Monitor, Agent, and Plugin Test in Plugin Management.',
+    pluginRuntimePolicyActiveProbeTitle: 'Traffic Active Probe',
+    pluginRuntimePolicyActiveProbeDesc:
+      'Active probe requests initiated by traffic-analysis plugins. Use this to control scan pacing against a single target.',
+    pluginRuntimePolicyBountyTitle: 'Bounty Fetch',
+    pluginRuntimePolicyBountyDesc:
+      'The active request queue used by bounty and asset-recon plugins.',
+    pluginRuntimePolicyMonitorTitle: 'Monitor Fetch',
+    pluginRuntimePolicyMonitorDesc:
+      'The active request queue used by monitor task plugins. Keep this more conservative for long-running schedules.',
+    pluginRuntimePolicyAgentTitle: 'Agent Fetch',
+    pluginRuntimePolicyAgentDesc: 'The active request queue used by agent and tool-style plugins.',
+    pluginRuntimePolicyPluginTestTitle: 'Plugin Test Fetch',
+    pluginRuntimePolicyPluginTestDesc:
+      'The request queue used while testing plugins. This should usually stay small.',
+    pluginRuntimeQueueStatusTitle: 'Live queue status',
+    pluginRuntimeQueueStatusDesc:
+      'This shows the real-time state already applied inside the Rust scheduler, so you can see whether concurrency or queue depth is actually saturated.',
+    pluginRuntimeQueueRefresh: 'Refresh',
+    pluginRuntimeQueueUpdatedAt: 'Last updated {time}',
+    pluginRuntimeQueuePending: 'Pending',
+    pluginRuntimeQueueRunning: 'Running',
+    pluginRuntimeQueueActiveHosts: 'Active hosts',
+    pluginRuntimeQueueRecent: 'Recent',
+    pluginRuntimeQueueThroughput1m: '1-minute throughput',
+    pluginRuntimeQueueAvgWait1m: '1-minute avg wait',
+    pluginRuntimeQueueAvgResponse1m: '1-minute avg response',
+    pluginRuntimeQueueOutcome1m: '1-minute outcome',
+    pluginRuntimeQueueRejected: 'Rejected total',
+    pluginRuntimeQueueQueuedScheduled: 'Queued / Scheduled',
+    pluginRuntimeQueueActiveRunsPlugins: 'Active run / plugin',
+    pluginRuntimeQueueHostPeak: 'Hottest host concurrency',
+    pluginRuntimeQueueCancelledRuns: 'Cancelled runs',
+    pluginRuntimeQueueHottestHost: 'Hottest host',
+    pluginRuntimeQueueRejectReasons: 'Reject reason breakdown',
+    pluginRuntimeQueueRejectQueueLimit: 'Queue depth limit',
+    pluginRuntimeQueueRejectRunPending: 'Per-run pending limit',
+    pluginRuntimeQueueRejectPluginPending: 'Per-plugin pending limit',
+    pluginRuntimeQueueRejectCancelledRun: 'Run cancelled',
+    pluginRuntimeQueueTrendTitle: 'Short-term trend',
+    pluginRuntimeQueueTrendPending: 'Pending',
+    pluginRuntimeQueueTrendRunning: 'Running',
+    pluginRuntimeQueueTrendRejected: 'Rejected',
+    pluginRuntimeQueueTrendThroughput: 'Throughput',
+    pluginRuntimeQueueNoHost: 'None',
+    pluginRuntimeQueueEmpty: 'No queue state is available yet.',
+    fetchMaxQueueDepth: 'Max queue depth',
+    fetchMaxPendingPerRun: 'Max pending per run',
+    fetchMaxPendingPerPlugin: 'Max pending per plugin',
+    fetchMaxGlobalConcurrent: 'Max global concurrency',
+    fetchMaxConcurrentPerHost: 'Max concurrency per host',
+    fetchMaxConcurrentPerRun: 'Max concurrency per run',
+    fetchMaxConcurrentPerPlugin: 'Max concurrency per plugin',
+    fetchMinHostDelayMs: 'Minimum host delay (ms)',
+    fetchTimeoutMs: 'Request timeout (ms)',
+    fetchJitterMinMs: 'Jitter minimum (ms)',
+    fetchJitterMaxMs: 'Jitter maximum (ms)',
     activeProbeMinHostCooldownMs: 'Active probe minimum host cooldown (ms)',
     activeProbeTimeoutMs: 'Active probe timeout (ms)',
     activeProbeMaxConcurrentPerHost: 'Maximum concurrency per path',
@@ -1120,16 +1207,18 @@ export default {
     activeProbePresetLocalFast: 'Local Fast',
     activeProbePresetBalanced: 'Balanced',
     activeProbePresetConservative: 'Conservative',
-    pluginRuntimeActiveProbeHint: 'The active probe queue only uses these global settings. Scheduling applies concurrency and cooldown at the host + pathname level and takes effect immediately after saving.',
     oastTitle: 'OAST / Collaborator',
-    oastDesc: 'Configure the OAST callback service used by the application. The current implementation follows the cfoast design and handles HTTP/HTTPS callbacks rather than DNS-only hits.',
+    oastDesc:
+      'Configure the OAST callback service used by the application. The current implementation follows the cfoast design and handles HTTP/HTTPS callbacks rather than DNS-only hits.',
     oastEnabled: 'Enable OAST capability',
-    oastEnabledDesc: 'When enabled, Repeater, Intruder, and request editors can reuse this configuration to generate and query OAST tokens.',
+    oastEnabledDesc:
+      'When enabled, Repeater, Intruder, and request editors can reuse this configuration to generate and query OAST tokens.',
     oastServerBaseUrl: 'Server base URL',
     oastServerBaseUrlPlaceholder: 'For example https://oast.example.com',
     oastApiKey: 'Worker API key (optional)',
     oastApiKeyPlaceholder: 'Enter the shared secret configured on your OAST Worker',
-    oastApiKeyDesc: 'This secures the Worker management endpoints and is not the token returned by /gen. Leave it empty if the Worker does not enforce key validation.',
+    oastApiKeyDesc:
+      'This secures the Worker management endpoints and is not the token returned by /gen. Leave it empty if the Worker does not enforce key validation.',
     oastPollIntervalSecs: 'Polling interval (secs)',
     oastRequestTimeoutSecs: 'Request timeout (secs)',
     oastAutoSaveHint: 'These settings are saved automatically after changes.',
@@ -1161,7 +1250,8 @@ export default {
     certInfo: 'Certificate Info',
     // CA Certificate Dialog
     caCertDialogTitle: 'CA Certificate',
-    caCertDialogDesc: 'You can export your certificate and key for use in other tools, or in another installation. You can import a certificate and key to use in this installation. Note that you can also export the current certificate by visiting http://burpsuite/cert in your browser.',
+    caCertDialogDesc:
+      'You can export your certificate and key for use in other tools, or in another installation. You can import a certificate and key to use in this installation. Note that you can also export the current certificate by visiting http://burpsuite/cert in your browser.',
     exportSection: 'Export',
     importSection: 'Import',
     certInDerFormat: 'Certificate in DER format',
@@ -1189,14 +1279,18 @@ export default {
     interceptionRules: 'Interception Rules',
     interceptionRulesDesc: 'Configure interception rules for requests and responses',
     requestInterceptionRules: 'Request Interception Rules',
-    requestInterceptionRulesDesc: 'Use these settings to control which requests are stalled for viewing and editing in the Intercept tab.',
+    requestInterceptionRulesDesc:
+      'Use these settings to control which requests are stalled for viewing and editing in the Intercept tab.',
     responseInterceptionRules: 'Response Interception Rules',
-    responseInterceptionRulesDesc: 'Use these settings to control which responses are stalled for viewing and editing in the Intercept tab.',
+    responseInterceptionRulesDesc:
+      'Use these settings to control which responses are stalled for viewing and editing in the Intercept tab.',
     interceptRequests: 'Intercept requests based on the following rules:',
     interceptResponses: 'Intercept responses based on the following rules:',
     masterInterceptionDisabled: 'Master interception is turned off',
-    masterInterceptionManagedInInterceptTab: 'Enable or disable master interception from the Intercept tab.',
-    responseInterceptionDependsOnMaster: 'Response interception depends on master intercept and only pauses responses after master intercept is enabled.',
+    masterInterceptionManagedInInterceptTab:
+      'Enable or disable master interception from the Intercept tab.',
+    responseInterceptionDependsOnMaster:
+      'Response interception depends on master intercept and only pauses responses after master intercept is enabled.',
     enable: 'Enabled',
     operator: 'Operator',
     matchType: 'Match type',
@@ -1208,8 +1302,10 @@ export default {
     moveUp: 'Up',
     moveDown: 'Down',
     autoFixNewlines: 'Automatically fix missing or superfluous new lines at end of request',
-    autoUpdateContentLength: 'Automatically update Content-Length header when the request is edited',
-    autoUpdateResponseContentLength: 'Automatically update Content-Length header when the response is edited',
+    autoUpdateContentLength:
+      'Automatically update Content-Length header when the request is edited',
+    autoUpdateResponseContentLength:
+      'Automatically update Content-Length header when the response is edited',
     // Rule edit dialog
     addInterceptionRule: 'Add interception rule',
     editInterceptionRule: 'Edit interception rule',
@@ -1236,7 +1332,7 @@ export default {
       param_value: 'Param value',
       listener_port: 'Listener port',
       status_code: 'Status code',
-      content_type_header: 'Content type header'
+      content_type_header: 'Content type header',
     },
     // Relationships
     relationships: {
@@ -1245,7 +1341,7 @@ export default {
       contains_parameters: 'Contains parameters',
       is_in_target_scope: 'Is in target scope',
       was_modified: 'Was modified',
-      was_intercepted: 'Was intercepted'
+      was_intercepted: 'Was intercepted',
     },
     websocketInterceptionRules: 'WebSocket Interception Rules',
     websocketInterceptionRulesDesc: 'Configure WebSocket interception rules',
@@ -1286,7 +1382,8 @@ export default {
     askUser: 'Ask user',
     doNothing: 'Do Nothing',
     defaultInterceptionState: 'Default Interception State',
-    defaultInterceptionStateDesc: 'Configure the default interception state for requests and responses',
+    defaultInterceptionStateDesc:
+      'Configure the default interception state for requests and responses',
     enableInterception: 'Enable Interception',
     disableInterception: 'Disable Interception',
     restoreInterceptionState: 'Restore Interception State',
@@ -1302,13 +1399,14 @@ export default {
     unpackCompressedRequests: 'Unpack Compressed Requests',
     unpackCompressedResponses: 'Unpack Compressed Responses',
     suppressBurpErrorMessages: 'Suppress Burp Error Messages',
-    dontSendToProxyHistory: 'Don\'t Send to Proxy History',
-    dontSendToProxyHistoryIfOutOfScope: 'Don\'t Send to Proxy History if Out-of-Scope',
+    dontSendToProxyHistory: "Don't Send to Proxy History",
+    dontSendToProxyHistoryIfOutOfScope: "Don't Send to Proxy History if Out-of-Scope",
     resetToDefaults: 'Reset to Defaults',
     saving: 'Saving...',
     // Upstream proxy
     upstreamProxyServers: 'Upstream Proxy Servers',
-    upstreamProxyServersDesc: 'Configure upstream proxy servers to forward proxy requests. Create a rule with * as the destination host to send all traffic to a single proxy server.',
+    upstreamProxyServersDesc:
+      'Configure upstream proxy servers to forward proxy requests. Create a rule with * as the destination host to send all traffic to a single proxy server.',
     destinationHost: 'Destination Host',
     destinationHostHelp: 'Use * to match all hosts',
     proxyHost: 'Proxy Host',
@@ -1333,16 +1431,17 @@ export default {
       requestParamValue: 'Request param value',
       requestFirstLine: 'Request first line',
       responseHeader: 'Response header',
-      responseBody: 'Response body'
+      responseBody: 'Response body',
     },
     // TLS Pass Through
     addTlsPassThrough: 'Add TLS pass through rule',
     editTlsPassThrough: 'Edit TLS pass through rule',
-    hostPlaceholder: 'e.g. *.example.com or 192.168.1.*'
+    hostPlaceholder: 'e.g. *.example.com or 192.168.1.*',
   },
   immersivePlugins: {
     title: 'Traffic plugins',
-    description: 'Start and stop traffic analysis plugins directly in immersive drill mode without leaving for plugin management.',
+    description:
+      'Start and stop traffic analysis plugins directly in immersive drill mode without leaving for plugin management.',
     globalEnabled: 'Scanning on',
     globalDisabled: 'Scanning off',
     refresh: 'Refresh',
@@ -1350,11 +1449,13 @@ export default {
     totalCount: 'Total plugins',
     quickHintTitle: 'Current mode',
     quickHintEnabled: 'New captured traffic will continue through the plugin scanning pipeline',
-    quickHintDisabled: 'New captured traffic will skip plugin scanning while history continues to be recorded',
+    quickHintDisabled:
+      'New captured traffic will skip plugin scanning while history continues to be recorded',
     retry: 'Retry',
     loading: 'Loading traffic plugin state',
     emptyTitle: 'No traffic plugins yet',
-    emptyDescription: 'Install or create traffic plugins first, then come back here to toggle them quickly.',
+    emptyDescription:
+      'Install or create traffic plugins first, then come back here to toggle them quickly.',
     pluginEnabled: 'Enabled',
     pluginDisabled: 'Disabled',
     enablePlugin: 'Enable',
@@ -1369,7 +1470,8 @@ export default {
   },
   oast: {
     title: 'OAST',
-    description: 'Generate, store, and poll OAST token hits. The current implementation works with HTTP/HTTPS callbacks.',
+    description:
+      'Generate, store, and poll OAST token hits. The current implementation works with HTTP/HTTPS callbacks.',
     createToken: 'Create token',
     insertPayload: 'Insert OAST payload',
     sync: 'Sync hits',
@@ -1386,9 +1488,11 @@ export default {
     openSourceRequest: 'Source request',
     sourceRequest: 'Source',
     disabledTitle: 'OAST is disabled',
-    disabledDesc: 'Open "Traffic Analysis -> Settings -> Analysis" first and finish the OAST server setup.',
+    disabledDesc:
+      'Open "Traffic Analysis -> Settings -> Analysis" first and finish the OAST server setup.',
     emptyTitle: 'No OAST tokens yet',
-    emptyDesc: 'Create a token first, then insert the returned URL into a Repeater or Intruder request.',
+    emptyDesc:
+      'Create a token first, then insert the returned URL into a Repeater or Intruder request.',
     created: 'OAST token created',
     inserted: 'OAST payload inserted',
     deleted: 'OAST record deleted',
@@ -1422,24 +1526,24 @@ export default {
     localRemoveUnknown: 'record status unknown',
     confirmDeleteRecord: 'Delete this OAST record and its remote token?',
     sourceRequestUnavailable: 'Source request was not found',
-    openedSourceRequest: 'Source request opened'
+    openedSourceRequest: 'Source request opened',
   },
   // Proxifier Panel Component
   proxifier: {
     title: 'Proxifier',
     status: {
       running: 'Running',
-      stopped: 'Stopped'
+      stopped: 'Stopped',
     },
     buttons: {
       start: 'Start',
-      stop: 'Stop'
+      stop: 'Stop',
     },
     tabs: {
       proxies: 'Proxies',
       rules: 'Rules',
-      system: 'System'
-    }
+      system: 'System',
+    },
   },
   // Proxifier Proxies Component
   proxifierProxies: {
@@ -1448,16 +1552,16 @@ export default {
       name: 'Name',
       port: 'Port',
       type: 'Type',
-      noProxies: 'No proxy servers'
+      noProxies: 'No proxy servers',
     },
     emptyState: {
-      noProxies: 'No proxy servers'
+      noProxies: 'No proxy servers',
     },
     buttons: {
       add: 'Add...',
       edit: 'Edit',
       remove: 'Remove',
-      proxyChains: 'Proxy Chains...'
+      proxyChains: 'Proxy Chains...',
     },
     description: 'Configure proxy chains to chain multiple proxy servers',
     dialog: {
@@ -1465,32 +1569,32 @@ export default {
       editTitle: 'Edit Proxy Server',
       host: {
         label: 'Host',
-        placeholder: 'Enter host address'
+        placeholder: 'Enter host address',
       },
       port: {
         label: 'Port',
-        placeholder: 'Enter port number'
+        placeholder: 'Enter port number',
       },
       type: {
         label: 'Type',
         http: 'HTTP',
         https: 'HTTPS',
-        socks5: 'SOCKS5'
+        socks5: 'SOCKS5',
       },
       auth: 'Authentication',
       username: {
         label: 'Username',
-        placeholder: 'Enter username (optional)'
+        placeholder: 'Enter username (optional)',
       },
       password: {
         label: 'Password',
-        placeholder: 'Enter password (optional)'
+        placeholder: 'Enter password (optional)',
       },
       buttons: {
         cancel: 'Cancel',
-        save: 'Save'
-      }
-    }
+        save: 'Save',
+      },
+    },
   },
   // Proxifier Panel Component
   proxifierPanel: {
@@ -1519,7 +1623,8 @@ export default {
     startTransparentProxy: 'Start Transparent Proxy',
     stopTransparentProxy: 'Stop Transparent Proxy',
     transparentProxyDesc: 'transparently intercepts traffic from all applications',
-    startTransparentProxyDesc: 'Start transparent proxy to automatically intercept traffic from all applications',
+    startTransparentProxyDesc:
+      'Start transparent proxy to automatically intercept traffic from all applications',
     stopTransparentProxyDesc: 'Stop transparent proxy to disable automatic traffic interception',
     pfFirewall: 'pf Firewall',
     rules: {
@@ -1537,8 +1642,8 @@ export default {
         direct: 'Direct',
         block: 'Block',
         viaProxy: 'Via Proxy',
-        proxyFormat: '{type} {host}:{port}'
-      }
+        proxyFormat: '{type} {host}:{port}',
+      },
     },
     buttons: {
       add: 'Add',
@@ -1548,8 +1653,8 @@ export default {
       enabled: 'Enabled',
       cancel: 'Cancel',
       save: 'Save',
-      close: 'Close'
-    }
+      close: 'Close',
+    },
   },
   // Proxifier Rules Component
   rules: {
@@ -1561,19 +1666,19 @@ export default {
       targetHosts: 'Target Hosts',
       port: 'Port',
       action: 'Action',
-      noRules: 'No rules'
-    }
+      noRules: 'No rules',
+    },
   },
   workflowStudio: {
     status: {
       saved: 'Saved',
       saving: 'Saving...',
-      unsaved: 'Unsaved changes'
+      unsaved: 'Unsaved changes',
     },
     title: 'Workflow Studio',
     header: {
       namePlaceholder: 'Workflow name',
-      editMetadataTooltip: 'Edit workflow metadata'
+      editMetadataTooltip: 'Edit workflow metadata',
     },
     toolbar: {
       workflowList: 'Workflows',
@@ -1600,13 +1705,13 @@ export default {
       logs: 'Logs',
       toggleLogsTooltip: 'Toggle logs panel',
       history: 'History',
-      executionHistoryTooltip: 'Execution history'
+      executionHistoryTooltip: 'Execution history',
     },
     export: {
       exportJson: 'Export as JSON',
       importJson: 'Import from JSON',
       exportImage: 'Export as image',
-      exportedBy: 'Exported by Sentinel AI Workflow Studio'
+      exportedBy: 'Exported by Sentinel AI Workflow Studio',
     },
     sidebar: {
       nodeLibrary: 'Node Library',
@@ -1618,7 +1723,7 @@ export default {
       favoritesOnly: 'Favorites only',
       noMatchingNodes: 'No matching nodes',
       favorite: 'Favorite',
-      unfavorite: 'Unfavorite'
+      unfavorite: 'Unfavorite',
     },
     logs: {
       title: 'Execution Logs',
@@ -1658,7 +1763,7 @@ export default {
       foundMatchingNodes: 'Found {count} matching nodes',
       noMatchingNodes: 'No matching nodes found',
       templateSaved: 'Template saved: {name}',
-      templateSaveFailed: 'Failed to save template: {error}'
+      templateSaveFailed: 'Failed to save template: {error}',
     },
     loadDialog: {
       title: 'Load Workflow',
@@ -1666,7 +1771,7 @@ export default {
       version: 'Version: {version}',
       updated: 'Updated: {date}',
       deleteTooltip: 'Delete',
-      close: 'Close'
+      close: 'Close',
     },
     workflowListPanel: {
       title: 'Workflow Management',
@@ -1683,7 +1788,7 @@ export default {
       useTemplate: 'Use template',
       deleteTemplate: 'Delete template',
       newWorkflow: 'New Workflow',
-      saveAsTemplate: 'Save as Template'
+      saveAsTemplate: 'Save as Template',
     },
     templateMarket: {
       title: 'Workflow Template Market',
@@ -1695,7 +1800,7 @@ export default {
       useTemplate: 'Use template',
       saveAsTemplate: 'Save as template',
       saveCurrentAsTemplate: 'Save current as template',
-      close: 'Close'
+      close: 'Close',
     },
     newWorkflowConfirm: {
       title: 'New Workflow',
@@ -1703,7 +1808,7 @@ export default {
       saveAndNew: 'Save and create new',
       discardAndNew: 'Discard and create new',
       cancel: 'Cancel',
-      close: 'Close'
+      close: 'Close',
     },
     metaDialog: {
       title: 'Workflow Metadata',
@@ -1718,10 +1823,10 @@ export default {
       asAiToolHelp: 'When enabled, this workflow can be used as a tool by the AI assistant',
       stats: {
         nodes: 'Nodes',
-        edges: 'Edges'
+        edges: 'Edges',
       },
       confirm: 'Confirm',
-      cancel: 'Cancel'
+      cancel: 'Cancel',
     },
     paramsEditor: {
       title: 'Parameter Editor',
@@ -1740,10 +1845,11 @@ export default {
       pleaseSelect: '-- Please select --',
       booleanYes: 'Yes',
       booleanNo: 'No',
-      arrayPlaceholder: 'One value per line, for example:\nhttps://example1.com/\nhttps://example2.com/',
+      arrayPlaceholder:
+        'One value per line, for example:\nhttps://example1.com/\nhttps://example2.com/',
       defaultValue: 'Default: {value}',
       save: 'Save',
-      cancel: 'Cancel'
+      cancel: 'Cancel',
     },
     executionHistory: {
       title: 'Execution History',
@@ -1757,7 +1863,7 @@ export default {
         failed: 'Failed',
         running: 'Running',
         pending: 'Pending',
-        cancelled: 'Cancelled'
+        cancelled: 'Cancelled',
       },
       deleteRecordTooltip: 'Delete this record',
       durationMs: 'Duration: {ms}ms',
@@ -1770,10 +1876,10 @@ export default {
         status: 'Status',
         actions: 'Actions',
         viewDetail: 'View Details',
-        delete: 'Delete'
+        delete: 'Delete',
       },
       pagination: {
-        total: 'Total {total}'
+        total: 'Total {total}',
       },
       detailDialog: {
         title: 'Execution Details',
@@ -1788,8 +1894,8 @@ export default {
         copy: 'Copy',
         close: 'Close',
         fullscreen: 'Fullscreen',
-        exitFullscreen: 'Exit Fullscreen'
-      }
+        exitFullscreen: 'Exit Fullscreen',
+      },
     },
     resultPanel: {
       title: 'Step Execution Result',
@@ -1800,7 +1906,7 @@ export default {
       executionResult: 'Execution result',
       editParams: 'Edit parameters',
       close: 'Close',
-      noResult: 'No result'
+      noResult: 'No result',
     },
     groups: {
       trigger: 'Trigger',
@@ -1810,16 +1916,16 @@ export default {
       output: 'Output/Notification',
       tool: 'Built-in Tools',
       mcp: 'MCP Tools',
-      plugin: 'Agent Plugins'
+      plugin: 'Agent Plugins',
     },
     schedule: {
       everySeconds: 'Every {seconds} seconds',
       dailyAt: 'Daily at {time}',
-      weeklyAt: 'Weekly on {weekdays} at {time}'
+      weeklyAt: 'Weekly on {weekdays} at {time}',
     },
     confirm: {
       deleteWorkflow: 'Are you sure you want to delete this workflow?',
-      deleteTemplate: 'Are you sure you want to delete this template?'
+      deleteTemplate: 'Are you sure you want to delete this template?',
     },
     toasts: {
       enterWorkflowName: 'Please enter a workflow name first',
@@ -1855,7 +1961,7 @@ export default {
       templateDeleted: 'Template deleted',
       deleteTemplateFailed: 'Failed to delete template: {error}',
       templateApplied: 'Template applied',
-      applyTemplateFailed: 'Failed to apply template: {error}'
+      applyTemplateFailed: 'Failed to apply template: {error}',
     },
     flowchart: {
       toolbar: {
@@ -1873,26 +1979,26 @@ export default {
         redoTooltip: 'Redo (Ctrl+Y)',
         deleteConnection: 'Delete connection',
         deleteConnectionTooltip: 'Click a connection line to delete',
-        exitFullscreen: 'Exit fullscreen'
+        exitFullscreen: 'Exit fullscreen',
       },
       emptyState: {
         title: 'Canvas is empty',
         description: 'Drag nodes from the node library on the left to start building a workflow',
-        tip: 'Tip: drag on blank area to pan, scroll to zoom, Ctrl+drag to select'
+        tip: 'Tip: drag on blank area to pan, scroll to zoom, Ctrl+drag to select',
       },
       canvasHints: {
         space: 'Drag blank: Pan',
         scroll: 'Scroll: Zoom',
         drag: 'Ctrl+drag: Select',
         selectAll: 'Select all',
-        selected: '{count} nodes selected'
+        selected: '{count} nodes selected',
       },
       ports: {
         input: 'Input',
-        output: 'Output'
+        output: 'Output',
       },
       breakpoints: {
-        title: 'Breakpoints'
+        title: 'Breakpoints',
       },
       status: {
         pending: 'Pending',
@@ -1901,14 +2007,14 @@ export default {
         completed: 'Completed',
         failed: 'Failed',
         paused: 'Paused',
-        cancelled: 'Cancelled'
+        cancelled: 'Cancelled',
       },
       contextMenu: {
         addBreakpoint: 'Add breakpoint',
         removeBreakpoint: 'Remove breakpoint',
         duplicateNode: 'Duplicate node',
         deleteNode: 'Delete node',
-        duplicateNodeName: '{name} (Copy)'
+        duplicateNodeName: '{name} (Copy)',
       },
       aiGenerate: {
         title: 'AI Generated Workflow',
@@ -1916,17 +2022,17 @@ export default {
         placeholder: 'Enter workflow description...',
         cancel: 'Cancel',
         generateAndLoad: 'Generate and load',
-        missingNodesError: 'Generated result is missing nodes'
-      }
+        missingNodesError: 'Generated result is missing nodes',
+      },
     },
     defaults: {
       unnamedWorkflow: 'Unnamed workflow',
       importedWorkflow: 'Imported workflow',
-      duplicateWorkflowName: '{name} (Clone)'
+      duplicateWorkflowName: '{name} (Clone)',
     },
     errors: {
       invalidWorkflowFile: 'Invalid workflow file format',
-      jsonFormatError: 'JSON format error: {message}'
-    }
-  }
+      jsonFormatError: 'JSON format error: {message}',
+    },
+  },
 }

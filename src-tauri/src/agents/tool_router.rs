@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::{
     CloseAgentTool, HttpRequestTool, ListAgentsTool, MemoryManagerTool, ShellTool, SkillsTool,
-    SpawnAgentTool, TasksTool, TenthManTool, WaitAgentsTool,
+    SpawnAgentTool, TasksTool, TenthManTool, ToolSearchTool, WaitAgentsTool,
 };
 pub use types::{
     SelectedSkill, ToolCategory, ToolConfig, ToolCost, ToolExposure, ToolMetadata,
@@ -72,25 +72,17 @@ impl ToolRouter {
     }
 
     fn select_deferred_core_tools(&self, config: &ToolConfig) -> Vec<String> {
-        let mut selected = Vec::new();
-        for tool in self.get_all_available_tools() {
-            if config.disabled_tools.contains(&tool.id) {
-                continue;
-            }
-            if matches!(tool.exposure, ToolExposure::Always | ToolExposure::Core) {
-                selected.push(tool.id);
-            }
-        }
-        selected.extend(config.fixed_tools.clone());
+        let mut selected = config.preselected_tools.clone();
 
         let available_tools = self.get_all_available_tools();
         let mut seen = std::collections::HashSet::new();
         selected.retain(|tool_id| seen.insert(tool_id.clone()));
+        selected.retain(|tool_id| !config.disabled_tools.contains(tool_id));
         selected.retain(|tool_id| available_tools.iter().any(|tool| &tool.id == tool_id));
 
         if selected.len() > config.max_tools {
             tracing::warn!(
-                "Deferred base toolset exceeds max_tools ({} > {}), truncating.",
+                "Deferred preselected toolset exceeds max_tools ({} > {}), truncating.",
                 selected.len(),
                 config.max_tools
             );
@@ -102,7 +94,7 @@ impl ToolRouter {
 
     async fn build_deferred_prompt_injection(&self) -> Option<String> {
         Some(
-            "\n<tool_mode>\nDeferred tool mode is active. You currently have a minimal core toolset.\nWhen the current tools are insufficient, use `tool_search` action=search to discover relevant tools. If the search result includes `recommended_tool_ids`, you may call `tool_search` action=activate with the same query and omit `tool_ids` to activate the recommended bundle automatically. Otherwise, call action=activate with explicit tool_ids before trying to use them.\nDo not guess hidden tool names. Search first, activate second, then use the activated tool.\n</tool_mode>\n".to_string(),
+            "\n<tool_mode>\nDeferred tool mode is active. You currently have only the explicitly preselected toolset for this run.\nWhen the current tools are insufficient, use `tool_search` action=search to discover relevant tools. If the search result includes `recommended_tool_ids`, you may call `tool_search` action=activate with the same query and omit `tool_ids` to activate the recommended bundle automatically. Otherwise, call action=activate with explicit tool_ids before trying to use them.\nDo not guess hidden tool names. Search first, activate second, then use the activated tool.\n</tool_mode>\n".to_string(),
         )
     }
 
@@ -182,7 +174,7 @@ impl ToolRouter {
             ToolSelectionStrategy::Skills(_allowed_groups) => {
                 if !self.is_skills_enabled().await {
                     tracing::info!("Skills tool disabled via config; returning no tools.");
-                    return Ok(self.merge_always_available_tools(vec![], &config.disabled_tools));
+                    return Ok(vec![]);
                 }
                 // Skills mode default toolset
                 let mut base_tools = vec![
@@ -209,7 +201,7 @@ impl ToolRouter {
             ToolSelectionStrategy::Deferred => self.select_deferred_core_tools(config),
         };
 
-        Ok(self.merge_always_available_tools(selected, &config.disabled_tools))
+        Ok(selected)
     }
 
     /// Plan tools with full selection plan (supports Skills context injection)
@@ -229,13 +221,15 @@ impl ToolRouter {
 
         match &config.selection_strategy {
             ToolSelectionStrategy::Deferred => {
-                let tool_ids = self.merge_always_available_tools(
-                    self.select_deferred_core_tools(config),
-                    &config.disabled_tools,
-                );
+                let tool_ids = self.select_deferred_core_tools(config);
                 Ok(ToolSelectionPlan {
+                    injected_system_prompt: if tool_ids.iter().any(|id| id == ToolSearchTool::NAME)
+                    {
+                        self.build_deferred_prompt_injection().await
+                    } else {
+                        None
+                    },
                     tool_ids,
-                    injected_system_prompt: self.build_deferred_prompt_injection().await,
                     selected_skill: None,
                 })
             }
@@ -270,7 +264,7 @@ impl ToolRouter {
                 }
                 let injected = self.build_skills_prompt_injection(Some(task)).await;
                 Ok(ToolSelectionPlan {
-                    tool_ids: self.merge_always_available_tools(all, &config.disabled_tools),
+                    tool_ids: all,
                     injected_system_prompt: injected,
                     selected_skill: None,
                 })
@@ -434,26 +428,6 @@ impl ToolRouter {
         tools
     }
 
-    fn merge_always_available_tools(
-        &self,
-        selected: Vec<String>,
-        disabled_tools: &[String],
-    ) -> Vec<String> {
-        let mut merged = std::collections::HashSet::new();
-        for id in selected {
-            merged.insert(id);
-        }
-        for tool in self.get_all_available_tools() {
-            if disabled_tools.contains(&tool.id) {
-                continue;
-            }
-            if tool.always_available {
-                merged.insert(tool.id);
-            }
-        }
-        merged.into_iter().collect()
-    }
-
     /// 关键词匹配选择工具（快速，无额外成本）
     fn select_by_keywords(&self, task: &str, config: &ToolConfig) -> Result<Vec<String>> {
         let task_lower = task.to_lowercase();
@@ -483,10 +457,10 @@ impl ToolRouter {
         .any(|kw| task_lower.contains(kw));
         let mut scored_tools = Vec::new();
 
-        // 先添加固定工具
+        // 先添加显式预选工具
         let all_available_tools = self.get_all_available_tools();
         let mut selected: Vec<String> = config
-            .fixed_tools
+            .preselected_tools
             .iter()
             .map(|t| {
                 if let Some(found) = all_available_tools.iter().find(|meta| &meta.id == t) {
@@ -513,17 +487,12 @@ impl ToolRouter {
                 continue;
             }
 
-            // 跳过已在固定工具中的
+            // 跳过已在显式预选集合中的
             if selected.contains(&tool.id) {
                 continue;
             }
 
             let mut score = 0;
-
-            // 始终可用的工具优先级更高
-            if tool.always_available {
-                score += 5;
-            }
 
             // 检查工具名称
             if task_lower.contains(&tool.name.to_lowercase()) {
@@ -690,7 +659,6 @@ impl ToolRouter {
                             tags,
                             search_hint: Some("run a workflow-defined tool".to_string()),
                             cost_estimate: ToolCost::High, // 工作流通常较复杂
-                            always_available: false,
                             exposure: ToolExposure::Deferred,
                         });
                     }
@@ -811,7 +779,6 @@ impl ToolRouter {
             workflow_tools: self.workflow_tools.len(),
             mcp_tools: self.mcp_tools.len(),
             plugin_tools: self.plugin_tools.len(),
-            always_available: all_tools.iter().filter(|t| t.always_available).count(),
             by_category,
             by_cost,
         }
@@ -884,7 +851,6 @@ impl ToolRouter {
                             tags,
                             search_hint: Some("use a connected MCP server capability".to_string()),
                             cost_estimate: ToolCost::Medium,
-                            always_available: false,
                             exposure: ToolExposure::Deferred,
                         });
                     }
@@ -921,8 +887,10 @@ impl ToolRouter {
 
         for p in plugins {
             // 只查询已启用的 agent 类型插件
-            if p.metadata.main_category == "agent"
-                && p.status == sentinel_plugins::PluginStatus::Enabled
+            if matches!(
+                p.metadata.main_category,
+                sentinel_plugins::PluginMainCategory::Agent
+            ) && p.status == sentinel_plugins::PluginStatus::Enabled
             {
                 let description_str = p
                     .metadata
@@ -948,7 +916,6 @@ impl ToolRouter {
                     tags,
                     search_hint: Some("run a plugin-provided tool".to_string()),
                     cost_estimate: ToolCost::Medium,
-                    always_available: false,
                     exposure: ToolExposure::Deferred,
                 });
             }
@@ -1005,8 +972,8 @@ impl ToolRouter {
     ) -> Result<Vec<String>> {
         use sentinel_llm::{LlmClient, LlmConfig};
 
-        // 先添加固定工具
-        let mut selected = config.fixed_tools.clone();
+        // 先添加显式预选工具
+        let mut selected = config.preselected_tools.clone();
 
         // 获取所有可用工具
         let all_tools = self.get_all_available_tools();
@@ -1380,12 +1347,12 @@ Return ONLY:
             });
         }
 
-        // Compute final tool_ids: fixed_tools + skill.allowed_tools - disabled_tools
+        // Compute final tool_ids: preselected_tools + skill.allowed_tools - disabled_tools
         let all_available = self.get_all_available_tools();
         let available_ids: std::collections::HashSet<_> =
             all_available.iter().map(|t| &t.id).collect();
 
-        let mut final_tools: Vec<String> = config.fixed_tools.clone();
+        let mut final_tools: Vec<String> = config.preselected_tools.clone();
 
         // Add skill tools (filter out non-existent and disabled)
         for skill in &full_skills {
@@ -1407,7 +1374,7 @@ Return ONLY:
             }
         }
 
-        // Remove disabled from fixed_tools too
+        // Remove disabled from preselected_tools too
         final_tools.retain(|t| !config.disabled_tools.contains(t));
 
         // Respect max_tools
@@ -1579,7 +1546,7 @@ mod tests {
             enabled: true,
             selection_strategy: ToolSelectionStrategy::Keyword,
             max_tools: 3,
-            fixed_tools: vec![],
+            preselected_tools: vec![],
             disabled_tools: vec![],
             allowed_tools: vec![],
         };
@@ -1597,7 +1564,7 @@ mod tests {
             enabled: true,
             selection_strategy: ToolSelectionStrategy::Manual(vec!["http_request".to_string()]),
             max_tools: 5,
-            fixed_tools: vec![],
+            preselected_tools: vec![],
             disabled_tools: vec![],
             allowed_tools: vec![],
         };
@@ -1607,8 +1574,7 @@ mod tests {
             .await
             .unwrap();
         assert!(selected.contains(&"http_request".to_string()));
-        assert!(selected.contains(&"ask_user_question".to_string()));
-        assert!(selected.contains(&"tool_search".to_string()));
+        assert_eq!(selected, vec!["http_request".to_string()]);
     }
 
     #[tokio::test]
@@ -1618,7 +1584,7 @@ mod tests {
             enabled: true,
             selection_strategy: ToolSelectionStrategy::All,
             max_tools: 10,
-            fixed_tools: vec![],
+            preselected_tools: vec![],
             disabled_tools: vec!["shell".to_string()],
             allowed_tools: vec![],
         };
@@ -1628,17 +1594,37 @@ mod tests {
             .await
             .unwrap();
         assert!(!selected.contains(&"shell".to_string()));
-        assert!(selected.contains(&"ask_user_question".to_string()));
     }
 
     #[tokio::test]
-    async fn test_deferred_plan_includes_tool_search_and_prompt() {
+    async fn test_deferred_plan_is_empty_without_explicit_preselected_tools() {
         let router = ToolRouter::new_with_all_tools(None).await;
         let config = ToolConfig {
             enabled: true,
             selection_strategy: ToolSelectionStrategy::Deferred,
             max_tools: 12,
-            fixed_tools: vec![],
+            preselected_tools: vec![],
+            disabled_tools: vec![],
+            allowed_tools: vec![],
+        };
+
+        let plan = router
+            .plan_tools("find the right tool and activate it", &config, None)
+            .await
+            .unwrap();
+
+        assert!(plan.tool_ids.is_empty());
+        assert!(plan.injected_system_prompt.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_deferred_plan_uses_explicit_preselected_tool_search() {
+        let router = ToolRouter::new_with_all_tools(None).await;
+        let config = ToolConfig {
+            enabled: true,
+            selection_strategy: ToolSelectionStrategy::Deferred,
+            max_tools: 12,
+            preselected_tools: vec!["tool_search".to_string()],
             disabled_tools: vec![],
             allowed_tools: vec![],
         };
@@ -1649,7 +1635,6 @@ mod tests {
             .unwrap();
 
         assert!(plan.tool_ids.contains(&"tool_search".to_string()));
-        assert!(plan.tool_ids.contains(&"ask_user_question".to_string()));
         assert!(plan
             .injected_system_prompt
             .as_deref()

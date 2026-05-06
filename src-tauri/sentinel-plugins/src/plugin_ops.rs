@@ -29,6 +29,7 @@ use crate::plugin_context::PluginContext;
 use crate::plugin_fetch_context::{build_plugin_request_schedule, fetch_policy_kind_for_context};
 use crate::plugin_fetch_types::{FetchBody, FetchOptions, FetchResponse};
 use crate::plugin_finding_sanitizer::sanitize_response_body_for_evidence;
+use crate::request_scheduler::configured_policy_for_kind;
 use crate::runtime_config::get_plugin_runtime_settings;
 use crate::runtime_events::emit_active_probe_event;
 use crate::service_probe::op_get_service_probe_capabilities;
@@ -36,7 +37,7 @@ use crate::service_probe_runtime::op_probe_services;
 use crate::types::{Confidence, Finding, Severity};
 use crate::{
     cancel_active_probe, complete_active_probe, enqueue_active_probe, fail_active_probe,
-    mark_active_probe_running, ActiveProbeRequest, PluginFetchPolicy,
+    mark_active_probe_running, ActiveProbeRequest,
 };
 use crate::{
     cancel_plugin_request, complete_plugin_request, enqueue_plugin_request, fail_plugin_request,
@@ -884,7 +885,7 @@ async fn op_fetch(
         }
 
         if let Some(schedule) = plugin_fetch_schedule.as_ref() {
-            let policy = PluginFetchPolicy::for_kind(schedule.kind);
+            let policy = configured_policy_for_kind(schedule.kind);
             let dispatch_rx = match enqueue_plugin_request(schedule.clone(), policy) {
                 Ok(dispatch_rx) => dispatch_rx,
                 Err(error) => {

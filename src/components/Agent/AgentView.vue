@@ -2,15 +2,16 @@
   <div class="agent-view h-full flex bg-gradient-to-br from-base-100 to-base-200 overflow-hidden relative">
     <!-- Backdrop -->
     <div 
-      v-if="showConversations || showToolConfig"
+      v-if="showConversations"
       class="conversation-backdrop absolute inset-0 bg-black/20 z-40 transition-opacity"
-      @click="showConversations = false; showToolConfig = false"
+      @click="closeAllOverlays()"
     ></div>
 
     <!-- Conversation List Drawer -->
     <Transition name="slide-drawer">
       <div 
         v-if="showConversations"
+        ref="conversationDrawerRef"
         class="conversation-drawer absolute left-0 top-0 bottom-0 w-80 bg-base-100 shadow-2xl z-50 overflow-hidden"
       >
         <ConversationList 
@@ -18,44 +19,7 @@
           :current-conversation-id="conversationId"
           @select="handleSelectConversation"
           @create="handleCreateConversation"
-          @close="showConversations = false"
-        />
-      </div>
-    </Transition>
-
-    <!-- Tool Config Panel -->
-    <Transition name="slide-drawer-right">
-      <div 
-        v-if="showToolConfig"
-        class="tool-config-drawer absolute right-0 top-0 bottom-0 bg-base-100 shadow-2xl z-50 overflow-hidden"
-        :style="{ width: toolConfigDrawerWidth + 'px' }"
-      >
-        <div
-          class="resize-handle drawer-resize-handle absolute left-0 top-0 bottom-0 z-10 w-1 cursor-col-resize"
-          @mousedown="startToolConfigDrawerResize"
-        ></div>
-        <AssistantWorkConfigPanel
-          :available-models="assistantModelOptions"
-          :context-mode="assistantSessionSettings.contextMode"
-          :execution-mode="assistantExecutionMode"
-          :model-loading="isLoadingAssistantModels"
-          :parallel-judge-model="assistantParallelJudgeModel"
-          :parallel-selected-models="assistantParallelSelectedModels"
-          :profile-id="assistantSessionSettings.profileId"
-          :profile-loading="isLoadingAssistantProfiles"
-          :profile-options="assistantProfileOptions"
-          :run-mode="assistantSessionSettings.runMode"
-          :selected-model="assistantSelectedModel"
-          :tool-config="toolConfig"
-          @update:context-mode="handleAssistantContextModeChange"
-          @update:execution-mode="setAssistantExecutionMode"
-          @update:model="handleAssistantModelSelection"
-          @update:parallel-judge-model="setAssistantParallelJudgeModel"
-          @update:parallel-models="setAssistantParallelSelectedModels"
-          @update:profile-id="handleAssistantProfileChange"
-          @update:run-mode="handleAssistantRunModeChange"
-          @update:tool-config="handleToolConfigUpdate"
-          @close="showToolConfig = false"
+          @close="closeConversationDrawer()"
         />
       </div>
     </Transition>
@@ -66,9 +30,9 @@
       <div class="conversation-header px-4 py-2 border-b border-base-300 flex items-center justify-between bg-base-100/50">
         <div class="flex items-center gap-2">
           <button 
-            @click="showConversations = !showConversations"
+            @click="toggleConversationDrawer()"
             class="btn btn-sm btn-ghost"
-            :title="t('agent.switchConversationList')"
+            :title="`${t('agent.switchConversationList')} (Ctrl/Cmd+Shift+B)`"
           >
             <i class="fas fa-bars"></i>
           </button>
@@ -140,11 +104,34 @@
           <button 
             @click="handleCreateConversation()"
             class="btn btn-sm btn-ghost gap-1"
-            :title="t('agent.newConversation')"
+            :title="`${t('agent.newConversation')} (Ctrl/Cmd+Shift+N)`"
           >
             <i class="fas fa-plus"></i>
             <span>{{ t('agent.newConversation') }}</span>
           </button>
+        </div>
+      </div>
+      <div class="border-b border-base-300 bg-base-100/40 px-4 py-2">
+        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
+          <div class="text-xs font-medium text-base-content/70">
+            当前会话工作目录
+          </div>
+          <input
+            v-model.trim="conversationWorkingDirectoryOverride"
+            type="text"
+            class="input input-sm flex-1 font-mono"
+            :placeholder="conversationWorkingDirectoryPlaceholder"
+          />
+          <button
+            class="btn btn-xs btn-outline"
+            :disabled="!conversationWorkingDirectoryOverride"
+            @click="clearConversationWorkingDirectoryOverride"
+          >
+            继承默认
+          </button>
+          <div class="text-xs text-base-content/60 break-all">
+            生效目录: {{ effectiveConversationWorkingDirectoryLabel }}
+          </div>
         </div>
       </div>
 
@@ -310,7 +297,7 @@
             @clear-assets="handleClearAssets"
             @create-new-conversation="handleCreateConversation"
             @clear-conversation="handleClearConversation"
-            @open-tool-config="openToolConfigDrawer"
+            @open-tool-config="toggleToolConfigDrawer"
           />
         </div>
         
@@ -318,16 +305,41 @@
         <div 
           v-if="activeRightPanel"
           class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
-          :style="{ width: sidebarWidth + 'px' }"
+          :style="{ width: activeRightPanel === 'work-config' ? `${toolConfigDrawerWidth}px` : `${sidebarWidth}px` }"
         >
             <!-- Resize Handle -->
             <div 
               class="resize-handle absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10"
-              @mousedown="startResize"
+              @mousedown="activeRightPanel === 'work-config' ? startToolConfigDrawerResize($event) : startResize($event)"
             ></div>
+
+            <AssistantWorkConfigPanel
+              v-if="activeRightPanel === 'work-config'"
+              :available-models="assistantModelOptions"
+              :context-mode="assistantSessionSettings.contextMode"
+              :execution-mode="assistantExecutionMode"
+              :model-loading="isLoadingAssistantModels"
+              :parallel-judge-model="assistantParallelJudgeModel"
+              :parallel-selected-models="assistantParallelSelectedModels"
+              :profile-id="assistantSessionSettings.profileId"
+              :profile-loading="isLoadingAssistantProfiles"
+              :profile-options="assistantProfileOptions"
+              :run-mode="assistantSessionSettings.runMode"
+              :selected-model="assistantSelectedModel"
+              :tool-config="toolConfig"
+              @update:context-mode="handleAssistantContextModeChange"
+              @update:execution-mode="setAssistantExecutionMode"
+              @update:model="handleAssistantModelSelection"
+              @update:parallel-judge-model="setAssistantParallelJudgeModel"
+              @update:parallel-models="setAssistantParallelSelectedModels"
+              @update:profile-id="handleAssistantProfileChange"
+              @update:run-mode="handleAssistantRunModeChange"
+              @update:tool-config="handleToolConfigUpdate"
+              @close="closeToolConfigDrawer()"
+            />
             
             <TeamWorkspacePanel
-              v-if="activeRightPanel === 'team' && !activeTeamV4RunId"
+              v-else-if="activeRightPanel === 'team' && !activeTeamV4RunId"
               v-model:tab="teamWorkspaceTab"
               :loading="teamWorkspaceLoading"
               :pending-create-task="pendingTeamCreateTask"
@@ -381,8 +393,9 @@
               @close="handleCloseHtmlPanel"
             />
             <InteractiveTerminal
-              v-else-if="activeRightPanel === 'terminal'"
+              v-else-if="isViewActive && activeRightPanel === 'terminal'"
               class="h-full border-0 rounded-none bg-transparent"
+              :working-directory="effectiveConversationWorkingDirectory || undefined"
               @close="handleCloseTerminal"
             />
             <BrowserShellBridgePanel
@@ -410,7 +423,7 @@
             {{ t('agent.openWorkConfig') }}
           </button>
         </div>
-        <button @click="clearError" class="error-close bg-transparent border-none text-error cursor-pointer text-xl leading-none px-1 hover:text-base-content">×</button>
+        <button @click="clearError" class="error-close bg-transparent border-none text-error cursor-pointer text-xl leading-none px-1 hover:text-base-content" :title="t('agent.close')">×</button>
       </div>
     </div>
 
@@ -515,16 +528,22 @@ interface TeamSplitMemberOption {
   status?: string
 }
 
+interface AgentRuntimeSettings {
+  working_directory?: string | null
+}
+
 const props = withDefaults(defineProps<{
   executionId?: string
   showTasks?: boolean
   selectedRole?: any
   focusedMemoryId?: string | null
   focusedMessageId?: string | null
+  active?: boolean
 }>(), {
   showTasks: true,
   focusedMemoryId: null,
   focusedMessageId: null,
+  active: true,
 })
 
 const emit = defineEmits<{
@@ -542,6 +561,7 @@ const emit = defineEmits<{
 // i18n
 const { t, locale } = useI18n()
 
+const isViewActive = computed(() => props.active)
 const isChineseUi = computed(() => locale.value.toLowerCase().startsWith('zh'))
 const browserShellDisplayName = computed(() => (isChineseUi.value ? '浏览器 Shell' : 'Browser Shell'))
 const browserShellPanelTitle = computed(() => (isChineseUi.value ? '打开浏览器 Shell 面板' : 'Open Browser Shell Bridge'))
@@ -549,13 +569,14 @@ const browserShellPanelTitle = computed(() => (isChineseUi.value ? '打开浏览
 // Refs
 const messageFlowRef = ref<InstanceType<typeof MessageFlow> | null>(null)
 const conversationListRef = ref<InstanceType<typeof ConversationList> | null>(null)
+const conversationDrawerRef = ref<HTMLElement | null>(null)
 const inputAreaRef = ref<InstanceType<typeof InputAreaComponent> | null>(null)
 const inputValue = ref('')
 const localError = ref<string | null>(null)
 const submitInFlight = ref(false)
 const conversationId = ref<string | null>(props.executionId ?? null)
 const showConversations = ref(false) // Default hidden
-const showToolConfig = ref(false)
+const lastOverlayTrigger = ref<HTMLElement | null>(null)
 const currentConversationTitle = ref(t('agent.newConversationTitle'))
 const conversationExecutionState = ref<PersistedAgentExecutionState | null>(null)
 const historyLoadToken = ref(0)
@@ -571,6 +592,7 @@ const conversationExecutionStateBadgeText = computed(() => {
 const conversationExecutionStateBadgeClass = computed(() => {
   return getExecutionStateBadgeClass(conversationExecutionState.value?.outcome)
 })
+const agentDefaultWorkingDirectory = ref('')
 
 const {
   defaultAssistantProfileId,
@@ -603,11 +625,34 @@ const {
   setContextMode,
   setProfileId,
   setRunMode,
+  setWorkingDirectoryOverride,
   teamModeEnabled,
   tenthManEnabled,
   toConversationBinding,
   webSearchEnabled,
 } = useAssistantSessionSettings()
+const conversationWorkingDirectoryOverride = computed({
+  get: () => assistantSessionSettings.value.workingDirectoryOverride,
+  set: (value: string) => {
+    setWorkingDirectoryOverride(value)
+  },
+})
+const effectiveConversationWorkingDirectory = computed(() => {
+  const overrideValue = conversationWorkingDirectoryOverride.value.trim()
+  if (overrideValue) return overrideValue
+  return agentDefaultWorkingDirectory.value.trim()
+})
+const conversationWorkingDirectoryPlaceholder = computed(() => {
+  const inherited = agentDefaultWorkingDirectory.value.trim()
+  return inherited ? `继承默认: ${inherited}` : '未设置时继承 Agent 默认工作目录'
+})
+const effectiveConversationWorkingDirectoryLabel = computed(() => {
+  const resolved = effectiveConversationWorkingDirectory.value.trim()
+  return resolved || '未配置'
+})
+const clearConversationWorkingDirectoryOverride = () => {
+  setWorkingDirectoryOverride('')
+}
 const {
   addReferencedAssets,
   addReferencedFiles,
@@ -881,6 +926,13 @@ const currentBrowserShellSessionId = computed(() => browserShellComposable.curre
 const currentBrowserShellDirectWriteEnabled = computed(() =>
   browserShellComposable.directWriteEnabled.value,
 )
+const buildCurrentConversationBinding = () => toConversationBinding({
+  browserShellDirectWriteEnabled: currentBrowserShellDirectWriteEnabled.value,
+  browserShellSessionId: currentBrowserShellSessionId.value,
+  selectedModel: assistantSelectedModel.value,
+  toolsEnabled: toolsEnabled.value,
+  toolConfig: toolConfig.value,
+})
 const {
   activeRightPanel,
   activateRightPanel,
@@ -928,11 +980,13 @@ const {
   selectedTeamTaskAssigneeId: computed(() => normalizeOptionalText(selectedTeamTask.value?.assignee_agent_id) || null),
   teamWorkspaceAvailable,
   terminalClose: () => {
+    if (!isViewActive.value) return
     terminalComposable.closeTerminal()
   },
   terminalHasHistory: computed(() => terminalComposable.hasHistory.value),
-  terminalIsActive: computed(() => terminalComposable.isTerminalActive.value),
+  terminalIsActive: computed(() => isViewActive.value && terminalComposable.isTerminalActive.value),
   terminalOpen: () => {
+    if (!isViewActive.value) return
     terminalComposable.openTerminal()
   },
   taskExecutionIds: computed(() => taskComposable.executionIds.value),
@@ -948,8 +1002,101 @@ const {
 const isVisionModelUnsupportedFailure = computed(() => isVisionModelUnsupportedError(error.value))
 
 const openToolConfigDrawer = () => {
+  lastOverlayTrigger.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
   showConversations.value = false
-  showToolConfig.value = true
+  activateRightPanel('work-config')
+}
+
+const toggleToolConfigDrawer = () => {
+  lastOverlayTrigger.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  showConversations.value = false
+  if (activeRightPanel.value === 'work-config') {
+    closeToolConfigDrawer()
+    return
+  }
+  activateRightPanel('work-config')
+}
+
+const closeConversationDrawer = () => {
+  showConversations.value = false
+}
+
+const closeToolConfigDrawer = () => {
+  deactivateRightPanel('work-config')
+}
+
+const closeAllOverlays = () => {
+  showConversations.value = false
+}
+
+const toggleConversationDrawer = () => {
+  if (showConversations.value) {
+    closeConversationDrawer()
+    return
+  }
+  lastOverlayTrigger.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  if (activeRightPanel.value === 'work-config') {
+    closeToolConfigDrawer()
+  }
+  showConversations.value = true
+}
+
+const restoreOverlayTriggerFocus = () => {
+  nextTick(() => {
+    lastOverlayTrigger.value?.focus()
+    lastOverlayTrigger.value = null
+  })
+}
+
+const isEditableTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false
+  const tagName = target.tagName.toLowerCase()
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable
+}
+
+const handleGlobalKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    if (activeRightPanel.value === 'work-config') {
+      event.preventDefault()
+      closeToolConfigDrawer()
+      return
+    }
+    if (showConversations.value) {
+      event.preventDefault()
+      closeConversationDrawer()
+      return
+    }
+  }
+
+  if (isEditableTarget(event.target) || !(event.metaKey || event.ctrlKey) || !event.shiftKey) {
+    return
+  }
+
+  const key = event.key.toLowerCase()
+  if (key === 'b') {
+    event.preventDefault()
+    toggleConversationDrawer()
+    return
+  }
+  if (key === 'n') {
+    event.preventDefault()
+    void handleCreateConversation()
+    return
+  }
+  if (key === 't') {
+    event.preventDefault()
+    handleToggleTasks()
+    return
+  }
+  if (key === 'o') {
+    event.preventDefault()
+    toggleToolConfigDrawer()
+    return
+  }
+  if (key === 'i') {
+    event.preventDefault()
+    inputAreaRef.value?.focusInput()
+  }
 }
 
 const clearBoundBrowserShellSession = () => {
@@ -974,6 +1121,17 @@ watch(hasConnectedBrowserShellSessions, (hasConnected) => {
   }
 })
 
+watch(showConversations, (open) => {
+  if (open) {
+    nextTick(() => {
+      conversationListRef.value?.focusSearch?.()
+    })
+    return
+  }
+
+  restoreOverlayTriggerFocus()
+})
+
 const handleParallelTaskSourceFocus = (event: Event) => {
   const sourceKey = String((event as CustomEvent)?.detail?.sourceKey || '').trim()
   if (!sourceKey) return
@@ -984,10 +1142,19 @@ const handleParallelTaskSourceFocus = (event: Event) => {
 
 onMounted(() => {
   window.addEventListener('agent:parallel-task-source-focus', handleParallelTaskSourceFocus)
+  window.addEventListener('keydown', handleGlobalKeydown)
+  void invoke<AgentRuntimeSettings>('get_agent_config')
+    .then((config) => {
+      agentDefaultWorkingDirectory.value = String(config?.working_directory || '').trim()
+    })
+    .catch((error) => {
+      console.warn('[AgentView] Failed to load default working directory:', error)
+    })
 })
 
 onUnmounted(() => {
   window.removeEventListener('agent:parallel-task-source-focus', handleParallelTaskSourceFocus)
+  window.removeEventListener('keydown', handleGlobalKeydown)
 })
 
 // Handle retrieval toggle
@@ -1036,6 +1203,7 @@ const {
   activateRightPanel,
   activeRightPanel,
   agentMessages: agentEvents.messages,
+  buildCurrentConversationBinding,
   buildToolPolicyFromUiConfig: buildTeamToolPolicyFromUiConfig,
   clearLocalError: () => {
     localError.value = null
@@ -1366,6 +1534,8 @@ const {
   assistantParallelJudgeModel,
   assistantParallelSelectedModels,
   assistantSelectedModel,
+  buildCurrentConversationBinding,
+  effectiveWorkingDirectory: effectiveConversationWorkingDirectory,
   buildToolConfig: () => toolConfig.value as unknown as UiToolConfigPayload,
   clearAgentMessages: () => {
     agentEvents.clearMessages()
@@ -1389,7 +1559,7 @@ const {
   },
   ensureConversationForTeamSession,
   executionIdProp: props.executionId,
-  forceTasks: props.showTasks,
+  forceTaskCompletionContract: false,
   getFailedToClearConversationLabel: () => t('agent.failedToClearConversation'),
   getFailedToStopExecutionLabel: () => t('agent.failedToStopExecution'),
   getNewConversationTitle: () => `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
@@ -1519,6 +1689,7 @@ watch(
     assistantSelectedModel,
     currentBrowserShellDirectWriteEnabled,
     currentBrowserShellSessionId,
+    conversationWorkingDirectoryOverride,
     toolsEnabled,
     toolConfig,
   ],
@@ -1559,6 +1730,7 @@ defineExpose({
   addReferencedTraffic,
   addReferencedAssets,
   addReferencedFiles,
+  buildCurrentConversationBinding,
   loadConversationHistory,
   conversationId,
   focusInput: () => inputAreaRef.value?.focusInput(),
@@ -1596,21 +1768,6 @@ defineExpose({
 
 .slide-drawer-leave-to {
   transform: translateX(-100%);
-}
-
-/* Drawer Slide Animation Right */
-.slide-drawer-right-enter-active,
-.slide-drawer-right-leave-active {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.slide-drawer-right-enter-from,
-.slide-drawer-right-leave-to {
-  transform: translateX(100%);
-}
-
-.tool-config-drawer {
-  max-width: calc(100vw - 1rem);
 }
 
 /* Resize handle */
@@ -1652,11 +1809,6 @@ body.resizing {
     max-width: 320px;
   }
 
-  .tool-config-drawer {
-    width: 100% !important;
-    max-width: none;
-  }
-  
   .sidebar-container {
     width: 100% !important;
     border-left: none;

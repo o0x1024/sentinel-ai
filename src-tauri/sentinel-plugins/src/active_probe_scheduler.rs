@@ -1,10 +1,10 @@
 use crate::request_scheduler::{
-    cancel_plugin_request, complete_plugin_request, enqueue_plugin_request, fail_plugin_request,
-    get_plugin_request_queue_snapshot, mark_plugin_request_running, PluginFetchPolicy,
-    PluginFetchPolicyKind, PluginRequestDispatchGrant, PluginRequestPhase, PluginRequestQueueEntry,
+    cancel_plugin_request, complete_plugin_request, configured_policy_for_kind,
+    enqueue_plugin_request, fail_plugin_request, get_plugin_request_queue_snapshot,
+    mark_plugin_request_running, PluginFetchPolicy, PluginFetchPolicyKind,
+    PluginRequestDispatchGrant, PluginRequestPhase, PluginRequestQueueEntry,
     PluginRequestScheduleRequest,
 };
-use crate::runtime_config::get_plugin_runtime_settings;
 use crate::runtime_events::emit_active_probe_queue_event;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -114,13 +114,7 @@ fn metadata_state() -> &'static Mutex<ActiveProbeMetadataState> {
 }
 
 fn active_probe_policy() -> PluginFetchPolicy {
-    let mut policy = PluginFetchPolicy::for_kind(PluginFetchPolicyKind::TrafficActiveProbe);
-    let settings = get_plugin_runtime_settings().active_probe;
-    policy.jitter_range = settings.jitter_range;
-    policy.min_host_delay_ms = settings.min_host_cooldown_ms;
-    policy.max_concurrent_per_host = settings.max_concurrent_per_host as u32;
-    policy.timeout_ms = settings.timeout_ms;
-    policy
+    configured_policy_for_kind(PluginFetchPolicyKind::TrafficActiveProbe)
 }
 
 fn normalize_fetch_host(url: &str) -> Result<String, String> {

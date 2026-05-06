@@ -1,7 +1,9 @@
 <template>
   <div class="web-search-card rounded-lg overflow-hidden border border-info/25 bg-info/5 mb-2">
-    <div
-      class="flex items-center gap-3 px-4 py-3 bg-info/10 cursor-pointer hover:bg-info/15 transition-colors"
+    <button
+      type="button"
+      class="flex w-full items-center gap-3 px-4 py-3 text-left bg-info/10 hover:bg-info/15 transition-colors"
+      :aria-expanded="isExpanded ? 'true' : 'false'"
       @click="toggleExpanded"
     >
       <i :class="['fas text-xs text-info transition-transform', isExpanded ? 'fa-chevron-down' : 'fa-chevron-right']"></i>
@@ -17,7 +19,7 @@
       <span v-if="statusText" :class="['badge badge-sm whitespace-nowrap', statusClass]">
         {{ statusText }}
       </span>
-    </div>
+    </button>
 
     <div v-show="isExpanded" class="px-4 py-3 space-y-3 border-t border-info/20">
       <div v-if="status === 'running'" class="text-sm text-base-content/70">

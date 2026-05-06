@@ -1,27 +1,32 @@
 <template>
   <div
     :data-team-task-id="task.id"
-    class="cursor-pointer rounded-lg border bg-base-100 p-2 transition-colors"
+    class="rounded-lg border bg-base-100 p-2 transition-colors"
     :class="selected ? 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'border-base-300 hover:border-primary/40 hover:bg-base-200/40'"
-    @click="emit('toggle-selected-task', task)"
   >
-    <div class="flex items-center justify-between gap-2">
-      <div class="text-sm font-medium truncate">{{ task.title || task.task_id }}</div>
-      <span class="badge badge-xs" :class="teamTaskStatusBadgeClass(task.status)">
-        {{ t(teamTaskStatusI18nKey(task.status)) }}
-      </span>
-    </div>
+    <button
+      type="button"
+      class="w-full text-left"
+      @click="emit('toggle-selected-task', task)"
+    >
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-sm font-medium truncate">{{ task.title || task.task_id }}</div>
+        <span class="badge badge-xs" :class="teamTaskStatusBadgeClass(task.status)">
+          {{ t(teamTaskStatusI18nKey(task.status)) }}
+        </span>
+      </div>
 
-    <div class="mt-1 text-xs text-base-content/55 line-clamp-2">{{ task.instruction || '—' }}</div>
+      <div class="mt-1 text-xs text-base-content/55 line-clamp-2">{{ task.instruction || '—' }}</div>
 
-    <TaskMetaList
-      class="mt-2"
-      :items="metaItems"
-    />
+      <TaskMetaList
+        class="mt-2"
+        :items="metaItems"
+      />
 
-    <div class="mt-1 text-[11px] text-primary/90">
-      {{ selected ? t('agent.teamTaskSelectedHint') : t('agent.teamTaskSelectHint') }}
-    </div>
+      <div class="mt-1 text-[11px] text-primary/90">
+        {{ selected ? t('agent.teamTaskSelectedHint') : t('agent.teamTaskSelectHint') }}
+      </div>
+    </button>
 
     <TeamTaskActionBar
       :task="task"

@@ -66,7 +66,7 @@ impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
             docker_image: "sentinel-sandbox:latest".to_string(),
-            default_execution_mode: ExecutionMode::Docker,
+            default_execution_mode: ExecutionMode::Host,
             docker_memory_limit: default_docker_memory_limit(),
             docker_cpu_limit: default_docker_cpu_limit(),
             docker_use_host_network: false,
@@ -206,6 +206,9 @@ pub struct AgentConfig {
     /// Terminal (interactive shell) configuration
     #[serde(default)]
     pub terminal: TerminalConfig,
+    /// Default host working directory for agent file operations
+    #[serde(default)]
+    pub working_directory: Option<String>,
     /// Image attachment configuration
     #[serde(default)]
     pub image_attachments: ImageAttachmentConfig,
@@ -225,6 +228,7 @@ pub async fn get_agent_config(
     let shell_config = load_shell_config_from_db(db_service.inner()).await;
     // Load terminal config from database
     let terminal_config = load_terminal_config_from_db(db_service.inner()).await;
+    let working_directory = load_agent_working_directory_from_db(db_service.inner()).await;
     // Load image attachment config from database
     let image_config = load_image_attachment_config_from_db(db_service.inner()).await;
     // Load subagent config from database
@@ -235,10 +239,33 @@ pub async fn get_agent_config(
     Ok(AgentConfig {
         shell: shell_config,
         terminal: terminal_config,
+        working_directory,
         image_attachments: image_config,
         subagent: subagent_config,
         completion_guard: completion_guard_config,
     })
+}
+
+pub async fn load_agent_working_directory_from_db(
+    db: &sentinel_db::DatabaseService,
+) -> Option<String> {
+    let configured_agent = db
+        .get_config("agent", "working_directory")
+        .await
+        .ok()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if configured_agent.is_some() {
+        return configured_agent;
+    }
+
+    db.get_config("ai", "working_directory")
+        .await
+        .ok()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 /// Save agent configuration
@@ -476,7 +503,7 @@ pub async fn load_shell_config_from_db(db: &sentinel_db::DatabaseService) -> She
         config.default_execution_mode = match value.as_str() {
             "docker" => sentinel_tools::buildin_tools::shell::ShellExecutionMode::Docker,
             "host" => sentinel_tools::buildin_tools::shell::ShellExecutionMode::Host,
-            _ => sentinel_tools::buildin_tools::shell::ShellExecutionMode::Docker,
+            _ => sentinel_tools::buildin_tools::shell::ShellExecutionMode::Host,
         };
     }
 
@@ -550,7 +577,7 @@ pub async fn load_terminal_config_from_db(db: &sentinel_db::DatabaseService) -> 
         config.default_execution_mode = match value.as_str() {
             "docker" => ExecutionMode::Docker,
             "host" => ExecutionMode::Host,
-            _ => ExecutionMode::Docker,
+            _ => ExecutionMode::Host,
         };
     }
 

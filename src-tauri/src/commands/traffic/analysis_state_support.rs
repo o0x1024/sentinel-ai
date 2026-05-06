@@ -15,7 +15,9 @@ use crate::services::system_agents::{
     TrafficBehaviorSignalSettings, TrafficContextExtractionSettings,
     TRAFFIC_BEHAVIOR_SIGNAL_SETTINGS_KEY, TRAFFIC_CONTEXT_EXTRACTION_SETTINGS_KEY,
 };
-use crate::services::{load_plugin_default_inputs, merge_plugin_input_defaults};
+use crate::services::{
+    load_plugin_default_inputs, merge_plugin_input_defaults, PluginMainCategory,
+};
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -392,10 +394,10 @@ impl TrafficAnalysisState {
             .plugin_manager
             .get_plugin(&resolved_plugin_id)
             .await
-            .map(|record| match record.metadata.main_category.as_str() {
-                "intruder" => "intruder_processor",
-                "bounty" => "bounty_workflow",
-                _ => "agent_tool",
+            .map(|record| match record.metadata.main_category {
+                PluginMainCategory::Intruder => "intruder_processor",
+                PluginMainCategory::Bounty => "bounty_workflow",
+                PluginMainCategory::Agent | PluginMainCategory::Traffic => "agent_tool",
             })
             .unwrap_or("agent_tool");
 
@@ -515,7 +517,7 @@ async fn ensure_execution_plugin_loaded(
             name: plugin_record.metadata.name.clone(),
             version: plugin_record.metadata.version.clone(),
             author: plugin_record.metadata.author.clone(),
-            main_category: plugin_record.metadata.main_category.clone(),
+            main_category: plugin_record.metadata.main_category,
             category: plugin_record.metadata.category.clone(),
             description: plugin_record.metadata.description.clone(),
             monitor_type: plugin_record.metadata.monitor_type.clone(),

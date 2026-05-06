@@ -15,6 +15,7 @@ use sentinel_tools::buildin_tools::{
     RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool,
     TenthManTool, ToolSearchTool, WaitAgentsTool,
 };
+use sentinel_tools::dynamic_tool::ToolSource;
 use sentinel_tools::get_tool_server;
 use sentinel_tools::terminal::server::TerminalServer;
 
@@ -95,13 +96,13 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         .list_tools()
         .await
         .into_iter()
-        .filter(|tool| tool.source == "builtin")
+        .filter(|tool| matches!(tool.source, ToolSource::Builtin))
         .filter(|tool| tool.name != "sops")
         .map(|tool| BuiltinToolInfo {
             id: tool.name.clone(),
             name: tool.name.clone(),
             description: tool.description,
-            category: tool.category,
+            category: tool.category.to_string(),
             version: "1.0.0".to_string(),
             enabled: states.get(&tool.name).copied().unwrap_or(tool.enabled),
             input_schema: Some(tool.input_schema),
@@ -279,7 +280,7 @@ pub struct PortDef {
 async fn get_plugin_input_schema_async(
     plugin_id: &str,
     plugin_name: &str,
-    main_category: &str,
+    main_category: sentinel_plugins::PluginMainCategory,
     code: &str,
 ) -> serde_json::Value {
     // 构建临时元数据
@@ -288,8 +289,8 @@ async fn get_plugin_input_schema_async(
         name: plugin_name.to_string(),
         version: "1.0.0".to_string(),
         author: None,
-        main_category: main_category.to_string(),
-        category: "tool".to_string(),
+        main_category,
+        category: "tool".into(),
         monitor_type: None,
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
@@ -681,7 +682,11 @@ pub async fn build_node_catalog(
         for plugin in plugins {
             // 普通 Agent 工具策略只加载 agent；工作流目录需要包含 bounty 执行插件。
             if plugin.status == sentinel_traffic::PluginStatus::Enabled
-                && matches!(plugin.metadata.main_category.as_str(), "agent" | "bounty")
+                && matches!(
+                    plugin.metadata.main_category,
+                    sentinel_plugins::PluginMainCategory::Agent
+                        | sentinel_plugins::PluginMainCategory::Bounty
+                )
             {
                 // 获取插件代码并通过运行时获取 schema（优先），静态解析作为 fallback
                 let params_schema = if let Some(ref db) = db_service {
@@ -690,7 +695,7 @@ pub async fn build_node_catalog(
                         get_plugin_input_schema_async(
                             &plugin.metadata.id,
                             &plugin.metadata.name,
-                            &plugin.metadata.main_category,
+                            plugin.metadata.main_category,
                             &code,
                         )
                         .await
@@ -755,7 +760,7 @@ async fn load_tool_server_metadata() -> Result<Vec<ToolMetadata>, String> {
     metadata.extend(
         tools
             .into_iter()
-            .filter(|tool| tool.source != "builtin")
+            .filter(|tool| !matches!(tool.source, ToolSource::Builtin))
             .filter(|tool| is_configurable_tool_name(&tool.name))
             .map(convert_tool_info_to_metadata),
     );
@@ -768,16 +773,11 @@ fn build_tool_statistics_from_metadata(tools: &[ToolMetadata]) -> ToolStatistics
     let mut workflow_tools = 0usize;
     let mut mcp_tools = 0usize;
     let mut plugin_tools = 0usize;
-    let mut always_available = 0usize;
 
     for tool in tools {
         *by_category
             .entry(tool.category.to_string())
             .or_insert(0usize) += 1;
-
-        if tool.always_available {
-            always_available += 1;
-        }
 
         match tool.category {
             ToolCategory::MCP => mcp_tools += 1,
@@ -806,7 +806,6 @@ fn build_tool_statistics_from_metadata(tools: &[ToolMetadata]) -> ToolStatistics
         workflow_tools,
         mcp_tools,
         plugin_tools,
-        always_available,
         by_category,
         by_cost,
     }

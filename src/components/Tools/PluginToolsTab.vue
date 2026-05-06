@@ -254,6 +254,13 @@
       :ai-messages="aiChatMessages"
       :ai-streaming="aiChatStreaming"
       :ai-streaming-content="aiChatStreamingContent"
+      :ai-assistant-profile-id="pluginEditorStore.aiAssistantProfileId"
+      :ai-assistant-profile-options="resolvedAssistantProfileOptions"
+      :ai-assistant-profile-default-label="resolvedDefaultAssistantProfileLabel"
+      :ai-assistant-profile-invalid="aiAssistantProfileInvalid"
+      :ai-assistant-effective-model-label="resolvedAiAssistantEffectiveModelLabel"
+      :ai-assistant-effective-model-source-label="resolvedAiAssistantEffectiveModelSourceLabel"
+      :ai-assistant-runtime-meta-text="resolvedAiAssistantRuntimeMetaText"
       :selected-code-ref="selectedCodeRef"
       :selected-test-result-ref="selectedTestResultRef"
       :plugin-testing="pluginTesting"
@@ -268,6 +275,7 @@
       @close="closeCodeEditorDialog"
       @toggle-ai-panel="showAiPanel = !showAiPanel"
       @send-ai-message="sendAiChatMessage"
+      @update-ai-assistant-profile-id="pluginEditorStore.setAiAssistantProfileId($event)"
       @clear-code-ref="selectedCodeRef = null"
       @clear-test-result-ref="selectedTestResultRef = null"
       @ai-quick-action="handleAiQuickAction"
@@ -283,9 +291,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
 import { useI18n } from 'vue-i18n'
+import { useAssistantProfiles } from '@/components/Agent/assistantProfiles'
 import UnifiedToolTest from './UnifiedToolTest.vue'
 import PluginCodeEditorDialog from '@/components/PluginManagement/PluginCodeEditorDialog.vue'
 import { mainCategories, type SubCategory, type NewPluginMetadata, type AiChatMessage, type CodeReference, type TestResultReference } from '@/components/PluginManagement/types'
+import { usePluginEditorStore } from '@/stores/pluginEditor'
 import { EditorView } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
 import { basicSetup } from 'codemirror'
@@ -293,6 +303,30 @@ import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 
 const { t } = useI18n()
+const pluginEditorStore = usePluginEditorStore()
+const {
+  defaultAssistantProfileId,
+  loadDefaultAssistantProfile,
+  loadAssistantProfiles,
+  profileOptions: assistantProfileOptions,
+} = useAssistantProfiles()
+const aiGlobalDefaultModel = ref('')
+
+void loadDefaultAssistantProfile()
+void loadAssistantProfiles()
+
+const loadAiGlobalDefaultModel = async () => {
+  try {
+    const aiConfig = await invoke<any>('get_ai_config')
+    aiGlobalDefaultModel.value = typeof aiConfig?.default_llm_model === 'string'
+      ? aiConfig.default_llm_model.trim()
+      : ''
+  } catch {
+    aiGlobalDefaultModel.value = ''
+  }
+}
+
+void loadAiGlobalDefaultModel()
 
 const props = withDefaults(defineProps<{
   embedded?: boolean
@@ -567,6 +601,86 @@ const selectedCodeRef = ref<CodeReference | null>(null)
 const selectedTestResultRef = ref<TestResultReference | null>(null)
 const pluginTesting = ref(false)
 const isPreviewMode = ref(false)
+
+const aiAssistantProfileInvalid = computed(() =>
+  !!pluginEditorStore.aiAssistantProfileId
+  && !assistantProfileOptions.value.some(profile => profile.id === pluginEditorStore.aiAssistantProfileId),
+)
+
+const resolvedDefaultAssistantProfileLabel = computed(() => {
+  const defaultProfile = assistantProfileOptions.value.find(
+    profile => profile.id === defaultAssistantProfileId.value,
+  )
+  return defaultProfile?.label || defaultAssistantProfileId.value || '未配置'
+})
+
+const resolvedAssistantProfileOptions = computed(() => {
+  if (!aiAssistantProfileInvalid.value || !pluginEditorStore.aiAssistantProfileId) {
+    return assistantProfileOptions.value
+  }
+  return [
+    {
+      id: pluginEditorStore.aiAssistantProfileId,
+      label: `已失效: ${pluginEditorStore.aiAssistantProfileId}`,
+      description: 'Stored plugin assistant profile is no longer available.',
+    },
+    ...assistantProfileOptions.value,
+  ]
+})
+
+const resolvedAiAssistantProfile = computed(() => {
+  const explicitProfileId = pluginEditorStore.aiAssistantProfileId?.trim() || ''
+  if (explicitProfileId) {
+    return assistantProfileOptions.value.find(profile => profile.id === explicitProfileId) || null
+  }
+  return assistantProfileOptions.value.find(profile => profile.id === defaultAssistantProfileId.value) || null
+})
+
+const resolvedAiAssistantEffectiveModelLabel = computed(() => {
+  const runtimeModel = pluginEditorStore.aiAssistantRuntimeModel?.trim() || ''
+  const runtimeProvider = pluginEditorStore.aiAssistantRuntimeProvider?.trim() || ''
+  if (runtimeModel) {
+    return runtimeModel.includes('/') || !runtimeProvider
+      ? runtimeModel
+      : `${runtimeProvider}/${runtimeModel}`
+  }
+  if (aiAssistantProfileInvalid.value) {
+    return 'Agent Profile 已失效'
+  }
+  const profileModel = resolvedAiAssistantProfile.value?.defaultModel?.trim() || ''
+  if (profileModel) return profileModel
+  if (aiGlobalDefaultModel.value) return aiGlobalDefaultModel.value
+  return '未配置'
+})
+
+const resolvedAiAssistantEffectiveModelSourceLabel = computed(() => {
+  const runtimeSource = pluginEditorStore.aiAssistantRuntimeModelSource?.trim() || ''
+  if (runtimeSource) {
+    return runtimeSource
+  }
+  if (aiAssistantProfileInvalid.value) {
+    return '配置失效'
+  }
+  const profileModel = resolvedAiAssistantProfile.value?.defaultModel?.trim() || ''
+  if (profileModel) {
+    return pluginEditorStore.aiAssistantProfileId ? '显式 Profile 默认模型' : '默认 Profile 默认模型'
+  }
+  if (aiGlobalDefaultModel.value) {
+    return 'AI 全局默认模型'
+  }
+  return '未配置'
+})
+
+const resolvedAiAssistantRuntimeMetaText = computed(() => {
+  const lines = [
+    pluginEditorStore.aiAssistantRuntimeProvider ? `provider: ${pluginEditorStore.aiAssistantRuntimeProvider}` : '',
+    pluginEditorStore.aiAssistantRuntimeModel ? `model: ${pluginEditorStore.aiAssistantRuntimeModel}` : '',
+    pluginEditorStore.aiAssistantRuntimeModelSource ? `model_source: ${pluginEditorStore.aiAssistantRuntimeModelSource}` : '',
+    pluginEditorStore.aiAssistantRuntimeProfileId ? `assistant_profile_id: ${pluginEditorStore.aiAssistantRuntimeProfileId}` : '',
+    pluginEditorStore.aiAssistantRuntimeTaskProfileId ? `task_profile_id: ${pluginEditorStore.aiAssistantRuntimeTaskProfileId}` : '',
+  ].filter(Boolean)
+  return lines.join('\n')
+})
 
 let codeEditorView: EditorView | null = null
 let fullscreenCodeEditorView: EditorView | null = null
@@ -950,6 +1064,17 @@ async function handleAiQuickAction(action: string) {
 
 async function sendAiChatMessage(message: string) {
   if (!message.trim() || aiChatStreaming.value) return
+
+  if (!defaultAssistantProfileId.value) {
+    await loadDefaultAssistantProfile()
+  }
+
+  if (aiAssistantProfileInvalid.value) {
+    dialog.error(t('plugins.invalidAgentProfileHint', '当前 Agent Profile 已失效，请重新选择。'))
+    return
+  }
+
+  pluginEditorStore.clearAiAssistantRuntimeMeta()
   
   // Get current references
   const codeRef = selectedCodeRef.value
@@ -985,7 +1110,7 @@ async function sendAiChatMessage(message: string) {
   aiChatStreaming.value = true
   aiChatStreamingContent.value = ''
   
-  const streamId = `plugin_edit_${Date.now()}`
+  const streamId = `plugin_assistant_${Date.now()}`
   
   try {
     // Build system prompt
@@ -1063,47 +1188,37 @@ const sqlPayloads = [
 `
     const systemPrompt = `${baseSystemPrompt}\n\n${agentInstructions}`
     
-    // Build user prompt with context
-    let userPrompt = message
-    const contextParts: string[] = []
-    
-    if (finalCodeRef.isFullCode) {
-      contextParts.push(`[Current Full Plugin Code]:\n\`\`\`typescript\n${finalCodeRef.code}\n\`\`\``)
-    } else {
-      contextParts.push(`[Current Focused Code Block] (Lines ${finalCodeRef.startLine}-${finalCodeRef.endLine}):\n\`\`\`typescript\n${finalCodeRef.code}\n\`\`\``)
-      contextParts.push(`[Full Code Context]:\n\`\`\`typescript\n${latestCode}\n\`\`\``)
-    }
-    
-    if (testResultRef) {
-      contextParts.push(`[Latest Plugin Test Result]:\n${testResultRef.preview}`)
-    }
-    
-    const instruction = "\n\nPlease modify the code according to the above code context and my needs. Please return the code directly."
-    
-    if (contextParts.length > 0) {
-      userPrompt = `${contextParts.join('\n\n')}\n\n[User Requirement]: ${message}${instruction}`
-    } else {
-      userPrompt = `${message}${instruction}`
-    }
-    
     // Clear references after sending
     selectedCodeRef.value = null
     selectedTestResultRef.value = null
     
     let generatedContent = ''
+
+    const unlistenStart = await listen('plugin_assistant_start', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        pluginEditorStore.setAiAssistantRuntimeMeta({
+          provider: event.payload.provider,
+          model: event.payload.model,
+          modelSource: event.payload.model_source,
+          profileId: event.payload.assistant_profile_id,
+          taskProfileId: event.payload.task_profile_id,
+        })
+      }
+    })
     
-    const unlistenDelta = await listen('plugin_gen_delta', (event: any) => {
+    const unlistenDelta = await listen('plugin_assistant_delta', (event: any) => {
       if (event.payload.stream_id === streamId) {
         generatedContent += event.payload.delta || ''
         aiChatStreamingContent.value = generatedContent
       }
     })
     
-    const unlistenComplete = await listen('plugin_gen_complete', (event: any) => {
+    const unlistenComplete = await listen('plugin_assistant_complete', (event: any) => {
       if (event.payload.stream_id === streamId) {
         generatedContent = event.payload.content || generatedContent
         aiChatStreaming.value = false
         aiChatStreamingContent.value = ''
+        unlistenStart()
         
         // Parse diff blocks
         const diffBlocks = parseDiffBlocks(generatedContent)
@@ -1157,25 +1272,31 @@ const sqlPayloads = [
       }
     })
     
-    const unlistenError = await listen('plugin_gen_error', (event: any) => {
+    const unlistenError = await listen('plugin_assistant_error', (event: any) => {
       if (event.payload.stream_id === streamId) {
         aiChatMessages.value.push({ role: 'assistant', content: `❌ ${event.payload.error || 'AI 处理失败'}` })
         aiChatStreaming.value = false
         aiChatStreamingContent.value = ''
+        unlistenStart()
       }
     })
     
-    await invoke('generate_plugin_stream', {
+    await invoke('plugin_assistant_chat_stream', {
       request: {
         stream_id: streamId,
-        message: userPrompt,
+        message,
         system_prompt: systemPrompt,
         service_name: 'default',
-        history: history
+        history: history,
+        current_code: latestCode,
+        code_context: finalCodeRef.isFullCode ? null : finalCodeRef.code,
+        assistant_profile_id: pluginEditorStore.aiAssistantProfileId || null,
+        task_kind: 'plugin_edit'
       }
     })
     
     setTimeout(() => {
+      unlistenStart()
       unlistenDelta()
       unlistenComplete()
       unlistenError()

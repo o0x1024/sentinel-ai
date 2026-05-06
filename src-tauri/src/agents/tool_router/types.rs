@@ -1,15 +1,6 @@
+pub use sentinel_tools::ToolExposure;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-/// 工具暴露级别
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ToolExposure {
-    Always,
-    Core,
-    Deferred,
-    Standard,
-}
 
 /// 工具元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,7 +13,6 @@ pub struct ToolMetadata {
     #[serde(default)]
     pub search_hint: Option<String>,
     pub cost_estimate: ToolCost,
-    pub always_available: bool,
     #[serde(default = "default_exposure")]
     pub exposure: ToolExposure,
 }
@@ -49,6 +39,7 @@ pub enum ToolCategory {
     Scanning,
     Exploitation,
     Monitoring,
+    Traffic,
     Other,
 }
 
@@ -69,6 +60,7 @@ impl std::fmt::Display for ToolCategory {
             ToolCategory::Scanning => write!(f, "scanning"),
             ToolCategory::Exploitation => write!(f, "exploitation"),
             ToolCategory::Monitoring => write!(f, "monitoring"),
+            ToolCategory::Traffic => write!(f, "traffic"),
             ToolCategory::Other => write!(f, "other"),
         }
     }
@@ -116,7 +108,7 @@ pub struct ToolSelectionPlan {
 pub struct ToolConfig {
     pub selection_strategy: ToolSelectionStrategy,
     pub max_tools: usize,
-    pub fixed_tools: Vec<String>,
+    pub preselected_tools: Vec<String>,
     pub disabled_tools: Vec<String>,
     #[serde(default)]
     pub allowed_tools: Vec<String>,
@@ -128,12 +120,39 @@ impl Default for ToolConfig {
         Self {
             selection_strategy: ToolSelectionStrategy::Keyword,
             max_tools: 5,
-            fixed_tools: vec![],
+            preselected_tools: vec![],
             disabled_tools: vec![],
             allowed_tools: vec![],
             enabled: true,
         }
     }
+}
+
+impl ToolConfig {
+    pub fn from_json_str(raw: &str) -> serde_json::Result<Self> {
+        let value = serde_json::from_str::<serde_json::Value>(raw)?;
+        Self::from_json_value(value)
+    }
+
+    pub fn from_json_value(value: serde_json::Value) -> serde_json::Result<Self> {
+        serde_json::from_value(migrate_tool_config_value(value))
+    }
+}
+
+fn migrate_tool_config_value(value: serde_json::Value) -> serde_json::Value {
+    let Some(mut object) = value.as_object().cloned() else {
+        return value;
+    };
+
+    if !object.contains_key("preselected_tools") {
+        if let Some(legacy) = object.remove("fixed_tools") {
+            object.insert("preselected_tools".to_string(), legacy);
+        }
+    } else {
+        object.remove("fixed_tools");
+    }
+
+    serde_json::Value::Object(object)
 }
 
 /// 工具统计信息
@@ -144,7 +163,6 @@ pub struct ToolStatistics {
     pub workflow_tools: usize,
     pub mcp_tools: usize,
     pub plugin_tools: usize,
-    pub always_available: usize,
     pub by_category: HashMap<String, usize>,
     pub by_cost: HashMap<String, usize>,
 }

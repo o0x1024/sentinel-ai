@@ -4,11 +4,13 @@ import type { ParallelTaskSource } from '@/composables/useAgentParallelRunState'
 
 export interface AgentStartEvent {
   execution_id: string
+  generation?: number | null
   task: string
 }
 
 export interface AgentChunkEvent {
   execution_id: string
+  generation?: number | null
   chunk_type: string
   content?: string
   input_tokens?: number
@@ -17,6 +19,7 @@ export interface AgentChunkEvent {
 
 export interface AgentToolCallEvent {
   execution_id: string
+  generation?: number | null
   tool_id: string
   tool_name: string
   tool_input: any
@@ -24,6 +27,7 @@ export interface AgentToolCallEvent {
 
 export interface AgentToolCallCompleteEvent {
   execution_id: string
+  generation?: number | null
   tool_call_id: string
   tool_name: string
   arguments: string
@@ -31,6 +35,7 @@ export interface AgentToolCallCompleteEvent {
 
 export interface AgentToolResultEvent {
   execution_id: string
+  generation?: number | null
   tool_name: string
   tool_input: any
   tool_result: string
@@ -39,6 +44,7 @@ export interface AgentToolResultEvent {
 
 export interface AgentToolResultNewEvent {
   execution_id: string
+  generation?: number | null
   tool_call_id: string
   result: string
   success?: boolean
@@ -47,11 +53,13 @@ export interface AgentToolResultNewEvent {
 
 export interface AgentToolsSelectedEvent {
   execution_id: string
+  generation?: number | null
   tools: string[]
 }
 
 export interface AgentToolsActivatedEvent {
   execution_id: string
+  generation?: number | null
   tool_ids: string[]
   query?: string | null
   runtime_hint?: string | null
@@ -60,6 +68,7 @@ export interface AgentToolsActivatedEvent {
 
 export interface AgentToolExecutedEvent {
   execution_id: string
+  generation?: number | null
   tool: string
   arguments: any
   result: string
@@ -69,6 +78,7 @@ export interface AgentToolExecutedEvent {
 
 export interface AgentIterationEvent {
   execution_id: string
+  generation?: number | null
   iteration: number
   max_iterations: number
 }
@@ -77,6 +87,7 @@ export type AgentExecutionOutcome = 'succeeded' | 'failed' | 'cancelled'
 
 export interface AgentExecutionFinishedEvent {
   execution_id: string
+  generation?: number | null
   outcome: AgentExecutionOutcome
   success: boolean
   error?: string | null
@@ -99,6 +110,7 @@ export interface AgentGlobalSummaryUpdatedEvent {
 
 export interface AgentRetryEvent {
   execution_id: string
+  generation?: number | null
   retry_count: number
   max_retries: number
   error?: string
@@ -106,6 +118,7 @@ export interface AgentRetryEvent {
 
 export interface AgentCompletionGuardFailedEvent {
   execution_id: string
+  generation?: number | null
   reasons: string[]
   required_artifact?: string | null
   response_length?: number
@@ -114,6 +127,7 @@ export interface AgentCompletionGuardFailedEvent {
 
 export interface AgentTenthManCritiqueEvent {
   execution_id: string
+  generation?: number | null
   critique: string
   message_id: string
 }
@@ -156,6 +170,7 @@ export interface SubagentItem {
 
 export interface OrderedMessageChunk {
   execution_id: string
+  generation?: number | null
   message_id: string
   conversation_id?: string
   sequence: number

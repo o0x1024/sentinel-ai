@@ -23,9 +23,14 @@ export function applyFileVerificationStatuses(messages: AgentMessage[]): AgentMe
 
     if (!FILE_MUTATION_TOOLS.has(toolName)) continue
 
+    if (metadata.status === 'failed' || metadata.status === 'cancelled' || metadata.error) {
+      metadata.file_verification_status = 'failed'
+      continue
+    }
+
     const fileRecord = extractFileRecord(message)
     if (!fileRecord) {
-      metadata.file_verification_status = 'pending'
+      delete metadata.file_verification_status
       continue
     }
 

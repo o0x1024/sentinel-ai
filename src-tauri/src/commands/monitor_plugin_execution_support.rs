@@ -2,9 +2,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use sentinel_db::{Database, DatabaseService};
+use sentinel_plugins::PluginMainCategory;
 
-pub(crate) fn is_monitor_execution_plugin_category(main_category: &str) -> bool {
-    matches!(main_category, "agent" | "bounty")
+pub(crate) fn is_monitor_execution_plugin_category(main_category: PluginMainCategory) -> bool {
+    matches!(
+        main_category,
+        PluginMainCategory::Agent | PluginMainCategory::Bounty
+    )
 }
 
 pub(crate) fn normalize_plugin_registry_id(value: &str) -> String {
@@ -37,7 +41,7 @@ pub(crate) async fn execute_monitor_plugin(
             })?
             .ok_or_else(|| format!("Plugin '{}' not found", normalized_plugin_id))?;
 
-        if !is_monitor_execution_plugin_category(&plugin_record.metadata.main_category) {
+        if !is_monitor_execution_plugin_category(plugin_record.metadata.main_category) {
             return Err(format!(
                 "Plugin '{}' is not a monitor execution plugin",
                 normalized_plugin_id
@@ -69,7 +73,7 @@ pub(crate) async fn execute_monitor_plugin(
                 name: plugin_record.metadata.name.clone(),
                 version: plugin_record.metadata.version.clone(),
                 author: plugin_record.metadata.author.clone(),
-                main_category: plugin_record.metadata.main_category.clone(),
+                main_category: plugin_record.metadata.main_category,
                 category: plugin_record.metadata.category.clone(),
                 monitor_type: plugin_record.metadata.monitor_type.clone(),
                 description: plugin_record.metadata.description.clone(),

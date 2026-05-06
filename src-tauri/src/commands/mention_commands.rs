@@ -7,7 +7,7 @@ use tauri::State;
 use tokio::io::AsyncReadExt;
 use walkdir::{DirEntry, WalkDir};
 
-use sentinel_db::{Database, DatabaseService};
+use sentinel_db::DatabaseService;
 
 const DEFAULT_SEARCH_LIMIT: usize = 8;
 const MAX_SEARCH_RESULTS: usize = 20;
@@ -64,21 +64,16 @@ fn skip_directory(entry: &DirEntry) -> bool {
     )
 }
 
-async fn resolve_working_directory(db_service: &DatabaseService) -> Result<PathBuf, String> {
-    let configured = db_service
-        .get_config("agent", "working_directory")
-        .await
-        .map_err(|e| format!("Failed to read working directory: {e}"))?;
-    let configured = if configured.is_some() {
-        configured
-    } else {
-        db_service
-            .get_config("ai", "working_directory")
-            .await
-            .map_err(|e| format!("Failed to read working directory: {e}"))?
-    };
-
-    let raw = configured.unwrap_or_default().trim().to_string();
+async fn resolve_effective_working_directory(
+    db_service: &DatabaseService,
+    conversation_id: Option<&str>,
+) -> Result<PathBuf, String> {
+    let raw = crate::commands::ai_conversation_binding_support::resolve_effective_conversation_working_directory(
+        db_service,
+        conversation_id,
+    )
+    .await?
+    .unwrap_or_default();
     if raw.is_empty() {
         return Err("请先在 Agent 设置中配置工作目录".to_string());
     }
@@ -214,9 +209,14 @@ pub async fn search_recent_proxy_requests(
 pub async fn search_working_directory_files(
     query: String,
     limit: Option<usize>,
+    conversation_id: Option<String>,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<WorkingDirectoryFileMatch>, String> {
-    let working_directory = resolve_working_directory(db_service.inner().as_ref()).await?;
+    let working_directory = resolve_effective_working_directory(
+        db_service.inner().as_ref(),
+        conversation_id.as_deref(),
+    )
+    .await?;
     let capped_limit = limit
         .unwrap_or(DEFAULT_SEARCH_LIMIT)
         .clamp(1, MAX_SEARCH_RESULTS);
@@ -265,9 +265,14 @@ pub async fn search_working_directory_files(
 pub async fn read_working_directory_file_preview(
     relative_path: String,
     max_chars: Option<usize>,
+    conversation_id: Option<String>,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<WorkingDirectoryFilePreview, String> {
-    let working_directory = resolve_working_directory(db_service.inner().as_ref()).await?;
+    let working_directory = resolve_effective_working_directory(
+        db_service.inner().as_ref(),
+        conversation_id.as_deref(),
+    )
+    .await?;
     let safe_relative = ensure_relative_path(&relative_path)?;
     let full_path = working_directory.join(&safe_relative);
     let canonical = std::fs::canonicalize(&full_path)

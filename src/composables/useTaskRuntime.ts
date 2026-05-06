@@ -48,6 +48,7 @@ type AgentExecutionOutcome = 'succeeded' | 'failed' | 'cancelled'
 
 interface AgentExecutionFinishedEvent {
   execution_id: string
+  generation?: number | null
   outcome: AgentExecutionOutcome
   success: boolean
   error?: string | null

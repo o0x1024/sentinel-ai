@@ -1,54 +1,46 @@
-use sentinel_tools::ToolInfo;
+use sentinel_tools::{
+    ToolCategory as SentinelToolCategory, ToolInfo, ToolSource as SentinelToolSource,
+};
 
-use super::types::{ToolCategory, ToolCost, ToolExposure, ToolMetadata};
+use super::types::{ToolCategory, ToolCost, ToolMetadata};
 
 #[derive(Debug, Clone)]
 struct BuiltinToolPolicy {
     cost_estimate: ToolCost,
-    always_available: bool,
 }
 
 fn builtin_tool_policy(tool_name: &str) -> BuiltinToolPolicy {
     match tool_name {
         "ask_user_question" => BuiltinToolPolicy {
             cost_estimate: ToolCost::Low,
-            always_available: true,
         },
         "plugin_authoring" => BuiltinToolPolicy {
             cost_estimate: ToolCost::High,
-            always_available: true,
         },
         "tool_search" => BuiltinToolPolicy {
             cost_estimate: ToolCost::Low,
-            always_available: true,
         },
         "shell" => BuiltinToolPolicy {
             cost_estimate: ToolCost::Medium,
-            always_available: true,
         },
         "glob" | "grep" | "file_read" | "lsp" | "interactive_shell" | "skills" | "tasks"
         | "memory" => BuiltinToolPolicy {
             cost_estimate: ToolCost::Low,
-            always_available: matches!(tool_name, "skills" | "tasks"),
         },
         "file_edit" | "file_write" | "http_request" | "browser" | "browser_shell"
         | "web_search" | "route_discovery" | "search_exploit" | "ocr" | "tenth_man_review" => {
             BuiltinToolPolicy {
                 cost_estimate: ToolCost::Medium,
-                always_available: false,
             }
         }
         "spawn_agent" => BuiltinToolPolicy {
             cost_estimate: ToolCost::High,
-            always_available: false,
         },
         "wait_agents" | "list_agents" | "close_agent" => BuiltinToolPolicy {
             cost_estimate: ToolCost::Low,
-            always_available: false,
         },
         _ => BuiltinToolPolicy {
             cost_estimate: ToolCost::Medium,
-            always_available: false,
         },
     }
 }
@@ -69,16 +61,29 @@ pub(crate) fn parse_tool_category(raw: &str) -> ToolCategory {
         "scanning" => ToolCategory::Scanning,
         "exploitation" => ToolCategory::Exploitation,
         "monitoring" => ToolCategory::Monitoring,
+        "traffic" => ToolCategory::Traffic,
         _ => ToolCategory::Other,
     }
 }
 
-pub(crate) fn parse_tool_exposure(raw: &str) -> ToolExposure {
-    match raw.trim().to_lowercase().as_str() {
-        "always" => ToolExposure::Always,
-        "core" => ToolExposure::Core,
-        "deferred" => ToolExposure::Deferred,
-        _ => ToolExposure::Standard,
+fn convert_tool_category(category: SentinelToolCategory) -> ToolCategory {
+    match category {
+        SentinelToolCategory::Network => ToolCategory::Network,
+        SentinelToolCategory::Security => ToolCategory::Security,
+        SentinelToolCategory::Data => ToolCategory::Data,
+        SentinelToolCategory::AI => ToolCategory::AI,
+        SentinelToolCategory::System => ToolCategory::System,
+        SentinelToolCategory::Mcp => ToolCategory::MCP,
+        SentinelToolCategory::Plugin => ToolCategory::Plugin,
+        SentinelToolCategory::Workflow => ToolCategory::Workflow,
+        SentinelToolCategory::Browser => ToolCategory::Browser,
+        SentinelToolCategory::Utility => ToolCategory::Utility,
+        SentinelToolCategory::Recon => ToolCategory::Recon,
+        SentinelToolCategory::Scanning => ToolCategory::Scanning,
+        SentinelToolCategory::Exploitation => ToolCategory::Exploitation,
+        SentinelToolCategory::Monitoring => ToolCategory::Monitoring,
+        SentinelToolCategory::Traffic => ToolCategory::Traffic,
+        SentinelToolCategory::Other => ToolCategory::Other,
     }
 }
 
@@ -88,12 +93,11 @@ pub(crate) fn is_configurable_tool_name(tool_name: &str) -> bool {
 }
 
 pub(crate) fn convert_tool_info_to_metadata(tool: ToolInfo) -> ToolMetadata {
-    let category = if tool.source.starts_with("plugin::") {
+    let category = if matches!(tool.source, SentinelToolSource::Plugin { .. }) {
         ToolCategory::Plugin
     } else {
-        parse_tool_category(&tool.category)
+        convert_tool_category(tool.category)
     };
-    let exposure = parse_tool_exposure(&tool.exposure);
     let policy = builtin_tool_policy(&tool.name);
 
     ToolMetadata {
@@ -104,15 +108,14 @@ pub(crate) fn convert_tool_info_to_metadata(tool: ToolInfo) -> ToolMetadata {
         tags: tool.tags,
         search_hint: tool.search_hint,
         cost_estimate: policy.cost_estimate,
-        always_available: policy.always_available || matches!(exposure, ToolExposure::Always),
-        exposure,
+        exposure: tool.exposure,
     }
 }
 
 pub(crate) fn build_builtin_tool_metadata(tools: Vec<ToolInfo>) -> Vec<ToolMetadata> {
     tools
         .into_iter()
-        .filter(|tool| tool.source == "builtin")
+        .filter(|tool| matches!(tool.source, SentinelToolSource::Builtin))
         .filter(|tool| is_configurable_tool_name(&tool.name))
         .map(convert_tool_info_to_metadata)
         .collect()
@@ -121,20 +124,41 @@ pub(crate) fn build_builtin_tool_metadata(tools: Vec<ToolInfo>) -> Vec<ToolMetad
 #[cfg(test)]
 mod tests {
     use sentinel_tools::dynamic_tool::ToolExecutionPolicy;
+    use sentinel_tools::ToolCategory as SentinelToolCategory;
+    use sentinel_tools::ToolExposure;
 
     use super::*;
 
     fn tool_info(source: &str, category: &str) -> ToolInfo {
+        let source = SentinelToolSource::from_wire_str(source).expect("valid test tool source");
+        let category = match category {
+            "network" => SentinelToolCategory::Network,
+            "security" => SentinelToolCategory::Security,
+            "data" => SentinelToolCategory::Data,
+            "ai" => SentinelToolCategory::AI,
+            "system" => SentinelToolCategory::System,
+            "mcp" => SentinelToolCategory::Mcp,
+            "plugin" => SentinelToolCategory::Plugin,
+            "workflow" => SentinelToolCategory::Workflow,
+            "browser" => SentinelToolCategory::Browser,
+            "utility" => SentinelToolCategory::Utility,
+            "recon" => SentinelToolCategory::Recon,
+            "scanning" => SentinelToolCategory::Scanning,
+            "exploitation" => SentinelToolCategory::Exploitation,
+            "monitoring" => SentinelToolCategory::Monitoring,
+            "traffic" => SentinelToolCategory::Traffic,
+            _ => SentinelToolCategory::Other,
+        };
         ToolInfo {
             name: "plugin__active_probe".to_string(),
             description: "Agent plugin tool".to_string(),
             input_schema: serde_json::json!({ "type": "object" }),
             output_schema: None,
-            source: source.to_string(),
-            category: category.to_string(),
+            source,
+            category,
             tags: vec![],
             search_hint: None,
-            exposure: "deferred".to_string(),
+            exposure: ToolExposure::Deferred,
             execution_policy: ToolExecutionPolicy::default(),
             enabled: true,
         }

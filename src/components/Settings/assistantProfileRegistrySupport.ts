@@ -52,7 +52,7 @@ export const profileToToolConfig = (profile: AssistantProfileOption): UiToolConf
   enabled: profile.defaultToolsEnabled === true,
   selection_strategy: profile.defaultToolSelectionStrategy || 'Keyword',
   max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
-  fixed_tools: normalizeToolIds(profile.defaultFixedTools),
+  preselected_tools: normalizeToolIds(profile.defaultPreselectedTools),
   disabled_tools: normalizeToolIds(profile.defaultDisabledTools),
   manual_tools: normalizeToolIds(profile.defaultManualTools),
 })
@@ -68,7 +68,7 @@ export const applyToolConfigToProfile = (
   profile.defaultToolsEnabled = config.enabled === true
   profile.defaultToolSelectionStrategy = parsedStrategy.strategy
   profile.defaultMaxTools = Math.max(1, Math.floor(Number(config.max_tools) || 1))
-  profile.defaultFixedTools = normalizeToolIds(config.fixed_tools)
+  profile.defaultPreselectedTools = normalizeToolIds(config.preselected_tools)
   profile.defaultDisabledTools = normalizeToolIds(config.disabled_tools)
   profile.defaultManualTools = parsedStrategy.strategy === 'Manual'
     ? parsedStrategy.manualTools
@@ -99,7 +99,7 @@ export const normalizeAssistantProfileDraft = (profile: AssistantProfileOption):
   defaultTenthManEnabled: profile.defaultTenthManEnabled === true,
   defaultToolSelectionStrategy: profile.defaultToolSelectionStrategy || 'Keyword',
   defaultMaxTools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
-  defaultFixedTools: normalizeToolIds(profile.defaultFixedTools),
+  defaultPreselectedTools: normalizeToolIds(profile.defaultPreselectedTools),
   defaultDisabledTools: normalizeToolIds(profile.defaultDisabledTools),
   defaultManualTools: normalizeToolIds(profile.defaultManualTools),
   defaultTeamOrchestrationPresetId: profile.defaultTeamOrchestrationPresetId?.trim() || null,

@@ -223,7 +223,9 @@ impl DatabaseService {
 
     pub async fn get_surface_overview(&self, program_id: Option<&str>) -> Result<SurfaceOverview> {
         let counts = self.get_surface_overview_counts(program_id).await?;
-        let by_type = self.get_surface_asset_type_counts_for_program(program_id).await?;
+        let by_type = self
+            .get_surface_asset_type_counts_for_program(program_id)
+            .await?;
         let total_relations = self.count_surface_relations_for_program(program_id).await?;
         let runs = self
             .list_surface_discovery_runs(program_id, Some(20))

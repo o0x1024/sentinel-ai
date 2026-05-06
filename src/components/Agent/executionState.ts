@@ -2,6 +2,7 @@ export type AgentExecutionOutcome = 'succeeded' | 'failed' | 'cancelled'
 
 export interface AgentExecutionFinishedEvent {
   execution_id: string
+  generation?: number | null
   outcome: AgentExecutionOutcome
   success: boolean
   error?: string | null

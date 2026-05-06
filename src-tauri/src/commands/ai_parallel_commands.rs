@@ -1344,6 +1344,7 @@ fn empty_agent_config() -> AgentExecuteConfig {
         current_browser_shell_session_id: None,
         current_terminal_session_fingerprint: None,
         current_terminal_session_id: None,
+        working_directory: None,
         referenced_files: None,
         referenced_messages: None,
         referenced_assets: None,

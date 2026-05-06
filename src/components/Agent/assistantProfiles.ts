@@ -14,7 +14,7 @@ export interface AssistantProfileOption {
   defaultTenthManEnabled?: boolean | null
   defaultToolSelectionStrategy?: string | null
   defaultMaxTools?: number | null
-  defaultFixedTools?: string[] | null
+  defaultPreselectedTools?: string[] | null
   defaultDisabledTools?: string[] | null
   defaultManualTools?: string[] | null
   defaultTeamOrchestrationPresetId?: string | null
@@ -60,7 +60,7 @@ let loadDefaultTeamProfilePromise: Promise<void> | null = null
 const TOOL_SELECTION_STRATEGIES = new Set(['Keyword', 'LLM', 'Hybrid', 'Manual', 'All'])
 const DEFAULT_TEAM_ROLE_TOOLS: Record<string, string[]> = {
   orchestrator: ['ask_user_question'],
-  specialist: ['interactive_shell', 'shell', 'file_read', 'grep', 'http_request', 'web_search'],
+  specialist: ['interactive_shell', 'file_read', 'file_edit', 'file_write', 'grep', 'http_request', 'web_search'],
   monitor: ['tenth_man_review'],
 }
 
@@ -93,7 +93,7 @@ const normalizeAssistantProfile = (profile: AssistantProfileOption): AssistantPr
     ? profile.defaultToolSelectionStrategy
     : 'Keyword',
   defaultMaxTools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
-  defaultFixedTools: normalizeToolIds(profile.defaultFixedTools),
+  defaultPreselectedTools: normalizeToolIds(profile.defaultPreselectedTools),
   defaultDisabledTools: normalizeToolIds(profile.defaultDisabledTools),
   defaultManualTools: normalizeToolIds(profile.defaultManualTools),
   defaultTeamOrchestrationPresetId: profile.defaultTeamOrchestrationPresetId?.trim() || null,
@@ -112,7 +112,7 @@ const normalizeTeamToolPolicyMatrix = (value: unknown): Record<string, any> => {
     Object.entries(DEFAULT_TEAM_ROLE_TOOLS).map(([role, defaultTools]) => {
       const rolePolicy = normalizeJsonObject(matrix[role])
       const tools = normalizeToolIds(
-        rolePolicy.tools || rolePolicy.allowed || rolePolicy.manualTools || rolePolicy.fixedTools,
+        rolePolicy.tools || rolePolicy.allowed || rolePolicy.manualTools || rolePolicy.preselectedTools,
       )
       return [role, { tools: tools.length > 0 ? tools : defaultTools }]
     }),

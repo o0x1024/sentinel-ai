@@ -9,7 +9,7 @@ use crate::generators::{
 };
 use crate::services::{
     execute_plugin_authoring, AiServiceManager, PluginAuthoringRequest, PluginAuthoringResult,
-    SystemAgentRuntime,
+    PluginMainCategory, SystemAgentRuntime,
 };
 use crate::TrafficAnalysisState;
 
@@ -60,8 +60,11 @@ pub async fn plugin_authoring_execute(
 pub async fn render_agent_plugin_definition_command(
     request: RenderAgentPluginDefinitionRequest,
 ) -> Result<CommandResponse<String>, String> {
-    if !matches!(request.metadata.main_category.as_str(), "agent" | "bounty") {
-        return Ok(CommandResponse::ok(request.definition));
+    match PluginMainCategory::parse(&request.metadata.main_category)? {
+        PluginMainCategory::Agent | PluginMainCategory::Bounty => {}
+        PluginMainCategory::Traffic | PluginMainCategory::Intruder => {
+            return Ok(CommandResponse::ok(request.definition));
+        }
     }
 
     let definition =
@@ -71,7 +74,7 @@ pub async fn render_agent_plugin_definition_command(
         name: request.metadata.name,
         version: request.metadata.version,
         author: request.metadata.author,
-        category: request.metadata.category,
+        plugin_business_category: request.metadata.category,
         default_severity: request.metadata.default_severity,
         tags: parse_tags(&request.metadata.tags_string),
         description: request.metadata.description,

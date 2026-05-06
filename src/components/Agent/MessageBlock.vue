@@ -32,9 +32,11 @@
     class="segment-summary-panel rounded-lg overflow-hidden bg-info/10 border-l-4 border-info"
   >
     <!-- Panel Header -->
-    <div
+    <button
+      type="button"
       @click="toggleSummaryPanel"
-      class="summary-panel-header flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-info/20 transition-colors"
+      class="summary-panel-header flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-info/20 transition-colors"
+      :aria-expanded="isSummaryPanelExpanded ? 'true' : 'false'"
     >
       <!-- Icon -->
       <i class="fas fa-layer-group text-info text-lg"></i>
@@ -55,7 +57,7 @@
           isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down',
         ]"
       ></i>
-    </div>
+    </button>
 
     <!-- Panel Content (collapsible) -->
     <div v-show="isSummaryPanelExpanded" class="summary-panel-content border-t border-info/30">
@@ -78,9 +80,11 @@
     class="global-summary-panel rounded-lg overflow-hidden bg-warning/10 border-l-4 border-warning"
   >
     <!-- Panel Header -->
-    <div
+    <button
+      type="button"
       @click="toggleSummaryPanel"
-      class="summary-panel-header flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-warning/20 transition-colors"
+      class="summary-panel-header flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-warning/20 transition-colors"
+      :aria-expanded="isSummaryPanelExpanded ? 'true' : 'false'"
     >
       <!-- Icon -->
       <i class="fas fa-brain text-warning text-lg"></i>
@@ -101,7 +105,7 @@
           isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down',
         ]"
       ></i>
-    </div>
+    </button>
 
     <!-- Panel Content (collapsible) -->
     <div v-show="isSummaryPanelExpanded" class="summary-panel-content border-t border-warning/30">
@@ -255,7 +259,7 @@
 
   <!-- Shell Tool - Render as independent message block -->
   <ShellToolResult
-    v-else-if="isShellTool && message.type === 'tool_call'"
+    v-else-if="shouldShowSpecializedShellTool && message.type === 'tool_call'"
     :args="message.metadata?.tool_args"
     :result="message.metadata?.tool_result"
     :error="message.metadata?.error"
@@ -270,6 +274,16 @@
     :result="message.metadata?.tool_result"
     :error="message.metadata?.error"
     :status="message.metadata?.status"
+  />
+
+  <FileToolResult
+    v-else-if="isFileTool"
+    :message="message"
+  />
+
+  <SearchToolResult
+    v-else-if="isSearchTool"
+    :message="message"
   />
 
   <WebSearchToolResult
@@ -365,15 +379,20 @@
             :key="idx"
             class="image-attachment relative group"
           >
-            <img
-              :src="getImagePreviewUrl(img)"
-              class="h-24 w-24 object-cover rounded border border-base-300 bg-base-200 cursor-pointer hover:opacity-80 transition-opacity"
-              :alt="getImageFilename(img)"
+            <button
+              type="button"
+              class="rounded"
               :title="getImageFilename(img)"
               @click="openImagePreview(getImagePreviewUrl(img))"
-            />
+            >
+              <img
+                :src="getImagePreviewUrl(img)"
+                class="h-24 w-24 object-cover rounded border border-base-300 bg-base-200 cursor-pointer hover:opacity-80 transition-opacity"
+                :alt="getImageFilename(img)"
+              />
+            </button>
             <div
-              class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-1 py-0.5 truncate opacity-0 group-hover:opacity-100 transition-opacity"
+              class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-1 py-0.5 truncate opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
             >
               {{ getImageFilename(img) }}
             </div>
@@ -679,9 +698,11 @@ import type {
 import { getMessageTypeName } from '@/types/agent'
 import { formatJsonStringIfPossible, formatJsonValueIfPossible } from '@/utils/jsonFormatting'
 import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
+import FileToolResult from './FileToolResult.vue'
 import MemoryToolResult from './MemoryToolResult.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ParallelModelResultPanel from './ParallelModelResultPanel.vue'
+import SearchToolResult from './SearchToolResult.vue'
 import ShellToolResult from './ShellToolResult.vue'
 import StoredArtifactPanel from './StoredArtifactPanel.vue'
 import ToolCallMessagePanel from './ToolCallMessagePanel.vue'
@@ -696,6 +717,11 @@ import {
   shouldShowRegularMessageBlock,
 } from './messageVisibilitySupport'
 import { buildStoredArtifactViews } from './storedArtifactSupport'
+import {
+  isFileToolName,
+  isSearchToolName,
+  shouldRenderSpecializedShellTool,
+} from './toolRenderSupport'
 
 const { t } = useI18n()
 
@@ -893,14 +919,31 @@ const skillsCardTarget = computed(() => {
 })
 
 // Check if this is a shell tool
-const isShellTool = computed(() => {
-  const name = props.message.metadata?.tool_name?.toLowerCase()
-  return name === 'shell' || name === 'bash' || name === 'cmd' || name === 'powershell'
+const shouldShowSpecializedShellTool = computed(() => {
+  return shouldRenderSpecializedShellTool({
+    toolName: props.message.metadata?.tool_name,
+    result: props.message.metadata?.tool_result,
+    error: props.message.metadata?.error,
+  })
 })
 
 const isAskUserQuestionTool = computed(() => {
   const name = props.message.metadata?.tool_name?.toLowerCase()
   return name === 'ask_user_question'
+})
+
+const isFileTool = computed(() => {
+  return (
+    (props.message.type === 'tool_call' || props.message.type === 'tool_result') &&
+    isFileToolName(props.message.metadata?.tool_name)
+  )
+})
+
+const isSearchTool = computed(() => {
+  return (
+    (props.message.type === 'tool_call' || props.message.type === 'tool_result') &&
+    isSearchToolName(props.message.metadata?.tool_name)
+  )
 })
 
 const isWebSearchTool = computed(() => {
@@ -935,6 +978,8 @@ const fileVerificationText = computed(() => {
       return 'Readback verified'
     case 'pending':
       return 'Readback pending'
+    case 'failed':
+      return 'Write failed'
     default:
       return ''
   }
@@ -946,6 +991,8 @@ const fileVerificationClass = computed(() => {
       return 'bg-success/10 text-success'
     case 'pending':
       return 'bg-warning/10 text-warning'
+    case 'failed':
+      return 'bg-error/10 text-error'
     default:
       return 'bg-base-300/20 text-base-content/60'
   }

@@ -1,4 +1,11 @@
+import type { AssistantConversationBinding } from './agentDraftTypes'
 import type { AiConversationSummary } from './conversationTypes'
+
+type CreateConversationRequest = {
+  service_name: string
+  title: string
+  conversation_binding?: AssistantConversationBinding | null
+}
 
 export const pickLatestConversation = (
   conversations: AiConversationSummary[],
@@ -15,13 +22,15 @@ export const pickLatestConversation = (
 }
 
 export const createConversationSession = async (params: {
-  createConversation: (request: { service_name: string; title: string }) => Promise<string>
+  conversationBinding?: AssistantConversationBinding | null
+  createConversation: (request: CreateConversationRequest) => Promise<string>
   getConversationTitle: () => string
   getDisplayTitle: () => string
   loadConversationList?: () => void
   onConversationCreated: (conversationId: string, title: string) => void
 }): Promise<string> => {
   const conversationId = await params.createConversation({
+    conversation_binding: params.conversationBinding,
     service_name: 'default',
     title: params.getConversationTitle(),
   })

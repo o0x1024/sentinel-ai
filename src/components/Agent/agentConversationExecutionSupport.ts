@@ -1,12 +1,126 @@
 import type { ProcessedDocumentResult } from '@/types/agent'
+import { invoke } from '@tauri-apps/api/core'
 import type {
   ReferencedAsset,
   ReferencedConversationMessage,
   ReferencedFile,
   ReferencedTraffic,
 } from '@/types/agentReferences'
-import { useTerminal } from '@/composables/useTerminal'
+import type { AssistantConversationBinding } from './agentDraftTypes'
+import { buildTerminalSessionFingerprint, useTerminal } from '@/composables/useTerminal'
 import { useBrowserShell } from '@/composables/useBrowserShell'
+
+type ExecutionMode = 'docker' | 'host'
+
+interface AgentRuntimeTerminalConfig {
+  docker_image?: string | null
+  default_execution_mode?: ExecutionMode | null
+}
+
+interface AgentRuntimeConfigResponse {
+  terminal?: AgentRuntimeTerminalConfig | null
+  working_directory?: string | null
+}
+
+const DEFAULT_DOCKER_IMAGE = 'sentinel-sandbox:latest'
+const DEFAULT_TERMINAL_SHELL = 'bash'
+
+const normalizeExecutionMode = (value?: string | null): ExecutionMode => (
+  String(value || '').trim().toLowerCase() === 'host' ? 'host' : 'docker'
+)
+
+const normalizeDockerImage = (value?: string | null): string => {
+  const normalized = String(value || '').trim()
+  return normalized || DEFAULT_DOCKER_IMAGE
+}
+
+const normalizeWorkingDirectory = (value?: string | null): string => (
+  String(value || '').trim()
+)
+
+const resolveTerminalWorkingDirectory = (params: {
+  executionMode: ExecutionMode
+  requestedWorkingDirectory?: string | null
+  defaultWorkingDirectory?: string | null
+}): string => {
+  if (params.executionMode === 'docker') {
+    return '/workspace'
+  }
+  return normalizeWorkingDirectory(params.requestedWorkingDirectory)
+    || normalizeWorkingDirectory(params.defaultWorkingDirectory)
+}
+
+export const shouldReuseTerminalSession = (params: {
+  currentSessionId?: string | null
+  currentSessionFingerprint?: string | null
+  shell?: string
+  terminalConfig?: AgentRuntimeTerminalConfig | null
+  workingDirectory?: string | null
+  defaultWorkingDirectory?: string | null
+}): boolean => {
+  const sessionId = String(params.currentSessionId || '').trim()
+  if (!sessionId) {
+    return false
+  }
+
+  const currentFingerprint = String(params.currentSessionFingerprint || '').trim()
+  const terminalConfig = params.terminalConfig
+  if (!terminalConfig) {
+    return true
+  }
+
+  if (!currentFingerprint) {
+    return false
+  }
+
+  const expectedFingerprint = buildTerminalSessionFingerprint(
+    normalizeExecutionMode(terminalConfig.default_execution_mode),
+    normalizeDockerImage(terminalConfig.docker_image),
+    params.shell || DEFAULT_TERMINAL_SHELL,
+    resolveTerminalWorkingDirectory({
+      executionMode: normalizeExecutionMode(terminalConfig.default_execution_mode),
+      requestedWorkingDirectory: params.workingDirectory,
+      defaultWorkingDirectory: params.defaultWorkingDirectory,
+    }),
+  )
+
+  return currentFingerprint === expectedFingerprint
+}
+
+const resolveActiveTerminalBinding = async (params: {
+  currentSessionId?: string | null
+  currentSessionFingerprint?: string | null
+  workingDirectory?: string | null
+}): Promise<{
+  currentTerminalSessionId?: string
+  currentTerminalSessionFingerprint?: string
+}> => {
+  const sessionId = String(params.currentSessionId || '').trim()
+  const sessionFingerprint = String(params.currentSessionFingerprint || '').trim()
+  if (!sessionId) {
+    return {}
+  }
+
+  try {
+    const config = await invoke<AgentRuntimeConfigResponse>('get_agent_config')
+    if (!shouldReuseTerminalSession({
+      currentSessionId: sessionId,
+      currentSessionFingerprint: sessionFingerprint,
+      terminalConfig: config?.terminal,
+      workingDirectory: params.workingDirectory,
+      defaultWorkingDirectory: config?.working_directory,
+    })) {
+      return {}
+    }
+  } catch (error) {
+    console.warn('[AgentView] Failed to verify active terminal binding, reusing existing session:', error)
+  }
+
+  return {
+    currentTerminalSessionId: sessionId,
+    currentTerminalSessionFingerprint: sessionFingerprint || undefined,
+  }
+}
 
 export const takeOverConversationExecution = async (params: {
   appendPartialAssistantMessage: (message: {
@@ -61,7 +175,12 @@ export const takeOverConversationExecution = async (params: {
 
 export const ensureConversationForExecution = async (params: {
   conversationId?: string | null
-  createConversation: (request: { service_name: string; title: string }) => Promise<string>
+  conversationBinding?: AssistantConversationBinding | null
+  createConversation: (request: {
+    service_name: string
+    title: string
+    conversation_binding?: AssistantConversationBinding | null
+  }) => Promise<string>
   getConversationTitle: () => string
   getDisplayTitle: () => string
   loadConversationList?: () => void
@@ -73,6 +192,7 @@ export const ensureConversationForExecution = async (params: {
 
   console.log('[AgentView] No conversation ID, creating new conversation')
   const conversationId = await params.createConversation({
+    conversation_binding: params.conversationBinding,
     service_name: 'default',
     title: params.getConversationTitle(),
   })
@@ -118,8 +238,9 @@ export const executeConversationTask = async (params: {
   enableRag: boolean
   enableTenthManRule: boolean
   firstMessage: string
-  forceTasks: boolean
+  forceTaskCompletionContract: boolean
   fullTask: string
+  workingDirectory?: string | null
   maybeAutoRenameConversation: (params: {
     convId: string
     currentConversationId: string
@@ -154,6 +275,7 @@ export const executeConversationTask = async (params: {
       referenced_traffic?: ReferencedTraffic[]
       timeout_secs: number
       tool_config: unknown
+      working_directory?: string
     }
     task: string
   }) => Promise<any>
@@ -177,9 +299,11 @@ export const executeConversationTask = async (params: {
 }): Promise<any> => {
   const terminal = useTerminal()
   const browserShell = useBrowserShell()
-  const currentTerminalSessionId = terminal.currentSessionId.value?.trim() || undefined
-  const currentTerminalSessionFingerprint =
-    terminal.currentSessionFingerprint.value?.trim() || undefined
+  const terminalBinding = await resolveActiveTerminalBinding({
+    currentSessionId: terminal.currentSessionId.value,
+    currentSessionFingerprint: terminal.currentSessionFingerprint.value,
+    workingDirectory: params.workingDirectory,
+  })
   const currentBrowserShellSessionId = browserShell.currentSessionId.value?.trim() || undefined
   const currentBrowserShellDirectWriteEnabled =
     currentBrowserShellSessionId && browserShell.directWriteEnabled.value === true
@@ -203,13 +327,13 @@ export const executeConversationTask = async (params: {
       context_mode: params.assistantContextMode,
       current_browser_shell_direct_write_enabled: currentBrowserShellDirectWriteEnabled,
       current_browser_shell_session_id: currentBrowserShellSessionId,
-      current_terminal_session_fingerprint: currentTerminalSessionFingerprint,
-      current_terminal_session_id: currentTerminalSessionId,
+      current_terminal_session_fingerprint: terminalBinding.currentTerminalSessionFingerprint,
+      current_terminal_session_id: terminalBinding.currentTerminalSessionId,
       display_content: params.displayContent,
       document_attachments: params.usedDocuments.length > 0 ? params.usedDocuments : undefined,
       enable_rag: params.enableRag,
       enable_tenth_man_rule: params.enableTenthManRule,
-      force_tasks: params.forceTasks,
+      force_tasks: params.forceTaskCompletionContract,
       message_id: null,
       model_override: buildAssistantModelOverride(params.assistantSelectedModel),
       persist_messages: params.persistMessages,
@@ -219,6 +343,7 @@ export const executeConversationTask = async (params: {
       referenced_traffic: params.usedTraffic.length > 0 ? params.usedTraffic : undefined,
       timeout_secs: 300,
       tool_config: params.runtimeToolConfig,
+      working_directory: normalizeWorkingDirectory(params.workingDirectory) || undefined,
   }
 
   const parallelTargets = buildParallelModelTargets(params.assistantParallelSelectedModels || [])

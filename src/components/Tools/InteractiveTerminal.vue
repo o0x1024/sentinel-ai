@@ -92,6 +92,7 @@ interface Props {
   useDocker?: boolean
   dockerImage?: string
   shell?: string
+  workingDirectory?: string | null
 }
 
 type ExecutionMode = 'docker' | 'host'
@@ -103,17 +104,34 @@ interface TerminalConfig {
 
 interface AgentConfig {
   terminal?: TerminalConfig
+  working_directory?: string | null
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  useDocker: true,
+  useDocker: false,
   dockerImage: 'sentinel-sandbox:latest',
-  shell: 'bash'
+  shell: 'bash',
+  workingDirectory: null,
 })
 
 // Actual config (from settings or props)
 const actualDockerImage = ref(props.dockerImage)
 const actualExecutionMode = ref<ExecutionMode>(props.useDocker ? 'docker' : 'host')
+const actualWorkingDirectory = ref(String(props.workingDirectory || '').trim())
+
+const normalizeExecutionMode = (value: unknown): ExecutionMode => {
+  if (value === 'docker' || value === 'host') {
+    return value
+  }
+  throw new Error(`Invalid terminal execution mode: ${String(value || '')}`)
+}
+
+const resolveTerminalWorkingDirectory = (executionMode: ExecutionMode): string => {
+  if (executionMode === 'docker') {
+    return '/workspace'
+  }
+  return String(actualWorkingDirectory.value || '').trim()
+}
 
 // State
 const terminalContainer = ref<HTMLElement | null>(null)
@@ -125,6 +143,10 @@ const isConnected = ref(false)
 const isConnecting = ref(false)
 const error = ref<string>('')
 const resizeObserver = ref<ResizeObserver | null>(null)
+
+watch(() => props.workingDirectory, (value) => {
+  actualWorkingDirectory.value = String(value || '').trim()
+})
 
 // Emits
 const emit = defineEmits<{
@@ -255,13 +277,20 @@ const connect = async () => {
     // Load terminal config from settings
     try {
       const agentConfig = await invoke<AgentConfig>('get_agent_config')
-      if (agentConfig?.terminal) {
-        actualDockerImage.value = agentConfig.terminal.docker_image || props.dockerImage
-        actualExecutionMode.value = agentConfig.terminal.default_execution_mode || (props.useDocker ? 'docker' : 'host')
-        console.log('[Terminal] Loaded config from settings:', actualDockerImage.value, actualExecutionMode.value)
+      if (!agentConfig?.terminal) {
+        throw new Error('Agent terminal config is missing')
       }
+      actualDockerImage.value = String(agentConfig.terminal.docker_image || props.dockerImage).trim()
+      actualExecutionMode.value = normalizeExecutionMode(agentConfig.terminal.default_execution_mode)
+      if (actualExecutionMode.value === 'docker' && !actualDockerImage.value) {
+        throw new Error('Docker terminal image is empty')
+      }
+      if (!String(props.workingDirectory || '').trim()) {
+        actualWorkingDirectory.value = String(agentConfig.working_directory || '').trim()
+      }
+      console.log('[Terminal] Loaded config from settings:', actualDockerImage.value, actualExecutionMode.value)
     } catch (e) {
-      console.warn('[Terminal] Failed to load agent config, using defaults:', e)
+      throw new Error(`Failed to load terminal runtime config: ${e instanceof Error ? e.message : String(e)}`)
     }
 
     let wsUrl: string
@@ -287,6 +316,8 @@ const connect = async () => {
     terminalDecoder = new TextDecoder()
     ws.value = new WebSocket(wsUrl)
 
+    let pendingExistingSessionId: string | null = null
+
     ws.value.onopen = () => {
       console.log('WebSocket connected')
       startKeepAlive()
@@ -294,6 +325,7 @@ const connect = async () => {
         actualExecutionMode.value,
         actualDockerImage.value,
         props.shell,
+        resolveTerminalWorkingDirectory(actualExecutionMode.value),
       )
       const existingSessionId = terminalComposable.currentSessionId.value
       const existingFingerprint = terminalComposable.currentSessionFingerprint.value
@@ -301,6 +333,7 @@ const connect = async () => {
       // If we have a compatible existing session, reconnect.
       if (existingSessionId && existingFingerprint === currentFingerprint) {
         console.log('Connecting to existing session:', existingSessionId)
+        pendingExistingSessionId = existingSessionId
         ws.value?.send(`session:${existingSessionId}`)
         return
       }
@@ -318,7 +351,7 @@ const connect = async () => {
       const config = {
         execution_mode: actualExecutionMode.value,
         docker_image: actualDockerImage.value,
-        working_dir: '/workspace',
+        working_dir: resolveTerminalWorkingDirectory(actualExecutionMode.value) || undefined,
         env_vars: {},
         shell: props.shell,
       }
@@ -337,6 +370,7 @@ const connect = async () => {
             actualExecutionMode.value,
             actualDockerImage.value,
             props.shell,
+            resolveTerminalWorkingDirectory(actualExecutionMode.value),
           )
           
           // Sync to global state so backend tools can find this session
@@ -375,6 +409,9 @@ const connect = async () => {
 
     ws.value.onclose = () => {
       console.log('WebSocket closed')
+      if (!isConnected.value && pendingExistingSessionId) {
+        terminalComposable.syncActiveSession(null, null)
+      }
       isConnected.value = false
       isConnecting.value = false
       terminal.value?.writeln('\r\n\x1b[1;31m✗ Connection closed\x1b[0m')

@@ -104,6 +104,10 @@ export default {
     submissions: '提交数',
     earnings: '收益',
     exportAssets: '导出资产',
+    cardView: '卡片视图',
+    listView: '列表视图',
+    organization: '组织',
+    platform: '平台',
   },
 
   findings: {

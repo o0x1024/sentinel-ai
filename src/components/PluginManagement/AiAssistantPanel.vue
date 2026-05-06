@@ -24,6 +24,57 @@
         </button>
       </div>
     </div>
+    <div class="ai-chat-profile-bar">
+      <label class="flex min-w-0 flex-1 items-center gap-2 text-xs">
+        <span class="shrink-0 font-medium opacity-70">{{ $t('plugins.agentProfile', 'Agent Profile') }}</span>
+        <select
+          :value="assistantProfileId || ''"
+          class="select select-bordered select-xs min-w-0 flex-1"
+          @change="handleAssistantProfileChange"
+        >
+          <option value="">
+            {{ $t('plugins.followDefaultAgentProfile', `跟随默认 (${assistantProfileDefaultLabel || '未配置'})`) }}
+          </option>
+          <option
+            v-for="profile in assistantProfileOptions"
+            :key="profile.id"
+            :value="profile.id"
+          >
+            {{ profile.label }}
+          </option>
+        </select>
+      </label>
+      <span
+        v-if="assistantProfileInvalid"
+        class="badge badge-error badge-xs"
+      >
+        {{ $t('plugins.agentProfileInvalid', '配置失效') }}
+      </span>
+    </div>
+    <div class="ai-chat-model-bar">
+      <div class="flex min-w-0 items-center gap-2 text-xs">
+        <span class="shrink-0 font-medium opacity-70">{{ $t('plugins.effectiveModel', '生效模型') }}</span>
+        <span class="truncate font-mono">{{ effectiveModelLabel }}</span>
+      </div>
+      <span class="badge badge-ghost badge-xs">
+        {{ effectiveModelSourceLabel }}
+      </span>
+    </div>
+    <div v-if="runtimeMetaText" class="ai-chat-runtime-bar">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-[11px] font-semibold uppercase tracking-wide opacity-70">
+          {{ $t('plugins.runtimeDiagnostics', '运行时诊断') }}
+        </span>
+        <button
+          class="btn btn-ghost btn-xs h-6 min-h-0 px-2"
+          @click="copyRuntimeMeta"
+        >
+          <i class="fas fa-copy text-[10px]"></i>
+          <span class="ml-1">{{ $t('plugins.copyCode', '复制代码') }}</span>
+        </button>
+      </div>
+      <pre class="ai-chat-runtime-meta"><code>{{ runtimeMetaText }}</code></pre>
+    </div>
     
     <!-- Chat Messages -->
     <div class="ai-chat-messages" ref="aiChatMessagesRef">
@@ -197,7 +248,7 @@
         :placeholder="$t('plugins.aiInputPlaceholder', '描述你想要的修改...')"
         class="textarea textarea-bordered w-full resize-none"
         rows="2"
-        :disabled="streaming"
+        :disabled="streaming || assistantProfileInvalid"
         @keydown.enter.exact.prevent="handleSendMessage"
         @keydown.enter.shift="handleShiftEnter"
       ></textarea>
@@ -206,9 +257,15 @@
           <i class="fas fa-keyboard"></i>
           <span>{{ $t('plugins.shortcutHint', 'Enter发送 · Shift+Enter换行 · Ctrl+K切换面板') }}</span>
         </div>
+        <span
+          v-if="assistantProfileInvalid"
+          class="text-xs text-error"
+        >
+          {{ $t('plugins.invalidAgentProfileHint', '当前 Agent Profile 已失效，请重新选择。') }}
+        </span>
         <button 
           class="btn btn-sm btn-primary" 
-          :disabled="!inputText.trim() || streaming"
+          :disabled="!inputText.trim() || streaming || assistantProfileInvalid"
           @click="handleSendMessage"
         >
           <span v-if="streaming" class="loading loading-spinner loading-xs"></span>
@@ -226,6 +283,11 @@ import DOMPurify from 'dompurify'
 import type { CodeReference, TestResultReference, AiChatMessage } from './types'
 import { useI18n } from 'vue-i18n'
 
+interface AssistantProfileChoice {
+  id: string
+  label: string
+}
+
 const props = defineProps<{
   show: boolean
   messages: AiChatMessage[]
@@ -233,6 +295,13 @@ const props = defineProps<{
   streamingContent: string
   codeRef: CodeReference | null
   testResultRef: TestResultReference | null
+  assistantProfileId: string | null
+  assistantProfileOptions: AssistantProfileChoice[]
+  assistantProfileDefaultLabel: string
+  assistantProfileInvalid: boolean
+  effectiveModelLabel: string
+  effectiveModelSourceLabel: string
+  runtimeMetaText?: string
 }>()
 
 const emit = defineEmits<{
@@ -244,6 +313,7 @@ const emit = defineEmits<{
   'clearCodeRef': []
   'clearTestResultRef': []
   'clearHistory': []
+  'updateAssistantProfileId': [profileId: string | null]
 }>()
 
 const { t } = useI18n()
@@ -294,8 +364,23 @@ const handleApplyAllCode = (code: string, messageIndex: number) => {
 }
 
 const handleSendMessage = () => {
-  if (inputText.value.trim() && !props.streaming) {
+  if (inputText.value.trim() && !props.streaming && !props.assistantProfileInvalid) {
     emit('sendMessage', inputText.value)
+  }
+}
+
+const handleAssistantProfileChange = (event: Event) => {
+  const value = (event.target as HTMLSelectElement).value.trim()
+  emit('updateAssistantProfileId', value || null)
+}
+
+const copyRuntimeMeta = async () => {
+  if (!props.runtimeMetaText) return
+  try {
+    await navigator.clipboard.writeText(props.runtimeMetaText)
+    showToast(t('plugins.copySuccess', '复制成功'), 'success')
+  } catch {
+    showToast(t('plugins.copyFailed', '复制失败'), 'error')
   }
 }
 
@@ -443,6 +528,49 @@ defineExpose({
 .ai-chat-header .btn-ghost:hover {
   background: oklch(var(--b1));
   color: oklch(var(--bc));
+}
+
+.ai-chat-profile-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  background: oklch(var(--b2));
+  border-bottom: 1px solid oklch(var(--bc) / 0.1);
+}
+
+.ai-chat-profile-bar .select {
+  min-height: 1.75rem;
+}
+
+.ai-chat-model-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: oklch(var(--b2));
+  border-bottom: 1px solid oklch(var(--bc) / 0.08);
+}
+
+.ai-chat-runtime-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.625rem 1rem;
+  background: oklch(var(--b1));
+  border-bottom: 1px solid oklch(var(--bc) / 0.08);
+}
+
+.ai-chat-runtime-meta {
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  background: oklch(var(--b2));
+  color: oklch(var(--bc) / 0.82);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  overflow: auto;
 }
 
 .ai-chat-messages {

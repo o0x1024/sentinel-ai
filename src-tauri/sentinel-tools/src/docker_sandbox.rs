@@ -426,6 +426,12 @@ pub enum DockerError {
     ImageNotFound(String),
     #[error("Command timeout after {0} seconds")]
     Timeout(u64),
+    #[error("Command timeout after {timeout_secs} seconds")]
+    TimeoutWithOutput {
+        timeout_secs: u64,
+        stdout: String,
+        stderr: String,
+    },
     #[error("Container execution failed: {0}")]
     ExecutionFailed(String),
 }
@@ -601,9 +607,19 @@ impl DockerSandbox {
                         _ = &mut timeout_sleep => {
                             let _ = child.kill().await;
                             let _ = child.wait().await;
-                            let _ = stdout_reader.await;
-                            let _ = stderr_reader.await;
-                            return Err(DockerError::Timeout(timeout_secs));
+                            let stdout = String::from_utf8_lossy(
+                                &collect_output_reader(stdout_reader, "stdout").await?,
+                            )
+                            .to_string();
+                            let stderr = String::from_utf8_lossy(
+                                &collect_output_reader(stderr_reader, "stderr").await?,
+                            )
+                            .to_string();
+                            return Err(DockerError::TimeoutWithOutput {
+                                timeout_secs,
+                                stdout,
+                                stderr,
+                            });
                         }
                         _ = tokio::time::sleep(Duration::from_millis(120)) => {}
                     }

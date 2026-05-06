@@ -655,6 +655,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
+import { useTerminal } from '@/composables/useTerminal'
 import ShellPermissionHistoryPanel from './ShellPermissionHistoryPanel.vue'
 
 interface ShellConfig {
@@ -716,6 +717,7 @@ interface WorkspaceSettings {
 }
 
 const { t } = useI18n()
+const terminal = useTerminal()
 
 const loading = ref(true)
 const shellConfig = ref<ShellConfig>({
@@ -726,7 +728,7 @@ const shellConfig = ref<ShellConfig>({
 
 const terminalConfig = ref<TerminalConfig>({
   docker_image: 'sentinel-sandbox:latest',
-  default_execution_mode: 'docker',
+  default_execution_mode: 'host',
   docker_memory_limit: '2g',
   docker_cpu_limit: '4.0',
   docker_use_host_network: false
@@ -787,6 +789,13 @@ const normalizeCompletionGuardConfig = (
 // Auto-save debounce
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
 
+const clearActiveTerminalBinding = () => {
+  if (!terminal.currentSessionId.value) {
+    return
+  }
+  terminal.syncActiveSession(null, null)
+}
+
 const uploadDates = computed(() => {
   const set = new Set(uploadedFiles.value.map((f) => f.date))
   return Array.from(set).sort((a, b) => b.localeCompare(a))
@@ -817,7 +826,7 @@ async function loadConfig() {
     if (result?.terminal) {
       terminalConfig.value = {
         docker_image: result.terminal.docker_image || 'sentinel-sandbox:latest',
-        default_execution_mode: result.terminal.default_execution_mode || 'docker',
+        default_execution_mode: result.terminal.default_execution_mode || 'host',
         docker_memory_limit: result.terminal.docker_memory_limit || '2g',
         docker_cpu_limit: result.terminal.docker_cpu_limit || '4.0',
         docker_use_host_network: !!result.terminal.docker_use_host_network
@@ -1020,6 +1029,9 @@ const toggleAllowUploadToModel = (event: Event) => {
 // Update docker image
 function updateDockerImage(event: Event) {
   const target = event.target as HTMLInputElement
+  if (terminalConfig.value.docker_image !== target.value) {
+    clearActiveTerminalBinding()
+  }
   terminalConfig.value.docker_image = target.value
   autoSaveConfig()
 }
@@ -1088,7 +1100,8 @@ function toggleCompletionGuardArtifactProof(event: Event) {
 
 // Toggle execution mode
 function toggleExecutionMode() {
-  terminalConfig.value.default_execution_mode = 
+  clearActiveTerminalBinding()
+  terminalConfig.value.default_execution_mode =
     terminalConfig.value.default_execution_mode === 'docker' ? 'host' : 'docker'
   autoSaveConfig()
 }

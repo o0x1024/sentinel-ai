@@ -1,11 +1,15 @@
 use crate::agents::executor::message_store::{
     build_assistant_session_stats_metadata, mark_first_response_ms,
 };
+use crate::commands::ai_conversation_binding_support::{
+    persist_conversation_binding, AssistantConversationBinding,
+};
 use crate::commands::ai_task_support::{
     build_virtual_tool_context, complete_external_profile_run_failure,
     complete_external_profile_run_success, load_external_profile_context,
     merge_external_profile_prompt, run_external_chat_task, start_external_profile_run,
 };
+use crate::commands::assistant_profile_commands::load_assistant_profile_by_id_or_default;
 use crate::commands::traffic::TrafficAnalysisState;
 use crate::models::database::{AiMessage, SubagentMessage, SubagentRun};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
@@ -85,6 +89,8 @@ static CANCELLATION_TOKENS: std::sync::LazyLock<Mutex<HashMap<String, (Cancellat
 
 static CANCELLATION_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+const PLUGIN_EDITOR_ASSISTANT_TASK_PROFILE_ID: &str = "plugin_editor_assistant_agent";
+
 // 辅助函数：创建取消令牌，返回 (token, generation)
 pub(crate) fn create_cancellation_token(conversation_id: &str) -> (CancellationToken, u64) {
     let token = CancellationToken::new();
@@ -131,6 +137,20 @@ pub fn is_conversation_cancelled(conversation_id: &str) -> bool {
     get_cancellation_token(conversation_id)
         .map(|t| t.is_cancelled())
         .unwrap_or(false)
+}
+
+/// Checks cancellation for one concrete generation of a conversation.
+///
+/// A generation is treated as cancelled when a newer generation has replaced its
+/// token. This prevents late async work from an older stop/resend/edit attempt
+/// from emitting messages into the current visible conversation.
+pub fn is_conversation_generation_cancelled(conversation_id: &str, generation: u64) -> bool {
+    if let Ok(tokens) = CANCELLATION_TOKENS.lock() {
+        if let Some((token, current_generation)) = tokens.get(conversation_id) {
+            return *current_generation != generation || token.is_cancelled();
+        }
+    }
+    true
 }
 
 /// Guard that auto-removes its cancellation token on drop, only if the generation matches.
@@ -414,6 +434,7 @@ pub(crate) async fn stream_chat_with_llm(
     service: &AiServiceWrapper,
     app_handle: &AppHandle,
     conversation_id: &str,
+    cancellation_generation: u64,
     message_id: &str,
     user_message: &str,
     system_prompt: Option<&str>,
@@ -492,7 +513,7 @@ pub(crate) async fn stream_chat_with_llm(
             &history,
             images.as_slice(),
             move |chunk| {
-                if is_conversation_cancelled(&conv_id) {
+                if is_conversation_generation_cancelled(&conv_id, cancellation_generation) {
                     return false;
                 }
                 match chunk {
@@ -513,7 +534,9 @@ pub(crate) async fn stream_chat_with_llm(
                             None,
                             None,
                             None,
-                            None,
+                            Some(serde_json::json!({
+                                "generation": cancellation_generation,
+                            })),
                         );
                     }
                     StreamContent::Reasoning(text) => {
@@ -533,7 +556,9 @@ pub(crate) async fn stream_chat_with_llm(
                             None,
                             None,
                             None,
-                            None,
+                            Some(serde_json::json!({
+                                "generation": cancellation_generation,
+                            })),
                         );
                     }
                     StreamContent::Usage {
@@ -556,6 +581,7 @@ pub(crate) async fn stream_chat_with_llm(
                             "agent:tool_call_start",
                             serde_json::json!({
                                 "execution_id": &execution_id,
+                                "generation": cancellation_generation,
                                 "tool_call_id": id,
                                 "tool_name": name,
                             }),
@@ -568,6 +594,7 @@ pub(crate) async fn stream_chat_with_llm(
                             "agent:tool_call_delta",
                             serde_json::json!({
                                 "execution_id": &execution_id,
+                                "generation": cancellation_generation,
                                 "tool_call_id": id,
                                 "delta": delta,
                             }),
@@ -584,6 +611,7 @@ pub(crate) async fn stream_chat_with_llm(
                             "agent:tool_call_complete",
                             serde_json::json!({
                                 "execution_id": &execution_id,
+                                "generation": cancellation_generation,
                                 "tool_call_id": id,
                                 "tool_name": name,
                                 "arguments": arguments,
@@ -597,6 +625,7 @@ pub(crate) async fn stream_chat_with_llm(
                             "agent:tool_result",
                             serde_json::json!({
                                 "execution_id": &execution_id,
+                                "generation": cancellation_generation,
                                 "tool_call_id": id,
                                 "result": result,
                             }),
@@ -612,6 +641,10 @@ pub(crate) async fn stream_chat_with_llm(
         .await
         .map_err(|e| format!("LLM stream error: {}", e))?;
 
+    if is_conversation_generation_cancelled(conversation_id, cancellation_generation) {
+        return Err("Execution cancelled by user".to_string());
+    }
+
     // 发送完成标记
     if is_final && has_conversation {
         crate::utils::ordered_message::emit_message_chunk_with_arch(
@@ -625,7 +658,9 @@ pub(crate) async fn stream_chat_with_llm(
             None,
             None,
             None,
-            None,
+            Some(serde_json::json!({
+                "generation": cancellation_generation,
+            })),
         );
     }
 
@@ -702,6 +737,7 @@ pub(crate) async fn stream_chat_with_llm(
                 "agent:assistant_message_saved",
                 &serde_json::json!({
                     "execution_id": conversation_id,
+                    "generation": cancellation_generation,
                     "message_id": message_id,
                     "content": content,
                     "metadata": msg.metadata.as_ref().and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok()),
@@ -719,6 +755,8 @@ pub(crate) async fn stream_chat_with_llm(
 pub struct CreateConversationRequest {
     pub title: Option<String>,
     pub service_name: String,
+    #[serde(default)]
+    pub conversation_binding: Option<AssistantConversationBinding>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -807,6 +845,8 @@ pub enum AgentExecutionOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentExecutionFinishedEvent {
     pub execution_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u64>,
     pub outcome: AgentExecutionOutcome,
     pub success: bool,
     pub error: Option<String>,
@@ -817,6 +857,46 @@ pub struct AgentExecutionFinishedEvent {
 pub(crate) fn emit_agent_execution_finished(
     app_handle: &AppHandle,
     execution_id: &str,
+    outcome: AgentExecutionOutcome,
+    error: Option<String>,
+    response: Option<String>,
+    message: Option<String>,
+) {
+    emit_agent_execution_finished_internal(
+        app_handle,
+        execution_id,
+        None,
+        outcome,
+        error,
+        response,
+        message,
+    )
+}
+
+pub(crate) fn emit_agent_execution_finished_for_generation(
+    app_handle: &AppHandle,
+    execution_id: &str,
+    generation: u64,
+    outcome: AgentExecutionOutcome,
+    error: Option<String>,
+    response: Option<String>,
+    message: Option<String>,
+) {
+    emit_agent_execution_finished_internal(
+        app_handle,
+        execution_id,
+        Some(generation),
+        outcome,
+        error,
+        response,
+        message,
+    )
+}
+
+fn emit_agent_execution_finished_internal(
+    app_handle: &AppHandle,
+    execution_id: &str,
+    generation: Option<u64>,
     outcome: AgentExecutionOutcome,
     error: Option<String>,
     response: Option<String>,
@@ -836,6 +916,7 @@ pub(crate) fn emit_agent_execution_finished(
     let success = matches!(outcome, AgentExecutionOutcome::Succeeded);
     let finished_payload = AgentExecutionFinishedEvent {
         execution_id: execution_id.to_string(),
+        generation,
         outcome,
         success,
         error: error.clone(),
@@ -868,6 +949,7 @@ pub(crate) fn emit_agent_execution_finished(
                 "agent:complete",
                 &serde_json::json!({
                     "execution_id": execution_id,
+                    "generation": generation,
                     "success": true,
                     "response": response,
                 }),
@@ -878,6 +960,7 @@ pub(crate) fn emit_agent_execution_finished(
                 "agent:error",
                 &serde_json::json!({
                     "execution_id": execution_id,
+                    "generation": generation,
                     "error": error.unwrap_or_else(|| "Agent execution failed".to_string()),
                 }),
             );
@@ -887,6 +970,7 @@ pub(crate) fn emit_agent_execution_finished(
                 "agent:cancelled",
                 &serde_json::json!({
                     "execution_id": execution_id,
+                    "generation": generation,
                     "message": message.unwrap_or_else(|| "Execution cancelled by user".to_string()),
                 }),
             );
@@ -935,6 +1019,22 @@ pub async fn cancel_ai_stream(
             conversation_id,
             err
         );
+    }
+    if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+        if let Err(err) = db
+            .settle_running_ai_tool_messages(
+                &conversation_id,
+                "cancelled",
+                "Execution cancelled by user",
+            )
+            .await
+        {
+            tracing::warn!(
+                "Failed to settle running tool messages for cancelled execution {}: {}",
+                conversation_id,
+                err
+            );
+        }
     }
 
     emit_agent_execution_finished(
@@ -1182,6 +1282,17 @@ pub struct PluginAssistantRequest {
     pub history: Option<Vec<LlmChatMessage>>,
     pub current_code: Option<String>, // 当前编辑的代码
     pub code_context: Option<String>, // 代码上下文（选中的代码片段）
+    pub assistant_profile_id: Option<String>,
+    pub task_kind: Option<String>,
+}
+
+fn resolve_plugin_assistant_task_profile_id(
+    task_kind: Option<&str>,
+) -> std::result::Result<&'static str, String> {
+    match task_kind.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("plugin_edit") => Ok(PLUGIN_EDITOR_ASSISTANT_TASK_PROFILE_ID),
+        Some(other) => Err(format!("Unsupported plugin assistant task kind: {}", other)),
+    }
 }
 
 // AI 助手对话流式响应（专门用于编辑器 AI 助手）
@@ -1190,7 +1301,49 @@ pub async fn plugin_assistant_chat_stream(
     request: PluginAssistantRequest,
     app_handle: AppHandle,
     ai_manager: State<'_, Arc<AiServiceManager>>,
+    system_agent_runtime: State<'_, Arc<SystemAgentRuntime>>,
 ) -> Result<String, String> {
+    let task_profile_id = resolve_plugin_assistant_task_profile_id(request.task_kind.as_deref())?;
+    let agent_context =
+        load_external_profile_context(system_agent_runtime.inner(), task_profile_id, &[])
+            .await
+            .map_err(|e| e.to_string())?;
+    let virtual_tool_sections = build_virtual_tool_context(&agent_context, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let assistant_profile = if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+        load_assistant_profile_by_id_or_default(
+            db.as_ref(),
+            request.assistant_profile_id.as_deref(),
+        )
+        .await?
+    } else {
+        None
+    };
+    let resolved_assistant_profile_id =
+        assistant_profile.as_ref().map(|profile| profile.id.clone());
+    let assistant_model_override = assistant_profile
+        .as_ref()
+        .and_then(|profile| profile.default_model.clone())
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty());
+    let assistant_model_source = if assistant_model_override.is_some() {
+        if request
+            .assistant_profile_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+        {
+            "显式 Profile 默认模型"
+        } else {
+            "默认 Profile 默认模型"
+        }
+    } else {
+        "AI 全局默认模型"
+    };
+
     // Get actual default LLM provider from database config
     let mut service_name = request
         .service_name
@@ -1217,33 +1370,65 @@ pub async fn plugin_assistant_chat_stream(
         .or_else(|| ai_manager.get_service("default"))
         .ok_or_else(|| format!("AI service '{}' not found", service_name))?;
 
-    tracing::info!(
-        "Plugin assistant chat using provider: {}, model: {}",
-        service.get_config().provider,
-        service.get_config().model
-    );
-
     let stream_id = request.stream_id.clone();
     let user_message = request.message.clone();
-    let system_prompt = request.system_prompt.clone();
+    let system_prompt = merge_external_profile_prompt(
+        Some(if virtual_tool_sections.is_empty() {
+            request.system_prompt.clone().unwrap_or_default()
+        } else {
+            let virtual_context = format!(
+                "Virtual tool context:\n{}",
+                virtual_tool_sections.join("\n\n")
+            );
+            match request.system_prompt.clone() {
+                Some(prompt) if !prompt.trim().is_empty() => {
+                    format!("{}\n\n{}", prompt, virtual_context)
+                }
+                _ => virtual_context,
+            }
+        }),
+        &agent_context,
+    );
 
     let (_cancellation_token, cancel_gen) = create_cancellation_token(&stream_id);
     let app_clone = app_handle.clone();
     let sid = stream_id.clone();
     let history = request.history.unwrap_or_default();
+    let assistant_model_source = assistant_model_source.to_string();
+    let resolved_assistant_profile_id_for_start = resolved_assistant_profile_id.clone();
+    let task_profile_id_for_start = task_profile_id.to_string();
 
     let llm_config = if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
         apply_generation_settings_from_db(db.as_ref(), service.service.to_llm_config()).await
     } else {
         service.service.to_llm_config()
     };
+    let mut llm_config = llm_config;
+    if let Some(model_override) = assistant_model_override {
+        llm_config.model = model_override;
+    }
+    tracing::info!(
+        "Plugin assistant chat using provider: {}, model: {}, task_profile: {}",
+        llm_config.provider,
+        llm_config.model,
+        task_profile_id
+    );
 
     tokio::spawn(async move {
         let _guard = CancellationGuard(sid.clone(), cancel_gen);
+        let provider_for_start = llm_config.provider.clone();
+        let model_for_start = llm_config.model.clone();
         // Start event
         let _ = app_clone.emit(
             "plugin_assistant_start",
-            &serde_json::json!({ "stream_id": sid }),
+            &serde_json::json!({
+                "stream_id": sid,
+                "provider": provider_for_start,
+                "model": model_for_start,
+                "model_source": assistant_model_source,
+                "assistant_profile_id": resolved_assistant_profile_id_for_start,
+                "task_profile_id": task_profile_id_for_start,
+            }),
         );
 
         // Create LLM client and stream
@@ -1258,7 +1443,7 @@ pub async fn plugin_assistant_chat_stream(
                 &history,
                 &[],
                 move |chunk| {
-                    if is_conversation_cancelled(&sid_for_callback) {
+                    if is_conversation_generation_cancelled(&sid_for_callback, cancel_gen) {
                         return false;
                     }
                     match chunk {
@@ -1519,26 +1704,43 @@ pub async fn remove_ai_service(
 #[tauri::command]
 pub async fn create_ai_conversation(
     request: CreateConversationRequest,
+    app_handle: AppHandle,
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<String, String> {
-    if let Some(service) = ai_manager.get_service(&request.service_name) {
+    let service_name = request.service_name.clone();
+    let title = request.title.clone();
+    let conversation_binding = request.conversation_binding.clone();
+    let conversation_id = if let Some(service) = ai_manager.get_service(&service_name) {
         service
-            .create_conversation(request.title)
+            .create_conversation(title)
             .await
             .map_err(|e| e.to_string())
     } else {
-        // Fallback or default service creation
         if let Some(default_service) = ai_manager.get_service("default") {
-            return default_service
-                .create_conversation(request.title)
+            default_service
+                .create_conversation(title)
                 .await
-                .map_err(|e| e.to_string());
+                .map_err(|e| e.to_string())
+        } else {
+            Err(format!(
+                "AI service '{}' not found and no default service is available.",
+                service_name
+            ))
         }
-        Err(format!(
-            "AI service '{}' not found and no default service is available.",
-            request.service_name
-        ))
+    }?;
+
+    if let Some(binding) = conversation_binding {
+        persist_conversation_binding(&app_handle, &conversation_id, &binding)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to persist conversation binding for {}: {}",
+                    conversation_id, e
+                )
+            })?;
     }
+
+    Ok(conversation_id)
 }
 
 // 仅保存AI消息到对话（不触发模型回复）
@@ -1663,6 +1865,39 @@ pub async fn delete_ai_messages_after(
     message_id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<u64, String> {
+    // Resend/edit replay supersedes the old visible tail. Cancel any in-flight
+    // generation before deleting state so late tool/model events cannot append
+    // stale output back into the conversation.
+    cancel_conversation_stream(&conversation_id);
+    let _ = crate::managers::cancellation_manager::cancel_execution(&conversation_id).await;
+    let _ = sentinel_tools::buildin_tools::shell::cancel_shell_execution(&conversation_id).await;
+    if let Err(err) =
+        sentinel_tools::buildin_tools::shell_background::stop_background_shell_tasks_for_execution(
+            &conversation_id,
+        )
+        .await
+    {
+        tracing::warn!(
+            "Failed to stop background shell tasks while replaying {}: {}",
+            conversation_id,
+            err
+        );
+    }
+    if let Err(e) = db_service
+        .settle_running_ai_tool_messages(
+            &conversation_id,
+            "cancelled",
+            "Execution superseded by message replay",
+        )
+        .await
+    {
+        tracing::warn!(
+            "Failed to settle running tool messages before replaying {}: {}",
+            conversation_id,
+            e
+        );
+    }
+
     let deleted = db_service
         .delete_ai_messages_after(&conversation_id, &message_id)
         .await
@@ -1687,6 +1922,17 @@ pub async fn delete_ai_messages_after(
     {
         tracing::warn!(
             "Failed to clear sliding window summaries for {}: {}",
+            conversation_id,
+            e
+        );
+    }
+
+    // A replay starts a clean generation. The old task ledger belongs to the
+    // superseded tail and must not drive unfinished-task recovery or task UI in
+    // the new attempt.
+    if let Err(e) = db_service.delete_execution_tasks(&conversation_id).await {
+        tracing::warn!(
+            "Failed to clear execution_tasks for replayed conversation {}: {}",
             conversation_id,
             e
         );

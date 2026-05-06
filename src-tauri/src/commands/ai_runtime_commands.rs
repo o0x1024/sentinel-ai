@@ -1,6 +1,7 @@
 use crate::commands::ai::{
-    create_cancellation_token, emit_agent_execution_finished, is_conversation_cancelled,
-    perform_rag_enhancement, stream_chat_with_llm, AgentExecutionOutcome, CancellationGuard,
+    create_cancellation_token, emit_agent_execution_finished_for_generation,
+    is_conversation_cancelled, is_conversation_generation_cancelled, perform_rag_enhancement,
+    stream_chat_with_llm, AgentExecutionOutcome, CancellationGuard,
     MAX_SAFE_OUTPUT_STORAGE_THRESHOLD, USER_FORCED_RULES_CONFIG_CATEGORY,
     USER_FORCED_RULES_CONFIG_KEY,
 };
@@ -58,6 +59,8 @@ pub struct AgentExecuteConfig {
     pub current_terminal_session_fingerprint: Option<String>,
     #[serde(default)]
     pub current_terminal_session_id: Option<String>,
+    #[serde(default)]
+    pub working_directory: Option<String>,
     #[serde(default)]
     pub referenced_files: Option<Vec<serde_json::Value>>,
     #[serde(default)]
@@ -123,6 +126,543 @@ fn append_force_tasks_contract(system_prompt: &str, force_tasks: bool) -> String
     } else {
         format!("{}\n\n{}", trimmed, TASK_COMPLETION_CONTRACT)
     }
+}
+
+const MAX_UNFINISHED_TASK_RECOVERY_ATTEMPTS: usize = 2;
+const MAX_TASK_RECOVERY_RESPONSE_SNIPPET_CHARS: usize = 1200;
+
+fn is_agent_execution_cancelled(execution_id: &str, generation: Option<u64>) -> bool {
+    generation
+        .map(|value| is_conversation_generation_cancelled(execution_id, value))
+        .unwrap_or_else(|| is_conversation_cancelled(execution_id))
+}
+
+async fn settle_running_tool_messages(
+    app_handle: &AppHandle,
+    execution_id: &str,
+    terminal_status: &str,
+    reason: &str,
+) {
+    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
+        return;
+    };
+    if let Err(error) = db
+        .settle_running_ai_tool_messages(execution_id, terminal_status, reason)
+        .await
+    {
+        tracing::warn!(
+            "Failed to settle running tool messages for {} as {}: {}",
+            execution_id,
+            terminal_status,
+            error
+        );
+    }
+}
+
+async fn create_agent_harness_run(
+    app_handle: &AppHandle,
+    run_id: &str,
+    conversation_id: &str,
+    generation: u64,
+    task: &str,
+    model: &str,
+    provider: &str,
+) {
+    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
+        return;
+    };
+    if let Err(error) = db
+        .create_agent_harness_run(sentinel_db::AgentHarnessRunInput {
+            id: run_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            generation: generation as i64,
+            task: task.to_string(),
+            model: Some(model.to_string()),
+            provider: Some(provider.to_string()),
+            metadata: Some(serde_json::json!({
+                "runtime": "ai_assistant",
+                "generation": generation,
+            })),
+        })
+        .await
+    {
+        tracing::warn!(
+            "Failed to create agent harness run {} for {}: {}",
+            run_id,
+            conversation_id,
+            error
+        );
+    }
+}
+
+async fn append_agent_harness_event(
+    app_handle: &AppHandle,
+    run_id: &str,
+    conversation_id: &str,
+    generation: u64,
+    event_type: &str,
+    payload: Option<serde_json::Value>,
+) {
+    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
+        return;
+    };
+    if let Err(error) = db
+        .append_agent_harness_event(
+            run_id,
+            conversation_id,
+            generation as i64,
+            event_type,
+            payload,
+        )
+        .await
+    {
+        tracing::warn!(
+            "Failed to append agent harness event {} for {}: {}",
+            event_type,
+            conversation_id,
+            error
+        );
+    }
+}
+
+async fn update_agent_harness_state(
+    app_handle: &AppHandle,
+    run_id: &str,
+    state: &str,
+    error: Option<&str>,
+    completed: bool,
+) {
+    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
+        return;
+    };
+    if let Err(update_error) = db
+        .update_agent_harness_state(run_id, state, error, completed.then(chrono::Utc::now))
+        .await
+    {
+        tracing::warn!(
+            "Failed to update agent harness run {} to {}: {}",
+            run_id,
+            state,
+            update_error
+        );
+    }
+}
+
+async fn checkpoint_agent_harness(
+    app_handle: &AppHandle,
+    run_id: &str,
+    checkpoint_type: &str,
+    payload: Option<serde_json::Value>,
+) {
+    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
+        return;
+    };
+    if let Err(error) = db
+        .append_agent_harness_checkpoint(run_id, checkpoint_type, payload)
+        .await
+    {
+        tracing::warn!(
+            "Failed to append agent harness checkpoint {} for {}: {}",
+            checkpoint_type,
+            run_id,
+            error
+        );
+    }
+}
+
+async fn finish_agent_harness(
+    app_handle: &AppHandle,
+    run_id: &str,
+    conversation_id: &str,
+    generation: u64,
+    state: &str,
+    error: Option<&str>,
+) {
+    append_agent_harness_event(
+        app_handle,
+        run_id,
+        conversation_id,
+        generation,
+        "generation_finished",
+        Some(serde_json::json!({
+            "state": state,
+            "error": error,
+        })),
+    )
+    .await;
+    update_agent_harness_state(app_handle, run_id, state, error, true).await;
+}
+
+#[derive(Debug, Clone)]
+struct UnfinishedExecutionTasksState {
+    tasks: Vec<sentinel_db::ExecutionTaskItem>,
+}
+
+#[derive(Debug, Clone)]
+struct UnfinishedTaskRecoveryOutcome {
+    response: String,
+    unfinished_error: Option<String>,
+    stalled: bool,
+    remaining_tasks: Vec<serde_json::Value>,
+}
+
+fn truncate_for_task_recovery(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let char_count = trimmed.chars().count();
+    if char_count <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let mut truncated = trimmed.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
+fn build_unfinished_tasks_continuation_prompt(
+    execution_id: &str,
+    previous_response: &str,
+    tasks: &[sentinel_db::ExecutionTaskItem],
+    attempt: usize,
+    previous_attempt_stalled: bool,
+) -> String {
+    let remaining = tasks
+        .iter()
+        .filter(|task| !matches!(task.status.as_str(), "completed" | "failed"))
+        .map(|task| {
+            let result = task
+                .result
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| {
+                    format!(
+                        " - current_result: {}",
+                        truncate_for_task_recovery(value, 240)
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                "#{} {} ({}){}",
+                task.item_index + 1,
+                task.description,
+                task.status,
+                result
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let response_snippet =
+        truncate_for_task_recovery(previous_response, MAX_TASK_RECOVERY_RESPONSE_SNIPPET_CHARS);
+
+    let previous_response_block = if response_snippet.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n[Previous Assistant Response]\n{}", response_snippet)
+    };
+
+    let stalled_rules = if previous_attempt_stalled {
+        "\n\n[Recovery Escalation]\n\
+- The previous harness continuation attempt made no task-state progress.\n\
+- A plain analysis-only reply is invalid.\n\
+- Before any explanation, you must either perform real tool work that advances the current task and then update `tasks`, or mark the current in_progress task `failed` with a concrete blocker."
+    } else {
+        ""
+    };
+
+    format!(
+        "[Runtime Task Recovery]\n\
+Execution {} ended a generation turn before all tasks reached a terminal state.\n\
+This is harness continuation attempt {}.\n\
+\n\
+Rules:\n\
+- Do not restart from scratch.\n\
+- Do not redo tasks already marked completed.\n\
+- Continue from the remaining tasks only.\n\
+- You may call `tasks` with `action: \"get_list\"` if needed, but do not stop after reading it.\n\
+- Immediately call `tasks` with `action: \"update_status\"` when a step finishes or fails.\n\
+- If the current step cannot be completed, mark it `failed` with a concise reason instead of leaving it `in_progress`.\n\
+- Before ending, verify every task is `completed` or `failed`.\n\
+\n\
+[Remaining Tasks]\n\
+{}\n\
+{}\n\
+{}\
+\n\
+\n\
+Continue the work now. Prefer tool execution and real task-state updates over re-explaining the plan.",
+        execution_id, attempt, remaining, previous_response_block, stalled_rules
+    )
+}
+
+fn did_unfinished_tasks_progress(
+    before: &[sentinel_db::ExecutionTaskItem],
+    after: &[sentinel_db::ExecutionTaskItem],
+) -> bool {
+    if before.len() != after.len() {
+        return true;
+    }
+
+    before
+        .iter()
+        .zip(after.iter())
+        .any(|(before_task, after_task)| {
+            before_task.status != after_task.status || before_task.result != after_task.result
+        })
+}
+
+#[cfg(test)]
+fn build_unfinished_execution_tasks_error(
+    execution_id: &str,
+    tasks: &[sentinel_db::ExecutionTaskItem],
+) -> String {
+    let remaining = tasks
+        .iter()
+        .filter(|task| !matches!(task.status.as_str(), "completed" | "failed"))
+        .map(|task| {
+            format!(
+                "#{} {} ({})",
+                task.item_index + 1,
+                task.description,
+                task.status
+            )
+        })
+        .collect::<Vec<_>>();
+
+    format!(
+        "Execution ended before all tasks reached a terminal state for {}. Remaining tasks: {}",
+        execution_id,
+        remaining.join("; ")
+    )
+}
+
+fn remaining_execution_tasks_json(
+    tasks: &[sentinel_db::ExecutionTaskItem],
+) -> Vec<serde_json::Value> {
+    tasks
+        .iter()
+        .filter(|task| !matches!(task.status.as_str(), "completed" | "failed"))
+        .map(|task| {
+            serde_json::json!({
+                "item_index": task.item_index + 1,
+                "description": task.description,
+                "status": task.status,
+                "result": task.result,
+            })
+        })
+        .collect()
+}
+
+fn build_unfinished_tasks_stalled_message(
+    execution_id: &str,
+    tasks: &[sentinel_db::ExecutionTaskItem],
+    attempts: usize,
+    last_attempt_stalled: bool,
+) -> String {
+    let remaining = tasks
+        .iter()
+        .filter(|task| !matches!(task.status.as_str(), "completed" | "failed"))
+        .map(|task| {
+            format!(
+                "#{} {} ({})",
+                task.item_index + 1,
+                task.description,
+                task.status
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let stalled_detail = if last_attempt_stalled {
+        " The last continuation made no task-state progress."
+    } else {
+        ""
+    };
+    format!(
+        "Harness stalled for {} with open execution tasks after {} continuation attempt(s). Remaining tasks: {}.{}",
+        execution_id, attempts, remaining, stalled_detail
+    )
+}
+
+async fn unfinished_execution_tasks_state(
+    app_handle: &AppHandle,
+    execution_id: &str,
+) -> Option<UnfinishedExecutionTasksState> {
+    let db = app_handle.try_state::<Arc<DatabaseService>>()?;
+    let tasks = match db.get_execution_tasks(execution_id).await {
+        Ok(tasks) => tasks,
+        Err(error) => {
+            tracing::warn!(
+                "Failed to verify execution tasks before finishing {}: {}",
+                execution_id,
+                error
+            );
+            return None;
+        }
+    };
+
+    if tasks
+        .iter()
+        .all(|task| matches!(task.status.as_str(), "completed" | "failed"))
+    {
+        return None;
+    }
+
+    Some(UnfinishedExecutionTasksState { tasks })
+}
+
+async fn recover_unfinished_tasks_after_response(
+    app_handle: &AppHandle,
+    params: &crate::agents::executor::AgentExecuteParams,
+    response: String,
+) -> UnfinishedTaskRecoveryOutcome {
+    let mut latest_response = response;
+    let mut previous_attempt_stalled = false;
+    let mut last_attempt_stalled = false;
+
+    for attempt in 1..=MAX_UNFINISHED_TASK_RECOVERY_ATTEMPTS {
+        let Some(state) = unfinished_execution_tasks_state(app_handle, &params.execution_id).await
+        else {
+            return UnfinishedTaskRecoveryOutcome {
+                response: latest_response,
+                unfinished_error: None,
+                stalled: false,
+                remaining_tasks: Vec::new(),
+            };
+        };
+
+        tracing::warn!(
+            "Detected unfinished tasks after model response for {}. Starting harness continuation attempt {}",
+            params.execution_id,
+            attempt
+        );
+
+        let remaining_tasks = remaining_execution_tasks_json(&state.tasks);
+
+        let _ = app_handle.emit(
+            "ai_meta_info",
+            &serde_json::json!({
+                "conversation_id": params.execution_id,
+                "unfinished_task_recovery": {
+                    "attempt": attempt,
+                    "max_attempts": MAX_UNFINISHED_TASK_RECOVERY_ATTEMPTS,
+                    "remaining_tasks": remaining_tasks,
+                }
+            }),
+        );
+
+        if is_agent_execution_cancelled(&params.execution_id, params.cancellation_generation) {
+            return UnfinishedTaskRecoveryOutcome {
+                response: latest_response,
+                unfinished_error: Some("Execution cancelled by user".to_string()),
+                stalled: false,
+                remaining_tasks,
+            };
+        }
+
+        let mut continuation_params = params.clone();
+        continuation_params.task = build_unfinished_tasks_continuation_prompt(
+            &params.execution_id,
+            &latest_response,
+            &state.tasks,
+            attempt,
+            previous_attempt_stalled,
+        );
+
+        match crate::agents::executor::execute_agent(app_handle, continuation_params).await {
+            Ok(next_response) => {
+                if !next_response.trim().is_empty() {
+                    latest_response = next_response;
+                }
+
+                let state_after =
+                    unfinished_execution_tasks_state(app_handle, &params.execution_id).await;
+                let Some(after_state) = state_after else {
+                    return UnfinishedTaskRecoveryOutcome {
+                        response: latest_response,
+                        unfinished_error: None,
+                        stalled: false,
+                        remaining_tasks: Vec::new(),
+                    };
+                };
+
+                last_attempt_stalled =
+                    !did_unfinished_tasks_progress(&state.tasks, &after_state.tasks);
+                previous_attempt_stalled = last_attempt_stalled;
+
+                if last_attempt_stalled {
+                    let _ = app_handle.emit(
+                        "ai_meta_info",
+                        &serde_json::json!({
+                            "conversation_id": params.execution_id,
+                            "generation": params.cancellation_generation,
+                            "unfinished_task_recovery": {
+                                "attempt": attempt,
+                                "stalled": true,
+                                "message": "Harness continuation attempt made no task-state progress."
+                            }
+                        }),
+                    );
+                }
+            }
+            Err(error) => {
+                return UnfinishedTaskRecoveryOutcome {
+                    response: latest_response,
+                    unfinished_error: Some(format!(
+                        "Harness continuation attempt {} failed for {}: {}",
+                        attempt, params.execution_id, error
+                    )),
+                    stalled: false,
+                    remaining_tasks: remaining_execution_tasks_json(&state.tasks),
+                };
+            }
+        }
+    }
+
+    let unfinished_state = unfinished_execution_tasks_state(app_handle, &params.execution_id).await;
+    let (unfinished_error, remaining_tasks) = unfinished_state
+        .map(|state| {
+            (
+                build_unfinished_tasks_stalled_message(
+                    &params.execution_id,
+                    &state.tasks,
+                    MAX_UNFINISHED_TASK_RECOVERY_ATTEMPTS,
+                    last_attempt_stalled,
+                ),
+                remaining_execution_tasks_json(&state.tasks),
+            )
+        })
+        .map_or((None, Vec::new()), |(message, remaining)| {
+            (Some(message), remaining)
+        });
+
+    let stalled = unfinished_error.is_some();
+    UnfinishedTaskRecoveryOutcome {
+        response: latest_response,
+        unfinished_error,
+        stalled,
+        remaining_tasks,
+    }
+}
+
+async fn emit_success_outcome(
+    app_handle: &AppHandle,
+    execution_id: &str,
+    generation: u64,
+    response: String,
+) {
+    emit_agent_execution_finished_for_generation(
+        app_handle,
+        execution_id,
+        generation,
+        AgentExecutionOutcome::Succeeded,
+        None,
+        Some(response),
+        None,
+    );
 }
 
 pub async fn get_subagent_runs(
@@ -201,6 +741,14 @@ pub async fn clear_conversation_messages(
     if let Err(e) = db_service.delete_agent_run_state(&conversation_id).await {
         tracing::warn!(
             "Failed to clear agent run_state for {}: {}",
+            conversation_id,
+            e
+        );
+    }
+
+    if let Err(e) = db_service.delete_execution_tasks(&conversation_id).await {
+        tracing::warn!(
+            "Failed to clear execution_tasks for {}: {}",
             conversation_id,
             e
         );
@@ -658,6 +1206,7 @@ pub async fn agent_execute(
         current_browser_shell_session_id: None,
         current_terminal_session_fingerprint: None,
         current_terminal_session_id: None,
+        working_directory: None,
         referenced_files: None,
         referenced_messages: None,
         referenced_assets: None,
@@ -681,7 +1230,25 @@ pub async fn agent_execute(
         .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let enable_rag = config.enable_rag.unwrap_or(false);
+    let force_tasks = config.force_tasks.unwrap_or(false);
     let persist_messages = config.persist_messages.unwrap_or(true);
+    let requested_working_directory = config
+        .working_directory
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+    let effective_working_directory = if let Some(working_directory) = requested_working_directory {
+        Some(working_directory)
+    } else if let Some(db_service) = app_handle.try_state::<Arc<DatabaseService>>() {
+        crate::commands::ai_conversation_binding_support::resolve_effective_conversation_working_directory(
+            db_service.inner().as_ref(),
+            Some(conversation_id.as_str()),
+        )
+        .await?
+    } else {
+        None
+    };
     let raw_attachments = config.attachments.clone();
     let attachments_for_save = raw_attachments.as_ref().map(sanitize_image_attachments);
     let document_attachments_for_save = config.document_attachments.clone();
@@ -720,6 +1287,22 @@ pub async fn agent_execute(
             conversation_id,
             e
         );
+    }
+    if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+        if let Err(e) = db
+            .settle_running_ai_tool_messages(
+                &conversation_id,
+                "timed_out",
+                "Previous generation ended before the tool result was recorded",
+            )
+            .await
+        {
+            tracing::warn!(
+                "Failed to settle stale running tool messages for {}: {}",
+                conversation_id,
+                e
+            );
+        }
     }
 
     let requested_override = config
@@ -802,6 +1385,7 @@ pub async fn agent_execute(
     }
 
     let (_cancellation_token, cancel_gen) = create_cancellation_token(&conversation_id);
+    let harness_run_id = Uuid::new_v4().to_string();
 
     let service_clone = service.clone();
     let conv_id = conversation_id.clone();
@@ -825,6 +1409,38 @@ pub async fn agent_execute(
 
     tokio::spawn(async move {
         let _guard = CancellationGuard(conv_id.clone(), cancel_gen);
+        create_agent_harness_run(
+            &app_handle,
+            &harness_run_id,
+            &conv_id,
+            cancel_gen,
+            &task_clone,
+            &model_name_for_closure,
+            &provider_for_closure,
+        )
+        .await;
+        append_agent_harness_event(
+            &app_handle,
+            &harness_run_id,
+            &conv_id,
+            cancel_gen,
+            "generation_started",
+            Some(serde_json::json!({
+                "message_id": msg_id.clone(),
+                "persist_messages": persist_messages,
+            })),
+        )
+        .await;
+        checkpoint_agent_harness(
+            &app_handle,
+            &harness_run_id,
+            "generation_created",
+            Some(serde_json::json!({
+                "conversation_id": conv_id.clone(),
+                "generation": cancel_gen,
+            })),
+        )
+        .await;
         if persist_messages {
             if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
                 let conversation_exists = db
@@ -966,6 +1582,7 @@ pub async fn agent_execute(
                         "agent:user_message",
                         &serde_json::json!({
                             "execution_id": conv_id,
+                            "generation": cancel_gen,
                             "message_id": user_msg_id,
                             "content": display_text,
                             "timestamp": user_msg.timestamp.timestamp_millis(),
@@ -1027,7 +1644,7 @@ pub async fn agent_execute(
 
         base_system_prompt = Some(append_force_tasks_contract(
             base_system_prompt.as_deref().unwrap_or_default(),
-            config.force_tasks.unwrap_or(false),
+            force_tasks,
         ));
 
         let mut augmented_task = task_clone.clone();
@@ -1117,9 +1734,19 @@ pub async fn agent_execute(
                 provider,
                 model_name
             );
-            emit_agent_execution_finished(
+            finish_agent_harness(
+                &app_handle,
+                &harness_run_id,
+                &conv_id,
+                cancel_gen,
+                "failed",
+                Some(&error_message),
+            )
+            .await;
+            emit_agent_execution_finished_for_generation(
                 &app_handle,
                 &conv_id,
+                cancel_gen,
                 AgentExecutionOutcome::Failed,
                 Some(error_message),
                 None,
@@ -1189,6 +1816,7 @@ pub async fn agent_execute(
                                 "ai_meta_info",
                                 &serde_json::json!({
                                     "conversation_id": conv_id,
+                                    "generation": cancel_gen,
                                     "message_id": msg_id,
                                     "rag_applied": true,
                                     "rag_sources_used": !citations.is_empty(),
@@ -1207,6 +1835,7 @@ pub async fn agent_execute(
             "ai_stream_start",
             &serde_json::json!({
                 "conversation_id": conv_id,
+                "generation": cancel_gen,
                 "message_id": msg_id
             }),
         ) {
@@ -1230,14 +1859,25 @@ pub async fn agent_execute(
                         .await {
                             Ok(path) => path,
                             Err(e) => {
-                                emit_agent_execution_finished(
+                                let error_message = format!(
+                                    "Failed to resolve uploaded file {}: {}",
+                                    d.file_id, e
+                                );
+                                finish_agent_harness(
+                                    &app_handle,
+                                    &harness_run_id,
+                                    &conv_id,
+                                    cancel_gen,
+                                    "failed",
+                                    Some(&error_message),
+                                )
+                                .await;
+                                emit_agent_execution_finished_for_generation(
                                     &app_handle,
                                     &conv_id,
+                                    cancel_gen,
                                     AgentExecutionOutcome::Failed,
-                                    Some(format!(
-                                        "Failed to resolve uploaded file {}: {}",
-                                        d.file_id, e
-                                    )),
+                                    Some(error_message),
                                     None,
                                     None,
                                 );
@@ -1259,6 +1899,7 @@ pub async fn agent_execute(
 
                 let executor_params = crate::agents::executor::AgentExecuteParams {
                     execution_id: conv_id.clone(),
+                    cancellation_generation: Some(cancel_gen),
                     model: model_name_for_closure.clone(),
                     system_prompt: base_system_prompt.unwrap_or_default(),
                     task: augmented_task.clone(),
@@ -1272,6 +1913,7 @@ pub async fn agent_execute(
                         .current_terminal_session_fingerprint
                         .clone(),
                     active_terminal_session_id: config.current_terminal_session_id.clone(),
+                    working_directory: effective_working_directory.clone(),
                     rig_provider: provider_for_closure.clone(),
                     api_key: provider_config_for_closure.api_key.clone(),
                     api_base: provider_config_for_closure.api_base.clone(),
@@ -1296,16 +1938,28 @@ pub async fn agent_execute(
                     recursion_depth: 0,
                 };
 
-                match crate::agents::executor::execute_agent(&app_handle, executor_params).await {
+                match crate::agents::executor::execute_agent(&app_handle, executor_params.clone())
+                    .await
+                {
                     Ok(response) => {
-                        if is_conversation_cancelled(&conv_id) {
+                        if is_agent_execution_cancelled(&conv_id, Some(cancel_gen)) {
                             tracing::info!(
                                 "Agent execution ended after cancellation for conversation: {}",
                                 conv_id
                             );
-                            emit_agent_execution_finished(
+                            finish_agent_harness(
+                                &app_handle,
+                                &harness_run_id,
+                                &conv_id,
+                                cancel_gen,
+                                "cancelled",
+                                None,
+                            )
+                            .await;
+                            emit_agent_execution_finished_for_generation(
                                 &app_handle,
                                 &conv_id,
+                                cancel_gen,
                                 AgentExecutionOutcome::Cancelled,
                                 None,
                                 None,
@@ -1334,24 +1988,165 @@ pub async fn agent_execute(
                             }
                         }
                         tracing::info!("Agent with tools completed for conversation: {}", conv_id);
-                        emit_agent_execution_finished(
+                        update_agent_harness_state(
+                            &app_handle,
+                            &harness_run_id,
+                            "verifying_completion",
+                            None,
+                            false,
+                        )
+                        .await;
+                        append_agent_harness_event(
+                            &app_handle,
+                            &harness_run_id,
+                            &conv_id,
+                            cancel_gen,
+                            "model_turn_finished",
+                            Some(serde_json::json!({
+                                "response_chars": response.chars().count(),
+                            })),
+                        )
+                        .await;
+                        let recovery_outcome = recover_unfinished_tasks_after_response(
+                            &app_handle,
+                            &executor_params,
+                            response,
+                        )
+                        .await;
+                        if is_agent_execution_cancelled(&conv_id, Some(cancel_gen)) {
+                            tracing::info!(
+                                "Agent execution cancelled during unfinished-task recovery for conversation: {}",
+                                conv_id
+                            );
+                            finish_agent_harness(
+                                &app_handle,
+                                &harness_run_id,
+                                &conv_id,
+                                cancel_gen,
+                                "cancelled",
+                                None,
+                            )
+                            .await;
+                            emit_agent_execution_finished_for_generation(
+                                &app_handle,
+                                &conv_id,
+                                cancel_gen,
+                                AgentExecutionOutcome::Cancelled,
+                                None,
+                                None,
+                                Some("Execution cancelled by user".to_string()),
+                            );
+                            return;
+                        }
+                        if let Some(error_message) = recovery_outcome.unfinished_error {
+                            let harness_state = if recovery_outcome.stalled {
+                                "stalled"
+                            } else {
+                                "failed"
+                            };
+                            let checkpoint_type = if recovery_outcome.stalled {
+                                "unfinished_tasks_stalled"
+                            } else {
+                                "unfinished_tasks_failed"
+                            };
+                            settle_running_tool_messages(
+                                &app_handle,
+                                &conv_id,
+                                if recovery_outcome.stalled {
+                                    "timed_out"
+                                } else {
+                                    "failed"
+                                },
+                                if recovery_outcome.stalled {
+                                    "Harness stalled while unfinished tasks remained open"
+                                } else {
+                                    "Execution failed while unfinished tasks remained open"
+                                },
+                            )
+                            .await;
+                            checkpoint_agent_harness(
+                                &app_handle,
+                                &harness_run_id,
+                                checkpoint_type,
+                                Some(serde_json::json!({
+                                    "error": error_message.clone(),
+                                    "remaining_tasks": recovery_outcome.remaining_tasks.clone(),
+                                    "stalled": recovery_outcome.stalled,
+                                })),
+                            )
+                            .await;
+                            finish_agent_harness(
+                                &app_handle,
+                                &harness_run_id,
+                                &conv_id,
+                                cancel_gen,
+                                harness_state,
+                                Some(&error_message),
+                            )
+                            .await;
+                            emit_agent_execution_finished_for_generation(
+                                &app_handle,
+                                &conv_id,
+                                cancel_gen,
+                                AgentExecutionOutcome::Failed,
+                                Some(error_message),
+                                Some(recovery_outcome.response),
+                                None,
+                            );
+                            return;
+                        }
+                        settle_running_tool_messages(
                             &app_handle,
                             &conv_id,
-                            AgentExecutionOutcome::Succeeded,
+                            "timed_out",
+                            "Execution finished before the tool result was recorded",
+                        )
+                        .await;
+                        checkpoint_agent_harness(
+                            &app_handle,
+                            &harness_run_id,
+                            "generation_succeeded",
+                            Some(serde_json::json!({
+                                "response_chars": recovery_outcome.response.chars().count(),
+                            })),
+                        )
+                        .await;
+                        finish_agent_harness(
+                            &app_handle,
+                            &harness_run_id,
+                            &conv_id,
+                            cancel_gen,
+                            "succeeded",
                             None,
-                            Some(response),
-                            None,
-                        );
+                        )
+                        .await;
+                        emit_success_outcome(
+                            &app_handle,
+                            &conv_id,
+                            cancel_gen,
+                            recovery_outcome.response,
+                        )
+                        .await;
                     }
                     Err(e) => {
-                        if is_conversation_cancelled(&conv_id) {
+                        if is_agent_execution_cancelled(&conv_id, Some(cancel_gen)) {
                             tracing::info!(
                                 "Agent execution failed after cancellation for conversation: {}",
                                 conv_id
                             );
-                            emit_agent_execution_finished(
+                            finish_agent_harness(
+                                &app_handle,
+                                &harness_run_id,
+                                &conv_id,
+                                cancel_gen,
+                                "cancelled",
+                                None,
+                            )
+                            .await;
+                            emit_agent_execution_finished_for_generation(
                                 &app_handle,
                                 &conv_id,
+                                cancel_gen,
                                 AgentExecutionOutcome::Cancelled,
                                 None,
                                 None,
@@ -1386,11 +2181,29 @@ pub async fn agent_execute(
                             }
                         }
                         tracing::error!("Agent with tools execution failed: {}", e);
-                        emit_agent_execution_finished(
+                        settle_running_tool_messages(
                             &app_handle,
                             &conv_id,
+                            "failed",
+                            "Execution failed before the tool result was recorded",
+                        )
+                        .await;
+                        let error_message = e.to_string();
+                        finish_agent_harness(
+                            &app_handle,
+                            &harness_run_id,
+                            &conv_id,
+                            cancel_gen,
+                            "failed",
+                            Some(&error_message),
+                        )
+                        .await;
+                        emit_agent_execution_finished_for_generation(
+                            &app_handle,
+                            &conv_id,
+                            cancel_gen,
                             AgentExecutionOutcome::Failed,
-                            Some(e.to_string()),
+                            Some(error_message),
                             None,
                             None,
                         );
@@ -1405,6 +2218,7 @@ pub async fn agent_execute(
             &service_clone,
             &app_handle,
             &conv_id,
+            cancel_gen,
             &msg_id,
             &augmented_task,
             base_system_prompt.as_deref(),
@@ -1414,14 +2228,24 @@ pub async fn agent_execute(
         .await
         {
             Ok(response) => {
-                if is_conversation_cancelled(&conv_id) {
+                if is_agent_execution_cancelled(&conv_id, Some(cancel_gen)) {
                     tracing::info!(
                         "Stream chat ended after cancellation for conversation: {}",
                         conv_id
                     );
-                    emit_agent_execution_finished(
+                    finish_agent_harness(
+                        &app_handle,
+                        &harness_run_id,
+                        &conv_id,
+                        cancel_gen,
+                        "cancelled",
+                        None,
+                    )
+                    .await;
+                    emit_agent_execution_finished_for_generation(
                         &app_handle,
                         &conv_id,
+                        cancel_gen,
                         AgentExecutionOutcome::Cancelled,
                         None,
                         None,
@@ -1450,24 +2274,45 @@ pub async fn agent_execute(
                     }
                 }
                 tracing::info!("Stream chat completed for conversation: {}", conv_id);
-                emit_agent_execution_finished(
+                checkpoint_agent_harness(
                     &app_handle,
+                    &harness_run_id,
+                    "generation_succeeded",
+                    Some(serde_json::json!({
+                        "response_chars": response.chars().count(),
+                    })),
+                )
+                .await;
+                finish_agent_harness(
+                    &app_handle,
+                    &harness_run_id,
                     &conv_id,
-                    AgentExecutionOutcome::Succeeded,
+                    cancel_gen,
+                    "succeeded",
                     None,
-                    Some(response),
-                    None,
-                );
+                )
+                .await;
+                emit_success_outcome(&app_handle, &conv_id, cancel_gen, response).await;
             }
             Err(e) => {
-                if is_conversation_cancelled(&conv_id) {
+                if is_agent_execution_cancelled(&conv_id, Some(cancel_gen)) {
                     tracing::info!(
                         "Stream chat failed after cancellation for conversation: {}",
                         conv_id
                     );
-                    emit_agent_execution_finished(
+                    finish_agent_harness(
+                        &app_handle,
+                        &harness_run_id,
+                        &conv_id,
+                        cancel_gen,
+                        "cancelled",
+                        None,
+                    )
+                    .await;
+                    emit_agent_execution_finished_for_generation(
                         &app_handle,
                         &conv_id,
+                        cancel_gen,
                         AgentExecutionOutcome::Cancelled,
                         None,
                         None,
@@ -1501,9 +2346,19 @@ pub async fn agent_execute(
                     }
                 }
                 tracing::error!("Stream chat failed: {}", e);
-                emit_agent_execution_finished(
+                finish_agent_harness(
+                    &app_handle,
+                    &harness_run_id,
+                    &conv_id,
+                    cancel_gen,
+                    "failed",
+                    Some(&e),
+                )
+                .await;
+                emit_agent_execution_finished_for_generation(
                     &app_handle,
                     &conv_id,
+                    cancel_gen,
                     AgentExecutionOutcome::Failed,
                     Some(e),
                     None,
@@ -1569,7 +2424,7 @@ async fn load_image_attachment_settings(
 async fn load_tool_config_from_db(app_handle: &AppHandle) -> Option<crate::agents::ToolConfig> {
     if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
         if let Ok(Some(config_str)) = db.get_config("agent", "tool_config").await {
-            if let Ok(config) = serde_json::from_str::<crate::agents::ToolConfig>(&config_str) {
+            if let Ok(config) = crate::agents::ToolConfig::from_json_str(&config_str) {
                 tracing::info!("Loaded global tool config from database");
                 return Some(config);
             }
@@ -1601,5 +2456,142 @@ async fn save_tool_config_to_db(
         Ok(())
     } else {
         Err("Database service not available".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_unfinished_execution_tasks_error, build_unfinished_tasks_continuation_prompt,
+    };
+
+    #[test]
+    fn unfinished_execution_tasks_error_lists_only_non_terminal_tasks() {
+        let tasks = vec![
+            sentinel_db::ExecutionTaskItem {
+                id: "task-1".to_string(),
+                execution_id: "exec-1".to_string(),
+                item_index: 0,
+                description: "done".to_string(),
+                status: "completed".to_string(),
+                result: None,
+                created_at: "2026-05-05T00:00:00Z".to_string(),
+                updated_at: "2026-05-05T00:00:00Z".to_string(),
+            },
+            sentinel_db::ExecutionTaskItem {
+                id: "task-2".to_string(),
+                execution_id: "exec-1".to_string(),
+                item_index: 1,
+                description: "building page".to_string(),
+                status: "in_progress".to_string(),
+                result: None,
+                created_at: "2026-05-05T00:00:00Z".to_string(),
+                updated_at: "2026-05-05T00:00:00Z".to_string(),
+            },
+            sentinel_db::ExecutionTaskItem {
+                id: "task-3".to_string(),
+                execution_id: "exec-1".to_string(),
+                item_index: 2,
+                description: "write tests".to_string(),
+                status: "pending".to_string(),
+                result: None,
+                created_at: "2026-05-05T00:00:00Z".to_string(),
+                updated_at: "2026-05-05T00:00:00Z".to_string(),
+            },
+            sentinel_db::ExecutionTaskItem {
+                id: "task-4".to_string(),
+                execution_id: "exec-1".to_string(),
+                item_index: 3,
+                description: "known issue".to_string(),
+                status: "failed".to_string(),
+                result: None,
+                created_at: "2026-05-05T00:00:00Z".to_string(),
+                updated_at: "2026-05-05T00:00:00Z".to_string(),
+            },
+        ];
+
+        let message = build_unfinished_execution_tasks_error("exec-1", &tasks);
+
+        assert!(message.contains("exec-1"));
+        assert!(message.contains("#2 building page (in_progress)"));
+        assert!(message.contains("#3 write tests (pending)"));
+        assert!(!message.contains("done"));
+        assert!(!message.contains("known issue"));
+    }
+
+    #[test]
+    fn unfinished_task_recovery_prompt_focuses_on_remaining_tasks() {
+        let tasks = vec![
+            sentinel_db::ExecutionTaskItem {
+                id: "task-1".to_string(),
+                execution_id: "exec-1".to_string(),
+                item_index: 0,
+                description: "done".to_string(),
+                status: "completed".to_string(),
+                result: Some("already handled".to_string()),
+                created_at: "2026-05-05T00:00:00Z".to_string(),
+                updated_at: "2026-05-05T00:00:00Z".to_string(),
+            },
+            sentinel_db::ExecutionTaskItem {
+                id: "task-2".to_string(),
+                execution_id: "exec-1".to_string(),
+                item_index: 1,
+                description: "building page".to_string(),
+                status: "in_progress".to_string(),
+                result: Some("editing current page".to_string()),
+                created_at: "2026-05-05T00:00:00Z".to_string(),
+                updated_at: "2026-05-05T00:00:00Z".to_string(),
+            },
+            sentinel_db::ExecutionTaskItem {
+                id: "task-3".to_string(),
+                execution_id: "exec-1".to_string(),
+                item_index: 2,
+                description: "write tests".to_string(),
+                status: "pending".to_string(),
+                result: None,
+                created_at: "2026-05-05T00:00:00Z".to_string(),
+                updated_at: "2026-05-05T00:00:00Z".to_string(),
+            },
+        ];
+
+        let prompt = build_unfinished_tasks_continuation_prompt(
+            "exec-1",
+            "Previous answer ended too early.",
+            &tasks,
+            1,
+            false,
+        );
+
+        assert!(prompt.contains("harness continuation attempt 1"));
+        assert!(prompt.contains("#2 building page (in_progress)"));
+        assert!(prompt.contains("#3 write tests (pending)"));
+        assert!(!prompt.contains("#1 done (completed)"));
+        assert!(prompt.contains("Previous answer ended too early."));
+    }
+
+    #[test]
+    fn unfinished_task_recovery_prompt_escalates_after_stalled_attempt() {
+        let tasks = vec![sentinel_db::ExecutionTaskItem {
+            id: "task-2".to_string(),
+            execution_id: "exec-1".to_string(),
+            item_index: 1,
+            description: "building page".to_string(),
+            status: "in_progress".to_string(),
+            result: Some("still analyzing".to_string()),
+            created_at: "2026-05-05T00:00:00Z".to_string(),
+            updated_at: "2026-05-05T00:00:00Z".to_string(),
+        }];
+
+        let prompt = build_unfinished_tasks_continuation_prompt(
+            "exec-1",
+            "No concrete progress yet.",
+            &tasks,
+            2,
+            true,
+        );
+
+        assert!(prompt.contains("harness continuation attempt 2"));
+        assert!(prompt.contains("[Recovery Escalation]"));
+        assert!(prompt.contains("plain analysis-only reply is invalid"));
     }
 }

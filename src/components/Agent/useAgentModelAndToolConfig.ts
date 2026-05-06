@@ -19,7 +19,7 @@ const createBaseToolConfig = (): UiToolConfigPayload => ({
   enabled: true,
   selection_strategy: 'Keyword',
   max_tools: 5,
-  fixed_tools: ['interactive_shell', 'ask_user_question'],
+  preselected_tools: [],
   disabled_tools: [],
   allowed_tools: [],
 })
@@ -257,7 +257,7 @@ export const useAgentModelAndToolConfig = (params: {
 
   const buildTeamToolPolicyFromUiConfig = (config: UiToolConfigPayload) => {
     const disabledSet = new Set(normalizeToolIdList(config.disabled_tools))
-    const fixedSet = new Set(normalizeToolIdList(config.fixed_tools))
+    const preselectedSet = new Set(normalizeToolIdList(config.preselected_tools))
     const manualFallback = normalizeToolIdList((config as any).manual_tools)
     const strategy = parseToolSelectionStrategy(config.selection_strategy, manualFallback)
 
@@ -267,7 +267,7 @@ export const useAgentModelAndToolConfig = (params: {
     if (!config.enabled) {
       allowlist = []
     } else if (strategy.mode === 'Manual') {
-      const manualSet = new Set([...strategy.manualTools, ...fixedSet])
+      const manualSet = new Set([...strategy.manualTools, ...preselectedSet])
       allowlist = [...manualSet].filter((tool) => !disabledSet.has(tool))
     }
 

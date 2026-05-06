@@ -1011,6 +1011,7 @@ impl SystemAgentRuntime {
             .await?;
         let params = AgentExecuteParams {
             execution_id: run_id.to_string(),
+            cancellation_generation: None,
             model: config.model.clone(),
             system_prompt,
             task,
@@ -1018,6 +1019,7 @@ impl SystemAgentRuntime {
             active_browser_shell_session_id: None,
             active_terminal_session_fingerprint: None,
             active_terminal_session_id: None,
+            working_directory: None,
             rig_provider: config
                 .rig_provider
                 .clone()
@@ -1090,11 +1092,11 @@ impl SystemAgentRuntime {
 
         let mut effective = config.unwrap_or_default();
         if !effective
-            .fixed_tools
+            .preselected_tools
             .iter()
             .any(|tool_id| tool_id == SopsTool::NAME)
         {
-            effective.fixed_tools.push(SopsTool::NAME.to_string());
+            effective.preselected_tools.push(SopsTool::NAME.to_string());
         }
         if !effective.allowed_tools.is_empty()
             && !effective
@@ -1104,7 +1106,10 @@ impl SystemAgentRuntime {
         {
             effective.allowed_tools.push(SopsTool::NAME.to_string());
         }
-        effective.max_tools = effective.max_tools.max(effective.fixed_tools.len()).max(1);
+        effective.max_tools = effective
+            .max_tools
+            .max(effective.preselected_tools.len())
+            .max(1);
         effective.enabled = true;
         Some(effective)
     }
@@ -1778,7 +1783,10 @@ mod tests {
             config.selection_strategy,
             crate::agents::ToolSelectionStrategy::Keyword
         ));
-        assert!(config.fixed_tools.iter().any(|tool| tool == SopsTool::NAME));
+        assert!(config
+            .preselected_tools
+            .iter()
+            .any(|tool| tool == SopsTool::NAME));
     }
 
     #[test]
@@ -1818,7 +1826,10 @@ mod tests {
         )
         .expect("forbidden policy should still return runtime restrictions");
 
-        assert!(!config.fixed_tools.iter().any(|tool| tool == SopsTool::NAME));
+        assert!(!config
+            .preselected_tools
+            .iter()
+            .any(|tool| tool == SopsTool::NAME));
         assert!(config
             .disabled_tools
             .iter()

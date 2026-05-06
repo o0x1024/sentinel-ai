@@ -602,7 +602,7 @@ pub fn build_sentinel_clarification_state(
             String::new()
         },
         confidence: intent.confidence,
-        recommended_timeout_secs: 20,
+        recommended_timeout_secs: 120,
         default_mode: if intent.relation == SentinelIntentRelation::Continuation {
             "continue_current_intent".to_string()
         } else {
@@ -1517,6 +1517,18 @@ mod tests {
             clarified.compression_aggressiveness,
             SentinelCompressionAggressiveness::Disabled
         );
+    }
+
+    #[test]
+    fn sentinel_clarification_recommends_two_minute_question_timeout() {
+        let intent = SentinelIntentState {
+            clarification_needed: true,
+            ..SentinelIntentState::default()
+        };
+
+        let clarification = build_sentinel_clarification_state(&intent);
+
+        assert_eq!(clarification.recommended_timeout_secs, 120);
     }
 
     #[test]

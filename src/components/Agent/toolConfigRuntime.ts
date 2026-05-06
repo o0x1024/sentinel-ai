@@ -17,7 +17,7 @@ export interface UiToolConfigPayload {
   enabled: boolean
   selection_strategy: any
   max_tools: number
-  fixed_tools: string[]
+  preselected_tools: string[]
   disabled_tools: string[]
   manual_tools?: string[]
   skills?: string[]
@@ -97,7 +97,7 @@ export const normalizeUiToolConfigPayload = (
       || Number(fallback?.max_tools)
       || 1,
     )),
-    fixed_tools: normalizeToolIdList(raw.fixed_tools ?? fallback?.fixed_tools),
+    preselected_tools: normalizeToolIdList(raw.preselected_tools ?? fallback?.preselected_tools),
     disabled_tools: normalizeToolIdList(raw.disabled_tools ?? fallback?.disabled_tools),
     allowed_tools: normalizeToolIdList(raw.allowed_tools ?? fallback?.allowed_tools),
   }
@@ -127,7 +127,7 @@ export const buildRuntimeToolConfigForExecution = (
   const webSearchEnabled = options?.webSearchEnabled === true
   const disabledTools = normalizeToolIdList(config.disabled_tools)
     .filter((toolId) => !(webSearchEnabled && toolId === WEB_SEARCH_TOOL_ID))
-  const fixedTools = normalizeToolIdList(config.fixed_tools)
+  const preselectedTools = normalizeToolIdList(config.preselected_tools)
   const manualFallback = normalizeToolIdList(config.manual_tools)
   const allowedTools = normalizeToolIdList(config.allowed_tools)
   const strategy = parseToolSelectionStrategy(config.selection_strategy, manualFallback)
@@ -140,7 +140,7 @@ export const buildRuntimeToolConfigForExecution = (
       enabled: config.enabled,
       selection_strategy: runtimeSelectionStrategy,
       max_tools: Math.max(1, Number(config.max_tools) || 1),
-      fixed_tools: fixedTools,
+      preselected_tools: preselectedTools,
       disabled_tools: disabledTools,
       allowed_tools: allowedTools,
     }
@@ -151,7 +151,7 @@ export const buildRuntimeToolConfigForExecution = (
       enabled: true,
       selection_strategy: { Manual: [WEB_SEARCH_TOOL_ID] },
       max_tools: 1,
-      fixed_tools: [],
+      preselected_tools: [],
       disabled_tools: disabledTools,
       allowed_tools: [WEB_SEARCH_TOOL_ID],
     }
@@ -167,7 +167,7 @@ export const buildRuntimeToolConfigForExecution = (
       enabled: true,
       selection_strategy: { Manual: manualTools },
       max_tools: Math.max(Number(config.max_tools) || 1, manualTools.length),
-      fixed_tools: unionToolIds(fixedTools, [WEB_SEARCH_TOOL_ID]),
+      preselected_tools: unionToolIds(preselectedTools, [WEB_SEARCH_TOOL_ID]),
       disabled_tools: disabledTools,
       allowed_tools: nextAllowedTools,
     }
@@ -177,7 +177,7 @@ export const buildRuntimeToolConfigForExecution = (
     enabled: true,
     selection_strategy: runtimeSelectionStrategy,
     max_tools: Math.max(1, Number(config.max_tools) || 1),
-    fixed_tools: unionToolIds(fixedTools, [WEB_SEARCH_TOOL_ID]),
+    preselected_tools: unionToolIds(preselectedTools, [WEB_SEARCH_TOOL_ID]),
     disabled_tools: disabledTools,
     allowed_tools: nextAllowedTools,
   }
@@ -203,17 +203,20 @@ export const buildRuntimeToolConfigForTeamRole = (
       ? normalizeToolIdList(baseStrategy.Manual)
       : []
   const agentToolScope = unionToolIds(
-    normalizeToolIdList(baseRuntimeConfig.fixed_tools),
+    normalizeToolIdList(baseRuntimeConfig.preselected_tools),
     baseManualTools,
     normalizeToolIdList(baseRuntimeConfig.allowed_tools),
   ).filter(toolId => !disabledTools.includes(toolId))
-  const effectiveTools = roleTools.filter(toolId => agentToolScope.includes(toolId))
+  const hasExplicitAgentToolScope = agentToolScope.length > 0
+  const effectiveTools = hasExplicitAgentToolScope
+    ? roleTools.filter(toolId => agentToolScope.includes(toolId))
+    : roleTools.filter(toolId => !disabledTools.includes(toolId))
 
   return {
     enabled: baseRuntimeConfig.enabled && effectiveTools.length > 0,
     selection_strategy: { Manual: effectiveTools },
     max_tools: Math.max(Number(baseRuntimeConfig.max_tools) || 1, effectiveTools.length || 1),
-    fixed_tools: [],
+    preselected_tools: [],
     disabled_tools: disabledTools,
     allowed_tools: effectiveTools,
   }

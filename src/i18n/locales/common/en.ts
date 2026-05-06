@@ -12,6 +12,8 @@ export default {
   search: 'Search',
   refresh: 'Refresh',
   close: 'Close',
+  clear: 'Clear',
+  expand: 'Expand',
   enabled: 'Enabled',
   disabled: 'Disabled',
   minimize: 'Minimize',

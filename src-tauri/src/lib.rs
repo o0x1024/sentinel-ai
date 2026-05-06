@@ -1542,6 +1542,7 @@ pub fn run() {
             traffic::set_traffic_context_extraction_settings,
             traffic::get_traffic_plugin_runtime_settings,
             traffic::set_traffic_plugin_runtime_settings,
+            traffic::get_traffic_plugin_runtime_queue_stats,
             traffic::get_active_probe_queue_snapshot,
             commands::security_workbench_list_cases,
             commands::security_workbench_get_or_create_case_for_finding,

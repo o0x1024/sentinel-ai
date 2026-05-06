@@ -61,6 +61,26 @@ use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 
 type PendingToolCalls = std::collections::HashMap<String, (String, String, i64, u32)>;
 
+async fn settle_running_tool_messages_for_interrupted_turn(
+    db: Option<&Arc<sentinel_db::DatabaseService>>,
+    execution_id: &str,
+    reason: &str,
+) {
+    let Some(db) = db else {
+        return;
+    };
+    if let Err(error) = db
+        .settle_running_ai_tool_messages(execution_id, "failed", reason)
+        .await
+    {
+        tracing::warn!(
+            "Failed to settle interrupted running tool messages for {}: {}",
+            execution_id,
+            error
+        );
+    }
+}
+
 pub async fn execute_agent_with_tools(
     app_handle: &AppHandle,
     params: AgentExecuteParams,
@@ -131,6 +151,7 @@ pub async fn execute_agent_with_tools(
     emit_initial_tool_selection(
         app_handle,
         &params.execution_id,
+        params.cancellation_generation,
         selection_plan
             .selected_skill
             .as_ref()
@@ -147,10 +168,12 @@ pub async fn execute_agent_with_tools(
     let context_result = build_context(ContextBuildInput {
         app_handle: app_handle.clone(),
         execution_id: params.execution_id.clone(),
+        generation: params.cancellation_generation,
         active_browser_shell_direct_write_enabled: params.active_browser_shell_direct_write_enabled,
         active_browser_shell_session_id: params.active_browser_shell_session_id.clone(),
         active_terminal_session_fingerprint: params.active_terminal_session_fingerprint.clone(),
         active_terminal_session_id: params.active_terminal_session_id.clone(),
+        working_directory: params.working_directory.clone(),
         base_system_prompt: params.system_prompt.clone(),
         injected_skill_prompt: selection_plan.injected_system_prompt.clone(),
         task: params.task.clone(),
@@ -176,6 +199,7 @@ pub async fn execute_agent_with_tools(
 
     let client = StreamingLlmClient::new(llm_config);
     let execution_id = params.execution_id.clone();
+    let cancellation_generation = params.cancellation_generation;
     let team_stream_context = parse_team_stream_context(&execution_id);
     let team_log_context =
         resolve_team_runtime_log_context(&execution_id, Some(db_service.inner())).await;
@@ -283,7 +307,15 @@ pub async fn execute_agent_with_tools(
     let mut force_history_with_tools = false;
     while retries <= max_retries {
         // Early exit if cancelled before starting a new stream turn
-        if crate::commands::ai::is_conversation_cancelled(&params.execution_id) {
+        if cancellation_generation
+            .map(|generation| {
+                crate::commands::ai::is_conversation_generation_cancelled(
+                    &params.execution_id,
+                    generation,
+                )
+            })
+            .unwrap_or_else(|| crate::commands::ai::is_conversation_cancelled(&params.execution_id))
+        {
             tracing::info!(
                 "Execution cancelled before new stream turn: {}",
                 params.execution_id
@@ -300,6 +332,7 @@ pub async fn execute_agent_with_tools(
             tool_server,
             &params.execution_id,
             params.active_terminal_session_id.as_deref(),
+            params.working_directory.as_deref(),
             referenced_traffic,
         )
         .await;
@@ -332,6 +365,7 @@ pub async fn execute_agent_with_tools(
                 emit_retry_event(
                     app_handle,
                     &params.execution_id,
+                    params.cancellation_generation,
                     retries,
                     max_retries,
                     last_error.as_ref(),
@@ -380,7 +414,15 @@ pub async fn execute_agent_with_tools(
                 image_attachments.as_slice(),
                 dynamic_tools.clone(),
                 |content| {
-                    if crate::commands::ai::is_conversation_cancelled(&execution_id) {
+                    if cancellation_generation
+                        .map(|generation| {
+                            crate::commands::ai::is_conversation_generation_cancelled(
+                                &execution_id,
+                                generation,
+                            )
+                        })
+                        .unwrap_or_else(|| crate::commands::ai::is_conversation_cancelled(&execution_id))
+                    {
                         return false;
                     }
                     match content {
@@ -507,6 +549,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:chunk",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "generation": cancellation_generation,
                                     "chunk_type": "text",
                                     "content": text,
                                 }),
@@ -522,6 +565,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:chunk",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "generation": cancellation_generation,
                                     "chunk_type": "reasoning",
                                     "content": reasoning,
                                 }),
@@ -573,6 +617,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:tool_call_start",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "generation": cancellation_generation,
                                     "tool_call_id": id,
                                     "tool_name": name,
                                 }),
@@ -583,6 +628,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:tool_call_delta",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "generation": cancellation_generation,
                                     "tool_call_id": id,
                                     "delta": delta,
                                 }),
@@ -794,6 +840,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:tool_call_complete",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "generation": cancellation_generation,
                                     "tool_call_id": id,
                                     "tool_name": name,
                                     "arguments": arguments,
@@ -1121,6 +1168,7 @@ pub async fn execute_agent_with_tools(
                                             "agent:loop_detected",
                                             &json!({
                                                 "execution_id": execution_id,
+                                                "generation": cancellation_generation,
                                                 "tool_name": name_for_meta,
                                                 "repeat_count": repeat_hits,
                                                 "reason": "repeated identical tool arguments and result"
@@ -1203,6 +1251,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:tool_result",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "generation": cancellation_generation,
                                     "tool_call_id": id,
                                     "result": result,
                                     "success": team_success,
@@ -1244,6 +1293,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:chunk",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "generation": cancellation_generation,
                                     "chunk_type": "usage",
                                     "input_tokens": input_tokens,
                                     "output_tokens": output_tokens,
@@ -1341,6 +1391,12 @@ pub async fn execute_agent_with_tools(
                     &accumulated_assistant_output,
                     Some(&pending),
                 );
+                settle_running_tool_messages_for_interrupted_turn(
+                    db_for_stream.as_ref(),
+                    &params.execution_id,
+                    "Tool activation reload interrupted a pending tool call before its result was recorded",
+                )
+                .await;
 
                 let mut requested_tools = if let Ok(mut slot) = activated_tool_ids.lock() {
                     std::mem::take(&mut *slot)
@@ -1360,7 +1416,7 @@ pub async fn execute_agent_with_tools(
                     };
 
                 if !requested_tools.is_empty() {
-                    let mut next_tools = tool_config.fixed_tools.clone();
+                    let mut next_tools = tool_config.preselected_tools.clone();
                     next_tools.extend(requested_tools.clone());
                     next_tools.extend(current_tool_ids.clone());
 
@@ -1386,6 +1442,7 @@ pub async fn execute_agent_with_tools(
                     emit_and_persist_tool_activation(
                         app_handle,
                         &params.execution_id,
+                        params.cancellation_generation,
                         &requested_tools,
                         activation_query,
                         activation_runtime_hint,
@@ -1417,6 +1474,12 @@ pub async fn execute_agent_with_tools(
                     &accumulated_assistant_output,
                     Some(&pending),
                 );
+                settle_running_tool_messages_for_interrupted_turn(
+                    db_for_stream.as_ref(),
+                    &params.execution_id,
+                    "Skill reload interrupted a pending tool call before its result was recorded",
+                )
+                .await;
 
                 let skill_id = if let Ok(mut slot) = loaded_skill_id.lock() {
                     slot.take()
@@ -1445,7 +1508,7 @@ pub async fn execute_agent_with_tools(
                                 next_tools.push(ShellTool::NAME.to_string());
                             }
                             next_tools.extend(skill.allowed_tools.clone());
-                            next_tools.extend(tool_config.fixed_tools.clone());
+                            next_tools.extend(tool_config.preselected_tools.clone());
                             let available_tools = tool_server
                                 .list_tools()
                                 .await
@@ -1464,12 +1527,14 @@ pub async fn execute_agent_with_tools(
                                 "agent:tools_selected",
                                 &json!({
                                     "execution_id": params.execution_id,
+                                    "generation": params.cancellation_generation,
                                     "tools": current_tool_ids,
                                 }),
                             );
                             emit_and_persist_skill_loaded(
                                 app_handle,
                                 &params.execution_id,
+                                params.cancellation_generation,
                                 &skill.id,
                                 &skill.name,
                                 db_for_stream.clone(),
@@ -1511,6 +1576,12 @@ pub async fn execute_agent_with_tools(
                     Some(&last_tool_fingerprint),
                     Some(repeated_tool_fingerprint_count.as_ref()),
                 );
+                settle_running_tool_messages_for_interrupted_turn(
+                    db_for_stream.as_ref(),
+                    &params.execution_id,
+                    "Retry interrupted a pending tool call before its result was recorded",
+                )
+                .await;
                 low_evidence_warning_issued.store(false, Ordering::SeqCst);
                 if let Ok(mut tracker) = hypothesis_tracker.lock() {
                     tracker.clear();
@@ -1628,6 +1699,7 @@ pub async fn execute_agent_with_tools(
                 save_assistant_message(
                     app_handle,
                     &params.execution_id,
+                    params.cancellation_generation,
                     &final_response,
                     tool_calls_slice,
                     reasoning_content,
@@ -1756,6 +1828,7 @@ pub async fn execute_agent_with_tools(
                                             "agent:tenth_man_critique",
                                             &json!({
                                                 "execution_id": params.execution_id,
+                                                "generation": params.cancellation_generation,
                                                 "critique": critique,
                                                 "message_id": review_msg.id,
                                                 "trigger": final_trigger,
@@ -1857,6 +1930,12 @@ pub async fn execute_agent_with_tools(
                         None,
                         None,
                     );
+                    settle_running_tool_messages_for_interrupted_turn(
+                        db_for_stream.as_ref(),
+                        &params.execution_id,
+                        "Retry interrupted a pending tool call before its result was recorded",
+                    )
+                    .await;
                     low_evidence_warning_issued.store(false, Ordering::SeqCst);
                     if let Ok(mut tracker) = hypothesis_tracker.lock() {
                         tracker.clear();
@@ -1889,6 +1968,12 @@ pub async fn execute_agent_with_tools(
                         Some(&last_tool_fingerprint),
                         Some(repeated_tool_fingerprint_count.as_ref()),
                     );
+                    settle_running_tool_messages_for_interrupted_turn(
+                        db_for_stream.as_ref(),
+                        &params.execution_id,
+                        "Retry interrupted a pending tool call before its result was recorded",
+                    )
+                    .await;
                     low_evidence_warning_issued.store(false, Ordering::SeqCst);
                     if let Ok(mut tracker) = hypothesis_tracker.lock() {
                         tracker.clear();

@@ -45,10 +45,12 @@ const USER_FORCED_RULES_BLOCK_MARKER: &str = "[User Forced Rules]";
 pub struct ContextBuildInput {
     pub app_handle: AppHandle,
     pub execution_id: String,
+    pub generation: Option<u64>,
     pub active_browser_shell_direct_write_enabled: bool,
     pub active_browser_shell_session_id: Option<String>,
     pub active_terminal_session_fingerprint: Option<String>,
     pub active_terminal_session_id: Option<String>,
+    pub working_directory: Option<String>,
     pub base_system_prompt: String,
     pub injected_skill_prompt: Option<String>,
     pub task: String,
@@ -114,6 +116,92 @@ fn env_label(env: ExecutionEnvironment) -> &'static str {
         ExecutionEnvironment::Host => "host",
         ExecutionEnvironment::Docker => "docker",
     }
+}
+
+fn tool_is_selected(selected_tool_ids: &[String], tool_id: &str) -> bool {
+    selected_tool_ids.iter().any(|id| id == tool_id)
+}
+
+fn build_tool_usage_priority_block(
+    selected_tool_ids: &[String],
+    has_bound_browser_shell_session: bool,
+    is_binary_security_task: bool,
+) -> String {
+    let has_ask_user_question = tool_is_selected(selected_tool_ids, "ask_user_question");
+    let has_shell = tool_is_selected(selected_tool_ids, "shell");
+    let has_interactive_shell = tool_is_selected(selected_tool_ids, "interactive_shell");
+    let has_browser_shell = tool_is_selected(selected_tool_ids, "browser_shell");
+
+    let mut lines = vec![
+        "Use only tools that are actually available in this run. Do not guess or call tool names outside the active toolset.".to_string(),
+    ];
+
+    if has_ask_user_question {
+        lines.push(
+            "Use `ask_user_question` when requirements are ambiguous, when multiple implementation paths are viable, or when you need the user to choose between concrete options.".to_string(),
+        );
+    }
+
+    if has_shell {
+        lines.push(
+            "Use one-shot `shell` only for commands that should finish on their own and return output promptly.".to_string(),
+        );
+        if has_interactive_shell {
+            lines.push(
+                "If a command starts a server, watcher, log follower, dev process, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive. Example: starting a dev server should be `shell {\"command\":\"npm run dev\",\"run_in_background\":true}` instead of a foreground `shell {\"command\":\"npm run dev\"}`. Example: following logs should be `shell {\"command\":\"docker logs -f api\",\"run_in_background\":true}`; if you need to interact with the live process, use `interactive_shell` instead.".to_string(),
+            );
+        } else {
+            lines.push(
+                "If a command starts a server, watcher, log follower, dev process, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive. Example: starting a dev server should be `shell {\"command\":\"npm run dev\",\"run_in_background\":true}` instead of a foreground `shell {\"command\":\"npm run dev\"}`. Example: following logs should be `shell {\"command\":\"docker logs -f api\",\"run_in_background\":true}`.".to_string(),
+            );
+        }
+    }
+
+    if has_interactive_shell {
+        lines.push(
+            "Use `interactive_shell` for iterative terminal work, REPLs, TUIs, debugger sessions, or when you need to inspect a live long-running process interactively.".to_string(),
+        );
+        if has_shell {
+            lines.push(
+                "If one-shot `shell` returns a structured failure with `interaction_required=true`, do not retry the same command with `shell`. Switch to `interactive_shell` to continue in the persistent terminal session, or rewrite the command to be non-interactive.".to_string(),
+            );
+        }
+    }
+
+    if has_browser_shell {
+        let mut browser_shell_line = "Use `browser_shell` when the target terminal is a third-party browser WebSocket shell captured by the Sentinel Chrome extension.".to_string();
+        if has_bound_browser_shell_session {
+            browser_shell_line.push_str(" Prefer the currently bound `browser_shell` session over DOM `browser` actions when you need the actual terminal stream rather than the page DOM.");
+        } else {
+            browser_shell_line.push_str(" Prefer it over DOM `browser` actions when you need the actual terminal stream rather than the page DOM.");
+        }
+        lines.push(browser_shell_line);
+    }
+
+    if has_shell || has_interactive_shell {
+        lines.push(
+            "Never leave the conversation blocked on a long-lived foreground shell command."
+                .to_string(),
+        );
+    }
+
+    if is_binary_security_task {
+        if has_interactive_shell && has_shell {
+            lines.push(
+                "For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and multi-step terminal exploration. Use one-off `shell` only for short non-interactive commands.".to_string(),
+            );
+        } else if has_interactive_shell {
+            lines.push(
+                "For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and multi-step terminal exploration.".to_string(),
+            );
+        } else if has_shell {
+            lines.push(
+                "For reverse engineering / pwn / binary exploitation tasks, limit `shell` usage to short non-interactive commands that produce immediate output.".to_string(),
+            );
+        }
+    }
+
+    format!("\n\n[Tool Usage Priority]\n- {}", lines.join("\n- "))
 }
 
 pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResult> {
@@ -359,50 +447,43 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     }
 
     if policy.include_working_dir {
-        if let Some(db) = input
-            .app_handle
-            .try_state::<Arc<sentinel_db::DatabaseService>>()
-        {
-            let configured_dir_agent = db
-                .get_config("agent", "working_directory")
-                .await
-                .ok()
-                .flatten()
-                .filter(|dir| !dir.trim().is_empty());
-            let configured_dir_legacy_ai = db
-                .get_config("ai", "working_directory")
-                .await
-                .ok()
-                .flatten()
-                .filter(|dir| !dir.trim().is_empty());
-            let configured_dir = configured_dir_agent.or(configured_dir_legacy_ai);
-            let working_dir =
-                configured_dir.unwrap_or_else(|| execution_context.context_dir.clone());
+        let working_dir = match execution_context.env {
+            ExecutionEnvironment::Docker => execution_context.context_dir.clone(),
+            ExecutionEnvironment::Host => input
+                .working_directory
+                .clone()
+                .filter(|dir| !dir.trim().is_empty())
+                .unwrap_or_else(|| execution_context.context_dir.clone()),
+        };
 
-            system_prompt.push_str(&format!(
-                "\n\n[Execution Environment]\n\
-                - Environment: {}\n\
-                - OS: {}\n\
-                - Working Directory: {}\n\
-                \n\
-                [Working Directory Note: When performing file operations, executing scripts, or any file system related tasks, use this directory as your base path unless explicitly specified otherwise by the user.]",
-                env_label(execution_context.env),
-                execution_context.os_name,
-                working_dir
-            ));
-            tracing::info!(
-                "Injected working directory into system prompt: {}",
-                working_dir
-            );
-        }
+        system_prompt.push_str(&format!(
+            "\n\n[Execution Environment]\n\
+            - Environment: {}\n\
+            - OS: {}\n\
+            - Working Directory: {}\n\
+            \n\
+            [Working Directory Note: When performing file operations, executing scripts, or any file system related tasks, use this directory as your base path unless explicitly specified otherwise by the user.]",
+            env_label(execution_context.env),
+            execution_context.os_name,
+            working_dir
+        ));
+        tracing::info!(
+            "Injected working directory into system prompt: {}",
+            working_dir
+        );
     }
 
-    if input
-        .active_terminal_session_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .is_some()
+    let has_shell = tool_is_selected(&input.selected_tool_ids, "shell");
+    let has_interactive_shell = tool_is_selected(&input.selected_tool_ids, "interactive_shell");
+    let has_browser_shell = tool_is_selected(&input.selected_tool_ids, "browser_shell");
+
+    if has_interactive_shell
+        && input
+            .active_terminal_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .is_some()
     {
         system_prompt.push_str(
             "\n\n[Interactive Terminal Session]\n\
@@ -422,32 +503,53 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
-    if let Some(browser_shell_session_id) = input
-        .active_browser_shell_session_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    {
-        system_prompt.push_str(
-            "\n\n[Browser Shell Session]\n\
-            - A third-party browser WebSocket shell session is already selected for this conversation.\n\
-            - Prefer the `browser_shell` tool when the task should operate inside that captured browser terminal.\n\
-            - If the user asks to use the current browser shell / browser terminal / third-party shell, do not use local `shell`, `interactive_shell`, or DOM `browser` actions for that command.\n\
-            - Reuse the selected browser shell session unless the user explicitly asks for a different one.\n\
-            - Do not invent, guess, or rotate browser shell session IDs yourself.",
-        );
-        system_prompt.push_str(&format!(
-            "\n- Active browser shell session id: {}",
-            browser_shell_session_id
-        ));
-        if input.active_browser_shell_direct_write_enabled {
-            system_prompt.push_str(
-                "\n- The user has explicitly authorized direct execution on this browser shell session.\n- When you intentionally send input to this selected browser shell session, you may set `browser_shell.requires_approval=false`.\n- Do not use direct execution on a different browser shell session unless the user re-authorizes it.",
+    if has_browser_shell {
+        if let Some(browser_shell_session_id) = input
+            .active_browser_shell_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            let mut browser_shell_note = vec![
+                "A third-party browser WebSocket shell session is already selected for this conversation.".to_string(),
+                "Prefer the `browser_shell` tool when the task should operate inside that captured browser terminal.".to_string(),
+            ];
+
+            let mut alternatives = Vec::new();
+            if has_shell {
+                alternatives.push("local `shell`");
+            }
+            if has_interactive_shell {
+                alternatives.push("`interactive_shell`");
+            }
+            alternatives.push("DOM `browser` actions");
+
+            browser_shell_note.push(format!(
+                "If the user asks to use the current browser shell / browser terminal / third-party shell, do not use {} for that command.",
+                alternatives.join(", ")
+            ));
+            browser_shell_note.push(
+                "Reuse the selected browser shell session unless the user explicitly asks for a different one.".to_string(),
             );
-        } else {
-            system_prompt.push_str(
-                "\n- Browser shell writes still require approval. Keep `browser_shell.requires_approval=true` unless the user explicitly authorizes direct execution.",
+            browser_shell_note.push(
+                "Do not invent, guess, or rotate browser shell session IDs yourself.".to_string(),
             );
+
+            system_prompt.push_str("\n\n[Browser Shell Session]\n- ");
+            system_prompt.push_str(&browser_shell_note.join("\n- "));
+            system_prompt.push_str(&format!(
+                "\n- Active browser shell session id: {}",
+                browser_shell_session_id
+            ));
+            if input.active_browser_shell_direct_write_enabled {
+                system_prompt.push_str(
+                    "\n- The user has explicitly authorized direct execution on this browser shell session.\n- When you intentionally send input to this selected browser shell session, you may set `browser_shell.requires_approval=false`.\n- Do not use direct execution on a different browser shell session unless the user re-authorizes it.",
+                );
+            } else {
+                system_prompt.push_str(
+                    "\n- Browser shell writes still require approval. Keep `browser_shell.requires_approval=true` unless the user explicitly authorizes direct execution.",
+                );
+            }
         }
     }
 
@@ -476,31 +578,28 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     .iter()
     .any(|kw| task_lower.contains(kw));
 
-    system_prompt.push_str(
-        "\n\n[Tool Usage Priority]\n\
-        - Use `ask_user_question` when requirements are ambiguous, when multiple implementation paths are viable, or when you need the user to choose between concrete options.\n\
-        - Use one-shot `shell` only for commands that should finish on their own and return output promptly.\n\
-        - If a command starts a server, watcher, log follower, dev process, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive.\nexample: starting a dev server should be `shell {\"command\":\"npm run dev\",\"run_in_background\":true}` instead of a foreground `shell {\"command\":\"npm run dev\"}`.\nexample: following logs should be `shell {\"command\":\"docker logs -f api\",\"run_in_background\":true}`; if you need to interact with the live process, use `interactive_shell` instead.\n\
-        - Use `interactive_shell` for iterative terminal work, REPLs, TUIs, debugger sessions, or when you need to inspect a live long-running process interactively.\n\
-        - Use `browser_shell` when the target terminal is a third-party browser WebSocket shell captured by the Sentinel Chrome extension. Prefer `browser_shell` over Playwright-style `browser` actions when you need the actual terminal stream rather than the page DOM.\n\
-        - Never leave the conversation blocked on a long-lived foreground shell command.",
-    );
-
-    if is_binary_security_task {
-        system_prompt.push_str(
-            "\n\
-            - For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and multi-step terminal exploration. Use one-off `shell` only for short non-interactive commands.",
-        );
-    }
+    system_prompt.push_str(&build_tool_usage_priority_block(
+        &input.selected_tool_ids,
+        input
+            .active_browser_shell_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .is_some(),
+        is_binary_security_task,
+    ));
 
     system_prompt.push_str(
         "\n\n[File Editing Efficiency Rules]\n\
         When editing existing files, optimize for incremental updates to reduce token/time cost:\n\
         1) Prefer minimal, targeted edits (line-level patch/diff) over full-file rewrites.\n\
         2) If a target file already exists, do NOT regenerate the entire file unless explicitly requested.\n\
-        3) Keep stable sections unchanged; isolate tunable values in compact config/parameter blocks where possible.\n\
-        4) After each edit, run a short validation command and continue with small deltas.\n\
-        5) In responses, summarize what changed instead of repeating full file content unless needed.",
+        3) Before any `file_edit`, first do a `file_read` of that file in the current execution.\n\
+        4) Before `file_write` with `overwrite=true`, first do a `file_read` of that file in the current execution.\n\
+        5) If the file changed after you read it, reread it before the next edit/overwrite.\n\
+        6) Keep stable sections unchanged; isolate tunable values in compact config/parameter blocks where possible.\n\
+        7) After each edit, run a short validation command and continue with small deltas.\n\
+        8) In responses, summarize what changed instead of repeating full file content unless needed.",
     );
 
     if policy.include_context_storage {
@@ -778,6 +877,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         "agent:context_usage",
         &json!({
             "execution_id": input.execution_id,
+            "generation": input.generation,
             "used_tokens": used_tokens,
             "max_tokens": max_tokens,
             "usage_percentage": usage_percentage,
@@ -828,6 +928,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         "agent:context_built",
         &json!({
             "execution_id": input.execution_id,
+            "generation": input.generation,
             "history_count": packet.window_messages.len(),
         }),
     );
@@ -836,6 +937,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         &input.app_handle,
         &ContextSnapshot {
             execution_id: input.execution_id.clone(),
+            generation: input.generation,
             system_tokens: estimate_tokens(&packet.system_instructions),
             run_state_tokens,
             window_tokens: history_tokens,
@@ -1202,4 +1304,59 @@ async fn get_provider_max_context_length(app_handle: &AppHandle, provider: &str)
     };
 
     Ok(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_tool_usage_priority_block;
+
+    #[test]
+    fn tool_usage_priority_omits_shell_guidance_when_shell_tools_are_unavailable() {
+        let rendered = build_tool_usage_priority_block(
+            &vec!["file_read".to_string(), "grep".to_string()],
+            false,
+            false,
+        );
+
+        assert!(rendered.contains("Use only tools that are actually available in this run"));
+        assert!(!rendered.contains("Use one-shot `shell`"));
+        assert!(!rendered.contains("Use `interactive_shell`"));
+        assert!(!rendered.contains("Use `browser_shell`"));
+    }
+
+    #[test]
+    fn tool_usage_priority_includes_only_selected_terminal_guidance() {
+        let rendered = build_tool_usage_priority_block(
+            &vec![
+                "ask_user_question".to_string(),
+                "interactive_shell".to_string(),
+                "browser_shell".to_string(),
+            ],
+            true,
+            true,
+        );
+
+        assert!(rendered.contains("Use `ask_user_question`"));
+        assert!(!rendered.contains("Use one-shot `shell`"));
+        assert!(rendered.contains("Use `interactive_shell`"));
+        assert!(rendered.contains("Use `browser_shell`"));
+        assert!(rendered.contains(
+            "For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell`"
+        ));
+    }
+
+    #[test]
+    fn tool_usage_priority_includes_shell_to_interactive_handoff_guidance() {
+        let rendered = build_tool_usage_priority_block(
+            &vec!["shell".to_string(), "interactive_shell".to_string()],
+            false,
+            false,
+        );
+
+        assert!(rendered.contains("Use one-shot `shell` only for commands that should finish"));
+        assert!(rendered.contains(
+            "If one-shot `shell` returns a structured failure with `interaction_required=true`, do not retry the same command with `shell`."
+        ));
+        assert!(rendered.contains("Switch to `interactive_shell`"));
+    }
 }

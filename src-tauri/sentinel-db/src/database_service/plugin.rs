@@ -1,7 +1,7 @@
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
 use anyhow::Result;
-use sentinel_plugins::PluginRecord;
+use sentinel_plugins::{PluginCategory, PluginMainCategory, PluginRecord};
 use sqlx::FromRow;
 
 #[derive(Debug, Clone, FromRow)]
@@ -63,10 +63,10 @@ pub struct TrafficPluginReloadRow {
     pub main_category: String,
 }
 
-fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> PluginRecord {
+fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> Result<PluginRecord> {
     if let Ok(mut record) = serde_json::from_str::<PluginRecord>(&row.metadata) {
         record.is_favorited = is_favorited;
-        return record;
+        return Ok(record);
     }
 
     if let Ok(metadata) = serde_json::from_str::<sentinel_plugins::PluginMetadata>(&row.metadata) {
@@ -77,13 +77,13 @@ fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> PluginRec
         };
 
         #[allow(deprecated)]
-        return PluginRecord {
+        return Ok(PluginRecord {
             metadata,
             path: None,
             status,
             last_error: None,
             is_favorited,
-        };
+        });
     }
 
     let severity = match row.default_severity.to_lowercase().as_str() {
@@ -105,8 +105,12 @@ fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> PluginRec
         name: row.name,
         version: row.version,
         author: row.author,
-        main_category: row.main_category,
-        category: row.category,
+        main_category: PluginMainCategory::parse(&row.main_category).map_err(anyhow::Error::msg)?,
+        category: PluginCategory::parse_for_main_category(
+            PluginMainCategory::parse(&row.main_category).map_err(anyhow::Error::msg)?,
+            &row.category,
+        )
+        .map_err(anyhow::Error::msg)?,
         default_severity: severity,
         tags,
         description: row.description,
@@ -121,13 +125,13 @@ fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> PluginRec
     };
 
     #[allow(deprecated)]
-    PluginRecord {
+    Ok(PluginRecord {
         metadata,
         path: None,
         status,
         last_error: None,
         is_favorited,
-    }
+    })
 }
 
 fn plugin_favorites_user_id(user_id: Option<&str>) -> &str {
@@ -138,6 +142,41 @@ fn plugin_favorites_user_id(user_id: Option<&str>) -> &str {
 }
 
 impl DatabaseService {
+    pub(crate) async fn migrate_legacy_passive_plugin_categories_internal(&self) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let query = r#"
+            UPDATE plugin_registry
+            SET main_category = 'traffic',
+                metadata = REPLACE(
+                    REPLACE(metadata, '"main_category":"passive"', '"main_category":"traffic"'),
+                    '"main_category": "passive"',
+                    '"main_category": "traffic"'
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE main_category = 'passive'
+               OR metadata LIKE '%"main_category":"passive"%'
+               OR metadata LIKE '%"main_category": "passive"%'
+        "#;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(query).execute(pool).await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(query).execute(pool).await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(query).execute(pool).await?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn list_enabled_traffic_plugins_for_scan(&self) -> Result<Vec<TrafficPluginScanRow>> {
         let runtime = self
             .runtime_pool
@@ -237,7 +276,7 @@ impl DatabaseService {
         Ok(rows
             .into_iter()
             .map(|row| row_to_plugin_record(row, false))
-            .collect())
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn get_plugins_from_registry_internal(
@@ -320,7 +359,7 @@ impl DatabaseService {
                     row.is_favorited == 1,
                 )
             })
-            .collect())
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn update_plugin_status_internal(&self, plugin_id: &str, status: &str) -> Result<()> {
@@ -457,7 +496,7 @@ impl DatabaseService {
         };
 
         if let Some(row) = row {
-            Ok(Some(row_to_plugin_record(row, false)))
+            Ok(Some(row_to_plugin_record(row, false)?))
         } else {
             Ok(None)
         }

@@ -11,10 +11,10 @@ export default {
     oast: 'OAST',
     proxifier: '代理工具',
     capture: '抓包',
-    proxyConfig: '配置'
+    proxyConfig: '配置',
   },
   ariaLabels: {
-    trafficAnalysisTabs: '流量分析标签页'
+    trafficAnalysisTabs: '流量分析标签页',
   },
   tooltips: {
     control: '代理控制',
@@ -25,7 +25,7 @@ export default {
     oast: 'OAST',
     proxifier: '代理工具',
     capture: '抓包',
-    proxyConfig: '配置'
+    proxyConfig: '配置',
   },
   icons: {
     control: 'fa-sliders-h',
@@ -36,7 +36,7 @@ export default {
     oast: 'fa-satellite-dish',
     proxifier: 'fa-network-wired',
     capture: 'fa-broadcast-tower',
-    proxyConfig: 'fa-cog'
+    proxyConfig: 'fa-cog',
   },
   messageSearch: {
     placeholder: '搜索当前内容，回车下一个，Shift+回车上一个',
@@ -99,7 +99,8 @@ export default {
       title: '主工作区',
       idleBadge: '工作区空闲',
       idleTitle: '从历史记录选择请求进行预览',
-      idleDescription: '编辑请求内容或发送请求后会自动保存到重放器历史；发送到爆破器会进入爆破器历史。',
+      idleDescription:
+        '编辑请求内容或发送请求后会自动保存到重放器历史；发送到爆破器会进入爆破器历史。',
       previewHint: '编辑或发送后自动保存到重放器历史',
       requestVariant: '请求版本',
       originalVariant: '原始',
@@ -140,7 +141,8 @@ export default {
       intruderStateMeta: '历史由爆破器工作区管理',
       clearToolHistory: '清空工具历史',
       clearToolHistoryConfirmTitle: '清空工具历史',
-      clearToolHistoryConfirmMessage: '将删除 {count} 条重放器、重放执行和爆破器历史记录，此操作不可撤销。',
+      clearToolHistoryConfirmMessage:
+        '将删除 {count} 条重放器、重放执行和爆破器历史记录，此操作不可撤销。',
       clearToolHistoryConfirm: '清空历史',
       clearToolHistorySuccess: '工具历史已清空',
     },
@@ -250,14 +252,14 @@ export default {
     title: '拦截',
     status: {
       on: '拦截已开启',
-      off: '拦截已关闭'
+      off: '拦截已关闭',
     },
     stats: {
       proxyStatus: '代理状态',
       running: '运行中',
       stopped: '已停止',
       port: '端口',
-      interceptQueue: '拦截队列'
+      interceptQueue: '拦截队列',
     },
     waiting: '等待被拦截的请求/响应...',
     disabled: '请先启用拦截功能',
@@ -265,7 +267,7 @@ export default {
     tooltip: {
       http: 'HTTP拦截状态',
       response: '响应拦截状态。仅在主拦截和响应拦截都开启时生效。',
-      websocket: 'WebSocket拦截状态'
+      websocket: 'WebSocket拦截状态',
     },
     buttons: {
       turnOn: '开启',
@@ -280,12 +282,12 @@ export default {
       openCompare: '发送到对比器',
       createAttackWorkspace: '发送到爆破器',
       toggleHttp: '切换HTTP拦截',
-      toggleWs: '切换WebSocket拦截'
+      toggleWs: '切换WebSocket拦截',
     },
     tabs: {
       raw: '原始',
       pretty: '格式化',
-      hex: '十六进制'
+      hex: '十六进制',
     },
     requestLine: '请求行',
     statusLine: '状态行',
@@ -320,7 +322,7 @@ export default {
       copyRequest: '复制请求',
       copyAsCurl: '复制为cURL',
       openInBrowser: '在浏览器中打开',
-      copyRaw: '复制原始内容'
+      copyRaw: '复制原始内容',
     },
     filterDialog: {
       title: '添加拦截过滤规则',
@@ -348,7 +350,7 @@ export default {
       cancel: '取消',
       save: '保存规则',
       ruleAdded: '过滤规则添加成功',
-      addFailed: '添加过滤规则失败'
+      addFailed: '添加过滤规则失败',
     },
     aiDialog: {
       title: 'AI安全助手',
@@ -361,8 +363,8 @@ export default {
       analyze: '安全分析',
       explain: '解释请求',
       suggest: '建议Payload',
-      decode: '解码参数'
-    }
+      decode: '解码参数',
+    },
   },
   // Proxy Control Component
   control: {
@@ -380,8 +382,8 @@ export default {
       qpsDesc: '每秒请求数',
       requestStats: '请求统计',
       http: 'HTTP',
-      https: 'HTTPS'
-    }
+      https: 'HTTPS',
+    },
   },
   intruder,
   // Proxy History Component
@@ -389,18 +391,18 @@ export default {
     title: '请求历史',
     emptyState: {
       noRequests: '暂无请求记录',
-      selectInterface: '请选择网络接口'
+      selectInterface: '请选择网络接口',
     },
     websocket: {
       toServer: '发往服务器',
-      fromServer: '来自服务器'
+      fromServer: '来自服务器',
     },
     toolbar: {
       filter: '过滤',
       clear: '清空',
       refresh: '刷新',
       export: '导出',
-      searchPlaceholder: '搜索请求...'
+      searchPlaceholder: '搜索请求...',
     },
     protocol: {
       all: '全部',
@@ -455,7 +457,7 @@ export default {
       compressionEnabled: '响应体压缩',
       compressionHelp: '自动压缩超过 1KB 的响应体以节省存储空间',
       configSaved: '配置已保存',
-      configSaveFailed: '配置保存失败: {error}'
+      configSaveFailed: '配置保存失败: {error}',
     },
     filterDialog: {
       shellTitle: '配置 HTTP 代理过滤器',
@@ -538,7 +540,7 @@ export default {
         raw: '原始',
         pretty: '格式化',
         hex: '十六进制',
-        render: '渲染'
+        render: '渲染',
       },
       request: '请求',
       response: '响应',
@@ -599,7 +601,7 @@ export default {
       filterByDomain: '域名',
       filterByUrl: 'URL',
       filterByMethod: '请求方法',
-      filterByExtension: '文件扩展名'
+      filterByExtension: '文件扩展名',
     },
     certificateError: {
       title: '证书错误',
@@ -611,20 +613,20 @@ export default {
         selfSigned: '自签名证书',
         untrusted: '证书链不受信任',
         hostnameMMismatch: '主机名不匹配',
-        weakSignature: '弱签名算法'
+        weakSignature: '弱签名算法',
       },
       actions: {
         trustCert: '信任此证书',
         viewDetails: '查看详情',
         ignore: '继续访问',
-        stop: '停止抓包'
+        stop: '停止抓包',
       },
       tips: {
         installCA: '请确保已安装并信任 Sentinel AI 的根证书',
         checkCAInstallation: '检查证书安装',
         caNotTrusted: '根证书未受信任',
-        serverCertIssue: '目标服务器证书存在问题'
-      }
+        serverCertIssue: '目标服务器证书存在问题',
+      },
     },
     errors: {
       loadFailed: '加载请求历史失败',
@@ -635,7 +637,7 @@ export default {
       exportFailed: '导出失败',
       networkError: '网络错误',
       timeout: '请求超时',
-      unknown: '未知错误'
+      unknown: '未知错误',
     },
     messages: {
       historyCleared: '历史记录已清空',
@@ -651,8 +653,8 @@ export default {
       sentBatchToComparer: '已发送 {count} 组对比到对比器',
       noEditedRequestVersion: '当前没有可对比的编辑后请求版本',
       noEditedResponseVersion: '当前没有可对比的编辑后响应版本',
-      sentToAssistant: '已发送到 AI 助手'
-    }
+      sentToAssistant: '已发送到 AI 助手',
+    },
   },
   // Proxy Repeater Component
   repeater: {
@@ -706,7 +708,7 @@ export default {
       raw: '原始',
       hex: '十六进制',
       render: '渲染',
-      clickSendToSendRequest: '点击"发送请求"以发送请求'
+      clickSendToSendRequest: '点击"发送请求"以发送请求',
     },
     tabContextMenu: {
       closeTab: '关闭标签页',
@@ -716,7 +718,7 @@ export default {
       deleteOthers: '删除其它',
       deleteAll: '删除所有',
       closeLeft: '关闭左侧标签页',
-      closeRight: '关闭右侧标签页'
+      closeRight: '关闭右侧标签页',
     },
     messages: {
       requestCancelled: '请求已取消',
@@ -759,13 +761,13 @@ export default {
       confirmCloseAllTabsMessage: '部分标签页有未保存的内容，确认全部关闭吗？',
       tabRestored: '已恢复 {count} 个标签页',
       tabsSaved: '标签页已自动保存',
-      saveTabsFailed: '保存标签页失败'
+      saveTabsFailed: '保存标签页失败',
     },
     types: {
       request: '请求',
       response: '响应',
-      both: '流量'
-    }
+      both: '流量',
+    },
   },
   // Packet Capture Component
   capture: {
@@ -780,7 +782,7 @@ export default {
       advancedFilter: '高级过滤',
       filterInput: '过滤器输入',
       statistics: '统计信息',
-      advancedFiltering: '高级过滤'
+      advancedFiltering: '高级过滤',
     },
     table: {
       time: '时间',
@@ -789,13 +791,13 @@ export default {
       protocol: '协议',
       length: '长度',
       info: '信息',
-      no: '序号'
+      no: '序号',
     },
     statusBar: {
       capturing: '抓包中',
       selected: '选中',
       captured: '已捕获',
-      packets: '包'
+      packets: '包',
     },
     contextMenu: {
       mark: '标记',
@@ -816,7 +818,7 @@ export default {
       summary: '摘要',
       copySource: '源地址',
       copyDestination: '目标地址',
-      filterByValue: '按此值过滤'
+      filterByValue: '按此值过滤',
     },
     emptyStates: {
       gettingInterfaces: '正在获取网卡列表...',
@@ -824,13 +826,13 @@ export default {
       installNpcap: 'Windows 系统需要安装 Npcap 驱动才能进行网络抓包',
       downloadNpcap: '下载 Npcap',
       selectAndStart: '选择网卡并点击开始抓包',
-      waitingForPackets: '等待数据包...'
+      waitingForPackets: '等待数据包...',
     },
     hexView: {
       hex: '十六进制',
       ascii: 'ASCII',
-      raw: '原始数据'
-    }
+      raw: '原始数据',
+    },
   },
   // Packet Capture Component (new structure)
   packetCapture: {
@@ -845,7 +847,7 @@ export default {
       advancedFilter: '高级筛选',
       advancedFilterBadge: '高级',
       filterPlaceholder: '筛选数据包...',
-      filtering: '筛选中'
+      filtering: '筛选中',
     },
     table: {
       no: '序号',
@@ -854,13 +856,13 @@ export default {
       destination: '目标地址',
       protocol: '协议',
       length: '长度',
-      info: '信息'
+      info: '信息',
     },
     statusBar: {
       capturing: '抓包中',
       selected: '选中',
       captured: '已捕获',
-      packets: '包'
+      packets: '包',
     },
     emptyState: {
       loadingInterfaces: '正在获取网卡列表...',
@@ -868,7 +870,7 @@ export default {
       npcapRequired: 'Windows 系统需要安装 Npcap 驱动才能进行网络抓包',
       downloadNpcap: '下载 Npcap',
       selectAndStart: '选择网卡并点击开始抓包',
-      waitingForPackets: '等待数据包...'
+      waitingForPackets: '等待数据包...',
     },
     contextMenu: {
       mark: '标记',
@@ -890,7 +892,7 @@ export default {
       copySource: '源地址',
       copyDestination: '目标地址',
       filterThisValue: '按此值过滤',
-      hex: '十六进制'
+      hex: '十六进制',
     },
     filterDialog: {
       title: '高级过滤',
@@ -906,7 +908,7 @@ export default {
       tcpFlags: 'TCP 标志',
       reset: '重置',
       cancel: '取消',
-      apply: '应用'
+      apply: '应用',
     },
     streamDialog: {
       ascii: 'ASCII',
@@ -915,7 +917,7 @@ export default {
       clientToServer: '客户端 → 服务器',
       serverToClient: '服务器 → 客户端',
       packets: '包',
-      close: '关闭'
+      close: '关闭',
     },
     extractDialog: {
       title: '文件提取',
@@ -961,13 +963,14 @@ export default {
       close: '关闭',
       saveSelectedFiles: '保存选中的文件',
       selectedFiles: '选中的文件',
-      selectedSize: '选中大小'
-    }
+      selectedSize: '选中大小',
+    },
   },
   // Proxy Configuration Component
   configuration: {
     title: '代理监听器',
-    description: '配置代理监听器以接收来自浏览器的 HTTP 请求。需要配置浏览器使用其中一个监听器作为代理服务器。',
+    description:
+      '配置代理监听器以接收来自浏览器的 HTTP 请求。需要配置浏览器使用其中一个监听器作为代理服务器。',
     table: {
       select: '选择',
       running: '运行中',
@@ -976,8 +979,8 @@ export default {
       redirect: '重定向',
       certificate: '证书',
       tlsProtocol: 'TLS协议',
-      supportHttp2: '支持 HTTP/2'
-    }
+      supportHttp2: '支持 HTTP/2',
+    },
   },
   proxyConfiguration: {
     settingsTabListeners: '监听器',
@@ -985,7 +988,8 @@ export default {
     settingsTabDisplay: '显示',
     settingsTabAdvanced: '高级',
     proxyListenersTitle: '代理监听器',
-    proxyListenersDescription: '配置代理监听器以接收来自浏览器的 HTTP 请求。需要配置浏览器使用其中一个监听器作为代理服务器。',
+    proxyListenersDescription:
+      '配置代理监听器以接收来自浏览器的 HTTP 请求。需要配置浏览器使用其中一个监听器作为代理服务器。',
     autoStartProxy: '应用启动时自动开启代理',
     autoStartProxyDesc: '启用后，应用启动时将自动开启代理监听器，无需手动操作',
     trafficAnalysisSettings: '流量分析设置',
@@ -1010,11 +1014,14 @@ export default {
     displayAsRawBytes: '按原始字节显示',
     useSpecificCharset: '使用特定字符集',
     excludeSelfTraffic: '排除本应用流量的扫描',
-    excludeSelfTrafficDesc: '启用后，本应用自己发出的 HTTP 请求将不会被流量分析插件扫描，但仍会显示在流量历史中',
+    excludeSelfTrafficDesc:
+      '启用后，本应用自己发出的 HTTP 请求将不会被流量分析插件扫描，但仍会显示在流量历史中',
     enableTrafficAnalysisPlugin: '开启流量分析插件扫描',
-    enableTrafficAnalysisPluginDesc: '启用后，流量分析插件将自动扫描代理捕获的流量，检测潜在的安全漏洞',
+    enableTrafficAnalysisPluginDesc:
+      '启用后，流量分析插件将自动扫描代理捕获的流量，检测潜在的安全漏洞',
     trafficScopeRules: '流量范围',
-    trafficScopeRulesDesc: '只有命中包含规则且未命中排除规则的流量才会进入历史记录和后续分析。包含和排除都留空时表示处理全部流量。',
+    trafficScopeRulesDesc:
+      '只有命中包含规则且未命中排除规则的流量才会进入历史记录和后续分析。包含和排除都留空时表示处理全部流量。',
     scopeIncludeTitle: '范围内',
     scopeExcludeTitle: '范围外',
     scopeIncludeEmpty: '当前没有包含规则。若排除规则也为空，则全部流量都在范围内。',
@@ -1035,11 +1042,14 @@ export default {
     loadScopeRulesSuccess: '已导入 {count} 条范围规则',
     loadScopeRulesFailed: '加载范围规则失败',
     behaviorSignalSource: '行为特征来源',
-    behaviorSignalSourceDesc: '选择逻辑漏洞分析如何推导用户行为上下文。默认模式无需安装浏览器扩展。',
+    behaviorSignalSourceDesc:
+      '选择逻辑漏洞分析如何推导用户行为上下文。默认模式无需安装浏览器扩展。',
     behaviorSourceProxyInferred: '默认：代理侧弱行为推断',
-    behaviorSourceProxyInferredDesc: '基于流量时间、请求序列、Referer、路径和参数模式推导行为会话，不依赖浏览器扩展。',
+    behaviorSourceProxyInferredDesc:
+      '基于流量时间、请求序列、Referer、路径和参数模式推导行为会话，不依赖浏览器扩展。',
     behaviorSourceBrowserExtension: '增强：浏览器扩展行为采集',
-    behaviorSourceBrowserExtensionDesc: '在复杂业务流程中使用浏览器扩展事件增强语义理解。即使扩展不可用，系统仍会回退到代理侧弱行为推断。',
+    behaviorSourceBrowserExtensionDesc:
+      '在复杂业务流程中使用浏览器扩展事件增强语义理解。即使扩展不可用，系统仍会回退到代理侧弱行为推断。',
     browserExtensionConnected: '扩展已连接',
     browserExtensionDisconnected: '扩展未连接',
     browserExtensionBridgeUrl: '本地桥接地址',
@@ -1055,7 +1065,68 @@ export default {
     copyExtensionToDirectoryFailed: '复制浏览器扩展失败: {error}',
     copyFailed: '复制失败',
     pluginRuntimeTitle: '插件运行时',
-    pluginRuntimeDesc: '配置流量插件的全局运行时默认值。这些配置会直接决定主动探测的调度节流和超时行为，插件本身不能覆盖。',
+    pluginRuntimeDesc:
+      '配置统一 Rust fetch 队列的全局运行时默认值。这里的节流、并发、排队和超时会直接作用于各类插件发起的请求。',
+    pluginRuntimeActiveProbeOnlyDesc:
+      '这里只配置流量分析使用的 Traffic Active Probe。其它插件类型的统一 fetch 调度已迁移到插件管理。',
+    pluginRuntimeFetchHint:
+      '保存后会立即更新统一请求调度器。主动探测、漏洞赏金、监控、Agent 工具和插件测试都会读取这里的对应策略。',
+    pluginRuntimeActiveProbeOnlyHint:
+      '保存后仅更新 active probe 策略；Bounty、Monitor、Agent 和 Plugin Test 请到插件管理中调整。',
+    pluginRuntimePolicyActiveProbeTitle: 'Traffic Active Probe',
+    pluginRuntimePolicyActiveProbeDesc:
+      '流量分析插件的主动探测请求。适合控制扫描节奏和单目标打点强度。',
+    pluginRuntimePolicyBountyTitle: 'Bounty Fetch',
+    pluginRuntimePolicyBountyDesc: '漏洞赏金与资产探测类插件的主动请求队列。',
+    pluginRuntimePolicyMonitorTitle: 'Monitor Fetch',
+    pluginRuntimePolicyMonitorDesc:
+      '监控任务插件的主动请求队列。默认应更保守，避免长时间持续打压目标。',
+    pluginRuntimePolicyAgentTitle: 'Agent Fetch',
+    pluginRuntimePolicyAgentDesc: 'Agent/工具型插件的主动请求队列。',
+    pluginRuntimePolicyPluginTestTitle: 'Plugin Test Fetch',
+    pluginRuntimePolicyPluginTestDesc: '插件测试执行时使用的请求队列，建议保持小并发。',
+    pluginRuntimeQueueStatusTitle: '运行中队列状态',
+    pluginRuntimeQueueStatusDesc:
+      '这里展示当前 Rust 调度器已经生效的实时队列状态，用来判断是否真的打满了并发或队列。',
+    pluginRuntimeQueueRefresh: '刷新',
+    pluginRuntimeQueueUpdatedAt: '最近刷新 {time}',
+    pluginRuntimeQueuePending: '待处理',
+    pluginRuntimeQueueRunning: '运行中',
+    pluginRuntimeQueueActiveHosts: '活跃主机',
+    pluginRuntimeQueueRecent: '最近完成',
+    pluginRuntimeQueueThroughput1m: '最近 1 分钟吞吐',
+    pluginRuntimeQueueAvgWait1m: '最近 1 分钟平均等待',
+    pluginRuntimeQueueAvgResponse1m: '最近 1 分钟平均响应',
+    pluginRuntimeQueueOutcome1m: '最近 1 分钟结果',
+    pluginRuntimeQueueRejected: '累计拒绝',
+    pluginRuntimeQueueQueuedScheduled: 'Queued / Scheduled',
+    pluginRuntimeQueueActiveRunsPlugins: '活跃 Run / Plugin',
+    pluginRuntimeQueueHostPeak: '最热主机并发',
+    pluginRuntimeQueueCancelledRuns: '已取消 Run',
+    pluginRuntimeQueueHottestHost: '最热主机',
+    pluginRuntimeQueueRejectReasons: '拒绝原因分布',
+    pluginRuntimeQueueRejectQueueLimit: '队列深度上限',
+    pluginRuntimeQueueRejectRunPending: '单 Run 待处理上限',
+    pluginRuntimeQueueRejectPluginPending: '单插件待处理上限',
+    pluginRuntimeQueueRejectCancelledRun: 'Run 已取消',
+    pluginRuntimeQueueTrendTitle: '短时趋势',
+    pluginRuntimeQueueTrendPending: 'Pending',
+    pluginRuntimeQueueTrendRunning: 'Running',
+    pluginRuntimeQueueTrendRejected: 'Rejected',
+    pluginRuntimeQueueTrendThroughput: 'Throughput',
+    pluginRuntimeQueueNoHost: '无',
+    pluginRuntimeQueueEmpty: '当前还没有可展示的队列状态。',
+    fetchMaxQueueDepth: '最大队列深度',
+    fetchMaxPendingPerRun: '单次运行最大待处理数',
+    fetchMaxPendingPerPlugin: '单插件最大待处理数',
+    fetchMaxGlobalConcurrent: '全局最大并发数',
+    fetchMaxConcurrentPerHost: '单主机最大并发数',
+    fetchMaxConcurrentPerRun: '单次运行最大并发数',
+    fetchMaxConcurrentPerPlugin: '单插件最大并发数',
+    fetchMinHostDelayMs: '单主机最小延迟（毫秒）',
+    fetchTimeoutMs: '请求超时（毫秒）',
+    fetchJitterMinMs: '抖动最小值（毫秒）',
+    fetchJitterMaxMs: '抖动最大值（毫秒）',
     activeProbeMinHostCooldownMs: '主动探测最小主机冷却（毫秒）',
     activeProbeTimeoutMs: '主动探测超时（毫秒）',
     activeProbeMaxConcurrentPerHost: '单路径最大并发数',
@@ -1064,16 +1135,18 @@ export default {
     activeProbePresetLocalFast: '本地验证',
     activeProbePresetBalanced: '均衡',
     activeProbePresetConservative: '保守',
-    pluginRuntimeActiveProbeHint: '主动探测队列只使用这里的全局配置。当前调度粒度按 host + pathname 进行限并发和节流；保存后会立即生效。',
     oastTitle: 'OAST / Collaborator',
-    oastDesc: '配置应用使用的 OAST 回连服务。当前实现按 cfoast 文档走 HTTP/HTTPS 回连，不处理纯 DNS-only 命中。',
+    oastDesc:
+      '配置应用使用的 OAST 回连服务。当前实现按 cfoast 文档走 HTTP/HTTPS 回连，不处理纯 DNS-only 命中。',
     oastEnabled: '启用 OAST 能力',
-    oastEnabledDesc: '开启后，后续 Repeater、Intruder 和请求编辑器会复用这份配置生成和查询 OAST token。',
+    oastEnabledDesc:
+      '开启后，后续 Repeater、Intruder 和请求编辑器会复用这份配置生成和查询 OAST token。',
     oastServerBaseUrl: '服务基地址',
     oastServerBaseUrlPlaceholder: '例如 https://oast.example.com',
     oastApiKey: 'Worker API Key（可留空）',
     oastApiKeyPlaceholder: '填写你为 OAST Worker 配置的共享密钥',
-    oastApiKeyDesc: '这是 Worker 管理接口的密钥，不是 /gen 返回的 token；如果 Worker 未启用 key 校验可留空。',
+    oastApiKeyDesc:
+      '这是 Worker 管理接口的密钥，不是 /gen 返回的 token；如果 Worker 未启用 key 校验可留空。',
     oastPollIntervalSecs: '轮询间隔（秒）',
     oastRequestTimeoutSecs: '请求超时（秒）',
     oastAutoSaveHint: '此处配置会在内容修改后自动保存。',
@@ -1105,7 +1178,8 @@ export default {
     certInfo: '证书信息',
     // CA Certificate Dialog
     caCertDialogTitle: 'CA 证书',
-    caCertDialogDesc: '您可以导出证书和密钥以供其他工具使用，或导入证书和密钥到本应用中。您也可以访问 http://burpsuite/cert 在浏览器中导出当前证书。',
+    caCertDialogDesc:
+      '您可以导出证书和密钥以供其他工具使用，或导入证书和密钥到本应用中。您也可以访问 http://burpsuite/cert 在浏览器中导出当前证书。',
     exportSection: '导出',
     importSection: '导入',
     certInDerFormat: 'DER 格式证书',
@@ -1133,14 +1207,17 @@ export default {
     interceptionRules: '拦截规则',
     interceptionRulesDesc: '配置请求和响应的拦截规则',
     requestInterceptionRules: '请求拦截规则',
-    requestInterceptionRulesDesc: '使用这些设置来控制哪些请求会被暂停，以便在拦截选项卡中查看和编辑。',
+    requestInterceptionRulesDesc:
+      '使用这些设置来控制哪些请求会被暂停，以便在拦截选项卡中查看和编辑。',
     responseInterceptionRules: '响应拦截规则',
-    responseInterceptionRulesDesc: '使用这些设置来控制哪些响应会被暂停，以便在拦截选项卡中查看和编辑。',
+    responseInterceptionRulesDesc:
+      '使用这些设置来控制哪些响应会被暂停，以便在拦截选项卡中查看和编辑。',
     interceptRequests: '根据以下规则拦截请求：',
     interceptResponses: '根据以下规则拦截响应：',
     masterInterceptionDisabled: '主拦截已关闭',
     masterInterceptionManagedInInterceptTab: '主拦截的启停请在拦截页面控制。',
-    responseInterceptionDependsOnMaster: '响应拦截依赖主拦截；只有主拦截开启后，才会按下列规则暂停响应。',
+    responseInterceptionDependsOnMaster:
+      '响应拦截依赖主拦截；只有主拦截开启后，才会按下列规则暂停响应。',
     enable: '启用',
     operator: '操作符',
     matchType: '匹配类型',
@@ -1180,7 +1257,7 @@ export default {
       param_value: '参数值',
       listener_port: '监听端口',
       status_code: '状态码',
-      content_type_header: 'Content-type 标头'
+      content_type_header: 'Content-type 标头',
     },
     // Relationships
     relationships: {
@@ -1189,7 +1266,7 @@ export default {
       contains_parameters: '包含参数',
       is_in_target_scope: '在目标范围内',
       was_modified: '已修改',
-      was_intercepted: '已被拦截'
+      was_intercepted: '已被拦截',
     },
     websocketInterceptionRules: 'WebSocket 拦截规则',
     websocketInterceptionRulesDesc: '配置 WebSocket 拦截规则',
@@ -1252,7 +1329,8 @@ export default {
     saving: '保存中...',
     // Upstream proxy
     upstreamProxyServers: '上游代理服务器',
-    upstreamProxyServersDesc: '配置上游代理服务器，将代理请求转发到指定的上游代理。创建一个目标主机为 * 的规则可以将所有流量发送到单个代理服务器。',
+    upstreamProxyServersDesc:
+      '配置上游代理服务器，将代理请求转发到指定的上游代理。创建一个目标主机为 * 的规则可以将所有流量发送到单个代理服务器。',
     destinationHost: '目标主机',
     destinationHostHelp: '使用 * 匹配所有主机',
     proxyHost: '代理主机',
@@ -1277,12 +1355,12 @@ export default {
       requestParamValue: '请求参数值',
       requestFirstLine: '请求首行',
       responseHeader: '响应头',
-      responseBody: '响应体'
+      responseBody: '响应体',
     },
     // TLS Pass Through
     addTlsPassThrough: '添加 TLS 直通规则',
     editTlsPassThrough: '编辑 TLS 直通规则',
-    hostPlaceholder: '例如 *.example.com 或 192.168.1.*'
+    hostPlaceholder: '例如 *.example.com 或 192.168.1.*',
   },
   immersivePlugins: {
     title: '流量分析插件',
@@ -1373,17 +1451,17 @@ export default {
     title: 'Proxifier',
     status: {
       running: '运行中',
-      stopped: '已停止'
+      stopped: '已停止',
     },
     buttons: {
       start: '启动',
-      stop: '停止'
+      stop: '停止',
     },
     tabs: {
       proxies: '代理服务器',
       rules: '规则',
-      system: '系统'
-    }
+      system: '系统',
+    },
   },
   // Proxifier Proxies Component
   proxifierProxies: {
@@ -1391,16 +1469,16 @@ export default {
     table: {
       name: '名称',
       port: '端口',
-      type: '类型'
+      type: '类型',
     },
     emptyState: {
-      noProxies: '暂无代理服务器'
+      noProxies: '暂无代理服务器',
     },
     buttons: {
       add: '添加...',
       edit: '编辑...',
       remove: '删除',
-      proxyChains: '代理链...'
+      proxyChains: '代理链...',
     },
     description: '可以链接多个代理服务器：',
     dialog: {
@@ -1408,32 +1486,32 @@ export default {
       editTitle: '编辑代理',
       host: {
         label: '主机地址',
-        placeholder: '127.0.0.1 或 proxy.example.com'
+        placeholder: '127.0.0.1 或 proxy.example.com',
       },
       port: {
         label: '端口',
-        placeholder: '8080'
+        placeholder: '8080',
       },
       type: {
         label: '代理类型',
         http: 'HTTP',
         https: 'HTTPS',
-        socks5: 'SOCKS5'
+        socks5: 'SOCKS5',
       },
       auth: '身份验证（可选）',
       username: {
         label: '用户名',
-        placeholder: '可选'
+        placeholder: '可选',
       },
       password: {
         label: '密码',
-        placeholder: '可选'
+        placeholder: '可选',
       },
       buttons: {
         cancel: '取消',
-        save: '保存'
-      }
-    }
+        save: '保存',
+      },
+    },
   },
   // Proxifier Proxies Component
   proxies: {
@@ -1442,13 +1520,13 @@ export default {
       name: '名称',
       port: '端口',
       type: '类型',
-      noProxies: '暂无代理服务器'
+      noProxies: '暂无代理服务器',
     },
     buttons: {
       add: '添加...',
       edit: '编辑',
-      delete: '删除'
-    }
+      delete: '删除',
+    },
   },
   // Proxifier Panel Component
   proxifierPanel: {
@@ -1495,8 +1573,8 @@ export default {
         direct: '直连',
         block: '阻止',
         viaProxy: '通过代理',
-        proxyFormat: '{type} {host}:{port}'
-      }
+        proxyFormat: '{type} {host}:{port}',
+      },
     },
     buttons: {
       add: '添加',
@@ -1506,8 +1584,8 @@ export default {
       enabled: '已启用',
       cancel: '取消',
       save: '保存',
-      close: '关闭'
-    }
+      close: '关闭',
+    },
   },
   // Proxifier Rules Component
   rules: {
@@ -1519,19 +1597,19 @@ export default {
       targetHosts: '目标主机',
       port: '端口',
       action: '动作',
-      noRules: '暂无规则'
-    }
+      noRules: '暂无规则',
+    },
   },
   workflowStudio: {
     status: {
       saved: '已保存',
       saving: '保存中...',
-      unsaved: '有未保存的更改'
+      unsaved: '有未保存的更改',
     },
     title: '工作流',
     header: {
       namePlaceholder: '工作流名称',
-      editMetadataTooltip: '编辑工作流元数据'
+      editMetadataTooltip: '编辑工作流元数据',
     },
     toolbar: {
       workflowList: '工作流',
@@ -1558,13 +1636,13 @@ export default {
       logs: '日志',
       toggleLogsTooltip: '切换日志面板',
       history: '历史',
-      executionHistoryTooltip: '执行历史'
+      executionHistoryTooltip: '执行历史',
     },
     export: {
       exportJson: '导出为JSON',
       importJson: '从JSON导入',
       exportImage: '导出为图片',
-      exportedBy: 'Sentinel AI 工作流'
+      exportedBy: 'Sentinel AI 工作流',
     },
     sidebar: {
       nodeLibrary: '节点库',
@@ -1576,7 +1654,7 @@ export default {
       favoritesOnly: '仅显示收藏',
       noMatchingNodes: '未找到匹配的节点',
       favorite: '收藏',
-      unfavorite: '取消收藏'
+      unfavorite: '取消收藏',
     },
     logs: {
       title: '执行日志',
@@ -1616,7 +1694,7 @@ export default {
       foundMatchingNodes: '找到 {count} 个匹配的节点',
       noMatchingNodes: '未找到匹配的节点',
       templateSaved: '已保存为模板: {name}',
-      templateSaveFailed: '保存模板失败: {error}'
+      templateSaveFailed: '保存模板失败: {error}',
     },
     loadDialog: {
       title: '加载工作流',
@@ -1624,7 +1702,7 @@ export default {
       version: '版本: {version}',
       updated: '更新: {date}',
       deleteTooltip: '删除',
-      close: '关闭'
+      close: '关闭',
     },
     workflowListPanel: {
       title: '工作流管理',
@@ -1641,7 +1719,7 @@ export default {
       useTemplate: '使用模板',
       deleteTemplate: '删除模板',
       newWorkflow: '新建工作流',
-      saveAsTemplate: '保存为模板'
+      saveAsTemplate: '保存为模板',
     },
     templateMarket: {
       title: '工作流模板市场',
@@ -1653,7 +1731,7 @@ export default {
       useTemplate: '使用模板',
       saveAsTemplate: '另存为模板',
       saveCurrentAsTemplate: '保存当前为模板',
-      close: '关闭'
+      close: '关闭',
     },
     newWorkflowConfirm: {
       title: '新建工作流',
@@ -1661,7 +1739,7 @@ export default {
       saveAndNew: '保存并新建',
       discardAndNew: '直接新建',
       cancel: '取消',
-      close: '关闭'
+      close: '关闭',
     },
     metaDialog: {
       title: '工作流元数据',
@@ -1676,10 +1754,10 @@ export default {
       asAiToolHelp: '启用后，此工作流可作为AI助手的工具被调用',
       stats: {
         nodes: '节点数',
-        edges: '连接数'
+        edges: '连接数',
       },
       confirm: '确定',
-      cancel: '取消'
+      cancel: '取消',
     },
     paramsEditor: {
       title: '参数编辑',
@@ -1701,7 +1779,7 @@ export default {
       arrayPlaceholder: '每行一个值，例如：\nhttps://example1.com/\nhttps://example2.com/',
       defaultValue: '默认: {value}',
       save: '保存',
-      cancel: '取消'
+      cancel: '取消',
     },
     executionHistory: {
       title: '执行历史',
@@ -1715,7 +1793,7 @@ export default {
         failed: '失败',
         running: '运行中',
         pending: '等待',
-        cancelled: '已取消'
+        cancelled: '已取消',
       },
       deleteRecordTooltip: '删除此记录',
       durationMs: '耗时: {ms}ms',
@@ -1728,10 +1806,10 @@ export default {
         status: '状态',
         actions: '操作',
         viewDetail: '查看详情',
-        delete: '删除'
+        delete: '删除',
       },
       pagination: {
-        total: '共 {total} 条'
+        total: '共 {total} 条',
       },
       detailDialog: {
         title: '执行详情',
@@ -1746,8 +1824,8 @@ export default {
         copy: '复制',
         close: '关闭',
         fullscreen: '全屏查看',
-        exitFullscreen: '退出全屏'
-      }
+        exitFullscreen: '退出全屏',
+      },
     },
     resultPanel: {
       title: '步骤执行结果',
@@ -1758,7 +1836,7 @@ export default {
       executionResult: '执行结果',
       editParams: '编辑参数',
       close: '关闭',
-      noResult: '暂无结果'
+      noResult: '暂无结果',
     },
     groups: {
       trigger: '触发器',
@@ -1768,16 +1846,16 @@ export default {
       output: '输出/通知',
       tool: '内置工具',
       mcp: 'MCP工具',
-      plugin: 'Agent插件'
+      plugin: 'Agent插件',
     },
     schedule: {
       everySeconds: '每 {seconds} 秒',
       dailyAt: '每天 {time}',
-      weeklyAt: '每周 {weekdays} {time}'
+      weeklyAt: '每周 {weekdays} {time}',
     },
     confirm: {
       deleteWorkflow: '确定要删除这个工作流吗？',
-      deleteTemplate: '确定要删除这个模板吗？'
+      deleteTemplate: '确定要删除这个模板吗？',
     },
     toasts: {
       enterWorkflowName: '请先输入工作流名称',
@@ -1813,7 +1891,7 @@ export default {
       templateDeleted: '模板已删除',
       deleteTemplateFailed: '删除模板失败：{error}',
       templateApplied: '模板已应用',
-      applyTemplateFailed: '应用模板失败：{error}'
+      applyTemplateFailed: '应用模板失败：{error}',
     },
     flowchart: {
       toolbar: {
@@ -1831,26 +1909,26 @@ export default {
         redoTooltip: '重做 (Ctrl+Y)',
         deleteConnection: '删除连接',
         deleteConnectionTooltip: '点击连接线删除',
-        exitFullscreen: '退出全屏'
+        exitFullscreen: '退出全屏',
       },
       emptyState: {
         title: '画布为空',
         description: '从左侧节点库拖拽节点到这里开始创建工作流',
-        tip: '提示：在空白区域拖拽可以平移画布，滚轮缩放，Ctrl+拖拽框选'
+        tip: '提示：在空白区域拖拽可以平移画布，滚轮缩放，Ctrl+拖拽框选',
       },
       canvasHints: {
         space: '拖拽空白: 移动画布',
         scroll: '滚轮: 缩放',
         drag: 'Ctrl+拖拽: 框选',
         selectAll: '全选',
-        selected: '已选中 {count} 个节点'
+        selected: '已选中 {count} 个节点',
       },
       ports: {
         input: '输入',
-        output: '输出'
+        output: '输出',
       },
       breakpoints: {
-        title: '断点'
+        title: '断点',
       },
       status: {
         pending: '待执行',
@@ -1859,14 +1937,14 @@ export default {
         completed: '已完成',
         failed: '失败',
         paused: '已暂停',
-        cancelled: '已取消'
+        cancelled: '已取消',
       },
       contextMenu: {
         addBreakpoint: '添加断点',
         removeBreakpoint: '移除断点',
         duplicateNode: '复制节点',
         deleteNode: '删除节点',
-        duplicateNodeName: '{name} (副本)'
+        duplicateNodeName: '{name} (副本)',
       },
       aiGenerate: {
         title: 'AI生成工作流',
@@ -1874,18 +1952,18 @@ export default {
         placeholder: '请输入工作流描述...',
         cancel: '取消',
         generateAndLoad: '生成并加载',
-        missingNodesError: '生成结果缺少 nodes'
-      }
+        missingNodesError: '生成结果缺少 nodes',
+      },
     },
     defaults: {
       unnamedWorkflow: '未命名工作流',
       importedWorkflow: '导入的工作流',
-      duplicateWorkflowName: '{name} (克隆)'
+      duplicateWorkflowName: '{name} (克隆)',
     },
     errors: {
       invalidWorkflowFile: '无效的工作流文件格式',
-      jsonFormatError: 'JSON格式错误: {message}'
-    }
+      jsonFormatError: 'JSON格式错误: {message}',
+    },
   },
 
   // Tour guide for pages
@@ -1894,62 +1972,62 @@ export default {
       title: '流量历史记录向导',
       welcome: {
         title: '欢迎使用流量历史记录',
-        description: '这里记录了所有通过代理的HTTP/HTTPS请求。让我们快速了解主要功能。'
+        description: '这里记录了所有通过代理的HTTP/HTTPS请求。让我们快速了解主要功能。',
       },
       filterBar: {
         title: '搜索和筛选',
-        description: '使用搜索框快速查找请求，支持URL、方法、状态码等多种筛选条件。'
+        description: '使用搜索框快速查找请求，支持URL、方法、状态码等多种筛选条件。',
       },
       requestList: {
         title: '请求列表',
-        description: '显示所有捕获的请求，点击任意请求可查看详细信息。支持按时间、状态码等排序。'
+        description: '显示所有捕获的请求，点击任意请求可查看详细信息。支持按时间、状态码等排序。',
       },
       requestDetails: {
         title: '请求详情',
-        description: '查看完整的请求和响应信息，包括请求头、请求体、响应头、响应体等。'
+        description: '查看完整的请求和响应信息，包括请求头、请求体、响应头、响应体等。',
       },
       actions: {
         title: '快捷操作',
-        description: '可以重放请求、发送到其他工具、导出数据等操作。'
-      }
+        description: '可以重放请求、发送到其他工具、导出数据等操作。',
+      },
     },
     proxyIntercept: {
       title: '流量拦截向导',
       welcome: {
         title: '欢迎使用流量拦截',
-        description: '在这里可以实时拦截和修改HTTP/HTTPS请求和响应。'
+        description: '在这里可以实时拦截和修改HTTP/HTTPS请求和响应。',
       },
       interceptToggle: {
         title: '拦截开关',
-        description: '开启后，匹配规则的请求将被拦截，您可以修改后再放行。'
+        description: '开启后，匹配规则的请求将被拦截，您可以修改后再放行。',
       },
       rules: {
         title: '拦截规则',
-        description: '配置拦截规则，支持URL匹配、方法筛选等条件。'
+        description: '配置拦截规则，支持URL匹配、方法筛选等条件。',
       },
       interceptedRequest: {
         title: '被拦截的请求',
-        description: '修改请求内容后点击"放行"继续，或点击"丢弃"取消请求。'
-      }
+        description: '修改请求内容后点击"放行"继续，或点击"丢弃"取消请求。',
+      },
     },
     proxySettings: {
       title: '代理设置向导',
       welcome: {
         title: '欢迎使用代理设置',
-        description: '配置代理服务器的监听端口、证书和其他选项。'
+        description: '配置代理服务器的监听端口、证书和其他选项。',
       },
       port: {
         title: '监听端口',
-        description: '设置代理服务器监听的端口号，默认为8080。'
+        description: '设置代理服务器监听的端口号，默认为8080。',
       },
       certificate: {
         title: 'HTTPS证书',
-        description: '配置HTTPS拦截所需的CA证书，可以生成新证书或导入现有证书。'
+        description: '配置HTTPS拦截所需的CA证书，可以生成新证书或导入现有证书。',
       },
       upstream: {
         title: '上游代理',
-        description: '如果需要通过其他代理访问网络，可以在这里配置上游代理。'
-      }
-    }
-  }
+        description: '如果需要通过其他代理访问网络，可以在这里配置上游代理。',
+      },
+    },
+  },
 }

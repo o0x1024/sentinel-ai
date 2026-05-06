@@ -1,16 +1,25 @@
 <template>
-  <div class="agent-tabs flex items-center gap-1 overflow-x-auto no-scrollbar">
+  <div class="agent-tabs flex items-center gap-1 overflow-x-auto no-scrollbar" role="tablist" :aria-label="t('agent.conversationList')">
     <div 
       v-for="session in sessions" 
       :key="session.id"
-      class="tab-item flex items-center gap-2 px-4 py-2 rounded-t-lg cursor-pointer transition-all duration-200 group min-w-[120px] max-w-[200px]"
-      :class="activeSessionId === session.id ? 'bg-base-100 text-primary shadow-sm' : 'hover:bg-base-200/50 text-base-content/60'"
-      @click="setActiveSession(session.id)"
+      class="tab-item flex items-center gap-1 rounded-t-lg transition-all duration-200 group min-w-[120px] max-w-[220px]"
+      :class="activeSessionId === session.id ? 'bg-base-100 text-primary shadow-sm' : 'hover:bg-base-200/50 text-base-content/60 focus-within:bg-base-200/50'"
     >
-      <i class="fas fa-comment-alt text-xs" :class="activeSessionId === session.id ? 'text-primary' : 'text-base-content/40'"></i>
-      <span class="text-sm truncate flex-1">{{ session.title }}</span>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="activeSessionId === session.id ? 'true' : 'false'"
+        class="flex min-w-0 flex-1 items-center gap-2 px-4 py-2 text-left"
+        @click="setActiveSession(session.id)"
+      >
+        <i class="fas fa-comment-alt text-xs" :class="activeSessionId === session.id ? 'text-primary' : 'text-base-content/40'"></i>
+        <span class="text-sm truncate flex-1">{{ session.title }}</span>
+      </button>
       <button 
-        class="opacity-0 group-hover:opacity-100 hover:text-error transition-opacity p-0.5 rounded-full hover:bg-base-300"
+        type="button"
+        class="mr-2 rounded-full p-0.5 opacity-0 transition-opacity hover:bg-base-300 hover:text-error group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+        :title="t('agent.close')"
         @click.stop="removeSession(session.id)"
       >
         <i class="fas fa-times text-[10px]"></i>
@@ -18,6 +27,7 @@
     </div>
     
     <button 
+      type="button"
       class="btn btn-ghost btn-sm btn-circle ml-1 hover:bg-base-300"
       @click="$emit('new-tab')"
       :title="t('agent.newTab')"

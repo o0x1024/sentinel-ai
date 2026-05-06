@@ -260,10 +260,8 @@ pub(crate) fn recommend_tool_bundle(
         || query_lower.contains("new file")
         || query_mentions_any(&tokens, &["write", "create", "overwrite", "generate"])
     {
-        bundle = vec!["file_write".to_string(), "file_read".to_string()];
-        reason = Some(
-            "recommended bundle for writing files and then reading back the result".to_string(),
-        );
+        bundle = vec!["file_read".to_string(), "file_write".to_string()];
+        reason = Some("recommended bundle for safe read-before-write workflow".to_string());
     } else if query_lower.contains("find file")
         || query_lower.contains("find files")
         || query_lower.contains("filename")
@@ -370,8 +368,8 @@ pub(crate) async fn run_tool_search(args: ToolSearchArgs) -> Result<ToolSearchOu
                     tool_id: tool.name,
                     description: tool.description,
                     reason,
-                    category: Some(tool.category),
-                    source: Some(tool.source),
+                    category: Some(tool.category.to_string()),
+                    source: Some(tool.source.to_string()),
                     search_hint: tool.search_hint,
                     exposure: Some(tool.exposure),
                     already_active: false,
@@ -443,10 +441,10 @@ pub(crate) async fn run_tool_search(args: ToolSearchArgs) -> Result<ToolSearchOu
                             reason: recommendation_reason
                                 .clone()
                                 .unwrap_or_else(|| "explicit activation request".to_string()),
-                            category: Some(tool.category.clone()),
-                            source: Some(tool.source.clone()),
+                            category: Some(tool.category.to_string()),
+                            source: Some(tool.source.to_string()),
                             search_hint: tool.search_hint.clone(),
-                            exposure: Some(tool.exposure.clone()),
+                            exposure: Some(tool.exposure),
                             already_active: false,
                         })
                 })
@@ -482,11 +480,11 @@ mod tests {
             description: description.to_string(),
             input_schema: serde_json::json!({}),
             output_schema: None,
-            source: "builtin".to_string(),
-            category: "utility".to_string(),
+            source: crate::dynamic_tool::ToolSource::Builtin,
+            category: crate::dynamic_tool::ToolCategory::Utility,
             tags: tags.iter().map(|tag| tag.to_string()).collect(),
             search_hint: None,
-            exposure: "deferred".to_string(),
+            exposure: crate::dynamic_tool::ToolExposure::Deferred,
             execution_policy: Default::default(),
             enabled: true,
         }
@@ -588,12 +586,12 @@ mod tests {
 
         assert_eq!(
             bundle,
-            vec!["file_write".to_string(), "file_read".to_string()]
+            vec!["file_read".to_string(), "file_write".to_string()]
         );
         assert!(reason
             .as_deref()
             .unwrap_or_default()
-            .contains("reading back the result"));
+            .contains("read-before-write"));
     }
 
     #[test]

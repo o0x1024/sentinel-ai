@@ -4,7 +4,9 @@ use serde::Deserialize;
 use serde_json::json;
 use tauri::{AppHandle, Manager};
 
-use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource};
+use sentinel_tools::dynamic_tool::{
+    DynamicToolDef, ToolCategory, ToolExecutionPolicy, ToolExecutor, ToolSource,
+};
 
 use crate::commands::traffic::TrafficAnalysisState;
 
@@ -116,7 +118,7 @@ pub(super) fn build_traffic_response_read_tool(
         input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: "traffic".to_string(),
+        category: ToolCategory::Traffic,
         tags: vec![
             "traffic".to_string(),
             "http".to_string(),

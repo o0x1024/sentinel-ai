@@ -140,6 +140,9 @@
 
           <div class="rounded-xl border border-base-300 bg-base-100 p-4">
             <div class="mb-3 text-sm font-semibold">角色绑定</div>
+            <div class="mb-3 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-xs leading-5 text-base-content/70">
+              Team 默认成员 Profile 不预选工具。实际运行时优先看下方“工具角色矩阵”；只有当成员 Profile 自己显式限制了工具范围，才会在角色矩阵基础上继续收窄。
+            </div>
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <label class="form-control">
                 <span class="label-text mb-2">Orchestrator Profile</span>
@@ -494,7 +497,7 @@ const createTeamProfile = () => {
     },
     toolPolicyMatrix: {
       orchestrator: { tools: ['ask_user_question'] },
-      specialist: { tools: ['interactive_shell', 'shell', 'file_read', 'grep', 'http_request', 'web_search'] },
+      specialist: { tools: ['interactive_shell', 'file_read', 'file_edit', 'file_write', 'grep', 'http_request', 'web_search'] },
       monitor: { tools: ['tenth_man_review'] },
     },
     harnessPolicy: { heartbeatSecs: 30, leaseSecs: 600, checkpoint: 'event_sequence', allowResume: true },

@@ -79,7 +79,7 @@ function get_metadata(): PluginMetadata {
     name: "{{PLUGIN_NAME}}",
     version: "1.0.0",
     author: "AI Generated",
-    main_category: "passive",
+    main_category: "traffic",
     category: "xss",
     description: "{{DESCRIPTION}}",
     default_severity: "high",
@@ -241,4 +241,3 @@ function init(config?: Record<string, any>): void {
     Object.assign(CONFIG, config);
   }
 }
-

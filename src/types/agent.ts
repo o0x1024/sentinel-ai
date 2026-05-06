@@ -114,7 +114,7 @@ export interface MessageMetadata {
   referenced_assets?: ReferencedAsset[]
   referenced_traffic?: ReferencedTraffic[]
   tracked_artifacts?: AgentTrackedArtifact[]
-  file_verification_status?: 'pending' | 'verified'
+  file_verification_status?: 'pending' | 'verified' | 'failed'
 }
 
 // Image attachment structure (matches backend MessageAttachment::Image)

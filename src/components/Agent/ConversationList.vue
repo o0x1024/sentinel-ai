@@ -28,6 +28,7 @@
     <!-- Search -->
     <div class="p-2">
       <input 
+        ref="searchInputRef"
         v-model="searchQuery"
         type="text" 
         :placeholder="t('agent.searchConversations')" 
@@ -56,42 +57,49 @@
           v-for="conv in conversations"
           :key="conv.id"
           :class="[
-            'conversation-item group relative p-3 rounded-lg cursor-pointer transition-all',
+            'conversation-item group relative rounded-lg transition-all',
             currentConversationId === conv.id 
               ? 'bg-primary/10 border-l-2 border-primary' 
-              : 'hover:bg-base-300/50'
+              : 'hover:bg-base-300/50 focus-within:bg-base-300/50'
           ]"
-          @click="selectConversation(conv)"
         >
-          <div class="flex items-start justify-between gap-2">
+          <div class="flex items-start justify-between gap-2 p-3">
             <div class="flex-1 min-w-0">
-              <h4 class="font-medium text-sm truncate" :title="conv.title || t('agent.unnamedConversation')">
-                {{ conv.title || t('agent.unnamedConversation') }}
-              </h4>
-              <p class="text-xs text-base-content/60 mt-1">
-                {{ formatDate(conv.created_at || conv.updated_at) }}
-              </p>
-              <div class="flex items-center gap-2 mt-1 text-xs text-base-content/50">
-                <span v-if="conv.total_messages > 0">
-                  <i class="fas fa-message"></i> {{ conv.total_messages }}
-                </span>
-                <span v-if="conv.model_name">
-                  <i class="fas fa-robot"></i> {{ conv.model_name }}
-                </span>
-              </div>
-              <div v-if="conv.execution_state" class="mt-2">
-                <span
-                  class="badge badge-xs"
-                  :class="getExecutionStateBadgeClass(conv.execution_state.outcome)"
-                >
-                  {{ t(getExecutionStateLabelKey(conv.execution_state.outcome)) }}
-                </span>
-              </div>
+              <button
+                type="button"
+                class="w-full text-left"
+                :title="conv.title || t('agent.unnamedConversation')"
+                @click="selectConversation(conv)"
+              >
+                <h4 class="font-medium text-sm truncate">
+                  {{ conv.title || t('agent.unnamedConversation') }}
+                </h4>
+                <p class="text-xs text-base-content/60 mt-1">
+                  {{ formatDate(conv.created_at || conv.updated_at) }}
+                </p>
+                <div class="flex items-center gap-2 mt-1 text-xs text-base-content/50">
+                  <span v-if="conv.total_messages > 0">
+                    <i class="fas fa-message"></i> {{ conv.total_messages }}
+                  </span>
+                  <span v-if="conv.model_name">
+                    <i class="fas fa-robot"></i> {{ conv.model_name }}
+                  </span>
+                </div>
+                <div v-if="conv.execution_state" class="mt-2">
+                  <span
+                    class="badge badge-xs"
+                    :class="getExecutionStateBadgeClass(conv.execution_state.outcome)"
+                  >
+                    {{ t(getExecutionStateLabelKey(conv.execution_state.outcome)) }}
+                  </span>
+                </div>
+              </button>
             </div>
 
             <!-- Actions -->
-            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
               <button
+                type="button"
                 @click.stop="renameConversation(conv)"
                 class="btn btn-xs btn-ghost"
                 :title="t('agent.rename')"
@@ -99,6 +107,7 @@
                 <i class="fas fa-edit"></i>
               </button>
               <button
+                type="button"
                 @click.stop="deleteConversation(conv)"
                 class="btn btn-xs btn-ghost text-error"
                 :title="t('agent.delete')"
@@ -128,6 +137,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
+import { dialog } from '@/composables/useDialog'
 import {
   type AgentExecutionFinishedEvent,
   type PersistedAgentExecutionState,
@@ -162,6 +172,7 @@ const isLoading = ref(false)
 const isLoadingMore = ref(false)
 const searchQuery = ref('')
 const scrollContainer = ref<HTMLElement | null>(null)
+const searchInputRef = ref<HTMLInputElement | null>(null)
 
 // Pagination state
 const PAGE_SIZE = 20
@@ -301,26 +312,38 @@ const selectConversation = (conv: Conversation) => {
 }
 
 const renameConversation = async (conv: Conversation) => {
-  const newTitle = prompt(t('agent.enterNewConversationName'), conv.title || '')
-  if (newTitle && newTitle.trim()) {
-    try {
-      await invoke('update_ai_conversation_title', {
-        conversationId: conv.id,
-        title: newTitle.trim(),
-        serviceName: 'default'
-      })
-      // Update local conversation instead of reloading all
-      const index = conversations.value.findIndex(c => c.id === conv.id)
-      if (index !== -1) {
-        conversations.value[index].title = newTitle.trim()
-      }
-    } catch (error) {
-      console.error('Failed to rename conversation:', error)
+  const newTitle = await dialog.input({
+    message: t('agent.enterNewConversationName'),
+    defaultValue: conv.title || '',
+    confirmText: t('common.confirm'),
+    cancelText: t('common.cancel'),
+  })
+  if (!newTitle || !newTitle.trim()) return
+
+  try {
+    await invoke('update_ai_conversation_title', {
+      conversationId: conv.id,
+      title: newTitle.trim(),
+      serviceName: 'default'
+    })
+    const index = conversations.value.findIndex(c => c.id === conv.id)
+    if (index !== -1) {
+      conversations.value[index].title = newTitle.trim()
     }
+  } catch (error) {
+    console.error('Failed to rename conversation:', error)
   }
 }
 
 const deleteConversation = async (conv: Conversation) => {
+  const confirmed = await dialog.confirm({
+    message: `${t('agent.delete')} "${conv.title || t('agent.unnamedConversation')}"?`,
+    confirmText: t('common.delete'),
+    cancelText: t('common.cancel'),
+    variant: 'error',
+  })
+  if (!confirmed) return
+
   try {
     await invoke('delete_ai_conversation', {
       conversationId: conv.id,
@@ -380,7 +403,8 @@ onUnmounted(() => {
 })
 
 defineExpose({
-  loadConversations: () => loadConversations(true)
+  focusSearch: () => searchInputRef.value?.focus(),
+  loadConversations: () => loadConversations(true),
 })
 </script>
 

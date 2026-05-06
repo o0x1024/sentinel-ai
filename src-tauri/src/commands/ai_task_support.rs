@@ -299,6 +299,7 @@ pub async fn run_external_text_task(
             .await?;
         let params = AgentExecuteParams {
             execution_id: run_id.to_string(),
+            cancellation_generation: None,
             model: config.model.clone(),
             system_prompt: system_prompt.unwrap_or_default(),
             task: user_input,
@@ -306,6 +307,7 @@ pub async fn run_external_text_task(
             active_browser_shell_session_id: None,
             active_terminal_session_fingerprint: None,
             active_terminal_session_id: None,
+            working_directory: None,
             rig_provider: config
                 .rig_provider
                 .clone()
@@ -377,6 +379,7 @@ pub async fn run_external_chat_task(
 
         let params = AgentExecuteParams {
             execution_id: run_id.to_string(),
+            cancellation_generation: None,
             model: config.model.clone(),
             system_prompt: system_prompt.unwrap_or_default(),
             task,
@@ -384,6 +387,7 @@ pub async fn run_external_chat_task(
             active_browser_shell_session_id: None,
             active_terminal_session_fingerprint: None,
             active_terminal_session_id: None,
+            working_directory: None,
             rig_provider: config
                 .rig_provider
                 .clone()

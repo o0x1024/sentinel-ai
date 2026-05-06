@@ -62,7 +62,7 @@
           </span>
           <span class="badge badge-outline badge-sm">{{ `策略 ${toolConfig.selection_strategy}` }}</span>
           <span class="badge badge-outline badge-sm">{{ `上限 ${toolConfig.max_tools}` }}</span>
-          <span class="badge badge-outline badge-sm">{{ `固定 ${toolConfig.fixed_tools.length}` }}</span>
+          <span class="badge badge-outline badge-sm">{{ `预选 ${toolConfig.preselected_tools.length}` }}</span>
           <span class="badge badge-outline badge-sm">{{ `禁用 ${toolConfig.disabled_tools.length}` }}</span>
           <span
             v-if="toolConfig.manual_tools && toolConfig.manual_tools.length > 0"

@@ -14,7 +14,7 @@ const createProfile = (): AssistantProfileOption => ({
   defaultTenthManEnabled: false,
   defaultToolSelectionStrategy: 'Keyword',
   defaultMaxTools: 5,
-  defaultFixedTools: [],
+  defaultPreselectedTools: [],
   defaultDisabledTools: [],
   defaultManualTools: [],
   defaultTeamOrchestrationPresetId: null,
@@ -31,7 +31,7 @@ describe('assistantProfileRegistrySupport', () => {
       enabled: true,
       selection_strategy: 'Manual',
       max_tools: 5,
-      fixed_tools: [],
+      preselected_tools: [],
       disabled_tools: [],
       manual_tools: ['browser__open', 'http_request'],
     })
@@ -48,7 +48,7 @@ describe('assistantProfileRegistrySupport', () => {
       enabled: true,
       selection_strategy: { Manual: ['browser::open', 'browser::open', 'http_request'] },
       max_tools: 5,
-      fixed_tools: [],
+      preselected_tools: [],
       disabled_tools: [],
       manual_tools: [],
     })

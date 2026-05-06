@@ -50,8 +50,9 @@ export function buildTerminalSessionFingerprint(
   executionMode: TerminalExecutionMode,
   dockerImage: string,
   shell: string,
+  workingDirectory = '',
 ): string {
-  return `${executionMode}|${dockerImage.trim().toLowerCase()}|${shell.trim().toLowerCase()}`
+  return `${executionMode}|${dockerImage.trim().toLowerCase()}|${shell.trim().toLowerCase()}|${workingDirectory.trim().replace(/\\/g, '/')}`
 }
 
 export function useTerminal() {

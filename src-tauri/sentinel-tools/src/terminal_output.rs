@@ -2,16 +2,18 @@ pub fn build_terminal_session_fingerprint(
     execution_mode: crate::terminal::ExecutionMode,
     docker_image: &str,
     shell: &str,
+    working_dir: &str,
 ) -> String {
     let mode = match execution_mode {
         crate::terminal::ExecutionMode::Docker => "docker",
         crate::terminal::ExecutionMode::Host => "host",
     };
     format!(
-        "{}|{}|{}",
+        "{}|{}|{}|{}",
         mode,
         docker_image.trim().to_lowercase(),
-        shell.trim().to_lowercase()
+        shell.trim().to_lowercase(),
+        working_dir.trim().replace('\\', "/")
     )
 }
 

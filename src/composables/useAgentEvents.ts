@@ -73,6 +73,7 @@ export function useAgentEvents(
   const contextUsage = ref<ContextUsageInfo | null>(null)
   const suppressedExecutionId = ref<string | null>(null)
   const settledExecutionId = ref<string | null>(null)
+  const currentGeneration = ref<number | null>(null)
   const executionStartedAt = ref<number | null>(null)
   const latestUsage = ref<{ inputTokens: number; outputTokens: number } | null>(null)
 
@@ -168,7 +169,13 @@ export function useAgentEvents(
     return typeof raw === 'string' && raw.trim().length > 0 ? raw : undefined
   }
 
-  const matchesTarget = (eventExecId: string): boolean => {
+  const readGeneration = (payload?: any): number | null => {
+    const raw = payload?.generation ?? payload?.structured_data?.generation
+    const value = Number(raw)
+    return Number.isFinite(value) && value > 0 ? value : null
+  }
+
+  const matchesTarget = (eventExecId: string, payload?: any): boolean => {
     const targetId = getTargetId()
     // If caller provided an explicit target but it's currently empty (e.g. session switching),
     // reject all events to avoid cross-session message bleed.
@@ -176,7 +183,19 @@ export function useAgentEvents(
     if (suppressedExecutionId.value && eventExecId === suppressedExecutionId.value) {
       return false
     }
-    return !targetId || eventExecId === targetId
+    if (targetId && eventExecId !== targetId) return false
+    const generation = readGeneration(payload)
+    if (generation !== null) {
+      if (currentGeneration.value !== null && currentGeneration.value !== generation) {
+        return false
+      }
+      currentGeneration.value = generation
+      return true
+    }
+    if (targetId && currentGeneration.value !== null && eventExecId === targetId) {
+      return false
+    }
+    return true
   }
 
   const isSuppressedExecution = (eventExecId: string): boolean => {
@@ -216,7 +235,13 @@ export function useAgentEvents(
     const executionMode = parsedResult?.execution_mode ?? toolArgs?.execution_mode ?? 'docker'
     const dockerImage = parsedResult?.docker_image ?? toolArgs?.docker_image ?? 'sentinel-sandbox:latest'
     const shell = parsedResult?.shell ?? toolArgs?.shell ?? 'bash'
-    if (typeof executionMode !== 'string' || typeof dockerImage !== 'string' || typeof shell !== 'string') {
+    const workingDirectory = parsedResult?.working_dir ?? toolArgs?.working_dir ?? ''
+    if (
+      typeof executionMode !== 'string'
+      || typeof dockerImage !== 'string'
+      || typeof shell !== 'string'
+      || typeof workingDirectory !== 'string'
+    ) {
       return undefined
     }
 
@@ -224,6 +249,7 @@ export function useAgentEvents(
       executionMode === 'host' ? 'host' : 'docker',
       dockerImage,
       shell,
+      workingDirectory,
     )
   }
 
@@ -345,7 +371,7 @@ export function useAgentEvents(
   }
 
   const handleExecutionFinished = (payload: AgentExecutionFinishedEvent): void => {
-    if (!matchesTarget(payload.execution_id)) return
+    if (!matchesTarget(payload.execution_id, payload)) return
 
     if (
       payload.outcome === 'cancelled'
@@ -449,6 +475,7 @@ export function useAgentEvents(
     contextUsage.value = null
     suppressedExecutionId.value = null
     settledExecutionId.value = null
+    currentGeneration.value = null
     executionStartedAt.value = null
     latestUsage.value = null
     clearParallelRuns()
@@ -529,7 +556,7 @@ export function useAgentEvents(
     }>('agent:user_message', (event) => {
       const payload = event.payload
       releaseSuppressedExecution(payload.execution_id)
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       markExecutionActive(payload.execution_id)
       startExecutionTiming()
@@ -621,7 +648,7 @@ export function useAgentEvents(
 
     const unlistenTasks = await listen<AgentTasksUpdatePayload>('agent-tasks-update', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
     })
     unlisteners.push(unlistenTasks)
 
@@ -629,7 +656,7 @@ export function useAgentEvents(
     const unlistenStart = await listen<AgentStartEvent>('agent:start', (event) => {
       const payload = event.payload
       releaseSuppressedExecution(payload.execution_id)
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       markExecutionActive(payload.execution_id)
       startExecutionTiming()
@@ -697,7 +724,7 @@ export function useAgentEvents(
       } | null
     }>('agent:context_usage', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       contextUsage.value = {
         usedTokens: payload.used_tokens,
@@ -737,7 +764,7 @@ export function useAgentEvents(
       sentinel_compression_aggressiveness?: string | null
     }>('agent:context_snapshot', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       const next = contextUsage.value ? { ...contextUsage.value } : buildContextUsageSkeleton()
       next.memoryRetrieval = mapMemoryRetrieval(payload.memory_retrieval)
@@ -790,7 +817,7 @@ export function useAgentEvents(
     // 监听 agent:iteration 事件
     const unlistenIteration = await listen<AgentIterationEvent>('agent:iteration', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
@@ -834,7 +861,7 @@ export function useAgentEvents(
         }
         return
       }
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
@@ -949,7 +976,7 @@ export function useAgentEvents(
         flushParallelChild(parallelChild)
         return
       }
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
@@ -1004,7 +1031,7 @@ export function useAgentEvents(
         flushParallelChild(parallelChild)
         return
       }
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
@@ -1074,7 +1101,7 @@ export function useAgentEvents(
         flushParallelChild(parallelChild)
         return
       }
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
       // Auto-recover execution state after page refresh
@@ -1275,7 +1302,7 @@ export function useAgentEvents(
     // 监听 agent:tools_selected 事件（仅记录日志，不显示消息）
     const unlistenToolsSelected = await listen<AgentToolsSelectedEvent>('agent:tools_selected', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       // 仅记录日志，不再添加到消息列表显示
       console.log(`[Agent] Selected ${payload.tools.length} tools:`, payload.tools)
@@ -1290,7 +1317,7 @@ export function useAgentEvents(
         flushParallelChild(parallelChild)
         return
       }
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       messages.value.push({
         id: crypto.randomUUID(),
@@ -1322,7 +1349,7 @@ export function useAgentEvents(
         flushParallelChild(parallelChild)
         return
       }
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       messages.value.push({
         id: crypto.randomUUID(),
@@ -1347,7 +1374,7 @@ export function useAgentEvents(
         flushParallelChild(parallelChild)
         return
       }
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       messages.value.push({
         id: crypto.randomUUID(),
@@ -1384,7 +1411,7 @@ export function useAgentEvents(
         flushParallelChild(parallelChild)
         return
       }
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       console.log('[useAgentEvents] Assistant message saved:', payload.message_id)
       const reasoningContent = typeof payload.reasoning_content === 'string'
@@ -1442,12 +1469,10 @@ export function useAgentEvents(
       currentAssistantMessageId.value = null
       assistantSegmentBuffer.value = ''
 
-      // The assistant response is visible at this point. Backend cleanup/final review may
-      // still finish later, but the chat turn should no longer show a thinking indicator.
-      markExecutionSettled(payload.execution_id)
-      resetExecutionBuffers()
-
-      // 清空缓冲区，避免 agent:complete 事件重复添加
+      // The assistant response is visible at this point, but the execution is not finished
+      // until agent:execution_finished arrives. Only clear streaming buffers here.
+      thinkingBuffer.value = ''
+      currentThinkingMessageId.value = null
       contentBuffer.value = ''
       streamingContent.value = ''
     })
@@ -1464,7 +1489,7 @@ export function useAgentEvents(
       citations?: any[]
     }>('ai_meta_info', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.conversation_id)) return
+      if (!matchesTarget(payload.conversation_id, payload)) return
 
       console.log('[useAgentEvents] Meta info received:', payload)
 
@@ -1487,7 +1512,7 @@ export function useAgentEvents(
       citations: any[]
     }>('agent:rag_retrieval_complete', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       console.log('[useAgentEvents] RAG retrieval complete:', payload)
 
@@ -1581,7 +1606,7 @@ export function useAgentEvents(
     // 监听 agent:segment_summary_created 事件（滑动窗口段落摘要）
     const unlistenSegmentSummary = await listen<AgentSegmentSummaryCreatedEvent>('agent:segment_summary_created', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.conversation_id)) return
+      if (!matchesTarget(payload.conversation_id, payload)) return
 
       console.log('[useAgentEvents] Segment summary created:', payload)
 
@@ -1603,7 +1628,7 @@ export function useAgentEvents(
     // 监听 agent:global_summary_updated 事件（滑动窗口全局摘要）
     const unlistenGlobalSummary = await listen<AgentGlobalSummaryUpdatedEvent>('agent:global_summary_updated', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.conversation_id)) return
+      if (!matchesTarget(payload.conversation_id, payload)) return
 
       console.log('[useAgentEvents] Global summary updated:', payload)
 
@@ -1624,7 +1649,7 @@ export function useAgentEvents(
     // 监听 agent:retry 事件
     const unlistenRetry = await listen<AgentRetryEvent>('agent:retry', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       console.warn('[useAgentEvents] Agent retry event received:', payload)
       error.value = null
@@ -1661,7 +1686,7 @@ export function useAgentEvents(
     // 监听 agent:completion_guard_failed 事件
     const unlistenCompletionGuardFailed = await listen<AgentCompletionGuardFailedEvent>('agent:completion_guard_failed', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       const reasons = Array.isArray(payload.reasons)
         ? payload.reasons.filter(reason => typeof reason === 'string' && reason.trim().length > 0)
@@ -1692,7 +1717,7 @@ export function useAgentEvents(
     // 监听 agent:tenth_man_critique 事件
     const unlistenTenthMan = await listen<AgentTenthManCritiqueEvent>('agent:tenth_man_critique', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       console.log('[useAgentEvents] Tenth Man critique received:', payload.message_id)
 
@@ -1722,7 +1747,7 @@ export function useAgentEvents(
         }
         return
       }
-      if (!matchesTarget(chunk.execution_id)) return
+      if (!matchesTarget(chunk.execution_id, chunk)) return
       if (isSettledActivityEvent(chunk.execution_id)) return
 
       if (!isExecuting.value) {
@@ -1834,7 +1859,7 @@ export function useAgentEvents(
       requires_confirmation: boolean
     }>('agent:tenth_man_warning', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       console.log('[useAgentEvents] Tenth Man warning:', payload)
 
@@ -1865,7 +1890,7 @@ export function useAgentEvents(
       timestamp: number
     }>('agent:tenth_man_intervention', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.execution_id, payload)) return
 
       console.log('[useAgentEvents] Tenth Man intervention:', payload)
 
@@ -1894,7 +1919,7 @@ export function useAgentEvents(
       output_preview?: string
     }>('shell-background-task-update', (event) => {
       const payload = event.payload
-      if (!payload?.execution_id || !matchesTarget(payload.execution_id)) return
+      if (!payload?.execution_id || !matchesTarget(payload.execution_id, payload)) return
       if (payload.status === 'running') return
 
       const msgId = crypto.randomUUID()

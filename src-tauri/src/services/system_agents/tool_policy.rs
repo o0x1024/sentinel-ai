@@ -111,7 +111,7 @@ impl SystemAgentToolPolicy {
     }
 
     pub fn build_runtime_tool_config(&self) -> Option<ToolConfig> {
-        let fixed_tools = self
+        let preselected_tools = self
             .required
             .iter()
             .filter(|tool_id| !is_virtual_tool_id(tool_id))
@@ -130,7 +130,7 @@ impl SystemAgentToolPolicy {
             .cloned()
             .collect::<Vec<_>>();
 
-        let has_runtime_allowlist = !fixed_tools.is_empty() || !optional_tools.is_empty();
+        let has_runtime_allowlist = !preselected_tools.is_empty() || !optional_tools.is_empty();
         let has_runtime_restrictions = has_runtime_allowlist || !disabled_tools.is_empty();
         if !has_runtime_restrictions {
             return None;
@@ -138,7 +138,7 @@ impl SystemAgentToolPolicy {
 
         let allowed_tools = if has_runtime_allowlist {
             let mut allowed = BTreeSet::new();
-            allowed.extend(fixed_tools.iter().cloned());
+            allowed.extend(preselected_tools.iter().cloned());
             allowed.extend(optional_tools.iter().cloned());
             allowed.into_iter().collect::<Vec<_>>()
         } else {
@@ -148,13 +148,13 @@ impl SystemAgentToolPolicy {
         let max_tools = if allowed_tools.is_empty() {
             5usize
         } else {
-            allowed_tools.len().max(fixed_tools.len()).max(1)
+            allowed_tools.len().max(preselected_tools.len()).max(1)
         };
 
         Some(ToolConfig {
             selection_strategy: ToolSelectionStrategy::Keyword,
             max_tools,
-            fixed_tools,
+            preselected_tools,
             disabled_tools,
             allowed_tools,
             enabled: true,

@@ -1,10 +1,16 @@
+import type { AssistantConversationBinding } from './agentDraftTypes'
 import type { AgentTeamSession } from '@/types/agentTeam'
 import { normalizeTeamHumanInputContent } from './agentTeamMessageSupport'
 import { buildTeamSessionName } from './agentTeamSessionSupport'
 
 export const ensureConversationForTeamSession = async (params: {
   conversationId?: string | null
-  createConversation: (request: { title: string; service_name: string }) => Promise<string>
+  conversationBinding?: AssistantConversationBinding | null
+  createConversation: (request: {
+    title: string
+    service_name: string
+    conversation_binding?: AssistantConversationBinding | null
+  }) => Promise<string>
   getConversationTitle: () => string
   getDisplayTitle: () => string
   loadConversationList?: () => void
@@ -16,6 +22,7 @@ export const ensureConversationForTeamSession = async (params: {
   }
 
   const conversationId = await params.createConversation({
+    conversation_binding: params.conversationBinding,
     title: params.getConversationTitle(),
     service_name: 'default',
   })

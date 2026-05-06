@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::AppHandle;
 
+use super::plugin_categories::{PluginCategory, PluginMainCategory};
 use crate::commands::ai_task_support::{
     build_virtual_tool_context, complete_external_profile_run_failure,
     complete_external_profile_run_success, load_external_profile_context,
@@ -82,8 +83,8 @@ struct PluginAuthoringContext {
     name: String,
     description: String,
     author: Option<String>,
-    main_category: String,
-    category: String,
+    main_category: PluginMainCategory,
+    plugin_business_category: PluginCategory,
     monitor_type: Option<String>,
     default_severity: String,
 }
@@ -298,8 +299,8 @@ async fn generate_plugin_code(
         .context("Failed to load plugin authoring profile")?;
 
     let system_prompt = get_combined_plugin_prompt_api(
-        context.main_category.clone(),
-        context.category.clone(),
+        context.main_category.to_string(),
+        context.plugin_business_category.to_string(),
         context.default_severity.clone(),
     )
     .map_err(|error| anyhow!(error))?;
@@ -339,7 +340,7 @@ async fn generate_plugin_code(
     )
     .await?;
 
-    let code = if uses_agent_tool_contract(&context.main_category) {
+    let code = if context.main_category.uses_agent_tool_contract() {
         render_generated_agent_plugin(&response, context)?
     } else {
         extract_and_clean_code(&response)
@@ -365,7 +366,7 @@ async fn build_generation_prompt(
     let mut sections = vec![
         format!("Task: {action_label} a Sentinel plugin."),
         format!("main_category: {}", context.main_category),
-        format!("category: {}", context.category),
+        format!("category: {}", context.plugin_business_category),
         format!("plugin_id: {}", context.plugin_id),
         format!("name: {}", context.name),
         format!("default_severity: {}", context.default_severity),
@@ -391,7 +392,7 @@ async fn build_generation_prompt(
         ));
     }
 
-    if uses_agent_tool_contract(&context.main_category) {
+    if context.main_category.uses_agent_tool_contract() {
         sections.push(
             "Output exactly one plugin definition JSON object that matches the active Agent Tool Contract. Do not output TypeScript plugin wrappers, markdown, or prose."
                 .to_string(),
@@ -419,17 +420,16 @@ fn render_generated_agent_plugin(
             .author
             .clone()
             .unwrap_or_else(|| "Sentinel AI".to_string()),
-        category: context.category.clone(),
+        plugin_business_category: context.plugin_business_category.to_string(),
         default_severity: context.default_severity.clone(),
-        tags: vec!["ai-authored".to_string(), context.category.clone()],
+        tags: vec![
+            "ai-authored".to_string(),
+            context.plugin_business_category.to_string(),
+        ],
         description: context.description.clone(),
     };
 
     render_agent_plugin_definition(definition, &render_context)
-}
-
-fn uses_agent_tool_contract(main_category: &str) -> bool {
-    matches!(main_category, "agent" | "bounty")
 }
 
 async fn resolve_context_and_code(
@@ -467,8 +467,8 @@ async fn resolve_context_and_code(
             .clone()
             .unwrap_or_else(|| plugin_record.metadata.name.clone()),
         author: plugin_record.metadata.author.clone(),
-        main_category: plugin_record.metadata.main_category.clone(),
-        category: plugin_record.metadata.category.clone(),
+        main_category: plugin_record.metadata.main_category,
+        plugin_business_category: plugin_record.metadata.category.clone(),
         monitor_type: plugin_record.metadata.monitor_type.clone(),
         default_severity,
     };
@@ -495,9 +495,10 @@ async fn resolve_authoring_context(
         .or_else(|| {
             existing
                 .as_ref()
-                .map(|plugin| plugin.metadata.main_category.clone())
+                .map(|plugin| plugin.metadata.main_category.to_string())
         })
         .ok_or_else(|| anyhow!("main_category is required"))?;
+    let main_category = PluginMainCategory::parse(&main_category).map_err(anyhow::Error::msg)?;
 
     let category = request
         .category
@@ -508,9 +509,12 @@ async fn resolve_authoring_context(
         .or_else(|| {
             existing
                 .as_ref()
-                .map(|plugin| plugin.metadata.category.clone())
+                .map(|plugin| plugin.metadata.category.to_string())
         })
         .ok_or_else(|| anyhow!("category is required"))?;
+    let plugin_business_category =
+        PluginCategory::parse_for_main_category(main_category, &category)
+            .map_err(anyhow::Error::msg)?;
 
     let requirements = request
         .requirements
@@ -582,9 +586,15 @@ async fn resolve_authoring_context(
                 .and_then(|plugin| plugin.metadata.author.clone())
         });
 
-    let monitor_type = request.monitor_type.clone().or_else(|| {
-        resolved_store_plugin_monitor_type(existing.as_ref(), &plugin_id, &main_category, &category)
-    });
+    let monitor_type = match request.monitor_type.clone() {
+        Some(monitor_type) => Some(monitor_type),
+        None => resolved_store_plugin_monitor_type(
+            existing.as_ref(),
+            &plugin_id,
+            main_category,
+            &plugin_business_category,
+        ),
+    };
 
     Ok(PluginAuthoringContext {
         plugin_id,
@@ -592,7 +602,7 @@ async fn resolve_authoring_context(
         description,
         author,
         main_category,
-        category,
+        plugin_business_category,
         monitor_type,
         default_severity,
     })
@@ -624,8 +634,8 @@ async fn validate_category_code(
     context: &PluginAuthoringContext,
     code: &str,
 ) -> Result<CategoryValidationResult> {
-    match context.main_category.as_str() {
-        "traffic" => {
+    match context.main_category {
+        PluginMainCategory::Traffic => {
             let validator = PluginValidator::new();
             let validation = validator.validate(code).await?;
             Ok(CategoryValidationResult {
@@ -633,12 +643,12 @@ async fn validate_category_code(
                 runtime_schema: None,
             })
         }
-        "agent" | "bounty" | "intruder" => {
+        PluginMainCategory::Agent | PluginMainCategory::Bounty | PluginMainCategory::Intruder => {
             let metadata = RuntimeSchemaValidationMetadata {
                 id: context.plugin_id.clone(),
                 name: context.name.clone(),
-                main_category: context.main_category.clone(),
-                category: context.category.clone(),
+                main_category: context.main_category.to_string(),
+                category: context.plugin_business_category.to_string(),
                 author: Some("Sentinel Plugin Authoring".to_string()),
                 description: Some(context.description.clone()),
                 default_severity: Some(context.default_severity.clone()),
@@ -658,7 +668,6 @@ async fn validate_category_code(
                 runtime_schema: Some(runtime_schema),
             })
         }
-        other => Err(anyhow!("Unsupported main_category: {other}")),
     }
 }
 
@@ -670,12 +679,13 @@ async fn test_category_code(
     let metadata = build_plugin_metadata(
         context.plugin_id.clone(),
         context.name.clone(),
-        context.main_category.clone(),
-        context.category.clone(),
+        context.main_category.to_string(),
+        context.plugin_business_category.to_string(),
         Some(context.description.clone()),
         context.monitor_type.clone(),
         severity,
-    );
+    )
+    .map_err(anyhow::Error::msg)?;
 
     test_plugin_code(metadata, code.to_string(), None)
         .await
@@ -717,8 +727,8 @@ async fn save_plugin_draft(
                 })
                 .unwrap_or_else(|| "Sentinel Plugin Authoring".to_string()),
         ),
-        main_category: context.main_category.clone(),
-        category: context.category.clone(),
+        main_category: context.main_category,
+        category: context.plugin_business_category.clone(),
         description: Some(context.description.clone()),
         monitor_type: context.monitor_type.clone(),
         default_severity: match severity {
@@ -740,8 +750,8 @@ async fn save_plugin_draft(
         name: metadata.name.clone(),
         version: metadata.version.clone(),
         author: metadata.author.clone(),
-        main_category: metadata.main_category.clone(),
-        category: metadata.category.clone(),
+        main_category: metadata.main_category.to_string(),
+        category: metadata.category.to_string(),
         description: metadata.description.clone(),
         default_severity: context.default_severity.clone(),
         tags: metadata.tags.clone(),
@@ -780,16 +790,19 @@ async fn enable_plugin_by_id(
         .get_plugin_summary(plugin_id)
         .await?
         .ok_or_else(|| anyhow!("Plugin not found: {plugin_id}"))?;
+    let main_category = PluginMainCategory::parse(&main_category).map_err(anyhow::Error::msg)?;
 
     db.update_plugin_enabled(plugin_id, true).await?;
 
-    if main_category == "agent" {
+    if matches!(main_category, PluginMainCategory::Agent) {
         refresh_active_agent_plugin_tools(db.as_ref())
             .await
             .map_err(anyhow::Error::msg)?;
     }
 
-    if main_category == "traffic" && *traffic_state.is_running.read().await {
+    if matches!(main_category, PluginMainCategory::Traffic)
+        && *traffic_state.is_running.read().await
+    {
         if let Some(scan_tx) = traffic_state.scan_tx.read().await.as_ref() {
             let _ = scan_tx.send(sentinel_traffic::ScanTask::ReloadPlugin(
                 plugin_id.to_string(),
@@ -825,8 +838,8 @@ async fn start_generation_run(
         serde_json::json!({
             "action": request.action,
             "pluginId": context.plugin_id,
-            "mainCategory": context.main_category,
-            "category": context.category,
+            "mainCategory": context.main_category.to_string(),
+            "category": context.plugin_business_category.to_string(),
             "enableAfterTest": request.enable_after_test.unwrap_or(false),
         }),
     )

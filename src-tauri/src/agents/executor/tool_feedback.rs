@@ -25,6 +25,13 @@ pub(super) fn spawn_tenth_man_warning(
                         serde_json::Value::String(context.execution_id.clone()),
                     ),
                     (
+                        "generation".to_string(),
+                        params
+                            .cancellation_generation
+                            .map(serde_json::Value::from)
+                            .unwrap_or(serde_json::Value::Null),
+                    ),
+                    (
                         "trigger".to_string(),
                         serde_json::Value::String(trigger.to_string()),
                     ),
@@ -66,6 +73,7 @@ pub(super) fn spawn_tenth_man_warning(
 pub(super) fn emit_retry_event(
     app_handle: &AppHandle,
     execution_id: &str,
+    generation: Option<u64>,
     retries: usize,
     max_retries: usize,
     last_error: Option<&anyhow::Error>,
@@ -76,6 +84,7 @@ pub(super) fn emit_retry_event(
         "agent:retry",
         &json!({
             "execution_id": execution_id,
+            "generation": generation,
             "retry_count": retries,
             "max_retries": max_retries,
             "error": last_error.map(|e| e.to_string()),

@@ -9,7 +9,7 @@
         <div class="flex-shrink-0 pb-2 flex items-center gap-2">
           <button
             class="btn btn-sm btn-outline gap-2"
-            :title="t('aiAssistant.turnLogsTitle', 'Turn 日志')"
+            :title="`${t('aiAssistant.turnLogsTitle', 'Turn 日志')} (Ctrl/Cmd+Shift+L)`"
             @click="showTurnLogsModal = true"
           >
             <i class="fas fa-scroll"></i>
@@ -17,31 +17,31 @@
           </button>
           <button
             class="btn btn-sm btn-outline gap-2"
-            :title="t('aiAssistant.manageForcedRules', '管理强制规则')"
+            :title="`${t('aiAssistant.manageForcedRules', '管理强制规则')} (Ctrl/Cmd+Shift+R)`"
             @click="showForcedRulesModal = true"
           >
             <i class="fas fa-file-signature"></i>
             <span class="hidden md:inline">{{ t('aiAssistant.forcedRules', '强制规则') }}</span>
           </button>
           <div class="dropdown dropdown-end">
-            <div tabindex="0" role="button" class="btn btn-sm btn-outline gap-2">
+            <button type="button" tabindex="0" class="btn btn-sm btn-outline gap-2">
               <i class="fas fa-user-tie"></i>
               {{ selectedRole ? selectedRole.title : t('aiAssistant.selectRole', '选择角色') }}
               <i class="fas fa-chevron-down text-xs"></i>
-            </div>
+            </button>
             <ul tabindex="0" class="dropdown-content z-[1000] menu p-2 shadow bg-base-100 rounded-box w-72 md:w-80">
               <li><span class="menu-title">{{ t('aiAssistant.availableRoles', '可用角色') }}</span></li>
-              <li @click="handleSelectRole(null)">
-                <a class="flex items-center justify-between gap-3" :class="{ active: !selectedRole }">
+              <li>
+                <button type="button" class="flex w-full items-center justify-between gap-3" :class="{ active: !selectedRole }" @click="handleSelectRole(null)">
                   <div class="flex items-center gap-2">
                     <div class="badge badge-xs badge-ghost">{{ t('aiAssistant.defaultBadge') }}</div>
                     <span>{{ t('aiAssistant.defaultRole', '默认助手') }}</span>
                   </div>
-                </a>
+                </button>
               </li>
               <div class="divider my-1"></div>
-              <li v-for="role in roles" :key="role.id" @click="handleSelectRole(role)">
-                <a class="flex items-center justify-between gap-3" :class="{ active: selectedRole?.id === role.id }">
+              <li v-for="role in roles" :key="role.id">
+                <button type="button" class="flex w-full items-center justify-between gap-3" :class="{ active: selectedRole?.id === role.id }" @click="handleSelectRole(role)">
                   <div class="flex items-center gap-2">
                     <div class="badge badge-xs badge-primary">{{ t('aiAssistant.roleBadge') }}</div>
                     <span class="truncate">{{ role.title }}</span>
@@ -49,14 +49,14 @@
                   <div class="text-xs text-base-content/60 truncate max-w-20" :title="role.description">
                     {{ role.description }}
                   </div>
-                </a>
+                </button>
               </li>
               <div class="divider my-1"></div>
-              <li @click="showRoleManagement = true">
-                <a class="flex items-center gap-2 text-primary">
+              <li>
+                <button type="button" class="flex w-full items-center gap-2 text-primary" @click="showRoleManagement = true">
                   <i class="fas fa-cog"></i>
                   <span>{{ t('aiAssistant.manageRoles', '管理角色') }}</span>
-                </a>
+                </button>
               </li>
               <li v-if="roles.length === 0 && !isLoadingRoles">
                 <span class="text-base-content/50 text-sm">{{ t('aiAssistant.noRoles', '暂无自定义角色') }}</span>
@@ -77,6 +77,7 @@
           :focused-message-id="focusedMemoryConversationId === session.id ? focusedMessageId : null"
           :show-tasks="true"
           :selected-role="selectedRole"
+          :active="activeSessionId === session.id"
           class="absolute inset-0"
           @submit="handleAgentSubmit"
           @complete="handleAgentComplete"
@@ -120,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
@@ -134,6 +135,7 @@ import type { ReferencedTraffic, ReferencedAsset } from '@/types/agentReferences
 import { useRoleManagement } from '@/composables/useRoleManagement'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import { dialog } from '@/composables/useDialog'
+import type { AssistantConversationBinding } from '@/components/Agent/agentDraftTypes'
 import type { AiConversationSummary } from '@/components/Agent/conversationTypes'
 import { pickLatestConversation } from '@/components/Agent/agentConversationSessionSupport'
 import { buildFocusedMessageQuery, readFocusLocationState } from '@/components/Agent/focusLocationSupport'
@@ -143,6 +145,13 @@ import { consumePendingSecurityFindingAssistantAssets } from '@/components/Secur
 type PendingTrafficReference = {
   requests: ReferencedTraffic[]
   type: 'request' | 'response' | 'both'
+}
+
+type AgentViewWorkspaceRef = {
+  addReferencedAssets?: (assets: ReferencedAsset[]) => void
+  addReferencedTraffic?: (requests: ReferencedTraffic[], type: 'request' | 'response' | 'both') => void
+  buildCurrentConversationBinding?: () => AssistantConversationBinding
+  focusInput?: () => void
 }
 
 const props = withDefaults(
@@ -181,7 +190,7 @@ const {
   replaceSession,
   syncSessionsWithConversations,
 } = useAgentSessionManager()
-const agentViewRefs = ref<Record<string, any>>({})
+const agentViewRefs = ref<Record<string, AgentViewWorkspaceRef>>({})
 const focusLocation = computed(() => readFocusLocationState(route.query))
 const focusedMemoryConversationId = computed(() => focusLocation.value.conversationId)
 const focusedMemoryId = computed(() => focusLocation.value.memoryId)
@@ -192,9 +201,56 @@ const pendingAssetReferences = ref<ReferencedAsset[][]>([])
 let unlistenTraffic: UnlistenFn | null = null
 let unlistenAssets: UnlistenFn | null = null
 
-const setAgentViewRef = (sessionId: string, el: any | null) => {
-  if (el) {
-    agentViewRefs.value[sessionId] = el
+const isEditableTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false
+  const tagName = target.tagName.toLowerCase()
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable
+}
+
+const handleWorkspaceKeydown = (event: KeyboardEvent) => {
+  if (!(event.metaKey || event.ctrlKey) || isEditableTarget(event.target)) {
+    return
+  }
+
+  const key = event.key.toLowerCase()
+  if (event.altKey && key === 'n') {
+    event.preventDefault()
+    void handleNewTab()
+    return
+  }
+  if (!event.shiftKey) return
+  if (key === 'l') {
+    event.preventDefault()
+    showTurnLogsModal.value = true
+    return
+  }
+  if (key === 'r') {
+    event.preventDefault()
+    showForcedRulesModal.value = true
+  }
+}
+
+const toAgentViewWorkspaceRef = (value: unknown): AgentViewWorkspaceRef | null => {
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as AgentViewWorkspaceRef
+  if (
+    typeof candidate.addReferencedAssets === 'function'
+    || typeof candidate.addReferencedTraffic === 'function'
+    || typeof candidate.buildCurrentConversationBinding === 'function'
+    || typeof candidate.focusInput === 'function'
+  ) {
+    return candidate
+  }
+  return null
+}
+
+const setAgentViewRef = (
+  sessionId: string,
+  el: Element | ComponentPublicInstance | null,
+) => {
+  const workspaceRef = toAgentViewWorkspaceRef(el)
+  if (workspaceRef) {
+    agentViewRefs.value[sessionId] = workspaceRef
     void nextTick(drainPendingSecurityFindingReferences)
     void nextTick(flushPendingReferences)
     return
@@ -257,8 +313,10 @@ async function focusActiveAgentInput() {
 
 const handleNewTab = async () => {
   try {
+    const conversationBinding = getActiveAgentViewRef()?.buildCurrentConversationBinding?.() || null
     const convId = await invoke<string>('create_ai_conversation', {
       request: {
+        conversation_binding: conversationBinding,
         title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
         service_name: 'default',
       },
@@ -388,6 +446,7 @@ const handleMemoryMessageFocused = ({ memoryId, messageId }: { memoryId: string;
 }
 
 onMounted(async () => {
+  window.addEventListener('keydown', handleWorkspaceKeydown)
   let roleLoadPromise: Promise<void> | null = null
 
   try {
@@ -442,6 +501,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleWorkspaceKeydown)
   if (unlistenTraffic) {
     unlistenTraffic()
     unlistenTraffic = null

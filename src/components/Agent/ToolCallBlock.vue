@@ -23,11 +23,16 @@
     
     <!-- Arguments (collapsible with preview) -->
     <div v-if="hasArgs" class="tool-args-section border-t border-base-300">
-      <div 
+      <div
         ref="argsBodyRef"
         @click="toggleArgs"
-        :class="['args-content px-4 py-3 bg-base-100 cursor-pointer transition-all relative', 
+        @keydown.enter.prevent="toggleArgs"
+        @keydown.space.prevent="toggleArgs"
+        tabindex="0"
+        role="button"
+        :class="['args-content w-full px-4 py-3 bg-base-100 text-left transition-all relative', 
                  isArgsExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden']"
+        :aria-expanded="isArgsExpanded ? 'true' : 'false'"
       >
         <pre class="m-0 text-sm font-mono text-base-content/70 whitespace-pre-wrap break-words">{{ formattedArgs }}</pre>
         
@@ -40,11 +45,16 @@
     
     <!-- Result (for completed tools with preview) -->
     <div v-if="hasResult" class="tool-result-section border-t border-base-300">
-      <div 
+      <div
         ref="resultBodyRef"
         @click="toggleResult"
-        :class="['result-content px-4 py-3 bg-base-100 cursor-pointer transition-all relative', 
+        @keydown.enter.prevent="toggleResult"
+        @keydown.space.prevent="toggleResult"
+        tabindex="0"
+        role="button"
+        :class="['result-content w-full px-4 py-3 bg-base-100 text-left transition-all relative', 
                  isResultExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-24 overflow-hidden']"
+        :aria-expanded="isResultExpanded ? 'true' : 'false'"
       >
         <MarkdownRenderer v-if="isMarkdownResult" :content="resultContent" />
         <pre v-else class="m-0 text-sm font-mono text-base-content/70 whitespace-pre-wrap break-words">{{ resultContent }}</pre>

@@ -5257,7 +5257,7 @@ pub async fn monitor_get_available_plugins(
     let mut plugins = Vec::new();
 
     for plugin in all_plugins {
-        if !is_monitor_execution_plugin_category(&plugin.metadata.main_category) {
+        if !is_monitor_execution_plugin_category(plugin.metadata.main_category) {
             continue;
         }
 
@@ -5272,7 +5272,7 @@ pub async fn monitor_get_available_plugins(
         let Some(monitor_type) = resolve_monitor_type_from_metadata(
             db_service.inner(),
             &plugin.metadata.id,
-            &plugin.metadata.category,
+            plugin.metadata.category.as_str(),
         )
         .await?
         else {
@@ -5282,7 +5282,7 @@ pub async fn monitor_get_available_plugins(
         plugins.push(MonitorPluginInfo {
             id: plugin.metadata.id.clone(),
             name: plugin.metadata.name.clone(),
-            category: plugin.metadata.category.clone(),
+            category: plugin.metadata.category.to_string(),
             monitor_type,
             description: plugin.metadata.description.clone(),
             is_available: plugin.status == sentinel_plugins::PluginStatus::Enabled,
@@ -5313,7 +5313,7 @@ pub async fn monitor_test_plugin(
 
     Ok(plugin
         .map(|record| {
-            is_monitor_execution_plugin_category(&record.metadata.main_category)
+            is_monitor_execution_plugin_category(record.metadata.main_category)
                 && record.status == sentinel_plugins::PluginStatus::Enabled
         })
         .unwrap_or(false))

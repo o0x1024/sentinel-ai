@@ -1717,6 +1717,9 @@ impl DatabaseService {
     }
 
     async fn ensure_runtime_default_data(&self) -> Result<()> {
+        self.migrate_legacy_passive_plugin_categories_internal()
+            .await?;
+
         if self
             .get_config_internal("ai", "providers_config")
             .await?

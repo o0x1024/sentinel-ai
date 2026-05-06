@@ -1,6 +1,7 @@
 import { computed, onUnmounted, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
+import type { AssistantConversationBinding } from './agentDraftTypes'
 import type {
   AgentTeamMessage,
   AgentTeamMessageStreamDeltaEvent,
@@ -73,6 +74,7 @@ export const useAgentTeamRuntime = (params: {
   activateRightPanel: (panel: 'team') => void
   activeRightPanel: Ref<string | null>
   agentMessages: Ref<AgentMessage[]>
+  buildCurrentConversationBinding: () => AssistantConversationBinding
   buildToolPolicyFromUiConfig: (config: UiToolConfigPayload) => Record<string, unknown>
   clearLocalError: () => void
   conversationId: Ref<string | null>
@@ -722,6 +724,7 @@ export const useAgentTeamRuntime = (params: {
   const ensureConversationForTeamSession = async () =>
     ensureConversationForTeamSessionSupport({
       conversationId: params.conversationId.value,
+      conversationBinding: params.buildCurrentConversationBinding(),
       createConversation: async (request) => invoke<string>('create_ai_conversation', { request }),
       getConversationTitle: params.getNewConversationTitle,
       getDisplayTitle: params.getDisplayConversationTitle,

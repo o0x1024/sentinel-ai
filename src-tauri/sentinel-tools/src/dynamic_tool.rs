@@ -5,7 +5,8 @@
 
 use rig::completion::ToolDefinition;
 use rig::tool::{Tool, ToolSet};
-use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +26,7 @@ pub type ToolExecutor = Arc<
 >;
 
 /// Tool source type
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolSource {
     /// Built-in tools (port_scan, http_request, etc.)
     Builtin,
@@ -35,6 +36,65 @@ pub enum ToolSource {
     Plugin { plugin_id: String },
     /// Workflow tools
     Workflow { workflow_id: String },
+}
+
+impl ToolSource {
+    pub fn as_wire_string(&self) -> String {
+        match self {
+            ToolSource::Builtin => "builtin".to_string(),
+            ToolSource::Mcp { server_name } => format!("mcp::{}", server_name),
+            ToolSource::Plugin { plugin_id } => format!("plugin::{}", plugin_id),
+            ToolSource::Workflow { workflow_id } => format!("workflow::{}", workflow_id),
+        }
+    }
+
+    pub fn from_wire_str(raw: &str) -> Result<Self, String> {
+        let normalized = raw.trim();
+        if normalized.eq_ignore_ascii_case("builtin") {
+            return Ok(ToolSource::Builtin);
+        }
+        if let Some(server_name) = normalized.strip_prefix("mcp::") {
+            return Ok(ToolSource::Mcp {
+                server_name: server_name.to_string(),
+            });
+        }
+        if let Some(plugin_id) = normalized.strip_prefix("plugin::") {
+            return Ok(ToolSource::Plugin {
+                plugin_id: plugin_id.to_string(),
+            });
+        }
+        if let Some(workflow_id) = normalized.strip_prefix("workflow::") {
+            return Ok(ToolSource::Workflow {
+                workflow_id: workflow_id.to_string(),
+            });
+        }
+        Err(format!("invalid tool source: {}", raw))
+    }
+}
+
+impl std::fmt::Display for ToolSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.as_wire_string())
+    }
+}
+
+impl Serialize for ToolSource {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.as_wire_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        ToolSource::from_wire_str(&raw).map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +118,90 @@ impl Default for ToolExecutionPolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolExposure {
+    Deferred,
+    Standard,
+}
+
+impl ToolExposure {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ToolExposure::Deferred => "deferred",
+            ToolExposure::Standard => "standard",
+        }
+    }
+}
+
+impl std::fmt::Display for ToolExposure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Default for ToolExposure {
+    fn default() -> Self {
+        Self::Standard
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolCategory {
+    Network,
+    Security,
+    Data,
+    AI,
+    System,
+    Mcp,
+    Plugin,
+    Workflow,
+    Browser,
+    Utility,
+    Recon,
+    Scanning,
+    Exploitation,
+    Monitoring,
+    Traffic,
+    Other,
+}
+
+impl ToolCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ToolCategory::Network => "network",
+            ToolCategory::Security => "security",
+            ToolCategory::Data => "data",
+            ToolCategory::AI => "ai",
+            ToolCategory::System => "system",
+            ToolCategory::Mcp => "mcp",
+            ToolCategory::Plugin => "plugin",
+            ToolCategory::Workflow => "workflow",
+            ToolCategory::Browser => "browser",
+            ToolCategory::Utility => "utility",
+            ToolCategory::Recon => "recon",
+            ToolCategory::Scanning => "scanning",
+            ToolCategory::Exploitation => "exploitation",
+            ToolCategory::Monitoring => "monitoring",
+            ToolCategory::Traffic => "traffic",
+            ToolCategory::Other => "other",
+        }
+    }
+}
+
+impl std::fmt::Display for ToolCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Default for ToolCategory {
+    fn default() -> Self {
+        Self::Other
+    }
+}
+
 /// Dynamic tool definition
 #[derive(Clone)]
 pub struct DynamicToolDef {
@@ -72,13 +216,13 @@ pub struct DynamicToolDef {
     /// Tool source
     pub source: ToolSource,
     /// Tool category
-    pub category: String,
+    pub category: ToolCategory,
     /// Search tags for tool discovery
     pub tags: Vec<String>,
     /// Optional short capability hint for tool search
     pub search_hint: Option<String>,
     /// Exposure level for deferred-tool mode
-    pub exposure: String,
+    pub exposure: ToolExposure,
     /// Runtime execution policy
     pub execution_policy: ToolExecutionPolicy,
     /// Tool executor function
@@ -348,10 +492,10 @@ pub struct DynamicToolBuilder {
     input_schema: Value,
     output_schema: Option<Value>,
     source: ToolSource,
-    category: String,
+    category: ToolCategory,
     tags: Vec<String>,
     search_hint: Option<String>,
-    exposure: String,
+    exposure: ToolExposure,
     execution_policy: ToolExecutionPolicy,
     executor: Option<ToolExecutor>,
 }
@@ -367,10 +511,10 @@ impl DynamicToolBuilder {
             }),
             output_schema: None,
             source: ToolSource::Builtin,
-            category: "other".to_string(),
+            category: ToolCategory::Other,
             tags: Vec::new(),
             search_hint: None,
-            exposure: "standard".to_string(),
+            exposure: ToolExposure::Standard,
             execution_policy: ToolExecutionPolicy::default(),
             executor: None,
         }
@@ -396,8 +540,8 @@ impl DynamicToolBuilder {
         self
     }
 
-    pub fn category(mut self, category: impl Into<String>) -> Self {
-        self.category = category.into();
+    pub fn category(mut self, category: ToolCategory) -> Self {
+        self.category = category;
         self
     }
 
@@ -411,8 +555,8 @@ impl DynamicToolBuilder {
         self
     }
 
-    pub fn exposure(mut self, exposure: impl Into<String>) -> Self {
-        self.exposure = exposure.into();
+    pub fn exposure(mut self, exposure: ToolExposure) -> Self {
+        self.exposure = exposure;
         self
     }
 

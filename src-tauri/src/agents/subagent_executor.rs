@@ -72,6 +72,7 @@ pub struct SubagentParentContext {
     pub active_browser_shell_session_id: Option<String>,
     pub active_terminal_session_fingerprint: Option<String>,
     pub active_terminal_session_id: Option<String>,
+    pub working_directory: Option<String>,
     pub tool_config: ToolConfig,
     pub max_iterations: usize,
     pub timeout_secs: u64,
@@ -190,7 +191,7 @@ fn default_subagent_tool_config() -> ToolConfig {
         enabled: true,
         selection_strategy: ToolSelectionStrategy::All,
         max_tools: 50,
-        fixed_tools: vec![],
+        preselected_tools: vec![],
         disabled_tools: vec![],
         allowed_tools: vec![],
     })
@@ -199,7 +200,7 @@ fn default_subagent_tool_config() -> ToolConfig {
 fn normalize_tool_config(mut config: ToolConfig) -> ToolConfig {
     // Subagents must never be able to spawn or orchestrate other subagents.
     config
-        .fixed_tools
+        .preselected_tools
         .retain(|tool| !SUBAGENT_TOOL_IDS.contains(&tool.as_str()));
     config
         .allowed_tools
@@ -689,7 +690,7 @@ async fn run_task(task_id: String) {
     create_subagent_message(&app_handle, &task_id, "user", &task_with_context).await;
 
     let tool_config_base = if let Some(raw) = pending_data.tool_config {
-        match serde_json::from_value::<ToolConfig>(raw) {
+        match ToolConfig::from_json_value(raw) {
             Ok(parsed) => normalize_tool_config(parsed),
             Err(e) => {
                 tracing::error!("Invalid tool_config: {}", e);
@@ -728,6 +729,7 @@ async fn run_task(task_id: String) {
 
     let params = super::AgentExecuteParams {
         execution_id: task_id.clone(),
+        cancellation_generation: None,
         model: pending_data.parent.model,
         system_prompt,
         task: task_with_context,
@@ -739,6 +741,7 @@ async fn run_task(task_id: String) {
             .active_terminal_session_fingerprint,
         active_browser_shell_session_id: pending_data.parent.active_browser_shell_session_id,
         active_terminal_session_id: pending_data.parent.active_terminal_session_id,
+        working_directory: pending_data.parent.working_directory,
         rig_provider: pending_data.parent.rig_provider,
         api_key: pending_data.parent.api_key,
         api_base: pending_data.parent.api_base,

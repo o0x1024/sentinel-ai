@@ -3266,7 +3266,7 @@ async fn execute_single_step(
                 name: plugin_data.metadata.name.clone(),
                 version: plugin_data.metadata.version.clone(),
                 author: plugin_data.metadata.author.clone(),
-                main_category: plugin_data.metadata.main_category.clone(),
+                main_category: plugin_data.metadata.main_category,
                 category: plugin_data.metadata.category.clone(),
                 monitor_type: plugin_data.metadata.monitor_type.clone(),
                 description: plugin_data.metadata.description.clone(),

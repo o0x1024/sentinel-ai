@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { pickLatestConversation } from '@/components/Agent/agentConversationSessionSupport'
+import {
+  createConversationSession,
+  pickLatestConversation,
+} from '@/components/Agent/agentConversationSessionSupport'
 
 describe('agentConversationSessionSupport', () => {
   it('picks the most recently created conversation first', () => {
@@ -20,5 +23,42 @@ describe('agentConversationSessionSupport', () => {
     ])
 
     expect(latest?.id).toBe('newer-created')
+  })
+
+  it('passes the current conversation binding when creating a new conversation', async () => {
+    let capturedRequest: Record<string, unknown> | null = null
+
+    await createConversationSession({
+      conversationBinding: {
+        schemaVersion: 4,
+        profileId: 'assistant.default',
+        contextMode: 'codex-like',
+        runMode: 'assistant',
+        workingDirectoryOverride: '/tmp/workspace',
+        ragEnabled: true,
+        webSearchEnabled: true,
+        tenthManEnabled: false,
+        selectedModel: 'openai/gpt-5.5',
+        toolsEnabled: true,
+        toolConfig: null,
+      },
+      createConversation: async (request) => {
+        capturedRequest = request
+        return 'conv-new'
+      },
+      getConversationTitle: () => 'New conversation',
+      getDisplayTitle: () => 'New conversation',
+      onConversationCreated: () => {},
+    })
+
+    expect(capturedRequest).toMatchObject({
+      service_name: 'default',
+      title: 'New conversation',
+      conversation_binding: {
+        contextMode: 'codex-like',
+        selectedModel: 'openai/gpt-5.5',
+        webSearchEnabled: true,
+      },
+    })
   })
 })

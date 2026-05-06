@@ -198,17 +198,25 @@ const buildEditableField = (
   }
 }
 
-export const buildEditableFields = (schema: any) => {
+export type BuildEditableFieldsOptions = {
+  hideInjectedMonitorFields?: boolean
+}
+
+export const buildEditableFields = (
+  schema: any,
+  options: BuildEditableFieldsOptions = {},
+) => {
   const properties = schema?.properties
   if (!properties || typeof properties !== 'object') {
     return [] as EditableField[]
   }
 
+  const hideInjectedMonitorFields = options.hideInjectedMonitorFields ?? true
   const requiredFields = new Set<string>(Array.isArray(schema?.required) ? schema.required : [])
 
   return Object.entries(properties)
     .filter(([name, property]) => {
-      if (INJECTED_MONITOR_FIELD_NAMES.has(name)) {
+      if (hideInjectedMonitorFields && INJECTED_MONITOR_FIELD_NAMES.has(name)) {
         return false
       }
 

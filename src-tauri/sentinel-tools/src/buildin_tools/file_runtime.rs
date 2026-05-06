@@ -52,8 +52,13 @@ pub struct FileRuntimeMetadata {
 
 #[derive(Debug, Clone)]
 enum FileRuntimeMode {
-    Host,
+    Host(HostFileRuntimeContext),
     Docker(DockerFileRuntimeContext),
+}
+
+#[derive(Debug, Clone)]
+struct HostFileRuntimeContext {
+    working_dir: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -64,9 +69,12 @@ struct DockerFileRuntimeContext {
 }
 
 impl FileRuntimeContext {
-    pub fn host() -> Self {
+    pub fn host(working_dir: Option<String>) -> Self {
         Self {
-            mode: FileRuntimeMode::Host,
+            mode: FileRuntimeMode::Host(HostFileRuntimeContext {
+                working_dir: resolve_host_working_dir(working_dir.as_deref())
+                    .unwrap_or_else(|_| default_host_working_dir()),
+            }),
         }
     }
 
@@ -92,10 +100,14 @@ where
     FILE_RUNTIME_CONTEXT.scope(context, future).await
 }
 
-pub async fn build_default_file_runtime_context() -> FileRuntimeContext {
+pub async fn build_default_file_runtime_context(
+    host_working_directory: Option<&str>,
+) -> FileRuntimeContext {
     let config = get_shell_config().await;
     match config.default_execution_mode {
-        ShellExecutionMode::Host => FileRuntimeContext::host(),
+        ShellExecutionMode::Host => {
+            FileRuntimeContext::host(host_working_directory.map(str::to_string))
+        }
         ShellExecutionMode::Docker => {
             let mut docker_config = config.docker_config.unwrap_or_default();
             if docker_config.container_name.is_none() {
@@ -112,21 +124,26 @@ pub async fn build_default_file_runtime_context() -> FileRuntimeContext {
 
 pub async fn build_file_runtime_context(
     active_terminal_session_id: Option<&str>,
+    host_working_directory: Option<&str>,
 ) -> FileRuntimeContext {
     let Some(session_id) = active_terminal_session_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return build_default_file_runtime_context().await;
+        return build_default_file_runtime_context(host_working_directory).await;
     };
 
     let Some(session_lock) = TERMINAL_MANAGER.get_session(session_id).await else {
-        return build_default_file_runtime_context().await;
+        return build_default_file_runtime_context(host_working_directory).await;
     };
 
     let session = session_lock.read().await;
     match session.config.execution_mode {
-        TerminalExecutionMode::Host => FileRuntimeContext::host(),
+        TerminalExecutionMode::Host => FileRuntimeContext::host(
+            host_working_directory
+                .map(str::to_string)
+                .or_else(|| session.config.working_dir.clone()),
+        ),
         TerminalExecutionMode::Docker => {
             let mut docker_config = get_shell_config().await.docker_config.unwrap_or_default();
             docker_config.image = session.config.docker_image.clone();
@@ -154,7 +171,7 @@ pub async fn build_file_runtime_context(
 
 pub async fn get_path_kind(raw: &str) -> Result<FilePathKind, String> {
     match effective_context() {
-        FileRuntimeMode::Host => get_host_path_kind(raw).await,
+        FileRuntimeMode::Host(context) => get_host_path_kind(&context, raw).await,
         FileRuntimeMode::Docker(context) => get_docker_path_kind(&context, raw).await,
     }
 }
@@ -165,22 +182,24 @@ pub async fn path_exists(raw: &str) -> Result<bool, String> {
 
 pub async fn resolve_runtime_path(raw: &str) -> Result<String, String> {
     match effective_context() {
-        FileRuntimeMode::Host => Ok(resolve_host_path(raw)?.to_string_lossy().to_string()),
+        FileRuntimeMode::Host(context) => Ok(resolve_host_path(&context, raw)?
+            .to_string_lossy()
+            .to_string()),
         FileRuntimeMode::Docker(context) => resolve_docker_path(&context.working_dir, raw),
     }
 }
 
 pub async fn list_files_under(base: Option<&str>) -> Result<RuntimeFileListing, String> {
     match effective_context() {
-        FileRuntimeMode::Host => list_host_files_under(base).await,
+        FileRuntimeMode::Host(context) => list_host_files_under(&context, base).await,
         FileRuntimeMode::Docker(context) => list_docker_files_under(&context, base).await,
     }
 }
 
 pub async fn read_path_bytes(raw: &str) -> Result<Vec<u8>, String> {
     match effective_context() {
-        FileRuntimeMode::Host => {
-            let path = resolve_host_path(raw)?;
+        FileRuntimeMode::Host(context) => {
+            let path = resolve_host_path(&context, raw)?;
             tokio::fs::read(&path)
                 .await
                 .map_err(|error| error.to_string())
@@ -195,8 +214,8 @@ pub async fn write_path_bytes(
     create_parent_dirs: bool,
 ) -> Result<(), String> {
     match effective_context() {
-        FileRuntimeMode::Host => {
-            let path = resolve_host_path(raw)?;
+        FileRuntimeMode::Host(context) => {
+            let path = resolve_host_path(&context, raw)?;
             if create_parent_dirs {
                 if let Some(parent) = path.parent() {
                     tokio::fs::create_dir_all(parent)
@@ -216,8 +235,8 @@ pub async fn write_path_bytes(
 
 pub async fn snapshot_key(raw: &str) -> Result<String, String> {
     match effective_context() {
-        FileRuntimeMode::Host => {
-            let path = resolve_host_path(raw)?;
+        FileRuntimeMode::Host(context) => {
+            let path = resolve_host_path(&context, raw)?;
             Ok(format!("host:{}", path.to_string_lossy()))
         }
         FileRuntimeMode::Docker(context) => {
@@ -235,11 +254,9 @@ pub async fn revision_token(raw: &str) -> Result<String, String> {
 
 pub fn current_runtime_metadata() -> FileRuntimeMetadata {
     match effective_context() {
-        FileRuntimeMode::Host => FileRuntimeMetadata {
+        FileRuntimeMode::Host(context) => FileRuntimeMetadata {
             execution_environment: "host".to_string(),
-            working_dir: std::env::current_dir()
-                .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|_| ".".to_string()),
+            working_dir: context.working_dir.to_string_lossy().to_string(),
             container_ref: None,
         },
         FileRuntimeMode::Docker(context) => {
@@ -256,10 +273,32 @@ pub fn current_runtime_metadata() -> FileRuntimeMetadata {
 fn effective_context() -> FileRuntimeMode {
     FILE_RUNTIME_CONTEXT
         .try_with(|context| context.mode.clone())
-        .unwrap_or(FileRuntimeMode::Host)
+        .unwrap_or_else(|_| {
+            FileRuntimeMode::Host(HostFileRuntimeContext {
+                working_dir: default_host_working_dir(),
+            })
+        })
 }
 
-fn resolve_host_path(raw: &str) -> Result<PathBuf, String> {
+fn default_host_working_dir() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn resolve_host_working_dir(raw: Option<&str>) -> Result<PathBuf, String> {
+    let trimmed = raw.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        return Ok(default_host_working_dir());
+    }
+
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(default_host_working_dir().join(path))
+    }
+}
+
+fn resolve_host_path(context: &HostFileRuntimeContext, raw: &str) -> Result<PathBuf, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("path cannot be empty".to_string());
@@ -269,8 +308,7 @@ fn resolve_host_path(raw: &str) -> Result<PathBuf, String> {
     if path.is_absolute() {
         Ok(path)
     } else {
-        let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
-        Ok(cwd.join(path))
+        Ok(context.working_dir.join(path))
     }
 }
 
@@ -291,8 +329,11 @@ fn resolve_docker_path(working_dir: &str, raw: &str) -> Result<String, String> {
     }
 }
 
-async fn get_host_path_kind(raw: &str) -> Result<FilePathKind, String> {
-    let path = resolve_host_path(raw)?;
+async fn get_host_path_kind(
+    context: &HostFileRuntimeContext,
+    raw: &str,
+) -> Result<FilePathKind, String> {
+    let path = resolve_host_path(context, raw)?;
     match tokio::fs::metadata(path).await {
         Ok(metadata) if metadata.is_dir() => Ok(FilePathKind::Directory),
         Ok(_) => Ok(FilePathKind::File),
@@ -301,10 +342,13 @@ async fn get_host_path_kind(raw: &str) -> Result<FilePathKind, String> {
     }
 }
 
-async fn list_host_files_under(base: Option<&str>) -> Result<RuntimeFileListing, String> {
+async fn list_host_files_under(
+    context: &HostFileRuntimeContext,
+    base: Option<&str>,
+) -> Result<RuntimeFileListing, String> {
     let base_path = match base {
-        Some(raw) if !raw.trim().is_empty() => resolve_host_path(raw)?,
-        _ => std::env::current_dir().map_err(|error| error.to_string())?,
+        Some(raw) if !raw.trim().is_empty() => resolve_host_path(context, raw)?,
+        _ => context.working_dir.clone(),
     };
 
     let mut files = Vec::new();

@@ -10,7 +10,7 @@ use crate::history_record_builder::build_http_history_record;
 use crate::scope::{url_is_in_scope, ProxyScopeRule};
 use crate::{Finding, InterceptFilterRule, RequestContext, ResponseContext, Result, TrafficError};
 use sentinel_db::DatabaseService;
-use sentinel_plugins::{types::HttpTransaction, PluginExecutor};
+use sentinel_plugins::{types::HttpTransaction, PluginExecutor, PluginMainCategory};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::Emitter;
@@ -813,8 +813,8 @@ impl ScanPipeline {
                 name: name.clone(),
                 version,
                 author,
-                main_category: "traffic".to_string(), // 从数据库加载的默认为traffic
-                category,
+                main_category: PluginMainCategory::Traffic,
+                category: category.into(),
                 description,
                 default_severity: severity,
                 tags: tags_array,
@@ -928,8 +928,8 @@ impl ScanPipeline {
             name: name.clone(),
             version,
             author,
-            main_category: "traffic".to_string(), // 从数据库加载的默认为traffic
-            category,
+            main_category: PluginMainCategory::Traffic,
+            category: category.into(),
             description,
             default_severity: severity,
             tags: tags_array,

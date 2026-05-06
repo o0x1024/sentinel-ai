@@ -23,6 +23,7 @@ use crate::output_storage::StoredOutputArtifact;
 
 /// Shell execution mode
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum ShellExecutionMode {
     /// Execute on host machine (less secure)
     Host,
@@ -116,6 +117,20 @@ pub enum ShellError {
     ExecutionFailed(String),
     #[error("Command timeout after {0} seconds")]
     Timeout(u64),
+    #[error("Command timeout after {timeout_secs} seconds")]
+    TimeoutWithOutput {
+        timeout_secs: u64,
+        stdout: String,
+        stderr: String,
+    },
+    #[error("{message}")]
+    InteractionRequired {
+        message: String,
+        stdout: String,
+        stderr: String,
+        interaction_kind: String,
+        recommended_tool: String,
+    },
     #[error("Invalid command: {0}")]
     InvalidCommand(String),
     #[error("Permission denied: {0}")]
@@ -660,6 +675,176 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         )
     }
 
+    fn command_starts_with_token(command: &str, token: &str) -> bool {
+        let trimmed = command.trim_start();
+        trimmed == token
+            || trimmed
+                .strip_prefix(token)
+                .map(|rest| rest.starts_with(char::is_whitespace))
+                .unwrap_or(false)
+    }
+
+    fn command_equals_any(command: &str, candidates: &[&str]) -> bool {
+        let trimmed = command.trim();
+        candidates.iter().any(|candidate| trimmed == *candidate)
+    }
+
+    fn command_looks_interactive(command: &str) -> Option<&'static str> {
+        let trimmed = command.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        const ALWAYS_TUI_PREFIXES: &[&str] = &[
+            "vim", "vi", "nano", "emacs", "less", "more", "top", "htop", "man",
+        ];
+        if ALWAYS_TUI_PREFIXES
+            .iter()
+            .any(|prefix| Self::command_starts_with_token(trimmed, prefix))
+        {
+            return Some("tui");
+        }
+
+        if trimmed == "python"
+            || trimmed == "python3"
+            || trimmed == "node"
+            || trimmed == "bash"
+            || trimmed == "zsh"
+            || trimmed == "sh"
+            || trimmed == "pwsh"
+            || trimmed == "powershell"
+            || trimmed == "mysql"
+            || trimmed == "psql"
+            || trimmed == "sqlite3"
+            || trimmed == "redis-cli"
+        {
+            return Some("repl");
+        }
+
+        const EXPLICIT_INTERACTIVE_PREFIXES: &[&str] = &[
+            "python -i",
+            "python3 -i",
+            "node -i",
+            "bash -i",
+            "zsh -i",
+            "sh -i",
+            "pwsh -i",
+            "powershell -i",
+            "git add -i",
+            "git clean -i",
+            "git rebase -i",
+            "git add -p",
+            "git restore -p",
+            "git checkout -p",
+            "git reset -p",
+        ];
+        if EXPLICIT_INTERACTIVE_PREFIXES
+            .iter()
+            .any(|prefix| Self::command_starts_with_token(trimmed, prefix))
+        {
+            return Some("prompt");
+        }
+
+        if Self::command_equals_any(trimmed, &["ssh", "sftp", "ftp", "telnet"]) {
+            return Some("repl");
+        }
+
+        None
+    }
+
+    fn build_interactive_command_guidance(command: &str) -> Option<ShellError> {
+        let interaction_kind = Self::command_looks_interactive(command)?;
+        Some(ShellError::InteractionRequired {
+            message: format!(
+                "Detected an interactive shell command. The one-shot shell tool does not support continued stdin/TTY interaction. Use interactive_shell to open or reuse a terminal session, or rewrite the command with non-interactive flags or piped input. Command: {}",
+                command
+            ),
+            stdout: String::new(),
+            stderr: String::new(),
+            interaction_kind: interaction_kind.to_string(),
+            recommended_tool: "interactive_shell".to_string(),
+        })
+    }
+
+    fn interactive_prompt_markers() -> &'static [&'static str] {
+        &[
+            "(y/n)",
+            "[y/n]",
+            "(yes/no)",
+            "continue?",
+            "overwrite?",
+            "press any key",
+            "press enter",
+            "password:",
+            "passphrase",
+            "enter password",
+            "enter passphrase",
+            "are you sure",
+            "do you want to continue",
+            "would you like to continue",
+            "ready to continue",
+            "proceed? [y/n]",
+        ]
+    }
+
+    fn output_tail_for_detection(stdout: &str, stderr: &str) -> String {
+        const MAX_TAIL_CHARS: usize = 1024;
+        let combined = if stderr.trim().is_empty() {
+            stdout.to_string()
+        } else if stdout.trim().is_empty() {
+            stderr.to_string()
+        } else {
+            format!("{}\n{}", stdout, stderr)
+        };
+        let chars: Vec<char> = combined.chars().collect();
+        let start = chars.len().saturating_sub(MAX_TAIL_CHARS);
+        chars[start..].iter().collect()
+    }
+
+    fn output_looks_like_interactive_prompt(stdout: &str, stderr: &str) -> bool {
+        let tail = Self::output_tail_for_detection(stdout, stderr);
+        let last_line = tail
+            .trim_end()
+            .lines()
+            .last()
+            .unwrap_or(tail.trim_end())
+            .trim()
+            .to_lowercase();
+        if last_line.is_empty() {
+            return false;
+        }
+
+        Self::interactive_prompt_markers()
+            .iter()
+            .any(|marker| last_line.contains(marker))
+    }
+
+    fn build_timeout_or_interaction_error(
+        command: &str,
+        timeout_secs: u64,
+        stdout: String,
+        stderr: String,
+    ) -> ShellError {
+        if Self::output_looks_like_interactive_prompt(&stdout, &stderr) {
+            return ShellError::InteractionRequired {
+                message: format!(
+                    "The command appears to be waiting for interactive input. The one-shot shell tool cannot continue an stdin/TTY conversation after launch. Use interactive_shell to continue in a persistent terminal session, or rerun non-interactively with piped input or confirmation flags. Command: {}",
+                    command
+                ),
+                stdout,
+                stderr,
+                interaction_kind: "prompt".to_string(),
+                recommended_tool: "interactive_shell".to_string(),
+            };
+        }
+
+        ShellError::TimeoutWithOutput {
+            timeout_secs,
+            stdout,
+            stderr,
+        }
+    }
+
     /// Execute command in Docker sandbox
     async fn execute_in_docker(
         &self,
@@ -684,6 +869,11 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
             .await
             .map_err(|e| match e {
                 crate::docker_sandbox::DockerError::Timeout(secs) => ShellError::Timeout(secs),
+                crate::docker_sandbox::DockerError::TimeoutWithOutput {
+                    timeout_secs,
+                    stdout,
+                    stderr,
+                } => Self::build_timeout_or_interaction_error(cmd, timeout_secs, stdout, stderr),
                 crate::docker_sandbox::DockerError::ExecutionFailed(msg) if msg == "cancelled" => {
                     ShellError::Cancelled
                 }
@@ -863,10 +1053,21 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
                         _ = &mut timeout_duration => {
                             let _ = child.kill().await;
                             let _ = child.wait().await;
-                            let _ = stdout_reader.await;
-                            let _ = stderr_reader.await;
+                            let stdout = String::from_utf8_lossy(
+                                &Self::collect_output_reader(stdout_reader, "stdout").await?,
+                            )
+                            .to_string();
+                            let stderr = String::from_utf8_lossy(
+                                &Self::collect_output_reader(stderr_reader, "stderr").await?,
+                            )
+                            .to_string();
                             tracing::error!("Command timeout after {} seconds", timeout_secs);
-                            return Err(ShellError::Timeout(timeout_secs));
+                            return Err(Self::build_timeout_or_interaction_error(
+                                cmd,
+                                timeout_secs,
+                                stdout,
+                                stderr,
+                            ));
                         }
                         _ = tokio::time::sleep(Duration::from_millis(120)) => {}
                     }
@@ -915,6 +1116,9 @@ impl Tool for ShellTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let start_time = Instant::now();
+        if let Some(guidance) = Self::build_interactive_command_guidance(&args.command) {
+            return Err(guidance);
+        }
         if !args.run_in_background {
             if let Some(guidance) = Self::build_background_command_guidance(&args.command) {
                 return Err(ShellError::ExecutionFailed(guidance));
@@ -1404,6 +1608,35 @@ mod tests {
         assert!(matches!(
             check_shell_permission_with_config("sudo ls /root", &config, None).await,
             Err(ShellError::PermissionDenied(_))
+        ));
+    }
+
+    #[test]
+    fn test_detects_interactive_commands() {
+        let interactive = ShellTool::build_interactive_command_guidance("git add -i Cargo.toml");
+        assert!(matches!(
+            interactive,
+            Some(ShellError::InteractionRequired { .. })
+        ));
+        assert!(ShellTool::build_interactive_command_guidance("vim README.md").is_some());
+        assert!(ShellTool::build_interactive_command_guidance("python").is_some());
+        assert!(ShellTool::build_interactive_command_guidance("python3 script.py").is_none());
+        assert!(ShellTool::build_interactive_command_guidance("ssh user@host uptime").is_none());
+    }
+
+    #[test]
+    fn test_detects_prompt_tail_from_partial_output() {
+        assert!(ShellTool::output_looks_like_interactive_prompt(
+            "Downloading package...\nContinue? [Y/n]",
+            ""
+        ));
+        assert!(ShellTool::output_looks_like_interactive_prompt(
+            "",
+            "Password:"
+        ));
+        assert!(!ShellTool::output_looks_like_interactive_prompt(
+            "Build complete\nReady",
+            ""
         ));
     }
 }

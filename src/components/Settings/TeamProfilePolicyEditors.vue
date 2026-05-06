@@ -8,6 +8,9 @@
       />
 
       <div v-if="modes.toolPolicyMatrix === 'form'" class="grid grid-cols-1 gap-3">
+        <div class="rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-xs leading-5 text-base-content/70">
+          Team 默认不再预选成员 Profile 工具。成员 Profile 没有显式工具范围时，运行时直接按这里的角色矩阵生效；如果成员 Profile 自己配置了工具范围，最终可用工具会再与这里取交集。
+        </div>
         <div
           v-for="role in toolRoles"
           :key="role.key"

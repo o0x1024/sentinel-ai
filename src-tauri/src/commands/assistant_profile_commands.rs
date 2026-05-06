@@ -22,7 +22,7 @@ pub struct AssistantProfilePayload {
     pub default_tenth_man_enabled: bool,
     pub default_tool_selection_strategy: String,
     pub default_max_tools: u32,
-    pub default_fixed_tools: Vec<String>,
+    pub default_preselected_tools: Vec<String>,
     pub default_disabled_tools: Vec<String>,
     pub default_manual_tools: Vec<String>,
     pub default_team_orchestration_preset_id: Option<String>,
@@ -93,6 +93,42 @@ const TEAM_RECOVERY_PRESET_IDS: &[&str] = &["conservative", "balanced", "aggress
 const TOOL_SELECTION_STRATEGIES: &[&str] =
     &["Keyword", "LLM", "Hybrid", "Manual", "All", "Deferred"];
 const PROFILE_TEAM_ROLES: &[&str] = &["assistant", "orchestrator", "specialist", "monitor"];
+const DEFAULT_TEAM_SPECIALIST_TOOLS: &[&str] = &[
+    "interactive_shell",
+    "file_read",
+    "file_edit",
+    "file_write",
+    "grep",
+    "http_request",
+    "web_search",
+];
+const DEFAULT_TEAM_SPECIALIST_TOOLS_WITH_REVIEW: &[&str] = &[
+    "interactive_shell",
+    "file_read",
+    "file_edit",
+    "file_write",
+    "grep",
+    "http_request",
+    "web_search",
+    "tenth_man_review",
+];
+const LEGACY_TEAM_SPECIALIST_SHELL_TOOLS: &[&str] = &[
+    "interactive_shell",
+    "shell",
+    "file_read",
+    "grep",
+    "http_request",
+    "web_search",
+];
+const LEGACY_TEAM_SPECIALIST_SHELL_TOOLS_WITH_REVIEW: &[&str] = &[
+    "interactive_shell",
+    "shell",
+    "file_read",
+    "grep",
+    "http_request",
+    "web_search",
+    "tenth_man_review",
+];
 const AI_AGENT_PROFILE_SYSTEM_PROMPT: &str = r#"You create Sentinel AI interactive Agent profiles.
 Return exactly one JSON object matching this camelCase schema:
 {
@@ -106,7 +142,7 @@ Return exactly one JSON object matching this camelCase schema:
   "defaultTenthManEnabled": false,
   "defaultToolSelectionStrategy": "Keyword|LLM|Hybrid|Manual|All",
   "defaultMaxTools": 1,
-  "defaultFixedTools": ["interactive_shell", "ask_user_question"],
+  "defaultPreselectedTools": [],
   "defaultDisabledTools": [],
   "defaultManualTools": [],
   "defaultTeamOrchestrationPresetId": null,
@@ -137,7 +173,7 @@ Return exactly one JSON object matching this camelCase schema:
       "defaultTenthManEnabled": false,
       "defaultToolSelectionStrategy": "Keyword|LLM|Hybrid|Manual|All",
       "defaultMaxTools": 1,
-      "defaultFixedTools": ["interactive_shell", "ask_user_question"],
+      "defaultPreselectedTools": [],
       "defaultDisabledTools": [],
       "defaultManualTools": [],
       "defaultTeamOrchestrationPresetId": null,
@@ -158,7 +194,7 @@ Return exactly one JSON object matching this camelCase schema:
     "memoryPolicy": {"monitorGate":"candidate_then_orchestrator_accept","shareScope":"high_value_only","longTermMemory":true},
     "toolPolicyMatrix": {
       "orchestrator": {"tools":["ask_user_question"]},
-      "specialist": {"tools":["interactive_shell","shell","file_read","grep","http_request","web_search"]},
+      "specialist": {"tools":["interactive_shell","file_read","file_edit","file_write","grep","http_request","web_search"]},
       "monitor": {"tools":["tenth_man_review"]}
     },
     "harnessPolicy": {"heartbeatSecs":30,"leaseSecs":600,"checkpoint":"event_sequence","allowResume":true},
@@ -192,12 +228,9 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_web_search_enabled: false,
             default_tools_enabled: true,
             default_tenth_man_enabled: false,
-            default_tool_selection_strategy: "Deferred".to_string(),
+            default_tool_selection_strategy: "Keyword".to_string(),
             default_max_tools: 12,
-            default_fixed_tools: vec![
-                "interactive_shell".to_string(),
-                "ask_user_question".to_string(),
-            ],
+            default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
             default_team_orchestration_preset_id: None,
@@ -218,11 +251,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_tenth_man_enabled: true,
             default_tool_selection_strategy: "Hybrid".to_string(),
             default_max_tools: 5,
-            default_fixed_tools: vec![
-                "interactive_shell".to_string(),
-                "ask_user_question".to_string(),
-                "tenth_man_review".to_string(),
-            ],
+            default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
             default_team_orchestration_preset_id: None,
@@ -241,13 +270,9 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_web_search_enabled: false,
             default_tools_enabled: true,
             default_tenth_man_enabled: true,
-            default_tool_selection_strategy: "Deferred".to_string(),
+            default_tool_selection_strategy: "Keyword".to_string(),
             default_max_tools: 12,
-            default_fixed_tools: vec![
-                "interactive_shell".to_string(),
-                "ask_user_question".to_string(),
-                "tenth_man_review".to_string(),
-            ],
+            default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
             default_team_orchestration_preset_id: None,
@@ -268,14 +293,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_tenth_man_enabled: false,
             default_tool_selection_strategy: "Hybrid".to_string(),
             default_max_tools: 8,
-            default_fixed_tools: vec![
-                "interactive_shell".to_string(),
-                "ask_user_question".to_string(),
-                "spawn_agent".to_string(),
-                "wait_agents".to_string(),
-                "list_agents".to_string(),
-                "close_agent".to_string(),
-            ],
+            default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
             default_team_orchestration_preset_id: Some("product_delivery_chain".to_string()),
@@ -296,15 +314,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_tenth_man_enabled: true,
             default_tool_selection_strategy: "Hybrid".to_string(),
             default_max_tools: 8,
-            default_fixed_tools: vec![
-                "interactive_shell".to_string(),
-                "ask_user_question".to_string(),
-                "spawn_agent".to_string(),
-                "wait_agents".to_string(),
-                "list_agents".to_string(),
-                "close_agent".to_string(),
-                "tenth_man_review".to_string(),
-            ],
+            default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
             default_team_orchestration_preset_id: Some("incident_response_flow".to_string()),
@@ -333,7 +343,7 @@ fn normalize_profile(mut profile: AssistantProfilePayload) -> AssistantProfilePa
     profile.default_tool_selection_strategy =
         profile.default_tool_selection_strategy.trim().to_string();
     profile.default_max_tools = profile.default_max_tools.max(1);
-    profile.default_fixed_tools = normalize_tool_ids(profile.default_fixed_tools);
+    profile.default_preselected_tools = normalize_tool_ids(profile.default_preselected_tools);
     profile.default_disabled_tools = normalize_tool_ids(profile.default_disabled_tools);
     profile.default_manual_tools = normalize_tool_ids(profile.default_manual_tools);
     profile.default_team_orchestration_preset_id = profile
@@ -387,6 +397,15 @@ fn decode_stored_profiles(raw: &str) -> Result<(Vec<AssistantProfilePayload>, bo
                 changed = true;
             }
         }
+        if !profile_object.contains_key("defaultPreselectedTools") {
+            if let Some(legacy) = profile_object.remove("defaultFixedTools") {
+                profile_object.insert("defaultPreselectedTools".to_string(), legacy);
+                changed = true;
+            }
+        } else if profile_object.contains_key("defaultFixedTools") {
+            profile_object.remove("defaultFixedTools");
+            changed = true;
+        }
     }
 
     let profiles: Vec<AssistantProfilePayload> =
@@ -405,6 +424,56 @@ fn seed_missing_builtin_profiles(
             changed = true;
         }
     }
+    (profiles, changed)
+}
+
+fn migrate_builtin_profile_tool_injection(
+    mut profiles: Vec<AssistantProfilePayload>,
+) -> (Vec<AssistantProfilePayload>, bool) {
+    let mut changed = false;
+
+    for profile in &mut profiles {
+        match profile.id.as_str() {
+            "assistant.default" => {
+                if !profile.default_preselected_tools.is_empty() {
+                    profile.default_preselected_tools.clear();
+                    changed = true;
+                }
+                if profile.default_tool_selection_strategy == "Deferred" {
+                    profile.default_tool_selection_strategy = "Keyword".to_string();
+                    changed = true;
+                }
+            }
+            "assistant.reviewer" | "assistant.sentinel" => {
+                if !profile.default_preselected_tools.is_empty() {
+                    profile.default_preselected_tools.clear();
+                    changed = true;
+                }
+                if profile.id == "assistant.sentinel"
+                    && profile.default_tool_selection_strategy == "Deferred"
+                {
+                    profile.default_tool_selection_strategy = "Keyword".to_string();
+                    changed = true;
+                }
+            }
+            "team.lead" | "team.reviewer" => {
+                if !profile.default_preselected_tools.is_empty() {
+                    profile.default_preselected_tools.clear();
+                    changed = true;
+                }
+                if !profile.default_manual_tools.is_empty() {
+                    profile.default_manual_tools.clear();
+                    changed = true;
+                }
+                if profile.default_tool_selection_strategy != "Hybrid" {
+                    profile.default_tool_selection_strategy = "Hybrid".to_string();
+                    changed = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
     (profiles, changed)
 }
 
@@ -439,7 +508,7 @@ fn default_team_profiles() -> Vec<TeamProfilePayload> {
             }),
             tool_policy_matrix: serde_json::json!({
                 "orchestrator": {"tools": ["ask_user_question"]},
-                "specialist": {"tools": ["interactive_shell", "shell", "file_read", "grep", "http_request", "web_search"]},
+                "specialist": {"tools": DEFAULT_TEAM_SPECIALIST_TOOLS},
                 "monitor": {"tools": ["tenth_man_review"]}
             }),
             harness_policy: serde_json::json!({
@@ -474,7 +543,7 @@ fn default_team_profiles() -> Vec<TeamProfilePayload> {
             }),
             tool_policy_matrix: serde_json::json!({
                 "orchestrator": {"tools": ["ask_user_question", "tenth_man_review"]},
-                "specialist": {"tools": ["interactive_shell", "shell", "file_read", "grep", "http_request", "web_search", "tenth_man_review"]},
+                "specialist": {"tools": DEFAULT_TEAM_SPECIALIST_TOOLS_WITH_REVIEW},
                 "monitor": {"tools": ["tenth_man_review"]}
             }),
             harness_policy: serde_json::json!({
@@ -512,7 +581,7 @@ fn default_team_profiles() -> Vec<TeamProfilePayload> {
             }),
             tool_policy_matrix: serde_json::json!({
                 "orchestrator": {"tools": ["ask_user_question"]},
-                "specialist": {"tools": ["interactive_shell", "shell", "file_read", "grep", "http_request", "web_search", "tenth_man_review"]},
+                "specialist": {"tools": DEFAULT_TEAM_SPECIALIST_TOOLS_WITH_REVIEW},
                 "monitor": {"tools": ["tenth_man_review"]}
             }),
             harness_policy: serde_json::json!({
@@ -568,7 +637,7 @@ fn normalize_team_role_tools(
                     .get("tools")
                     .or_else(|| policy.get("allowed"))
                     .or_else(|| policy.get("manualTools"))
-                    .or_else(|| policy.get("fixedTools")),
+                    .or_else(|| policy.get("preselectedTools")),
             )
         })
         .unwrap_or_default();
@@ -584,16 +653,42 @@ fn normalize_team_tool_policy_matrix(value: serde_json::Value) -> serde_json::Va
     let matrix = normalize_json_object(value);
     serde_json::json!({
         "orchestrator": normalize_team_role_tools(&matrix, "orchestrator", &["ask_user_question"]),
-        "specialist": normalize_team_role_tools(&matrix, "specialist", &[
-            "interactive_shell",
-            "shell",
-            "file_read",
-            "grep",
-            "http_request",
-            "web_search"
-        ]),
+        "specialist": normalize_team_role_tools(&matrix, "specialist", DEFAULT_TEAM_SPECIALIST_TOOLS),
         "monitor": normalize_team_role_tools(&matrix, "monitor", &["tenth_man_review"])
     })
+}
+
+fn migrate_builtin_team_specialist_tools(
+    team_profile_id: &str,
+    tools: &[String],
+) -> Option<Vec<String>> {
+    let tools_match = |expected: &[&str]| {
+        tools.len() == expected.len()
+            && tools
+                .iter()
+                .zip(expected.iter())
+                .all(|(actual, expected_tool)| actual == expected_tool)
+    };
+
+    match team_profile_id {
+        "team.profile.default" if tools_match(LEGACY_TEAM_SPECIALIST_SHELL_TOOLS) => Some(
+            DEFAULT_TEAM_SPECIALIST_TOOLS
+                .iter()
+                .map(|tool| tool.to_string())
+                .collect(),
+        ),
+        "team.profile.review" | "team.profile.incident"
+            if tools_match(LEGACY_TEAM_SPECIALIST_SHELL_TOOLS_WITH_REVIEW) =>
+        {
+            Some(
+                DEFAULT_TEAM_SPECIALIST_TOOLS_WITH_REVIEW
+                    .iter()
+                    .map(|tool| tool.to_string())
+                    .collect(),
+            )
+        }
+        _ => None,
+    }
 }
 
 fn normalize_team_profile(mut profile: TeamProfilePayload) -> TeamProfilePayload {
@@ -663,6 +758,11 @@ fn migrate_legacy_team_profile_registry(value: &mut serde_json::Value) -> Result
         let Some(profile_object) = profile.as_object_mut() else {
             return Err("team profile registry entries must be objects".to_string());
         };
+        let team_profile_id = profile_object
+            .get("id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
         if let Some(value) = profile_object.remove("commanderProfileId") {
             profile_object.insert("orchestratorProfileId".to_string(), value);
             changed = true;
@@ -690,6 +790,26 @@ fn migrate_legacy_team_profile_registry(value: &mut serde_json::Value) -> Result
             if let Some(value) = matrix.remove("observer") {
                 matrix.insert("monitor".to_string(), value);
                 changed = true;
+            }
+            if let Some(specialist_tools) = matrix
+                .get_mut("specialist")
+                .and_then(|value| value.as_object_mut())
+                .and_then(|role| role.get_mut("tools"))
+                .and_then(|value| value.as_array_mut())
+            {
+                let current_tools = specialist_tools
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect::<Vec<_>>();
+                if let Some(next_tools) =
+                    migrate_builtin_team_specialist_tools(&team_profile_id, &current_tools)
+                {
+                    *specialist_tools = next_tools
+                        .into_iter()
+                        .map(serde_json::Value::String)
+                        .collect();
+                    changed = true;
+                }
             }
         }
         if let Some(memory_policy) = profile_object.get_mut("memoryPolicy") {
@@ -868,7 +988,7 @@ fn validate_team_profiles(
     Ok(())
 }
 
-async fn load_profiles(
+pub(crate) async fn load_profiles(
     db_service: &sentinel_db::DatabaseService,
 ) -> Result<Vec<AssistantProfilePayload>, String> {
     match db_service
@@ -883,8 +1003,9 @@ async fn load_profiles(
             let (profiles, migrated) = decode_stored_profiles(&raw)?;
             let profiles = normalize_profiles(profiles);
             let (profiles, seeded) = seed_missing_builtin_profiles(profiles);
+            let (profiles, fixed_tool_migrated) = migrate_builtin_profile_tool_injection(profiles);
             validate_profiles(&profiles)?;
-            if migrated || seeded {
+            if migrated || seeded || fixed_tool_migrated {
                 let raw = serde_json::to_string(&profiles).map_err(|e| e.to_string())?;
                 db_service
                     .set_config(
@@ -906,7 +1027,7 @@ async fn load_profiles(
     }
 }
 
-async fn load_default_profile_id(
+pub(crate) async fn load_default_profile_id(
     db_service: &sentinel_db::DatabaseService,
 ) -> Result<String, String> {
     let profiles = load_profiles(db_service).await?;
@@ -925,6 +1046,30 @@ async fn load_default_profile_id(
     {
         Some(raw) if profiles.iter().any(|profile| profile.id == raw) => Ok(raw),
         _ => Ok(fallback_id),
+    }
+}
+
+pub(crate) async fn load_assistant_profile_by_id_or_default(
+    db_service: &sentinel_db::DatabaseService,
+    profile_id: Option<&str>,
+) -> Result<Option<AssistantProfilePayload>, String> {
+    let profiles = load_profiles(db_service).await?;
+    if profiles.is_empty() {
+        return Ok(None);
+    }
+
+    match profile_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(profile_id) => profiles
+            .into_iter()
+            .find(|profile| profile.id == profile_id)
+            .map(Some)
+            .ok_or_else(|| format!("unknown assistant profile id: {}", profile_id)),
+        None => {
+            let resolved_profile_id = load_default_profile_id(db_service).await?;
+            Ok(profiles
+                .into_iter()
+                .find(|profile| profile.id == resolved_profile_id))
+        }
     }
 }
 
@@ -1422,7 +1567,7 @@ mod tests {
                 "defaultTenthManEnabled":true,
                 "defaultToolSelectionStrategy":"Deferred",
                 "defaultMaxTools":12,
-                "defaultFixedTools":[],
+                "defaultPreselectedTools":[],
                 "defaultDisabledTools":[],
                 "defaultManualTools":[],
                 "defaultTeamOrchestrationPresetId":null,
@@ -1492,6 +1637,47 @@ mod tests {
     }
 
     #[test]
+    fn migrates_builtin_team_specialist_shell_defaults_to_file_tools() {
+        let raw = r#"[
+            {
+                "id":"team.profile.default",
+                "name":"Team Lead",
+                "description":"legacy",
+                "orchestratorProfileId":"team.lead",
+                "specialistProfileIds":["assistant.default"],
+                "monitorProfileId":"assistant.reviewer",
+                "defaultModel":null,
+                "contextMode":"claude-like",
+                "memoryPolicy":{},
+                "toolPolicyMatrix":{
+                    "orchestrator":{"tools":["ask_user_question"]},
+                    "specialist":{"tools":["interactive_shell","shell","file_read","grep","http_request","web_search"]},
+                    "monitor":{"tools":["tenth_man_review"]}
+                },
+                "harnessPolicy":{},
+                "concurrencyPolicy":{},
+                "safetyPolicy":{}
+            }
+        ]"#;
+
+        let (profiles, migrated) = decode_stored_team_profiles(raw).unwrap();
+        let profiles = normalize_team_profiles(profiles);
+        let team = &profiles[0];
+        let specialist_tools = team
+            .tool_policy_matrix
+            .get("specialist")
+            .and_then(|value| value.get("tools"))
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>();
+
+        assert!(migrated);
+        assert_eq!(specialist_tools, DEFAULT_TEAM_SPECIALIST_TOOLS);
+    }
+
+    #[test]
     fn seeds_missing_builtin_assistant_profiles() {
         let persisted = normalize_profiles(
             default_assistant_profiles()
@@ -1506,6 +1692,43 @@ mod tests {
         assert!(profiles
             .iter()
             .any(|profile| profile.id == "assistant.sentinel"));
+    }
+
+    #[test]
+    fn migrates_builtin_preselected_tools_out_of_persisted_profiles() {
+        let mut profiles = normalize_profiles(default_assistant_profiles());
+        let assistant = profiles
+            .iter_mut()
+            .find(|profile| profile.id == "assistant.default")
+            .unwrap();
+        assistant.default_preselected_tools = vec!["interactive_shell".to_string()];
+        assistant.default_tool_selection_strategy = "Deferred".to_string();
+
+        let team = profiles
+            .iter_mut()
+            .find(|profile| profile.id == "team.lead")
+            .unwrap();
+        team.default_preselected_tools = vec!["spawn_agent".to_string(), "wait_agents".to_string()];
+        team.default_manual_tools = vec!["ask_user_question".to_string()];
+        team.default_tool_selection_strategy = "Hybrid".to_string();
+
+        let (migrated, changed) = migrate_builtin_profile_tool_injection(profiles);
+        assert!(changed);
+
+        let assistant = migrated
+            .iter()
+            .find(|profile| profile.id == "assistant.default")
+            .unwrap();
+        assert!(assistant.default_preselected_tools.is_empty());
+        assert_eq!(assistant.default_tool_selection_strategy, "Keyword");
+
+        let team = migrated
+            .iter()
+            .find(|profile| profile.id == "team.lead")
+            .unwrap();
+        assert!(team.default_preselected_tools.is_empty());
+        assert_eq!(team.default_tool_selection_strategy, "Hybrid");
+        assert!(team.default_manual_tools.is_empty());
     }
 
     #[test]

@@ -8,6 +8,7 @@ pub mod builtin_bounty_plugins;
 pub mod feature_entitlements;
 pub mod finding_ai_review;
 pub mod plugin_authoring;
+pub mod plugin_categories;
 pub mod plugin_default_inputs;
 pub mod plugin_execution_test;
 pub mod database {
@@ -58,6 +59,7 @@ pub use feature_entitlements::{
 pub use plugin_authoring::{
     execute_plugin_authoring, PluginAuthoringAction, PluginAuthoringRequest, PluginAuthoringResult,
 };
+pub use plugin_categories::{IntruderPluginCategory, PluginCategory, PluginMainCategory};
 pub use plugin_default_inputs::{
     load_plugin_default_inputs, merge_plugin_input_defaults, save_plugin_default_inputs,
 };

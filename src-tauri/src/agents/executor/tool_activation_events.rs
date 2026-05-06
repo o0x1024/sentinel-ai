@@ -6,16 +6,19 @@ use tauri::{AppHandle, Emitter};
 
 fn build_tool_selection_payload(
     execution_id: &str,
+    generation: Option<u64>,
     selected_tool_ids: &[String],
 ) -> serde_json::Value {
     json!({
         "execution_id": execution_id,
+        "generation": generation,
         "tools": selected_tool_ids,
     })
 }
 
 fn build_tool_activation_payload(
     execution_id: &str,
+    generation: Option<u64>,
     requested_tools: &[String],
     activation_query: Option<&str>,
     runtime_hint: Option<&str>,
@@ -23,6 +26,7 @@ fn build_tool_activation_payload(
 ) -> serde_json::Value {
     json!({
         "execution_id": execution_id,
+        "generation": generation,
         "tool_ids": requested_tools,
         "query": activation_query,
         "runtime_hint": runtime_hint,
@@ -46,6 +50,7 @@ fn build_tools_preview(current_tool_ids: &[String]) -> String {
 }
 
 fn build_tool_activation_metadata(
+    generation: Option<u64>,
     requested_tools: &[String],
     activation_query: Option<&str>,
     runtime_hint: Option<&str>,
@@ -53,6 +58,7 @@ fn build_tool_activation_metadata(
 ) -> serde_json::Value {
     json!({
         "kind": "tools_activated",
+        "generation": generation,
         "tool_ids": requested_tools,
         "query": activation_query,
         "runtime_hint": runtime_hint,
@@ -64,6 +70,7 @@ fn build_tool_activation_metadata(
 pub(super) fn emit_initial_tool_selection(
     app_handle: &AppHandle,
     execution_id: &str,
+    generation: Option<u64>,
     selected_skill: Option<(&str, &str)>,
     selected_tool_ids: &[String],
 ) {
@@ -72,6 +79,7 @@ pub(super) fn emit_initial_tool_selection(
             "agent:skill_selected",
             &json!({
                 "execution_id": execution_id,
+                "generation": generation,
                 "skill_id": skill_id,
                 "skill_name": skill_name,
             }),
@@ -80,13 +88,14 @@ pub(super) fn emit_initial_tool_selection(
 
     let _ = app_handle.emit(
         "agent:tools_selected",
-        &build_tool_selection_payload(execution_id, selected_tool_ids),
+        &build_tool_selection_payload(execution_id, generation, selected_tool_ids),
     );
 }
 
 pub(super) fn emit_and_persist_tool_activation(
     app_handle: &AppHandle,
     execution_id: &str,
+    generation: Option<u64>,
     requested_tools: &[String],
     activation_query: Option<String>,
     runtime_hint: Option<String>,
@@ -95,12 +104,13 @@ pub(super) fn emit_and_persist_tool_activation(
 ) {
     let _ = app_handle.emit(
         "agent:tools_selected",
-        &build_tool_selection_payload(execution_id, current_tool_ids),
+        &build_tool_selection_payload(execution_id, generation, current_tool_ids),
     );
     let _ = app_handle.emit(
         "agent:tools_activated",
         &build_tool_activation_payload(
             execution_id,
+            generation,
             requested_tools,
             activation_query.as_deref(),
             runtime_hint.as_deref(),
@@ -112,6 +122,7 @@ pub(super) fn emit_and_persist_tool_activation(
         use sentinel_core::models::database as core_db;
 
         let meta = build_tool_activation_metadata(
+            generation,
             requested_tools,
             activation_query.as_deref(),
             runtime_hint.as_deref(),
@@ -153,6 +164,7 @@ mod tests {
         let current = vec!["tool_search".to_string(), "file_read".to_string()];
         let payload = build_tool_activation_payload(
             "exec-1",
+            Some(7),
             &requested,
             Some("read the changed file"),
             Some("recent file changes detected; prefer readback"),
@@ -160,6 +172,7 @@ mod tests {
         );
 
         assert_eq!(payload["execution_id"], "exec-1");
+        assert_eq!(payload["generation"], 7);
         assert_eq!(payload["tool_ids"][0], "file_read");
         assert_eq!(
             payload["runtime_hint"],
@@ -177,6 +190,7 @@ mod tests {
             "grep".to_string(),
         ];
         let metadata = build_tool_activation_metadata(
+            Some(7),
             &requested,
             Some("read the changed file"),
             Some("recent file changes detected; prefer readback"),
@@ -184,6 +198,7 @@ mod tests {
         );
 
         assert_eq!(metadata["kind"], "tools_activated");
+        assert_eq!(metadata["generation"], 7);
         assert_eq!(
             metadata["runtime_hint"],
             "recent file changes detected; prefer readback"

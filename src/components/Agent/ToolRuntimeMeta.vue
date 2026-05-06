@@ -10,18 +10,18 @@
       </span>
       <span
         v-if="runtime.containerRef"
-        class="inline-flex items-center gap-1 rounded-md bg-base-100/80 px-2 py-1 font-mono text-[11px]"
+        class="inline-flex items-center gap-1 rounded-md bg-base-100/70 px-2 py-1 text-[10px]"
       >
         <span class="text-base-content/50">{{ t('agent.toolRuntimeContainer') }}</span>
-        <span>{{ runtime.containerRef }}</span>
+        <span class="font-mono text-[10px] leading-4 text-base-content/70">{{ runtime.containerRef }}</span>
       </span>
     </div>
 
     <div class="mt-2 flex flex-wrap items-start gap-2">
       <span class="text-base-content/50">{{ t('agent.toolRuntimeWorkingDir') }}</span>
-      <code class="break-all rounded-md bg-base-100/80 px-2 py-1 font-mono text-[11px]">
+      <span class="break-all rounded-md bg-base-100/70 px-2 py-1 font-mono text-[10px] leading-4 text-base-content/70">
         {{ runtime.workingDir }}
-      </code>
+      </span>
     </div>
   </div>
 </template>

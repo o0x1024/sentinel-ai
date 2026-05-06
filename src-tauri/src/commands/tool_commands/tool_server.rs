@@ -4,6 +4,7 @@ use sentinel_db::Database;
 use std::sync::Arc;
 
 use sentinel_tools::buildin_tools::{SkillsTool, SopsTool};
+use sentinel_tools::dynamic_tool::ToolSource;
 use sentinel_tools::get_tool_server;
 
 /// Initialize the global tool server with builtin tools
@@ -140,18 +141,21 @@ pub async fn get_tool_server_stats() -> Result<serde_json::Value, String> {
     server.init_builtin_tools().await;
 
     let tools = server.list_tools().await;
-    let builtin_count = tools.iter().filter(|t| t.source == "builtin").count();
+    let builtin_count = tools
+        .iter()
+        .filter(|t| matches!(t.source, ToolSource::Builtin))
+        .count();
     let mcp_count = tools
         .iter()
-        .filter(|t| t.source.starts_with("mcp::"))
+        .filter(|t| matches!(t.source, ToolSource::Mcp { .. }))
         .count();
     let plugin_count = tools
         .iter()
-        .filter(|t| t.source.starts_with("plugin::"))
+        .filter(|t| matches!(t.source, ToolSource::Plugin { .. }))
         .count();
     let workflow_count = tools
         .iter()
-        .filter(|t| t.source.starts_with("workflow::"))
+        .filter(|t| matches!(t.source, ToolSource::Workflow { .. }))
         .count();
 
     Ok(serde_json::json!({

@@ -20,6 +20,7 @@ interface ChatHistoryStorage {
 
 export const usePluginEditorStore = defineStore('pluginEditor', () => {
   const STORAGE_KEY = 'sentinel_plugin_chat_history'
+  const ASSISTANT_PROFILE_STORAGE_KEY = 'sentinel_plugin_assistant_profile_id'
   const MAX_HISTORY_ENTRIES = 50 // 最多保存50个插件的对话历史
   const MAX_MESSAGES_PER_PLUGIN = 100 // 每个插件最多保存100条消息
 
@@ -49,6 +50,12 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
   const aiChatMessages = ref<AiChatMessage[]>([])
   const aiChatStreaming = ref(false)
   const aiChatStreamingContent = ref('')
+  const aiAssistantProfileId = ref<string | null>(null)
+  const aiAssistantRuntimeProvider = ref<string | null>(null)
+  const aiAssistantRuntimeModel = ref<string | null>(null)
+  const aiAssistantRuntimeModelSource = ref<string | null>(null)
+  const aiAssistantRuntimeProfileId = ref<string | null>(null)
+  const aiAssistantRuntimeTaskProfileId = ref<string | null>(null)
   const selectedCodeRef = ref<CodeReference | null>(null)
   const selectedTestResultRef = ref<TestResultReference | null>(null)
   const pluginTesting = ref(false)
@@ -70,6 +77,28 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
       }
     } catch (error) {
       console.error('Failed to load chat history from storage:', error)
+    }
+  }
+
+  const loadAssistantProfileSelectionFromStorage = () => {
+    try {
+      const stored = localStorage.getItem(ASSISTANT_PROFILE_STORAGE_KEY)
+      aiAssistantProfileId.value = stored && stored.trim().length > 0 ? stored.trim() : null
+    } catch (error) {
+      console.error('Failed to load plugin assistant profile selection from storage:', error)
+      aiAssistantProfileId.value = null
+    }
+  }
+
+  const saveAssistantProfileSelectionToStorage = () => {
+    try {
+      if (aiAssistantProfileId.value && aiAssistantProfileId.value.trim().length > 0) {
+        localStorage.setItem(ASSISTANT_PROFILE_STORAGE_KEY, aiAssistantProfileId.value.trim())
+      } else {
+        localStorage.removeItem(ASSISTANT_PROFILE_STORAGE_KEY)
+      }
+    } catch (error) {
+      console.error('Failed to save plugin assistant profile selection to storage:', error)
     }
   }
 
@@ -119,6 +148,35 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
     saveChatHistoryToStorage()
   }
 
+  const setAiAssistantProfileId = (profileId: string | null) => {
+    const normalized = profileId?.trim() || null
+    aiAssistantProfileId.value = normalized
+    clearAiAssistantRuntimeMeta()
+    saveAssistantProfileSelectionToStorage()
+  }
+
+  const setAiAssistantRuntimeMeta = (payload: {
+    provider?: string | null
+    model?: string | null
+    modelSource?: string | null
+    profileId?: string | null
+    taskProfileId?: string | null
+  }) => {
+    aiAssistantRuntimeProvider.value = payload.provider?.trim() || null
+    aiAssistantRuntimeModel.value = payload.model?.trim() || null
+    aiAssistantRuntimeModelSource.value = payload.modelSource?.trim() || null
+    aiAssistantRuntimeProfileId.value = payload.profileId?.trim() || null
+    aiAssistantRuntimeTaskProfileId.value = payload.taskProfileId?.trim() || null
+  }
+
+  const clearAiAssistantRuntimeMeta = () => {
+    aiAssistantRuntimeProvider.value = null
+    aiAssistantRuntimeModel.value = null
+    aiAssistantRuntimeModelSource.value = null
+    aiAssistantRuntimeProfileId.value = null
+    aiAssistantRuntimeTaskProfileId.value = null
+  }
+
   // 操作
   const openEditor = (plugin: PluginRecord | null = null, code: string = '', metadata?: NewPluginMetadata) => {
     isOpen.value = true
@@ -128,6 +186,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
     originalCode.value = code
     codeError.value = ''
     aiValidationReport.value = null
+    clearAiAssistantRuntimeMeta()
     
     // 如果是编辑现有插件，默认处于编辑状态
     isEditing.value = plugin !== null
@@ -176,6 +235,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
     codeError.value = ''
     aiValidationReport.value = null
     aiChatMessages.value = []
+    clearAiAssistantRuntimeMeta()
     selectedCodeRef.value = null
     selectedTestResultRef.value = null
     isPreviewMode.value = false
@@ -198,6 +258,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
 
   // 初始化时加载历史
   loadChatHistoryFromStorage()
+  loadAssistantProfileSelectionFromStorage()
 
   // 监听 aiChatMessages 变化，自动保存
   // 使用防抖避免频繁保存
@@ -223,9 +284,18 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
     editingPlugin, pluginCode, originalCode, isEditing, saving, codeError, aiValidationReport,
     newPluginMetadata,
     showAiPanel, aiChatMessages, aiChatStreaming, aiChatStreamingContent,
+    aiAssistantProfileId,
+    aiAssistantRuntimeProvider,
+    aiAssistantRuntimeModel,
+    aiAssistantRuntimeModelSource,
+    aiAssistantRuntimeProfileId,
+    aiAssistantRuntimeTaskProfileId,
     selectedCodeRef, selectedTestResultRef, pluginTesting,
     isPreviewMode, previewCode,
     openEditor, closeEditor, minimizeEditor, restoreEditor, toggleFullscreen,
+    setAiAssistantProfileId,
+    setAiAssistantRuntimeMeta,
+    clearAiAssistantRuntimeMeta,
     // 对话历史管理方法
     loadChatHistory, saveChatHistory, clearChatHistory
   }

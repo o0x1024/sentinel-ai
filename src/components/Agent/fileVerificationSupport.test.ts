@@ -58,4 +58,25 @@ describe('fileVerificationSupport', () => {
     expect(messages[0].metadata?.file_verification_status).toBe('verified')
     expect(messages[2].metadata?.file_verification_status).toBe('pending')
   })
+
+  it('marks failed file mutations as failed instead of pending verification', () => {
+    const messages: AgentMessage[] = [
+      {
+        id: 'write-failed-1',
+        type: 'tool_call',
+        content: 'failed',
+        timestamp: 1,
+        metadata: {
+          tool_name: 'file_write',
+          status: 'failed',
+          error: 'file must be read with file_read before editing or overwriting: /tmp/a.txt',
+          tool_result: 'file must be read with file_read before editing or overwriting: /tmp/a.txt',
+        },
+      },
+    ]
+
+    applyFileVerificationStatuses(messages)
+
+    expect(messages[0].metadata?.file_verification_status).toBe('failed')
+  })
 })

@@ -208,7 +208,7 @@
 
               <AgentToolPolicyPanel
                 title="默认工具策略"
-                description="配置交互型 Agent 默认是否启用工具、如何选工具，以及可固定或禁用的工具范围。"
+                description="配置交互型 Agent 默认是否启用工具、如何选工具，以及可显式预选或禁用的工具范围。"
               >
                 <template #summary>
                   <span class="badge badge-sm" :class="selectedProfileToolConfig.enabled ? 'badge-primary' : 'badge-ghost'">
@@ -221,7 +221,7 @@
                     {{ `上限 ${selectedProfileToolConfig.max_tools}` }}
                   </span>
                   <span class="badge badge-outline badge-sm">
-                    {{ `固定 ${selectedProfileToolConfig.fixed_tools.length}` }}
+                    {{ `预选 ${selectedProfileToolConfig.preselected_tools.length}` }}
                   </span>
                   <span class="badge badge-outline badge-sm">
                     {{ `禁用 ${selectedProfileToolConfig.disabled_tools.length}` }}
@@ -232,6 +232,12 @@
                   <input type="checkbox" />
                   <div class="collapse-title font-semibold">展开默认工具配置</div>
                   <div class="collapse-content">
+                    <div
+                      v-if="selectedProfile.runMode === 'team'"
+                      class="mb-3 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-xs leading-5 text-base-content/70"
+                    >
+                      Team 成员 Profile 默认不需要预选工具。这里留空时，运行时会直接回落到 Team Profile 的“工具角色矩阵”；只有在这里显式选择或禁用工具，才会进一步收窄该角色的实际工具范围。
+                    </div>
                     <ToolConfigPanel
                       :config="selectedProfileToolConfig"
                       :show-header="false"
@@ -546,7 +552,7 @@ const selectedProfileToolConfig = computed(() =>
     enabled: false,
     selection_strategy: 'Keyword',
     max_tools: 5,
-    fixed_tools: ['interactive_shell'],
+    preselected_tools: [],
     disabled_tools: [],
     manual_tools: [],
   }
@@ -839,7 +845,7 @@ const createProfile = () => {
     defaultTenthManEnabled: false,
     defaultToolSelectionStrategy: 'Keyword',
     defaultMaxTools: 5,
-    defaultFixedTools: ['interactive_shell'],
+    defaultPreselectedTools: [],
     defaultDisabledTools: [],
     defaultManualTools: [],
     defaultTeamOrchestrationPresetId: null,

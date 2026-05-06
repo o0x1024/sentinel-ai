@@ -36,6 +36,8 @@ export default {
   add: '添加',
   delete: '删除',
   close: '关闭',
+  clear: '清空',
+  expand: '展开',
   edit: '编辑',
   export: '导出',
   duplicate: '复制',

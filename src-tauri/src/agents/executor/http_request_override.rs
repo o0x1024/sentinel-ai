@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use sentinel_tools::buildin_tools::HttpRequestTool;
-use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolExecutor, ToolSource};
+use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolCategory, ToolExecutor, ToolSource};
 use sentinel_tools::ToolServer;
 
 #[derive(Debug, Clone)]
@@ -64,7 +64,7 @@ pub(super) async fn build_http_override_def(
         input_schema: http_input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: "network".to_string(),
+        category: ToolCategory::Network,
         tags: http_info.tags.clone(),
         search_hint: http_info.search_hint.clone(),
         exposure: http_info.exposure.clone(),

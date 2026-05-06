@@ -13,13 +13,13 @@ use sentinel_tools::buildin_tools::{
     HttpRequestTool, LspTool, ShellTool, SkillsTool, TasksTool, ToolSearchTool,
 };
 use sentinel_tools::dynamic_tool::{
-    DynamicTool, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
+    DynamicTool, DynamicToolDef, ToolCategory, ToolExecutionPolicy, ToolExecutor, ToolSource,
 };
 use sentinel_tools::terminal::server::TerminalServer;
 use sentinel_tools::ToolServer;
 
 use crate::agents::executor::file_tool_state::{
-    ensure_file_snapshot_is_editable, invalidate_file_snapshot, record_file_read_snapshot,
+    ensure_file_snapshot_is_editable, record_file_read_snapshot, record_file_revision_snapshot,
 };
 use crate::agents::executor::http_request_override::build_http_override_def;
 use crate::agents::executor::question_override::build_ask_user_question_override_def;
@@ -119,7 +119,7 @@ pub(super) async fn register_skills_tool_guard(
         input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: "system".to_string(),
+        category: ToolCategory::System,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1009,14 +1009,17 @@ fn replace_dynamic_tool(dynamic_tools: Vec<DynamicTool>, def: DynamicToolDef) ->
 async fn build_glob_override_def(
     tool_server: &ToolServer,
     active_terminal_session_id: Option<&str>,
+    host_working_directory: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(GlobTool::NAME).await?;
     let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
+    let host_working_directory = host_working_directory.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let active_terminal_session_id = active_terminal_session_id.clone();
+        let host_working_directory = host_working_directory.clone();
         Box::pin(async move {
             use rig::tool::Tool;
             use sentinel_tools::buildin_tools::file_runtime::{
@@ -1026,8 +1029,11 @@ async fn build_glob_override_def(
 
             let tool_args: GlobArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-            let runtime_context =
-                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let runtime_context = build_file_runtime_context(
+                active_terminal_session_id.as_deref(),
+                host_working_directory.as_deref(),
+            )
+            .await;
             let result = with_file_runtime_context(runtime_context, GlobTool.call(tool_args))
                 .await
                 .map_err(|e| format!("Glob failed: {}", e))?;
@@ -1043,7 +1049,7 @@ async fn build_glob_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: "utility".to_string(),
+        category: ToolCategory::Utility,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1055,14 +1061,17 @@ async fn build_glob_override_def(
 async fn build_grep_override_def(
     tool_server: &ToolServer,
     active_terminal_session_id: Option<&str>,
+    host_working_directory: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(GrepTool::NAME).await?;
     let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
+    let host_working_directory = host_working_directory.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let active_terminal_session_id = active_terminal_session_id.clone();
+        let host_working_directory = host_working_directory.clone();
         Box::pin(async move {
             use rig::tool::Tool;
             use sentinel_tools::buildin_tools::file_runtime::{
@@ -1072,8 +1081,11 @@ async fn build_grep_override_def(
 
             let tool_args: GrepArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-            let runtime_context =
-                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let runtime_context = build_file_runtime_context(
+                active_terminal_session_id.as_deref(),
+                host_working_directory.as_deref(),
+            )
+            .await;
             let result = with_file_runtime_context(runtime_context, GrepTool.call(tool_args))
                 .await
                 .map_err(|e| format!("Grep failed: {}", e))?;
@@ -1089,7 +1101,7 @@ async fn build_grep_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: "utility".to_string(),
+        category: ToolCategory::Utility,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1101,14 +1113,17 @@ async fn build_grep_override_def(
 async fn build_lsp_override_def(
     tool_server: &ToolServer,
     active_terminal_session_id: Option<&str>,
+    host_working_directory: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(LspTool::NAME).await?;
     let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
+    let host_working_directory = host_working_directory.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let active_terminal_session_id = active_terminal_session_id.clone();
+        let host_working_directory = host_working_directory.clone();
         Box::pin(async move {
             use rig::tool::Tool;
             use sentinel_tools::buildin_tools::file_runtime::{
@@ -1118,8 +1133,11 @@ async fn build_lsp_override_def(
 
             let tool_args: LspArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-            let runtime_context =
-                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let runtime_context = build_file_runtime_context(
+                active_terminal_session_id.as_deref(),
+                host_working_directory.as_deref(),
+            )
+            .await;
             let result = with_file_runtime_context(runtime_context, LspTool.call(tool_args))
                 .await
                 .map_err(|e| format!("LSP navigation failed: {}", e))?;
@@ -1135,7 +1153,7 @@ async fn build_lsp_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: "utility".to_string(),
+        category: ToolCategory::Utility,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1148,16 +1166,19 @@ async fn build_file_read_override_def(
     tool_server: &ToolServer,
     execution_id: &str,
     active_terminal_session_id: Option<&str>,
+    host_working_directory: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(FileReadTool::NAME).await?;
     let execution_id_for_file_read = execution_id.to_string();
     let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
+    let host_working_directory = host_working_directory.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let execution_id_for_file_read = execution_id_for_file_read.clone();
         let active_terminal_session_id = active_terminal_session_id.clone();
+        let host_working_directory = host_working_directory.clone();
         Box::pin(async move {
             use rig::tool::Tool;
             use sentinel_tools::buildin_tools::file_read::{FileReadArgs, FileReadTool};
@@ -1167,8 +1188,11 @@ async fn build_file_read_override_def(
 
             let tool_args: FileReadArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-            let runtime_context =
-                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let runtime_context = build_file_runtime_context(
+                active_terminal_session_id.as_deref(),
+                host_working_directory.as_deref(),
+            )
+            .await;
             let result = with_file_runtime_context(
                 runtime_context.clone(),
                 FileReadTool.call(tool_args.clone()),
@@ -1202,7 +1226,7 @@ async fn build_file_read_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: "utility".to_string(),
+        category: ToolCategory::Utility,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1215,16 +1239,19 @@ async fn build_file_edit_override_def(
     tool_server: &ToolServer,
     execution_id: &str,
     active_terminal_session_id: Option<&str>,
+    host_working_directory: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(FileEditTool::NAME).await?;
     let execution_id_for_file_edit = execution_id.to_string();
     let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
+    let host_working_directory = host_working_directory.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let execution_id_for_file_edit = execution_id_for_file_edit.clone();
         let active_terminal_session_id = active_terminal_session_id.clone();
+        let host_working_directory = host_working_directory.clone();
         Box::pin(async move {
             use rig::tool::Tool;
             use sentinel_tools::buildin_tools::file_edit::{FileEditArgs, FileEditTool};
@@ -1234,8 +1261,11 @@ async fn build_file_edit_override_def(
 
             let tool_args: FileEditArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-            let runtime_context =
-                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let runtime_context = build_file_runtime_context(
+                active_terminal_session_id.as_deref(),
+                host_working_directory.as_deref(),
+            )
+            .await;
             with_file_runtime_context(
                 runtime_context.clone(),
                 ensure_file_snapshot_is_editable(&execution_id_for_file_edit, &tool_args.file_path),
@@ -1251,9 +1281,14 @@ async fn build_file_edit_override_def(
             .map_err(|e| format!("File edit failed: {}", e))?;
             with_file_runtime_context(
                 runtime_context,
-                invalidate_file_snapshot(&execution_id_for_file_edit, &tool_args.file_path),
+                record_file_revision_snapshot(
+                    &execution_id_for_file_edit,
+                    &tool_args.file_path,
+                    &result.content_hash,
+                ),
             )
-            .await;
+            .await
+            .map_err(|e| format!("Failed to update file edit state: {}", e))?;
 
             serde_json::to_value(result)
                 .map_err(|e| format!("Failed to serialize file_edit result: {}", e))
@@ -1266,7 +1301,7 @@ async fn build_file_edit_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: "utility".to_string(),
+        category: ToolCategory::Utility,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1279,16 +1314,19 @@ async fn build_file_write_override_def(
     tool_server: &ToolServer,
     execution_id: &str,
     active_terminal_session_id: Option<&str>,
+    host_working_directory: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(FileWriteTool::NAME).await?;
     let execution_id_for_file_write = execution_id.to_string();
     let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
+    let host_working_directory = host_working_directory.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let execution_id_for_file_write = execution_id_for_file_write.clone();
         let active_terminal_session_id = active_terminal_session_id.clone();
+        let host_working_directory = host_working_directory.clone();
         Box::pin(async move {
             use rig::tool::Tool;
             use sentinel_tools::buildin_tools::file_runtime::{
@@ -1298,8 +1336,11 @@ async fn build_file_write_override_def(
 
             let tool_args: FileWriteArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-            let runtime_context =
-                build_file_runtime_context(active_terminal_session_id.as_deref()).await;
+            let runtime_context = build_file_runtime_context(
+                active_terminal_session_id.as_deref(),
+                host_working_directory.as_deref(),
+            )
+            .await;
             let exists = with_file_runtime_context(
                 runtime_context.clone(),
                 path_exists(&tool_args.file_path),
@@ -1327,9 +1368,14 @@ async fn build_file_write_override_def(
             .map_err(|e| format!("File write failed: {}", e))?;
             with_file_runtime_context(
                 runtime_context,
-                invalidate_file_snapshot(&execution_id_for_file_write, &tool_args.file_path),
+                record_file_revision_snapshot(
+                    &execution_id_for_file_write,
+                    &tool_args.file_path,
+                    &result.content_hash,
+                ),
             )
-            .await;
+            .await
+            .map_err(|e| format!("Failed to update file write state: {}", e))?;
 
             serde_json::to_value(result)
                 .map_err(|e| format!("Failed to serialize file_write result: {}", e))
@@ -1342,7 +1388,7 @@ async fn build_file_write_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: "utility".to_string(),
+        category: ToolCategory::Utility,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1393,7 +1439,7 @@ async fn build_tasks_override_def(
         input_schema: tasks_input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: "system".to_string(),
+        category: ToolCategory::System,
         tags: tasks_info.tags.clone(),
         search_hint: tasks_info.search_hint.clone(),
         exposure: tasks_info.exposure.clone(),
@@ -1409,6 +1455,7 @@ pub(super) async fn patch_builtin_dynamic_tools(
     tool_server: &ToolServer,
     execution_id: &str,
     active_terminal_session_id: Option<&str>,
+    host_working_directory: Option<&str>,
     referenced_traffic: &[serde_json::Value],
 ) -> Vec<DynamicTool> {
     if let Some(def) = build_traffic_response_read_tool(app_handle.clone(), referenced_traffic) {
@@ -1431,45 +1478,75 @@ pub(super) async fn patch_builtin_dynamic_tools(
     }
 
     if current_tool_ids.iter().any(|id| id == GlobTool::NAME) {
-        if let Some(def) = build_glob_override_def(tool_server, active_terminal_session_id).await {
+        if let Some(def) = build_glob_override_def(
+            tool_server,
+            active_terminal_session_id,
+            host_working_directory,
+        )
+        .await
+        {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
 
     if current_tool_ids.iter().any(|id| id == GrepTool::NAME) {
-        if let Some(def) = build_grep_override_def(tool_server, active_terminal_session_id).await {
+        if let Some(def) = build_grep_override_def(
+            tool_server,
+            active_terminal_session_id,
+            host_working_directory,
+        )
+        .await
+        {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
 
     if current_tool_ids.iter().any(|id| id == LspTool::NAME) {
-        if let Some(def) = build_lsp_override_def(tool_server, active_terminal_session_id).await {
+        if let Some(def) = build_lsp_override_def(
+            tool_server,
+            active_terminal_session_id,
+            host_working_directory,
+        )
+        .await
+        {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
 
     if current_tool_ids.iter().any(|id| id == FileReadTool::NAME) {
-        if let Some(def) =
-            build_file_read_override_def(tool_server, execution_id, active_terminal_session_id)
-                .await
+        if let Some(def) = build_file_read_override_def(
+            tool_server,
+            execution_id,
+            active_terminal_session_id,
+            host_working_directory,
+        )
+        .await
         {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
 
     if current_tool_ids.iter().any(|id| id == FileEditTool::NAME) {
-        if let Some(def) =
-            build_file_edit_override_def(tool_server, execution_id, active_terminal_session_id)
-                .await
+        if let Some(def) = build_file_edit_override_def(
+            tool_server,
+            execution_id,
+            active_terminal_session_id,
+            host_working_directory,
+        )
+        .await
         {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
 
     if current_tool_ids.iter().any(|id| id == FileWriteTool::NAME) {
-        if let Some(def) =
-            build_file_write_override_def(tool_server, execution_id, active_terminal_session_id)
-                .await
+        if let Some(def) = build_file_write_override_def(
+            tool_server,
+            execution_id,
+            active_terminal_session_id,
+            host_working_directory,
+        )
+        .await
         {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
@@ -1501,6 +1578,7 @@ pub(super) async fn patch_builtin_dynamic_tools(
             tool_server,
             execution_id,
             active_terminal_session_id,
+            host_working_directory,
         )
         .await
         {
@@ -1910,7 +1988,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_snapshot_requires_full_read_and_fresh_mtime() {
+    async fn file_snapshot_requires_prior_read_and_fresh_mtime() {
         let execution_id = format!("exec-{}", uuid::Uuid::new_v4());
         let temp_dir = std::env::temp_dir().join(format!("file-state-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
@@ -1933,24 +2011,6 @@ mod tests {
         )
         .await
         .unwrap();
-        let partial_err =
-            ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
-                .await
-                .unwrap_err()
-                .to_string();
-        assert!(partial_err.contains("partially read"));
-
-        record_file_read_snapshot(
-            &execution_id,
-            &file_path.to_string_lossy(),
-            &revision_token,
-            1,
-            3,
-            3,
-            false,
-        )
-        .await
-        .unwrap();
         ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
             .await
             .unwrap();
@@ -1965,6 +2025,75 @@ mod tests {
         assert!(stale_err.contains("changed since it was read"));
 
         crate::agents::executor::file_tool_state::clear_file_tool_state(&execution_id).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn file_read_edit_override_allows_consecutive_edits_after_snapshot_update() {
+        use rig::tool::Tool;
+        use sentinel_tools::buildin_tools::shell::{
+            get_shell_config, set_shell_config, ShellExecutionMode,
+        };
+
+        let execution_id = format!("exec-{}", uuid::Uuid::new_v4());
+        let temp_dir =
+            std::env::temp_dir().join(format!("file-override-state-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let file_path: PathBuf = temp_dir.join("sample.txt");
+        tokio::fs::write(&file_path, "alpha\nbeta\ngamma\n")
+            .await
+            .unwrap();
+        let original_shell_config = get_shell_config().await;
+        let mut host_shell_config = original_shell_config.clone();
+        host_shell_config.default_execution_mode = ShellExecutionMode::Host;
+        set_shell_config(host_shell_config).await;
+
+        let tool_server = ToolServer::new();
+        tool_server.init_builtin_tools().await;
+        let working_dir = temp_dir.to_string_lossy().to_string();
+        let read_def =
+            build_file_read_override_def(&tool_server, &execution_id, None, Some(&working_dir))
+                .await
+                .expect("file_read override should be available");
+        let edit_def =
+            build_file_edit_override_def(&tool_server, &execution_id, None, Some(&working_dir))
+                .await
+                .expect("file_edit override should be available");
+        let read_tool = DynamicTool::new(read_def);
+        let edit_tool = DynamicTool::new(edit_def);
+
+        read_tool
+            .call(json!({
+                "file_path": file_path.to_string_lossy(),
+                "offset": 1,
+                "limit": 200,
+            }))
+            .await
+            .expect("file_read should record an editable snapshot");
+
+        edit_tool
+            .call(json!({
+                "file_path": file_path.to_string_lossy(),
+                "old_string": "beta",
+                "new_string": "delta",
+            }))
+            .await
+            .expect("first edit should update the snapshot to the new revision");
+
+        edit_tool
+            .call(json!({
+                "file_path": file_path.to_string_lossy(),
+                "old_string": "gamma",
+                "new_string": "epsilon",
+            }))
+            .await
+            .expect("second edit should not require another file_read");
+
+        let updated = tokio::fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(updated, "alpha\ndelta\nepsilon\n");
+
+        crate::agents::executor::file_tool_state::clear_file_tool_state(&execution_id).await;
+        set_shell_config(original_shell_config).await;
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 }

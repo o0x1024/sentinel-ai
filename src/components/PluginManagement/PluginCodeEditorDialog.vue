@@ -254,17 +254,25 @@
           :messages="aiMessages"
           :streaming="aiStreaming"
           :streaming-content="aiStreamingContent"
+          :assistant-profile-id="aiAssistantProfileId"
+          :assistant-profile-options="aiAssistantProfileOptions"
+          :assistant-profile-default-label="aiAssistantProfileDefaultLabel"
+          :assistant-profile-invalid="aiAssistantProfileInvalid"
+          :effective-model-label="aiAssistantEffectiveModelLabel"
+          :effective-model-source-label="aiAssistantEffectiveModelSourceLabel"
+          :runtime-meta-text="aiAssistantRuntimeMetaText"
           :code-ref="selectedCodeRef"
           :test-result-ref="selectedTestResultRef"
           @close="$emit('toggleAiPanel')"
           @send-message="$emit('sendAiMessage', $event)"
+          @update-assistant-profile-id="$emit('updateAiAssistantProfileId', $event)"
           @quick-action="$emit('aiQuickAction', $event)"
           @apply-code="(...args) => $emit('applyAiCode', ...args)"
           @preview-code="$emit('previewAiCode', $event)"
-            @clear-code-ref="$emit('clearCodeRef')"
-            @clear-test-result-ref="$emit('clearTestResultRef')"
-            @clear-history="$emit('clearHistory')"
-          />
+          @clear-code-ref="$emit('clearCodeRef')"
+          @clear-test-result-ref="$emit('clearTestResultRef')"
+          @clear-history="$emit('clearHistory')"
+        />
       </div>
 
       <!-- Floating Toolbar - centered in editor area -->
@@ -407,6 +415,11 @@ import { mainCategories } from './types'
 import AiAssistantPanel from './AiAssistantPanel.vue'
 import PluginValidationReportPanel from './PluginValidationReportPanel.vue'
 
+interface AssistantProfileChoice {
+  id: string
+  label: string
+}
+
 // Type extension for click outside handler
 declare module '@vue/runtime-core' {
   interface HTMLElement {
@@ -437,7 +450,7 @@ const vClickOutside = {
   }
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   editingPlugin: PluginRecord | null
   newPluginMetadata: NewPluginMetadata
   isEditing: boolean
@@ -452,13 +465,28 @@ const props = defineProps<{
   aiMessages: AiChatMessage[]
   aiStreaming: boolean
   aiStreamingContent: string
+  aiAssistantProfileId?: string | null
+  aiAssistantProfileOptions?: AssistantProfileChoice[]
+  aiAssistantProfileDefaultLabel?: string
+  aiAssistantProfileInvalid?: boolean
+  aiAssistantEffectiveModelLabel?: string
+  aiAssistantEffectiveModelSourceLabel?: string
+  aiAssistantRuntimeMetaText?: string
   selectedCodeRef: CodeReference | null
   selectedTestResultRef: TestResultReference | null
   // Test related props
   pluginTesting: boolean
   // Preview related props
   isPreviewMode?: boolean
-}>()
+}>(), {
+  aiAssistantProfileId: null,
+  aiAssistantProfileOptions: () => [],
+  aiAssistantProfileDefaultLabel: '未配置',
+  aiAssistantProfileInvalid: false,
+  aiAssistantEffectiveModelLabel: '未配置',
+  aiAssistantEffectiveModelSourceLabel: '未解析',
+  aiAssistantRuntimeMetaText: '',
+})
 
 const { t } = useI18n()
 
@@ -487,6 +515,7 @@ const emit = defineEmits<{
   'aiQuickAction': [action: string]
   'applyAiCode': [code: string, context?: CodeReference | null]
   'previewAiCode': [code: string]
+  'updateAiAssistantProfileId': [profileId: string | null]
   'exitPreviewMode': []
   'confirmMerge': []
   'addSelectedCode': []

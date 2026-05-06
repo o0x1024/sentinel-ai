@@ -60,7 +60,7 @@ export const useAgentConversationBinding = (params: {
       enabled,
       selection_strategy: profile.defaultToolSelectionStrategy || params.defaultToolConfig.value.selection_strategy,
       max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
-      fixed_tools: normalizeToolIdList(profile.defaultFixedTools),
+      preselected_tools: normalizeToolIdList(profile.defaultPreselectedTools),
       disabled_tools: normalizeToolIdList(profile.defaultDisabledTools),
       manual_tools: normalizeToolIdList(profile.defaultManualTools),
     } as UiToolConfigPayload
@@ -198,15 +198,18 @@ export const useAgentConversationBinding = (params: {
     }
   }
 
-  const persistConversationBinding = async (targetConversationId: string) => {
-    const binding = params.toConversationBinding({
+  const buildCurrentConversationBinding = () => (
+    params.toConversationBinding({
       browserShellDirectWriteEnabled: params.currentBrowserShellDirectWriteEnabled.value,
       browserShellSessionId: params.currentBrowserShellSessionId.value,
       selectedModel: params.assistantSelectedModel.value,
       toolsEnabled: params.toolsEnabled.value,
       toolConfig: params.toolConfig.value,
     })
+  )
 
+  const persistConversationBinding = async (targetConversationId: string) => {
+    const binding = buildCurrentConversationBinding()
     await invoke('save_ai_conversation_binding', {
       conversationId: targetConversationId,
       binding,
@@ -243,6 +246,7 @@ export const useAgentConversationBinding = (params: {
 
   return {
     assistantProfileRegistryReady,
+    buildCurrentConversationBinding,
     handleAssistantContextModeChange,
     handleAssistantProfileChange,
     handleAssistantRunModeChange,

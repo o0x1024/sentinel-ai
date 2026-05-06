@@ -1,6 +1,7 @@
 //! Plugin generation prompt commands
 
 use crate::generators::agent_contract_generation_instructions;
+use crate::services::{IntruderPluginCategory, PluginMainCategory};
 use tauri::command;
 
 /// Get combined plugin generation prompt for AI
@@ -10,10 +11,13 @@ pub fn get_combined_plugin_prompt_api(
     vuln_type: String,
     _severity: String,
 ) -> Result<String, String> {
-    match plugin_type.as_str() {
-        "agent" | "bounty" => Ok(get_agent_plugin_prompt()),
-        "intruder" => Ok(get_intruder_plugin_prompt(&vuln_type)),
-        _ => Ok(get_traffic_plugin_prompt()),
+    match PluginMainCategory::parse(&plugin_type)? {
+        PluginMainCategory::Agent | PluginMainCategory::Bounty => Ok(get_agent_plugin_prompt()),
+        PluginMainCategory::Intruder => {
+            let category = IntruderPluginCategory::parse(&vuln_type)?;
+            Ok(get_intruder_plugin_prompt(category))
+        }
+        PluginMainCategory::Traffic => Ok(get_traffic_plugin_prompt()),
     }
 }
 
@@ -223,15 +227,9 @@ Now generate the Agent Tool Plugin.
     )
 }
 
-fn get_intruder_plugin_prompt(category: &str) -> String {
-    let category = match category {
-        "payload_processor" => "payload_processor",
-        "request_processor" => "request_processor",
-        _ => "payload_generator",
-    };
-
+fn get_intruder_plugin_prompt(category: IntruderPluginCategory) -> String {
     let (category_guidance, input_example, implementation_example) = match category {
-        "payload_processor" => (
+        IntruderPluginCategory::PayloadProcessor => (
             r#"Generate an Intruder payload processor plugin.
 
 The plugin must:
@@ -326,7 +324,7 @@ globalThis.get_input_schema = get_input_schema;
 globalThis.analyze = analyze;
 ```"#,
         ),
-        "request_processor" => (
+        IntruderPluginCategory::RequestProcessor => (
             r#"Generate an Intruder request processor plugin.
 
 The plugin must:
@@ -419,7 +417,7 @@ globalThis.get_input_schema = get_input_schema;
 globalThis.analyze = analyze;
 ```"#,
         ),
-        _ => (
+        IntruderPluginCategory::PayloadGenerator => (
             r#"Generate an Intruder payload generator plugin.
 
 The plugin must:
@@ -551,7 +549,7 @@ Intruder plugins are active request-preparation helpers. They run before request
 
 Target category: `"#,
     );
-    prompt.push_str(category);
+    prompt.push_str(&category.to_string());
     prompt.push_str("`\n\n");
     prompt.push_str(category_guidance);
     prompt.push_str(

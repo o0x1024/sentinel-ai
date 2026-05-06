@@ -105,6 +105,10 @@ export default {
     submissions: 'Submissions',
     earnings: 'Earnings',
     exportAssets: 'Export Assets',
+    cardView: 'Card View',
+    listView: 'List View',
+    organization: 'Organization',
+    platform: 'Platform',
   },
 
   findings: {

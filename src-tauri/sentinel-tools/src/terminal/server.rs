@@ -19,6 +19,23 @@ struct ResizeMessage {
     cols: u16,
 }
 
+fn parse_terminal_session_config(text: &str) -> Result<TerminalSessionConfig, String> {
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| format!("Failed to parse terminal session config: {}", e))?;
+    let execution_mode = value
+        .get("execution_mode")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "Terminal session config missing execution_mode".to_string())?;
+    if execution_mode != "host" && execution_mode != "docker" {
+        return Err(format!(
+            "Invalid terminal execution mode: {}",
+            execution_mode
+        ));
+    }
+    serde_json::from_value(value)
+        .map_err(|e| format!("Failed to parse terminal session config: {}", e))
+}
+
 /// WebSocket terminal server
 pub struct TerminalServer {
     manager: Arc<TerminalSessionManager>,
@@ -115,35 +132,14 @@ impl TerminalServer {
 
                         (session_id, rx)
                     } else {
-                        // Session not found - client has stale session ID
-                        // Create new session with default config instead of returning error
-                        warn!("Session not found: {}, creating new session", session_id);
-                        self.manager
-                            .create_session(TerminalSessionConfig::default())
-                            .await?
+                        return Err(format!("Terminal session not found: {}", session_id));
                     }
                 } else {
-                    // Parse as config
-                    let config: TerminalSessionConfig = match serde_json::from_str(&text) {
-                        Ok(cfg) => cfg,
-                        Err(e) => {
-                            warn!(
-                                "Failed to parse terminal session config, using defaults. raw={}, error={}",
-                                text, e
-                            );
-                            TerminalSessionConfig::default()
-                        }
-                    };
-
+                    let config = parse_terminal_session_config(&text)?;
                     self.manager.create_session(config).await?
                 }
             }
-            _ => {
-                // No config provided, use default
-                self.manager
-                    .create_session(TerminalSessionConfig::default())
-                    .await?
-            }
+            _ => return Err("Terminal session init message must be text".to_string()),
         };
 
         info!("Terminal session established: {}", session_id);
@@ -260,5 +256,35 @@ impl TerminalServer {
     /// Get session manager
     pub fn manager(&self) -> &Arc<TerminalSessionManager> {
         &self.manager
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_terminal_session_config;
+    use crate::terminal::ExecutionMode;
+
+    #[test]
+    fn parse_terminal_session_config_requires_explicit_execution_mode() {
+        let error = parse_terminal_session_config("{}")
+            .expect_err("missing execution_mode must not fall back to Docker");
+        assert!(error.contains("missing execution_mode"));
+    }
+
+    #[test]
+    fn parse_terminal_session_config_rejects_invalid_execution_mode() {
+        let error = parse_terminal_session_config(r#"{"execution_mode":"invalid"}"#)
+            .expect_err("invalid execution_mode must fail");
+        assert!(error.contains("Invalid terminal execution mode"));
+    }
+
+    #[test]
+    fn parse_terminal_session_config_accepts_host_mode() {
+        let config = parse_terminal_session_config(
+            r#"{"execution_mode":"host","shell":"bash","working_dir":"/tmp"}"#,
+        )
+        .expect("host terminal config should parse");
+        assert_eq!(config.execution_mode, ExecutionMode::Host);
+        assert_eq!(config.working_dir.as_deref(), Some("/tmp"));
     }
 }

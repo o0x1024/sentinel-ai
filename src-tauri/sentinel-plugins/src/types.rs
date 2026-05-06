@@ -4,6 +4,143 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginMainCategory {
+    Traffic,
+    Agent,
+    Bounty,
+    Intruder,
+}
+
+impl PluginMainCategory {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "traffic" => Ok(Self::Traffic),
+            "agent" => Ok(Self::Agent),
+            "bounty" => Ok(Self::Bounty),
+            "intruder" => Ok(Self::Intruder),
+            other => Err(format!("Unsupported main_category: {other}")),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Traffic => "traffic",
+            Self::Agent => "agent",
+            Self::Bounty => "bounty",
+            Self::Intruder => "intruder",
+        }
+    }
+
+    pub fn uses_agent_tool_contract(self) -> bool {
+        matches!(self, Self::Agent | Self::Bounty)
+    }
+}
+
+impl fmt::Display for PluginMainCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntruderPluginCategory {
+    PayloadGenerator,
+    PayloadProcessor,
+    RequestProcessor,
+}
+
+impl IntruderPluginCategory {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "payload_generator" => Ok(Self::PayloadGenerator),
+            "payload_processor" => Ok(Self::PayloadProcessor),
+            "request_processor" => Ok(Self::RequestProcessor),
+            other => Err(format!("Unsupported intruder category: {other}")),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PayloadGenerator => "payload_generator",
+            Self::PayloadProcessor => "payload_processor",
+            Self::RequestProcessor => "request_processor",
+        }
+    }
+}
+
+impl fmt::Display for IntruderPluginCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PluginCategory(String);
+
+impl PluginCategory {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        let category = raw.trim();
+        if category.is_empty() {
+            return Err("category is required".to_string());
+        }
+        Ok(Self(category.to_string()))
+    }
+
+    pub fn parse_for_main_category(
+        main_category: PluginMainCategory,
+        raw: &str,
+    ) -> Result<Self, String> {
+        let category = raw.trim();
+        if category.is_empty() {
+            return Err("category is required".to_string());
+        }
+
+        match main_category {
+            PluginMainCategory::Intruder => {
+                Ok(Self(IntruderPluginCategory::parse(category)?.to_string()))
+            }
+            PluginMainCategory::Traffic
+            | PluginMainCategory::Agent
+            | PluginMainCategory::Bounty => Ok(Self(category.to_string())),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+
+    pub fn intruder_category(&self) -> Result<IntruderPluginCategory, String> {
+        IntruderPluginCategory::parse(self.as_str())
+    }
+}
+
+impl fmt::Display for PluginCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<String> for PluginCategory {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for PluginCategory {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
 
 /// 插件元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,10 +154,9 @@ pub struct PluginMetadata {
     /// 作者
     pub author: Option<String>,
     /// 主分类 (traffic/agent)
-    #[serde(default = "default_main_category")]
-    pub main_category: String,
+    pub main_category: PluginMainCategory,
     /// 子分类 (vulnerability/injection/xss/scanner/analyzer/reporter)
-    pub category: String,
+    pub category: PluginCategory,
     /// 默认严重等级
     pub default_severity: Severity,
     /// 标签
@@ -33,10 +169,6 @@ pub struct PluginMetadata {
     /// Preferred asset target types for monitor tasks
     #[serde(default)]
     pub target_asset_types: Vec<String>,
-}
-
-fn default_main_category() -> String {
-    "traffic".to_string()
 }
 
 /// 严重等级

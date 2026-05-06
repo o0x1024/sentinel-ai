@@ -73,7 +73,8 @@ impl FileEditTool {
     pub const DESCRIPTION: &'static str = concat!(
         "Modify an existing text file by exact string replacement. ",
         "Use this for targeted edits when you already know the current snippet to replace. ",
-        "By default it requires exactly one match to avoid accidental broad changes."
+        "By default it requires exactly one match to avoid accidental broad changes. ",
+        "In agent runtime, you must first perform a file_read of the target file in the same execution before calling file_edit."
     );
 }
 

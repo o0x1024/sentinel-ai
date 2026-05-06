@@ -228,6 +228,7 @@ const buildMentionText = (item: MentionSuggestionItem) => {
 }
 
 export const useInputMentions = (params: {
+  getConversationId: () => string | null
   getInputMessage: () => string
   getReferencedAssets: () => ReferencedAsset[]
   getReferencedFiles: () => ReferencedFile[]
@@ -285,6 +286,7 @@ export const useInputMentions = (params: {
 
     const [fileResult, assetResult, trafficResult] = await Promise.allSettled([
       invoke<WorkingDirectoryFileMatch[]>('search_working_directory_files', {
+        conversationId: params.getConversationId(),
         query,
         limit: MENTION_LIMIT_PER_KIND,
       }),
@@ -403,6 +405,7 @@ export const useInputMentions = (params: {
 
       if (selectedItem.kind === 'file') {
         const preview = await invoke<WorkingDirectoryFilePreview>('read_working_directory_file_preview', {
+          conversationId: params.getConversationId(),
           relativePath: selectedItem.relativePath,
           maxChars: 4000,
         })

@@ -11,16 +11,50 @@ use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::services::{
     ensure_plugin_allowed_for_current_tier, ensure_plugin_catalog_write_access,
     ensure_plugin_delete_access, filter_plugins_for_current_tier, load_plugin_default_inputs,
-    merge_plugin_input_defaults, save_plugin_default_inputs,
+    merge_plugin_input_defaults, save_plugin_default_inputs, IntruderPluginCategory,
+    PluginCategory, PluginMainCategory,
 };
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
-pub(crate) fn is_agent_tool_plugin_main_category(main_category: &str) -> bool {
-    main_category == "agent"
+pub(crate) fn is_agent_tool_plugin_main_category(main_category: PluginMainCategory) -> bool {
+    matches!(main_category, PluginMainCategory::Agent)
 }
 
-pub(crate) fn is_execution_plugin_main_category(main_category: &str) -> bool {
-    matches!(main_category, "agent" | "bounty" | "intruder")
+pub(crate) fn is_execution_plugin_main_category(main_category: PluginMainCategory) -> bool {
+    matches!(
+        main_category,
+        PluginMainCategory::Agent | PluginMainCategory::Bounty | PluginMainCategory::Intruder
+    )
+}
+
+pub(crate) fn is_traffic_scan_plugin_main_category(main_category: PluginMainCategory) -> bool {
+    matches!(main_category, PluginMainCategory::Traffic)
+}
+
+fn ensure_intruder_plugin_kind(
+    plugin: &PluginRecord,
+    plugin_id: &str,
+    expected_category: IntruderPluginCategory,
+) -> Result<(), String> {
+    let main_category = plugin.metadata.main_category;
+    if main_category != PluginMainCategory::Intruder {
+        return Err(format!("Plugin '{plugin_id}' is not an intruder plugin"));
+    }
+
+    let actual_category = plugin.metadata.category.intruder_category()?;
+    if actual_category != expected_category {
+        let capability = match expected_category {
+            IntruderPluginCategory::PayloadGenerator => "payload generation",
+            IntruderPluginCategory::PayloadProcessor => "payload processing",
+            IntruderPluginCategory::RequestProcessor => "request processing",
+        };
+        return Err(format!(
+            "Plugin '{}' does not implement intruder {}",
+            plugin_id, capability
+        ));
+    }
+
+    Ok(())
 }
 
 pub(crate) async fn refresh_active_agent_plugin_tools(
@@ -102,8 +136,8 @@ pub(crate) async fn refresh_active_agent_plugin_tools(
 pub(crate) fn resolved_store_plugin_monitor_type(
     existing: Option<&PluginRecord>,
     plugin_id: &str,
-    main_category: &str,
-    category: &str,
+    main_category: PluginMainCategory,
+    category: &PluginCategory,
 ) -> Option<String> {
     if let Some(monitor_type) = existing
         .and_then(|record| record.metadata.monitor_type.clone())
@@ -112,11 +146,14 @@ pub(crate) fn resolved_store_plugin_monitor_type(
         return Some(monitor_type);
     }
 
-    if !matches!(main_category, "agent" | "bounty") {
+    if !matches!(
+        main_category,
+        PluginMainCategory::Agent | PluginMainCategory::Bounty
+    ) {
         return None;
     }
 
-    infer_monitor_type_for_plugin(plugin_id, category).map(str::to_string)
+    infer_monitor_type_for_plugin(plugin_id, category.as_str()).map(str::to_string)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -299,6 +336,7 @@ pub async fn enable_plugin(
             )))
         }
     };
+    let main_category = PluginMainCategory::parse(&main_category)?;
 
     if let Err(e) = db.update_plugin_enabled(&plugin_id, true).await {
         return Ok(CommandResponse::err(format!(
@@ -309,7 +347,7 @@ pub async fn enable_plugin(
 
     tracing::info!("Plugin enabled in database: {}", plugin_id);
 
-    if is_agent_tool_plugin_main_category(&main_category) {
+    if is_agent_tool_plugin_main_category(main_category) {
         if let Err(e) = refresh_active_agent_plugin_tools(db.as_ref()).await {
             tracing::warn!(
                 "Failed to refresh active agent tools after enabling plugin {}: {}",
@@ -326,7 +364,7 @@ pub async fn enable_plugin(
         .flatten()
         .unwrap_or_else(|| plugin_id.clone());
 
-    if main_category == "traffic" {
+    if is_traffic_scan_plugin_main_category(main_category) {
         let scan_tx = state.scan_tx.read().await;
         if let Some(ref tx) = *scan_tx {
             if let Err(e) = tx.send(sentinel_traffic::ScanTask::ReloadPlugin(plugin_id.clone())) {
@@ -372,6 +410,7 @@ pub async fn disable_plugin(
             )))
         }
     };
+    let main_category = PluginMainCategory::parse(&main_category)?;
 
     if let Err(e) = db.update_plugin_enabled(&plugin_id, false).await {
         return Ok(CommandResponse::err(format!(
@@ -382,7 +421,7 @@ pub async fn disable_plugin(
 
     tracing::info!("Plugin disabled in database: {}", plugin_id);
 
-    if is_agent_tool_plugin_main_category(&main_category) {
+    if is_agent_tool_plugin_main_category(main_category) {
         if let Err(e) = refresh_active_agent_plugin_tools(db.as_ref()).await {
             tracing::warn!(
                 "Failed to refresh active agent tools after disabling plugin {}: {}",
@@ -399,7 +438,7 @@ pub async fn disable_plugin(
         .flatten()
         .unwrap_or_else(|| plugin_id.clone());
 
-    if main_category == "traffic" {
+    if is_traffic_scan_plugin_main_category(main_category) {
         let scan_tx = state.scan_tx.read().await;
         if let Some(ref tx) = *scan_tx {
             if let Err(e) = tx.send(sentinel_traffic::ScanTask::RemovePlugin(plugin_id.clone())) {
@@ -487,16 +526,16 @@ pub async fn intruder_list_plugins(
         .await?
         .into_iter()
         .filter(|plugin| plugin.status == PluginStatus::Enabled)
-        .filter(|plugin| plugin.metadata.main_category == "intruder")
+        .filter(|plugin| matches!(plugin.metadata.main_category, PluginMainCategory::Intruder))
         .filter(|plugin| {
             category_filter
-                .map(|expected| plugin.metadata.category == expected)
+                .map(|expected| plugin.metadata.category.as_str() == expected)
                 .unwrap_or(true)
         })
         .map(|plugin| IntruderPluginSummary {
             id: plugin.metadata.id,
             name: plugin.metadata.name,
-            category: plugin.metadata.category,
+            category: plugin.metadata.category.to_string(),
             description: plugin.metadata.description,
         })
         .collect::<Vec<_>>();
@@ -525,18 +564,12 @@ pub async fn intruder_generate_payloads(
         )));
     };
 
-    if plugin.metadata.main_category != "intruder" {
-        return Ok(CommandResponse::err(format!(
-            "Plugin '{}' is not an intruder plugin",
-            resolved_plugin_id
-        )));
-    }
-
-    if plugin.metadata.category != "payload_generator" {
-        return Ok(CommandResponse::err(format!(
-            "Plugin '{}' does not implement intruder payload generation",
-            resolved_plugin_id
-        )));
+    if let Err(error) = ensure_intruder_plugin_kind(
+        &plugin,
+        &resolved_plugin_id,
+        IntruderPluginCategory::PayloadGenerator,
+    ) {
+        return Ok(CommandResponse::err(error));
     }
 
     if plugin.status != sentinel_plugins::PluginStatus::Enabled {
@@ -583,18 +616,12 @@ pub async fn intruder_process_payload(
         )));
     };
 
-    if plugin.metadata.main_category != "intruder" {
-        return Ok(CommandResponse::err(format!(
-            "Plugin '{}' is not an intruder plugin",
-            resolved_plugin_id
-        )));
-    }
-
-    if plugin.metadata.category != "payload_processor" {
-        return Ok(CommandResponse::err(format!(
-            "Plugin '{}' does not implement intruder payload processing",
-            resolved_plugin_id
-        )));
+    if let Err(error) = ensure_intruder_plugin_kind(
+        &plugin,
+        &resolved_plugin_id,
+        IntruderPluginCategory::PayloadProcessor,
+    ) {
+        return Ok(CommandResponse::err(error));
     }
 
     if plugin.status != sentinel_plugins::PluginStatus::Enabled {
@@ -642,18 +669,12 @@ pub async fn intruder_transform_request(
         )));
     };
 
-    if plugin.metadata.main_category != "intruder" {
-        return Ok(CommandResponse::err(format!(
-            "Plugin '{}' is not an intruder plugin",
-            resolved_plugin_id
-        )));
-    }
-
-    if plugin.metadata.category != "request_processor" {
-        return Ok(CommandResponse::err(format!(
-            "Plugin '{}' does not implement intruder request processing",
-            resolved_plugin_id
-        )));
+    if let Err(error) = ensure_intruder_plugin_kind(
+        &plugin,
+        &resolved_plugin_id,
+        IntruderPluginCategory::RequestProcessor,
+    ) {
+        return Ok(CommandResponse::err(error));
     }
 
     if plugin.status != sentinel_plugins::PluginStatus::Enabled {
@@ -814,8 +835,8 @@ pub async fn create_plugin_in_db(
         name: plugin.name.clone(),
         version: plugin.version.clone(),
         author: plugin.author.clone(),
-        main_category: plugin.main_category.clone(),
-        category: plugin.category.clone(),
+        main_category: plugin.main_category.to_string(),
+        category: plugin.category.to_string(),
         description: plugin.description.clone(),
         default_severity: format!("{}", plugin.default_severity),
         tags: plugin.tags.clone(),
@@ -836,7 +857,7 @@ pub async fn create_plugin_in_db(
     tracing::info!("Plugin created/updated in database: {}", plugin_id);
 
     let plugin_manager = state.get_plugin_manager();
-    if is_execution_plugin_main_category(plugin.main_category.as_str()) {
+    if is_execution_plugin_main_category(plugin.main_category) {
         let runtime_metadata = PluginMetadata {
             id: plugin.id.clone(),
             name: plugin.name.clone(),
@@ -898,25 +919,11 @@ pub async fn update_plugin(
         .unwrap_or(&plugin_id)
         .to_string();
 
-    let plugin_description = metadata
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let main_category = metadata
-        .get("main_category")
-        .and_then(|v| v.as_str())
-        .unwrap_or("traffic")
-        .to_string();
-
-    let plugin_category = metadata
-        .get("category")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
     let plugin: sentinel_traffic::PluginMetadata =
         serde_json::from_value(metadata).map_err(|e| format!("Invalid plugin metadata: {}", e))?;
+    let plugin_description = plugin.description.clone().unwrap_or_default();
+    let main_category = plugin.main_category.clone();
+    let plugin_category = plugin.category.clone();
 
     use sentinel_db::TrafficPluginMetadata;
     let traffic_plugin = TrafficPluginMetadata {
@@ -924,8 +931,8 @@ pub async fn update_plugin(
         name: plugin.name.clone(),
         version: plugin.version.clone(),
         author: plugin.author.clone(),
-        main_category: plugin.main_category.clone(),
-        category: plugin.category.clone(),
+        main_category: plugin.main_category.to_string(),
+        category: plugin.category.to_string(),
         description: plugin.description.clone(),
         default_severity: format!("{}", plugin.default_severity),
         tags: plugin.tags.clone(),
@@ -952,7 +959,7 @@ pub async fn update_plugin(
         tracing::info!("Plugin code cache updated: {}", plugin_id);
     }
 
-    if main_category == "traffic" && *state.is_running.read().await {
+    if is_traffic_scan_plugin_main_category(main_category) && *state.is_running.read().await {
         if let Some(scan_tx) = state.scan_tx.read().await.as_ref() {
             if let Err(e) =
                 scan_tx.send(sentinel_traffic::ScanTask::ReloadPlugin(plugin_id.clone()))
@@ -964,7 +971,7 @@ pub async fn update_plugin(
         }
     }
 
-    if is_agent_tool_plugin_main_category(&main_category) {
+    if is_agent_tool_plugin_main_category(main_category) {
         let tool_server = sentinel_tools::tool_server::get_tool_server();
         let sanitized_id = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
         let tool_name = format!("plugin__{}", sanitized_id);
@@ -977,9 +984,7 @@ pub async fn update_plugin(
             version: "1.0.0".to_string(),
             author: None,
             main_category: main_category.clone(),
-            category: plugin_category
-                .clone()
-                .unwrap_or_else(|| "other".to_string()),
+            category: plugin_category.clone(),
             monitor_type: None,
             default_severity: sentinel_plugins::Severity::Medium,
             tags: vec![],
@@ -1099,7 +1104,7 @@ pub async fn test_plugin(
         let main_category = record.metadata.main_category.clone();
         let enabled = record.status == sentinel_plugins::PluginStatus::Enabled;
 
-        if is_execution_plugin_main_category(&main_category) {
+        if is_execution_plugin_main_category(main_category) {
             return Ok(CommandResponse::ok(TestPluginResult {
                 success: false,
                 message: Some("该插件属于执行型插件类别，请使用 Agent 测试入口".to_string()),
@@ -1476,8 +1481,8 @@ pub async fn test_agent_plugin(
     };
 
     if !matches!(
-        plugin_record.metadata.main_category.as_str(),
-        "agent" | "bounty" | "intruder"
+        plugin_record.metadata.main_category,
+        PluginMainCategory::Agent | PluginMainCategory::Bounty | PluginMainCategory::Intruder
     ) {
         return Ok(CommandResponse::ok(AgentTestResult {
             success: false,
@@ -1513,12 +1518,13 @@ pub async fn test_agent_plugin(
     let metadata = crate::services::build_plugin_metadata(
         plugin_record.metadata.id.clone(),
         plugin_record.metadata.name.clone(),
-        plugin_record.metadata.main_category.clone(),
-        plugin_record.metadata.category.clone(),
+        plugin_record.metadata.main_category.to_string(),
+        plugin_record.metadata.category.to_string(),
         plugin_record.metadata.description.clone(),
         plugin_record.metadata.monitor_type.clone(),
         severity,
-    );
+    )
+    .map_err(|e| format!("Failed to build plugin metadata: {}", e))?;
 
     let default_input = load_plugin_default_inputs(db.as_ref(), &plugin_id).await?;
     let resolved_inputs = match inputs {
@@ -1577,8 +1583,8 @@ pub async fn get_plugin_input_schema(
             name: resolved_plugin_id.clone(),
             version: "1.0.0".to_string(),
             author: None,
-            main_category: "agent".to_string(),
-            category: "tool".to_string(),
+            main_category: sentinel_plugins::PluginMainCategory::Agent,
+            category: "tool".into(),
             monitor_type: None,
             default_severity: sentinel_plugins::Severity::Medium,
             tags: vec![],
@@ -1633,8 +1639,8 @@ pub async fn get_plugin_output_schema(
             name: plugin_id.clone(),
             version: "1.0.0".to_string(),
             author: None,
-            main_category: "agent".to_string(),
-            category: "tool".to_string(),
+            main_category: sentinel_plugins::PluginMainCategory::Agent,
+            category: "tool".into(),
             monitor_type: None,
             default_severity: sentinel_plugins::Severity::Medium,
             tags: vec![],

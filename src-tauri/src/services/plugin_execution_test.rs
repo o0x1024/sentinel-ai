@@ -1,7 +1,8 @@
 use std::time::Instant;
 
 use sentinel_plugins::{
-    HttpTransaction, PluginExecutor, PluginMetadata, RequestContext, ResponseContext, Severity,
+    HttpTransaction, IntruderPluginCategory, PluginCategory, PluginExecutor, PluginMainCategory,
+    PluginMetadata, RequestContext, ResponseContext, Severity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -42,13 +43,17 @@ pub async fn test_plugin_code(
             let executor = PluginExecutor::new(metadata.clone(), code, 1000)
                 .map_err(|error| format!("Failed to create plugin executor: {error}"))?;
 
-            match metadata.main_category.as_str() {
-                "traffic" => execute_traffic_plugin(executor).await,
-                "agent" | "bounty" | "intruder" => {
-                    let input = inputs.unwrap_or_else(|| default_execution_input(&metadata));
+            match metadata.main_category {
+                PluginMainCategory::Traffic => execute_traffic_plugin(executor).await,
+                PluginMainCategory::Agent
+                | PluginMainCategory::Bounty
+                | PluginMainCategory::Intruder => {
+                    let input = match inputs {
+                        Some(input) => input,
+                        None => default_execution_input(&metadata)?,
+                    };
                     execute_execution_plugin(executor, input).await
                 }
-                other => Err(format!("Unsupported plugin main_category: {other}")),
             }
         })
     })
@@ -199,21 +204,21 @@ fn sample_http_transaction() -> HttpTransaction {
     }
 }
 
-fn default_execution_input(metadata: &PluginMetadata) -> Value {
-    if metadata.main_category == "intruder" {
+fn default_execution_input(metadata: &PluginMetadata) -> Result<Value, String> {
+    if matches!(metadata.main_category, PluginMainCategory::Intruder) {
         return default_intruder_input(&metadata.category);
     }
 
-    json!({
+    Ok(json!({
         "target": "https://example.com",
         "timeout": 5000,
         "rawRequest": "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
-    })
+    }))
 }
 
-fn default_intruder_input(category: &str) -> Value {
-    match category {
-        "payload_generator" => json!({
+fn default_intruder_input(category: &PluginCategory) -> Result<Value, String> {
+    match category.intruder_category()? {
+        IntruderPluginCategory::PayloadGenerator => Ok(json!({
             "config": {
                 "values": ["' OR '1'='1", "<script>alert(1)</script>", "../../etc/passwd"],
                 "limit": 3
@@ -221,8 +226,8 @@ fn default_intruder_input(category: &str) -> Value {
             "options": {
                 "limit": 3
             }
-        }),
-        "payload_processor" => json!({
+        })),
+        IntruderPluginCategory::PayloadProcessor => Ok(json!({
             "payload": "admin",
             "baseValue": "admin",
             "positionIndex": 0,
@@ -231,8 +236,8 @@ fn default_intruder_input(category: &str) -> Value {
                 "suffix": "-post",
                 "skipIfContains": "skip-me"
             }
-        }),
-        "request_processor" => json!({
+        })),
+        IntruderPluginCategory::RequestProcessor => Ok(json!({
             "rawRequest": "GET /search?q=test HTTP/1.1\r\nHost: example.com\r\n\r\n",
             "payloadValues": ["test"],
             "payloadSummary": "single payload",
@@ -241,8 +246,7 @@ fn default_intruder_input(category: &str) -> Value {
                 "headerName": "X-Intruder-Request",
                 "headerValue": "preview"
             }
-        }),
-        _ => json!({}),
+        })),
     }
 }
 
@@ -254,8 +258,11 @@ pub fn build_plugin_metadata(
     description: Option<String>,
     monitor_type: Option<String>,
     default_severity: Severity,
-) -> PluginMetadata {
-    PluginMetadata {
+) -> Result<PluginMetadata, String> {
+    let main_category = PluginMainCategory::parse(&main_category)?;
+    let category = PluginCategory::parse_for_main_category(main_category, &category)?;
+
+    Ok(PluginMetadata {
         id,
         name,
         version: "1.0.0".to_string(),
@@ -267,7 +274,7 @@ pub fn build_plugin_metadata(
         tags: vec!["ai-authored".to_string()],
         description,
         target_asset_types: Vec::new(),
-    }
+    })
 }
 
 pub fn parse_plugin_severity(value: &str) -> Result<Severity, String> {

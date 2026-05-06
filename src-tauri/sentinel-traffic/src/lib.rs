@@ -65,7 +65,8 @@ pub use types::*;
 
 // 重导出插件系统（来自 sentinel-plugins）
 pub use sentinel_plugins::{
-    PluginEngine, PluginError, PluginManager, PluginMetadata, PluginRecord, PluginStatus,
+    IntruderPluginCategory, PluginCategory, PluginEngine, PluginError, PluginMainCategory,
+    PluginManager, PluginMetadata, PluginRecord, PluginStatus,
 };
 
 /// 流量分析系统版本

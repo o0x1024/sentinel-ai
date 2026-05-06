@@ -20,7 +20,8 @@ pub struct ApiInventoryEndpointPayload {
 struct ApiInventorySnapshotPayload {
     #[serde(rename = "baseUrl")]
     base_url: String,
-    endpoints: Vec<ApiInventoryEndpointPayload>,
+    #[serde(rename = "apiEndpoints")]
+    api_endpoints: Vec<ApiInventoryEndpointPayload>,
     #[serde(rename = "lastChecked")]
     last_checked: String,
 }
@@ -31,9 +32,9 @@ struct ApiInventoryObservationPayload {
     base_url: String,
     success: bool,
     snapshot: Option<ApiInventorySnapshotPayload>,
-    #[serde(rename = "addedEndpoints")]
+    #[serde(rename = "addedApiEndpoints")]
     added_endpoints: Option<Vec<ApiInventoryEndpointPayload>>,
-    #[serde(rename = "removedEndpoints")]
+    #[serde(rename = "removedApiEndpoints")]
     removed_endpoints: Option<Vec<ApiInventoryEndpointPayload>>,
     error: Option<String>,
 }
@@ -289,7 +290,7 @@ fn observation_to_summary(
     let snapshot = payload.snapshot;
     let endpoints = snapshot
         .as_ref()
-        .map(|value| value.endpoints.as_slice())
+        .map(|value| value.api_endpoints.as_slice())
         .unwrap_or(&[]);
     let sample_endpoints = endpoints
         .iter()
@@ -330,7 +331,7 @@ fn observation_to_detail(
     let snapshot = payload.snapshot;
     let endpoints = snapshot
         .as_ref()
-        .map(|value| value.endpoints.clone())
+        .map(|value| value.api_endpoints.clone())
         .unwrap_or_default();
 
     ApiInventoryTargetDetail {

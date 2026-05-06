@@ -26,8 +26,8 @@ describe('useTerminal', () => {
   })
 
   it('builds terminal session fingerprints deterministically', () => {
-    expect(buildTerminalSessionFingerprint('docker', 'Sentinel-Sandbox:Latest', 'Bash')).toBe(
-      'docker|sentinel-sandbox:latest|bash',
+    expect(buildTerminalSessionFingerprint('docker', 'Sentinel-Sandbox:Latest', 'Bash', '/workspace')).toBe(
+      'docker|sentinel-sandbox:latest|bash|/workspace',
     )
   })
 })

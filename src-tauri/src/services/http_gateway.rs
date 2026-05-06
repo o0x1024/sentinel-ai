@@ -1677,7 +1677,7 @@ async fn persist_message(
 
 async fn load_tool_config_from_db(state: &GatewayAppState) -> Option<ToolConfig> {
     match state.db.get_config("agent", "tool_config").await {
-        Ok(Some(config_str)) => serde_json::from_str::<ToolConfig>(&config_str).ok(),
+        Ok(Some(config_str)) => ToolConfig::from_json_str(&config_str).ok(),
         _ => None,
     }
 }
@@ -1722,6 +1722,7 @@ async fn run_agent_execution(
     };
     let params = AgentExecuteParams {
         execution_id: session_id.to_string(),
+        cancellation_generation: None,
         model: model_name,
         system_prompt: system_prompt.unwrap_or_default().to_string(),
         task: task.to_string(),
@@ -1731,6 +1732,7 @@ async fn run_agent_execution(
         active_terminal_session_fingerprint: active_terminal_session_fingerprint
             .map(|v| v.to_string()),
         active_terminal_session_id: active_terminal_session_id.map(|v| v.to_string()),
+        working_directory: None,
         rig_provider,
         api_key: provider_config.api_key.clone(),
         api_base: provider_config.api_base.clone(),
@@ -2306,7 +2308,7 @@ async fn bridge_invoke(
                 .or_else(|| req.payload.get("tool_config"))
                 .cloned()
                 .ok_or_else(|| "save_tool_config missing tool_config".to_string())
-                .and_then(|v| serde_json::from_value::<ToolConfig>(v).map_err(|e| e.to_string()));
+                .and_then(|v| ToolConfig::from_json_value(v).map_err(|e| e.to_string()));
             match tool_config {
                 Ok(cfg) => {
                     let raw = serde_json::to_string(&cfg).map_err(|e| e.to_string());
@@ -3346,7 +3348,7 @@ async fn bridge_invoke(
                         .config
                         .as_ref()
                         .and_then(|c| c.get("tool_config"))
-                        .and_then(|x| serde_json::from_value::<ToolConfig>(x.clone()).ok());
+                        .and_then(|x| ToolConfig::from_json_value(x.clone()).ok());
                     let max_iterations = v
                         .config
                         .as_ref()

@@ -64,9 +64,9 @@ pub use plugin_ops::{cancel_plugin_fetch_requests_by_run, sentinel_plugin_ext};
 pub use request_scheduler::{
     cancel_plugin_request, cancel_plugin_requests_by_run, complete_plugin_request,
     enqueue_plugin_request, fail_plugin_request, get_plugin_request_queue_snapshot,
-    mark_plugin_request_running, PluginFetchPolicy, PluginFetchPolicyKind,
-    PluginRequestDispatchGrant, PluginRequestPhase, PluginRequestQueueEntry,
-    PluginRequestQueueSnapshot, PluginRequestScheduleRequest,
+    get_plugin_request_queue_stats, mark_plugin_request_running, PluginFetchPolicy,
+    PluginFetchPolicyKind, PluginRequestDispatchGrant, PluginRequestPhase, PluginRequestQueueEntry,
+    PluginRequestQueueSnapshot, PluginRequestQueueStats, PluginRequestScheduleRequest,
 };
 pub use runtime_config::{
     get_plugin_runtime_settings, set_plugin_runtime_settings, ActiveProbeRuntimeSettings,

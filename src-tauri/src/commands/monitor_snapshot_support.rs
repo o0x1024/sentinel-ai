@@ -176,12 +176,12 @@ pub(crate) async fn persist_api_monitor_inventory_output(
         };
 
         let added_count = object
-            .get("addedEndpoints")
+            .get("addedApiEndpoints")
             .and_then(Value::as_array)
             .map(|value| value.len())
             .unwrap_or(0);
         let removed_count = object
-            .get("removedEndpoints")
+            .get("removedApiEndpoints")
             .and_then(Value::as_array)
             .map(|value| value.len())
             .unwrap_or(0);

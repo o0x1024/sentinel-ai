@@ -2,7 +2,7 @@ import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { AgentTask } from '@/types/agentTask'
 import type { ParallelTaskSource } from '@/composables/useAgentParallelRunState'
 
-export type RightPanelKey = 'tasks' | 'html' | 'terminal' | 'browser-shell' | 'team'
+export type RightPanelKey = 'tasks' | 'html' | 'terminal' | 'browser-shell' | 'team' | 'work-config'
 
 interface TaskSourceOption {
   key: string
@@ -270,6 +270,9 @@ export const useAgentPanels = (params: {
     if (panel === 'browser-shell') {
       return
     }
+    if (panel === 'work-config') {
+      return
+    }
     params.isTeamWorkspaceActive.value = false
   }
 
@@ -279,6 +282,9 @@ export const useAgentPanels = (params: {
     if (activePanel !== 'terminal') params.terminalClose()
     if (activePanel !== 'browser-shell') {
       // browser-shell panel is driven only by activeRightPanel
+    }
+    if (activePanel !== 'work-config') {
+      // work-config panel is driven only by activeRightPanel
     }
     if (activePanel !== 'team') params.isTeamWorkspaceActive.value = false
   }
@@ -291,10 +297,6 @@ export const useAgentPanels = (params: {
         if (activeRightPanel.value === panel) {
           activeRightPanel.value = null
         }
-        return
-      }
-      if (activeRightPanel.value && activeRightPanel.value !== panel) {
-        closeRightPanelByKey(panel)
         return
       }
       activeRightPanel.value = panel

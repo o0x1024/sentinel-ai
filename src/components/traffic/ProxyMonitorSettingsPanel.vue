@@ -22,8 +22,12 @@
               @change="debouncedSave"
             />
             <div>
-              <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.excludeSelfTraffic') }}</span>
-              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.excludeSelfTrafficDesc') }}</p>
+              <span class="label-text font-medium">{{
+                $t('trafficAnalysis.proxyConfiguration.excludeSelfTraffic')
+              }}</span>
+              <p class="text-xs text-base-content/60 mt-1">
+                {{ $t('trafficAnalysis.proxyConfiguration.excludeSelfTrafficDesc') }}
+              </p>
             </div>
           </label>
         </div>
@@ -37,97 +41,39 @@
               @change="saveTrafficAnalysisPluginEnabled"
             />
             <div>
-              <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.enableTrafficAnalysisPlugin') }}</span>
-              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.enableTrafficAnalysisPluginDesc') }}</p>
+              <span class="label-text font-medium">{{
+                $t('trafficAnalysis.proxyConfiguration.enableTrafficAnalysisPlugin')
+              }}</span>
+              <p class="text-xs text-base-content/60 mt-1">
+                {{ $t('trafficAnalysis.proxyConfiguration.enableTrafficAnalysisPluginDesc') }}
+              </p>
             </div>
           </label>
         </div>
 
-        <div class="mt-4 rounded-lg border border-base-300 p-4 space-y-4">
-          <div>
-            <h3 class="font-medium">{{ $t('trafficAnalysis.proxyConfiguration.pluginRuntimeTitle') }}</h3>
-            <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.pluginRuntimeDesc') }}</p>
-          </div>
-
-          <div class="grid gap-4 md:grid-cols-2">
-            <label class="form-control">
-              <span class="label-text text-xs">{{ $t('trafficAnalysis.proxyConfiguration.activeProbeMinHostCooldownMs') }}</span>
-              <input
-                v-model.number="trafficPluginRuntimeSettings.activeProbe.minHostCooldownMs"
-                type="number"
-                min="0"
-                max="60000"
-                class="input input-bordered"
-              />
-            </label>
-
-            <label class="form-control">
-              <span class="label-text text-xs">{{ $t('trafficAnalysis.proxyConfiguration.activeProbeTimeoutMs') }}</span>
-              <input
-                v-model.number="trafficPluginRuntimeSettings.activeProbe.timeoutMs"
-                type="number"
-                min="1000"
-                max="60000"
-                class="input input-bordered"
-              />
-            </label>
-
-            <label class="form-control">
-              <span class="label-text text-xs">{{ $t('trafficAnalysis.proxyConfiguration.activeProbeMaxConcurrentPerHost') }}</span>
-              <input
-                v-model.number="trafficPluginRuntimeSettings.activeProbe.maxConcurrentPerHost"
-                type="number"
-                min="1"
-                max="16"
-                class="input input-bordered"
-              />
-            </label>
-
-            <label class="form-control">
-              <span class="label-text text-xs">{{ $t('trafficAnalysis.proxyConfiguration.activeProbeJitterMinMs') }}</span>
-              <input
-                v-model.number="trafficPluginRuntimeSettings.activeProbe.jitterRange[0]"
-                type="number"
-                min="0"
-                max="30000"
-                class="input input-bordered"
-              />
-            </label>
-
-            <label class="form-control">
-              <span class="label-text text-xs">{{ $t('trafficAnalysis.proxyConfiguration.activeProbeJitterMaxMs') }}</span>
-              <input
-                v-model.number="trafficPluginRuntimeSettings.activeProbe.jitterRange[1]"
-                type="number"
-                min="0"
-                max="30000"
-                class="input input-bordered"
-              />
-            </label>
-          </div>
-
-          <p class="text-xs text-base-content/60">{{ $t('trafficAnalysis.proxyConfiguration.pluginRuntimeActiveProbeHint') }}</p>
-
-          <div class="flex flex-wrap gap-2">
-            <button class="btn btn-xs btn-outline" type="button" :disabled="isSavingTrafficPluginRuntimeSettings" @click="applyTrafficPluginRuntimePreset('local_fast')">
-              {{ $t('trafficAnalysis.proxyConfiguration.activeProbePresetLocalFast') }}
-            </button>
-            <button class="btn btn-xs btn-outline" type="button" :disabled="isSavingTrafficPluginRuntimeSettings" @click="applyTrafficPluginRuntimePreset('balanced')">
-              {{ $t('trafficAnalysis.proxyConfiguration.activeProbePresetBalanced') }}
-            </button>
-            <button class="btn btn-xs btn-outline" type="button" :disabled="isSavingTrafficPluginRuntimeSettings" @click="applyTrafficPluginRuntimePreset('conservative')">
-              {{ $t('trafficAnalysis.proxyConfiguration.activeProbePresetConservative') }}
-            </button>
-          </div>
-
-          <div class="flex flex-wrap gap-2">
-            <button class="btn btn-sm btn-primary" type="button" :disabled="isSavingTrafficPluginRuntimeSettings" @click="saveTrafficPluginRuntimeSettings">
-              <i :class="isSavingTrafficPluginRuntimeSettings ? 'fas fa-spinner fa-spin' : 'fas fa-save'"></i>
-              <span>{{ $t('trafficAnalysis.proxyConfiguration.save') }}</span>
-            </button>
-            <button class="btn btn-sm btn-outline" type="button" :disabled="isSavingTrafficPluginRuntimeSettings" @click="resetTrafficPluginRuntimeSettings">
-              {{ $t('trafficAnalysis.proxyConfiguration.resetToDefaults') }}
-            </button>
+        <div class="mt-4 rounded-lg border border-base-300 bg-base-200/40 p-4">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <h3 class="font-medium">
+                {{ $t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyActiveProbeTitle') }}
+              </h3>
+              <p class="mt-1 text-xs text-base-content/60">
+                {{ $t('trafficAnalysis.proxyConfiguration.pluginRuntimeActiveProbeOnlyDesc') }}
+              </p>
+            </div>
+            <TrafficPluginRuntimeDialogLauncher
+              :policy-ids="['activeProbe']"
+              :default-expanded-policy-ids="['activeProbe']"
+              :collapsible="false"
+              :title="$t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyActiveProbeTitle')"
+              :description="
+                $t('trafficAnalysis.proxyConfiguration.pluginRuntimeActiveProbeOnlyDesc')
+              "
+              :hint="$t('trafficAnalysis.proxyConfiguration.pluginRuntimeActiveProbeOnlyHint')"
+              button-label="打开设置"
+              button-class="btn btn-sm btn-outline"
+              icon-class="fas fa-sliders"
+            />
           </div>
         </div>
 
@@ -140,8 +86,12 @@
 
         <div class="mt-4 rounded-lg border border-base-300 p-4 space-y-3">
           <div>
-            <h3 class="font-medium">{{ $t('trafficAnalysis.proxyConfiguration.behaviorSignalSource') }}</h3>
-            <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.behaviorSignalSourceDesc') }}</p>
+            <h3 class="font-medium">
+              {{ $t('trafficAnalysis.proxyConfiguration.behaviorSignalSource') }}
+            </h3>
+            <p class="text-xs text-base-content/60 mt-1">
+              {{ $t('trafficAnalysis.proxyConfiguration.behaviorSignalSourceDesc') }}
+            </p>
           </div>
 
           <label class="label cursor-pointer justify-start gap-3 py-2 items-start">
@@ -153,8 +103,12 @@
               @change="saveTrafficBehaviorSignalSettings"
             />
             <div>
-              <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceProxyInferred') }}</span>
-              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceProxyInferredDesc') }}</p>
+              <span class="label-text font-medium">{{
+                $t('trafficAnalysis.proxyConfiguration.behaviorSourceProxyInferred')
+              }}</span>
+              <p class="text-xs text-base-content/60 mt-1">
+                {{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceProxyInferredDesc') }}
+              </p>
             </div>
           </label>
 
@@ -168,8 +122,17 @@
             />
             <div class="flex-1">
               <div class="flex items-center gap-2 flex-wrap">
-                <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceBrowserExtension') }}</span>
-                <span class="badge badge-sm" :class="behaviorSignalSettings.browserExtensionConnected ? 'badge-success' : 'badge-ghost'">
+                <span class="label-text font-medium">{{
+                  $t('trafficAnalysis.proxyConfiguration.behaviorSourceBrowserExtension')
+                }}</span>
+                <span
+                  class="badge badge-sm"
+                  :class="
+                    behaviorSignalSettings.browserExtensionConnected
+                      ? 'badge-success'
+                      : 'badge-ghost'
+                  "
+                >
                   {{
                     behaviorSignalSettings.browserExtensionConnected
                       ? $t('trafficAnalysis.proxyConfiguration.browserExtensionConnected')
@@ -177,7 +140,9 @@
                   }}
                 </span>
               </div>
-              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceBrowserExtensionDesc') }}</p>
+              <p class="text-xs text-base-content/60 mt-1">
+                {{ $t('trafficAnalysis.proxyConfiguration.behaviorSourceBrowserExtensionDesc') }}
+              </p>
               <div class="mt-2 text-[11px] text-base-content/50 space-y-1">
                 <div>
                   {{ $t('trafficAnalysis.proxyConfiguration.browserExtensionBridgeUrl') }}:
@@ -186,7 +151,10 @@
                 <div>
                   {{ $t('trafficAnalysis.proxyConfiguration.browserExtensionDirectory') }}:
                   <code class="font-mono break-all">{{ browserExtensionDirectoryPath }}</code>
-                  <span class="badge badge-xs ml-2" :class="browserExtensionBundledWithApp ? 'badge-success' : 'badge-ghost'">
+                  <span
+                    class="badge badge-xs ml-2"
+                    :class="browserExtensionBundledWithApp ? 'badge-success' : 'badge-ghost'"
+                  >
                     {{
                       browserExtensionBundledWithApp
                         ? $t('trafficAnalysis.proxyConfiguration.browserExtensionBundledWithApp')
@@ -200,15 +168,36 @@
                 </div>
               </div>
               <div class="mt-3 flex flex-wrap gap-2">
-                <button class="btn btn-xs btn-outline" type="button" @click.stop="copyBrowserExtensionBridgeUrl">
+                <button
+                  class="btn btn-xs btn-outline"
+                  type="button"
+                  @click.stop="copyBrowserExtensionBridgeUrl"
+                >
                   {{ $t('trafficAnalysis.proxyConfiguration.copyBridgeUrl', '复制 Bridge 地址') }}
                 </button>
-                <button class="btn btn-xs btn-outline" type="button" @click.stop="copyBrowserExtensionDirectory">
-                  {{ $t('trafficAnalysis.proxyConfiguration.copyExtensionDirectory', '复制扩展目录') }}
+                <button
+                  class="btn btn-xs btn-outline"
+                  type="button"
+                  @click.stop="copyBrowserExtensionDirectory"
+                >
+                  {{
+                    $t('trafficAnalysis.proxyConfiguration.copyExtensionDirectory', '复制扩展目录')
+                  }}
                 </button>
-                <button class="btn btn-xs btn-outline" type="button" :disabled="isCopyingBrowserExtension" @click.stop="copyBrowserExtensionToDirectory">
-                  <i :class="isCopyingBrowserExtension ? 'fas fa-spinner fa-spin' : 'fas fa-folder-plus'"></i>
-                  <span>{{ $t('trafficAnalysis.proxyConfiguration.copyExtensionToSpecificDirectory') }}</span>
+                <button
+                  class="btn btn-xs btn-outline"
+                  type="button"
+                  :disabled="isCopyingBrowserExtension"
+                  @click.stop="copyBrowserExtensionToDirectory"
+                >
+                  <i
+                    :class="
+                      isCopyingBrowserExtension ? 'fas fa-spinner fa-spin' : 'fas fa-folder-plus'
+                    "
+                  ></i>
+                  <span>{{
+                    $t('trafficAnalysis.proxyConfiguration.copyExtensionToSpecificDirectory')
+                  }}</span>
                 </button>
               </div>
             </div>
@@ -218,20 +207,32 @@
         <div class="mt-4 rounded-lg border border-base-300 p-4 space-y-4">
           <div>
             <h3 class="font-medium">{{ $t('trafficAnalysis.proxyConfiguration.oastTitle') }}</h3>
-            <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.oastDesc') }}</p>
+            <p class="text-xs text-base-content/60 mt-1">
+              {{ $t('trafficAnalysis.proxyConfiguration.oastDesc') }}
+            </p>
           </div>
 
           <label class="label cursor-pointer justify-start gap-3 py-0">
-            <input v-model="trafficOastConfig.enabled" type="checkbox" class="checkbox checkbox-primary" />
+            <input
+              v-model="trafficOastConfig.enabled"
+              type="checkbox"
+              class="checkbox checkbox-primary"
+            />
             <div>
-              <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.oastEnabled') }}</span>
-              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.oastEnabledDesc') }}</p>
+              <span class="label-text font-medium">{{
+                $t('trafficAnalysis.proxyConfiguration.oastEnabled')
+              }}</span>
+              <p class="text-xs text-base-content/60 mt-1">
+                {{ $t('trafficAnalysis.proxyConfiguration.oastEnabledDesc') }}
+              </p>
             </div>
           </label>
 
           <div class="grid gap-4 md:grid-cols-2">
             <label class="form-control md:col-span-2">
-              <span class="label-text text-xs">{{ $t('trafficAnalysis.proxyConfiguration.oastServerBaseUrl') }}</span>
+              <span class="label-text text-xs">{{
+                $t('trafficAnalysis.proxyConfiguration.oastServerBaseUrl')
+              }}</span>
               <input
                 v-model.trim="trafficOastConfig.serverBaseUrl"
                 type="text"
@@ -241,18 +242,24 @@
             </label>
 
             <label class="form-control md:col-span-2">
-              <span class="label-text text-xs">{{ $t('trafficAnalysis.proxyConfiguration.oastApiKey') }}</span>
+              <span class="label-text text-xs">{{
+                $t('trafficAnalysis.proxyConfiguration.oastApiKey')
+              }}</span>
               <input
                 v-model.trim="trafficOastConfig.apiKey"
                 type="password"
                 class="input input-bordered"
                 :placeholder="$t('trafficAnalysis.proxyConfiguration.oastApiKeyPlaceholder')"
               />
-              <span class="label-text-alt mt-1 text-xs text-base-content/60">{{ $t('trafficAnalysis.proxyConfiguration.oastApiKeyDesc') }}</span>
+              <span class="label-text-alt mt-1 text-xs text-base-content/60">{{
+                $t('trafficAnalysis.proxyConfiguration.oastApiKeyDesc')
+              }}</span>
             </label>
 
             <label class="form-control">
-              <span class="label-text text-xs">{{ $t('trafficAnalysis.proxyConfiguration.oastPollIntervalSecs') }}</span>
+              <span class="label-text text-xs">{{
+                $t('trafficAnalysis.proxyConfiguration.oastPollIntervalSecs')
+              }}</span>
               <input
                 v-model.number="trafficOastConfig.pollIntervalSecs"
                 type="number"
@@ -263,7 +270,9 @@
             </label>
 
             <label class="form-control">
-              <span class="label-text text-xs">{{ $t('trafficAnalysis.proxyConfiguration.oastRequestTimeoutSecs') }}</span>
+              <span class="label-text text-xs">{{
+                $t('trafficAnalysis.proxyConfiguration.oastRequestTimeoutSecs')
+              }}</span>
               <input
                 v-model.number="trafficOastConfig.requestTimeoutSecs"
                 type="number"
@@ -275,13 +284,20 @@
           </div>
 
           <div class="flex flex-wrap gap-2">
-            <button class="btn btn-sm btn-outline" type="button" :disabled="testingTrafficOastConfig" @click="testTrafficOastConfig">
+            <button
+              class="btn btn-sm btn-outline"
+              type="button"
+              :disabled="testingTrafficOastConfig"
+              @click="testTrafficOastConfig"
+            >
               <i :class="testingTrafficOastConfig ? 'fas fa-spinner fa-spin' : 'fas fa-plug'"></i>
               <span>{{ $t('trafficAnalysis.proxyConfiguration.oastTestConnection') }}</span>
             </button>
           </div>
           <div class="space-y-1">
-            <p class="text-xs text-base-content/60">{{ $t('trafficAnalysis.proxyConfiguration.oastAutoSaveHint') }}</p>
+            <p class="text-xs text-base-content/60">
+              {{ $t('trafficAnalysis.proxyConfiguration.oastAutoSaveHint') }}
+            </p>
             <p class="flex items-center gap-2 text-xs" :class="trafficOastAutoSaveStatusClass">
               <i :class="trafficOastAutoSaveStatusIcon"></i>
               <span>{{ trafficOastAutoSaveStatusText }}</span>
@@ -291,7 +307,11 @@
           <div
             v-if="lastTrafficOastTestResult"
             class="rounded-lg border px-3 py-3 text-sm"
-            :class="lastTrafficOastTestResult.reachable ? 'border-success/30 bg-success/10' : 'border-error/30 bg-error/10'"
+            :class="
+              lastTrafficOastTestResult.reachable
+                ? 'border-success/30 bg-success/10'
+                : 'border-error/30 bg-error/10'
+            "
           >
             <div class="font-medium">
               {{
@@ -300,7 +320,9 @@
                   : $t('trafficAnalysis.proxyConfiguration.oastTestFailed')
               }}
             </div>
-            <p class="mt-1 break-all text-xs text-base-content/80">{{ lastTrafficOastTestResult.message }}</p>
+            <p class="mt-1 break-all text-xs text-base-content/80">
+              {{ lastTrafficOastTestResult.message }}
+            </p>
             <p v-if="lastTrafficOastTestResult.generatedToken" class="mt-2 text-xs">
               {{ $t('trafficAnalysis.proxyConfiguration.oastGeneratedToken') }}:
               <code class="font-mono">{{ lastTrafficOastTestResult.generatedToken }}</code>
@@ -320,25 +342,50 @@
           <i class="fas fa-history mr-2"></i>
           {{ $t('trafficAnalysis.proxyConfiguration.proxyHistoryLogging') }}
         </h2>
-        <p class="text-sm text-base-content/70 mb-4">{{ $t('trafficAnalysis.proxyConfiguration.proxyHistoryLoggingDesc') }}</p>
+        <p class="text-sm text-base-content/70 mb-4">
+          {{ $t('trafficAnalysis.proxyConfiguration.proxyHistoryLoggingDesc') }}
+        </p>
 
         <div class="space-y-2">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="historyLogging" type="radio" name="historyLogging" class="radio radio-sm" value="stop" checked />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.stopLoggingOutOfScope') }}</span>
+              <input
+                v-model="historyLogging"
+                type="radio"
+                name="historyLogging"
+                class="radio radio-sm"
+                value="stop"
+                checked
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.stopLoggingOutOfScope')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="historyLogging" type="radio" name="historyLogging" class="radio radio-sm" value="ask" />
+              <input
+                v-model="historyLogging"
+                type="radio"
+                name="historyLogging"
+                class="radio radio-sm"
+                value="ask"
+              />
               <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.askUser') }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="historyLogging" type="radio" name="historyLogging" class="radio radio-sm" value="nothing" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.doNothing') }}</span>
+              <input
+                v-model="historyLogging"
+                type="radio"
+                name="historyLogging"
+                class="radio radio-sm"
+                value="nothing"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.doNothing')
+              }}</span>
             </label>
           </div>
         </div>
@@ -356,13 +403,29 @@
           <i class="fas fa-server mr-2"></i>
           {{ $t('trafficAnalysis.proxyConfiguration.upstreamProxyServers') }}
         </h2>
-        <p class="text-sm text-base-content/70 mb-4">{{ $t('trafficAnalysis.proxyConfiguration.upstreamProxyServersDesc') }}</p>
+        <p class="text-sm text-base-content/70 mb-4">
+          {{ $t('trafficAnalysis.proxyConfiguration.upstreamProxyServersDesc') }}
+        </p>
 
         <div class="proxy-settings-rule-editor flex gap-4">
           <div class="flex flex-col gap-2 shrink-0">
-            <button class="btn btn-sm btn-outline w-24" @click="addUpstreamProxy">{{ $t('trafficAnalysis.proxyConfiguration.add') }}</button>
-            <button class="btn btn-sm btn-outline w-24" :disabled="selectedUpstreamIndex === -1" @click="editUpstreamProxy">{{ $t('trafficAnalysis.proxyConfiguration.edit') }}</button>
-            <button class="btn btn-sm btn-outline w-24" :disabled="selectedUpstreamIndex === -1" @click="removeUpstreamProxy">{{ $t('trafficAnalysis.proxyConfiguration.remove') }}</button>
+            <button class="btn btn-sm btn-outline w-24" @click="addUpstreamProxy">
+              {{ $t('trafficAnalysis.proxyConfiguration.add') }}
+            </button>
+            <button
+              class="btn btn-sm btn-outline w-24"
+              :disabled="selectedUpstreamIndex === -1"
+              @click="editUpstreamProxy"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.edit') }}
+            </button>
+            <button
+              class="btn btn-sm btn-outline w-24"
+              :disabled="selectedUpstreamIndex === -1"
+              @click="removeUpstreamProxy"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.remove') }}
+            </button>
           </div>
 
           <div class="flex-1 overflow-x-auto border border-base-300 rounded">
@@ -402,7 +465,9 @@
                   <td>{{ proxy.username || '-' }}</td>
                 </tr>
                 <tr v-if="upstreamProxies.length === 0">
-                  <td colspan="6" class="text-center text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.noUpstreamProxy') }}</td>
+                  <td colspan="6" class="text-center text-base-content/50">
+                    {{ $t('trafficAnalysis.proxyConfiguration.noUpstreamProxy') }}
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -417,43 +482,70 @@
           <i class="fas fa-edit mr-2"></i>
           {{ $t('trafficAnalysis.proxyConfiguration.responseModificationRules') }}
         </h2>
-        <p class="text-sm text-base-content/70 mb-4">{{ $t('trafficAnalysis.proxyConfiguration.responseModificationRulesDesc') }}</p>
+        <p class="text-sm text-base-content/70 mb-4">
+          {{ $t('trafficAnalysis.proxyConfiguration.responseModificationRulesDesc') }}
+        </p>
 
         <div class="space-y-2">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input v-model="unhideHiddenFields" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.unhideHiddenFields') }}</span>
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.unhideHiddenFields')
+              }}</span>
             </label>
           </div>
           <div class="form-control ml-6">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="prominentlyHighlightUnhidden" type="checkbox" class="checkbox checkbox-sm" disabled />
-              <span class="label-text text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.prominentlyHighlightUnhidden') }}</span>
+              <input
+                v-model="prominentlyHighlightUnhidden"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+                disabled
+              />
+              <span class="label-text text-base-content/50">{{
+                $t('trafficAnalysis.proxyConfiguration.prominentlyHighlightUnhidden')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input v-model="enableDisabledFields" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.enableDisabledFields') }}</span>
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.enableDisabledFields')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="removeInputFieldLengthLimits" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.removeInputFieldLengthLimits') }}</span>
+              <input
+                v-model="removeInputFieldLengthLimits"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.removeInputFieldLengthLimits')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="removeJavaScriptFormValidation" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.removeJavaScriptFormValidation') }}</span>
+              <input
+                v-model="removeJavaScriptFormValidation"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.removeJavaScriptFormValidation')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input v-model="removeAllJavaScript" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.removeAllJavaScript') }}</span>
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.removeAllJavaScript')
+              }}</span>
             </label>
           </div>
         </div>
@@ -466,14 +558,32 @@
           <i class="fas fa-lock mr-2"></i>
           {{ $t('trafficAnalysis.proxyConfiguration.tlsPassThrough') }}
         </h2>
-        <p class="text-sm text-base-content/70 mb-4">{{ $t('trafficAnalysis.proxyConfiguration.tlsPassThroughDesc') }}</p>
+        <p class="text-sm text-base-content/70 mb-4">
+          {{ $t('trafficAnalysis.proxyConfiguration.tlsPassThroughDesc') }}
+        </p>
 
         <div class="proxy-settings-rule-editor flex gap-4">
           <div class="flex flex-col gap-2 shrink-0">
-            <button class="btn btn-sm btn-outline w-24" @click="addTlsPassThroughRule">{{ $t('trafficAnalysis.proxyConfiguration.add') }}</button>
-            <button class="btn btn-sm btn-outline w-24" :disabled="selectedTlsPassThroughIndex === -1" @click="editTlsPassThroughRule">{{ $t('trafficAnalysis.proxyConfiguration.edit') }}</button>
-            <button class="btn btn-sm btn-outline w-24" :disabled="selectedTlsPassThroughIndex === -1" @click="removeTlsPassThroughRule">{{ $t('trafficAnalysis.proxyConfiguration.remove') }}</button>
-            <button class="btn btn-sm btn-outline w-24" @click="pasteUrlToTlsPassThrough">{{ $t('trafficAnalysis.proxyConfiguration.pasteURL') }}</button>
+            <button class="btn btn-sm btn-outline w-24" @click="addTlsPassThroughRule">
+              {{ $t('trafficAnalysis.proxyConfiguration.add') }}
+            </button>
+            <button
+              class="btn btn-sm btn-outline w-24"
+              :disabled="selectedTlsPassThroughIndex === -1"
+              @click="editTlsPassThroughRule"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.edit') }}
+            </button>
+            <button
+              class="btn btn-sm btn-outline w-24"
+              :disabled="selectedTlsPassThroughIndex === -1"
+              @click="removeTlsPassThroughRule"
+            >
+              {{ $t('trafficAnalysis.proxyConfiguration.remove') }}
+            </button>
+            <button class="btn btn-sm btn-outline w-24" @click="pasteUrlToTlsPassThrough">
+              {{ $t('trafficAnalysis.proxyConfiguration.pasteURL') }}
+            </button>
           </div>
 
           <div class="flex-1 overflow-x-auto border border-base-300 rounded">
@@ -495,13 +605,20 @@
                   @dblclick="editTlsPassThroughRuleByIndex(index)"
                 >
                   <td>
-                    <input v-model="rule.enabled" type="checkbox" class="checkbox checkbox-sm" @click.stop />
+                    <input
+                      v-model="rule.enabled"
+                      type="checkbox"
+                      class="checkbox checkbox-sm"
+                      @click.stop
+                    />
                   </td>
                   <td>{{ rule.host }}</td>
                   <td>{{ rule.port }}</td>
                 </tr>
                 <tr v-if="tlsPassThroughRules.length === 0">
-                  <td colspan="3" class="text-center text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.noRules') }}</td>
+                  <td colspan="3" class="text-center text-base-content/50">
+                    {{ $t('trafficAnalysis.proxyConfiguration.noRules') }}
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -511,14 +628,23 @@
         <div class="form-control mt-4">
           <label class="label cursor-pointer justify-start gap-2">
             <input v-model="autoAddTLSOnFailure" type="checkbox" class="checkbox checkbox-sm" />
-            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.autoAddTLSOnFailure') }}</span>
+            <span class="label-text">{{
+              $t('trafficAnalysis.proxyConfiguration.autoAddTLSOnFailure')
+            }}</span>
           </label>
         </div>
 
         <div class="form-control">
           <label class="label cursor-pointer justify-start gap-2">
-            <input v-model="applyToOutOfScope" type="checkbox" class="checkbox checkbox-sm" disabled />
-            <span class="label-text text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.applyToOutOfScope') }}</span>
+            <input
+              v-model="applyToOutOfScope"
+              type="checkbox"
+              class="checkbox checkbox-sm"
+              disabled
+            />
+            <span class="label-text text-base-content/50">{{
+              $t('trafficAnalysis.proxyConfiguration.applyToOutOfScope')
+            }}</span>
           </label>
         </div>
       </div>
@@ -530,79 +656,133 @@
           <i class="fas fa-cogs mr-2"></i>
           {{ $t('trafficAnalysis.proxyConfiguration.miscellaneousSettings') }}
         </h2>
-        <p class="text-sm text-base-content/70 mb-4">{{ $t('trafficAnalysis.proxyConfiguration.miscellaneousSettingsDesc') }}</p>
+        <p class="text-sm text-base-content/70 mb-4">
+          {{ $t('trafficAnalysis.proxyConfiguration.miscellaneousSettingsDesc') }}
+        </p>
 
         <div class="space-y-2">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input v-model="useHTTP1_1ToServer" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.useHTTP1_1ToServer') }}</span>
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.useHTTP1_1ToServer')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input v-model="useHTTP1_1ToClient" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.useHTTP1_1ToClient') }}</span>
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.useHTTP1_1ToClient')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input v-model="setConnectionClose" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.setConnectionClose') }}</span>
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.setConnectionClose')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input v-model="setConnectionHeader" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.setConnectionHeader') }}</span>
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.setConnectionHeader')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input v-model="stripProxyHeaders" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.stripProxyHeaders') }}</span>
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.stripProxyHeaders')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="removeUnsupportedEncodings" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.removeUnsupportedEncodings') }}</span>
+              <input
+                v-model="removeUnsupportedEncodings"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.removeUnsupportedEncodings')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="stripWebSocketExtensions" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.stripWebSocketExtensions') }}</span>
+              <input
+                v-model="stripWebSocketExtensions"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.stripWebSocketExtensions')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="unpackCompressedRequests" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.unpackCompressedRequests') }}</span>
+              <input
+                v-model="unpackCompressedRequests"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.unpackCompressedRequests')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="unpackCompressedResponses" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.unpackCompressedResponses') }}</span>
+              <input
+                v-model="unpackCompressedResponses"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.unpackCompressedResponses')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="suppressBurpErrorMessages" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.suppressBurpErrorMessages') }}</span>
+              <input
+                v-model="suppressBurpErrorMessages"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.suppressBurpErrorMessages')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="dontSendToProxyHistory" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.dontSendToProxyHistory') }}</span>
+              <input
+                v-model="dontSendToProxyHistory"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.dontSendToProxyHistory')
+              }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
-              <input v-model="dontSendToProxyHistoryIfOutOfScope" type="checkbox" class="checkbox checkbox-sm" />
-              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.dontSendToProxyHistoryIfOutOfScope') }}</span>
+              <input
+                v-model="dontSendToProxyHistoryIfOutOfScope"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+              />
+              <span class="label-text">{{
+                $t('trafficAnalysis.proxyConfiguration.dontSendToProxyHistoryIfOutOfScope')
+              }}</span>
             </label>
           </div>
         </div>
@@ -613,76 +793,75 @@
 
 <script setup lang="ts">
 import ProxyScopeRulesPanel from './ProxyScopeRulesPanel.vue'
+import TrafficPluginRuntimeDialogLauncher from './TrafficPluginRuntimeDialogLauncher.vue'
 
-type Action = (...args: any[]) => void | Promise<void>
+type Action = (...args: any[]) => void | Promise<unknown>
 
-const props = withDefaults(defineProps<{
-  showAnalysis?: boolean
-  showAdvanced?: boolean
-  proxyConfig: any
-  debouncedSave: Action
-  trafficAnalysisPluginEnabled: any
-  saveTrafficAnalysisPluginEnabled: Action
-  trafficPluginRuntimeSettings: any
-  isSavingTrafficPluginRuntimeSettings: any
-  applyTrafficPluginRuntimePreset: Action
-  saveTrafficPluginRuntimeSettings: Action
-  resetTrafficPluginRuntimeSettings: Action
-  behaviorSignalSettings: any
-  saveTrafficBehaviorSignalSettings: Action
-  browserExtensionBridgeUrl: any
-  browserExtensionDirectoryPath: any
-  browserExtensionBundledWithApp: any
-  copyBrowserExtensionBridgeUrl: Action
-  copyBrowserExtensionDirectory: Action
-  copyBrowserExtensionToDirectory: Action
-  isCopyingBrowserExtension: any
-  trafficOastConfig: any
-  testingTrafficOastConfig: any
-  testTrafficOastConfig: Action
-  lastTrafficOastTestResult: any
-  trafficOastAutoSaveStatusClass: any
-  trafficOastAutoSaveStatusIcon: any
-  trafficOastAutoSaveStatusText: any
-  historyLogging: any
-  upstreamProxies: any
-  selectedUpstreamIndex: any
-  addUpstreamProxy: Action
-  editUpstreamProxy: Action
-  removeUpstreamProxy: Action
-  editUpstreamProxyByIndex: Action
-  onUpstreamProxyChange: Action
-  unhideHiddenFields: any
-  prominentlyHighlightUnhidden: any
-  enableDisabledFields: any
-  removeInputFieldLengthLimits: any
-  removeJavaScriptFormValidation: any
-  removeAllJavaScript: any
-  tlsPassThroughRules: any
-  selectedTlsPassThroughIndex: any
-  addTlsPassThroughRule: Action
-  editTlsPassThroughRule: Action
-  removeTlsPassThroughRule: Action
-  pasteUrlToTlsPassThrough: Action
-  editTlsPassThroughRuleByIndex: Action
-  autoAddTLSOnFailure: any
-  applyToOutOfScope: any
-  useHTTP1_1ToServer: any
-  useHTTP1_1ToClient: any
-  setConnectionClose: any
-  setConnectionHeader: any
-  stripProxyHeaders: any
-  removeUnsupportedEncodings: any
-  stripWebSocketExtensions: any
-  unpackCompressedRequests: any
-  unpackCompressedResponses: any
-  suppressBurpErrorMessages: any
-  dontSendToProxyHistory: any
-  dontSendToProxyHistoryIfOutOfScope: any
-}>(), {
-  showAnalysis: true,
-  showAdvanced: true,
-})
+const props = withDefaults(
+  defineProps<{
+    showAnalysis?: boolean
+    showAdvanced?: boolean
+    proxyConfig: any
+    debouncedSave: Action
+    trafficAnalysisPluginEnabled: any
+    saveTrafficAnalysisPluginEnabled: Action
+    behaviorSignalSettings: any
+    saveTrafficBehaviorSignalSettings: Action
+    browserExtensionBridgeUrl: any
+    browserExtensionDirectoryPath: any
+    browserExtensionBundledWithApp: any
+    copyBrowserExtensionBridgeUrl: Action
+    copyBrowserExtensionDirectory: Action
+    copyBrowserExtensionToDirectory: Action
+    isCopyingBrowserExtension: any
+    trafficOastConfig: any
+    testingTrafficOastConfig: any
+    testTrafficOastConfig: Action
+    lastTrafficOastTestResult: any
+    trafficOastAutoSaveStatusClass: any
+    trafficOastAutoSaveStatusIcon: any
+    trafficOastAutoSaveStatusText: any
+    historyLogging: any
+    upstreamProxies: any
+    selectedUpstreamIndex: any
+    addUpstreamProxy: Action
+    editUpstreamProxy: Action
+    removeUpstreamProxy: Action
+    editUpstreamProxyByIndex: Action
+    onUpstreamProxyChange: Action
+    unhideHiddenFields: any
+    prominentlyHighlightUnhidden: any
+    enableDisabledFields: any
+    removeInputFieldLengthLimits: any
+    removeJavaScriptFormValidation: any
+    removeAllJavaScript: any
+    tlsPassThroughRules: any
+    selectedTlsPassThroughIndex: any
+    addTlsPassThroughRule: Action
+    editTlsPassThroughRule: Action
+    removeTlsPassThroughRule: Action
+    pasteUrlToTlsPassThrough: Action
+    editTlsPassThroughRuleByIndex: Action
+    autoAddTLSOnFailure: any
+    applyToOutOfScope: any
+    useHTTP1_1ToServer: any
+    useHTTP1_1ToClient: any
+    setConnectionClose: any
+    setConnectionHeader: any
+    stripProxyHeaders: any
+    removeUnsupportedEncodings: any
+    stripWebSocketExtensions: any
+    unpackCompressedRequests: any
+    unpackCompressedResponses: any
+    suppressBurpErrorMessages: any
+    dontSendToProxyHistory: any
+    dontSendToProxyHistoryIfOutOfScope: any
+  }>(),
+  {
+    showAnalysis: true,
+    showAdvanced: true,
+  }
+)
 
 const {
   showAnalysis,
@@ -691,11 +870,6 @@ const {
   debouncedSave,
   trafficAnalysisPluginEnabled,
   saveTrafficAnalysisPluginEnabled,
-  trafficPluginRuntimeSettings,
-  isSavingTrafficPluginRuntimeSettings,
-  applyTrafficPluginRuntimePreset,
-  saveTrafficPluginRuntimeSettings,
-  resetTrafficPluginRuntimeSettings,
   behaviorSignalSettings,
   saveTrafficBehaviorSignalSettings,
   browserExtensionBridgeUrl,

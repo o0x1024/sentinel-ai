@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 use crate::dynamic_tool::{
-    create_executor, DynamicToolDef, ToolExecutionPolicy, ToolExecutor, ToolSource,
+    create_executor, DynamicToolDef, ToolCategory, ToolExecutionPolicy, ToolExecutor, ToolExposure,
+    ToolSource,
 };
 use crate::mcp_transport::{connect_mcp_client, McpTransportConfig};
 use crate::tool_server::ToolServer;
@@ -288,10 +289,10 @@ impl McpToolAdapter {
             source: ToolSource::Mcp {
                 server_name: server_name.clone(),
             },
-            category: "mcp".to_string(),
+            category: ToolCategory::Mcp,
             tags: Vec::new(),
             search_hint: None,
-            exposure: "deferred".to_string(),
+            exposure: ToolExposure::Deferred,
             execution_policy: ToolExecutionPolicy::default(),
             executor: create_mcp_tool_executor(server_name, tool_name),
         }

@@ -44,7 +44,7 @@
             </span>
             <button
               @click="removeReferencedMessage(idx)"
-              class="w-4 h-4 rounded-full bg-error/80 text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs ml-1"
+              class="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-error/80 text-xs text-error-content opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
               title="移除"
             >
               <i class="fas fa-times text-[10px]"></i>
@@ -83,7 +83,7 @@
             </span>
             <button
               @click="removeReferencedFile(idx)"
-              class="w-4 h-4 rounded-full bg-error/80 text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs ml-1"
+              class="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-error/80 text-xs text-error-content opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
               title="移除"
             >
               <i class="fas fa-times text-[10px]"></i>
@@ -129,7 +129,7 @@
             </span>
             <button
               @click="removeReferencedTraffic(idx)"
-              class="w-4 h-4 rounded-full bg-error/80 text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs ml-1"
+              class="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-error/80 text-xs text-error-content opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
               title="移除"
             >
               <i class="fas fa-times text-[10px]"></i>
@@ -171,7 +171,7 @@
             </span>
             <button
               @click="removeReferencedAsset(idx)"
-              class="w-4 h-4 rounded-full bg-error/80 text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs ml-1"
+              class="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-error/80 text-xs text-error-content opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
               title="移除"
             >
               <i class="fas fa-times text-[10px]"></i>
@@ -194,7 +194,7 @@
           />
           <button
             @click="removeAttachment(idx)"
-            class="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-error text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs"
+            class="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-error text-xs text-error-content opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
             title="移除"
           >
             <i class="fas fa-times"></i>
@@ -1209,6 +1209,7 @@ const {
   syncMentionBindings,
   updateMentionState,
 } = useInputMentions({
+  getConversationId: () => props.conversationId ?? null,
   getInputMessage: () => props.inputMessage || '',
   getReferencedAssets: () => props.referencedAssets || [],
   getReferencedFiles: () => props.referencedFiles || [],

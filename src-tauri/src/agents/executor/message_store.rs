@@ -50,6 +50,7 @@ pub fn build_assistant_session_stats_metadata(
 pub async fn save_assistant_message(
     app_handle: &AppHandle,
     conversation_id: &str,
+    generation: Option<u64>,
     content: &str,
     tool_calls: Option<&[ToolCallRecord]>,
     reasoning_content: Option<String>,
@@ -114,6 +115,7 @@ pub async fn save_assistant_message(
                 "agent:assistant_message_saved",
                 &serde_json::json!({
                     "execution_id": conversation_id,
+                    "generation": generation,
                     "message_id": message_id,
                     "content": content,
                     "metadata": metadata,

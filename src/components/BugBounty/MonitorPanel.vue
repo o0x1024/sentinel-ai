@@ -156,320 +156,114 @@
                 {{ availablePlugins.length }} {{ t('bugBounty.monitor.availablePlugins') }}
               </div>
 
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_dns_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-network-wired mr-2"></i>
-                      {{ t('bugBounty.monitor.dnsMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_dns_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('dns')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
+              <MonitorTypeConfigSection
+                v-model:enabled="taskForm.config.enable_dns_monitoring"
+                :title="t('bugBounty.monitor.dnsMonitoring')"
+                icon-class="fas fa-network-wired"
+                monitor-type="dns"
+                :plugins="taskForm.config.dns_plugins"
+                :plugin-options="getPluginsByType('dns')"
+                @add-plugin="addPluginConfig('dns')"
+                @remove-plugin="idx => removePluginConfig('dns', idx)"
+                @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
+              />
 
-                <div v-if="taskForm.config.enable_dns_monitoring && taskForm.config.dns_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
+              <MonitorTypeConfigSection
+                v-model:enabled="taskForm.config.enable_ip_monitoring"
+                :title="t('bugBounty.monitor.ipMonitoring')"
+                icon-class="fas fa-diagram-project"
+                monitor-type="ip"
+                :plugins="taskForm.config.ip_plugins"
+                :plugin-options="getPluginsByType('ip')"
+                intro-text="目标资产应为域名，监控的是域名解析结果中的 IP 变化。"
+                @add-plugin="addPluginConfig('ip')"
+                @remove-plugin="idx => removePluginConfig('ip', idx)"
+                @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
+              />
 
-                <div v-if="taskForm.config.enable_dns_monitoring && taskForm.config.dns_plugins.length > 0" class="space-y-2 ml-6">
-                  <MonitorPluginConfigCard
-                    v-for="(plugin, idx) in taskForm.config.dns_plugins"
-                    :key="`dns-${idx}`"
-                    :plugin="plugin"
-                    monitor-type="dns"
-                    :plugin-options="getPluginsByType('dns')"
-                    :can-remove="true"
-                    @remove="removePluginConfig('dns', idx)"
-                    @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
-                  />
-                </div>
-              </div>
+              <MonitorTypeConfigSection
+                v-model:enabled="taskForm.config.enable_port_monitoring"
+                :title="t('bugBounty.monitor.portMonitoring')"
+                icon-class="fas fa-network-wired"
+                monitor-type="port"
+                :plugins="taskForm.config.port_plugins"
+                :plugin-options="getPluginsByType('port')"
+                @add-plugin="addPluginConfig('port')"
+                @remove-plugin="idx => removePluginConfig('port', idx)"
+                @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
+              />
 
-              <!-- IP Monitoring -->
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_ip_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-diagram-project mr-2"></i>
-                      {{ t('bugBounty.monitor.ipMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_ip_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('ip')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
+              <MonitorTypeConfigSection
+                v-model:enabled="taskForm.config.enable_service_monitoring"
+                :title="t('bugBounty.monitor.serviceMonitoring')"
+                icon-class="fas fa-server"
+                monitor-type="service"
+                :plugins="taskForm.config.service_plugins"
+                :plugin-options="getPluginsByType('service')"
+                @add-plugin="addPluginConfig('service')"
+                @remove-plugin="idx => removePluginConfig('service', idx)"
+                @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
+              />
 
-                <div v-if="taskForm.config.enable_ip_monitoring && taskForm.config.ip_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
+              <MonitorTypeConfigSection
+                v-model:enabled="taskForm.config.enable_cert_monitoring"
+                :title="t('bugBounty.monitor.certMonitoring')"
+                icon-class="fas fa-certificate"
+                monitor-type="cert"
+                :plugins="taskForm.config.cert_plugins"
+                :plugin-options="getPluginsByType('cert')"
+                @add-plugin="addPluginConfig('cert')"
+                @remove-plugin="idx => removePluginConfig('cert', idx)"
+                @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
+              />
 
-                <div v-if="taskForm.config.enable_ip_monitoring && taskForm.config.ip_plugins.length > 0" class="space-y-2 ml-6">
-                  <MonitorPluginConfigCard
-                    v-for="(plugin, idx) in taskForm.config.ip_plugins"
-                    :key="`ip-${idx}`"
-                    :plugin="plugin"
-                    monitor-type="ip"
-                    :plugin-options="getPluginsByType('ip')"
-                    :can-remove="true"
-                    intro-text="目标资产应为域名，监控的是域名解析结果中的 IP 变化。"
-                    @remove="removePluginConfig('ip', idx)"
-                    @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
-                  />
-                </div>
-              </div>
+              <MonitorTypeConfigSection
+                v-model:enabled="taskForm.config.enable_web_monitoring"
+                :title="t('bugBounty.monitor.webMonitoring')"
+                icon-class="fas fa-globe"
+                monitor-type="web"
+                :plugins="taskForm.config.web_plugins"
+                :plugin-options="getPluginsByType('web')"
+                @add-plugin="addPluginConfig('web')"
+                @remove-plugin="idx => removePluginConfig('web', idx)"
+                @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
+              />
 
-              <!-- Port Monitoring -->
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_port_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-network-wired mr-2"></i>
-                      {{ t('bugBounty.monitor.portMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_port_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('port')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
+              <MonitorTypeConfigSection
+                v-model:enabled="taskForm.config.enable_api_monitoring"
+                :title="t('bugBounty.monitor.apiMonitoring')"
+                icon-class="fas fa-plug"
+                monitor-type="api"
+                :plugins="taskForm.config.api_plugins"
+                :plugin-options="getPluginsByType('api')"
+                @add-plugin="addPluginConfig('api')"
+                @remove-plugin="idx => removePluginConfig('api', idx)"
+                @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
+              />
 
-                <div v-if="taskForm.config.enable_port_monitoring && taskForm.config.port_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
+              <MonitorTypeConfigSection
+                v-model:enabled="taskForm.config.enable_content_monitoring"
+                :title="t('bugBounty.monitor.contentMonitoring')"
+                icon-class="fas fa-file-alt"
+                monitor-type="content"
+                :plugins="taskForm.config.content_plugins"
+                :plugin-options="getPluginsByType('content')"
+                @add-plugin="addPluginConfig('content')"
+                @remove-plugin="idx => removePluginConfig('content', idx)"
+                @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
+              />
 
-                <div v-if="taskForm.config.enable_port_monitoring && taskForm.config.port_plugins.length > 0" class="space-y-2 ml-6">
-                  <MonitorPluginConfigCard
-                    v-for="(plugin, idx) in taskForm.config.port_plugins"
-                    :key="`port-${idx}`"
-                    :plugin="plugin"
-                    monitor-type="port"
-                    :plugin-options="getPluginsByType('port')"
-                    :can-remove="true"
-                    @remove="removePluginConfig('port', idx)"
-                    @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
-                  />
-                </div>
-              </div>
-
-              <!-- Service Monitoring -->
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_service_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-server mr-2"></i>
-                      {{ t('bugBounty.monitor.serviceMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_service_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('service')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
-
-                <div v-if="taskForm.config.enable_service_monitoring && taskForm.config.service_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
-
-                <div v-if="taskForm.config.enable_service_monitoring && taskForm.config.service_plugins.length > 0" class="space-y-2 ml-6">
-                  <MonitorPluginConfigCard
-                    v-for="(plugin, idx) in taskForm.config.service_plugins"
-                    :key="`service-${idx}`"
-                    :plugin="plugin"
-                    monitor-type="service"
-                    :plugin-options="getPluginsByType('service')"
-                    :can-remove="true"
-                    @remove="removePluginConfig('service', idx)"
-                    @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
-                  />
-                </div>
-              </div>
-
-              <!-- Certificate Monitoring -->
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_cert_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-certificate mr-2"></i>
-                      {{ t('bugBounty.monitor.certMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_cert_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('cert')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
-
-                <div v-if="taskForm.config.enable_cert_monitoring && taskForm.config.cert_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
-
-                <div v-if="taskForm.config.enable_cert_monitoring && taskForm.config.cert_plugins.length > 0" class="space-y-2 ml-6">
-                  <MonitorPluginConfigCard
-                    v-for="(plugin, idx) in taskForm.config.cert_plugins"
-                    :key="`cert-${idx}`"
-                    :plugin="plugin"
-                    monitor-type="cert"
-                    :plugin-options="getPluginsByType('cert')"
-                    :can-remove="true"
-                    @remove="removePluginConfig('cert', idx)"
-                    @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
-                  />
-                </div>
-              </div>
-
-              <!-- Web Monitoring -->
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_web_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-globe mr-2"></i>
-                      {{ t('bugBounty.monitor.webMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_web_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('web')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
-
-                <div v-if="taskForm.config.enable_web_monitoring && taskForm.config.web_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
-
-                <div v-if="taskForm.config.enable_web_monitoring && taskForm.config.web_plugins.length > 0" class="space-y-2 ml-6">
-                  <MonitorPluginConfigCard
-                    v-for="(plugin, idx) in taskForm.config.web_plugins"
-                    :key="`web-${idx}`"
-                    :plugin="plugin"
-                    monitor-type="web"
-                    :plugin-options="getPluginsByType('web')"
-                    :can-remove="true"
-                    @remove="removePluginConfig('web', idx)"
-                    @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
-                  />
-                </div>
-              </div>
-
-              <!-- API Monitoring -->
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_api_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-plug mr-2"></i>
-                      {{ t('bugBounty.monitor.apiMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_api_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('api')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
-
-                <div v-if="taskForm.config.enable_api_monitoring && taskForm.config.api_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
-
-                <div v-if="taskForm.config.enable_api_monitoring && taskForm.config.api_plugins.length > 0" class="space-y-2 ml-6">
-                  <MonitorPluginConfigCard
-                    v-for="(plugin, idx) in taskForm.config.api_plugins"
-                    :key="`api-${idx}`"
-                    :plugin="plugin"
-                    monitor-type="api"
-                    :plugin-options="getPluginsByType('api')"
-                    :can-remove="true"
-                    @remove="removePluginConfig('api', idx)"
-                    @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
-                  />
-                </div>
-              </div>
-
-              <!-- Content Monitoring -->
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_content_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-file-alt mr-2"></i>
-                      {{ t('bugBounty.monitor.contentMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_content_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('content')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
-
-                <div v-if="taskForm.config.enable_content_monitoring && taskForm.config.content_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
-
-                <div v-if="taskForm.config.enable_content_monitoring && taskForm.config.content_plugins.length > 0" class="space-y-2 ml-6">
-                  <MonitorPluginConfigCard
-                    v-for="(plugin, idx) in taskForm.config.content_plugins"
-                    :key="`content-${idx}`"
-                    :plugin="plugin"
-                    monitor-type="content"
-                    :plugin-options="getPluginsByType('content')"
-                    :can-remove="true"
-                    @remove="removePluginConfig('content', idx)"
-                    @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
-                  />
-                </div>
-              </div>
-
-              <!-- Vulnerability Monitoring -->
-              <div class="card bg-base-200 p-4 mb-3">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="label cursor-pointer gap-2">
-                    <input type="checkbox" v-model="taskForm.config.enable_risk_monitoring" class="checkbox checkbox-primary" />
-                    <span class="label-text font-semibold">
-                      <i class="fas fa-shield-alt mr-2"></i>
-                      {{ t('bugBounty.monitor.vulnMonitoring') }}
-                    </span>
-                  </label>
-                  <button v-if="taskForm.config.enable_risk_monitoring" class="btn btn-xs btn-ghost" @click="addPluginConfig('risk')">
-                    <i class="fas fa-plus mr-1"></i>
-                    {{ t('bugBounty.monitor.addPlugin') }}
-                  </button>
-                </div>
-
-                <div v-if="taskForm.config.enable_risk_monitoring && taskForm.config.risk_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
-                  <i class="fas fa-info-circle mr-1"></i>
-                  {{ t('bugBounty.monitor.noPluginsConfigured') }}
-                </div>
-
-                <div v-if="taskForm.config.enable_risk_monitoring && taskForm.config.risk_plugins.length > 0" class="space-y-2 ml-6">
-                  <MonitorPluginConfigCard
-                    v-for="(plugin, idx) in taskForm.config.risk_plugins"
-                    :key="`risk-${idx}`"
-                    :plugin="plugin"
-                    monitor-type="risk"
-                    :plugin-options="getPluginsByType('risk')"
-                    :can-remove="true"
-                    @remove="removePluginConfig('risk', idx)"
-                    @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
-                  />
-                </div>
-              </div>
+              <MonitorTypeConfigSection
+                v-model:enabled="taskForm.config.enable_risk_monitoring"
+                :title="t('bugBounty.monitor.vulnMonitoring')"
+                icon-class="fas fa-shield-alt"
+                monitor-type="risk"
+                :plugins="taskForm.config.risk_plugins"
+                :plugin-options="getPluginsByType('risk')"
+                @add-plugin="addPluginConfig('risk')"
+                @remove-plugin="idx => removePluginConfig('risk', idx)"
+                @refresh-plugins="refreshAvailablePluginsOnDropdownOpen"
+              />
               <div class="divider">{{ t('bugBounty.monitor.autoTrigger') }}</div>
 
               <div class="form-control">
@@ -625,9 +419,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useToast } from '../../composables/useToast'
 import { useMonitorTaskProgress } from '../../composables/useMonitorTaskProgress'
-import MonitorPluginConfigCard from './MonitorPluginConfigCard.vue'
 import MonitorRunHistoryDrawer from './MonitorRunHistoryDrawer.vue'
 import MonitorTaskCard from './MonitorTaskCard.vue'
+import MonitorTypeConfigSection from './MonitorTypeConfigSection.vue'
 import {
   createEmptyPluginConfig,
   mapPluginTree,

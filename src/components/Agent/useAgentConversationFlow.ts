@@ -24,7 +24,7 @@ import {
 import type { AiConversationDetail, AiConversationSummary } from './conversationTypes'
 import type { AgentExecutionFinishedEvent, PersistedAgentExecutionState } from './executionState'
 import { normalizeTeamHumanInputContent, shouldSuppressTeamMirrorNoiseMessage } from './agentTeamMessageSupport'
-import type { AssistantModelOption } from './agentDraftTypes'
+import type { AssistantConversationBinding, AssistantModelOption } from './agentDraftTypes'
 import { buildVisionModelUnsupportedError } from './agentVisionErrorSupport'
 import { prepareSubmission } from './agentSubmissionSupport'
 import { runTeamV4AssignmentsWithDependencies } from './teamV4AssignmentScheduler'
@@ -104,7 +104,7 @@ const buildTeamV4ModelOnlyToolConfig = () => ({
   enabled: false,
   selection_strategy: { Manual: [] as string[] },
   max_tools: 1,
-  fixed_tools: [] as string[],
+  preselected_tools: [] as string[],
   disabled_tools: [] as string[],
   allowed_tools: [] as string[],
 })
@@ -113,17 +113,17 @@ const buildTeamV4SpecialistProfileToolConfig = (
   profile: AssistantProfileOption,
   baseline: UiToolConfigPayload,
 ): UiToolConfigPayload => {
-  const fixedTools = normalizeToolIdList(profile.defaultFixedTools)
+  const preselectedTools = normalizeToolIdList(profile.defaultPreselectedTools)
   const manualTools = normalizeToolIdList(profile.defaultManualTools)
   return {
     ...baseline,
     enabled: profile.defaultToolsEnabled === true,
     selection_strategy: profile.defaultToolSelectionStrategy || baseline.selection_strategy,
     max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || Number(baseline.max_tools) || 1)),
-    fixed_tools: fixedTools,
+    preselected_tools: preselectedTools,
     disabled_tools: normalizeToolIdList(profile.defaultDisabledTools),
     manual_tools: manualTools,
-    allowed_tools: normalizeToolIdList([...fixedTools, ...manualTools]),
+    allowed_tools: normalizeToolIdList([...preselectedTools, ...manualTools]),
   }
 }
 
@@ -489,6 +489,8 @@ export const useAgentConversationFlow = (params: {
   assistantParallelJudgeModel: Ref<string>
   assistantParallelSelectedModels: Ref<string[]>
   assistantSelectedModel: Ref<string>
+  buildCurrentConversationBinding: () => AssistantConversationBinding
+  effectiveWorkingDirectory: Ref<string>
   buildToolConfig: () => UiToolConfigPayload
   clearAgentMessages: () => void
   clearDraftArtifacts: () => void
@@ -502,7 +504,7 @@ export const useAgentConversationFlow = (params: {
   emitSubmit: (task: string) => void
   ensureConversationForTeamSession: () => Promise<any>
   executionIdProp?: string | null
-  forceTasks: boolean
+  forceTaskCompletionContract: boolean
   getFailedToClearConversationLabel: () => string
   getFailedToStopExecutionLabel: () => string
   getNewConversationTitle: () => string
@@ -593,8 +595,9 @@ export const useAgentConversationFlow = (params: {
         enableRag: false,
         enableTenthManRule: false,
         firstMessage: input.prompt,
-        forceTasks: false,
+        forceTaskCompletionContract: false,
         fullTask: input.prompt,
+        workingDirectory: params.effectiveWorkingDirectory.value,
         maybeAutoRenameConversation: (renameParams) => {
           void maybeAutoRenameConversationByFirstMessage(renameParams)
         },
@@ -1101,6 +1104,7 @@ export const useAgentConversationFlow = (params: {
 
     try {
       await createConversationSession({
+        conversationBinding: params.buildCurrentConversationBinding(),
         createConversation: async (request) =>
           invoke<string>('create_ai_conversation', { request }),
         getConversationTitle: params.getNewConversationTitle,
@@ -1179,6 +1183,7 @@ export const useAgentConversationFlow = (params: {
           params.emitSubmit(fullTask)
           const ensuredConversationId = await ensureConversationForExecutionSupport({
             conversationId: params.conversationId.value,
+            conversationBinding: params.buildCurrentConversationBinding(),
             createConversation: async (request) =>
               invoke<string>('create_ai_conversation', { request }),
             getConversationTitle: params.getNewConversationTitle,
@@ -1338,7 +1343,7 @@ export const useAgentConversationFlow = (params: {
                     profileId: specialistProfileId,
                     selectionStrategy: specialistRuntimeToolConfig.selection_strategy,
                     maxTools: specialistRuntimeToolConfig.max_tools,
-                    fixedTools: specialistRuntimeToolConfig.fixed_tools,
+                    preselectedTools: specialistRuntimeToolConfig.preselected_tools,
                     disabledTools: specialistRuntimeToolConfig.disabled_tools,
                     allowedTools: specialistRuntimeToolConfig.allowed_tools,
                   },
@@ -1450,8 +1455,9 @@ export const useAgentConversationFlow = (params: {
                     enableRag: params.ragEnabled.value,
                     enableTenthManRule: params.tenthManEnabled.value,
                     firstMessage: task,
-                    forceTasks: params.forceTasks,
+                    forceTaskCompletionContract: params.forceTaskCompletionContract,
                     fullTask: specialistTaskPrompt,
+                    workingDirectory: params.effectiveWorkingDirectory.value,
                     maybeAutoRenameConversation: (renameParams) => {
                       void maybeAutoRenameConversationByFirstMessage(renameParams)
                     },
@@ -1867,6 +1873,7 @@ export const useAgentConversationFlow = (params: {
       try {
         const ensuredConversationId = await ensureConversationForExecutionSupport({
           conversationId: params.conversationId.value,
+          conversationBinding: params.buildCurrentConversationBinding(),
           createConversation: async (request) =>
             invoke<string>('create_ai_conversation', { request }),
           getConversationTitle: params.getNewConversationTitle,
@@ -1894,8 +1901,9 @@ export const useAgentConversationFlow = (params: {
           enableRag: params.ragEnabled.value,
           enableTenthManRule: params.tenthManEnabled.value,
           firstMessage: task,
-          forceTasks: params.forceTasks,
+          forceTaskCompletionContract: params.forceTaskCompletionContract,
           fullTask,
+          workingDirectory: params.effectiveWorkingDirectory.value,
           maybeAutoRenameConversation: (renameParams) => {
             void maybeAutoRenameConversationByFirstMessage(renameParams)
           },

@@ -2,7 +2,9 @@
   <div class="container mx-auto p-6">
     <div class="mb-6">
       <h1 class="text-3xl font-bold">{{ $t('plugins.title', '插件管理') }}</h1>
-      <p class="text-base-content/70 mt-2">{{ $t('plugins.description', '管理和配置安全测试插件') }}</p>
+      <p class="text-base-content/70 mt-2">
+        {{ $t('plugins.description', '管理和配置安全测试插件') }}
+      </p>
     </div>
 
     <div v-if="isFreeTier" class="alert alert-warning mb-6">
@@ -31,12 +33,18 @@
         <i class="fas fa-sync-alt mr-2"></i>
         {{ $t('common.refresh', '刷新列表') }}
       </button>
+      <TrafficPluginRuntimeDialogLauncher />
     </div>
 
     <!-- Plugin Manager Tabs -->
-    <div class="tabs tabs-boxed  flex-wrap gap-2">
-      <button v-for="cat in pluginManagementTabs" :key="cat.value" class="tab"
-        :class="{ 'tab-active': selectedCategory === cat.value }" @click="selectedCategory = cat.value">
+    <div class="tabs tabs-boxed flex-wrap gap-2">
+      <button
+        v-for="cat in pluginManagementTabs"
+        :key="cat.value"
+        class="tab"
+        :class="{ 'tab-active': selectedCategory === cat.value }"
+        @click="selectedCategory = cat.value"
+      >
         <i :class="cat.icon" class="mr-2"></i>
         {{ cat.label }}
         <span v-if="allPluginCount > 0" class="ml-2 badge badge-sm">
@@ -59,7 +67,11 @@
       </button>
 
       <!-- Plugin Store Tab -->
-      <button class="tab" :class="{ 'tab-active': selectedCategory === 'store' }" @click="selectedCategory = 'store'">
+      <button
+        class="tab"
+        :class="{ 'tab-active': selectedCategory === 'store' }"
+        @click="selectedCategory = 'store'"
+      >
         <i class="fas fa-store mr-2"></i>
         {{ $t('plugins.store.title', '插件商店') }}
       </button>
@@ -96,7 +108,7 @@
           :is-plugin-selected="isPluginSelected"
           :get-review-status-text="getReviewStatusText"
           @change-status-filter="changeReviewStatusFilter"
-          @update:search-text="reviewSearchText = $event; refreshReviewPlugins()"
+          @update:search-text="handleReviewSearchTextUpdate"
           @approve-selected="approveSelected"
           @reject-selected="rejectSelected"
           @toggle-select-all="toggleSelectAll"
@@ -256,6 +268,7 @@ import PluginReviewSection from '@/components/PluginManagement/PluginReviewSecti
 import PluginStoreSection from '@/components/PluginManagement/PluginStoreSection.vue'
 import PluginDialogs from '@/components/PluginManagement/PluginDialogs.vue'
 import PluginDefaultConfigDialog from '@/components/PluginManagement/PluginDefaultConfigDialog.vue'
+import TrafficPluginRuntimeDialogLauncher from '@/components/traffic/TrafficPluginRuntimeDialogLauncher.vue'
 import {
   buildAiValidationReport,
   combineAiValidationResults,
@@ -267,31 +280,42 @@ import {
   validateAiGeneratedPluginCode,
 } from '@/components/PluginManagement/aiGeneratedPluginGate'
 import { usePluginEditorStore } from '@/stores/pluginEditor'
-import {
-  getFeatureEntitlements,
-  useFeatureEntitlementsState,
-} from '@/services/featureEntitlements'
+import { getFeatureEntitlements, useFeatureEntitlementsState } from '@/services/featureEntitlements'
 import {
   buildResolvedPluginDefaultConfig,
   savePluginDefaultConfig,
 } from '@/services/pluginDefaultConfig'
 import type {
-  PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult,
-  CommandResponse, BatchToggleResult, NewPluginMetadata, AdvancedForm
+  PluginRecord,
+  ReviewPlugin,
+  TestResult,
+  AdvancedTestResult,
+  CommandResponse,
+  BatchToggleResult,
+  NewPluginMetadata,
+  AdvancedForm,
 } from '@/components/PluginManagement/types'
-import { trafficCategories, agentsCategories, bountyCategories, mainCategories, intruderCategories } from '@/components/PluginManagement/types'
+import {
+  trafficCategories,
+  agentsCategories,
+  bountyCategories,
+  mainCategories,
+  intruderCategories,
+} from '@/components/PluginManagement/types'
 
 const { t } = useI18n()
 const pluginEditorStore = usePluginEditorStore()
 const entitlements = useFeatureEntitlementsState()
 
 defineOptions({
-  name: 'Plugin'
-});
+  name: 'Plugin',
+})
 
 // Component refs
 const pluginDialogsRef = ref<InstanceType<typeof PluginDialogs>>()
-const pluginStoreSectionRef = ref<{ refreshStore: (forceRefresh?: boolean) => Promise<void> } | null>(null)
+const pluginStoreSectionRef = ref<{
+  refreshStore: (forceRefresh?: boolean) => Promise<void>
+} | null>(null)
 
 // Component State
 const selectedCategory = ref('all')
@@ -337,11 +361,9 @@ const canInstallPlugins = computed(() => entitlements.value.can_install_plugins)
 const canReviewPlugins = computed(() => entitlements.value.can_review_plugins)
 const allowedPluginIds = computed(() => new Set(entitlements.value.allowed_plugin_ids))
 const freeTierPluginSummary = computed(() => entitlements.value.allowed_plugin_ids.join(', '))
-const pluginRestrictionMessage = computed(() => (
-  isFreeTier.value
-    ? `免费版仅允许使用固定插件：${freeTierPluginSummary.value}`
-    : ''
-))
+const pluginRestrictionMessage = computed(() =>
+  isFreeTier.value ? `免费版仅允许使用固定插件：${freeTierPluginSummary.value}` : ''
+)
 
 // Upload State
 const selectedFile = ref<File | null>(null)
@@ -370,9 +392,13 @@ const advancedTesting = ref(false)
 const advancedError = ref('')
 const advancedResult = ref<AdvancedTestResult | null>(null)
 const advancedForm = ref<AdvancedForm>({
-  url: 'https://example.com/test', method: 'GET',
-  headersText: '{"User-Agent":"Sentinel-AdvTest/1.0"}', bodyText: '',
-  agent_inputs_text: '{}', runs: 1, concurrency: 1
+  url: 'https://example.com/test',
+  method: 'GET',
+  headersText: '{"User-Agent":"Sentinel-AdvTest/1.0"}',
+  bodyText: '',
+  agent_inputs_text: '{}',
+  runs: 1,
+  concurrency: 1,
 })
 const advancedInputSchema = ref<any>({ type: 'object', properties: {} })
 const defaultConfigDialogOpen = ref(false)
@@ -392,21 +418,26 @@ const getDefaultAiPluginCategory = (pluginType: string): string => {
   return 'custom'
 }
 
-watch(aiPluginType, (nextType) => {
-  const validCategories = nextType === 'traffic'
-    ? trafficCategories
-    : nextType === 'agent'
-      ? agentsCategories
-      : nextType === 'bounty'
-        ? bountyCategories
-      : nextType === 'intruder'
-        ? intruderCategories
-        : []
+watch(
+  aiPluginType,
+  nextType => {
+    const validCategories =
+      nextType === 'traffic'
+        ? trafficCategories
+        : nextType === 'agent'
+          ? agentsCategories
+          : nextType === 'bounty'
+            ? bountyCategories
+            : nextType === 'intruder'
+              ? intruderCategories
+              : []
 
-  if (!validCategories.includes(aiPluginCategory.value)) {
-    aiPluginCategory.value = getDefaultAiPluginCategory(nextType)
-  }
-}, { immediate: true })
+    if (!validCategories.includes(aiPluginCategory.value)) {
+      aiPluginCategory.value = getDefaultAiPluginCategory(nextType)
+    }
+  },
+  { immediate: true }
+)
 
 // Computed Properties
 const pluginManagementTabs = computed(() => [
@@ -415,7 +446,12 @@ const pluginManagementTabs = computed(() => [
 
 const resolvePluginMainCategory = (plugin: PluginRecord): string => {
   const mainCategory = (plugin.metadata.main_category || '').trim()
-  if (mainCategory === 'traffic' || mainCategory === 'agent' || mainCategory === 'bounty' || mainCategory === 'intruder') {
+  if (
+    mainCategory === 'traffic' ||
+    mainCategory === 'agent' ||
+    mainCategory === 'bounty' ||
+    mainCategory === 'intruder'
+  ) {
     return mainCategory
   }
 
@@ -452,11 +488,10 @@ const isPluginVisibleForCurrentTier = (plugin: PluginRecord): boolean => {
 const allPluginCount = computed(() => plugins.value.filter(isPluginVisibleForCurrentTier).length)
 
 const availableMainCategories = computed(() => {
-  return mainCategories
-    .map(category => ({
-      ...category,
-      label: getMainCategoryLabel(category.value),
-    }))
+  return mainCategories.map(category => ({
+    ...category,
+    label: getMainCategoryLabel(category.value),
+  }))
 })
 
 const matchesMainCategory = (plugin: PluginRecord, mainCategory: string): boolean => {
@@ -477,10 +512,11 @@ const baseFilteredPlugins = computed(() => {
 
   if (pluginSearchText.value.trim()) {
     const query = pluginSearchText.value.toLowerCase()
-    filtered = filtered.filter(p =>
-      p.metadata.name.toLowerCase().includes(query) ||
-      p.metadata.id.toLowerCase().includes(query) ||
-      p.metadata.description?.toLowerCase().includes(query)
+    filtered = filtered.filter(
+      p =>
+        p.metadata.name.toLowerCase().includes(query) ||
+        p.metadata.id.toLowerCase().includes(query) ||
+        p.metadata.description?.toLowerCase().includes(query)
     )
   }
 
@@ -500,7 +536,9 @@ const filteredPlugins = computed(() => {
   return filtered
 })
 
-const pluginTotalPages = computed(() => Math.max(1, Math.ceil(filteredPlugins.value.length / pluginPageSize.value)))
+const pluginTotalPages = computed(() =>
+  Math.max(1, Math.ceil(filteredPlugins.value.length / pluginPageSize.value))
+)
 
 const paginatedPlugins = computed(() => {
   const start = (pluginCurrentPage.value - 1) * pluginPageSize.value
@@ -514,10 +552,11 @@ const pluginPaginationInfo = computed(() => {
   return { start, end, total }
 })
 const pluginBatchProcessing = computed(() => batchToggling.value || pluginBatchDeleting.value)
-const isAllCurrentPageSelected = computed(() => (
-  paginatedPlugins.value.length > 0
-  && paginatedPlugins.value.every(plugin => selectedPluginIds.value.includes(plugin.metadata.id))
-))
+const isAllCurrentPageSelected = computed(
+  () =>
+    paginatedPlugins.value.length > 0 &&
+    paginatedPlugins.value.every(plugin => selectedPluginIds.value.includes(plugin.metadata.id))
+)
 
 const reviewStats = computed(() => reviewStatsData.value)
 const paginatedReviewPlugins = computed(() => reviewPlugins.value)
@@ -530,8 +569,10 @@ const reviewPaginationInfo = computed(() => {
 })
 
 const isAllSelected = computed(() => {
-  return paginatedReviewPlugins.value.length > 0 &&
+  return (
+    paginatedReviewPlugins.value.length > 0 &&
     paginatedReviewPlugins.value.every(p => isPluginSelected(p))
+  )
 })
 
 const sortedRuns = computed(() => {
@@ -539,20 +580,22 @@ const sortedRuns = computed(() => {
   return [...advancedResult.value.runs].sort((a, b) => a.run_index - b.run_index)
 })
 
-const isAdvancedAgent = computed(() => ['agent', 'bounty', 'intruder'].includes(advancedPlugin.value?.metadata?.main_category || ''))
+const isAdvancedAgent = computed(() =>
+  ['agent', 'bounty', 'intruder'].includes(advancedPlugin.value?.metadata?.main_category || '')
+)
 
 // Installed plugin IDs for store section
-const installedPluginIds = computed(() => (
-  plugins.value
-    .filter(isPluginVisibleForCurrentTier)
-    .map(p => p.metadata.id)
-))
+const installedPluginIds = computed(() =>
+  plugins.value.filter(isPluginVisibleForCurrentTier).map(p => p.metadata.id)
+)
 
 // Installed plugins with version info for store section
-const installedPlugins = computed(() => plugins.value.filter(isPluginVisibleForCurrentTier).map(p => ({
-  id: p.metadata.id,
-  version: p.metadata.version
-})))
+const installedPlugins = computed(() =>
+  plugins.value.filter(isPluginVisibleForCurrentTier).map(p => ({
+    id: p.metadata.id,
+    version: p.metadata.version,
+  }))
+)
 
 // Helper Functions
 const isPluginFavorited = (plugin: PluginRecord): boolean => plugin.is_favorited || false
@@ -571,12 +614,17 @@ const isBountyPluginType = (plugin: PluginRecord): boolean => {
 }
 
 const getStatusText = (status: string): string => {
-  const map: Record<string, string> = { 'Enabled': t('plugins.enabled', '已启用'), 'Disabled': t('plugins.disabled', '已禁用'), 'Error': t('plugins.error', '错误') }
+  const map: Record<string, string> = {
+    Enabled: t('plugins.enabled', '已启用'),
+    Disabled: t('plugins.disabled', '已禁用'),
+    Error: t('plugins.error', '错误'),
+  }
   return map[status] || status
 }
 
 const getMainCategoryLabel = (mainCategory: string): string => {
-  if (mainCategory === 'traffic') return t('plugins.categories.trafficAnalysis', 'Traffic Analysis Plugins')
+  if (mainCategory === 'traffic')
+    return t('plugins.categories.trafficAnalysis', 'Traffic Analysis Plugins')
   if (mainCategory === 'agent') return t('plugins.categories.agents', 'Agent Tool Plugins')
   if (mainCategory === 'bounty') return t('plugins.categories.bounty', 'Bug Bounty Plugins')
   if (mainCategory === 'intruder') return t('plugins.categories.intruder', 'Intruder Plugins')
@@ -621,16 +669,22 @@ const getCategoryIcon = (category: string): string => {
   const mainCategory = mainCategories.find(c => c.value === category)
   if (mainCategory) return mainCategory.icon
   const icons: Record<string, string> = {
-    'scanner': 'fas fa-radar', 'analyzer': 'fas fa-microscope', 'reporter': 'fas fa-file-alt',
-    'sqli': 'fas fa-database', 'xss': 'fas fa-code', 'csrf': 'fas fa-shield-alt'
+    scanner: 'fas fa-radar',
+    analyzer: 'fas fa-microscope',
+    reporter: 'fas fa-file-alt',
+    sqli: 'fas fa-database',
+    xss: 'fas fa-code',
+    csrf: 'fas fa-shield-alt',
   }
   return icons[category] || 'fas fa-wrench'
 }
 
 const getReviewStatusText = (status: string): string => {
   const map: Record<string, string> = {
-    'PendingReview': t('plugins.pendingReview', '待审核'), 'Approved': t('plugins.approved', '已批准'),
-    'Rejected': t('plugins.rejected', '已拒绝'), 'ValidationFailed': t('plugins.validationFailed', '验证失败')
+    PendingReview: t('plugins.pendingReview', '待审核'),
+    Approved: t('plugins.approved', '已批准'),
+    Rejected: t('plugins.rejected', '已拒绝'),
+    ValidationFailed: t('plugins.validationFailed', '验证失败'),
   }
   return map[status] || status
 }
@@ -639,8 +693,18 @@ const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warnin
   const toast = document.createElement('div')
   toast.className = 'toast toast-top toast-end z-50'
   toast.style.top = '5rem'
-  const alertClass = { success: 'alert-success', error: 'alert-error', info: 'alert-info', warning: 'alert-warning' }[type]
-  const icon = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' }[type]
+  const alertClass = {
+    success: 'alert-success',
+    error: 'alert-error',
+    info: 'alert-info',
+    warning: 'alert-warning',
+  }[type]
+  const icon = {
+    success: 'fa-check-circle',
+    error: 'fa-times-circle',
+    info: 'fa-info-circle',
+    warning: 'fa-exclamation-triangle',
+  }[type]
   toast.innerHTML = `<div class="alert ${alertClass} shadow-lg"><i class="fas ${icon}"></i><span>${message}</span></div>`
   document.body.appendChild(toast)
   setTimeout(() => toast.remove(), 3000)
@@ -688,11 +752,15 @@ const togglePlugin = async (plugin: PluginRecord) => {
 
 const togglePluginFavorite = async (plugin: PluginRecord) => {
   try {
-    const response: any = await invoke('toggle_plugin_favorite', { pluginId: plugin.metadata.id, userId: null })
+    const response: any = await invoke('toggle_plugin_favorite', {
+      pluginId: plugin.metadata.id,
+      userId: null,
+    })
     if (response.success) {
-      const isFavorited = typeof response.data?.is_favorited === 'boolean'
-        ? response.data.is_favorited
-        : !isPluginFavorited(plugin)
+      const isFavorited =
+        typeof response.data?.is_favorited === 'boolean'
+          ? response.data.is_favorited
+          : !isPluginFavorited(plugin)
       updatePluginFavoriteState(plugin.metadata.id, isFavorited)
       showToast(
         isFavorited
@@ -730,7 +798,9 @@ const batchEnableCurrent = async () => {
   if (ids.length === 0) return
   batchToggling.value = true
   try {
-    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_enable_plugins', { pluginIds: ids })
+    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_enable_plugins', {
+      pluginIds: ids,
+    })
     if (resp.success) {
       await refreshPlugins()
       showToast(`已启用 ${resp.data?.enabled_count}/${ids.length}`, 'success')
@@ -747,7 +817,9 @@ const batchDisableCurrent = async () => {
   if (ids.length === 0) return
   batchToggling.value = true
   try {
-    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_disable_plugins', { pluginIds: ids })
+    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_disable_plugins', {
+      pluginIds: ids,
+    })
     if (resp.success) {
       await refreshPlugins()
       showToast(`已禁用 ${resp.data?.disabled_count}/${ids.length}`, 'success')
@@ -800,7 +872,9 @@ const batchEnableSelected = async () => {
 
   batchToggling.value = true
   try {
-    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_enable_plugins', { pluginIds: ids })
+    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_enable_plugins', {
+      pluginIds: ids,
+    })
     if (!resp.success) {
       showToast(resp.error || t('plugins.operationFailed', '操作失败'), 'error')
       return
@@ -810,7 +884,9 @@ const batchEnableSelected = async () => {
     const failedIds = resp.data?.failed_ids || []
     syncSelectedPluginIds(failedIds)
     showToast(
-      t('plugins.batchEnableSelectedSuccess', { count: `${resp.data?.enabled_count ?? 0}/${ids.length}` }),
+      t('plugins.batchEnableSelectedSuccess', {
+        count: `${resp.data?.enabled_count ?? 0}/${ids.length}`,
+      }),
       failedIds.length > 0 ? 'warning' : 'success'
     )
   } catch (error: any) {
@@ -826,7 +902,9 @@ const batchDisableSelected = async () => {
 
   batchToggling.value = true
   try {
-    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_disable_plugins', { pluginIds: ids })
+    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_disable_plugins', {
+      pluginIds: ids,
+    })
     if (!resp.success) {
       showToast(resp.error || t('plugins.operationFailed', '操作失败'), 'error')
       return
@@ -836,7 +914,9 @@ const batchDisableSelected = async () => {
     const failedIds = resp.data?.failed_ids || []
     syncSelectedPluginIds(failedIds)
     showToast(
-      t('plugins.batchDisableSelectedSuccess', { count: `${resp.data?.disabled_count ?? 0}/${ids.length}` }),
+      t('plugins.batchDisableSelectedSuccess', {
+        count: `${resp.data?.disabled_count ?? 0}/${ids.length}`,
+      }),
       failedIds.length > 0 ? 'warning' : 'success'
     )
   } catch (error: any) {
@@ -956,6 +1036,12 @@ const changeReviewStatusFilter = (status: string) => {
   refreshReviewPlugins()
 }
 
+const handleReviewSearchTextUpdate = (value: string) => {
+  reviewSearchText.value = value
+  reviewCurrentPage.value = 1
+  void refreshReviewPlugins()
+}
+
 const refreshReviewStats = async () => {
   try {
     const response: any = await invoke('get_plugin_review_statistics')
@@ -965,7 +1051,7 @@ const refreshReviewStats = async () => {
         pending: response.data.pending || 0,
         approved: response.data.approved || 0,
         rejected: response.data.rejected || 0,
-        failed: response.data.failed || 0
+        failed: response.data.failed || 0,
       }
     }
   } catch (error) {
@@ -980,7 +1066,7 @@ const refreshReviewPlugins = async () => {
       pageSize: reviewPageSize.value,
       statusFilter: reviewStatusFilter.value === 'all' ? null : reviewStatusFilter.value,
       searchText: reviewSearchText.value || null,
-      userId: null
+      userId: null,
     })
     if (response.success && response.data) {
       reviewPlugins.value = Array.isArray(response.data.data) ? response.data.data : []
@@ -1047,9 +1133,9 @@ const initReviewCodeEditor = () => {
       reviewCodeEditorReadOnly.of(EditorView.editable.of(reviewEditMode.value)),
       EditorView.updateListener.of((update: ViewUpdate) => {
         if (update.docChanged) editedReviewCode.value = update.state.doc.toString()
-      })
+      }),
     ],
-    parent: container
+    parent: container,
   })
 }
 
@@ -1083,7 +1169,10 @@ const approvePlugin = async (plugin: ReviewPlugin) => {
 const rejectPlugin = async (plugin: ReviewPlugin) => {
   if (!plugin) return
   try {
-    const response: any = await invoke('reject_plugin', { pluginId: plugin.plugin_id, reason: 'Manual rejection' })
+    const response: any = await invoke('reject_plugin', {
+      pluginId: plugin.plugin_id,
+      reason: 'Manual rejection',
+    })
     if (response.success) {
       plugin.status = 'Rejected'
       await refreshReviewPlugins()
@@ -1118,7 +1207,10 @@ const rejectSelected = async () => {
   if (selectedReviewPlugins.value.length === 0) return
   try {
     const pluginIds = selectedReviewPlugins.value.map(p => p.plugin_id)
-    const response: any = await invoke('batch_reject_plugins', { pluginIds, reason: 'Batch rejection' })
+    const response: any = await invoke('batch_reject_plugins', {
+      pluginIds,
+      reason: 'Batch rejection',
+    })
     if (response.success) {
       await refreshReviewPlugins()
       await refreshPlugins()
@@ -1143,7 +1235,7 @@ const saveReviewEdit = async () => {
   try {
     const response: any = await invoke('review_update_plugin_code', {
       pluginId: selectedReviewPlugin.value.plugin_id,
-      pluginCode: editedReviewCode.value
+      pluginCode: editedReviewCode.value,
     })
     if (response.success) {
       selectedReviewPlugin.value.code = editedReviewCode.value
@@ -1193,7 +1285,7 @@ const uploadPlugin = async () => {
     const content = await selectedFile.value.text()
     const response = await invoke<CommandResponse<string>>('upload_plugin', {
       filename: selectedFile.value.name,
-      content
+      content,
     })
     if (response.success) {
       pluginDialogsRef.value?.closeUploadDialog()
@@ -1231,7 +1323,9 @@ const deletePlugin = async () => {
   if (!deletingPlugin.value) return
   deleting.value = true
   try {
-    const response = await invoke<CommandResponse<void>>('delete_plugin', { pluginId: deletingPlugin.value.metadata.id })
+    const response = await invoke<CommandResponse<void>>('delete_plugin', {
+      pluginId: deletingPlugin.value.metadata.id,
+    })
     if (response.success) {
       pluginDialogsRef.value?.closeDeleteDialog()
       await refreshPlugins()
@@ -1267,7 +1361,7 @@ const closeAIGenerateDialog = () => {
 
 const validateGeneratedPluginCode = async (
   code: string,
-  metadata: NewPluginMetadata,
+  metadata: NewPluginMetadata
 ): Promise<PluginCodeValidationResult> => {
   try {
     const result = await invoke<PluginCodeValidationResult>('validate_plugin_code', { code })
@@ -1286,7 +1380,7 @@ const validateGeneratedPluginCode = async (
 
 const validateGeneratedPluginRuntimeSchema = async (
   code: string,
-  metadata: NewPluginMetadata,
+  metadata: NewPluginMetadata
 ): Promise<PluginRuntimeSchemaValidationResult> => {
   if (metadata.mainCategory === 'traffic') {
     return { success: true, schema: null, warnings: [] }
@@ -1321,21 +1415,22 @@ const generatePluginWithAI = async () => {
   aiGenerateError.value = ''
 
   const streamId = `plugin_gen_${Date.now()}`
-  
+
   try {
     const systemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
       pluginType: aiPluginType.value,
       vulnType: aiPluginCategory.value,
-      severity: aiSeverity.value
+      severity: aiSeverity.value,
     })
 
-    const pluginTypeDescription = aiPluginType.value === 'traffic'
-      ? 'traffic analysis'
-      : aiPluginType.value === 'intruder'
-        ? 'intruder'
-        : aiPluginType.value === 'bounty'
-          ? 'bug bounty'
-        : 'agent tool'
+    const pluginTypeDescription =
+      aiPluginType.value === 'traffic'
+        ? 'traffic analysis'
+        : aiPluginType.value === 'intruder'
+          ? 'intruder'
+          : aiPluginType.value === 'bounty'
+            ? 'bug bounty'
+            : 'agent tool'
     const userPrompt = `please generate ${pluginTypeDescription} plugin code for the "${aiPluginCategory.value}" category based on the following requirements:\n\n${aiPrompt.value}`
 
     let generatedCode = ''
@@ -1369,24 +1464,32 @@ const generatePluginWithAI = async () => {
           message: userPrompt,
           system_prompt: systemPrompt,
           service_name: 'default_llm_provider',
-        }
+        },
       })
 
       const maxWaitTime = 120000
       const startTime = Date.now()
-      while (!streamCompleted && (Date.now() - startTime < maxWaitTime)) {
+      while (!streamCompleted && Date.now() - startTime < maxWaitTime) {
         await new Promise(resolve => setTimeout(resolve, 100))
       }
 
       if (streamError) throw new Error(streamError)
       if (!generatedCode.trim()) throw new Error('AI did not return any code')
 
-      generatedCode = generatedCode.trim()
-        .replace(/```typescript\n?/g, '').replace(/```ts\n?/g, '')
-        .replace(/```javascript\n?/g, '').replace(/```js\n?/g, '')
-        .replace(/```\n?/g, '').trim()
+      generatedCode = generatedCode
+        .trim()
+        .replace(/```typescript\n?/g, '')
+        .replace(/```ts\n?/g, '')
+        .replace(/```javascript\n?/g, '')
+        .replace(/```js\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim()
 
-      const pluginId = aiPrompt.value.toLowerCase().replace(/[^a-z0-9]+/g, '_').substring(0, 50) || 'ai_generated_plugin'
+      const pluginId =
+        aiPrompt.value
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .substring(0, 50) || 'ai_generated_plugin'
 
       const metadata: NewPluginMetadata = {
         id: pluginId,
@@ -1398,26 +1501,29 @@ const generatePluginWithAI = async () => {
         monitorType: '',
         default_severity: aiSeverity.value,
         description: aiPrompt.value,
-        tagsString: `ai-generated, ${aiPluginType.value}, ${aiPluginCategory.value}`
+        tagsString: `ai-generated, ${aiPluginType.value}, ${aiPluginCategory.value}`,
       }
 
       if (metadata.mainCategory === 'agent' || metadata.mainCategory === 'bounty') {
-        const renderResponse = await invoke<CommandResponse<string>>('render_agent_plugin_definition_command', {
-          request: {
-            definition: generatedCode,
-            metadata: {
-              id: metadata.id,
-              name: metadata.name,
-              version: metadata.version,
-              author: metadata.author,
-              mainCategory: metadata.mainCategory,
-              category: metadata.category,
-              defaultSeverity: metadata.default_severity,
-              description: metadata.description,
-              tagsString: metadata.tagsString,
+        const renderResponse = await invoke<CommandResponse<string>>(
+          'render_agent_plugin_definition_command',
+          {
+            request: {
+              definition: generatedCode,
+              metadata: {
+                id: metadata.id,
+                name: metadata.name,
+                version: metadata.version,
+                author: metadata.author,
+                mainCategory: metadata.mainCategory,
+                category: metadata.category,
+                defaultSeverity: metadata.default_severity,
+                description: metadata.description,
+                tagsString: metadata.tagsString,
+              },
             },
-          },
-        })
+          }
+        )
 
         if (!renderResponse.success || !renderResponse.data) {
           throw new Error(renderResponse.error || 'Failed to render agent plugin definition')
@@ -1428,9 +1534,19 @@ const generatePluginWithAI = async () => {
       const gateResult = validateAiGeneratedPluginCode(generatedCode, metadata)
       const staticValidation = await validateGeneratedPluginCode(generatedCode, metadata)
       const staticValidationIssues = normalizePluginValidationIssues(staticValidation, metadata)
-      const runtimeSchemaValidation = await validateGeneratedPluginRuntimeSchema(generatedCode, metadata)
-      const runtimeSchemaResult = normalizeRuntimeSchemaValidationResult(runtimeSchemaValidation, metadata)
-      const combinedValidation = combineAiValidationResults(gateResult, staticValidationIssues, runtimeSchemaResult)
+      const runtimeSchemaValidation = await validateGeneratedPluginRuntimeSchema(
+        generatedCode,
+        metadata
+      )
+      const runtimeSchemaResult = normalizeRuntimeSchemaValidationResult(
+        runtimeSchemaValidation,
+        metadata
+      )
+      const combinedValidation = combineAiValidationResults(
+        gateResult,
+        staticValidationIssues,
+        runtimeSchemaResult
+      )
       const validationReport = buildAiValidationReport([
         {
           key: 'structure',
@@ -1458,7 +1574,10 @@ const generatePluginWithAI = async () => {
       pluginEditorStore.codeError = ''
 
       if (combinedValidation.errors.length > 0) {
-        showToast(`AI 生成完成，但发现 ${combinedValidation.errors.length} 个问题，已在校验面板中标出`, 'warning')
+        showToast(
+          `AI 生成完成，但发现 ${combinedValidation.errors.length} 个问题，已在校验面板中标出`,
+          'warning'
+        )
       } else if (combinedValidation.warnings.length > 0) {
         showToast(`AI 生成完成，发现 ${combinedValidation.warnings.length} 个提示`, 'warning')
       } else {
@@ -1491,7 +1610,9 @@ const viewPluginCode = async (plugin: PluginRecord) => {
     return
   }
   try {
-    const response = await invoke<CommandResponse<string>>('get_plugin_code', { pluginId: plugin.metadata.id })
+    const response = await invoke<CommandResponse<string>>('get_plugin_code', {
+      pluginId: plugin.metadata.id,
+    })
     if (response.success) {
       pluginEditorStore.openEditor(plugin, response.data || '')
     } else {
@@ -1529,7 +1650,9 @@ const testPlugin = async (plugin: PluginRecord) => {
 }
 
 const testTrafficPlugin = async (plugin: PluginRecord) => {
-  const resp = await invoke<CommandResponse<TestResult>>('test_plugin', { pluginId: plugin.metadata.id })
+  const resp = await invoke<CommandResponse<TestResult>>('test_plugin', {
+    pluginId: plugin.metadata.id,
+  })
   if (resp.success && resp.data) {
     testResult.value = resp.data
     pluginDialogsRef.value?.showTestResultDialog()
@@ -1541,28 +1664,31 @@ const testTrafficPlugin = async (plugin: PluginRecord) => {
 }
 
 const testAgentPlugin = async (plugin: PluginRecord) => {
-  const result = await invoke<CommandResponse<any>>('test_agent_plugin', { 
+  const result = await invoke<CommandResponse<any>>('test_agent_plugin', {
     pluginId: plugin.metadata.id,
-    inputs: {}
+    inputs: {},
   })
-  
+
   if (result.success && result.data) {
     const data = result.data
     testResult.value = {
       success: data.success,
-      message: data.message || (data.success ? `插件执行完成 (${data.execution_time_ms}ms)` : '测试失败'),
-      findings: [{ 
-        title: 'Agent工具执行结果', 
-        description: JSON.stringify(data.output ?? { error: data.error }, null, 2), 
-        severity: data.success ? 'info' : 'error' 
-      }],
-      error: data.error
+      message:
+        data.message || (data.success ? `插件执行完成 (${data.execution_time_ms}ms)` : '测试失败'),
+      findings: [
+        {
+          title: 'Agent工具执行结果',
+          description: JSON.stringify(data.output ?? { error: data.error }, null, 2),
+          severity: data.success ? 'info' : 'error',
+        },
+      ],
+      error: data.error,
     }
   } else {
     testResult.value = {
       success: false,
       message: result.error || '测试失败',
-      error: result.error
+      error: result.error,
     }
   }
   pluginDialogsRef.value?.showTestResultDialog()
@@ -1585,9 +1711,8 @@ const openDefaultConfigDialog = async (plugin: PluginRecord) => {
     const schemaResp = await invoke<CommandResponse<any>>('get_plugin_input_schema', {
       pluginId: plugin.metadata.id,
     })
-    const schema = schemaResp.success && schemaResp.data
-      ? schemaResp.data
-      : { type: 'object', properties: {} }
+    const schema =
+      schemaResp.success && schemaResp.data ? schemaResp.data : { type: 'object', properties: {} }
 
     defaultConfigSchema.value = schema
     const resolvedConfig = await buildResolvedPluginDefaultConfig(plugin.metadata.id, schema)
@@ -1641,16 +1766,19 @@ const openAdvancedDialog = async (plugin: PluginRecord) => {
   advancedError.value = ''
   advancedResult.value = null
   advancedInputSchema.value = { type: 'object', properties: {} }
-  
+
   const isAgent = ['agent', 'bounty', 'intruder'].includes(plugin.metadata.main_category)
   if (isAgent) {
     try {
       const schemaResp = await invoke<CommandResponse<any>>('get_plugin_input_schema', {
-        pluginId: plugin.metadata.id
+        pluginId: plugin.metadata.id,
       })
       if (schemaResp.success && schemaResp.data) {
         advancedInputSchema.value = schemaResp.data
-        const resolvedConfig = await buildResolvedPluginDefaultConfig(plugin.metadata.id, schemaResp.data)
+        const resolvedConfig = await buildResolvedPluginDefaultConfig(
+          plugin.metadata.id,
+          schemaResp.data
+        )
         advancedForm.value.agent_inputs_text = JSON.stringify(resolvedConfig, null, 2)
       } else {
         advancedForm.value.agent_inputs_text = '{}'
@@ -1660,7 +1788,7 @@ const openAdvancedDialog = async (plugin: PluginRecord) => {
       advancedForm.value.agent_inputs_text = '{}'
     }
   }
-  
+
   pluginDialogsRef.value?.showAdvancedDialog()
 }
 
@@ -1678,8 +1806,10 @@ const runAdvancedTest = async () => {
   advancedResult.value = null
 
   try {
-    const isAgent = ['agent', 'bounty', 'intruder'].includes(advancedPlugin.value.metadata.main_category)
-    
+    const isAgent = ['agent', 'bounty', 'intruder'].includes(
+      advancedPlugin.value.metadata.main_category
+    )
+
     if (isAgent) {
       let inputs: Record<string, any> = {}
       try {
@@ -1700,7 +1830,7 @@ const runAdvancedTest = async () => {
         try {
           const resp = await invoke<CommandResponse<any>>('test_agent_plugin', {
             pluginId: advancedPlugin.value.metadata.id,
-            inputs
+            inputs,
           })
           const result = resp.data
           runs.push({
@@ -1708,18 +1838,18 @@ const runAdvancedTest = async () => {
             duration_ms: Date.now() - runStart,
             findings: result?.output?.findings?.length || 0,
             error: result?.error || null,
-            output: result
+            output: result,
           })
           allOutputs.push(result)
           totalFindings += result?.output?.findings?.length || 0
         } catch (e: any) {
           const errorOutput = { error: e?.message || 'Error', success: false }
-          runs.push({ 
-            run_index: i + 1, 
-            duration_ms: Date.now() - runStart, 
-            findings: 0, 
+          runs.push({
+            run_index: i + 1,
+            duration_ms: Date.now() - runStart,
+            findings: 0,
             error: e?.message || 'Error',
-            output: errorOutput
+            output: errorOutput,
           })
           allOutputs.push(errorOutput)
         }
@@ -1736,7 +1866,7 @@ const runAdvancedTest = async () => {
         unique_findings: totalFindings,
         findings: [],
         runs,
-        outputs: allOutputs
+        outputs: allOutputs,
       }
       advancedTesting.value = false
     } else {
@@ -1756,7 +1886,7 @@ const runAdvancedTest = async () => {
         url: advancedForm.value.url,
         method: advancedForm.value.method,
         headers,
-        body: advancedForm.value.bodyText || null
+        body: advancedForm.value.bodyText || null,
       })
 
       if (response.success && response.data) {
@@ -1770,7 +1900,7 @@ const runAdvancedTest = async () => {
     advancedError.value = error instanceof Error ? error.message : '高级测试失败'
     advancedTesting.value = false
   }
-} 
+}
 
 // Event listeners
 const setupEventListeners = async () => {
@@ -1778,13 +1908,15 @@ const setupEventListeners = async () => {
 }
 
 // Watchers
-watch(reviewEditMode, (newValue) => {
+watch(reviewEditMode, newValue => {
   if (reviewCodeEditorView) {
-    reviewCodeEditorView.dispatch({ effects: reviewCodeEditorReadOnly.reconfigure(EditorView.editable.of(newValue)) })
+    reviewCodeEditorView.dispatch({
+      effects: reviewCodeEditorReadOnly.reconfigure(EditorView.editable.of(newValue)),
+    })
   }
 })
 
-watch(selectedCategory, async (newValue) => {
+watch(selectedCategory, async newValue => {
   pluginCurrentPage.value = 1
   selectedPluginIds.value = []
   selectedMainCategory.value = ''
@@ -1794,11 +1926,15 @@ watch(selectedCategory, async (newValue) => {
   }
 })
 
-watch(canReviewPlugins, (allowed) => {
-  if (!allowed && selectedCategory.value === 'review') {
-    selectedCategory.value = 'all'
-  }
-}, { immediate: true })
+watch(
+  canReviewPlugins,
+  allowed => {
+    if (!allowed && selectedCategory.value === 'review') {
+      selectedCategory.value = 'all'
+    }
+  },
+  { immediate: true }
+)
 
 watch(filteredPlugins, () => {
   syncSelectedPluginIds()
@@ -1816,7 +1952,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (pluginChangedUnlisten) pluginChangedUnlisten()
-  if (reviewCodeEditorView) { reviewCodeEditorView.destroy(); reviewCodeEditorView = null }
+  if (reviewCodeEditorView) {
+    reviewCodeEditorView.destroy()
+    reviewCodeEditorView = null
+  }
 })
 </script>
 

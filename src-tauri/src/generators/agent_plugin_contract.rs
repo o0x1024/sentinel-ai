@@ -53,7 +53,7 @@ pub struct AgentPluginRenderContext {
     pub name: String,
     pub version: String,
     pub author: String,
-    pub category: String,
+    pub plugin_business_category: String,
     pub default_severity: String,
     pub tags: Vec<String>,
     pub description: String,
@@ -121,7 +121,10 @@ pub fn render_agent_plugin_definition(
     rendered.push_str(&format!(" * @name {}\n", context.name));
     rendered.push_str(&format!(" * @version {}\n", context.version));
     rendered.push_str(&format!(" * @author {}\n", context.author));
-    rendered.push_str(&format!(" * @category {}\n", context.category));
+    rendered.push_str(&format!(
+        " * @category {}\n",
+        context.plugin_business_category
+    ));
     rendered.push_str(&format!(
         " * @default_severity {}\n",
         context.default_severity
@@ -217,7 +220,9 @@ pub fn validate_schema_object(schema: &Value, schema_key: &str) -> Vec<String> {
     }
 
     let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
-        errors.push(format!("schemas.{schema_key} must define object properties"));
+        errors.push(format!(
+            "schemas.{schema_key} must define object properties"
+        ));
         return errors;
     };
 
@@ -384,7 +389,7 @@ mod tests {
             name: "Test Tool".to_string(),
             version: "1.0.0".to_string(),
             author: "Sentinel AI".to_string(),
-            category: "recon".to_string(),
+            plugin_business_category: "recon".to_string(),
             default_severity: "medium".to_string(),
             tags: vec!["test".to_string()],
             description: "Test tool".to_string(),

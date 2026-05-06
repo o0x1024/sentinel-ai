@@ -12,11 +12,13 @@ import type { AgentExecutionFinishedEvent, PersistedAgentExecutionState } from '
 
 interface AgentStartEvent {
   execution_id: string
+  generation?: number | null
   task: string
 }
 
 interface AgentAssistantMessageSavedEvent {
   execution_id: string
+  generation?: number | null
   message_id: string
   content: string
   metadata?: Record<string, unknown> | null

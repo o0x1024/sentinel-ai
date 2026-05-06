@@ -6,6 +6,8 @@ use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::dynamic_tool::ToolExposure;
+
 type ToolSearchExecutorFuture =
     Pin<Box<dyn Future<Output = Result<ToolSearchOutput, ToolSearchError>> + Send>>;
 type ToolSearchExecutorFn = Arc<dyn Fn(ToolSearchArgs) -> ToolSearchExecutorFuture + Send + Sync>;
@@ -54,7 +56,7 @@ pub struct ToolSearchMatch {
     #[serde(default)]
     pub search_hint: Option<String>,
     #[serde(default)]
-    pub exposure: Option<String>,
+    pub exposure: Option<ToolExposure>,
     #[serde(default)]
     pub already_active: bool,
 }

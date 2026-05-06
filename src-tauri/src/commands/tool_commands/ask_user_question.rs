@@ -124,7 +124,7 @@ impl AskUserQuestionHandler for AskUserQuestionHandlerImpl {
 }
 
 fn normalize_timeout_secs(value: Option<u64>) -> u64 {
-    value.unwrap_or(20).clamp(5, 1800)
+    value.unwrap_or(120).clamp(5, 1800)
 }
 
 fn build_default_answers(
@@ -228,4 +228,20 @@ pub async fn reject_ask_user_question(id: String) -> Result<(), String> {
     };
     tx.send(AskUserQuestionResponse::Rejected)
         .map_err(|_| format!("failed to reject ask_user_question request {}", id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_timeout_secs;
+
+    #[test]
+    fn ask_user_question_defaults_to_two_minutes() {
+        assert_eq!(normalize_timeout_secs(None), 120);
+    }
+
+    #[test]
+    fn ask_user_question_timeout_still_respects_bounds() {
+        assert_eq!(normalize_timeout_secs(Some(1)), 5);
+        assert_eq!(normalize_timeout_secs(Some(9_999)), 1800);
+    }
 }

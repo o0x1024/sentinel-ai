@@ -20,9 +20,11 @@
         :status="call.success === false ? 'failed' : 'completed'"
       />
       <!-- Tool call header -->
-      <div
+      <button
+        type="button"
         v-else
-        class="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-base-200/80 transition-colors"
+        class="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-base-200/80 transition-colors"
+        :aria-expanded="expandedItems.has(index) ? 'true' : 'false'"
         @click="toggleExpand(index)"
       >
         <div class="flex items-center gap-2">
@@ -45,7 +47,7 @@
             :class="expandedItems.has(index) ? 'fa-chevron-up' : 'fa-chevron-down'"
           ></i>
         </div>
-      </div>
+      </button>
 
       <!-- Expanded content -->
       <Transition name="expand">
@@ -78,6 +80,7 @@ import { computed, ref } from 'vue'
 import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
 import ShellToolResult from './ShellToolResult.vue'
 import ToolRuntimeMeta from './ToolRuntimeMeta.vue'
+import { shouldRenderSpecializedShellTool } from './toolRenderSupport'
 
 interface ToolCall {
   id?: string
@@ -114,8 +117,11 @@ const toggleExpand = (index: number) => {
 }
 
 const isShellCall = (call: ToolCall) => {
-  const name = call.name?.toLowerCase?.()
-  return name === 'shell' || name === 'bash' || name === 'cmd' || name === 'powershell'
+  return shouldRenderSpecializedShellTool({
+    toolName: call.name,
+    result: call.result,
+    error: call.success === false ? call.result : undefined,
+  })
 }
 
 const isAskUserQuestionCall = (call: ToolCall) => {

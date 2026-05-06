@@ -780,7 +780,7 @@ fn team_v3_default_tool_config() -> ToolConfig {
         enabled: true,
         selection_strategy: ToolSelectionStrategy::Keyword,
         max_tools: 5,
-        fixed_tools: vec!["interactive_shell".to_string()],
+        preselected_tools: vec![],
         disabled_tools: Vec::new(),
         allowed_tools: Vec::new(),
     }
@@ -798,7 +798,7 @@ async fn load_team_v3_tool_config(app_handle: &AppHandle) -> ToolConfig {
     };
 
     match db.get_config("agent", "tool_config").await {
-        Ok(Some(config_str)) => match serde_json::from_str::<ToolConfig>(&config_str) {
+        Ok(Some(config_str)) => match ToolConfig::from_json_str(&config_str) {
             Ok(config) => {
                 tracing::info!(
                     "Team V3 tool config loaded from DB (strategy={:?}, enabled={}, max_tools={})",

@@ -210,16 +210,16 @@
                 <div class="join shrink-0">
                    <button 
                      class="join-item btn btn-xs" 
-                     :class="!isFixed(tool.id) && !isDisabled(tool.id) ? 'btn-active shadow-inner' : 'btn-ghost'"
+                     :class="!isPreselected(tool.id) && !isDisabled(tool.id) ? 'btn-active shadow-inner' : 'btn-ghost'"
                      @click="setToolStatus(tool.id, 'auto')"
                      :title="t('agent.autoSelect')"
                    >{{ t('agent.autoSelect') }}</button>
                    <button 
                      class="join-item btn btn-xs"
-                     :class="isFixed(tool.id) ? 'btn-primary' : 'btn-ghost'"
-                     @click="setToolStatus(tool.id, 'fixed')"
-                     :title="t('agent.alwaysEnabled')"
-                   >{{ t('agent.alwaysEnabled') }}</button>
+                     :class="isPreselected(tool.id) ? 'btn-primary' : 'btn-ghost'"
+                     @click="setToolStatus(tool.id, 'preselected')"
+                     :title="t('agent.preselected')"
+                   >{{ t('agent.preselected') }}</button>
                    <button 
                      class="join-item btn btn-xs"
                      :class="isDisabled(tool.id) ? 'btn-error' : 'btn-ghost'"
@@ -237,27 +237,30 @@
           </div>
         </div>
 
-        <!-- Fixed Tools -->
+        <!-- Preselected Tools -->
         <div class="form-control min-w-0">
           <label class="label">
-            <span class="label-text font-medium">{{ t('agent.alwaysEnabledTools') }}</span>
+            <span class="label-text font-medium">{{ t('agent.preselectedTools') }}</span>
           </label>
+          <p class="mb-2 text-xs text-base-content/60">
+            这里只定义当前 Profile 明确预选的工具，不再表示系统会无条件强制注入。
+          </p>
           <div class="flex flex-wrap gap-2">
             <div 
-              v-for="tool in localConfig.fixed_tools" 
+              v-for="tool in localConfig.preselected_tools" 
               :key="tool"
               class="badge badge-primary gap-2"
             >
               {{ tool }}
               <button 
-                @click="removeFixedTool(tool)"
+                @click="removePreselectedTool(tool)"
                 class="btn btn-xs btn-ghost btn-circle"
               >
                 <i class="fas fa-times text-xs"></i>
               </button>
             </div>
             <button 
-              v-if="localConfig.fixed_tools.length === 0"
+              v-if="localConfig.preselected_tools.length === 0"
               class="badge badge-ghost"
             >
               {{ t('agent.none') }}
@@ -388,14 +391,13 @@ interface ToolMetadata {
   category: string
   tags: string[]
   cost_estimate: string
-  always_available: boolean
 }
 
 interface ToolConfig {
   enabled: boolean
   selection_strategy: string
   max_tools: number
-  fixed_tools: string[]
+  preselected_tools: string[]
   disabled_tools: string[]
   manual_tools?: string[]
 }
@@ -406,7 +408,6 @@ interface ToolStatistics {
   workflow_tools: number
   mcp_tools: number
   plugin_tools: number
-  always_available: number
   by_category: Record<string, number>
   by_cost: Record<string, number>
 }
@@ -561,6 +562,7 @@ const getCategoryDisplayName = (category: string) => {
     'scanning': '扫描',
     'exploitation': '利用',
     'monitoring': '监控',
+    'traffic': '流量',
     'other': '其他',
   }
   return nameMap[category.toLowerCase()] || category
@@ -582,6 +584,7 @@ const getCategoryBadgeClass = (category: string) => {
     'scanning': 'btn-accent',
     'exploitation': 'btn-error',
     'monitoring': 'btn-secondary',
+    'traffic': 'btn-info',
     'other': 'btn-ghost',
   }
   return map[category.toLowerCase()] || 'btn-ghost'
@@ -603,6 +606,7 @@ const getCategoryIcon = (category: string) => {
     'scanning': 'fas fa-radar',
     'exploitation': 'fas fa-bug',
     'monitoring': 'fas fa-satellite-dish',
+    'traffic': 'fas fa-exchange-alt',
     'other': 'fas fa-tools',
   }
   return map[category.toLowerCase()] || 'fas fa-tools'
@@ -684,19 +688,19 @@ const formatTimestamp = (timestamp: number) => {
   return date.toLocaleDateString()
 }
 
-const isFixed = (id: string) => localConfig.value.fixed_tools?.includes(id)
+const isPreselected = (id: string) => localConfig.value.preselected_tools?.includes(id)
 const isDisabled = (id: string) => localConfig.value.disabled_tools?.includes(id)
 
-const setToolStatus = (id: string, status: 'auto' | 'fixed' | 'disabled') => {
-  if (!localConfig.value.fixed_tools) localConfig.value.fixed_tools = []
+const setToolStatus = (id: string, status: 'auto' | 'preselected' | 'disabled') => {
+  if (!localConfig.value.preselected_tools) localConfig.value.preselected_tools = []
   if (!localConfig.value.disabled_tools) localConfig.value.disabled_tools = []
   
   // Remove from both
-  localConfig.value.fixed_tools = localConfig.value.fixed_tools.filter(t => t !== id)
+  localConfig.value.preselected_tools = localConfig.value.preselected_tools.filter(t => t !== id)
   localConfig.value.disabled_tools = localConfig.value.disabled_tools.filter(t => t !== id)
   
-  if (status === 'fixed') {
-    localConfig.value.fixed_tools.push(id)
+  if (status === 'preselected') {
+    localConfig.value.preselected_tools.push(id)
   } else if (status === 'disabled') {
     localConfig.value.disabled_tools.push(id)
   }
@@ -704,10 +708,10 @@ const setToolStatus = (id: string, status: 'auto' | 'fixed' | 'disabled') => {
   emitUpdate()
 }
 
-const removeFixedTool = (tool: string) => {
-  const index = localConfig.value.fixed_tools.indexOf(tool)
+const removePreselectedTool = (tool: string) => {
+  const index = localConfig.value.preselected_tools.indexOf(tool)
   if (index > -1) {
-    localConfig.value.fixed_tools.splice(index, 1)
+    localConfig.value.preselected_tools.splice(index, 1)
     emitUpdate()
   }
 }
@@ -717,7 +721,7 @@ const resetToDefault = () => {
     enabled: true,
     selection_strategy: 'Keyword',
     max_tools: 5,
-    fixed_tools: ['interactive_shell', 'ask_user_question'],
+    preselected_tools: [],
     disabled_tools: [],
     manual_tools: [],
   }
