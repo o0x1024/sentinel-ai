@@ -190,6 +190,8 @@ mod tests {
                 session_id: None,
                 created_at: now,
                 updated_at: now,
+                viewed_at: None,
+                viewed_by: None,
             },
             evidence: vec![sentinel_traffic::EvidenceRecord {
                 id: "e-1".to_string(),

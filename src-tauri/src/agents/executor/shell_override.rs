@@ -101,7 +101,7 @@ fn build_shell_interaction_failure_result(
         "interaction_required": true,
         "interaction_kind": interaction_kind,
         "recommended_tool": recommended_tool,
-        "suggested_action": "Use interactive_shell to continue in a persistent terminal session, or rerun the command with non-interactive flags or piped input.",
+        "suggested_action": "Use exec_command or interactive_shell, then continue with write_stdin using the returned session_id/process_id; or rerun the command with non-interactive flags or piped input.",
         "backgrounded": false,
         "background_task_id": serde_json::Value::Null,
         "background_session_id": serde_json::Value::Null,

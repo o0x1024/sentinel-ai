@@ -689,6 +689,13 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         candidates.iter().any(|candidate| trimmed == *candidate)
     }
 
+    fn command_has_non_interactive_yes_flag(command: &str) -> bool {
+        let tokens: Vec<&str> = command.split_whitespace().collect();
+        tokens
+            .iter()
+            .any(|token| matches!(*token, "-y" | "--yes" | "--force"))
+    }
+
     fn command_looks_interactive(command: &str) -> Option<&'static str> {
         let trimmed = command.trim();
         if trimmed.is_empty() {
@@ -749,6 +756,25 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
             return Some("repl");
         }
 
+        let lower = trimmed.to_lowercase();
+        if !Self::command_has_non_interactive_yes_flag(trimmed) {
+            let prompt_scaffold_prefixes = [
+                "npm create",
+                "npm init",
+                "npm exec create-",
+                "npx create-",
+                "pnpm create",
+                "pnpm dlx create-",
+                "yarn create",
+            ];
+            if prompt_scaffold_prefixes
+                .iter()
+                .any(|prefix| lower.starts_with(prefix))
+            {
+                return Some("prompt");
+            }
+        }
+
         None
     }
 
@@ -756,7 +782,7 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         let interaction_kind = Self::command_looks_interactive(command)?;
         Some(ShellError::InteractionRequired {
             message: format!(
-                "Detected an interactive shell command. The one-shot shell tool does not support continued stdin/TTY interaction. Use interactive_shell to open or reuse a terminal session, or rewrite the command with non-interactive flags or piped input. Command: {}",
+                "Detected an interactive shell command. The one-shot shell tool does not support continued stdin/TTY interaction. Use exec_command or interactive_shell, then continue with write_stdin using the returned session_id/process_id; or rewrite the command with non-interactive flags or piped input. Command: {}",
                 command
             ),
             stdout: String::new(),
@@ -784,6 +810,10 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
             "would you like to continue",
             "ready to continue",
             "proceed? [y/n]",
+            "ok to proceed?",
+            "need to install",
+            "select a framework",
+            "choose a",
         ]
     }
 
@@ -828,7 +858,7 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         if Self::output_looks_like_interactive_prompt(&stdout, &stderr) {
             return ShellError::InteractionRequired {
                 message: format!(
-                    "The command appears to be waiting for interactive input. The one-shot shell tool cannot continue an stdin/TTY conversation after launch. Use interactive_shell to continue in a persistent terminal session, or rerun non-interactively with piped input or confirmation flags. Command: {}",
+                    "The command appears to be waiting for interactive input. The one-shot shell tool cannot continue an stdin/TTY conversation after launch. Use exec_command or interactive_shell, then continue with write_stdin using the returned session_id/process_id; or rerun non-interactively with piped input or confirmation flags. Command: {}",
                     command
                 ),
                 stdout,

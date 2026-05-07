@@ -7,6 +7,9 @@
 //! - 忽略上游证书验证（用于抓取证书异常的站点）
 
 use crate::header_utils::{append_request_headers, append_response_headers, merge_header_value};
+use crate::intercept_content::{
+    parse_intercept_response_content, sanitize_edited_response_headers,
+};
 use crate::intercept_rules::should_intercept_response;
 use crate::intercept_tracking::InterceptTracking;
 use crate::match_replace::{
@@ -964,52 +967,21 @@ impl TrafficProxyHandler {
     /// 解析修改后的响应内容并重建 HTTP 响应
     /// 格式: HTTP/1.1 STATUS\nHeader1: Value1\n...\n\nBODY
     fn parse_and_rebuild_response(content: &str) -> Result<Response<Body>> {
-        let mut lines = content.lines();
-
-        // 解析状态行: HTTP/1.1 STATUS
-        let status_line = lines
-            .next()
-            .ok_or_else(|| TrafficError::Proxy("Empty response content".to_string()))?;
-        let parts: Vec<&str> = status_line.split_whitespace().collect();
-
-        // 提取状态码
-        let status_code = if parts.len() >= 2 {
-            parts[1].parse::<u16>().unwrap_or(200)
-        } else {
-            200
-        };
-
-        // 解析响应头
-        let mut headers = HashMap::new();
-        let mut body_start = false;
-        let mut body_lines = Vec::new();
-
-        for line in lines {
-            if body_start {
-                body_lines.push(line);
-            } else if line.is_empty() {
-                body_start = true;
-            } else if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim().to_string();
-                let value = value.trim().to_string();
-                merge_header_value(&mut headers, &key, &value);
-            }
-        }
-
-        // 合并 body
-        let body_content = body_lines.join("\n");
+        let parsed = parse_intercept_response_content(content)?;
+        let mut headers = parsed.headers;
+        sanitize_edited_response_headers(&mut headers, parsed.body.len());
 
         // 构建响应
-        let mut builder = Response::builder().status(status_code);
+        let mut builder = Response::builder().status(parsed.status_code);
 
         // 添加头部
         builder = append_response_headers(builder, &headers);
 
         // 构建带 body 的响应
-        let body = if body_content.is_empty() {
+        let body = if parsed.body.is_empty() {
             Body::empty()
         } else {
-            Body::from(body_content)
+            Body::from(Full::new(Bytes::from(parsed.body)))
         };
 
         builder
@@ -2267,40 +2239,20 @@ impl HttpHandler for TrafficProxyHandler {
                                                                             .as_u16(),
                                                                     );
 
-                                                                    // 保存修改后的 headers
-                                                                    let mut edited_headers =
-                                                                    std::collections::HashMap::new(
-                                                                    );
-                                                                    for (name, value) in
-                                                                        modified_resp
-                                                                            .headers()
-                                                                            .iter()
-                                                                    {
-                                                                        if let Ok(v) =
-                                                                            value.to_str()
-                                                                        {
-                                                                            merge_header_value(
-                                                                                &mut edited_headers,
-                                                                                name.as_str(),
-                                                                                v,
+                                                                    match parse_intercept_response_content(&content) {
+                                                                        Ok(mut parsed_content) => {
+                                                                            sanitize_edited_response_headers(
+                                                                                &mut parsed_content.headers,
+                                                                                parsed_content.body.len(),
                                                                             );
+                                                                            resp_ctx.edited_headers =
+                                                                                Some(parsed_content.headers);
+                                                                            resp_ctx.edited_body =
+                                                                                Some(parsed_content.body);
                                                                         }
-                                                                    }
-                                                                    resp_ctx.edited_headers =
-                                                                        Some(edited_headers);
-
-                                                                    // 注意：修改后的 body 需要从 content 中解析
-                                                                    // 因为 modified_resp 的 body 已经被消费了，我们从原始 content 中提取
-                                                                    if let Some(body_start) =
-                                                                        content.find("\r\n\r\n")
-                                                                    {
-                                                                        let body_content = &content
-                                                                            [body_start + 4..];
-                                                                        resp_ctx.edited_body = Some(
-                                                                            body_content
-                                                                                .as_bytes()
-                                                                                .to_vec(),
-                                                                        );
+                                                                        Err(error) => {
+                                                                            warn!("Failed to extract edited response content for history: {}", error);
+                                                                        }
                                                                     }
 
                                                                     final_response = modified_resp;

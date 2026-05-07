@@ -217,6 +217,20 @@ pub async fn update_finding_status(
 }
 
 #[tauri::command]
+pub async fn mark_findings_read(
+    state: State<'_, TrafficAnalysisState>,
+    finding_ids: Vec<String>,
+) -> Result<CommandResponse<u64>, String> {
+    let db_service = state.get_db_service();
+    let updated = db_service
+        .mark_traffic_vulnerabilities_viewed(&finding_ids, "local")
+        .await
+        .map_err(|e| format!("Failed to mark findings as read: {}", e))?;
+
+    Ok(CommandResponse::ok(updated))
+}
+
+#[tauri::command]
 pub async fn export_findings_html(
     state: State<'_, TrafficAnalysisState>,
     filters: Option<VulnerabilityFilters>,

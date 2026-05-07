@@ -13,9 +13,6 @@
           {{ $t('trafficAnalysis.intruder.labels.estimatedRequests') }}: {{ estimatedRequests }}
         </div>
 
-        <div v-if="truncated" class="badge badge-warning badge-outline">
-          {{ $t('trafficAnalysis.intruder.messages.attackPlanTrimmed') }}
-        </div>
       </div>
     </header>
 
@@ -74,17 +71,6 @@
           />
         </label>
 
-        <label class="form-control">
-          <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.maxRequests') }}</span>
-          <input
-            :value="attackOptions.maxRequests"
-            type="number"
-            min="1"
-            max="50000"
-            class="input input-bordered input-sm"
-            @input="updateOption('maxRequests', clampNumber(($event.target as HTMLInputElement).value, 1, 50000, 500))"
-          />
-        </label>
       </div>
 
       <article v-for="(payloadSet, index) in payloadSets" :key="payloadSet.id" class="rounded-lg border border-base-300 bg-base-100">
@@ -146,7 +132,6 @@ const props = defineProps<{
   payloadSets: IntruderPayloadSet[]
   attackOptions: IntruderAttackOptions
   estimatedRequests: number
-  truncated: boolean
 }>()
 
 const emit = defineEmits<{

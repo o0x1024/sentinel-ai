@@ -74,7 +74,7 @@ describe('intruder attack helpers', () => {
       payloadSets: [
         createPayloadSet({ payloadsText: 'admin\nroot' }),
       ],
-      maxRequests: 20,
+      requestLimit: 20,
     })
 
     expect(plan.requests).toHaveLength(4)
@@ -94,7 +94,7 @@ describe('intruder attack helpers', () => {
           nullValue: '',
         }),
       ],
-      maxRequests: 10,
+      requestLimit: 10,
     })
 
     expect(plan.totalGenerated).toBe(3)
@@ -141,12 +141,27 @@ describe('intruder attack helpers', () => {
         createPayloadSet({ id: 'set-1', payloadsText: 'a\nb\nc' }),
         createPayloadSet({ id: 'set-2', name: 'Payload set 2', payloadsText: '1\n2\n3' }),
       ],
-      maxRequests: 4,
+      requestLimit: 4,
     })
 
     expect(plan.totalGenerated).toBe(9)
     expect(plan.requests).toHaveLength(4)
     expect(plan.truncated).toBe(true)
+  })
+
+  it('builds the full attack plan when no request limit is provided', async () => {
+    const plan = await buildIntruderAttackPlan({
+      template: 'POST /login HTTP/1.1\r\nHost: example.com\r\n\r\nusername=$admin$&password=$pass$',
+      attackType: 'clusterBomb',
+      payloadSets: [
+        createPayloadSet({ id: 'set-1', payloadsText: 'a\nb\nc' }),
+        createPayloadSet({ id: 'set-2', name: 'Payload set 2', payloadsText: '1\n2\n3' }),
+      ],
+    })
+
+    expect(plan.totalGenerated).toBe(9)
+    expect(plan.requests).toHaveLength(9)
+    expect(plan.truncated).toBe(false)
   })
 
   it('clears markers cleanly', () => {
@@ -183,7 +198,7 @@ describe('intruder attack helpers', () => {
           replaceValue: '',
         },
       ],
-      maxRequests: 10,
+      requestLimit: 10,
     })
 
     expect(plan.requests).toHaveLength(1)
@@ -207,7 +222,7 @@ describe('intruder attack helpers', () => {
           caseSensitive: false,
         },
       ],
-      maxRequests: 10,
+      requestLimit: 10,
     })
 
     expect(plan.requests).toHaveLength(1)
@@ -230,7 +245,7 @@ describe('intruder attack helpers', () => {
           replaceValue: '',
         },
       ],
-      maxRequests: 10,
+      requestLimit: 10,
     })
 
     expect(plan.requests).toHaveLength(1)
@@ -263,7 +278,7 @@ describe('intruder attack helpers', () => {
           rawPayloadPlacement: 'after',
         },
       ],
-      maxRequests: 10,
+      requestLimit: 10,
     })
 
     expect(plan.requests).toHaveLength(1)
@@ -281,7 +296,7 @@ describe('intruder attack helpers', () => {
           urlEncodeCharacters: '+/=',
         }),
       ],
-      maxRequests: 10,
+      requestLimit: 10,
     })
 
     expect(plan.requests).toHaveLength(1)
@@ -299,7 +314,7 @@ describe('intruder attack helpers', () => {
         }),
       ],
       payloadResolver: async () => ['alpha', 'beta'],
-      maxRequests: 10,
+      requestLimit: 10,
     })
 
     expect(plan.totalGenerated).toBe(2)
@@ -323,7 +338,7 @@ describe('intruder attack helpers', () => {
         }),
       ],
       payloadResolver: async () => ['alice', 'bob'],
-      maxRequests: 10,
+      requestLimit: 10,
     })
 
     expect(plan.totalGenerated).toBe(2)
@@ -349,7 +364,7 @@ describe('intruder attack helpers', () => {
         },
       ],
       payloadPluginProcessor: async (payload) => `${payload}-plugin`,
-      maxRequests: 10,
+      requestLimit: 10,
     })
 
     expect(plan.requests).toHaveLength(1)

@@ -157,15 +157,33 @@ function appendUniqueIds(currentIds: string[], nextIds: string[]) {
   return deduped.slice(deduped.length - MAX_READ_RECORD_IDS)
 }
 
-function seedInitialReadStateIfNeeded() {
-  if (baselineSeeded.value || legacyMigrated.value) {
+function markLocalFindingsRead(ids: string[], viewedAt = new Date().toISOString()) {
+  const idSet = new Set(ids)
+  findings.value = findings.value.map((item) =>
+    idSet.has(item.id)
+      ? {
+          ...item,
+          viewed_at: viewedAt,
+          viewed_by: item.viewed_by || 'local',
+        }
+      : item,
+  )
+}
+
+async function seedInitialReadStateIfNeeded() {
+  if (!legacyMigrated.value && readFindingIds.value.length > 0) {
+    await markFindingsAsRead(readFindingIds.value)
+    legacyMigrated.value = true
+    persistState()
+  }
+
+  if (baselineSeeded.value) {
     return
   }
 
   if (lastViewedAt.value) {
     const viewedTimestamp = toTimestamp(lastViewedAt.value)
-    readFindingIds.value = appendUniqueIds(
-      readFindingIds.value,
+    await markFindingsAsRead(
       findings.value
         .filter((item) => {
           const createdAt = toTimestamp(item.created_at)
@@ -188,10 +206,7 @@ function seedInitialReadStateIfNeeded() {
     return
   }
 
-  readFindingIds.value = appendUniqueIds(
-    readFindingIds.value,
-    findings.value.map((item) => item.id),
-  )
+  await markFindingsAsRead(findings.value.map((item) => item.id))
   readWorkbenchCaseIds.value = appendUniqueIds(
     readWorkbenchCaseIds.value,
     workbenchCases.value.map((item) => item.id),
@@ -250,7 +265,7 @@ async function refreshSecurityCenterActivity() {
       workbenchCases.value = []
     }
 
-    seedInitialReadStateIfNeeded()
+    await seedInitialReadStateIfNeeded()
   } catch (error) {
     console.error('[useSecurityCenterActivity] Failed to refresh activity:', error)
     findings.value = []
@@ -260,14 +275,19 @@ async function refreshSecurityCenterActivity() {
   }
 }
 
-function markFindingsAsRead(ids: string[]) {
+async function markFindingsAsRead(ids: string[]) {
   const nextIds = ids.filter((id) => typeof id === 'string' && id.trim())
   if (!nextIds.length) {
     return
   }
 
+  markLocalFindingsRead(nextIds)
   readFindingIds.value = appendUniqueIds(readFindingIds.value, nextIds)
   persistState()
+  const response = await invoke<any>('mark_findings_read', { findingIds: nextIds })
+  if (!response?.success) {
+    throw new Error(response?.error || 'Failed to mark findings as read')
+  }
 }
 
 function markWorkbenchCasesAsRead(ids: string[]) {
@@ -280,8 +300,8 @@ function markWorkbenchCasesAsRead(ids: string[]) {
   persistState()
 }
 
-function markFindingAsRead(id: string) {
-  markFindingsAsRead([id])
+async function markFindingAsRead(id: string) {
+  await markFindingsAsRead([id])
 }
 
 function markWorkbenchCaseAsRead(id: string) {
@@ -289,7 +309,7 @@ function markWorkbenchCaseAsRead(id: string) {
 }
 
 function markCurrentAsSeen() {
-  markFindingsAsRead(findings.value.map((item) => item.id))
+  void markFindingsAsRead(findings.value.map((item) => item.id))
   markWorkbenchCasesAsRead(workbenchCases.value.map((item) => item.id))
   lastViewedAt.value = getLatestFindingCreatedAt(findings.value) || new Date().toISOString()
   persistState()
@@ -313,10 +333,9 @@ async function initializeSecurityCenterActivity() {
   unlisteners.push(await listen('security-workbench:changed', refreshFromEvent))
 }
 
-const readFindingIdSet = computed(() => new Set(readFindingIds.value))
 const readWorkbenchCaseIdSet = computed(() => new Set(readWorkbenchCaseIds.value))
 const unreadFindings = computed(() =>
-  findings.value.filter((item) => !readFindingIdSet.value.has(item.id)),
+  findings.value.filter((item) => !item.viewed_at),
 )
 const unreadWorkbenchCases = computed(() =>
   workbenchCases.value.filter((item) => !readWorkbenchCaseIdSet.value.has(item.id)),
@@ -341,7 +360,7 @@ export function useSecurityCenterActivity() {
     newFindingCount: unreadFindingCount,
     initializeSecurityCenterActivity,
     refreshSecurityCenterActivity,
-    isFindingRead: (id: string) => readFindingIdSet.value.has(id),
+    isFindingRead: (id: string) => Boolean(findings.value.find((item) => item.id === id)?.viewed_at),
     isWorkbenchCaseRead: (id: string) => readWorkbenchCaseIdSet.value.has(id),
     markFindingAsRead,
     markWorkbenchCaseAsRead,

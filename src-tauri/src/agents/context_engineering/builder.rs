@@ -148,7 +148,7 @@ fn build_tool_usage_priority_block(
         );
         if has_interactive_shell {
             lines.push(
-                "If a command starts a server, watcher, log follower, dev process, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive. Example: starting a dev server should be `shell {\"command\":\"npm run dev\",\"run_in_background\":true}` instead of a foreground `shell {\"command\":\"npm run dev\"}`. Example: following logs should be `shell {\"command\":\"docker logs -f api\",\"run_in_background\":true}`; if you need to interact with the live process, use `interactive_shell` instead.".to_string(),
+                "If a command starts a server, watcher, log follower, dev process, installer, scaffolder, or anything expected to keep running or ask for input, prefer `interactive_shell`/`exec_command` and continue with `write_stdin` using the returned session_id. Use `shell` with `run_in_background=true` only for non-interactive background processes.".to_string(),
             );
         } else {
             lines.push(
@@ -159,11 +159,11 @@ fn build_tool_usage_priority_block(
 
     if has_interactive_shell {
         lines.push(
-            "Use `interactive_shell` for iterative terminal work, REPLs, TUIs, debugger sessions, or when you need to inspect a live long-running process interactively.".to_string(),
+            "Use `interactive_shell` or `exec_command` for iterative terminal work, REPLs, TUIs, installers, scaffolders, debugger sessions, or live long-running processes. These tools return a session_id/process_id after a bounded wait; use `write_stdin` with that id to answer prompts or poll output.".to_string(),
         );
         if has_shell {
             lines.push(
-                "If one-shot `shell` returns a structured failure with `interaction_required=true`, do not retry the same command with `shell`. Switch to `interactive_shell` to continue in the persistent terminal session, or rewrite the command to be non-interactive.".to_string(),
+                "If one-shot `shell` returns a structured failure with `interaction_required=true`, do not retry the same command with `shell`. Switch to `interactive_shell`/`exec_command` and continue with `write_stdin`, or rewrite the command to be non-interactive.".to_string(),
             );
         }
     }
@@ -265,11 +265,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         ));
         system_prompt.push_str(
             "\n\n[TaskProgressContract]\n\
-            - Use the `tasks` tool as a live progress ledger for multi-step work.\n\
-            - When a step starts, it should be `in_progress`.\n\
-            - As soon as a step completes or fails, immediately call `tasks` with `action: \"update_status\"`, set it to `completed` or `failed`, and record the result/evidence.\n\
-            - Do not batch task status updates at the end; the list must reflect actual progress throughout execution.\n\
-            - Before the final answer, only verify that no task remains `pending` or `in_progress`."
+            - Use the `tasks` tool to publish the current multi-step plan for the UI.\n\
+            - Each call must submit the complete desired `plan`; omitted previous steps are removed from the displayed plan.\n\
+            - Keep at most one step `in_progress` and update the plan as meaningful progress happens.\n\
+            - Treat the plan as a display/event stream, not as the completion authority for the execution."
         );
     }
 
@@ -488,7 +487,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         system_prompt.push_str(
             "\n\n[Interactive Terminal Session]\n\
             - An interactive terminal session is already active.\n\
-            - `interactive_shell` reuses the current terminal session by default.\n\
+            - `interactive_shell` reuses the current terminal session by default; `write_stdin` can continue a returned session_id/process_id.\n\
             - Use `session_policy: \"new\"` only when you intentionally need a fresh terminal session.\n\
             - Do not invent, guess, or manage terminal session IDs yourself.",
         );

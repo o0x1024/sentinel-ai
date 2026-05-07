@@ -1103,6 +1103,8 @@ impl DatabaseService {
                 last_seen_at DATETIME NOT NULL,
                 hit_count INTEGER NOT NULL DEFAULT 1,
                 session_id TEXT,
+                viewed_at DATETIME,
+                viewed_by TEXT,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"#,
@@ -1484,6 +1486,8 @@ impl DatabaseService {
         self.ensure_runtime_bounty_asset_domain_schema(runtime)
             .await?;
         self.ensure_runtime_proxy_request_schema(runtime).await?;
+        self.ensure_runtime_traffic_vulnerability_view_schema(runtime)
+            .await?;
         self.execute_runtime_ddl(
             runtime,
             "CREATE INDEX IF NOT EXISTS idx_system_agent_profiles_mode_enabled ON system_agent_profiles(mode, enabled)",

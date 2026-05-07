@@ -48,3 +48,24 @@ pub async fn get_agent_tasks(
         })
         .map_err(|e| format!("Failed to load task history for {}: {}", execution_id, e))
 }
+
+#[tauri::command]
+pub async fn prune_agent_tasks_after(
+    execution_id: String,
+    after_timestamp_ms: i64,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<AgentTaskHistoryItem>, String> {
+    db_service
+        .delete_execution_tasks_after(&execution_id, after_timestamp_ms)
+        .await
+        .map_err(|e| {
+            format!(
+                "Failed to prune task history for {} after {}: {}",
+                execution_id, after_timestamp_ms, e
+            )
+        })?;
+
+    sentinel_tools::buildin_tools::tasks::invalidate_execution_tasks(&execution_id).await;
+
+    get_agent_tasks(execution_id, db_service).await
+}

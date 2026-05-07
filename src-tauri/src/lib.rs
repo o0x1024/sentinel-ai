@@ -700,6 +700,7 @@ pub fn run() {
                 let db_for_tracker = db_service.clone();
                 let db_service_for_enrichment = db_service.clone();
                 let ai_manager_for_gateway = ai_manager.clone();
+                let ai_manager_for_weixin = ai_manager.clone();
 
                 // Register as concrete type
                 handle.manage(db_service.clone());
@@ -865,6 +866,21 @@ pub fn run() {
                     }
                 });
 
+                // Auto-start Weixin remote-control gateway if enabled in config.
+                let db_service_for_weixin = db_service.clone();
+                let handle_for_weixin = handle.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                    if let Err(e) = commands::weixin_gateway_commands::auto_start_weixin_gateway_if_enabled(
+                        db_service_for_weixin,
+                        ai_manager_for_weixin,
+                        handle_for_weixin,
+                    ).await {
+                        tracing::warn!("Failed to auto-start Weixin gateway: {}", e);
+                    }
+                });
+
                 // Auto-start monitor scheduler so enabled monitor tasks can run without visiting the UI.
                 let handle_for_monitor = handle.clone();
                 tokio::spawn(async move {
@@ -1009,6 +1025,7 @@ pub fn run() {
             ai::remove_ai_service,
             ai::create_ai_conversation,
             commands::agent_task_commands::get_agent_tasks,
+            commands::agent_task_commands::prune_agent_tasks_after,
             commands::assistant_profile_commands::list_assistant_profiles,
             commands::assistant_profile_commands::get_assistant_profile,
             commands::assistant_profile_commands::ai_create_assistant_profile_from_description,
@@ -1479,6 +1496,7 @@ pub fn run() {
             traffic::get_finding,
             traffic::review_finding_with_ai,
             traffic::update_finding_status,
+            traffic::mark_findings_read,
             traffic::export_findings_html,
             traffic::list_proxy_requests,
             traffic::get_proxy_request,
@@ -1734,6 +1752,13 @@ pub fn run() {
             commands::get_http_gateway_config,
             commands::save_http_gateway_config,
             commands::rotate_http_gateway_api_key,
+            commands::get_weixin_gateway_config,
+            commands::save_weixin_gateway_config,
+            commands::start_weixin_gateway,
+            commands::stop_weixin_gateway,
+            commands::get_weixin_gateway_status,
+            commands::create_weixin_qr_login,
+            commands::poll_weixin_qr_login,
             // Agent config commands
             tool_commands::get_agent_config,
             tool_commands::save_agent_config,

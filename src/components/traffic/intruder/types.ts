@@ -220,7 +220,6 @@ export interface IntruderAttackOptions {
   autoThrottleEnabled: boolean
   autoThrottleStatusCodes: number[]
   timeoutSecs: number
-  maxRequests: number
   updateHostHeader: boolean
   updateContentLength: boolean
   setConnectionClose: boolean

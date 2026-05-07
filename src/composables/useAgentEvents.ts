@@ -187,7 +187,12 @@ export function useAgentEvents(
     const generation = readGeneration(payload)
     if (generation !== null) {
       if (currentGeneration.value !== null && currentGeneration.value !== generation) {
-        return false
+        if (generation < currentGeneration.value) {
+          return false
+        }
+        if (isExecuting.value && currentExecutionId.value === eventExecId) {
+          return false
+        }
       }
       currentGeneration.value = generation
       return true
@@ -1004,7 +1009,7 @@ export function useAgentEvents(
 
       // ❌ 不要在这里打开终端，等待 tool_result 事件中的 session_id
       // 检测 interactive_shell 工具调用
-      if (payload.tool_name === 'interactive_shell') {
+      if (['interactive_shell', 'exec_command', 'write_stdin'].includes(payload.tool_name)) {
         console.log('[Agent] Detected interactive_shell call, will open terminal when result arrives')
       }
     })
@@ -1079,7 +1084,7 @@ export function useAgentEvents(
 
       // ❌ 不要在这里打开终端，等待 tool_result 事件中的 session_id
       // 检测 interactive_shell 工具调用
-      if (payload.tool_name === 'interactive_shell') {
+      if (['interactive_shell', 'exec_command', 'write_stdin'].includes(payload.tool_name)) {
         console.log('[Agent] Detected interactive_shell call (complete), will open terminal when result arrives')
       }
     })
@@ -1147,7 +1152,7 @@ export function useAgentEvents(
             )
             
             // 如果是 interactive_shell 工具，自动打开终端面板，关闭任务面板
-            if (callInfo.tool_name === 'interactive_shell') {
+            if (['interactive_shell', 'exec_command', 'write_stdin'].includes(callInfo.tool_name)) {
               // First close task panel
               const tasks = useAgentTasks()
               tasks.close()
@@ -1235,7 +1240,7 @@ export function useAgentEvents(
           )
           
           // 旧格式路径：如果是 interactive_shell 工具，也自动打开终端面板，关闭任务面板
-          if (payload.tool_name === 'interactive_shell') {
+          if (['interactive_shell', 'exec_command', 'write_stdin'].includes(payload.tool_name)) {
             // First close task panel
             const tasks = useAgentTasks()
             tasks.close()

@@ -2,6 +2,10 @@ use std::sync::Arc;
 
 use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolCategory, ToolExecutor, ToolSource};
 use sentinel_tools::terminal::server::TerminalServer;
+use sentinel_tools::terminal::unified_exec_tool::{
+    execute_exec_command, execute_interactive_shell, execute_write_stdin, EXEC_COMMAND_TOOL_NAME,
+    WRITE_STDIN_TOOL_NAME,
+};
 use sentinel_tools::ToolServer;
 
 use crate::agents::executor::terminal_session_store::{
@@ -26,7 +30,6 @@ pub(super) async fn build_interactive_shell_override_def(
         let fallback_active_session_id = fallback_active_session_id.clone();
         let working_directory = working_directory.clone();
         Box::pin(async move {
-            let tool_server = sentinel_tools::get_tool_server();
             let mut patched_args = args;
 
             if let Some(obj) = patched_args.as_object_mut() {
@@ -57,18 +60,13 @@ pub(super) async fn build_interactive_shell_override_def(
                 }
             }
 
-            let result = tool_server
-                .execute(TerminalServer::NAME, patched_args)
-                .await;
-            if !result.success {
-                return Err(result
-                    .error
-                    .unwrap_or_else(|| "Interactive shell execution failed".to_string()));
-            }
-
-            let output = result
-                .output
-                .ok_or_else(|| "Interactive shell returned no output".to_string())?;
+            let output = execute_interactive_shell(
+                patched_args,
+                Some(execution_id_for_terminal.clone()),
+                fallback_active_session_id.clone(),
+                working_directory.clone(),
+            )
+            .await?;
 
             if let Some(session_id) = output.get("session_id").and_then(|value| value.as_str()) {
                 set_active_terminal_session(&execution_id_for_terminal, Some(session_id));
@@ -90,5 +88,62 @@ pub(super) async fn build_interactive_shell_override_def(
         exposure: info.exposure.clone(),
         execution_policy,
         executor: terminal_executor,
+    })
+}
+
+pub(super) async fn build_exec_command_override_def(
+    tool_server: &ToolServer,
+    execution_id: &str,
+    working_directory: Option<&str>,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(EXEC_COMMAND_TOOL_NAME).await?;
+    let execution_id = execution_id.to_string();
+    let working_directory = working_directory.map(str::to_string);
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id = execution_id.clone();
+        let working_directory = working_directory.clone();
+        Box::pin(async move {
+            execute_exec_command(args, Some(execution_id), working_directory).await
+        })
+    });
+
+    Some(DynamicToolDef {
+        name: EXEC_COMMAND_TOOL_NAME.to_string(),
+        description: info.description.clone(),
+        input_schema: info.input_schema.clone(),
+        output_schema: None,
+        source: ToolSource::Builtin,
+        category: ToolCategory::System,
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
+        execution_policy: info.execution_policy.clone(),
+        executor,
+    })
+}
+
+pub(super) async fn build_write_stdin_override_def(
+    tool_server: &ToolServer,
+    execution_id: &str,
+) -> Option<DynamicToolDef> {
+    let info = tool_server.get_tool(WRITE_STDIN_TOOL_NAME).await?;
+    let execution_id = execution_id.to_string();
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id = execution_id.clone();
+        Box::pin(async move { execute_write_stdin(args, Some(execution_id)).await })
+    });
+
+    Some(DynamicToolDef {
+        name: WRITE_STDIN_TOOL_NAME.to_string(),
+        description: info.description.clone(),
+        input_schema: info.input_schema.clone(),
+        output_schema: None,
+        source: ToolSource::Builtin,
+        category: ToolCategory::System,
+        tags: info.tags.clone(),
+        search_hint: info.search_hint.clone(),
+        exposure: info.exposure.clone(),
+        execution_policy: info.execution_policy.clone(),
+        executor,
     })
 }

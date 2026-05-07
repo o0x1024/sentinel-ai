@@ -88,9 +88,8 @@ export async function generateIntruderPluginPayloads(options: {
   target: IntruderTarget
   positions: IntruderPosition[]
   payloadSet: IntruderPayloadSet
-  maxRequests: number
 }): Promise<string[]> {
-  const { requestText, target, positions, payloadSet, maxRequests } = options
+  const { requestText, target, positions, payloadSet } = options
   if (!payloadSet.pluginId.trim()) {
     throw new Error('Select an Intruder payload plugin first')
   }
@@ -108,9 +107,7 @@ export async function generateIntruderPluginPayloads(options: {
         payloadType: payloadSet.payloadType,
       },
       config: parseIntruderPluginConfig(payloadSet.pluginConfig),
-      options: {
-        limit: maxRequests,
-      },
+      options: {},
     },
   })
 

@@ -16,6 +16,7 @@ use sentinel_tools::dynamic_tool::{
     DynamicTool, DynamicToolDef, ToolCategory, ToolExecutionPolicy, ToolExecutor, ToolSource,
 };
 use sentinel_tools::terminal::server::TerminalServer;
+use sentinel_tools::terminal::{EXEC_COMMAND_TOOL_NAME, WRITE_STDIN_TOOL_NAME};
 use sentinel_tools::ToolServer;
 
 use crate::agents::executor::file_tool_state::{
@@ -24,7 +25,10 @@ use crate::agents::executor::file_tool_state::{
 use crate::agents::executor::http_request_override::build_http_override_def;
 use crate::agents::executor::question_override::build_ask_user_question_override_def;
 use crate::agents::executor::shell_override::build_shell_override_def;
-use crate::agents::executor::terminal_override::build_interactive_shell_override_def;
+use crate::agents::executor::terminal_override::{
+    build_exec_command_override_def, build_interactive_shell_override_def,
+    build_write_stdin_override_def,
+};
 use crate::agents::executor::tool_search_override::build_tool_search_override_def;
 use crate::agents::executor::traffic_response_read_tool::build_traffic_response_read_tool;
 use crate::agents::executor::types::ToolCallRecord;
@@ -994,16 +998,22 @@ pub(super) fn collect_all_tool_calls(
 }
 
 fn replace_dynamic_tool(dynamic_tools: Vec<DynamicTool>, def: DynamicToolDef) -> Vec<DynamicTool> {
-    dynamic_tools
+    let mut replaced = false;
+    let mut tools: Vec<DynamicTool> = dynamic_tools
         .into_iter()
         .map(|tool| {
             if tool.name() == def.name {
+                replaced = true;
                 DynamicTool::new(def.clone())
             } else {
                 tool
             }
         })
-        .collect()
+        .collect();
+    if !replaced {
+        tools.push(DynamicTool::new(def));
+    }
+    tools
 }
 
 async fn build_glob_override_def(
@@ -1403,7 +1413,21 @@ async fn build_tasks_override_def(
 ) -> Option<DynamicToolDef> {
     let tasks_info = tool_server.get_tool(TasksTool::NAME).await?;
     let execution_id_for_tasks = execution_id.to_string();
-    let tasks_input_schema = tasks_info.input_schema.clone();
+    let mut tasks_input_schema = tasks_info.input_schema.clone();
+    if let Some(obj) = tasks_input_schema.as_object_mut() {
+        if let Some(properties) = obj
+            .get_mut("properties")
+            .and_then(|value| value.as_object_mut())
+        {
+            properties.remove("execution_id");
+        }
+        if let Some(required) = obj
+            .get_mut("required")
+            .and_then(|value| value.as_array_mut())
+        {
+            required.retain(|value| value.as_str() != Some("execution_id"));
+        }
+    }
     let tasks_description = tasks_info.description.clone();
     let tasks_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let execution_id_for_tasks = execution_id_for_tasks.clone();
@@ -1582,6 +1606,37 @@ pub(super) async fn patch_builtin_dynamic_tools(
         )
         .await
         {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+        if let Some(def) =
+            build_exec_command_override_def(tool_server, execution_id, host_working_directory).await
+        {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+        if let Some(def) = build_write_stdin_override_def(tool_server, execution_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
+    if current_tool_ids
+        .iter()
+        .any(|id| id == EXEC_COMMAND_TOOL_NAME)
+    {
+        if let Some(def) =
+            build_exec_command_override_def(tool_server, execution_id, host_working_directory).await
+        {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+        if let Some(def) = build_write_stdin_override_def(tool_server, execution_id).await {
+            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
+        }
+    }
+
+    if current_tool_ids
+        .iter()
+        .any(|id| id == WRITE_STDIN_TOOL_NAME)
+    {
+        if let Some(def) = build_write_stdin_override_def(tool_server, execution_id).await {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }

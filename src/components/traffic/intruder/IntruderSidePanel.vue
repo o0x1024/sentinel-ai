@@ -478,7 +478,6 @@
               retryCount: attackOptions.retryCount,
               retryPauseMs: attackOptions.retryPauseMs,
               timeoutSecs: attackOptions.timeoutSecs,
-              maxRequests: attackOptions.maxRequests,
             }"
             @update:options="updateAttackOptions"
           />
@@ -1155,7 +1154,6 @@ const props = defineProps<{
   requestText: string
   target: IntruderTarget
   positions: IntruderPosition[]
-  maxRequests: number
   requestProcessingPreviewLoading: boolean
   requestProcessingPreviewOriginal: string
   requestProcessingPreviewFinal: string
@@ -1369,7 +1367,6 @@ async function generatePluginPayloadPreview() {
       target: props.target,
       positions: props.positions,
       payloadSet: activePayloadSet.value,
-      maxRequests: props.maxRequests,
     })
 
     updateActivePayloadSet({

@@ -65,9 +65,6 @@
           <div v-if="currentWorkspace.progress.completed > 0 || currentWorkspace.isRunning" :class="IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS">
             {{ currentWorkspace.progress.completed }}/{{ currentWorkspace.progress.total }}
           </div>
-          <div v-if="planWillTruncate" :class="[IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS, 'badge-warning']">
-            {{ $t('trafficAnalysis.intruder.messages.attackPlanTrimmed') }}
-          </div>
         </div>
       </div>
 
@@ -114,7 +111,6 @@
             :request-text="currentWorkspace.requestText"
             :target="currentWorkspace.target"
             :positions="currentWorkspace.positions"
-            :max-requests="currentWorkspace.attackOptions.maxRequests"
             :request-processing-preview-loading="requestProcessingPreviewLoading"
             :request-processing-preview-original="requestProcessingPreviewOriginal"
             :request-processing-preview-final="requestProcessingPreviewFinal"
@@ -152,7 +148,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { emit as tauriEmit, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
@@ -173,7 +169,16 @@ import { buildIntruderTargetUrl as buildTargetUrl, INTRUDER_SIDEBAR_WIDTH_KEY, I
 import { buildHttpReplayResponseFromCommandResult, type RawReplayCommandResult } from './http/response'
 import type { TrafficComparePayload } from './transfers'
 import { evaluateIntruderGrepExtracts, evaluateIntruderGrepMatches, evaluateIntruderPayloadReflections, normalizeGrepMatchRule, normalizeGrepPayloadSettings } from './intruder/analysis'
-import { getIntruderResultsStorageKey, loadIntruderResultsWindowState, matchesIntruderResultFilter, normalizeIntruderResultFilter, saveIntruderResultsWindowState, sortIntruderResults } from './intruder/results'
+import {
+  INTRUDER_RESULTS_WINDOW_CLOSED_EVENT,
+  INTRUDER_RESULTS_WINDOW_STATE_EVENT,
+  getIntruderResultsStorageKey,
+  loadIntruderResultsWindowState,
+  matchesIntruderResultFilter,
+  normalizeIntruderResultFilter,
+  saveIntruderResultsWindowState,
+  sortIntruderResults,
+} from './intruder/results'
 import { buildIntruderResourcePoolAutoName, createBuiltInResourcePools, createIntruderAttackTemplate, exportIntruderResultsCsv, loadIntruderAttackTemplates, loadIntruderResourcePools, normalizeVisibleColumns, persistIntruderAttackTemplates, persistIntruderResourcePools, type IntruderAttackTemplate, upsertIntruderResourcePoolEntry } from './intruder/storage'
 import { generateIntruderPluginPayloads, processIntruderPayloadWithPlugin, transformIntruderRequestWithPlugin, type IntruderRequestProcessorTrace } from './intruder/plugins'
 import { getIntruderAutoThrottleStepMs, getIntruderRuntimeDelayMs, shouldIntruderThrottleForStatus, waitForIntruderDelay } from './intruder/runtimeSupport'
@@ -196,6 +201,7 @@ import type {
   IntruderResourcePool,
   IntruderResultFilter,
   IntruderResultSort,
+  IntruderResultsWindowState,
 } from './intruder/types'
 
 interface ReplayCommandResponse<T> {
@@ -243,6 +249,7 @@ const persistedIntruderSessionStore = ref<PersistedIntruderWorkspaceSessionStore
 let persistIntruderSessionTimer: number | null = null
 const openResultsWindowLabels = new Set<string>()
 let unlistenResultsWindowClosed: UnlistenFn | null = null
+let unlistenResultsWindowState: UnlistenFn | null = null
 
 const currentWorkspace = computed(() => workspaces.value.find((workspace) => workspace.id === activeWorkspaceId.value) ?? null)
 const selectedResult = computed(() => {
@@ -257,12 +264,6 @@ const estimatedRequests = computed(() => {
   const estimate = estimateAttackCount(workspace.attackType, workspace.positions.length, workspace.payloadSets)
   return workspace.attackOptions.makeUnmodifiedBaseline && workspace.positions.length > 0 ? estimate + 1 : estimate
 })
-const planWillTruncate = computed(() => {
-  const workspace = currentWorkspace.value
-  if (!workspace) return false
-  return estimatedRequests.value > workspace.attackOptions.maxRequests
-})
-
 function buildPersistedIntruderSessionStore(): PersistedIntruderWorkspaceSessionStore {
   return serializeIntruderWorkspaceSessionStore(activeWorkspaceId.value, workspaces.value)
 }
@@ -333,7 +334,12 @@ function syncResultsWindowState(workspace: IntruderWorkspace, options: { force?:
   if (!options.force && !openResultsWindowLabels.has(buildResultsWindowLabel(workspace.id))) {
     return
   }
-  saveIntruderResultsWindowState(buildResultsWindowState(workspace))
+  const state = buildResultsWindowState(workspace)
+  saveIntruderResultsWindowState(state)
+  void tauriEmit(INTRUDER_RESULTS_WINDOW_STATE_EVENT, {
+    source: 'main',
+    state,
+  })
 }
 
 async function openResultsView() {
@@ -398,6 +404,22 @@ function handleResultsWindowStorage(event: StorageEvent) {
     persistedState.grepMatchRules || [],
     persistedState.grepExtractRules || [],
     normalizeGrepPayloadSettings(persistedState.grepPayloadSettings),
+  )
+}
+
+function handleResultsWindowState(state: IntruderResultsWindowState) {
+  const workspace = workspaces.value.find((item) => item.id === state.workspaceId)
+  if (!workspace) return
+
+  workspace.selectedResultId = state.selectedResultId
+  workspace.captureFilter = normalizeIntruderResultFilter(state.captureFilter)
+  workspace.viewFilter = normalizeIntruderResultFilter(state.viewFilter)
+  workspace.sort = state.sort
+  workspace.visibleColumns = normalizeVisibleColumns(
+    state.visibleColumns,
+    state.grepMatchRules || [],
+    state.grepExtractRules || [],
+    normalizeGrepPayloadSettings(state.grepPayloadSettings),
   )
 }
 
@@ -928,7 +950,6 @@ async function resolvePayloadSetValues(workspace: IntruderWorkspace, payloadSet:
     target: workspace.target,
     positions: workspace.positions,
     payloadSet,
-    maxRequests: workspace.attackOptions.maxRequests,
   })
 
   updatePayloadSet(workspace.id, payloadSet.id, {
@@ -1035,7 +1056,7 @@ async function buildRequestProcessingPreview(workspace: IntruderWorkspace): Prom
     attackType: workspace.attackType,
     payloadSets: workspace.payloadSets,
     payloadProcessingRules: workspace.payloadProcessingRules,
-    maxRequests: 1,
+    requestLimit: 1,
     payloadResolver: async (payloadSet) => resolvePayloadSetValues(workspace, payloadSet),
     payloadPluginProcessor: async (payload, context) =>
       applyPayloadProcessorPlugins(workspace, payload, {
@@ -1661,7 +1682,6 @@ async function startAttack() {
       attackType: workspace.attackType,
       payloadSets: workspace.payloadSets,
       payloadProcessingRules: workspace.payloadProcessingRules,
-      maxRequests: workspace.attackOptions.maxRequests,
       payloadResolver: async (payloadSet) => resolvePayloadSetValues(workspace, payloadSet),
       payloadPluginProcessor: async (payload, context) =>
         applyPayloadProcessorPlugins(workspace, payload, {
@@ -1694,10 +1714,6 @@ async function startAttack() {
     return
   }
 
-  if (requests.length > workspace.attackOptions.maxRequests) {
-    requests = requests.slice(0, workspace.attackOptions.maxRequests)
-  }
-
   workspace.results = []
   workspace.selectedResultId = null
   workspace.progress = {
@@ -1705,7 +1721,7 @@ async function startAttack() {
     completed: 0,
     failed: 0,
     active: 0,
-    truncated: plan.truncated || requests.length < estimatedRequests.value,
+    truncated: plan.truncated,
   }
   workspace.isRunning = true
   syncWorkbenchWorkspaceRuntime(workspace, 'running')
@@ -1925,7 +1941,13 @@ watch(
 onMounted(() => {
   window.addEventListener('resize', handleWindowResize)
   window.addEventListener('storage', handleResultsWindowStorage)
-  void listen<{ workspaceId?: string }>('intruder-results-window:closed', (event) => {
+  void listen<{ source?: string; state?: IntruderResultsWindowState }>(INTRUDER_RESULTS_WINDOW_STATE_EVENT, (event) => {
+    if (event.payload?.source !== 'results-window' || !event.payload.state) return
+    handleResultsWindowState(event.payload.state)
+  }).then((unlisten) => {
+    unlistenResultsWindowState = unlisten
+  })
+  void listen<{ workspaceId?: string }>(INTRUDER_RESULTS_WINDOW_CLOSED_EVENT, (event) => {
     if (!event.payload?.workspaceId) return
     openResultsWindowLabels.delete(buildResultsWindowLabel(event.payload.workspaceId))
   }).then((unlisten) => {
@@ -1953,6 +1975,8 @@ onUnmounted(() => {
   stopSidebarResize()
   window.removeEventListener('resize', handleWindowResize)
   window.removeEventListener('storage', handleResultsWindowStorage)
+  unlistenResultsWindowState?.()
+  unlistenResultsWindowState = null
   unlistenResultsWindowClosed?.()
   unlistenResultsWindowClosed = null
 })

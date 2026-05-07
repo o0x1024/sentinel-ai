@@ -535,10 +535,7 @@ async fn execute_single_http2_request(
     let method = Method::from_bytes(request.method.as_bytes())
         .map_err(|error| format!("Unsupported HTTP method for HTTP/2 replay: {error}"))?;
     let request_uri = build_http2_request_uri(request, target_url, transport)?;
-    let mut headers = build_http2_headers(request, target_url, cookie_jar)?;
-    let authority_header = HeaderValue::from_str(&transport.request_authority)
-        .map_err(|error| format!("Invalid HTTP/2 authority header: {error}"))?;
-    headers.insert(HeaderName::from_static("host"), authority_header);
+    let headers = build_http2_headers(request, target_url, cookie_jar)?;
 
     let mut request_builder = Request::builder()
         .method(method)
@@ -920,7 +917,9 @@ fn build_outbound_request(
     cookie_jar: &[RedirectCookie],
 ) -> String {
     let mut headers = request.headers.clone();
-    replace_or_insert_header(&mut headers, "Host", &build_host_header(target_url));
+    if !has_header(&headers, "Host") {
+        replace_or_insert_header(&mut headers, "Host", &build_host_header(target_url));
+    }
 
     let cookie_header = build_cookie_header(cookie_jar, target_url);
     match cookie_header {
@@ -946,6 +945,12 @@ fn build_outbound_request(
     raw_request.push_str("\r\n");
     raw_request.push_str(&request.body);
     raw_request
+}
+
+fn has_header(headers: &[(String, String)], name: &str) -> bool {
+    headers
+        .iter()
+        .any(|(existing_name, _)| existing_name.eq_ignore_ascii_case(name))
 }
 
 fn build_redirect_request(
@@ -1475,9 +1480,9 @@ async fn read_http_response<S: AsyncRead + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_display_response, build_effective_request_authority, build_http2_request_uri,
-        build_initial_cookie_jar, build_outbound_request, build_redirect_request,
-        build_replay_transport_context, build_request_url, cookie_matches,
+        build_display_response, build_effective_request_authority, build_http2_headers,
+        build_http2_request_uri, build_initial_cookie_jar, build_outbound_request,
+        build_redirect_request, build_replay_transport_context, build_request_url, cookie_matches,
         downgrade_request_to_http1, is_http2_protocol, parse_raw_request, parse_raw_response,
         parse_set_cookie, should_fallback_from_http2_to_http1, should_skip_http2_header,
         RedirectCookie,
@@ -1561,6 +1566,18 @@ mod tests {
     }
 
     #[test]
+    fn outbound_request_preserves_editor_host_header_for_http1_replay() {
+        let request =
+            parse_raw_request("GET /api HTTP/1.1\r\nHost: api.example.com\r\n\r\n").unwrap();
+        let target_url = build_request_url(&request.target, "127.0.0.1", 443, true).unwrap();
+
+        let outbound = build_outbound_request(&request, &target_url, &[]);
+
+        assert!(outbound.contains("\r\nHost: api.example.com\r\n"));
+        assert!(!outbound.contains("\r\nHost: 127.0.0.1\r\n"));
+    }
+
+    #[test]
     fn detects_http2_protocol_tokens() {
         assert!(is_http2_protocol("HTTP/2"));
         assert!(is_http2_protocol("http/2.0"));
@@ -1640,6 +1657,29 @@ mod tests {
         let uri = build_http2_request_uri(&request, &target_url, &transport).unwrap();
 
         assert_eq!(uri.to_string(), "https://api.example.com/v1/list?q=1");
+    }
+
+    #[test]
+    fn http2_headers_do_not_send_host_as_regular_header() {
+        let request = parse_raw_request(
+            concat!(
+                "GET /api/muse/runner/api/task/get_list?page_num=0&page_size=1&tmpl_ids=27,30,21 HTTP/2\r\n",
+                "Host: muse.console.volcengine.com\r\n",
+                "priority: u=1, i\r\n",
+                "x-muse-token: test-token\r\n",
+                "Accept: */*\r\n",
+                "\r\n",
+            ),
+        )
+        .unwrap();
+        let target_url = build_request_url(&request.target, "1.2.3.4", 443, true).unwrap();
+
+        let headers = build_http2_headers(&request, &target_url, &[]).unwrap();
+
+        assert!(!headers.contains_key("host"));
+        assert_eq!(headers.get("accept").unwrap(), "*/*");
+        assert_eq!(headers.get("priority").unwrap(), "u=1, i");
+        assert_eq!(headers.get("x-muse-token").unwrap(), "test-token");
     }
 
     #[test]

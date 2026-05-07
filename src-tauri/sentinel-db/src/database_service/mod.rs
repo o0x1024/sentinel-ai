@@ -45,6 +45,7 @@ pub mod surface_topology;
 pub mod system_agent;
 pub mod task_tool;
 pub mod traffic;
+pub mod traffic_vulnerability_read_state;
 pub mod traits;
 pub mod traits_impl;
 pub mod workflow;
@@ -136,6 +137,8 @@ pub use surface_topology::*;
 pub use system_agent::*;
 #[allow(unused_imports)]
 pub use traffic::*;
+#[allow(unused_imports)]
+pub use traffic_vulnerability_read_state::*;
 #[allow(unused_imports)]
 pub use traits::*;
 #[allow(unused_imports)]

@@ -61,7 +61,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { emit as tauriEmit } from '@tauri-apps/api/event'
+import { emit as tauriEmit, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from 'vue-i18n'
 import IntruderResultsContent from '@/components/traffic/intruder/IntruderResultsContent.vue'
@@ -69,6 +69,8 @@ import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
 import { normalizeGrepPayloadSettings } from '@/components/traffic/intruder/analysis'
 import { buildSourceRequestFromRawRequest } from '@/components/traffic/intruder/http'
 import {
+  INTRUDER_RESULTS_WINDOW_CLOSED_EVENT,
+  INTRUDER_RESULTS_WINDOW_STATE_EVENT,
   getIntruderResultsStorageKey,
   loadIntruderResultsWindowState,
   saveIntruderResultsWindowState,
@@ -88,6 +90,7 @@ const { enabledTargets } = useTrafficSendTargets()
 const workspaceId = computed(() => String(route.params.workspaceId ?? ''))
 const windowState = ref<IntruderResultsWindowState | null>(null)
 let closeNotified = false
+let unlistenResultsWindowState: UnlistenFn | null = null
 
 const selectedResult = computed<IntruderAttackResult | null>(() => {
   if (!windowState.value?.selectedResultId) return null
@@ -118,6 +121,10 @@ function hydrateWindowState() {
 function persistState() {
   if (!windowState.value) return
   saveIntruderResultsWindowState(windowState.value)
+  void tauriEmit(INTRUDER_RESULTS_WINDOW_STATE_EVENT, {
+    source: 'results-window',
+    state: windowState.value,
+  })
 }
 
 function updateSelectedResult(resultId: string) {
@@ -175,6 +182,20 @@ function handleStorage(event: StorageEvent) {
   hydrateWindowState()
 }
 
+function applyStateFromMain(state: IntruderResultsWindowState) {
+  if (state.workspaceId !== workspaceId.value) return
+  windowState.value = {
+    ...state,
+    grepPayloadSettings: normalizeGrepPayloadSettings(state.grepPayloadSettings),
+    visibleColumns: normalizeVisibleColumns(
+      state.visibleColumns,
+      state.grepMatchRules || [],
+      state.grepExtractRules || [],
+      normalizeGrepPayloadSettings(state.grepPayloadSettings),
+    ),
+  }
+}
+
 function sendToRepeater(resultId?: string) {
   if (!windowState.value) return
 
@@ -224,7 +245,7 @@ function sendToComparer(resultId?: string) {
 function notifyResultsWindowClosed() {
   if (closeNotified || !workspaceId.value) return
   closeNotified = true
-  void tauriEmit('intruder-results-window:closed', { workspaceId: workspaceId.value })
+  void tauriEmit(INTRUDER_RESULTS_WINDOW_CLOSED_EVENT, { workspaceId: workspaceId.value })
 }
 
 async function closeWindow() {
@@ -241,10 +262,18 @@ async function closeWindow() {
 onMounted(() => {
   hydrateWindowState()
   window.addEventListener('storage', handleStorage)
+  void listen<{ source?: string; state?: IntruderResultsWindowState }>(INTRUDER_RESULTS_WINDOW_STATE_EVENT, (event) => {
+    if (event.payload?.source !== 'main' || !event.payload.state) return
+    applyStateFromMain(event.payload.state)
+  }).then((unlisten) => {
+    unlistenResultsWindowState = unlisten
+  })
 })
 
 onUnmounted(() => {
   notifyResultsWindowClosed()
   window.removeEventListener('storage', handleStorage)
+  unlistenResultsWindowState?.()
+  unlistenResultsWindowState = null
 })
 </script>

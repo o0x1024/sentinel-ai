@@ -22,8 +22,9 @@ use crate::dynamic_tool::{
     DynamicTool, DynamicToolBuilder, DynamicToolDef, ToolCategory, ToolExecutionPolicy,
     ToolExecutor, ToolExposure, ToolRegistry, ToolSource,
 };
-use crate::terminal::server::TerminalServer;
-use crate::terminal_output::{build_terminal_session_fingerprint, sanitize_interactive_output};
+use crate::terminal::unified_exec_tool::{
+    build_exec_command_tool_def, build_interactive_shell_tool_def, build_write_stdin_tool_def,
+};
 use crate::tool_search_runtime::run_tool_search;
 
 static TOOL_SERVER: Lazy<Arc<ToolServer>> = Lazy::new(|| Arc::new(ToolServer::new()));
@@ -867,35 +868,35 @@ impl ToolServer {
                         "type": "string",
                         "description": "The current execution ID (mandatory)"
                     },
-                    "action": {
+                    "explanation": {
                         "type": "string",
-                        "description": "Action to perform",
-                        "enum": ["add_items", "update_status", "get_list", "reset", "replan", "update_item", "delete_item", "insert_item", "cleanup"]
+                        "description": "Optional short explanation for this plan update"
                     },
-                    "items": {
+                    "plan": {
                         "type": "array",
-                        "items": { "type": "string" },
-                        "description": "List of item descriptions (required for 'add_items' and 'replan')"
-                    },
-                    "item_index": {
-                        "type": "integer",
-                        "description": "Index of item (required for 'update_status', 'update_item', 'delete_item', 'insert_item')"
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "New status (required for 'update_status')",
-                        "enum": ["pending", "in_progress", "completed", "failed"]
-                    },
-                    "result": {
-                        "type": "string",
-                        "description": "Optional observation or result to record"
-                    },
-                    "new_description": {
-                        "type": "string",
-                        "description": "New item description (required for 'update_item' and 'insert_item')"
+                        "description": "Complete current plan. Omitted old items are removed from the displayed plan.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "description": {
+                                    "type": "string",
+                                    "description": "Step description"
+                                },
+                                "status": {
+                                    "type": "string",
+                                    "description": "Step status",
+                                    "enum": ["pending", "in_progress", "completed"]
+                                },
+                                "result": {
+                                    "type": "string",
+                                    "description": "Optional observation or result for this step"
+                                }
+                            },
+                            "required": ["description", "status"]
+                        }
                     }
                 },
-                "required": ["execution_id", "action"]
+                "required": ["execution_id", "plan"]
             }))
             .source(ToolSource::Builtin)
             .execution_policy(ToolExecutionPolicy {
@@ -1473,410 +1474,11 @@ impl ToolServer {
 
         self.registry.register(tenth_man_def).await;
 
-        // Register interactive_shell tool
-        let interactive_shell_desc = {
-            let config = crate::buildin_tools::shell::get_shell_config().await;
-            let mut desc = TerminalServer::DESCRIPTION.to_string();
-            if config.default_execution_mode
-                == crate::buildin_tools::shell::ShellExecutionMode::Docker
-            {
-                desc.push_str(" [ENVIRONMENT: This interactive shell runs in a Kali Linux docker sandbox with pre-installed cybersecurity tools like nmap, sqlmap, msfconsole, masscan, dirb, etc. Do not hesitate to use these tools directly.]");
-            } else {
-                desc.push_str(" [ENVIRONMENT: This interactive shell runs on the Host OS.]");
-            }
-            desc
-        };
-        let interactive_shell_def = DynamicToolBuilder::new(TerminalServer::NAME.to_string())
-            .description(interactive_shell_desc)
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "execution_mode": {
-                        "type": "string",
-                        "enum": ["docker", "host"],
-                        "description": "Execution mode: 'docker' (run in container, recommended) or 'host' (run on host machine)",
-                        "default": "docker"
-                    },
-                    "docker_image": {
-                        "type": "string",
-                        "description": "Docker image to use when execution_mode is 'docker' (default: sentinel-sandbox:latest)",
-                        "default": "sentinel-sandbox:latest"
-                    },
-                    "working_dir": {
-                        "type": "string",
-                        "description": "Working directory for host sessions. Docker sessions always use /workspace."
-                    },
-                    "command": {
-                        "type": "string",
-                        "description": "Command to execute in the terminal. Long-running commands like 'ping' will be auto-normalized (e.g., 'ping host' -> 'ping -c 4 host')"
-                    },
-                    "session_policy": {
-                        "type": "string",
-                        "enum": ["reuse", "new"],
-                        "description": "Session selection policy: 'reuse' keeps using the current interactive terminal session for this execution when available, while 'new' forces a fresh terminal session.",
-                        "default": "reuse"
-                    },
-                    "wait_strategy": {
-                        "type": "string",
-                        "enum": ["auto", "prompt", "timeout", "lines"],
-                        "description": "How to wait for output: 'auto' (detect completion via prompt + idle), 'prompt' (wait for shell prompt), 'timeout' (fixed timeout), 'lines' (wait for N lines)",
-                        "default": "auto"
-                    },
-                    "wait_timeout": {
-                        "type": "integer",
-                        "description": "Maximum wait time in seconds (default: 30, max: 120)",
-                        "default": 30
-                    },
-                    "expected_lines": {
-                        "type": "integer",
-                        "description": "For 'lines' strategy: number of output lines to wait for"
-                    },
-                    "skip_normalize": {
-                        "type": "boolean",
-                        "description": "Skip auto-normalization of long-running commands (default: false)",
-                        "default": false
-                    }
-                }
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move {
-                use crate::buildin_tools::shell::check_shell_permission;
-                use crate::terminal::{TERMINAL_MANAGER, TerminalSessionConfig, WaitStrategy, normalize_command, detect_shell_prompt, decode_transport_html_entities, ExecutionMode};
-                use tokio::sync::mpsc;
-                use tokio::time::{timeout, Duration};
-                use tracing::{info, warn};
-
-                // Parse arguments
-                let execution_mode = args.get("execution_mode")
-                    .and_then(|v| v.as_str())
-                    .map(|s| match s {
-                        "host" => ExecutionMode::Host,
-                        "docker" => ExecutionMode::Docker,
-                        _ => ExecutionMode::Host,
-                    })
-                    .unwrap_or(ExecutionMode::Host);
-
-                let docker_image = args.get("docker_image")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("sentinel-sandbox:latest")
-                    .to_string();
-                let requested_working_dir = args.get("working_dir")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(|value| value.to_string());
-
-                // Support both 'command' and 'initial_command' for backward compatibility
-                let command = args.get("command")
-                    .or_else(|| args.get("initial_command"))
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string());
-
-                let session_policy = args.get("session_policy")
-                    .and_then(|v| v.as_str())
-                    .map(|value| value.to_ascii_lowercase())
-                    .unwrap_or_else(|| "reuse".to_string());
-                let force_new_session = session_policy == "new";
-
-                let active_session_id = args.get("active_session_id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                // Parse wait strategy options
-                let wait_strategy = args.get("wait_strategy")
-                    .and_then(|v| v.as_str())
-                    .map(WaitStrategy::from_str)
-                    .unwrap_or_default();
-
-                let wait_timeout_secs = args.get("wait_timeout")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(30)
-                    .min(120); // Cap at 120 seconds
-
-                let expected_lines = args.get("expected_lines")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize);
-
-                let skip_normalize = args.get("skip_normalize")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-
-                let active_session = if !force_new_session {
-                    if let Some(ref sid) = active_session_id {
-                        if let Some(session_lock) = TERMINAL_MANAGER.get_session(sid).await {
-                            let session = session_lock.read().await;
-                            let is_healthy = session.is_healthy();
-                            let requested_id = session.id.clone();
-                            drop(session);
-
-                            if is_healthy {
-                                info!("Reusing active terminal session: {}", requested_id);
-                                Some(session_lock)
-                            } else {
-                                info!("Active session {} is unhealthy, stopping it", requested_id);
-                                let _ = TERMINAL_MANAGER.stop_session(&requested_id).await;
-                                None
-                            }
-                        } else {
-                            warn!(
-                                "Active terminal session '{}' was not found; creating a new session",
-                                sid
-                            );
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    info!("Session policy is 'new'; creating a fresh terminal session");
-                    None
-                };
-
-                let (session_id, mut output_rx, session_execution_mode, session_docker_image, session_shell, session_working_dir): (String, mpsc::UnboundedReceiver<Vec<u8>>, ExecutionMode, String, String, String) = if let Some(session_lock) = active_session {
-                    let id = {
-                        let session = session_lock.read().await;
-                        session.id.clone()
-                    };
-                    info!("Using existing terminal session: {}", id);
-
-                    // Create a new subscriber to capture ONLY new output (skip history)
-                    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                    {
-                        let session = session_lock.read().await;
-                        let exec_mode = session.config.execution_mode;
-                        let docker_image = session.config.docker_image.clone();
-                        let shell = session.config.shell.clone();
-                        let working_dir = session.config.working_dir.clone().unwrap_or_default();
-                        session.add_subscriber_no_history(tx).await;
-                        (id, rx, exec_mode, docker_image, shell, working_dir)
-                    }
-                } else {
-                    // 2. Create a new persistent session if none exists
-                    let shell = "bash".to_string();
-                    let working_dir = match execution_mode {
-                        ExecutionMode::Docker => "/workspace".to_string(),
-                        ExecutionMode::Host => requested_working_dir
-                            .clone()
-                            .or_else(|| {
-                                std::env::current_dir()
-                                    .ok()
-                                    .map(|path| path.to_string_lossy().to_string())
-                            })
-                            .unwrap_or_default(),
-                    };
-                    let config = TerminalSessionConfig {
-                        execution_mode,
-                        docker_image: docker_image.clone(),
-                        working_dir: if working_dir.is_empty() {
-                            None
-                        } else {
-                            Some(working_dir.clone())
-                        },
-                        env_vars: std::collections::HashMap::new(),
-                        shell: shell.clone(),
-                        initial_command: None,
-                        reuse_container: true,
-                        container_name: Some("sentinel-sandbox-main".to_string()),
-                    };
-
-                    let (id, rx) = TERMINAL_MANAGER.create_session(config).await?;
-                    info!("Created new persistent terminal session: {}", id);
-                    (id, rx, execution_mode, docker_image.clone(), shell, working_dir)
-                };
-                let session_fingerprint = build_terminal_session_fingerprint(
-                    session_execution_mode,
-                    &session_docker_image,
-                    &session_shell,
-                    &session_working_dir,
-                );
-
-                // If no command, just return session info
-                let Some(original_cmd) = command else {
-                    return Ok(serde_json::json!({
-                        "session_id": session_id,
-                        "session_fingerprint": session_fingerprint,
-                        "execution_mode": match session_execution_mode {
-                            ExecutionMode::Docker => "docker",
-                            ExecutionMode::Host => "host",
-                        },
-                        "docker_image": session_docker_image,
-                        "shell": session_shell,
-                        "working_dir": session_working_dir,
-                        "completed": false,
-                        "message": "Connected to terminal session",
-                        "instructions": "Use the Terminal panel to interact"
-                    }));
-                };
-
-                let decoded_cmd = decode_transport_html_entities(&original_cmd);
-                let command_was_html_decoded = decoded_cmd != original_cmd;
-                let command_for_execution = if command_was_html_decoded {
-                    info!(
-                        "Decoded HTML entities in interactive shell command: '{}' -> '{}'",
-                        original_cmd, decoded_cmd
-                    );
-                    decoded_cmd
-                } else {
-                    original_cmd.clone()
-                };
-
-                // 3. Normalize command if needed (auto-add limits to long-running commands)
-                let (cmd, was_normalized) = if skip_normalize {
-                    (command_for_execution.clone(), false)
-                } else {
-                    normalize_command(&command_for_execution)
-                };
-
-                if was_normalized {
-                    info!("Command normalized: '{}' -> '{}'", original_cmd, cmd);
-                }
-
-                // 4. Permission check for host execution only
-                if session_execution_mode == ExecutionMode::Host {
-                    let execution_id = args
-                        .get("execution_id")
-                        .and_then(|v| v.as_str());
-                    check_shell_permission(&cmd, execution_id)
-                        .await
-                        .map_err(|e| format!("Permission denied: {}", e))?;
-                }
-
-                // 5. Execute the command in the session
-                let cmd_with_newline = format!("{}\n", cmd);
-                if let Err(e) = TERMINAL_MANAGER.write_to_session(&session_id, cmd_with_newline.into_bytes()).await {
-                    return Err(format!("Failed to execute command: {}", e));
-                }
-
-                // 6. Collect output with smart waiting strategy
-                let mut output = Vec::new();
-                let collect_timeout = Duration::from_secs(wait_timeout_secs);
-                let start = tokio::time::Instant::now();
-                let mut line_count = 0;
-                let mut idle_count = 0;
-                let mut completed = false;
-
-                while start.elapsed() < collect_timeout {
-                    match timeout(Duration::from_millis(300), output_rx.recv()).await {
-                        Ok(Some(data)) => {
-                            idle_count = 0;
-                            let text = String::from_utf8_lossy(&data);
-                            line_count += text.matches('\n').count();
-                            output.extend_from_slice(&data);
-
-                            let current_output = String::from_utf8_lossy(&output);
-
-                            match wait_strategy {
-                                WaitStrategy::Prompt => {
-                                    if detect_shell_prompt(&current_output) {
-                                        completed = true;
-                                        break;
-                                    }
-                                }
-                                WaitStrategy::Lines => {
-                                    if let Some(expected) = expected_lines {
-                                        if line_count >= expected {
-                                            completed = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                WaitStrategy::Auto => {
-                                    // Check for shell prompt
-                                    if detect_shell_prompt(&current_output) {
-                                        completed = true;
-                                        break;
-                                    }
-                                }
-                                WaitStrategy::Timeout => {
-                                    // Just wait for timeout
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            completed = true;
-                            break;
-                        }
-                        Err(_) => {
-                            // 300ms timeout - no new data
-                            idle_count += 1;
-
-                            if matches!(wait_strategy, WaitStrategy::Auto) && !output.is_empty() {
-                                // Auto mode: if idle for 1.5s (5 * 300ms), consider done
-                                if idle_count >= 5 {
-                                    // Double-check with prompt detection
-                                    let current_output = String::from_utf8_lossy(&output);
-                                    completed = detect_shell_prompt(&current_output);
-                                    break;
-                                }
-                            } else if matches!(wait_strategy, WaitStrategy::Timeout) {
-                                // Timeout mode: continue waiting
-                            } else if !output.is_empty() && idle_count >= 3 {
-                                // Other modes: break after 900ms idle if we have output
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                let timed_out = start.elapsed() >= collect_timeout;
-                let output_str = String::from_utf8_lossy(&output).to_string();
-
-                // Strip ANSI escape sequences for LLM (keep raw output for terminal display)
-                let clean_output = sanitize_interactive_output(&output_str, &cmd);
-
-                // Build result with status info
-                let mut result = serde_json::json!({
-                    "session_id": session_id,
-                    "session_fingerprint": session_fingerprint,
-                    "execution_mode": match session_execution_mode {
-                        ExecutionMode::Docker => "docker",
-                        ExecutionMode::Host => "host",
-                    },
-                    "docker_image": session_docker_image,
-                    "shell": session_shell,
-                    "working_dir": session_working_dir,
-                    "command": cmd,
-                    "output": clean_output,
-                    "completed": completed,
-                    "truncated": timed_out && !completed,
-                });
-
-                // Add helpful hints
-                if command_was_html_decoded {
-                    result["input_command"] = serde_json::json!(original_cmd);
-                    result["decoded_from_html_entities"] = serde_json::json!(true);
-                }
-
-                if was_normalized {
-                    result["original_command"] = serde_json::json!(command_for_execution);
-                    let mut notes = Vec::new();
-                    if command_was_html_decoded {
-                        notes.push("Command contained HTML entities and was decoded before execution.".to_string());
-                    }
-                    notes.push(format!(
-                        "Command was auto-normalized to limit output. Original: '{}'. Use skip_normalize=true to disable.",
-                        command_for_execution
-                    ));
-                    result["note"] = serde_json::json!(notes.join(" "));
-                } else if command_was_html_decoded {
-                    result["note"] = serde_json::json!(
-                        "Command contained HTML entities and was decoded before execution."
-                    );
-                }
-
-                if timed_out && !completed {
-                    result["hint"] = serde_json::json!(
-                        "Output was truncated due to timeout. The command may still be running. Consider: 1) Using 'wait_strategy: prompt' for commands that return to shell, 2) Adding flags to limit output (e.g., 'ping -c 4'), 3) Increasing 'wait_timeout'."
-                    );
-                }
-
-                Ok(result)
-            })
-            .build()
-            .expect("Failed to build interactive_shell tool");
-
-        self.registry.register(interactive_shell_def).await;
+        self.registry
+            .register(build_interactive_shell_tool_def())
+            .await;
+        self.registry.register(build_exec_command_tool_def()).await;
+        self.registry.register(build_write_stdin_tool_def()).await;
 
         *initialized = true;
         tracing::info!("Builtin tools initialized");
@@ -2239,7 +1841,7 @@ impl ToolServer {
 mod tests {
     use super::*;
     use crate::terminal::TERMINAL_MANAGER;
-    use crate::terminal_output::strip_ansi_codes;
+    use crate::terminal_output::{sanitize_interactive_output, strip_ansi_codes};
     use serde_json::json;
 
     #[test]
@@ -2269,6 +1871,8 @@ mod tests {
         // Check builtin tools exist
         assert!(server.get_tool("http_request").await.is_some());
         assert!(server.get_tool("shell").await.is_some());
+        assert!(server.get_tool("exec_command").await.is_some());
+        assert!(server.get_tool("write_stdin").await.is_some());
         assert!(server.get_tool("tasks").await.is_some());
         assert!(server.get_tool("web_search").await.is_some());
         assert!(server.get_tool("subdomain_brute").await.is_some());
@@ -2354,6 +1958,33 @@ mod tests {
                 .get("recommended_tool")
                 .and_then(|value| value.as_str()),
             Some("interactive_shell")
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_rejects_prompting_scaffold_commands_before_timeout() {
+        let server = ToolServer::new();
+        server.init_builtin_tools().await;
+
+        let result = server
+            .execute(
+                "shell",
+                json!({
+                    "command": "npm create vite@latest . -- --template react",
+                    "execution_mode": "host"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        let output = result.output.expect("shell should return structured output");
+        assert_eq!(
+            output
+                .get("interaction_required")
+                .and_then(|value| value.as_bool()),
+            Some(true),
+            "unexpected shell output: {}",
+            output
         );
     }
 
@@ -2463,4 +2094,5 @@ mod tests {
         let _ = TERMINAL_MANAGER.stop_session(&session_a).await;
         let _ = TERMINAL_MANAGER.stop_session(&session_b).await;
     }
+
 }

@@ -494,7 +494,6 @@ export const useAgentConversationFlow = (params: {
   buildToolConfig: () => UiToolConfigPayload
   clearAgentMessages: () => void
   clearDraftArtifacts: () => void
-  clearTasksForCurrentContext: () => void
   closeConversationDrawer: () => void
   conversationExecutionState: Ref<PersistedAgentExecutionState | null>
   conversationId: Ref<string | null>
@@ -504,7 +503,7 @@ export const useAgentConversationFlow = (params: {
   emitSubmit: (task: string) => void
   ensureConversationForTeamSession: () => Promise<any>
   executionIdProp?: string | null
-  forceTaskCompletionContract: boolean
+  forceTaskPlanContract: boolean
   getFailedToClearConversationLabel: () => string
   getFailedToStopExecutionLabel: () => string
   getNewConversationTitle: () => string
@@ -523,6 +522,7 @@ export const useAgentConversationFlow = (params: {
   loadSubagentRuns: (parentExecutionId: string, loadToken?: number) => Promise<void>
   localError: Ref<string | null>
   pendingAttachments: Ref<any[]>
+  pruneTasksForCurrentContextAfter: (timestampMs: number) => Promise<void>
   processedDocuments: Ref<any[]>
   ragEnabled: Ref<boolean>
   referencedAssets: Ref<any[]>
@@ -595,7 +595,7 @@ export const useAgentConversationFlow = (params: {
         enableRag: false,
         enableTenthManRule: false,
         firstMessage: input.prompt,
-        forceTaskCompletionContract: false,
+        forceTaskPlanContract: false,
         fullTask: input.prompt,
         workingDirectory: params.effectiveWorkingDirectory.value,
         maybeAutoRenameConversation: (renameParams) => {
@@ -995,7 +995,7 @@ export const useAgentConversationFlow = (params: {
     if (!snapshot) return
     await deleteConversationTailForMessageReplay(message, snapshot.messageTimestamp, 'original')
     params.restoreArtifactsFromMessage(message)
-    params.clearTasksForCurrentContext()
+    await params.pruneTasksForCurrentContextAfter(snapshot.messageTimestamp)
     params.inputValue.value = params.teamModeEnabled.value
       ? normalizeTeamHumanInputContent(message.content)
       : message.content
@@ -1008,7 +1008,7 @@ export const useAgentConversationFlow = (params: {
     if (!snapshot) return
     await deleteConversationTailForMessageReplay(message, snapshot.messageTimestamp, 'edited')
     params.restoreArtifactsFromMessage(message)
-    params.clearTasksForCurrentContext()
+    await params.pruneTasksForCurrentContextAfter(snapshot.messageTimestamp)
     params.inputValue.value = params.teamModeEnabled.value
       ? normalizeTeamHumanInputContent(newContent)
       : newContent
@@ -1455,7 +1455,7 @@ export const useAgentConversationFlow = (params: {
                     enableRag: params.ragEnabled.value,
                     enableTenthManRule: params.tenthManEnabled.value,
                     firstMessage: task,
-                    forceTaskCompletionContract: params.forceTaskCompletionContract,
+                    forceTaskPlanContract: params.forceTaskPlanContract,
                     fullTask: specialistTaskPrompt,
                     workingDirectory: params.effectiveWorkingDirectory.value,
                     maybeAutoRenameConversation: (renameParams) => {
@@ -1901,7 +1901,7 @@ export const useAgentConversationFlow = (params: {
           enableRag: params.ragEnabled.value,
           enableTenthManRule: params.tenthManEnabled.value,
           firstMessage: task,
-          forceTaskCompletionContract: params.forceTaskCompletionContract,
+          forceTaskPlanContract: params.forceTaskPlanContract,
           fullTask,
           workingDirectory: params.effectiveWorkingDirectory.value,
           maybeAutoRenameConversation: (renameParams) => {

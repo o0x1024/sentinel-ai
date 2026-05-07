@@ -382,7 +382,7 @@ impl DatabaseService {
                     r#"
                     SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                            cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
-                           hit_count, session_id, created_at, updated_at
+                           hit_count, session_id, created_at, updated_at, viewed_at, viewed_by
                     FROM traffic_vulnerabilities
                     WHERE 1=1
                     "#,
@@ -432,7 +432,7 @@ impl DatabaseService {
                     r#"
                     SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                            cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
-                           hit_count, session_id, created_at, updated_at
+                           hit_count, session_id, created_at, updated_at, viewed_at, viewed_by
                     FROM traffic_vulnerabilities
                     WHERE 1=1
                     "#,
@@ -482,7 +482,7 @@ impl DatabaseService {
                     r#"
                     SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                            cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
-                           hit_count, session_id, created_at, updated_at
+                           hit_count, session_id, created_at, updated_at, viewed_at, viewed_by
                     FROM traffic_vulnerabilities
                     WHERE 1=1
                     "#,
@@ -701,7 +701,7 @@ impl DatabaseService {
                     r#"
                     SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                            cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
-                           hit_count, session_id, created_at, updated_at
+                           hit_count, session_id, created_at, updated_at, viewed_at, viewed_by
                     FROM traffic_vulnerabilities
                     WHERE id = $1
                     "#,
@@ -716,7 +716,7 @@ impl DatabaseService {
                     r#"
                     SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                            cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
-                           hit_count, session_id, created_at, updated_at
+                           hit_count, session_id, created_at, updated_at, viewed_at, viewed_by
                     FROM traffic_vulnerabilities
                     WHERE id = ?
                     "#,
@@ -731,7 +731,7 @@ impl DatabaseService {
                     r#"
                     SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                            cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
-                           hit_count, session_id, created_at, updated_at
+                           hit_count, session_id, created_at, updated_at, viewed_at, viewed_by
                     FROM traffic_vulnerabilities
                     WHERE id = ?
                     "#,
@@ -2378,6 +2378,8 @@ pub struct TrafficVulnerabilityRecord {
     pub session_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub viewed_at: Option<DateTime<Utc>>,
+    pub viewed_by: Option<String>,
 }
 
 /// Evidence record

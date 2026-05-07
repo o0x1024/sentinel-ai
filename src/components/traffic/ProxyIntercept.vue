@@ -543,7 +543,14 @@ import {
   type ProxyStatus,
 } from './proxyInterceptSupport';
 import type { HttpExchangeRequest } from './http/model'
-import { buildInterceptItemText, buildInterceptResponseText, buildInterceptHexView, formatInterceptPrettyContent } from './proxyInterceptContentSupport'
+import {
+  buildInterceptItemText,
+  buildInterceptResponseText,
+  buildInterceptHexView,
+  formatInterceptPrettyContent,
+  getInterceptItemKey,
+  resolveInterceptForwardModifiedContent,
+} from './proxyInterceptContentSupport'
 import { setupProxyInterceptEventListeners, refreshProxyInterceptStatus } from './proxyInterceptEventSupport'
 import { buildSavedInterceptFilterRule } from './proxyInterceptFilterSupport'
 import type { ContextMenuState, FilterRule, ProxyInterceptListenerCleanup } from './proxyInterceptTypes'
@@ -601,6 +608,7 @@ const activeTab = ref<'raw' | 'pretty' | 'hex'>(getDefaultTrafficMessageViewTab(
 const isEditable = ref(true); // 默认可编辑
 const isProcessing = ref(false);
 const requestContent = ref('');
+const originalInterceptContentByItemId = new Map<string, string>();
 
 const contextMenu = ref<ContextMenuState>({
   visible: false,
@@ -1286,6 +1294,7 @@ async function forwardAll() {
       if (response.success) successCount++;
     }
     interceptedWebsockets.value = [];
+    originalInterceptContentByItemId.clear();
     
     currentItemIndex.value = 0;
     dialog.toast.success(`已批量转发 ${successCount} 个项目`);
@@ -1314,6 +1323,7 @@ async function forwardAllSilent() {
     
     interceptedRequests.value = [];
     interceptedResponses.value = [];
+    originalInterceptContentByItemId.clear();
     currentItemIndex.value = 0;
   } catch (error: any) {
     console.error('Failed to forward all silently:', error);
@@ -1401,7 +1411,24 @@ function loadCurrentItemContent() {
   const item = currentItem.value;
   if (!item) return;
 
-  requestContent.value = buildInterceptItemText(item, interceptedRequests.value);
+  requestContent.value = registerInterceptItemOriginalContent(item);
+}
+
+function registerInterceptItemOriginalContent(item: InterceptedItem) {
+  const key = getInterceptItemKey(item);
+  if (!originalInterceptContentByItemId.has(key)) {
+    originalInterceptContentByItemId.set(key, buildInterceptItemText(item, interceptedRequests.value));
+  }
+  return originalInterceptContentByItemId.get(key) || '';
+}
+
+function removeInterceptItemOriginalContent(item: InterceptedItem) {
+  originalInterceptContentByItemId.delete(getInterceptItemKey(item));
+}
+
+function resolveCurrentForwardModifiedContent(item: InterceptedItem) {
+  const originalContent = registerInterceptItemOriginalContent(item);
+  return resolveInterceptForwardModifiedContent(requestContent.value, originalContent);
 }
 
 // 选择队列中的项
@@ -1421,8 +1448,7 @@ async function forwardCurrentItem() {
   
   isProcessing.value = true;
   try {
-    // 始终传递当前编辑的内容（默认可编辑）
-    const modifiedContent = requestContent.value;
+    const modifiedContent = resolveCurrentForwardModifiedContent(item);
     
     if (item.type === 'request') {
       const response = await invoke<any>('forward_intercepted_request', { 
@@ -1430,6 +1456,7 @@ async function forwardCurrentItem() {
       });
       if (response.success) {
         interceptedRequests.value = interceptedRequests.value.filter(r => r.id !== item.data.id);
+        removeInterceptItemOriginalContent(item);
       } else {
         dialog.toast.error(response.error || '转发失败');
       }
@@ -1439,6 +1466,7 @@ async function forwardCurrentItem() {
       });
       if (response.success) {
         interceptedResponses.value = interceptedResponses.value.filter(r => r.id !== item.data.id);
+        removeInterceptItemOriginalContent(item);
       } else {
         dialog.toast.error(response.error || '转发失败');
       }
@@ -1448,6 +1476,7 @@ async function forwardCurrentItem() {
       });
       if (response.success) {
         interceptedWebsockets.value = interceptedWebsockets.value.filter(w => w.id !== item.data.id);
+        removeInterceptItemOriginalContent(item);
       } else {
         dialog.toast.error(response.error || '转发失败');
       }
@@ -1477,18 +1506,21 @@ async function dropCurrentItem() {
       const response = await invoke<any>('drop_intercepted_request', { requestId: item.data.id });
       if (response.success) {
         interceptedRequests.value = interceptedRequests.value.filter(r => r.id !== item.data.id);
+        removeInterceptItemOriginalContent(item);
         dialog.toast.info('请求已丢弃');
       }
     } else if (item.type === 'response') {
       const response = await invoke<any>('drop_intercepted_response', { responseId: item.data.id });
       if (response.success) {
         interceptedResponses.value = interceptedResponses.value.filter(r => r.id !== item.data.id);
+        removeInterceptItemOriginalContent(item);
         dialog.toast.info('响应已丢弃');
       }
     } else if (item.type === 'websocket') {
       const response = await invoke<any>('drop_intercepted_websocket', { id: item.data.id });
       if (response.success) {
         interceptedWebsockets.value = interceptedWebsockets.value.filter(w => w.id !== item.data.id);
+        removeInterceptItemOriginalContent(item);
         dialog.toast.info('消息已丢弃');
       }
     }
@@ -1529,7 +1561,7 @@ async function setupEventListeners() {
       if (interceptedItems.value.length === 1) {
         currentItemIndex.value = 0
         currentItemType.value = 'request'
-        requestContent.value = buildInterceptItemText({ type: 'request', data: request }, interceptedRequests.value)
+        requestContent.value = registerInterceptItemOriginalContent({ type: 'request', data: request })
       }
     },
     onInterceptResponse: (response) => {
@@ -1537,7 +1569,7 @@ async function setupEventListeners() {
       if (interceptedItems.value.length === 1) {
         currentItemIndex.value = 0
         currentItemType.value = 'response'
-        requestContent.value = buildInterceptItemText({ type: 'response', data: response }, interceptedRequests.value)
+        requestContent.value = registerInterceptItemOriginalContent({ type: 'response', data: response })
       }
     },
     onInterceptWebSocket: (message) => {
@@ -1546,7 +1578,7 @@ async function setupEventListeners() {
       if (interceptedItems.value.length === 1) {
         currentItemIndex.value = 0
         currentItemType.value = 'websocket'
-        requestContent.value = buildInterceptItemText({ type: 'websocket', data: message }, interceptedRequests.value)
+        requestContent.value = registerInterceptItemOriginalContent({ type: 'websocket', data: message })
       }
     },
   })

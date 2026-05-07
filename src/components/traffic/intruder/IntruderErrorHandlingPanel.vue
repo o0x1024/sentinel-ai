@@ -9,7 +9,7 @@
         {{ $t('trafficAnalysis.intruder.help.errorHandlingHint') }}
       </p>
 
-      <div class="grid gap-3 md:grid-cols-2">
+      <div class="grid gap-3 md:grid-cols-3">
         <label class="form-control">
           <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.retryCount') }}</span>
           <input
@@ -46,17 +46,6 @@
           />
         </label>
 
-        <label class="form-control">
-          <span class="label-text text-xs">{{ $t('trafficAnalysis.intruder.labels.maxRequests') }}</span>
-          <input
-            :value="attackOptions.maxRequests"
-            type="number"
-            min="1"
-            max="50000"
-            class="input input-bordered input-sm"
-            @input="emitOption('maxRequests', clampNumber(($event.target as HTMLInputElement).value, 1, 50000, 500))"
-          />
-        </label>
       </div>
     </div>
   </div>
@@ -66,11 +55,11 @@
 import type { IntruderAttackOptions } from './types'
 
 const props = defineProps<{
-  attackOptions: Pick<IntruderAttackOptions, 'retryCount' | 'retryPauseMs' | 'timeoutSecs' | 'maxRequests'>
+  attackOptions: Pick<IntruderAttackOptions, 'retryCount' | 'retryPauseMs' | 'timeoutSecs'>
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:options', value: Partial<Pick<IntruderAttackOptions, 'retryCount' | 'retryPauseMs' | 'timeoutSecs' | 'maxRequests'>>): void
+  (e: 'update:options', value: Partial<Pick<IntruderAttackOptions, 'retryCount' | 'retryPauseMs' | 'timeoutSecs'>>): void
 }>()
 
 function clampNumber(rawValue: string, min: number, max: number, fallback: number): number {

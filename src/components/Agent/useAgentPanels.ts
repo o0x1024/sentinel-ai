@@ -56,9 +56,11 @@ export const useAgentPanels = (params: {
   } | null
   propsShowTasks: boolean
   parallelTaskSources?: ComputedRef<ParallelTaskSource[]>
+  pruneTasksForExecutionAfter: (executionId: string, timestampMs: number) => Promise<AgentTask[]>
   resetAgentError: () => void
   resolveAgentName: (agentId?: string | null) => string
   selectedTeamTaskAssigneeId: ComputedRef<string | null>
+  setTasksForExecution: (executionId: string, tasks: AgentTask[]) => void
   teamWorkspaceAvailable: ComputedRef<boolean>
   terminalClose: () => void
   terminalHasHistory: ComputedRef<boolean>
@@ -90,6 +92,7 @@ export const useAgentPanels = (params: {
   htmlPanelContent: Ref<string>
   loadSidebarWidth: () => void
   loadToolConfigDrawerWidth: () => void
+  pruneTasksForCurrentContextAfter: (timestampMs: number) => Promise<void>
   selectedTaskSourceKey: Ref<string>
   sidebarWidth: Ref<number>
   startToolConfigDrawerResize: (event: MouseEvent) => void
@@ -539,22 +542,42 @@ export const useAgentPanels = (params: {
     params.isTeamWorkspaceActive.value = false
   }, { immediate: true })
 
-  const clearTasksForCurrentContext = () => {
+  const currentContextTaskExecutionIds = () => {
+    const ids = new Set<string>()
     const convId = params.conversationId.value
     if (convId) {
-      params.clearTasksForExecution(convId)
+      ids.add(convId)
       for (const source of params.parallelTaskSources?.value || []) {
         if (source.parentConversationId === convId) {
-          params.clearTasksForExecution(source.executionId)
+          ids.add(source.executionId)
         }
       }
     }
     const sessionId = params.activeTeamSessionId.value
-    if (!sessionId) return
-    for (const executionId of params.taskExecutionIds.value) {
-      const parsed = params.parseTeamTaskExecutionId(executionId)
-      if (!parsed || parsed.sessionId !== sessionId) continue
+    if (sessionId) {
+      for (const executionId of params.taskExecutionIds.value) {
+        const parsed = params.parseTeamTaskExecutionId(executionId)
+        if (!parsed || parsed.sessionId !== sessionId) continue
+        ids.add(executionId)
+      }
+    }
+    return Array.from(ids)
+  }
+
+  const clearTasksForCurrentContext = () => {
+    for (const executionId of currentContextTaskExecutionIds()) {
       params.clearTasksForExecution(executionId)
+    }
+  }
+
+  const pruneTasksForCurrentContextAfter = async (timestampMs: number) => {
+    for (const executionId of currentContextTaskExecutionIds()) {
+      const remaining = await params.pruneTasksForExecutionAfter(executionId, timestampMs)
+      if (remaining.length > 0) {
+        params.setTasksForExecution(executionId, remaining)
+      } else {
+        params.clearTasksForExecution(executionId)
+      }
     }
   }
 
@@ -589,6 +612,7 @@ export const useAgentPanels = (params: {
     htmlPanelContent,
     loadSidebarWidth,
     loadToolConfigDrawerWidth,
+    pruneTasksForCurrentContextAfter,
     selectedTaskSourceKey,
     sidebarWidth,
     startToolConfigDrawerResize,

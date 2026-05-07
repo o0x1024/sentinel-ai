@@ -1,4 +1,12 @@
-const SHELL_TOOL_NAMES = new Set(['shell', 'bash', 'cmd', 'powershell'])
+const SHELL_TOOL_NAMES = new Set([
+  'shell',
+  'interactive_shell',
+  'exec_command',
+  'write_stdin',
+  'bash',
+  'cmd',
+  'powershell',
+])
 const FILE_TOOL_NAMES = new Set(['file_read', 'file_write', 'file_edit'])
 const SEARCH_TOOL_NAMES = new Set(['glob', 'grep'])
 

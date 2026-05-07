@@ -9,6 +9,8 @@ import { getIntruderResultColumnValue } from './analysis'
 import { setLocalStorageItem } from '@/utils/browserStorage'
 
 const STORAGE_KEY_PREFIX = 'intruder-results-window'
+export const INTRUDER_RESULTS_WINDOW_STATE_EVENT = 'intruder-results-window:state'
+export const INTRUDER_RESULTS_WINDOW_CLOSED_EVENT = 'intruder-results-window:closed'
 
 export function createDefaultResultFilter(): IntruderResultFilter {
   return {

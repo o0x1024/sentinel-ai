@@ -152,7 +152,7 @@
               :key="finding.id"
               :finding="finding"
               :selected="selectedIds.has(finding.id)"
-              :read="isFindingRead(finding.id)"
+              :read="isFindingReadRecord(finding)"
               :reviewing="reviewingFindingId === finding.id"
               @toggle-select="toggleSelect"
               @open-details="openDetails"
@@ -406,7 +406,6 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const securityCenterActivity = useSecurityCenterActivity()
-const { isFindingRead } = securityCenterActivity
 const props = defineProps<{
   immersiveMode?: boolean
   immersiveOpenFindingRequest?: {
@@ -610,6 +609,33 @@ const buildDetailedFinding = (detail: any, fallbackFinding: Finding | null = nul
   } as Finding
 }
 
+const isFindingReadRecord = (finding: Finding) => Boolean(finding.viewed_at)
+
+const markFindingIdsAsRead = async (ids: string[]) => {
+  const nextIds = ids.filter(id => typeof id === 'string' && id.trim())
+  if (!nextIds.length) return
+
+  await securityCenterActivity.markFindingsAsRead(nextIds)
+  const viewedAt = new Date().toISOString()
+  const idSet = new Set(nextIds)
+  findings.value = findings.value.map(item =>
+    idSet.has(item.id)
+      ? {
+          ...item,
+          viewed_at: item.viewed_at || viewedAt,
+          viewed_by: item.viewed_by || 'local',
+        }
+      : item,
+  )
+  if (selectedFinding.value && idSet.has(selectedFinding.value.id)) {
+    selectedFinding.value = {
+      ...selectedFinding.value,
+      viewed_at: selectedFinding.value.viewed_at || viewedAt,
+      viewed_by: selectedFinding.value.viewed_by || 'local',
+    }
+  }
+}
+
 const fetchFindingDetail = async (findingId: string, fallbackFinding: Finding | null = null) => {
   const response = await invoke<any>('get_finding', { findingId })
   if (!response?.success || !response?.data) {
@@ -673,11 +699,11 @@ const countVisibleStats = async (
 
 const filterFindingsByReadStatus = (items: Finding[]) => {
   if (filters.value.readStatus === 'unread') {
-    return items.filter(item => !isFindingRead(item.id))
+    return items.filter(item => !isFindingReadRecord(item))
   }
 
   if (filters.value.readStatus === 'read') {
-    return items.filter(item => isFindingRead(item.id))
+    return items.filter(item => isFindingReadRecord(item))
   }
 
   return items
@@ -864,10 +890,10 @@ const applyPageJump = () => {
 }
 
 const openDetails = async (finding: Finding) => {
-  securityCenterActivity.markFindingAsRead(finding.id)
   selectedFinding.value = finding
   detailTab.value = DEFAULT_DETAIL_TAB
   showDetailsModal.value = true
+  await markFindingIdsAsRead([finding.id])
 
   try {
     const detailedFinding = await fetchFindingDetail(finding.id, finding)
@@ -901,7 +927,7 @@ const closeDetails = () => {
 
 const openWorkbenchForFinding = async (finding: Finding) => {
   try {
-    securityCenterActivity.markFindingAsRead(finding.id)
+    await markFindingIdsAsRead([finding.id])
     const caseItem = await getOrCreateWorkbenchCaseForFinding(finding.id)
     showDetailsModal.value = false
     selectedFinding.value = null
@@ -935,21 +961,21 @@ const toggleSelectAll = () => {
   }
 }
 
-const markSingleAsRead = (id: string) => {
-  securityCenterActivity.markFindingAsRead(id)
+const markSingleAsRead = async (id: string) => {
+  await markFindingIdsAsRead([id])
   selectedIds.value.delete(id)
   if (filters.value.readStatus) {
-    void refreshFindings()
+    await refreshFindings()
   }
 }
 
-const markCurrentPageAsRead = () => {
+const markCurrentPageAsRead = async () => {
   if (findings.value.length === 0) return
   const targetIds = findings.value.map(item => item.id)
-  securityCenterActivity.markFindingsAsRead(targetIds)
+  await markFindingIdsAsRead(targetIds)
   targetIds.forEach(id => selectedIds.value.delete(id))
   if (filters.value.readStatus) {
-    void refreshFindings()
+    await refreshFindings()
   }
 }
 
@@ -969,7 +995,7 @@ const markAllFilteredAsRead = async () => {
     const targetIds = (await loadAllFilteredFindings()).map(item => item.id)
     if (!targetIds.length) return
 
-    securityCenterActivity.markFindingsAsRead(targetIds)
+    await markFindingIdsAsRead(targetIds)
     targetIds.forEach(id => selectedIds.value.delete(id))
     if (filters.value.readStatus) {
       await refreshFindings()
@@ -1061,8 +1087,13 @@ const openFindingFromRoute = async () => {
 
     consumedRouteFindingId.value = findingId
     consumedImmersiveFindingRequestKey.value = immersiveRequestKey
-    securityCenterActivity.markFindingAsRead(findingId)
-    selectedFinding.value = detailedFinding
+    const viewedAt = new Date().toISOString()
+    await markFindingIdsAsRead([findingId])
+    selectedFinding.value = {
+      ...detailedFinding,
+      viewed_at: detailedFinding.viewed_at || viewedAt,
+      viewed_by: detailedFinding.viewed_by || 'local',
+    }
     detailTab.value = DEFAULT_DETAIL_TAB
     showDetailsModal.value = true
   } catch (error) {

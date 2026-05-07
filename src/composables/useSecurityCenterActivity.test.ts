@@ -82,6 +82,10 @@ const mockSecurityCenterResponses = (
       })
     }
 
+    if (command === 'mark_findings_read') {
+      return Promise.resolve({ success: true, data: 1 })
+    }
+
     return Promise.resolve({ success: true, data: null })
   })
 }
@@ -168,7 +172,7 @@ describe('useSecurityCenterActivity', () => {
     expect(activity.unreadWorkbenchCaseCount.value).toBe(1)
     expect(activity.unreadSecurityCenterCount.value).toBe(2)
 
-    activity.markFindingAsRead('finding-new')
+    await activity.markFindingAsRead('finding-new')
     expect(activity.unreadFindingCount.value).toBe(0)
     expect(activity.unreadSecurityCenterCount.value).toBe(1)
 
@@ -195,10 +199,9 @@ describe('useSecurityCenterActivity', () => {
     const { useSecurityCenterActivity } = await import('./useSecurityCenterActivity')
     const activity = useSecurityCenterActivity()
 
-    expect(() => activity.markFindingAsRead('finding-over-quota')).not.toThrow()
-    expect(activity.isFindingRead('finding-over-quota')).toBe(true)
-
     await activity.initializeSecurityCenterActivity()
+    await expect(activity.markFindingAsRead('finding-1')).resolves.toBeUndefined()
+    expect(activity.isFindingRead('finding-1')).toBe(true)
 
     expect(() => activity.markWorkbenchCaseAsRead('case-over-quota')).not.toThrow()
     expect(activity.isWorkbenchCaseRead('case-over-quota')).toBe(true)

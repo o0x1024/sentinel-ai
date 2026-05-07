@@ -427,6 +427,37 @@ export default {
       generatedKeyNotice: 'Save this API key now. It will be shown only once.',
       generateFailed: 'Failed to generate API key: {error}'
     },
+    weixin: {
+      title: 'Weixin Remote Control',
+      description: 'Control this app remotely from personal WeChat DMs or groups (disabled by default; DMs and groups respond after enabling).',
+      securityHint:
+        'Remote control enters the real AI assistant and tool execution path. Use a dedicated WeChat account; turn off group control if groups should not trigger tasks.',
+      accountId: 'Account ID',
+      token: 'Token',
+      baseUrl: 'iLink Base URL',
+      assistantProfile: 'Weixin Bot Agent Profile',
+      defaultAssistantProfile: 'Default interactive Agent Profile',
+      assistantProfileHint: 'Loaded from Agent Management interactive Agent Profiles. Team Profiles are not used by Weixin.',
+      allowedUsers: 'DM User Allowlist',
+      allowedUsersHint: 'Leave empty to allow all DM users. Fill user IDs to restrict DMs.',
+      enableGroups: 'Allow Group Remote Control',
+      maxIterations: 'Max Tool Turns',
+      timeoutSecs: 'Timeout (seconds)',
+      save: 'Save Weixin Config',
+      qrLogin: 'QR Login',
+      refreshStatus: 'Refresh Status',
+      status: 'Weixin Gateway Status',
+      lastMessageAt: 'Last message',
+      saved: 'Weixin config saved',
+      saveFailed: 'Failed to save Weixin config: {error}',
+      started: 'Weixin gateway started',
+      stopped: 'Weixin gateway stopped',
+      toggleFailed: 'Failed to switch Weixin gateway: {error}',
+      qrPending: 'Scan with WeChat and confirm login',
+      qrWaiting: 'Waiting for scan confirmation...',
+      qrConfirmed: 'Weixin login confirmed and credentials saved',
+      qrFailed: 'Failed to create Weixin QR code: {error}'
+    },
     runtime: {
       title: 'Effective Proxy Status',
       description:

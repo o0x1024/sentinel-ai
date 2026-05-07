@@ -965,6 +965,8 @@ impl DatabaseService {
                 last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 hit_count INTEGER NOT NULL DEFAULT 1,
                 session_id TEXT,
+                viewed_at TIMESTAMP WITH TIME ZONE,
+                viewed_by TEXT,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"#,
@@ -1161,6 +1163,7 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_severity ON traffic_vulnerabilities(severity)",
             "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_status ON traffic_vulnerabilities(status)",
             "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_created ON traffic_vulnerabilities(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_viewed ON traffic_vulnerabilities(viewed_at)",
             "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_vuln ON traffic_evidence(vuln_id)",
             "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_timestamp ON traffic_evidence(timestamp DESC)",
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_timestamp ON proxy_requests(timestamp DESC)",

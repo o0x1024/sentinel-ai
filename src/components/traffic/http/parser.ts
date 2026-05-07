@@ -28,10 +28,10 @@ export function ensureRawRequestTerminator(rawRequest: string): string {
 }
 
 export function parseRawHttpRequest(rawRequest: string): ParsedRawHttpRequest | null {
-  const normalized = rawRequest.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  const separatorIndex = normalized.indexOf('\n\n')
-  const headerPart = separatorIndex === -1 ? normalized : normalized.slice(0, separatorIndex)
-  const bodyText = separatorIndex === -1 ? '' : normalized.slice(separatorIndex + 2)
+  const separator = findHttpMessageSeparator(rawRequest)
+  const rawHeaderPart = separator ? rawRequest.slice(0, separator.index) : rawRequest
+  const headerPart = rawHeaderPart.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const bodyText = separator ? rawRequest.slice(separator.index + separator.length) : ''
   const lines = headerPart.split('\n')
 
   if (!lines[0]) {
@@ -57,6 +57,19 @@ export function parseRawHttpRequest(rawRequest: string): ParsedRawHttpRequest | 
     headers,
     bodyText,
   }
+}
+
+function findHttpMessageSeparator(rawRequest: string): { index: number; length: number } | null {
+  const separators = ['\r\n\r\n', '\n\n', '\r\r']
+  const matches = separators
+    .map((separator) => ({
+      index: rawRequest.indexOf(separator),
+      length: separator.length,
+    }))
+    .filter((match) => match.index >= 0)
+    .sort((left, right) => left.index - right.index)
+
+  return matches[0] ?? null
 }
 
 export function buildHttpExchangeRequestFromRawRequest(

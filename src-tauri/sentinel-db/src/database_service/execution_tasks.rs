@@ -4,6 +4,7 @@ use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use std::collections::HashMap;
 
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
@@ -252,6 +253,12 @@ impl DatabaseService {
         items: &[ExecutionTaskInput],
     ) -> Result<()> {
         self.ensure_execution_tasks_schema().await?;
+        let existing_created_at: HashMap<(i32, String), String> = self
+            .get_execution_tasks(execution_id)
+            .await?
+            .into_iter()
+            .map(|item| ((item.item_index, item.description), item.created_at))
+            .collect();
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -267,6 +274,10 @@ impl DatabaseService {
 
                 for (index, item) in items.iter().enumerate() {
                     let id = format!("{}_{}", execution_id, index);
+                    let created_at = existing_created_at
+                        .get(&(index as i32, item.description.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| now.clone());
                     sqlx::query(
                         r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#
@@ -277,7 +288,7 @@ impl DatabaseService {
                     .bind(&item.description)
                     .bind(item.status.to_string())
                     .bind(&item.result)
-                    .bind(&now)
+                    .bind(&created_at)
                     .bind(&now)
                     .execute(pool)
                     .await?;
@@ -291,6 +302,10 @@ impl DatabaseService {
 
                 for (index, item) in items.iter().enumerate() {
                     let id = format!("{}_{}", execution_id, index);
+                    let created_at = existing_created_at
+                        .get(&(index as i32, item.description.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| now.clone());
                     sqlx::query(
                         r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
@@ -301,7 +316,7 @@ impl DatabaseService {
                     .bind(&item.description)
                     .bind(item.status.to_string())
                     .bind(&item.result)
-                    .bind(&now)
+                    .bind(&created_at)
                     .bind(&now)
                     .execute(pool)
                     .await?;
@@ -315,6 +330,10 @@ impl DatabaseService {
 
                 for (index, item) in items.iter().enumerate() {
                     let id = format!("{}_{}", execution_id, index);
+                    let created_at = existing_created_at
+                        .get(&(index as i32, item.description.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| now.clone());
                     sqlx::query(
                         r#"INSERT INTO execution_tasks (id, execution_id, item_index, description, status, result, created_at, updated_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
@@ -325,7 +344,7 @@ impl DatabaseService {
                     .bind(&item.description)
                     .bind(item.status.to_string())
                     .bind(&item.result)
-                    .bind(&now)
+                    .bind(&created_at)
                     .bind(&now)
                     .execute(pool)
                     .await?;
@@ -334,6 +353,108 @@ impl DatabaseService {
         }
 
         Ok(())
+    }
+
+    /// Delete execution tasks created after a timestamp and reindex remaining items.
+    pub async fn delete_execution_tasks_after(
+        &self,
+        execution_id: &str,
+        after_timestamp_ms: i64,
+    ) -> Result<u64> {
+        self.ensure_execution_tasks_schema().await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let cutoff = chrono::DateTime::<Utc>::from_timestamp_millis(after_timestamp_ms)
+            .ok_or_else(|| anyhow::anyhow!("无效的任务时间戳: {}", after_timestamp_ms))?;
+        let now = Utc::now().to_rfc3339();
+
+        let deleted_count = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let deleted_count = sqlx::query(
+                    "DELETE FROM execution_tasks WHERE execution_id = $1 AND created_at > $2",
+                )
+                .bind(execution_id)
+                .bind(cutoff)
+                .execute(pool)
+                .await?
+                .rows_affected();
+
+                let remaining = self.get_execution_tasks(execution_id).await?;
+                for (new_index, item) in remaining.into_iter().enumerate() {
+                    let new_id = format!("{}_{}", execution_id, new_index);
+                    if item.item_index != new_index as i32 || item.id != new_id {
+                        sqlx::query(
+                            "UPDATE execution_tasks SET id = $1, item_index = $2, updated_at = $3 WHERE id = $4",
+                        )
+                        .bind(&new_id)
+                        .bind(new_index as i32)
+                        .bind(&now)
+                        .bind(&item.id)
+                        .execute(pool)
+                        .await?;
+                    }
+                }
+                deleted_count
+            }
+            DatabasePool::SQLite(pool) => {
+                let deleted_count = sqlx::query(
+                    "DELETE FROM execution_tasks WHERE execution_id = ? AND created_at > ?",
+                )
+                .bind(execution_id)
+                .bind(cutoff.to_rfc3339())
+                .execute(pool)
+                .await?
+                .rows_affected();
+
+                let remaining = self.get_execution_tasks(execution_id).await?;
+                for (new_index, item) in remaining.into_iter().enumerate() {
+                    let new_id = format!("{}_{}", execution_id, new_index);
+                    if item.item_index != new_index as i32 || item.id != new_id {
+                        sqlx::query(
+                            "UPDATE execution_tasks SET id = ?, item_index = ?, updated_at = ? WHERE id = ?",
+                        )
+                        .bind(&new_id)
+                        .bind(new_index as i32)
+                        .bind(&now)
+                        .bind(&item.id)
+                        .execute(pool)
+                        .await?;
+                    }
+                }
+                deleted_count
+            }
+            DatabasePool::MySQL(pool) => {
+                let deleted_count = sqlx::query(
+                    "DELETE FROM execution_tasks WHERE execution_id = ? AND created_at > ?",
+                )
+                .bind(execution_id)
+                .bind(cutoff.naive_utc())
+                .execute(pool)
+                .await?
+                .rows_affected();
+
+                let remaining = self.get_execution_tasks(execution_id).await?;
+                for (new_index, item) in remaining.into_iter().enumerate() {
+                    let new_id = format!("{}_{}", execution_id, new_index);
+                    if item.item_index != new_index as i32 || item.id != new_id {
+                        sqlx::query(
+                            "UPDATE execution_tasks SET id = ?, item_index = ?, updated_at = ? WHERE id = ?",
+                        )
+                        .bind(&new_id)
+                        .bind(new_index as i32)
+                        .bind(&now)
+                        .bind(&item.id)
+                        .execute(pool)
+                        .await?;
+                    }
+                }
+                deleted_count
+            }
+        };
+
+        Ok(deleted_count)
     }
 
     /// Update a single execution task's status and result

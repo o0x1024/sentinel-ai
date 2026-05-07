@@ -471,6 +471,8 @@ mod tests {
             session_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            viewed_at: None,
+            viewed_by: None,
         };
         let primary_body = "A".repeat(5000);
         let secondary_body = "B".repeat(5000);

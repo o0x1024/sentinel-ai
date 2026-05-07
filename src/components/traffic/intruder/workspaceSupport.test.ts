@@ -40,7 +40,6 @@ function createWorkspace(): IntruderWorkspace {
       autoThrottleEnabled: false,
       autoThrottleStatusCodes: [429, 503],
       timeoutSecs: 30,
-      maxRequests: 500,
       updateHostHeader: true,
       updateContentLength: true,
       setConnectionClose: true,

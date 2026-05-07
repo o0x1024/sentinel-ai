@@ -185,7 +185,7 @@ export async function buildIntruderAttackPlan(options: {
   attackType: IntruderAttackType
   payloadSets: IntruderPayloadSet[]
   payloadProcessingRules?: IntruderPayloadProcessingRule[]
-  maxRequests: number
+  requestLimit?: number
   payloadResolver?: (
     payloadSet: IntruderPayloadSet,
     context: IntruderPayloadResolutionContext,
@@ -200,12 +200,15 @@ export async function buildIntruderAttackPlan(options: {
     attackType,
     payloadSets,
     payloadProcessingRules = [],
-    maxRequests,
+    requestLimit: rawRequestLimit,
     payloadResolver,
     payloadPluginProcessor,
   } = options
   const positions = extractIntruderPositions(template)
   const payloadContext = { template, positions }
+  const requestLimit = rawRequestLimit == null || !Number.isFinite(rawRequestLimit)
+    ? null
+    : Math.max(0, Math.floor(rawRequestLimit))
   const payloadLists = await Promise.all(
     payloadSets.map(async (payloadSet) => {
       if (
@@ -215,7 +218,7 @@ export async function buildIntruderAttackPlan(options: {
         return payloadResolver(payloadSet, payloadContext)
       }
       if (payloadSet.payloadType === 'bruteForcer') {
-        return expandPayloadSet(payloadSet, maxRequests)
+        return expandPayloadSet(payloadSet, requestLimit ?? undefined)
       }
       return expandPayloadSet(payloadSet)
     }),
@@ -231,7 +234,7 @@ export async function buildIntruderAttackPlan(options: {
   let truncated = false
 
   const pushRequest = (values: string[], payloadValues: string[]) => {
-    if (requests.length >= maxRequests) {
+    if (requestLimit != null && requests.length >= requestLimit) {
       truncated = true
       return
     }
@@ -248,7 +251,7 @@ export async function buildIntruderAttackPlan(options: {
     const requestText = clearIntruderMarkers(template)
 
     for (const payload of payloads) {
-      if (requests.length >= maxRequests) {
+      if (requestLimit != null && requests.length >= requestLimit) {
         truncated = true
         break
       }
@@ -340,7 +343,7 @@ export async function buildIntruderAttackPlan(options: {
   }
 
   const walk = async (depth: number, values: string[], rawValues: string[]): Promise<void> => {
-    if (truncated && requests.length >= maxRequests) {
+    if (requestLimit != null && truncated && requests.length >= requestLimit) {
       return
     }
 

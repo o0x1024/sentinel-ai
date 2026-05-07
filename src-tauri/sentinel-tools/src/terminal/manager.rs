@@ -64,6 +64,32 @@ impl TerminalSessionManager {
         session.write(data).await
     }
 
+    /// Current output cursor for a session.
+    pub async fn session_output_cursor(&self, session_id: &str) -> Result<usize, String> {
+        let session = self
+            .get_session(session_id)
+            .await
+            .ok_or_else(|| "Session not found".to_string())?;
+
+        let session = session.read().await;
+        Ok(session.output_cursor().await)
+    }
+
+    /// Read output chunks produced since a previous cursor.
+    pub async fn read_session_output_since(
+        &self,
+        session_id: &str,
+        cursor: usize,
+    ) -> Result<(Vec<Vec<u8>>, usize), String> {
+        let session = self
+            .get_session(session_id)
+            .await
+            .ok_or_else(|| "Session not found".to_string())?;
+
+        let session = session.read().await;
+        Ok(session.output_since(cursor).await)
+    }
+
     /// Touch session to keep it active
     pub async fn touch_session(&self, session_id: &str) -> Result<(), String> {
         let session = self

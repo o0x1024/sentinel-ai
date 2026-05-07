@@ -26,8 +26,13 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
-    fn is_terminal(&self) -> bool {
-        matches!(self, TaskStatus::Completed | TaskStatus::Failed)
+    fn as_str(&self) -> &'static str {
+        match self {
+            TaskStatus::Pending => "pending",
+            TaskStatus::InProgress => "in_progress",
+            TaskStatus::Completed => "completed",
+            TaskStatus::Failed => "failed",
+        }
     }
 }
 
@@ -216,18 +221,10 @@ async fn get_or_load_tasks(execution_id: &str) -> TasksList {
 pub struct TasksArgs {
     /// The execution ID of the current agent run
     pub execution_id: String,
-    /// The action to perform: "add_items", "update_status", "get_list", "reset", "replan", "update_item", "delete_item", "insert_item", "cleanup"
-    pub action: String,
-    /// Items to add (required for "add_items", "replan")
-    pub items: Option<Vec<String>>,
-    /// Index of the item to update/delete/insert (required for "update_status", "update_item", "delete_item", "insert_item")
-    pub item_index: Option<usize>,
-    /// New status for the item (required for "update_status")
-    pub status: Option<TaskStatus>,
-    /// Optional result or observation to record
-    pub result: Option<String>,
-    /// New item description (required for "update_item", "insert_item")
-    pub new_description: Option<String>,
+    /// Optional explanation for the plan update
+    pub explanation: Option<String>,
+    /// Complete plan for the current execution
+    pub plan: Vec<TaskItem>,
 }
 
 /// Tasks tool output
@@ -241,10 +238,8 @@ pub struct TasksOutput {
 /// Tasks tool errors
 #[derive(Debug, thiserror::Error)]
 pub enum TasksError {
-    #[error("Missing required parameters for action {0}")]
-    MissingParameters(String),
-    #[error("Item index {0} out of bounds")]
-    IndexOutOfBounds(usize),
+    #[error("Invalid plan: {0}")]
+    InvalidPlan(String),
     #[error("Internal error: {0}")]
     InternalError(String),
 }
@@ -260,16 +255,11 @@ impl TasksTool {
 
     pub const NAME: &'static str = "tasks";
     pub const DESCRIPTION: &'static str = concat!(
-        "Persistent task tracker for the current agent execution. ",
-        "Use it to create or revise a multi-step plan, mark progress, record step results, ",
-        "and recover existing tasks across sessions. Call action='get_list' before creating new items ",
-        "to avoid duplicates. Actions: add_items, update_status, get_list, reset, replan, update_item, ",
-        "delete_item, insert_item, cleanup. Use this for execution tracking, not as a general note store. ",
-        "Progress must be updated incrementally: when a step is started, make it in_progress; ",
-        "as soon as that step is completed or fails, immediately call update_status with completed or failed ",
-        "and include the result/evidence before starting unrelated work or writing the final answer. ",
-        "Do not wait until the end to batch-update all tasks; the task list must reflect the real execution state throughout the run. ",
-        "When one in_progress item reaches a terminal status, the next item is advanced automatically."
+        "Updates the current execution plan shown in the UI. ",
+        "Submit the complete desired plan each time using the plan array; omitted old steps are removed from the displayed plan. ",
+        "Use pending for steps not started, in_progress for the one active step, and completed for finished steps. ",
+        "At most one step may be in_progress. ",
+        "This tool is a plan display/event stream, not a completion gate; normal agent execution success, cancellation, or errors determine the run outcome."
     );
 }
 
@@ -290,266 +280,53 @@ impl Tool for TasksTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let execution_id = args.execution_id.clone();
 
-        // Get or load tasks list
-        let mut list = get_or_load_tasks(&execution_id).await;
-        let mut needs_save = false;
-
-        let result = match args.action.as_str() {
-            "add_items" => {
-                let new_items = args
-                    .items
-                    .ok_or_else(|| TasksError::MissingParameters("add_items".to_string()))?;
-                for desc in new_items {
-                    // Avoid duplicate items
-                    if !list.items.iter().any(|t| t.description == desc) {
-                        list.items.push(TaskItem {
-                            description: desc,
-                            status: TaskStatus::Pending,
-                            result: None,
-                        });
-                    }
-                }
-                if list.current_index.is_none() && !list.items.is_empty() {
-                    list.current_index = Some(0);
-                    list.items[0].status = TaskStatus::InProgress;
-                }
-                needs_save = true;
-                Ok(TasksOutput {
-                    success: true,
-                    list: Some(list.clone()),
-                    message: "Items added to tasks".to_string(),
-                })
-            }
-            "update_status" => {
-                let idx = args
-                    .item_index
-                    .ok_or_else(|| TasksError::MissingParameters("update_status".to_string()))?;
-                let status = args
-                    .status
-                    .ok_or_else(|| TasksError::MissingParameters("update_status".to_string()))?;
-
-                if idx >= list.items.len() {
-                    return Err(TasksError::IndexOutOfBounds(idx));
-                }
-
-                list.items[idx].status = status.clone();
-                if let Some(res) = args.result {
-                    list.items[idx].result = Some(res);
-                }
-
-                // Advance the pointer whenever the current item reaches a terminal state.
-                if status.is_terminal() && Some(idx) == list.current_index {
-                    if idx + 1 < list.items.len() {
-                        list.current_index = Some(idx + 1);
-                        list.items[idx + 1].status = TaskStatus::InProgress;
-                    } else {
-                        list.current_index = None;
-                    }
-                }
-                needs_save = true;
-                Ok(TasksOutput {
-                    success: true,
-                    list: Some(list.clone()),
-                    message: format!("Updated item {} status to {:?}", idx, status),
-                })
-            }
-            "get_list" => {
-                // For get_list, we always try to load from database first if cache is empty
-                if list.items.is_empty() {
-                    if let Some(db_list) = load_tasks_from_db(&execution_id).await {
-                        list = db_list;
-                    }
-                }
-                Ok(TasksOutput {
-                    success: true,
-                    list: Some(list.clone()),
-                    message: if list.items.is_empty() {
-                        "No existing tasks found".to_string()
-                    } else {
-                        format!("Retrieved {} tasks", list.items.len())
-                    },
-                })
-            }
-            "reset" => {
-                list = TasksList::default();
-                needs_save = true;
-                // Also delete from database
-                delete_tasks_from_db(&execution_id).await;
-                Ok(TasksOutput {
-                    success: true,
-                    list: Some(list.clone()),
-                    message: "Tasks list reset successfully".to_string(),
-                })
-            }
-            "replan" => {
-                let new_items = args
-                    .items
-                    .ok_or_else(|| TasksError::MissingParameters("replan".to_string()))?;
-
-                // Clear existing items and add new ones (deduplicated)
-                list.items.clear();
-                let mut seen_descriptions = std::collections::HashSet::new();
-                for desc in new_items {
-                    if seen_descriptions.insert(desc.clone()) {
-                        list.items.push(TaskItem {
-                            description: desc,
-                            status: TaskStatus::Pending,
-                            result: None,
-                        });
-                    }
-                }
-
-                // Set first item as in progress
-                if !list.items.is_empty() {
-                    list.current_index = Some(0);
-                    list.items[0].status = TaskStatus::InProgress;
-                } else {
-                    list.current_index = None;
-                }
-                needs_save = true;
-                Ok(TasksOutput {
-                    success: true,
-                    list: Some(list.clone()),
-                    message: format!("Tasks list replaced with {} new items", list.items.len()),
-                })
-            }
-            "update_item" => {
-                let idx = args
-                    .item_index
-                    .ok_or_else(|| TasksError::MissingParameters("update_item".to_string()))?;
-                let new_desc = args
-                    .new_description
-                    .ok_or_else(|| TasksError::MissingParameters("update_item".to_string()))?;
-
-                if idx >= list.items.len() {
-                    return Err(TasksError::IndexOutOfBounds(idx));
-                }
-
-                list.items[idx].description = new_desc;
-                needs_save = true;
-                Ok(TasksOutput {
-                    success: true,
-                    list: Some(list.clone()),
-                    message: format!("Updated item {} description", idx),
-                })
-            }
-            "delete_item" => {
-                let idx = args
-                    .item_index
-                    .ok_or_else(|| TasksError::MissingParameters("delete_item".to_string()))?;
-
-                if idx >= list.items.len() {
-                    return Err(TasksError::IndexOutOfBounds(idx));
-                }
-
-                list.items.remove(idx);
-
-                // Adjust current_index if necessary
-                if let Some(current_idx) = list.current_index {
-                    if current_idx == idx {
-                        if idx < list.items.len() {
-                            list.current_index = Some(idx);
-                            list.items[idx].status = TaskStatus::InProgress;
-                        } else if idx > 0 {
-                            list.current_index = Some(idx - 1);
-                        } else {
-                            list.current_index = None;
-                        }
-                    } else if current_idx > idx {
-                        list.current_index = Some(current_idx - 1);
-                    }
-                }
-                needs_save = true;
-                Ok(TasksOutput {
-                    success: true,
-                    list: Some(list.clone()),
-                    message: format!("Deleted item at index {}", idx),
-                })
-            }
-            "insert_item" => {
-                let idx = args
-                    .item_index
-                    .ok_or_else(|| TasksError::MissingParameters("insert_item".to_string()))?;
-                let new_desc = args
-                    .new_description
-                    .ok_or_else(|| TasksError::MissingParameters("insert_item".to_string()))?;
-
-                if idx > list.items.len() {
-                    return Err(TasksError::IndexOutOfBounds(idx));
-                }
-
-                list.items.insert(
-                    idx,
-                    TaskItem {
-                        description: new_desc,
-                        status: TaskStatus::Pending,
-                        result: None,
-                    },
-                );
-
-                // Adjust current_index if necessary
-                if let Some(current_idx) = list.current_index {
-                    if current_idx >= idx {
-                        list.current_index = Some(current_idx + 1);
-                    }
-                }
-                needs_save = true;
-                Ok(TasksOutput {
-                    success: true,
-                    list: Some(list.clone()),
-                    message: format!("Inserted item at index {}", idx),
-                })
-            }
-            "cleanup" => {
-                // Remove from both cache and database
-                {
-                    let mut cache = TASKS_CACHE.write().await;
-                    cache.remove(&execution_id);
-                }
-                delete_tasks_from_db(&execution_id).await;
-
-                Ok(TasksOutput {
-                    success: true,
-                    list: None,
-                    message: format!("Cleaned up tasks list for execution {}", execution_id),
-                })
-            }
-            _ => Err(TasksError::InternalError(format!(
-                "Unknown action: {}",
-                args.action
-            ))),
-        };
-
-        // Save to database and update cache if needed
-        if needs_save {
-            // Update cache
-            {
-                let mut cache = TASKS_CACHE.write().await;
-                cache.insert(execution_id.clone(), list.clone());
-            }
-            // Save to database
-            save_tasks_to_db(&execution_id, &list).await;
+        let in_progress_count = args
+            .plan
+            .iter()
+            .filter(|item| item.status == TaskStatus::InProgress)
+            .count();
+        if in_progress_count > 1 {
+            return Err(TasksError::InvalidPlan(
+                "at most one item may be in_progress".to_string(),
+            ));
         }
+
+        let mut list = TasksList {
+            items: args.plan,
+            current_index: None,
+        };
+        list.recalculate_current_index();
+
+        {
+            let mut cache = TASKS_CACHE.write().await;
+            cache.insert(execution_id.clone(), list.clone());
+        }
+        save_tasks_to_db(&execution_id, &list).await;
+
+        let result = Ok(TasksOutput {
+            success: true,
+            list: Some(list.clone()),
+            message: args
+                .explanation
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| format!("Plan updated with {} item(s)", list.items.len())),
+        });
 
         // Emit events for UI synchronization.
         if let Ok(ref output) = result {
             if let Some(ref list) = output.list {
                 if let Some(handle) = &*APP_HANDLE.read().await {
-                    if args.action != "get_list" {
-                        // Emit plan event for UI synchronization.
-                        let _ = handle.emit(
-                            "agent:plan_updated",
-                            serde_json::json!({
-                                "execution_id": execution_id,
-                                "plan": {
-                                    "tasks": list.items,
-                                    "current_task_index": list.current_index
-                                }
-                            }),
-                        );
-                    }
+                    let _ = handle.emit(
+                        "agent:plan_updated",
+                        serde_json::json!({
+                            "execution_id": execution_id,
+                            "plan": {
+                                "tasks": list.items,
+                                "current_task_index": list.current_index
+                            }
+                        }),
+                    );
 
-                    // Emit agent-tasks-update for all actions with a concrete list, including get_list.
                     let tasks_json: Vec<serde_json::Value> = list
                         .items
                         .iter()
@@ -558,12 +335,7 @@ impl Tool for TasksTool {
                             serde_json::json!({
                                 "id": format!("{}_{}", execution_id, i),
                                 "content": item.description,
-                                "status": match item.status {
-                                    TaskStatus::Pending => "pending",
-                                    TaskStatus::InProgress => "in_progress",
-                                    TaskStatus::Completed => "completed",
-                                    TaskStatus::Failed => "failed",
-                                },
+                                "status": item.status.as_str(),
                                 "created_at": chrono::Utc::now().timestamp_millis(),
                                 "updated_at": chrono::Utc::now().timestamp_millis(),
                                 "metadata": {
@@ -610,91 +382,73 @@ pub async fn cleanup_execution_tasks(execution_id: &str) -> bool {
     removed
 }
 
-/// Helper function to auto-complete all unfinished tasks for an execution.
-/// Used as a server-side fallback when the agent's response clearly indicates
-/// the task is done but it forgot to call tasks(update_status, completed).
-pub async fn auto_complete_all_tasks(execution_id: &str, reason: &str) -> bool {
-    let mut list = get_or_load_tasks(execution_id).await;
-    if list.items.is_empty() {
-        return false;
-    }
-
-    let mut changed = false;
-    for item in list.items.iter_mut() {
-        if item.status != TaskStatus::Completed {
-            item.status = TaskStatus::Completed;
-            if item.result.is_none() {
-                item.result = Some(format!("[auto-completed] {}", reason));
-            }
-            changed = true;
-        }
-    }
-    if !changed {
-        return false;
-    }
-
-    list.current_index = None;
-
-    // Update cache
-    {
-        let mut cache = TASKS_CACHE.write().await;
-        cache.insert(execution_id.to_string(), list.clone());
-    }
-    // Persist to database
-    save_tasks_to_db(execution_id, &list).await;
-
-    // Emit UI event
-    if let Some(handle) = &*APP_HANDLE.read().await {
-        let _ = handle.emit(
-            "agent:plan_updated",
-            serde_json::json!({
-                "execution_id": execution_id,
-                "plan": {
-                    "tasks": list.items,
-                    "current_task_index": serde_json::Value::Null
-                }
-            }),
-        );
-
-        let tasks_json: Vec<serde_json::Value> = list
-            .items
-            .iter()
-            .enumerate()
-            .map(|(i, item)| {
-                serde_json::json!({
-                    "id": format!("{}_{}", execution_id, i),
-                    "content": item.description,
-                    "status": "completed",
-                    "created_at": chrono::Utc::now().timestamp_millis(),
-                    "updated_at": chrono::Utc::now().timestamp_millis(),
-                    "metadata": {
-                        "step_index": i,
-                        "result": item.result
-                    }
-                })
-            })
-            .collect();
-
-        let _ = handle.emit(
-            "agent-tasks-update",
-            serde_json::json!({
-                "execution_id": execution_id,
-                "tasks": tasks_json,
-                "timestamp": chrono::Utc::now().timestamp_millis()
-            }),
-        );
-    }
-
-    tracing::info!(
-        "Auto-completed all tasks for execution {} (reason: {})",
-        execution_id,
-        reason
-    );
-    true
+/// Helper function to drop a cached task list without deleting persisted history.
+pub async fn invalidate_execution_tasks(execution_id: &str) {
+    let mut cache = TASKS_CACHE.write().await;
+    cache.remove(execution_id);
 }
 
 /// Helper function to cleanup all task lists (cache only, not database)
 pub async fn cleanup_all_tasks() {
     let mut cache = TASKS_CACHE.write().await;
     cache.clear();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TaskItem, TaskStatus, TasksArgs, TasksError, TasksTool};
+    use rig::tool::Tool;
+
+    #[tokio::test]
+    async fn tasks_tool_replaces_display_plan_with_complete_plan() {
+        let output = TasksTool::new()
+            .call(TasksArgs {
+                execution_id: "test-plan-replace".to_string(),
+                explanation: Some("testing plan update".to_string()),
+                plan: vec![
+                    TaskItem {
+                        description: "inspect".to_string(),
+                        status: TaskStatus::Completed,
+                        result: Some("done".to_string()),
+                    },
+                    TaskItem {
+                        description: "patch".to_string(),
+                        status: TaskStatus::InProgress,
+                        result: None,
+                    },
+                ],
+            })
+            .await
+            .expect("plan update should succeed");
+
+        let list = output.list.expect("list");
+        assert_eq!(list.items.len(), 2);
+        assert_eq!(list.current_index, Some(1));
+        assert_eq!(output.message, "testing plan update");
+    }
+
+    #[tokio::test]
+    async fn tasks_tool_rejects_multiple_in_progress_items() {
+        let error = TasksTool::new()
+            .call(TasksArgs {
+                execution_id: "test-plan-invalid".to_string(),
+                explanation: None,
+                plan: vec![
+                    TaskItem {
+                        description: "one".to_string(),
+                        status: TaskStatus::InProgress,
+                        result: None,
+                    },
+                    TaskItem {
+                        description: "two".to_string(),
+                        status: TaskStatus::InProgress,
+                        result: None,
+                    },
+                ],
+            })
+            .await
+            .expect_err("invalid plan should fail");
+
+        assert!(matches!(error, TasksError::InvalidPlan(_)));
+    }
 }

@@ -88,6 +88,14 @@ export function buildInterceptWebSocketText(message: InterceptedWebSocketMessage
   return message.content || ''
 }
 
+export function getInterceptItemKey(item: InterceptedItem) {
+  return `${item.type}:${item.data.id}`
+}
+
+export function resolveInterceptForwardModifiedContent(currentContent: string, originalContent: string) {
+  return currentContent === originalContent ? undefined : currentContent
+}
+
 export function buildInterceptItemText(item: InterceptedItem, interceptedRequests: InterceptedRequest[]) {
   if (item.type === 'request') {
     return buildInterceptRequestText(item.data as InterceptedRequest)

@@ -23,9 +23,11 @@ const createPanelController = () => {
     parseTeamTaskExecutionId: () => null,
     propsShowTasks: true,
     parallelTaskSources: computed(() => []),
+    pruneTasksForExecutionAfter: async () => [],
     resetAgentError: () => {},
     resolveAgentName: () => 'Agent',
     selectedTeamTaskAssigneeId: computed(() => null),
+    setTasksForExecution: () => {},
     teamWorkspaceAvailable: computed(() => false),
     terminalClose: () => {
       terminalCloseCount += 1
@@ -80,5 +82,63 @@ describe('useAgentPanels', () => {
     expect(controller.activeRightPanel.value).toBe('terminal')
     expect(counts.tasksClose).toBe(tasksCloseBeforeTerminalSync + 1)
     expect(counts.terminalClose).toBe(terminalCloseBeforeTerminalSync)
+  })
+
+  it('prunes only current-context tasks after the replay boundary', async () => {
+    const calls: Array<{ executionId: string; timestampMs: number }> = []
+    const remainingByExecution: Record<string, any[]> = {
+      'conversation-1': [
+        { id: 'conversation-1_0', title: 'kept', status: 'completed', created_at: 100, updated_at: 100 },
+      ],
+      'parallel-1': [],
+    }
+    const applied: Record<string, any[]> = {}
+    const cleared: string[] = []
+
+    const controller = useAgentPanels({
+      activeTeamSessionId: ref(null),
+      agentError: computed(() => null),
+      clearTasksForExecution: (executionId) => {
+        cleared.push(executionId)
+      },
+      conversationId: ref('conversation-1'),
+      getTasksForExecution: () => [],
+      isTeamWorkspaceActive: ref(false),
+      isTaskPanelActive: computed(() => false),
+      localError: ref(null),
+      parseTeamTaskExecutionId: () => null,
+      parallelTaskSources: computed(() => [
+        { executionId: 'parallel-1', parentConversationId: 'conversation-1', label: 'parallel', task: 'task', status: 'running' },
+      ]),
+      propsShowTasks: true,
+      pruneTasksForExecutionAfter: async (executionId, timestampMs) => {
+        calls.push({ executionId, timestampMs })
+        return remainingByExecution[executionId] || []
+      },
+      resetAgentError: () => {},
+      resolveAgentName: () => 'Agent',
+      selectedTeamTaskAssigneeId: computed(() => null),
+      setTasksForExecution: (executionId, tasks) => {
+        applied[executionId] = tasks
+      },
+      teamWorkspaceAvailable: computed(() => false),
+      terminalClose: () => {},
+      terminalHasHistory: computed(() => false),
+      terminalIsActive: computed(() => false),
+      terminalOpen: () => {},
+      tasksByExecutionId: computed(() => ({})),
+      taskExecutionIds: computed(() => []),
+      tasksClose: () => {},
+      tasksOpen: () => {},
+    })
+
+    await controller.pruneTasksForCurrentContextAfter(500)
+
+    expect(calls).toEqual([
+      { executionId: 'conversation-1', timestampMs: 500 },
+      { executionId: 'parallel-1', timestampMs: 500 },
+    ])
+    expect(applied['conversation-1']).toEqual(remainingByExecution['conversation-1'])
+    expect(cleared).toEqual(['parallel-1'])
   })
 })

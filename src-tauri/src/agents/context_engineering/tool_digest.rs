@@ -317,17 +317,13 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
                     }
                 )
             } else if tool_name.contains("tasks") {
-                let action = args
-                    .get("action")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
                 let item_count = map
                     .get("list")
                     .and_then(|v| v.get("items"))
                     .and_then(|v| v.as_array())
                     .map(|items| items.len())
                     .or_else(|| {
-                        args.get("items")
+                        args.get("plan")
                             .and_then(|v| v.as_array())
                             .map(|items| items.len())
                     })
@@ -345,51 +341,15 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
                     })
                     .unwrap_or_default();
 
-                match action {
-                    "add_items" | "replan" => format!(
-                        "Tasks planned: {}{}",
-                        item_count,
-                        if preview.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" | {}", preview)
-                        }
-                    ),
-                    "update_status" => {
-                        let status = args
-                            .get("status")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("updated");
-                        format!(
-                            "Task status -> {}{}",
-                            status,
-                            if preview.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" | {}", preview)
-                            }
-                        )
+                format!(
+                    "Plan updated: {}{}",
+                    item_count,
+                    if preview.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" | {}", preview)
                     }
-                    "get_list" => format!(
-                        "Tasks list read: {}{}",
-                        item_count,
-                        if preview.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" | {}", preview)
-                        }
-                    ),
-                    "reset" | "cleanup" => "Tasks cleared".to_string(),
-                    _ => format!(
-                        "Tasks {}{}",
-                        action,
-                        if preview.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" | {}", preview)
-                        }
-                    ),
-                }
+                )
             } else {
                 condense_text(result, 240)
             }

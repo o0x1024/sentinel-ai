@@ -23,8 +23,8 @@ fn builtin_tool_policy(tool_name: &str) -> BuiltinToolPolicy {
         "shell" => BuiltinToolPolicy {
             cost_estimate: ToolCost::Medium,
         },
-        "glob" | "grep" | "file_read" | "lsp" | "interactive_shell" | "skills" | "tasks"
-        | "memory" => BuiltinToolPolicy {
+        "glob" | "grep" | "file_read" | "lsp" | "interactive_shell" | "exec_command"
+        | "write_stdin" | "skills" | "tasks" | "memory" => BuiltinToolPolicy {
             cost_estimate: ToolCost::Low,
         },
         "file_edit" | "file_write" | "http_request" | "browser" | "browser_shell"

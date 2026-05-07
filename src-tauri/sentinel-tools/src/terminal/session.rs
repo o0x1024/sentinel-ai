@@ -1,6 +1,6 @@
 //! Terminal session management
 
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::process::Command;
@@ -74,6 +74,7 @@ pub struct TerminalSession {
     state: Arc<RwLock<SessionState>>,
     container_id: Option<String>,
     pty_master: Option<Arc<std::sync::Mutex<Box<dyn MasterPty + Send>>>>,
+    child_killer: Option<Box<dyn ChildKiller + Send + Sync>>,
     stdin_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
     output_txs: Arc<RwLock<Vec<mpsc::UnboundedSender<Vec<u8>>>>>,
     output_history: Arc<RwLock<Vec<Vec<u8>>>>,
@@ -89,6 +90,7 @@ impl TerminalSession {
             state: Arc::new(RwLock::new(SessionState::Starting)),
             container_id: None,
             pty_master: None,
+            child_killer: None,
             stdin_tx: None,
             output_txs: Arc::new(RwLock::new(Vec::new())),
             output_history: Arc::new(RwLock::new(Vec::new())),
@@ -141,6 +143,20 @@ impl TerminalSession {
             self.id,
             self.output_txs.read().await.len()
         );
+    }
+
+    /// Current output history cursor. Callers can store this value and later
+    /// read only chunks produced after it.
+    pub async fn output_cursor(&self) -> usize {
+        self.output_history.read().await.len()
+    }
+
+    /// Return output chunks produced at or after `cursor`, plus the next cursor.
+    pub async fn output_since(&self, cursor: usize) -> (Vec<Vec<u8>>, usize) {
+        let history = self.output_history.read().await;
+        let start = cursor.min(history.len());
+        let chunks = history[start..].to_vec();
+        (chunks, history.len())
     }
 
     /// Broadcast output to all subscribers
@@ -231,10 +247,11 @@ impl TerminalSession {
         cmd_builder.arg(&self.config.shell);
 
         // Spawn command through PTY
-        let _child = pty_pair
+        let child = pty_pair
             .slave
             .spawn_command(cmd_builder)
             .map_err(|e| format!("Failed to spawn docker exec with PTY: {}", e))?;
+        self.child_killer = Some(child.clone_killer());
 
         // Get PTY master for reading/writing
         let mut pty_reader = pty_pair
@@ -385,10 +402,11 @@ impl TerminalSession {
             cmd_builder.env(key, value);
         }
 
-        let _child = pty_pair
+        let child = pty_pair
             .slave
             .spawn_command(cmd_builder)
             .map_err(|e| format!("Failed to start host shell with PTY: {}", e))?;
+        self.child_killer = Some(child.clone_killer());
 
         let mut pty_reader = pty_pair
             .master
@@ -791,6 +809,9 @@ impl TerminalSession {
         *self.state.write().await = SessionState::Stopped;
 
         self.stdin_tx = None;
+        if let Some(mut killer) = self.child_killer.take() {
+            let _ = killer.kill();
+        }
         self.pty_master = None;
 
         // Only remove container if not configured for reuse

@@ -20,6 +20,7 @@ pub mod finding;
 pub mod header_utils;
 pub mod history_cache;
 pub mod history_record_builder;
+pub mod intercept_content;
 pub mod intercept_rules;
 pub mod intercept_tracking;
 pub mod match_replace;

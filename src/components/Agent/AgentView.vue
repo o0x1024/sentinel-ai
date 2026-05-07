@@ -27,27 +27,48 @@
     <!-- Main content area -->
     <div class="flex-1 flex flex-col overflow-hidden min-h-0">
       <!-- {{ t('agent.conversationHeader') }} -->
-      <div class="conversation-header px-4 py-2 border-b border-base-300 flex items-center justify-between bg-base-100/50">
-        <div class="flex items-center gap-2">
+      <div class="conversation-header grid grid-cols-[minmax(0,1fr)_minmax(14rem,32rem)_minmax(0,1fr)] items-center gap-3 border-b border-base-300 bg-base-100/50 px-4 py-2">
+        <div class="flex min-w-0 items-center gap-2">
           <button 
             @click="toggleConversationDrawer()"
-            class="btn btn-sm btn-ghost"
+            class="btn btn-sm btn-ghost shrink-0"
             :title="`${t('agent.switchConversationList')} (Ctrl/Cmd+Shift+B)`"
           >
             <i class="fas fa-bars"></i>
           </button>
-          <span class="text-sm font-medium text-base-content/70">
+          <span class="truncate text-sm font-medium text-base-content/70">
             {{ currentConversationTitle }}
           </span>
           <span
             v-if="conversationExecutionState"
-            class="badge badge-sm"
+            class="badge badge-sm shrink-0"
             :class="conversationExecutionStateBadgeClass"
           >
             {{ conversationExecutionStateBadgeText }}
           </span>
         </div>
-        <div class="flex items-center gap-2">
+        <div
+          class="group relative w-full justify-self-center"
+          :title="conversationWorkingDirectoryTooltip"
+        >
+          <input
+            v-model.trim="conversationWorkingDirectoryOverride"
+            type="text"
+            class="input input-sm h-8 w-full border-transparent bg-transparent pr-10 text-center font-mono text-xs shadow-none placeholder:text-base-content/65 hover:border-base-300 hover:bg-base-100/70 hover:text-left focus:border-base-300 focus:bg-base-100/70 focus:text-left focus:outline-none"
+            :placeholder="conversationWorkingDirectoryPlaceholder"
+            :title="conversationWorkingDirectoryTooltip"
+            aria-label="当前会话工作目录"
+          />
+          <button
+            class="btn btn-sm btn-outline absolute right-0 top-0 h-8 min-h-8 rounded-l-none px-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+            title="选择当前会话工作目录"
+            aria-label="选择当前会话工作目录"
+            @click="selectConversationWorkingDirectory"
+          >
+            <i class="fas fa-folder-open"></i>
+          </button>
+        </div>
+        <div class="flex shrink-0 items-center justify-self-end gap-2">
           <!-- Tasks Button - always visible -->
           <button 
             @click="handleToggleTasks()"
@@ -111,30 +132,6 @@
           </button>
         </div>
       </div>
-      <div class="border-b border-base-300 bg-base-100/40 px-4 py-2">
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <div class="text-xs font-medium text-base-content/70">
-            当前会话工作目录
-          </div>
-          <input
-            v-model.trim="conversationWorkingDirectoryOverride"
-            type="text"
-            class="input input-sm flex-1 font-mono"
-            :placeholder="conversationWorkingDirectoryPlaceholder"
-          />
-          <button
-            class="btn btn-xs btn-outline"
-            :disabled="!conversationWorkingDirectoryOverride"
-            @click="clearConversationWorkingDirectoryOverride"
-          >
-            继承默认
-          </button>
-          <div class="text-xs text-base-content/60 break-all">
-            生效目录: {{ effectiveConversationWorkingDirectoryLabel }}
-          </div>
-        </div>
-      </div>
-
       <!-- {{ t('agent.messagesAndTasks') }} -->
       <div class="flex flex-1 overflow-hidden min-h-0">
         <!-- Left: Message flow + Input Area -->
@@ -644,14 +641,27 @@ const effectiveConversationWorkingDirectory = computed(() => {
 })
 const conversationWorkingDirectoryPlaceholder = computed(() => {
   const inherited = agentDefaultWorkingDirectory.value.trim()
-  return inherited ? `继承默认: ${inherited}` : '未设置时继承 Agent 默认工作目录'
+  return inherited || '未配置工作目录'
 })
 const effectiveConversationWorkingDirectoryLabel = computed(() => {
   const resolved = effectiveConversationWorkingDirectory.value.trim()
   return resolved || '未配置'
 })
-const clearConversationWorkingDirectoryOverride = () => {
-  setWorkingDirectoryOverride('')
+const conversationWorkingDirectoryTooltip = computed(() => {
+  const overrideValue = conversationWorkingDirectoryOverride.value.trim()
+  const resolved = effectiveConversationWorkingDirectoryLabel.value
+  return overrideValue ? `当前会话工作目录: ${resolved}` : `继承默认工作目录: ${resolved}`
+})
+const selectConversationWorkingDirectory = async () => {
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: '选择当前会话工作目录',
+  })
+  if (typeof selected === 'string' && selected.trim()) {
+    setWorkingDirectoryOverride(selected)
+  }
 }
 const {
   addReferencedAssets,
@@ -937,7 +947,6 @@ const {
   activeRightPanel,
   activateRightPanel,
   clearError,
-  clearTasksForCurrentContext,
   deactivateRightPanel,
   error,
   handleCloseHtmlPanel,
@@ -953,6 +962,7 @@ const {
   htmlPanelContent,
   loadSidebarWidth,
   loadToolConfigDrawerWidth,
+  pruneTasksForCurrentContextAfter,
   selectedTaskSourceKey,
   sidebarWidth,
   startToolConfigDrawerResize,
@@ -972,12 +982,20 @@ const {
   localError,
   parseTeamTaskExecutionId,
   parallelTaskSources: computed(() => agentEvents.parallelTaskSources.value),
+  pruneTasksForExecutionAfter: async (executionId, timestampMs) => {
+    const remaining = await invoke<any[]>('prune_agent_tasks_after', {
+      executionId,
+      afterTimestampMs: timestampMs,
+    })
+    return mapPersistedAgentTasks(remaining)
+  },
   propsShowTasks: props.showTasks,
   resetAgentError: () => {
     agentEvents.resetError()
   },
   resolveAgentName,
   selectedTeamTaskAssigneeId: computed(() => normalizeOptionalText(selectedTeamTask.value?.assignee_agent_id) || null),
+  setTasksForExecution: taskComposable.setTasksForExecution,
   teamWorkspaceAvailable,
   terminalClose: () => {
     if (!isViewActive.value) return
@@ -1541,7 +1559,6 @@ const {
     agentEvents.clearMessages()
   },
   clearDraftArtifacts,
-  clearTasksForCurrentContext,
   closeConversationDrawer: () => {
     showConversations.value = false
   },
@@ -1559,7 +1576,7 @@ const {
   },
   ensureConversationForTeamSession,
   executionIdProp: props.executionId,
-  forceTaskCompletionContract: false,
+  forceTaskPlanContract: false,
   getFailedToClearConversationLabel: () => t('agent.failedToClearConversation'),
   getFailedToStopExecutionLabel: () => t('agent.failedToStopExecution'),
   getNewConversationTitle: () => `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
@@ -1580,6 +1597,7 @@ const {
   loadSubagentRuns,
   localError,
   pendingAttachments,
+  pruneTasksForCurrentContextAfter,
   processedDocuments,
   ragEnabled,
   referencedAssets,

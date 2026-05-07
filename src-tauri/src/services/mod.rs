@@ -21,6 +21,7 @@ pub mod model_capabilities;
 pub mod system_agents;
 pub mod traffic_oast;
 pub mod vulnerability;
+pub mod weixin_gateway;
 
 // Re-export from sentinel-services
 pub use sentinel_services::dictionary;

@@ -238,7 +238,7 @@ export const executeConversationTask = async (params: {
   enableRag: boolean
   enableTenthManRule: boolean
   firstMessage: string
-  forceTaskCompletionContract: boolean
+  forceTaskPlanContract: boolean
   fullTask: string
   workingDirectory?: string | null
   maybeAutoRenameConversation: (params: {
@@ -333,7 +333,7 @@ export const executeConversationTask = async (params: {
       document_attachments: params.usedDocuments.length > 0 ? params.usedDocuments : undefined,
       enable_rag: params.enableRag,
       enable_tenth_man_rule: params.enableTenthManRule,
-      force_tasks: params.forceTaskCompletionContract,
+      force_tasks: params.forceTaskPlanContract,
       message_id: null,
       model_override: buildAssistantModelOverride(params.assistantSelectedModel),
       persist_messages: params.persistMessages,

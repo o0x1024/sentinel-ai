@@ -7,6 +7,7 @@ pub(crate) mod ai_conversation_binding_support;
 pub(crate) mod ai_execution_state_support;
 pub mod ai_parallel_commands;
 pub(crate) mod ai_runtime_commands;
+pub(crate) mod ai_runtime_task_config;
 pub mod ai_task_commands;
 pub(crate) mod ai_task_support;
 pub mod ai_turn_logs;
@@ -88,6 +89,7 @@ pub mod test_proxy;
 pub mod test_tracking_commands;
 pub mod tool_commands;
 pub mod traffic;
+pub mod weixin_gateway_commands;
 pub mod window;
 pub(crate) mod workflow_notification_support;
 
@@ -146,6 +148,7 @@ pub use terminal_commands::*;
 pub use test_tracking_commands::*;
 pub use tool_commands::*;
 pub use traffic::*;
+pub use weixin_gateway_commands::*;
 pub use window::*;
 
 use std::process::Command;
