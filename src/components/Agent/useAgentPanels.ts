@@ -2,7 +2,7 @@ import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { AgentTask } from '@/types/agentTask'
 import type { ParallelTaskSource } from '@/composables/useAgentParallelRunState'
 
-export type RightPanelKey = 'tasks' | 'html' | 'terminal' | 'browser-shell' | 'team' | 'work-config'
+export type RightPanelKey = 'tasks' | 'html' | 'terminal' | 'browser-shell' | 'team' | 'work-config' | 'workspace-files'
 
 interface TaskSourceOption {
   key: string
@@ -274,6 +274,9 @@ export const useAgentPanels = (params: {
       return
     }
     if (panel === 'work-config') {
+      return
+    }
+    if (panel === 'workspace-files') {
       return
     }
     params.isTeamWorkspaceActive.value = false
