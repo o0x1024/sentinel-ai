@@ -40,6 +40,7 @@ pub(crate) struct TeamWaveTaskExecutionResult {
 pub(crate) async fn execute_team_wave_tasks(
     _app_handle: &AppHandle,
     session_id: &str,
+    provider_config_key: &str,
     rig_provider: &str,
     model: &str,
     api_key: Option<String>,
@@ -70,6 +71,7 @@ pub(crate) async fn execute_team_wave_tasks(
     set_parent_context(
         parent_execution_id.clone(),
         SubagentParentContext {
+            provider_config_key: provider_config_key.to_string(),
             rig_provider: rig_provider.to_string(),
             model: model.to_string(),
             api_key,

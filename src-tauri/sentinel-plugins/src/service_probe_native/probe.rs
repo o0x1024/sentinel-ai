@@ -1,5 +1,6 @@
 use crate::service_probe_runtime::{ServiceProbeRule, ServiceProbeTarget};
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 
 use super::common::{invalid_target_result, is_http_target, normalize_protocol};
 use super::http::probe_http_evidence;
@@ -35,8 +36,15 @@ pub(crate) async fn probe_target(
     stage_reporter: Option<&ProbeStageReporter<'_>>,
 ) -> Result<ProbeEvidence, crate::service_probe_runtime::ServiceProbeResult> {
     let _ = rules;
+    let connect_ip = target
+        .connect_ip
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let normalized_target = ServiceProbeTarget {
         host: target.host.trim().to_string(),
+        connect_ip: connect_ip.clone(),
         port: target.port,
         protocol: normalize_protocol(&target.protocol, target.port),
     };
@@ -46,6 +54,15 @@ pub(crate) async fn probe_target(
             normalized_target,
             "Invalid service target",
         ));
+    }
+
+    if let Some(connect_ip) = connect_ip.as_deref() {
+        if connect_ip.parse::<IpAddr>().is_err() {
+            return Err(invalid_target_result(
+                normalized_target,
+                "connect_ip must be a valid IP address",
+            ));
+        }
     }
 
     let evidence = if is_http_target(normalized_target.port, &normalized_target.protocol) {

@@ -12,6 +12,7 @@ import type { AgentExecutionFinishedEvent, PersistedAgentExecutionState } from '
 
 interface AgentStartEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   task: string
 }
@@ -70,47 +71,71 @@ export const useAgentViewLifecycle = (params: {
       params.loadDefaultAssistantProfile(),
     ])
 
-    await pushListener(() => listen('ai_config_updated', async () => {
-      await params.loadAssistantModelOptions()
-    }))
+    await pushListener(() =>
+      listen('ai_config_updated', async () => {
+        await params.loadAssistantModelOptions()
+      })
+    )
 
-    await pushListener(() => listen<AgentTeamStateChangedEvent>('agent_team:state_changed', (event) => {
-      if (!params.activeTeamSessionId.value || event.payload.session_id !== params.activeTeamSessionId.value) {
-        return
-      }
-      params.applyTeamState(event.payload.state)
-      void params.syncTeamMessagesToMainFlow(event.payload.session_id)
-      if (params.isTeamWorkspaceActive.value) {
-        void params.loadTeamWorkspaceData()
-      }
-    }))
+    await pushListener(() =>
+      listen<AgentTeamStateChangedEvent>('agent_team:state_changed', event => {
+        if (
+          !params.activeTeamSessionId.value ||
+          event.payload.session_id !== params.activeTeamSessionId.value
+        ) {
+          return
+        }
+        params.applyTeamState(event.payload.state)
+        void params.syncTeamMessagesToMainFlow(event.payload.session_id)
+        if (params.isTeamWorkspaceActive.value) {
+          void params.loadTeamWorkspaceData()
+        }
+      })
+    )
 
-    await pushListener(() => listen<AgentTeamMessageStreamStartEvent>('agent_team:message_stream_start', (event) => {
-      params.handleTeamMessageStreamStart(event.payload)
-    }))
-    await pushListener(() => listen<AgentTeamMessageStreamDeltaEvent>('agent_team:message_stream_delta', (event) => {
-      params.handleTeamMessageStreamDelta(event.payload)
-    }))
-    await pushListener(() => listen<AgentTeamMessageStreamDoneEvent>('agent_team:message_stream_done', (event) => {
-      params.handleTeamMessageStreamDone(event.payload)
-    }))
-    await pushListener(() => listen<AgentTeamToolCallEvent>('agent_team:tool_call', (event) => {
-      params.handleTeamToolCall(event.payload)
-    }))
-    await pushListener(() => listen<AgentTeamToolResultEvent>('agent_team:tool_result', (event) => {
-      params.handleTeamToolResult(event.payload)
-    }))
-    await pushListener(() => listen<AgentStartEvent>('agent:start', (event) => {
-      if (event.payload.execution_id !== params.conversationId.value) return
-      params.conversationExecutionState.value = null
-    }))
-    await pushListener(() => listen<AgentExecutionFinishedEvent>('agent:execution_finished', (event) => {
-      params.handleConversationExecutionStateUpdate(event.payload)
-      void params.handleTeamExecutionFinished(event.payload)
-    }))
-    await pushListener(() => listen<AgentAssistantMessageSavedEvent>('agent:assistant_message_saved', (event) => {
-      void params.handleTeamAssistantMessageSaved(event.payload)
-    }))
+    await pushListener(() =>
+      listen<AgentTeamMessageStreamStartEvent>('agent_team:message_stream_start', event => {
+        params.handleTeamMessageStreamStart(event.payload)
+      })
+    )
+    await pushListener(() =>
+      listen<AgentTeamMessageStreamDeltaEvent>('agent_team:message_stream_delta', event => {
+        params.handleTeamMessageStreamDelta(event.payload)
+      })
+    )
+    await pushListener(() =>
+      listen<AgentTeamMessageStreamDoneEvent>('agent_team:message_stream_done', event => {
+        params.handleTeamMessageStreamDone(event.payload)
+      })
+    )
+    await pushListener(() =>
+      listen<AgentTeamToolCallEvent>('agent_team:tool_call', event => {
+        params.handleTeamToolCall(event.payload)
+      })
+    )
+    await pushListener(() =>
+      listen<AgentTeamToolResultEvent>('agent_team:tool_result', event => {
+        params.handleTeamToolResult(event.payload)
+      })
+    )
+    await pushListener(() =>
+      listen<AgentStartEvent>('agent:start', event => {
+        const payloadConversationId = event.payload.conversation_id || event.payload.execution_id
+        if (payloadConversationId !== params.conversationId.value) return
+        params.conversationExecutionState.value = null
+      })
+    )
+    await pushListener(() =>
+      listen<AgentExecutionFinishedEvent>('agent:execution_finished', event => {
+        params.handleConversationExecutionStateUpdate(event.payload)
+        void params.handleTeamExecutionFinished(event.payload)
+      })
+    )
+    await pushListener(() =>
+      listen<AgentAssistantMessageSavedEvent>('agent:assistant_message_saved', event => {
+        void params.handleTeamAssistantMessageSaved(event.payload)
+      })
+    )
 
     params.loadSidebarWidth()
     params.loadToolConfigDrawerWidth()

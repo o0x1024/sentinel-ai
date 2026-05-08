@@ -25,12 +25,17 @@ const messageStub = defineComponent({
       type: Boolean,
       default: false,
     },
+    showSessionStats: {
+      type: Boolean,
+      default: false,
+    },
   },
   setup(props) {
     return () => h('div', {
       class: 'message-block-stub',
       'data-message-id': String((props.message as AgentMessage).id),
       'data-show-actions': String(props.showActions),
+      'data-show-session-stats': String(props.showSessionStats),
     }, String((props.message as AgentMessage).content || ''))
   },
 })
@@ -153,16 +158,51 @@ describe('MessageFlow', () => {
     const blocks = wrapper.findAll('.message-block-stub')
     expect(blocks[0].attributes('data-show-actions')).toBe('false')
     expect(blocks[1].attributes('data-show-actions')).toBe('true')
+    expect(blocks[0].attributes('data-show-session-stats')).toBe('false')
+    expect(blocks[1].attributes('data-show-session-stats')).toBe('true')
 
     await wrapper.setProps({ isExecuting: true })
     await nextTick()
 
     expect(wrapper.findAll('.message-block-stub')[1].attributes('data-show-actions')).toBe('false')
+    expect(wrapper.findAll('.message-block-stub')[1].attributes('data-show-session-stats')).toBe('false')
 
     await wrapper.setProps({ isExecuting: false, isStreaming: true })
     await nextTick()
 
     expect(wrapper.findAll('.message-block-stub')[1].attributes('data-show-actions')).toBe('false')
+    expect(wrapper.findAll('.message-block-stub')[1].attributes('data-show-session-stats')).toBe('false')
+
+    wrapper.unmount()
+  })
+
+  it('shows context compression status while execution is waiting for the compressed prompt', async () => {
+    const wrapper = mount(MessageFlow, {
+      props: {
+        messages: sampleMessages,
+        isExecuting: true,
+        isStreaming: false,
+        streamingContent: '',
+        contextCompression: {
+          active: true,
+          executionId: 'conversation-1',
+          reason: 'token_threshold',
+          recentTokens: 90000,
+          thresholdTokens: 80000,
+          messageCount: 24,
+          recentMessageCount: 20,
+          startedAt: Date.now(),
+        },
+      },
+      global: {
+        stubs: {
+          MessageBlock: messageStub,
+        },
+      },
+      attachTo: document.body,
+    })
+
+    expect(wrapper.text()).toContain('agent.contextCompressing')
 
     wrapper.unmount()
   })

@@ -28,8 +28,11 @@
         </div>
 
         <!-- 参数说明（高级模式） -->
-        <div v-if="showAdvanced && inputSchema?.properties" class="collapse collapse-arrow border border-base-300 bg-base-100">
-          <input type="checkbox" checked />
+        <div
+          v-if="showAdvanced && inputSchema?.properties"
+          class="collapse collapse-arrow border border-base-300 bg-base-100"
+        >
+          <input type="checkbox" />
           <div class="collapse-title text-md font-medium flex items-center gap-2">
             <i class="fas fa-info-circle text-info"></i>
             输入参数说明
@@ -49,7 +52,9 @@
                 <tbody>
                   <tr v-for="prop in schemaProperties" :key="prop.name">
                     <td class="font-mono text-primary">{{ prop.name }}</td>
-                    <td><span class="badge badge-outline">{{ prop.type }}</span></td>
+                    <td>
+                      <span class="badge badge-outline">{{ prop.type }}</span>
+                    </td>
                     <td>
                       <span v-if="prop.required" class="badge badge-error badge-sm">必填</span>
                     </td>
@@ -69,21 +74,79 @@
         </div>
 
         <!-- 测试参数输入（高级模式） -->
-        <div v-if="showAdvanced" class="form-control">
-          <label class="label">
-            <span class="label-text">测试参数 (JSON)</span>
-            <button @click="resetParams" class="btn btn-xs btn-ghost">
-              <i class="fas fa-undo mr-1"></i>
-              重置参数
-            </button>
-          </label>
-          <textarea
-            v-model="paramsJson"
-            class="textarea textarea-bordered font-mono text-sm"
-            placeholder='输入 JSON 格式的测试参数，例如: {}'
-            rows="6"
-            spellcheck="false"
-          ></textarea>
+        <div v-if="showAdvanced" class="form-control space-y-3">
+          <div class="flex items-center justify-between gap-3">
+            <label class="label py-0">
+              <span class="label-text">测试参数</span>
+            </label>
+            <div class="flex items-center gap-2">
+              <div class="tabs tabs-boxed tabs-sm">
+                <button
+                  type="button"
+                  class="tab"
+                  :class="{ 'tab-active': inputEditorMode === 'form' }"
+                  @click="inputEditorMode = 'form'"
+                >
+                  图形化
+                </button>
+                <button
+                  type="button"
+                  class="tab"
+                  :class="{ 'tab-active': inputEditorMode === 'json' }"
+                  @click="inputEditorMode = 'json'"
+                >
+                  JSON
+                </button>
+              </div>
+              <button @click="resetParams" class="btn btn-xs btn-ghost">
+                <i class="fas fa-undo mr-1"></i>
+                重置参数
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="inputEditorMode === 'form' && hasEditableSchema"
+            class="space-y-3 rounded-lg border border-base-300/70 bg-base-100/70 p-3"
+          >
+            <div class="text-xs text-base-content/60">
+              优先使用图形化配置；只有在复杂场景下再切换到 JSON。
+            </div>
+            <MonitorPluginParamsField
+              v-for="field in editableFields"
+              :key="getFieldPathKey(field.path)"
+              :field="field"
+              :params="inputParams"
+              :json-editor-values="inputJsonEditorValues"
+              :field-errors="inputFieldErrors"
+              :expanded-hint-fields="inputExpandedHintFields"
+            />
+          </div>
+
+          <template v-else-if="inputEditorMode === 'json'">
+            <label class="label py-0">
+              <span class="label-text">测试参数 (JSON)</span>
+            </label>
+            <textarea
+              v-model="paramsJson"
+              class="textarea textarea-bordered font-mono text-sm"
+              placeholder="输入 JSON 格式的测试参数，例如: {}"
+              rows="8"
+              spellcheck="false"
+            ></textarea>
+            <div class="text-xs text-base-content/60">高级模式：直接编辑工具输入参数 JSON。</div>
+          </template>
+
+          <div
+            v-else
+            class="rounded-lg border border-base-300 bg-base-200 p-3 text-sm text-base-content/70"
+          >
+            当前工具没有可图形化编辑的参数，可切换到 JSON 模式。
+          </div>
+
+          <div v-if="inputLocalError" class="text-sm text-error">
+            {{ inputLocalError }}
+          </div>
         </div>
 
         <!-- 测试结果 -->
@@ -91,17 +154,19 @@
           <label class="label">
             <span class="label-text">测试结果</span>
             <div class="flex items-center gap-2">
-              <span v-if="testDuration" class="label-text-alt text-xs">耗时: {{ testDuration }}ms</span>
+              <span v-if="testDuration" class="label-text-alt text-xs"
+                >耗时: {{ testDuration }}ms</span
+              >
               <div v-if="testResult" class="join">
-                <button 
-                  @click="copyResult" 
+                <button
+                  @click="copyResult"
                   class="btn btn-xs btn-ghost join-item"
                   :title="t('tools.copyResult')"
                 >
                   <i class="fas fa-copy"></i>
                 </button>
-                <button 
-                  @click="toggleJsonView" 
+                <button
+                  @click="toggleJsonView"
                   class="btn btn-xs btn-ghost join-item"
                   :class="{ 'btn-active': isJsonView }"
                   :title="t('tools.toggleJsonView')"
@@ -112,18 +177,16 @@
               </div>
             </div>
           </label>
-          
+
           <!-- 原始文本视图 -->
-          <pre 
-            v-if="!isJsonView" 
+          <pre
+            v-if="!isJsonView"
             class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-48 bg-base-200 overflow-auto"
-          >{{ testResult || '点击"运行测试"查看结果' }}</pre>
-          
-          <!-- JSON渲染视图 -->
-          <div 
-            v-else 
-            class="border border-base-300 rounded-lg h-48 bg-base-200 overflow-auto p-3"
+            >{{ testResult || '点击"运行测试"查看结果' }}</pre
           >
+
+          <!-- JSON渲染视图 -->
+          <div v-else class="border border-base-300 rounded-lg h-48 bg-base-200 overflow-auto p-3">
             <JsonViewer :data="parsedJson" :expanded="true" />
           </div>
         </div>
@@ -131,19 +194,11 @@
 
       <div class="modal-action">
         <button @click="close" class="btn btn-ghost">取消</button>
-        <button 
-          v-if="!showAdvanced"
-          @click="showAdvanced = true"
-          class="btn btn-outline btn-info"
-        >
+        <button v-if="!showAdvanced" @click="showAdvanced = true" class="btn btn-outline btn-info">
           <i class="fas fa-cog mr-1"></i>
           高级选项
         </button>
-        <button 
-          class="btn btn-primary"
-          :disabled="isTesting"
-          @click="runTest"
-        >
+        <button class="btn btn-primary" :disabled="isTesting" @click="runTest">
           <i v-if="isTesting" class="fas fa-spinner fa-spin mr-1"></i>
           <i v-else class="fas fa-play mr-1"></i>
           运行测试
@@ -157,76 +212,94 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, defineComponent, h } from 'vue'
+import { ref, computed, watch, defineComponent, h, reactive } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import { useI18n } from 'vue-i18n'
 import JsonViewer from './JsonViewer.vue'
+import MonitorPluginParamsField from '@/components/BugBounty/MonitorPluginParamsField.vue'
+import {
+  buildEditableFields,
+  cloneValue,
+  getFieldPathKey,
+} from '@/components/BugBounty/monitorPluginParamsSupport'
 
 const { t } = useI18n()
 
 // 工具类型图标组件
 const BuiltinIcon = defineComponent({
   render() {
-    return h('svg', { 
-      xmlns: 'http://www.w3.org/2000/svg', 
-      class: 'h-6 w-6 text-success',
-      fill: 'none', 
-      viewBox: '0 0 24 24', 
-      stroke: 'currentColor' 
-    }, [
-      h('path', { 
-        'stroke-linecap': 'round', 
-        'stroke-linejoin': 'round', 
-        'stroke-width': '2',
-        d: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z'
-      }),
-      h('path', { 
-        'stroke-linecap': 'round', 
-        'stroke-linejoin': 'round', 
-        'stroke-width': '2',
-        d: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z'
-      })
-    ])
-  }
+    return h(
+      'svg',
+      {
+        xmlns: 'http://www.w3.org/2000/svg',
+        class: 'h-6 w-6 text-success',
+        fill: 'none',
+        viewBox: '0 0 24 24',
+        stroke: 'currentColor',
+      },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          'stroke-width': '2',
+          d: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
+        }),
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          'stroke-width': '2',
+          d: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
+        }),
+      ]
+    )
+  },
 })
 
 const WorkflowIcon = defineComponent({
   render() {
-    return h('svg', { 
-      xmlns: 'http://www.w3.org/2000/svg', 
-      class: 'h-6 w-6 text-secondary',
-      fill: 'none', 
-      viewBox: '0 0 24 24', 
-      stroke: 'currentColor' 
-    }, [
-      h('path', { 
-        'stroke-linecap': 'round', 
-        'stroke-linejoin': 'round', 
-        'stroke-width': '2',
-        d: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z'
-      })
-    ])
-  }
+    return h(
+      'svg',
+      {
+        xmlns: 'http://www.w3.org/2000/svg',
+        class: 'h-6 w-6 text-secondary',
+        fill: 'none',
+        viewBox: '0 0 24 24',
+        stroke: 'currentColor',
+      },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          'stroke-width': '2',
+          d: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z',
+        }),
+      ]
+    )
+  },
 })
 
 const PluginIcon = defineComponent({
   render() {
-    return h('svg', { 
-      xmlns: 'http://www.w3.org/2000/svg', 
-      class: 'h-6 w-6 text-primary',
-      fill: 'none', 
-      viewBox: '0 0 24 24', 
-      stroke: 'currentColor' 
-    }, [
-      h('path', { 
-        'stroke-linecap': 'round', 
-        'stroke-linejoin': 'round', 
-        'stroke-width': '2',
-        d: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z'
-      })
-    ])
-  }
+    return h(
+      'svg',
+      {
+        xmlns: 'http://www.w3.org/2000/svg',
+        class: 'h-6 w-6 text-primary',
+        fill: 'none',
+        viewBox: '0 0 24 24',
+        stroke: 'currentColor',
+      },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          'stroke-width': '2',
+          d: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z',
+        }),
+      ]
+    )
+  },
 })
 
 // Props
@@ -268,23 +341,37 @@ const testDuration = ref<number | null>(null)
 const isTesting = ref(false)
 const isJsonView = ref(false)
 const parsedJson = ref<any>(null)
+const inputEditorMode = ref<'form' | 'json'>('form')
+const inputLocalError = ref('')
+const inputParams = ref<Record<string, any>>({})
+const inputFieldErrors = reactive<Record<string, string>>({})
+const inputJsonEditorValues = reactive<Record<string, string>>({})
+const inputExpandedHintFields = reactive<Record<string, boolean>>({})
 
 // Computed
 const toolIcon = computed(() => {
   switch (props.toolType) {
-    case 'builtin': return BuiltinIcon
-    case 'workflow': return WorkflowIcon
-    case 'plugin': return PluginIcon
-    default: return BuiltinIcon
+    case 'builtin':
+      return BuiltinIcon
+    case 'workflow':
+      return WorkflowIcon
+    case 'plugin':
+      return PluginIcon
+    default:
+      return BuiltinIcon
   }
 })
 
 const categoryBadgeClass = computed(() => {
   switch (props.toolType) {
-    case 'builtin': return 'badge-success'
-    case 'workflow': return 'badge-secondary'
-    case 'plugin': return 'badge-primary'
-    default: return 'badge-ghost'
+    case 'builtin':
+      return 'badge-success'
+    case 'workflow':
+      return 'badge-secondary'
+    case 'plugin':
+      return 'badge-primary'
+    default:
+      return 'badge-ghost'
   }
 })
 
@@ -313,11 +400,16 @@ const schemaProperties = computed(() => {
       type: details.type || 'any',
       required: required.has(name),
       description: details.description || '',
-      constraints: constraints.join(', ')
+      constraints: constraints.join(', '),
     })
   }
   return properties
 })
+
+const editableFields = computed(() =>
+  buildEditableFields(props.inputSchema, { hideInjectedMonitorFields: false })
+)
+const hasEditableSchema = computed(() => editableFields.value.length > 0)
 
 // Methods
 function close() {
@@ -344,9 +436,9 @@ async function copyResult() {
 
 function toggleJsonView() {
   if (!isValidJson.value) return
-  
+
   isJsonView.value = !isJsonView.value
-  
+
   if (isJsonView.value) {
     try {
       parsedJson.value = JSON.parse(testResult.value)
@@ -359,7 +451,10 @@ function toggleJsonView() {
 }
 
 function resetParams() {
-  paramsJson.value = generateDefaultParams(props.inputSchema)
+  const nextParams = parseJsonObject(generateDefaultParams(props.inputSchema))
+  applyInputParams(nextParams)
+  paramsJson.value = JSON.stringify(nextParams, null, 2)
+  inputEditorMode.value = hasEditableSchema.value ? 'form' : 'json'
 }
 
 function generateDefaultParams(schema: any): string {
@@ -371,13 +466,24 @@ function generateDefaultParams(schema: any): string {
       params[name] = prop.default
     } else {
       switch (prop.type) {
-        case 'string': params[name] = ''; break
+        case 'string':
+          params[name] = ''
+          break
         case 'number':
-        case 'integer': params[name] = prop.minimum ?? 0; break
-        case 'boolean': params[name] = false; break
-        case 'array': params[name] = []; break
-        case 'object': params[name] = {}; break
-        default: params[name] = null
+        case 'integer':
+          params[name] = prop.minimum ?? 0
+          break
+        case 'boolean':
+          params[name] = false
+          break
+        case 'array':
+          params[name] = []
+          break
+        case 'object':
+          params[name] = {}
+          break
+        default:
+          params[name] = null
       }
     }
   }
@@ -397,15 +503,79 @@ function buildInitialParamsJson(): string {
   return JSON.stringify(mergedParams, null, 2)
 }
 
+function clearInputEditorErrors() {
+  inputLocalError.value = ''
+  for (const key of Object.keys(inputFieldErrors)) {
+    delete inputFieldErrors[key]
+  }
+  for (const key of Object.keys(inputJsonEditorValues)) {
+    delete inputJsonEditorValues[key]
+  }
+}
+
+function normalizeInputObject(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  return cloneValue(value as Record<string, any>)
+}
+
+function parseJsonObject(raw: string) {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return {}
+  }
+
+  const parsed = JSON.parse(trimmed)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('测试参数必须是 JSON 对象')
+  }
+  return normalizeInputObject(parsed)
+}
+
+function applyInputParams(value: Record<string, any>) {
+  inputParams.value = normalizeInputObject(value)
+}
+
+function serializeInputParams() {
+  return normalizeInputObject(inputParams.value)
+}
+
+function initializeInputEditor() {
+  clearInputEditorErrors()
+
+  let parsedParams: Record<string, any> = {}
+  try {
+    parsedParams = parseJsonObject(buildInitialParamsJson())
+  } catch {
+    inputLocalError.value = '测试参数 JSON 无法解析'
+  }
+
+  applyInputParams(parsedParams)
+  paramsJson.value = JSON.stringify(parsedParams, null, 2)
+  inputEditorMode.value = hasEditableSchema.value ? 'form' : 'json'
+}
+
+function buildRunInputs() {
+  if (!showAdvanced.value && !props.initialParams) {
+    return {}
+  }
+
+  if (inputEditorMode.value === 'json') {
+    return parseJsonObject(paramsJson.value)
+  }
+
+  return serializeInputParams()
+}
+
 async function runTest() {
   let inputs: any = {}
-  if (paramsJson.value.trim() && (showAdvanced.value || !!props.initialParams)) {
-    try {
-      inputs = JSON.parse(paramsJson.value)
-    } catch (e) {
-      dialog.toast.error('参数 JSON 格式错误，请检查')
-      return
-    }
+  try {
+    inputs = buildRunInputs()
+  } catch (error) {
+    inputLocalError.value = error instanceof Error ? error.message : '参数 JSON 格式错误，请检查'
+    dialog.toast.error('参数 JSON 格式错误，请检查')
+    return
   }
 
   isTesting.value = true
@@ -415,9 +585,10 @@ async function runTest() {
 
   try {
     // 统一工具执行
-    const toolNameToExecute = props.executionInfo?.type === 'workflow' 
-      ? `workflow::${props.executionInfo.id}` 
-      : props.toolName
+    const toolNameToExecute =
+      props.executionInfo?.type === 'workflow'
+        ? `workflow::${props.executionInfo.id}`
+        : props.toolName
 
     const result = await invoke<any>('unified_execute_tool', {
       toolName: toolNameToExecute,
@@ -429,9 +600,8 @@ async function runTest() {
     testDuration.value = Date.now() - startTime
 
     if (result.success) {
-      testResult.value = typeof result.output === 'string'
-        ? result.output
-        : JSON.stringify(result.output, null, 2)
+      testResult.value =
+        typeof result.output === 'string' ? result.output : JSON.stringify(result.output, null, 2)
       dialog.toast.success('工具测试完成')
     } else {
       testResult.value = `测试失败: ${result.error || '未知错误'}`
@@ -450,14 +620,54 @@ async function runTest() {
 }
 
 // Watch for modal open to initialize params
-watch(() => props.modelValue, (isOpen) => {
-  if (isOpen) {
-    paramsJson.value = buildInitialParamsJson()
-    testResult.value = ''
-    testDuration.value = null
-    showAdvanced.value = !!props.initialParams
+watch(
+  () => props.modelValue,
+  isOpen => {
+    if (isOpen) {
+      initializeInputEditor()
+      testResult.value = ''
+      testDuration.value = null
+      showAdvanced.value = !!props.initialParams
+    }
+  }
+)
+
+watch(inputEditorMode, (mode, previousMode) => {
+  if (mode === previousMode) {
+    return
+  }
+
+  if (mode === 'json') {
+    try {
+      clearInputEditorErrors()
+      paramsJson.value = JSON.stringify(serializeInputParams(), null, 2)
+    } catch {
+      inputLocalError.value = '无法将当前图形化配置转换为 JSON'
+    }
+    return
+  }
+
+  try {
+    const parsed = parseJsonObject(paramsJson.value)
+    clearInputEditorErrors()
+    applyInputParams(parsed)
+    paramsJson.value = JSON.stringify(parsed, null, 2)
+  } catch (error) {
+    inputLocalError.value = error instanceof Error ? error.message : '测试参数 JSON 无法解析'
   }
 })
+
+watch(
+  inputParams,
+  value => {
+    if (inputEditorMode.value !== 'form') {
+      return
+    }
+
+    paramsJson.value = JSON.stringify(normalizeInputObject(value), null, 2)
+  },
+  { deep: true }
+)
 </script>
 
 <style scoped>
@@ -466,7 +676,9 @@ watch(() => props.modelValue, (isOpen) => {
 }
 
 .modal-box {
-  transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out;
+  transition:
+    transform 0.2s ease-in-out,
+    opacity 0.2s ease-in-out;
 }
 
 .modal-open .modal-box {

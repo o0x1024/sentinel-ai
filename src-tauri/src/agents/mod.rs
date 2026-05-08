@@ -28,7 +28,10 @@ pub use context_engineering::{
     RetrievedMemoryItem, ToolDigest, ToolDigestEntry, TrackedArtifact,
 };
 pub use control_plane::{close_agent, list_agents, spawn_agent, wait_agents, AgentHandleSummary};
-pub use executor::{execute_agent, AgentExecuteParams};
+pub use executor::{
+    execute_agent, execute_agent_turn, AgentExecuteParams, AgentToolProtocolSummary,
+    AgentTurnOutcome, AgentTurnStopReason, AgentTurnToolSummary,
+};
 pub use subagent_executor::{
     clear_parent_context, set_parent_context, ControlPlaneSpawnRequest, SubagentParentContext,
 };

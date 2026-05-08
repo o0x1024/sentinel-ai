@@ -46,7 +46,7 @@ pub(super) async fn build_tool_search_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: ToolCategory::System,
+        category: ToolCategory::KnowledgeExtension,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),

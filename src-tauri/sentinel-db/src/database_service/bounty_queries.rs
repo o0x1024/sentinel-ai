@@ -2,8 +2,8 @@ use anyhow::Result;
 use sqlx::{Database, Encode, QueryBuilder, Row, Type};
 
 use crate::database_service::bounty::{
-    BountyChangeEventStats, BountyFindingRow, BountyProgramRow, BountySubmissionRow,
-    BountySubmissionStats,
+    BountyChangeEventStats, BountyFindingRow, BountyFindingStats, BountyProgramRow,
+    BountyProgramStats, BountySubmissionRow, BountySubmissionStats,
 };
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
@@ -339,6 +339,23 @@ fn sort_direction(sort_dir: Option<&str>) -> &'static str {
     }
 }
 
+const BOUNTY_BATCH_MUTATION_SIZE: usize = 200;
+
+fn dedupe_non_empty_ids(ids: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::with_capacity(ids.len());
+    let mut deduped = Vec::with_capacity(ids.len());
+    for id in ids {
+        let id = id.trim();
+        if id.is_empty() {
+            continue;
+        }
+        if seen.insert(id.to_string()) {
+            deduped.push(id.to_string());
+        }
+    }
+    deduped
+}
+
 impl DatabaseService {
     pub async fn list_bounty_programs_filtered(
         &self,
@@ -434,115 +451,56 @@ impl DatabaseService {
         }
     }
 
-    pub async fn get_bounty_program_stats_live(
-        &self,
-    ) -> Result<crate::database_service::bounty::BountyProgramStats> {
+    pub async fn get_bounty_program_stats_live(&self) -> Result<BountyProgramStats> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
+        let program_sql = "SELECT COUNT(*) AS total_programs, COUNT(CASE WHEN status = 'active' THEN 1 END) AS active_programs FROM bounty_programs";
+        let submission_sql = "SELECT COUNT(*) AS total_submissions, COUNT(CASE WHEN status IN ('accepted', 'resolved', 'paid') THEN 1 END) AS total_accepted, COALESCE(SUM(COALESCE(reward_amount, 0) + COALESCE(bonus_amount, 0)), 0.0) AS total_earnings FROM bounty_submissions";
+
         let (total_programs, active_programs, total_submissions, total_accepted, total_earnings) =
             match runtime {
                 DatabasePool::SQLite(pool) => {
-                    let total_programs: (i64,) =
-                        sqlx::query_as("SELECT COUNT(*) FROM bounty_programs")
-                            .fetch_one(pool)
-                            .await?;
-                    let active_programs: (i64,) = sqlx::query_as(
-                        "SELECT COUNT(*) FROM bounty_programs WHERE status = 'active'",
-                    )
-                    .fetch_one(pool)
-                    .await?;
-                    let total_submissions: (i64,) =
-                        sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions")
-                            .fetch_one(pool)
-                            .await?;
-                    let total_accepted: (i64,) = sqlx::query_as(
-                        "SELECT COUNT(*) FROM bounty_submissions WHERE status IN ('accepted', 'resolved', 'paid')",
-                    )
-                    .fetch_one(pool)
-                    .await?;
-                    let total_earnings: (f64,) = sqlx::query_as(
-                        "SELECT COALESCE(SUM(COALESCE(reward_amount, 0) + COALESCE(bonus_amount, 0)), 0.0) FROM bounty_submissions",
-                    )
-                    .fetch_one(pool)
-                    .await?;
+                    let programs: (i64, i64) = sqlx::query_as(program_sql).fetch_one(pool).await?;
+                    let submissions: (i64, i64, f64) =
+                        sqlx::query_as(submission_sql).fetch_one(pool).await?;
                     (
-                        total_programs.0,
-                        active_programs.0,
-                        total_submissions.0,
-                        total_accepted.0,
-                        total_earnings.0,
+                        programs.0,
+                        programs.1,
+                        submissions.0,
+                        submissions.1,
+                        submissions.2,
                     )
                 }
                 DatabasePool::MySQL(pool) => {
-                    let total_programs: (i64,) =
-                        sqlx::query_as("SELECT COUNT(*) FROM bounty_programs")
-                            .fetch_one(pool)
-                            .await?;
-                    let active_programs: (i64,) = sqlx::query_as(
-                        "SELECT COUNT(*) FROM bounty_programs WHERE status = 'active'",
-                    )
-                    .fetch_one(pool)
-                    .await?;
-                    let total_submissions: (i64,) =
-                        sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions")
-                            .fetch_one(pool)
-                            .await?;
-                    let total_accepted: (i64,) = sqlx::query_as(
-                        "SELECT COUNT(*) FROM bounty_submissions WHERE status IN ('accepted', 'resolved', 'paid')",
-                    )
-                    .fetch_one(pool)
-                    .await?;
-                    let total_earnings: (f64,) = sqlx::query_as(
-                        "SELECT COALESCE(SUM(COALESCE(reward_amount, 0) + COALESCE(bonus_amount, 0)), 0.0) FROM bounty_submissions",
-                    )
-                    .fetch_one(pool)
-                    .await?;
+                    let programs: (i64, i64) = sqlx::query_as(program_sql).fetch_one(pool).await?;
+                    let submissions: (i64, i64, f64) =
+                        sqlx::query_as(submission_sql).fetch_one(pool).await?;
                     (
-                        total_programs.0,
-                        active_programs.0,
-                        total_submissions.0,
-                        total_accepted.0,
-                        total_earnings.0,
+                        programs.0,
+                        programs.1,
+                        submissions.0,
+                        submissions.1,
+                        submissions.2,
                     )
                 }
                 DatabasePool::PostgreSQL(pool) => {
-                    let total_programs: (i64,) =
-                        sqlx::query_as("SELECT COUNT(*) FROM bounty_programs")
-                            .fetch_one(pool)
-                            .await?;
-                    let active_programs: (i64,) = sqlx::query_as(
-                        "SELECT COUNT(*) FROM bounty_programs WHERE status = 'active'",
-                    )
-                    .fetch_one(pool)
-                    .await?;
-                    let total_submissions: (i64,) =
-                        sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions")
-                            .fetch_one(pool)
-                            .await?;
-                    let total_accepted: (i64,) = sqlx::query_as(
-                        "SELECT COUNT(*) FROM bounty_submissions WHERE status IN ('accepted', 'resolved', 'paid')",
-                    )
-                    .fetch_one(pool)
-                    .await?;
-                    let total_earnings: (f64,) = sqlx::query_as(
-                        "SELECT COALESCE(SUM(COALESCE(reward_amount, 0) + COALESCE(bonus_amount, 0)), 0.0) FROM bounty_submissions",
-                    )
-                    .fetch_one(pool)
-                    .await?;
+                    let programs: (i64, i64) = sqlx::query_as(program_sql).fetch_one(pool).await?;
+                    let submissions: (i64, i64, f64) =
+                        sqlx::query_as(submission_sql).fetch_one(pool).await?;
                     (
-                        total_programs.0,
-                        active_programs.0,
-                        total_submissions.0,
-                        total_accepted.0,
-                        total_earnings.0,
+                        programs.0,
+                        programs.1,
+                        submissions.0,
+                        submissions.1,
+                        submissions.2,
                     )
                 }
             };
 
-        Ok(crate::database_service::bounty::BountyProgramStats {
+        Ok(BountyProgramStats {
             total_programs: total_programs as i32,
             active_programs: active_programs as i32,
             total_submissions: total_submissions as i32,
@@ -787,17 +745,544 @@ impl DatabaseService {
         }
     }
 
+    pub async fn batch_update_bounty_change_event_status(
+        &self,
+        ids: &[String],
+        status: &str,
+        resolved_at: Option<&str>,
+        updated_at: &str,
+    ) -> Result<u64> {
+        let ids = dedupe_non_empty_ids(ids);
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let runtime = self.get_runtime_pool()?;
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut updated = 0;
+                for batch in ids.chunks(BOUNTY_BATCH_MUTATION_SIZE) {
+                    let mut qb = QueryBuilder::<sqlx::Sqlite>::new(
+                        "UPDATE bounty_change_events SET status = ",
+                    );
+                    qb.push_bind(status.to_string())
+                        .push(", resolved_at = ")
+                        .push_bind(resolved_at.map(str::to_string))
+                        .push(", updated_at = ")
+                        .push_bind(updated_at.to_string())
+                        .push(" WHERE id IN (");
+                    {
+                        let mut separated = qb.separated(", ");
+                        for id in batch {
+                            separated.push_bind(id.clone());
+                        }
+                    }
+                    qb.push(")");
+                    updated += qb.build().execute(&mut *tx).await?.rows_affected();
+                }
+                tx.commit().await?;
+                Ok(updated)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut updated = 0;
+                for batch in ids.chunks(BOUNTY_BATCH_MUTATION_SIZE) {
+                    let mut qb = QueryBuilder::<crate::database_service::sqlx_compat::MySql>::new(
+                        "UPDATE bounty_change_events SET status = ",
+                    );
+                    qb.push_bind(status.to_string())
+                        .push(", resolved_at = ")
+                        .push_bind(resolved_at.map(str::to_string))
+                        .push(", updated_at = ")
+                        .push_bind(updated_at.to_string())
+                        .push(" WHERE id IN (");
+                    {
+                        let mut separated = qb.separated(", ");
+                        for id in batch {
+                            separated.push_bind(id.clone());
+                        }
+                    }
+                    qb.push(")");
+                    updated += qb.build().execute(&mut *tx).await?.rows_affected();
+                }
+                tx.commit().await?;
+                Ok(updated)
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut updated = 0;
+                for batch in ids.chunks(BOUNTY_BATCH_MUTATION_SIZE) {
+                    let mut qb =
+                        QueryBuilder::<Postgres>::new("UPDATE bounty_change_events SET status = ");
+                    qb.push_bind(status.to_string())
+                        .push(", resolved_at = ")
+                        .push_bind(resolved_at.map(str::to_string))
+                        .push(", updated_at = ")
+                        .push_bind(updated_at.to_string())
+                        .push(" WHERE id IN (");
+                    {
+                        let mut separated = qb.separated(", ");
+                        for id in batch {
+                            separated.push_bind(id.clone());
+                        }
+                    }
+                    qb.push(")");
+                    updated += qb.build().execute(&mut *tx).await?.rows_affected();
+                }
+                tx.commit().await?;
+                Ok(updated)
+            }
+        }
+    }
+
+    pub async fn batch_delete_bounty_change_events(&self, ids: &[String]) -> Result<u64> {
+        let ids = dedupe_non_empty_ids(ids);
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let runtime = self.get_runtime_pool()?;
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut deleted = 0;
+                for batch in ids.chunks(BOUNTY_BATCH_MUTATION_SIZE) {
+                    let mut qb = QueryBuilder::<sqlx::Sqlite>::new(
+                        "DELETE FROM bounty_change_events WHERE id IN (",
+                    );
+                    {
+                        let mut separated = qb.separated(", ");
+                        for id in batch {
+                            separated.push_bind(id.clone());
+                        }
+                    }
+                    qb.push(")");
+                    deleted += qb.build().execute(&mut *tx).await?.rows_affected();
+                }
+                tx.commit().await?;
+                Ok(deleted)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut deleted = 0;
+                for batch in ids.chunks(BOUNTY_BATCH_MUTATION_SIZE) {
+                    let mut qb = QueryBuilder::<crate::database_service::sqlx_compat::MySql>::new(
+                        "DELETE FROM bounty_change_events WHERE id IN (",
+                    );
+                    {
+                        let mut separated = qb.separated(", ");
+                        for id in batch {
+                            separated.push_bind(id.clone());
+                        }
+                    }
+                    qb.push(")");
+                    deleted += qb.build().execute(&mut *tx).await?.rows_affected();
+                }
+                tx.commit().await?;
+                Ok(deleted)
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut deleted = 0;
+                for batch in ids.chunks(BOUNTY_BATCH_MUTATION_SIZE) {
+                    let mut qb = QueryBuilder::<Postgres>::new(
+                        "DELETE FROM bounty_change_events WHERE id IN (",
+                    );
+                    {
+                        let mut separated = qb.separated(", ");
+                        for id in batch {
+                            separated.push_bind(id.clone());
+                        }
+                    }
+                    qb.push(")");
+                    deleted += qb.build().execute(&mut *tx).await?.rows_affected();
+                }
+                tx.commit().await?;
+                Ok(deleted)
+            }
+        }
+    }
+
     pub async fn get_bounty_submission_stats_live(
         &self,
         program_id: Option<&str>,
     ) -> Result<BountySubmissionStats> {
-        self.get_bounty_submission_stats(program_id).await
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let base_sql = r#"
+            SELECT
+                COUNT(*) AS total_submissions,
+                COALESCE(SUM(CASE WHEN status IN ('accepted', 'resolved', 'paid') THEN 1 ELSE 0 END), 0) AS accepted_submissions,
+                COALESCE(SUM(reward_amount), 0.0) AS total_rewards,
+                COALESCE(SUM(bonus_amount), 0.0) AS total_bonuses
+            FROM bounty_submissions
+        "#;
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let sql = if program_id.is_some() {
+                    format!("{base_sql} WHERE program_id = ?")
+                } else {
+                    base_sql.to_string()
+                };
+                let mut query = sqlx::query(&sql);
+                if let Some(program_id) = program_id {
+                    query = query.bind(program_id);
+                }
+                let row = query.fetch_one(pool).await?;
+                Ok(BountySubmissionStats {
+                    total_submissions: row.get::<i64, _>("total_submissions") as i32,
+                    accepted_submissions: row.get::<i64, _>("accepted_submissions") as i32,
+                    total_rewards: row.get::<f64, _>("total_rewards"),
+                    total_bonuses: row.get::<f64, _>("total_bonuses"),
+                })
+            }
+            DatabasePool::MySQL(pool) => {
+                let sql = if program_id.is_some() {
+                    format!("{base_sql} WHERE program_id = ?")
+                } else {
+                    base_sql.to_string()
+                };
+                let mut query = sqlx::query(&sql);
+                if let Some(program_id) = program_id {
+                    query = query.bind(program_id);
+                }
+                let row = query.fetch_one(pool).await?;
+                Ok(BountySubmissionStats {
+                    total_submissions: row.get::<i64, _>("total_submissions") as i32,
+                    accepted_submissions: row.get::<i64, _>("accepted_submissions") as i32,
+                    total_rewards: row.get::<f64, _>("total_rewards"),
+                    total_bonuses: row.get::<f64, _>("total_bonuses"),
+                })
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let sql = if program_id.is_some() {
+                    format!("{base_sql} WHERE program_id = $1")
+                } else {
+                    base_sql.to_string()
+                };
+                let mut query = sqlx::query(&sql);
+                if let Some(program_id) = program_id {
+                    query = query.bind(program_id);
+                }
+                let row = query.fetch_one(pool).await?;
+                Ok(BountySubmissionStats {
+                    total_submissions: row.get::<i64, _>("total_submissions") as i32,
+                    accepted_submissions: row.get::<i64, _>("accepted_submissions") as i32,
+                    total_rewards: row.get::<f64, _>("total_rewards"),
+                    total_bonuses: row.get::<f64, _>("total_bonuses"),
+                })
+            }
+        }
     }
 
     pub async fn get_bounty_change_event_stats_live(
         &self,
         program_id: Option<&str>,
     ) -> Result<BountyChangeEventStats> {
-        self.get_bounty_change_event_stats(program_id).await
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let sql_without_filter = r#"
+            SELECT 'summary' AS bucket, 'total' AS label, COUNT(*) AS count_value, COALESCE(AVG(risk_score), 0.0) AS avg_value FROM bounty_change_events
+            UNION ALL
+            SELECT 'summary' AS bucket, 'pending' AS label, COUNT(*) AS count_value, 0.0 AS avg_value FROM bounty_change_events WHERE status IN ('new', 'analyzing', 'review_required')
+            UNION ALL
+            SELECT 'type' AS bucket, event_type AS label, COUNT(*) AS count_value, 0.0 AS avg_value FROM bounty_change_events GROUP BY event_type
+            UNION ALL
+            SELECT 'severity' AS bucket, severity AS label, COUNT(*) AS count_value, 0.0 AS avg_value FROM bounty_change_events GROUP BY severity
+            UNION ALL
+            SELECT 'status' AS bucket, status AS label, COUNT(*) AS count_value, 0.0 AS avg_value FROM bounty_change_events GROUP BY status
+        "#;
+
+        let sql_with_filter = |placeholder: &str| {
+            format!(
+                r#"
+                SELECT 'summary' AS bucket, 'total' AS label, COUNT(*) AS count_value, COALESCE(AVG(risk_score), 0.0) AS avg_value FROM bounty_change_events WHERE program_id = {placeholder}
+                UNION ALL
+                SELECT 'summary' AS bucket, 'pending' AS label, COUNT(*) AS count_value, 0.0 AS avg_value FROM bounty_change_events WHERE program_id = {placeholder} AND status IN ('new', 'analyzing', 'review_required')
+                UNION ALL
+                SELECT 'type' AS bucket, event_type AS label, COUNT(*) AS count_value, 0.0 AS avg_value FROM bounty_change_events WHERE program_id = {placeholder} GROUP BY event_type
+                UNION ALL
+                SELECT 'severity' AS bucket, severity AS label, COUNT(*) AS count_value, 0.0 AS avg_value FROM bounty_change_events WHERE program_id = {placeholder} GROUP BY severity
+                UNION ALL
+                SELECT 'status' AS bucket, status AS label, COUNT(*) AS count_value, 0.0 AS avg_value FROM bounty_change_events WHERE program_id = {placeholder} GROUP BY status
+                "#
+            )
+        };
+
+        macro_rules! build_change_event_stats {
+            ($rows:expr) => {{
+                let mut total_events = 0;
+                let mut pending_review = 0;
+                let mut average_risk_score = 0.0;
+                let mut by_type = std::collections::HashMap::new();
+                let mut by_severity = std::collections::HashMap::new();
+                let mut by_status = std::collections::HashMap::new();
+
+                for row in $rows {
+                    let bucket: String = row.get("bucket");
+                    let label: String = row.get("label");
+                    let count_value = row.get::<i64, _>("count_value") as i32;
+                    match bucket.as_str() {
+                        "summary" if label == "total" => {
+                            total_events = count_value;
+                            average_risk_score = row.get::<f64, _>("avg_value");
+                        }
+                        "summary" if label == "pending" => pending_review = count_value,
+                        "type" => {
+                            by_type.insert(label, count_value);
+                        }
+                        "severity" => {
+                            by_severity.insert(label, count_value);
+                        }
+                        "status" => {
+                            by_status.insert(label, count_value);
+                        }
+                        _ => {}
+                    }
+                }
+
+                BountyChangeEventStats {
+                    total_events,
+                    by_type,
+                    by_severity,
+                    by_status,
+                    pending_review,
+                    average_risk_score,
+                }
+            }};
+        }
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let rows = if let Some(program_id) = program_id {
+                    let sql = sql_with_filter("?");
+                    sqlx::query(&sql)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .fetch_all(pool)
+                        .await?
+                } else {
+                    sqlx::query(sql_without_filter).fetch_all(pool).await?
+                };
+                Ok(build_change_event_stats!(rows))
+            }
+            DatabasePool::MySQL(pool) => {
+                let rows = if let Some(program_id) = program_id {
+                    let sql = sql_with_filter("?");
+                    sqlx::query(&sql)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .fetch_all(pool)
+                        .await?
+                } else {
+                    sqlx::query(sql_without_filter).fetch_all(pool).await?
+                };
+                Ok(build_change_event_stats!(rows))
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let rows = if let Some(program_id) = program_id {
+                    let sql = sql_with_filter("$1");
+                    sqlx::query(&sql).bind(program_id).fetch_all(pool).await?
+                } else {
+                    sqlx::query(sql_without_filter).fetch_all(pool).await?
+                };
+                Ok(build_change_event_stats!(rows))
+            }
+        }
+    }
+
+    pub async fn list_existing_bounty_asset_canonical_urls(
+        &self,
+        program_id: &str,
+        canonical_urls: &[String],
+    ) -> Result<std::collections::HashSet<String>> {
+        let canonical_urls = dedupe_non_empty_ids(canonical_urls);
+        if canonical_urls.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+
+        let runtime = self.get_runtime_pool()?;
+        let mut existing = std::collections::HashSet::with_capacity(canonical_urls.len());
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                for batch in canonical_urls.chunks(BOUNTY_BATCH_MUTATION_SIZE) {
+                    let mut qb = QueryBuilder::<sqlx::Sqlite>::new(
+                        "SELECT canonical_url FROM bounty_assets WHERE program_id = ",
+                    );
+                    qb.push_bind(program_id.to_string())
+                        .push(" AND canonical_url IN (");
+                    {
+                        let mut separated = qb.separated(", ");
+                        for canonical_url in batch {
+                            separated.push_bind(canonical_url.clone());
+                        }
+                    }
+                    qb.push(")");
+                    for (canonical_url,) in
+                        qb.build_query_as::<(String,)>().fetch_all(&pool).await?
+                    {
+                        existing.insert(canonical_url);
+                    }
+                }
+            }
+            DatabasePool::MySQL(pool) => {
+                for batch in canonical_urls.chunks(BOUNTY_BATCH_MUTATION_SIZE) {
+                    let mut qb = QueryBuilder::<crate::database_service::sqlx_compat::MySql>::new(
+                        "SELECT canonical_url FROM bounty_assets WHERE program_id = ",
+                    );
+                    qb.push_bind(program_id.to_string())
+                        .push(" AND canonical_url IN (");
+                    {
+                        let mut separated = qb.separated(", ");
+                        for canonical_url in batch {
+                            separated.push_bind(canonical_url.clone());
+                        }
+                    }
+                    qb.push(")");
+                    for (canonical_url,) in
+                        qb.build_query_as::<(String,)>().fetch_all(&pool).await?
+                    {
+                        existing.insert(canonical_url);
+                    }
+                }
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                for batch in canonical_urls.chunks(BOUNTY_BATCH_MUTATION_SIZE) {
+                    let mut qb = QueryBuilder::<Postgres>::new(
+                        "SELECT canonical_url FROM bounty_assets WHERE program_id = ",
+                    );
+                    qb.push_bind(program_id.to_string())
+                        .push(" AND canonical_url IN (");
+                    {
+                        let mut separated = qb.separated(", ");
+                        for canonical_url in batch {
+                            separated.push_bind(canonical_url.clone());
+                        }
+                    }
+                    qb.push(")");
+                    for (canonical_url,) in
+                        qb.build_query_as::<(String,)>().fetch_all(&pool).await?
+                    {
+                        existing.insert(canonical_url);
+                    }
+                }
+            }
+        }
+
+        Ok(existing)
+    }
+
+    pub async fn get_bounty_finding_stats_live(
+        &self,
+        program_id: Option<&str>,
+    ) -> Result<BountyFindingStats> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let sql_without_filter = r#"
+            SELECT 'total' AS bucket, '' AS label, COUNT(*) AS count_value FROM bounty_findings
+            UNION ALL
+            SELECT 'severity' AS bucket, severity AS label, COUNT(*) AS count_value FROM bounty_findings GROUP BY severity
+            UNION ALL
+            SELECT 'status' AS bucket, status AS label, COUNT(*) AS count_value FROM bounty_findings GROUP BY status
+        "#;
+        let sql_with_filter = |placeholder: &str| {
+            format!(
+                r#"
+                SELECT 'total' AS bucket, '' AS label, COUNT(*) AS count_value FROM bounty_findings WHERE program_id = {placeholder}
+                UNION ALL
+                SELECT 'severity' AS bucket, severity AS label, COUNT(*) AS count_value FROM bounty_findings WHERE program_id = {placeholder} GROUP BY severity
+                UNION ALL
+                SELECT 'status' AS bucket, status AS label, COUNT(*) AS count_value FROM bounty_findings WHERE program_id = {placeholder} GROUP BY status
+                "#
+            )
+        };
+
+        macro_rules! build_finding_stats {
+            ($rows:expr) => {{
+                let mut total_findings = 0;
+                let mut by_severity = std::collections::HashMap::new();
+                let mut by_status = std::collections::HashMap::new();
+
+                for row in $rows {
+                    let bucket: String = row.get("bucket");
+                    let label: String = row.get("label");
+                    let count_value = row.get::<i64, _>("count_value") as i32;
+                    match bucket.as_str() {
+                        "total" => total_findings = count_value,
+                        "severity" => {
+                            by_severity.insert(label, count_value);
+                        }
+                        "status" => {
+                            by_status.insert(label, count_value);
+                        }
+                        _ => {}
+                    }
+                }
+
+                BountyFindingStats {
+                    total_findings,
+                    by_severity,
+                    by_status,
+                }
+            }};
+        }
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let rows = if let Some(program_id) = program_id {
+                    let sql = sql_with_filter("?");
+                    sqlx::query(&sql)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .fetch_all(pool)
+                        .await?
+                } else {
+                    sqlx::query(sql_without_filter).fetch_all(pool).await?
+                };
+                Ok(build_finding_stats!(rows))
+            }
+            DatabasePool::MySQL(pool) => {
+                let rows = if let Some(program_id) = program_id {
+                    let sql = sql_with_filter("?");
+                    sqlx::query(&sql)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .bind(program_id)
+                        .fetch_all(pool)
+                        .await?
+                } else {
+                    sqlx::query(sql_without_filter).fetch_all(pool).await?
+                };
+                Ok(build_finding_stats!(rows))
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let rows = if let Some(program_id) = program_id {
+                    let sql = sql_with_filter("$1");
+                    sqlx::query(&sql).bind(program_id).fetch_all(pool).await?
+                } else {
+                    sqlx::query(sql_without_filter).fetch_all(pool).await?
+                };
+                Ok(build_finding_stats!(rows))
+            }
+        }
     }
 }

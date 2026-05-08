@@ -100,6 +100,8 @@ type ExecutionMode = 'docker' | 'host'
 interface TerminalConfig {
   docker_image: string
   default_execution_mode: ExecutionMode
+  host_shell?: string | null
+  docker_shell?: string | null
 }
 
 interface AgentConfig {
@@ -110,7 +112,6 @@ interface AgentConfig {
 const props = withDefaults(defineProps<Props>(), {
   useDocker: false,
   dockerImage: 'sentinel-sandbox:latest',
-  shell: 'bash',
   workingDirectory: null,
 })
 
@@ -118,6 +119,8 @@ const props = withDefaults(defineProps<Props>(), {
 const actualDockerImage = ref(props.dockerImage)
 const actualExecutionMode = ref<ExecutionMode>(props.useDocker ? 'docker' : 'host')
 const actualWorkingDirectory = ref(String(props.workingDirectory || '').trim())
+const actualHostShell = ref('')
+const actualDockerShell = ref('')
 
 const normalizeExecutionMode = (value: unknown): ExecutionMode => {
   if (value === 'docker' || value === 'host') {
@@ -132,6 +135,25 @@ const resolveTerminalWorkingDirectory = (executionMode: ExecutionMode): string =
   }
   return String(actualWorkingDirectory.value || '').trim()
 }
+
+const defaultShellForExecutionMode = (executionMode: ExecutionMode): string => {
+  if (executionMode === 'docker') {
+    return 'bash'
+  }
+  if (typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac')) {
+    return '/bin/zsh'
+  }
+  return '/bin/bash'
+}
+
+const resolvedShell = computed(() => {
+  const configuredShell = String(props.shell || '').trim()
+  if (configuredShell) return configuredShell
+  if (actualExecutionMode.value === 'docker') {
+    return actualDockerShell.value.trim() || defaultShellForExecutionMode(actualExecutionMode.value)
+  }
+  return actualHostShell.value.trim() || defaultShellForExecutionMode(actualExecutionMode.value)
+})
 
 // State
 const terminalContainer = ref<HTMLElement | null>(null)
@@ -282,6 +304,8 @@ const connect = async () => {
       }
       actualDockerImage.value = String(agentConfig.terminal.docker_image || props.dockerImage).trim()
       actualExecutionMode.value = normalizeExecutionMode(agentConfig.terminal.default_execution_mode)
+      actualHostShell.value = String(agentConfig.terminal.host_shell || '').trim()
+      actualDockerShell.value = String(agentConfig.terminal.docker_shell || '').trim()
       if (actualExecutionMode.value === 'docker' && !actualDockerImage.value) {
         throw new Error('Docker terminal image is empty')
       }
@@ -324,7 +348,7 @@ const connect = async () => {
       const currentFingerprint = buildTerminalSessionFingerprint(
         actualExecutionMode.value,
         actualDockerImage.value,
-        props.shell,
+        resolvedShell.value,
         resolveTerminalWorkingDirectory(actualExecutionMode.value),
       )
       const existingSessionId = terminalComposable.currentSessionId.value
@@ -346,14 +370,14 @@ const connect = async () => {
       }
 
       // No session ID yet - send default config to create a new session
-      // This happens when user opens terminal before any interactive_shell call
+      // This happens when user opens terminal before any bound shell session exists.
       console.log('[Terminal] No session ID, creating new session with config:', actualDockerImage.value, actualExecutionMode.value)
       const config = {
         execution_mode: actualExecutionMode.value,
         docker_image: actualDockerImage.value,
         working_dir: resolveTerminalWorkingDirectory(actualExecutionMode.value) || undefined,
         env_vars: {},
-        shell: props.shell,
+        shell: resolvedShell.value,
       }
       ws.value?.send(JSON.stringify(config))
     }
@@ -369,7 +393,7 @@ const connect = async () => {
           const currentFingerprint = buildTerminalSessionFingerprint(
             actualExecutionMode.value,
             actualDockerImage.value,
-            props.shell,
+            resolvedShell.value,
             resolveTerminalWorkingDirectory(actualExecutionMode.value),
           )
           

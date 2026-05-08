@@ -2,6 +2,7 @@ export type AgentExecutionOutcome = 'succeeded' | 'failed' | 'cancelled'
 
 export interface AgentExecutionFinishedEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   outcome: AgentExecutionOutcome
   success: boolean
@@ -31,9 +32,7 @@ export const parseConversationExecutionState = (
   }
 }
 
-export const getExecutionStateBadgeClass = (
-  outcome?: AgentExecutionOutcome | null
-): string => {
+export const getExecutionStateBadgeClass = (outcome?: AgentExecutionOutcome | null): string => {
   switch (outcome) {
     case 'succeeded':
       return 'badge-success'
@@ -46,9 +45,7 @@ export const getExecutionStateBadgeClass = (
   }
 }
 
-export const getExecutionStateLabelKey = (
-  outcome?: AgentExecutionOutcome | null
-): string => {
+export const getExecutionStateLabelKey = (outcome?: AgentExecutionOutcome | null): string => {
   switch (outcome) {
     case 'succeeded':
       return 'agent.executionOutcomeSucceeded'

@@ -11,7 +11,9 @@ use sentinel_db::{
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::commands::monitor_surface::materialize_surface_artifacts;
+use crate::commands::monitor_surface::{
+    materialize_surface_artifacts, SurfaceMaterializationStats,
+};
 
 const MONITOR_TARGET_PAGE_SIZE: i64 = 5_000;
 const HTTP_SERVICE_PORTS: [i32; 4] = [80, 443, 8080, 8443];
@@ -139,9 +141,9 @@ pub(crate) async fn ingest_surface_plugin_output(
     schedule_id: Option<&str>,
     output: &Value,
     metadata: Option<Value>,
-) -> Result<usize, String> {
+) -> Result<Option<SurfaceMaterializationStats>, String> {
     let Some(surface_artifacts) = extract_surface_artifacts(output) else {
-        return Ok(0);
+        return Ok(None);
     };
 
     let run_id = Uuid::new_v4().to_string();
@@ -171,6 +173,7 @@ pub(crate) async fn ingest_surface_plugin_output(
         .map_err(|e| e.to_string())?;
 
     let mut observation_count = 0i32;
+    let mut observations = Vec::with_capacity(surface_artifacts.len());
     for (artifact_type, payload) in &surface_artifacts {
         if payload.is_null() {
             continue;
@@ -182,7 +185,7 @@ pub(crate) async fn ingest_surface_plugin_output(
             .unwrap_or(1);
         observation_count += item_count.max(1);
 
-        let observation = SurfaceObservationRow {
+        observations.push(SurfaceObservationRow {
             id: Uuid::new_v4().to_string(),
             run_id: run_id.clone(),
             program_id: program_id.to_string(),
@@ -201,15 +204,15 @@ pub(crate) async fn ingest_surface_plugin_output(
                 })
                 .to_string(),
             ),
-        };
-
-        db_service
-            .create_surface_observation(&observation)
-            .await
-            .map_err(|e| e.to_string())?;
+        });
     }
 
-    let materialized = materialize_surface_artifacts(
+    db_service
+        .create_surface_observations(&observations)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let stats = materialize_surface_artifacts(
         db_service,
         program_id,
         Some(&run_id),
@@ -223,15 +226,15 @@ pub(crate) async fn ingest_surface_plugin_output(
             &run_id,
             "completed",
             Some(observation_count),
-            Some(materialized as i32),
-            Some(0),
+            Some(stats.created_assets as i32),
+            Some(stats.changed_assets as i32),
             None,
             Some(&Utc::now().to_rfc3339()),
         )
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(materialized)
+    Ok(Some(stats))
 }
 
 pub(crate) async fn collect_monitor_targets(

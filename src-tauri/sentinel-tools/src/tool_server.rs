@@ -8,22 +8,19 @@ use tokio::sync::RwLock;
 use crate::buildin_tools::tool_search::set_tool_search_executor;
 #[cfg(feature = "ocr")]
 use crate::buildin_tools::OcrTool;
-#[cfg(feature = "plugins")]
-use crate::buildin_tools::SubdomainBruteTool;
 use crate::buildin_tools::{
-    AskUserQuestionTool, BrowserShellTool, BrowserTool, FileEditTool, FileReadTool, FileWriteTool,
-    GlobTool, GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, PluginAuthoringTool,
-    RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool, TenthManTool, ToolSearchArgs,
-    ToolSearchOutput, ToolSearchTool, WebSearchTool,
+    AskUserQuestionTool, BrowserShellTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
+    GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, PluginAuthoringTool, RouteDiscoveryTool,
+    SearchExploitTool, ShellTool, SkillsTool, TenthManTool, ToolSearchArgs, ToolSearchOutput,
+    ToolSearchTool, WebSearchTool,
 };
+#[cfg(feature = "plugins")]
+use crate::buildin_tools::{PortScanTool, SubdomainBruteTool};
 #[cfg(feature = "db")]
 use crate::buildin_tools::{SopsTool, TasksTool};
 use crate::dynamic_tool::{
     DynamicTool, DynamicToolBuilder, DynamicToolDef, ToolCategory, ToolExecutionPolicy,
     ToolExecutor, ToolExposure, ToolRegistry, ToolSource,
-};
-use crate::terminal::unified_exec_tool::{
-    build_exec_command_tool_def, build_interactive_shell_tool_def, build_write_stdin_tool_def,
 };
 use crate::tool_search_runtime::run_tool_search;
 
@@ -138,7 +135,7 @@ impl ToolServer {
                 "required": []
             }))
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Network)
+            .category(ToolCategory::WebNetwork)
             .execution_policy(ToolExecutionPolicy {
                 read_only: true,
                 mutating: false,
@@ -221,7 +218,7 @@ impl ToolServer {
                     "required": ["questions"]
                 }))
                 .source(ToolSource::Builtin)
-                .category(ToolCategory::System)
+                .category(ToolCategory::Collaboration)
                 .execution_policy(ToolExecutionPolicy {
                     read_only: true,
                     mutating: false,
@@ -252,53 +249,6 @@ impl ToolServer {
 
         self.registry.register(ask_user_question_def).await;
 
-        let browser_def = DynamicToolBuilder::new(BrowserTool::NAME.to_string())
-            .description(BrowserTool::DESCRIPTION.to_string())
-            .input_schema(
-                serde_json::to_value(schemars::schema_for!(
-                    crate::buildin_tools::browser::BrowserToolArgs
-                ))
-                .unwrap_or_default(),
-            )
-            .source(ToolSource::Builtin)
-            .category(ToolCategory::Browser)
-            .tags(vec![
-                "browser".to_string(),
-                "playwright".to_string(),
-                "javascript".to_string(),
-                "session".to_string(),
-                "cookies".to_string(),
-            ])
-            .search_hint("interact with a real browser session for JS-heavy or login-backed pages")
-            .exposure(ToolExposure::Deferred)
-            .execution_policy(ToolExecutionPolicy {
-                read_only: false,
-                mutating: true,
-                concurrency_safe: false,
-                requires_permission: false,
-                supports_background: false,
-            })
-            .executor(|args| async move {
-                use crate::buildin_tools::browser::{BrowserTool, BrowserToolArgs};
-                use rig::tool::Tool;
-
-                let tool_args: BrowserToolArgs = serde_json::from_value(args)
-                    .map_err(|e| format!("Invalid arguments: {}", e))?;
-
-                let tool = BrowserTool::default();
-                let result = tool
-                    .call(tool_args)
-                    .await
-                    .map_err(|e| format!("Browser tool failed: {}", e))?;
-
-                serde_json::to_value(result)
-                    .map_err(|e| format!("Failed to serialize result: {}", e))
-            })
-            .build()
-            .expect("Failed to build browser tool");
-
-        self.registry.register(browser_def).await;
-
         let browser_shell_def = DynamicToolBuilder::new(BrowserShellTool::NAME.to_string())
             .description(BrowserShellTool::DESCRIPTION.to_string())
             .input_schema(
@@ -308,7 +258,7 @@ impl ToolServer {
                 .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Browser)
+            .category(ToolCategory::WebNetwork)
             .tags(vec![
                 "browser".to_string(),
                 "shell".to_string(),
@@ -353,7 +303,7 @@ impl ToolServer {
                     .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Utility)
+            .category(ToolCategory::FileCode)
             .tags(vec![
                 "file".to_string(),
                 "glob".to_string(),
@@ -399,7 +349,7 @@ impl ToolServer {
                     .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Utility)
+            .category(ToolCategory::FileCode)
             .tags(vec![
                 "search".to_string(),
                 "grep".to_string(),
@@ -447,7 +397,7 @@ impl ToolServer {
                 .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Utility)
+            .category(ToolCategory::FileCode)
             .tags(vec![
                 "file".to_string(),
                 "read".to_string(),
@@ -496,7 +446,7 @@ impl ToolServer {
                 .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Utility)
+            .category(ToolCategory::FileCode)
             .tags(vec![
                 "file".to_string(),
                 "edit".to_string(),
@@ -545,7 +495,7 @@ impl ToolServer {
                 .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Utility)
+            .category(ToolCategory::FileCode)
             .tags(vec![
                 "file".to_string(),
                 "write".to_string(),
@@ -591,7 +541,7 @@ impl ToolServer {
                     .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Utility)
+            .category(ToolCategory::FileCode)
             .tags(vec![
                 "code".to_string(),
                 "symbol".to_string(),
@@ -643,16 +593,66 @@ impl ToolServer {
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "Shell command to execute"
+                        "description": "Shell command to execute with a bounded wait. If it is still running or waiting for input, shell returns a session_id that can be continued."
+                    },
+                    "cmd": {
+                        "type": "string",
+                        "description": "Alias for command when starting a prompt-capable shell session."
                     },
                     "cwd": {
                         "type": "string",
                         "description": "Working directory"
                     },
+                    "workdir": {
+                        "type": "string",
+                        "description": "Alias for cwd when starting a prompt-capable shell session."
+                    },
                     "timeout_secs": {
                         "type": "integer",
                         "description": "Command timeout in seconds",
                         "default": 60
+                    },
+                    "yield_time_ms": {
+                        "type": "integer",
+                        "description": "Bounded wait time in milliseconds for prompt-capable shell sessions. When set, shell returns session_id/process_id instead of blocking indefinitely."
+                    },
+                    "max_output_tokens": {
+                        "type": "integer",
+                        "description": "Approximate maximum output tokens to return for prompt-capable shell sessions."
+                    },
+                    "tty": {
+                        "type": "boolean",
+                        "description": "Use a TTY-backed session for prompt-capable shell execution.",
+                        "default": true
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session id returned by a prior shell call with yield_time_ms."
+                    },
+                    "process_id": {
+                        "type": "string",
+                        "description": "Alias for session_id."
+                    },
+                    "chars": {
+                        "type": "string",
+                        "description": "Raw characters to write to a running shell session.",
+                        "default": ""
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "Terminal key for action=key. Supported keys: ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Enter, Escape, CtrlC, Backspace, Tab, Space."
+                    },
+                    "repeat": {
+                        "type": "integer",
+                        "description": "Repeat count for action=key.",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "default": 1
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": "Shell action. start requires command/cmd; poll reads without writing; write sends raw chars/input/input_text; key sends an explicit terminal key; submit presses TTY Enter; cancel stops the session.",
+                        "enum": ["start", "poll", "write", "key", "submit", "cancel"]
                     },
                     "run_in_background": {
                         "type": "boolean",
@@ -660,9 +660,15 @@ impl ToolServer {
                         "default": false
                     }
                 },
-                "required": ["command"]
+                "anyOf": [
+                    { "required": ["command"] },
+                    { "required": ["cmd"] },
+                    { "required": ["session_id"] },
+                    { "required": ["process_id"] }
+                ]
             }))
             .source(ToolSource::Builtin)
+            .category(ToolCategory::Terminal)
             .execution_policy(ToolExecutionPolicy {
                 read_only: false,
                 mutating: true,
@@ -672,6 +678,9 @@ impl ToolServer {
             })
             .executor(|args| async move {
                 use crate::buildin_tools::shell::{ShellArgs, ShellError};
+                use crate::terminal::unified_exec_tool::{
+                    execute_shell_session_command, execute_shell_session_input,
+                };
                 use rig::tool::Tool;
                 use std::time::Instant;
 
@@ -772,7 +781,7 @@ impl ToolServer {
                         "interaction_required": true,
                         "interaction_kind": interaction_kind,
                         "recommended_tool": recommended_tool,
-                        "suggested_action": "Use interactive_shell to continue in a persistent terminal session, or rerun the command with non-interactive flags or piped input.",
+                        "suggested_action": "Call shell with yield_time_ms to start a prompt-capable session. Poll with action=poll, write raw stdin with action=write and chars, send terminal keys with action=key and key, or confirm prompts with action=submit.",
                         "backgrounded": false,
                         "background_task_id": serde_json::Value::Null,
                         "background_session_id": serde_json::Value::Null,
@@ -782,12 +791,73 @@ impl ToolServer {
                     })
                 }
 
+                fn has_non_empty_string(args: &Value, key: &str) -> bool {
+                    args.get(key)
+                        .and_then(|value| value.as_str())
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .is_some()
+                }
+
+                fn should_continue_shell_session(args: &Value) -> bool {
+                    has_non_empty_string(args, "session_id")
+                        || has_non_empty_string(args, "process_id")
+                }
+
+                fn should_start_prompt_capable_shell(args: &Value) -> bool {
+                    if has_non_empty_string(args, "cmd") {
+                        return true;
+                    }
+                    has_non_empty_string(args, "command")
+                }
+
+                fn normalize_prompt_shell_args(args: &mut Value) {
+                    let Some(obj) = args.as_object_mut() else {
+                        return;
+                    };
+                    if !obj.contains_key("cmd") {
+                        if let Some(command) = obj.get("command").cloned() {
+                            obj.insert("cmd".to_string(), command);
+                        }
+                    }
+                    if !obj.contains_key("workdir") {
+                        if let Some(cwd) = obj.get("cwd").cloned() {
+                            obj.insert("workdir".to_string(), cwd);
+                        }
+                    }
+                }
+
+                fn strip_prompt_shell_only_args(args: &mut Value) {
+                    let Some(obj) = args.as_object_mut() else {
+                        return;
+                    };
+                    obj.remove("cmd");
+                    obj.remove("workdir");
+                    obj.remove("yield_time_ms");
+                    obj.remove("max_output_tokens");
+                    obj.remove("tty");
+                    obj.remove("session_id");
+                    obj.remove("process_id");
+                    obj.remove("chars");
+                }
+
                 let started_at = Instant::now();
+                let mut args = args;
+                if should_continue_shell_session(&args) {
+                    return execute_shell_session_input(args, None).await;
+                }
+
+                if should_start_prompt_capable_shell(&args) {
+                    normalize_prompt_shell_args(&mut args);
+                    return execute_shell_session_command(args, None, None).await;
+                }
+
                 let raw_command = args
                     .get("command")
                     .and_then(|value| value.as_str())
                     .unwrap_or_default()
                     .to_string();
+                strip_prompt_shell_only_args(&mut args);
 
                 let tool_args: ShellArgs = match serde_json::from_value(args) {
                     Ok(args) => args,
@@ -899,6 +969,7 @@ impl ToolServer {
                 "required": ["execution_id", "plan"]
             }))
             .source(ToolSource::Builtin)
+            .category(ToolCategory::Collaboration)
             .execution_policy(ToolExecutionPolicy {
                 read_only: false,
                 mutating: true,
@@ -936,7 +1007,7 @@ impl ToolServer {
                 .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::System)
+            .category(ToolCategory::KnowledgeExtension)
             .executor(|args| async move {
                 use crate::buildin_tools::skills::{SkillsTool, SkillsToolArgs};
                 use rig::tool::Tool;
@@ -986,7 +1057,7 @@ impl ToolServer {
                 serde_json::to_value(schemars::schema_for!(ToolSearchOutput)).unwrap_or_default(),
             ))
             .source(ToolSource::Builtin)
-            .category(ToolCategory::System)
+            .category(ToolCategory::KnowledgeExtension)
             .tags(vec![
                 "tool".to_string(),
                 "search".to_string(),
@@ -1025,7 +1096,7 @@ impl ToolServer {
                 .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::System)
+            .category(ToolCategory::KnowledgeExtension)
             .executor(|args| async move {
                 use crate::buildin_tools::sops::{SopsTool, SopsToolArgs};
                 use rig::tool::Tool;
@@ -1081,6 +1152,7 @@ impl ToolServer {
                 "required": ["action", "content"]
             }))
             .source(ToolSource::Builtin)
+            .category(ToolCategory::KnowledgeExtension)
             .executor(|args| async move {
                 use crate::buildin_tools::memory::{MemoryManagerTool, MemoryManagerArgs};
                 use rig::tool::Tool;
@@ -1109,7 +1181,7 @@ impl ToolServer {
                 .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Plugin)
+            .category(ToolCategory::KnowledgeExtension)
             .tags(vec![
                 "plugin".to_string(),
                 "authoring".to_string(),
@@ -1174,6 +1246,7 @@ impl ToolServer {
                 "required": ["query"]
             }))
             .source(ToolSource::Builtin)
+            .category(ToolCategory::WebNetwork)
             .executor(|args| async move {
                 use crate::buildin_tools::web_search::WebSearchArgs;
                 use rig::tool::Tool;
@@ -1212,7 +1285,7 @@ impl ToolServer {
                 .unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Network)
+            .category(ToolCategory::SecurityRecon)
             .tags(vec![
                 "route".to_string(),
                 "discovery".to_string(),
@@ -1254,6 +1327,45 @@ impl ToolServer {
 
         #[cfg(feature = "plugins")]
         {
+            let port_scan_def = DynamicToolBuilder::new(PortScanTool::NAME.to_string())
+                .description(PortScanTool::DESCRIPTION.to_string())
+                .input_schema(
+                    serde_json::to_value(schemars::schema_for!(
+                        crate::buildin_tools::port_scan::PortScanArgs
+                    ))
+                    .unwrap_or_default(),
+                )
+                .source(ToolSource::Builtin)
+                .category(ToolCategory::SecurityRecon)
+                .tags(vec![
+                    "port".to_string(),
+                    "scan".to_string(),
+                    "masscan".to_string(),
+                    "network".to_string(),
+                    "scanning".to_string(),
+                    "recon".to_string(),
+                ])
+                .search_hint("scan TCP ports on focused hosts, CIDR ranges, or IP ranges")
+                .exposure(ToolExposure::Deferred)
+                .executor(|args| async move {
+                    use crate::buildin_tools::port_scan::{PortScanArgs, PortScanTool};
+                    use rig::tool::Tool;
+
+                    let tool_args: PortScanArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                    let tool = PortScanTool;
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("Port scan failed: {}", e))?;
+
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build port_scan tool");
+
             let subdomain_brute_def = DynamicToolBuilder::new(SubdomainBruteTool::NAME.to_string())
                 .description(SubdomainBruteTool::DESCRIPTION.to_string())
                 .input_schema(
@@ -1263,12 +1375,12 @@ impl ToolServer {
                     .unwrap_or_default(),
                 )
                 .source(ToolSource::Builtin)
-                .category(ToolCategory::Monitoring)
+                .category(ToolCategory::SecurityRecon)
                 .tags(vec![
                     "subdomain".to_string(),
                     "dns".to_string(),
                     "recon".to_string(),
-                    "monitoring".to_string(),
+                    "scanning".to_string(),
                 ])
                 .search_hint("enumerate likely subdomains for an asset or program")
                 .exposure(ToolExposure::Deferred)
@@ -1293,6 +1405,7 @@ impl ToolServer {
                 .build()
                 .expect("Failed to build subdomain_brute tool");
 
+            self.registry.register(port_scan_def).await;
             self.registry.register(subdomain_brute_def).await;
         }
 
@@ -1345,7 +1458,7 @@ impl ToolServer {
                 }
             }))
             .source(ToolSource::Builtin)
-            .category(ToolCategory::Exploitation)
+            .category(ToolCategory::VulnerabilityResearch)
             .executor(|args| async move {
                 use crate::buildin_tools::search_exploit::{SearchExploitArgs, SearchExploitTool};
                 use rig::tool::Tool;
@@ -1383,6 +1496,7 @@ impl ToolServer {
                     "required": ["image_path"]
                 }))
                 .source(ToolSource::Builtin)
+                .category(ToolCategory::KnowledgeExtension)
                 .executor(|args| async move {
                     use crate::buildin_tools::ocr::{OcrArgs, OcrTool};
                     use rig::tool::Tool;
@@ -1455,6 +1569,7 @@ impl ToolServer {
                 "required": ["execution_id"]
             }))
             .source(ToolSource::Builtin)
+            .category(ToolCategory::Collaboration)
             .executor(|args| async move {
                 use crate::buildin_tools::tenth_man_tool::{TenthManToolArgs, TenthManTool};
                 use rig::tool::Tool;
@@ -1473,12 +1588,6 @@ impl ToolServer {
             .expect("Failed to build tenth_man_review tool");
 
         self.registry.register(tenth_man_def).await;
-
-        self.registry
-            .register(build_interactive_shell_tool_def())
-            .await;
-        self.registry.register(build_exec_command_tool_def()).await;
-        self.registry.register(build_write_stdin_tool_def()).await;
 
         *initialized = true;
         tracing::info!("Builtin tools initialized");
@@ -1751,6 +1860,7 @@ impl ToolServer {
                 serde_json::to_value(schemars::schema_for!(SpawnAgentArgs)).unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
+            .category(ToolCategory::AgentOrchestration)
             .executor(|args| async move {
                 use rig::tool::Tool;
                 let tool_args: SpawnAgentArgs = serde_json::from_value(args)
@@ -1773,6 +1883,7 @@ impl ToolServer {
                 serde_json::to_value(schemars::schema_for!(WaitAgentsArgs)).unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
+            .category(ToolCategory::AgentOrchestration)
             .executor(|args| async move {
                 use rig::tool::Tool;
                 let tool_args: WaitAgentsArgs = serde_json::from_value(args)
@@ -1795,6 +1906,7 @@ impl ToolServer {
                 serde_json::to_value(schemars::schema_for!(ListAgentsArgs)).unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
+            .category(ToolCategory::AgentOrchestration)
             .executor(|args| async move {
                 use rig::tool::Tool;
                 let tool_args: ListAgentsArgs = serde_json::from_value(args)
@@ -1817,6 +1929,7 @@ impl ToolServer {
                 serde_json::to_value(schemars::schema_for!(CloseAgentArgs)).unwrap_or_default(),
             )
             .source(ToolSource::Builtin)
+            .category(ToolCategory::AgentOrchestration)
             .executor(|args| async move {
                 use rig::tool::Tool;
                 let tool_args: CloseAgentArgs = serde_json::from_value(args)
@@ -1838,261 +1951,5 @@ impl ToolServer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::terminal::TERMINAL_MANAGER;
-    use crate::terminal_output::{sanitize_interactive_output, strip_ansi_codes};
-    use serde_json::json;
-
-    #[test]
-    fn strip_ansi_codes_renders_carriage_returns() {
-        assert_eq!(
-            strip_ansi_codes("progress 1\rprogress 2\nok"),
-            "progress 2\nok"
-        );
-    }
-
-    #[test]
-    fn sanitize_interactive_output_removes_echo_and_prompt() {
-        let raw = "cat <<'EOF'\r\n> hello\r\n> EOF\r\nhello\r\n$ ";
-        assert_eq!(
-            sanitize_interactive_output(raw, "cat <<'EOF'\nhello\nEOF"),
-            "hello"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_tool_server_init() {
-        let server = ToolServer::new();
-        server.init_builtin_tools().await;
-
-        assert!(server.tool_count().await >= 4);
-
-        // Check builtin tools exist
-        assert!(server.get_tool("http_request").await.is_some());
-        assert!(server.get_tool("shell").await.is_some());
-        assert!(server.get_tool("exec_command").await.is_some());
-        assert!(server.get_tool("write_stdin").await.is_some());
-        assert!(server.get_tool("tasks").await.is_some());
-        assert!(server.get_tool("web_search").await.is_some());
-        assert!(server.get_tool("subdomain_brute").await.is_some());
-        assert!(server.get_tool("tool_search").await.is_some());
-        assert!(server.get_tool("browser").await.is_some());
-        assert!(server.get_tool("route_discovery").await.is_some());
-    }
-
-    #[tokio::test]
-    async fn list_tools_by_source_preserves_builtin_categories() {
-        let server = ToolServer::new();
-        server.init_builtin_tools().await;
-
-        let builtin_tools = server.list_tools_by_source("builtin").await;
-        let browser = builtin_tools
-            .iter()
-            .find(|tool| tool.name == "browser")
-            .expect("browser tool should exist");
-        let route_discovery = builtin_tools
-            .iter()
-            .find(|tool| tool.name == "route_discovery")
-            .expect("route_discovery tool should exist");
-
-        assert_eq!(browser.category, ToolCategory::Browser);
-        assert_eq!(route_discovery.category, ToolCategory::Network);
-    }
-
-    #[tokio::test]
-    async fn interactive_shell_schema_uses_session_policy_not_session_id() {
-        let server = ToolServer::new();
-        server.init_builtin_tools().await;
-
-        let tool = server
-            .get_tool("interactive_shell")
-            .await
-            .expect("interactive_shell should exist");
-        let properties = tool
-            .input_schema
-            .get("properties")
-            .and_then(|value| value.as_object())
-            .expect("interactive_shell schema should have properties");
-
-        assert!(properties.contains_key("session_policy"));
-        assert!(!properties.contains_key("session_id"));
-    }
-
-    #[tokio::test]
-    async fn shell_returns_structured_interaction_failure_for_interactive_commands() {
-        let server = ToolServer::new();
-        server.init_builtin_tools().await;
-
-        let result = server
-            .execute(
-                "shell",
-                json!({
-                    "command": "git add -i Cargo.toml",
-                    "execution_mode": "host"
-                }),
-            )
-            .await;
-
-        assert!(
-            result.success,
-            "shell executor should return structured failure output instead of tool execution error"
-        );
-        let output = result
-            .output
-            .expect("shell should return structured output");
-        assert_eq!(
-            output.get("success").and_then(|value| value.as_bool()),
-            Some(false)
-        );
-        assert_eq!(
-            output
-                .get("interaction_required")
-                .and_then(|value| value.as_bool()),
-            Some(true),
-            "unexpected shell output: {}",
-            output
-        );
-        assert_eq!(
-            output
-                .get("recommended_tool")
-                .and_then(|value| value.as_str()),
-            Some("interactive_shell")
-        );
-    }
-
-    #[tokio::test]
-    async fn shell_rejects_prompting_scaffold_commands_before_timeout() {
-        let server = ToolServer::new();
-        server.init_builtin_tools().await;
-
-        let result = server
-            .execute(
-                "shell",
-                json!({
-                    "command": "npm create vite@latest . -- --template react",
-                    "execution_mode": "host"
-                }),
-            )
-            .await;
-
-        assert!(result.success);
-        let output = result.output.expect("shell should return structured output");
-        assert_eq!(
-            output
-                .get("interaction_required")
-                .and_then(|value| value.as_bool()),
-            Some(true),
-            "unexpected shell output: {}",
-            output
-        );
-    }
-
-    #[tokio::test]
-    async fn interactive_shell_reuses_then_rotates_active_session() {
-        let server = ToolServer::new();
-        server.init_builtin_tools().await;
-
-        let first = server
-            .execute(
-                "interactive_shell",
-                json!({
-                    "execution_mode": "host",
-                    "command": "printf first",
-                    "session_policy": "new",
-                    "wait_strategy": "timeout",
-                    "wait_timeout": 1
-                }),
-            )
-            .await;
-        assert!(first.success, "first interactive_shell call should succeed");
-        let first_output = first.output.expect("first call should return output");
-        let session_a = first_output
-            .get("session_id")
-            .and_then(|value| value.as_str())
-            .expect("first call should return session_id")
-            .to_string();
-        assert!(
-            first_output
-                .get("session_fingerprint")
-                .and_then(|value| value.as_str())
-                .is_some(),
-            "first call should return session_fingerprint"
-        );
-
-        let reuse = server
-            .execute(
-                "interactive_shell",
-                json!({
-                    "execution_mode": "host",
-                    "command": "printf second",
-                    "session_policy": "reuse",
-                    "active_session_id": session_a,
-                    "wait_strategy": "timeout",
-                    "wait_timeout": 1
-                }),
-            )
-            .await;
-        assert!(reuse.success, "reuse interactive_shell call should succeed");
-        let reuse_output = reuse.output.expect("reuse call should return output");
-        let reused_session = reuse_output
-            .get("session_id")
-            .and_then(|value| value.as_str())
-            .expect("reuse call should return session_id");
-        assert_eq!(reused_session, session_a);
-
-        let second = server
-            .execute(
-                "interactive_shell",
-                json!({
-                    "execution_mode": "host",
-                    "command": "printf third",
-                    "session_policy": "new",
-                    "wait_strategy": "timeout",
-                    "wait_timeout": 1
-                }),
-            )
-            .await;
-        assert!(second.success, "second new-session call should succeed");
-        let second_output = second.output.expect("second call should return output");
-        let session_b = second_output
-            .get("session_id")
-            .and_then(|value| value.as_str())
-            .expect("second call should return session_id")
-            .to_string();
-        assert_ne!(
-            session_a, session_b,
-            "new session should rotate terminal session"
-        );
-
-        let reuse_second = server
-            .execute(
-                "interactive_shell",
-                json!({
-                    "execution_mode": "host",
-                    "command": "printf fourth",
-                    "session_policy": "reuse",
-                    "active_session_id": session_b,
-                    "wait_strategy": "timeout",
-                    "wait_timeout": 1
-                }),
-            )
-            .await;
-        assert!(
-            reuse_second.success,
-            "reuse on rotated session should succeed"
-        );
-        let reuse_second_output = reuse_second
-            .output
-            .expect("reuse second call should return output");
-        let reused_second_session = reuse_second_output
-            .get("session_id")
-            .and_then(|value| value.as_str())
-            .expect("reuse second call should return session_id");
-        assert_eq!(reused_second_session, session_b);
-
-        let _ = TERMINAL_MANAGER.stop_session(&session_a).await;
-        let _ = TERMINAL_MANAGER.stop_session(&session_b).await;
-    }
-
-}
+#[path = "tool_server_tests.rs"]
+mod tool_server_tests;

@@ -38,6 +38,7 @@ fn build_skill_loaded_content(skill_id: &str, skill_name: &str) -> String {
 pub(super) fn emit_and_persist_skill_loaded(
     app_handle: &AppHandle,
     execution_id: &str,
+    conversation_id: &str,
     generation: Option<u64>,
     skill_id: &str,
     skill_name: &str,
@@ -53,7 +54,7 @@ pub(super) fn emit_and_persist_skill_loaded(
 
         let msg = core_db::AiMessage {
             id: uuid::Uuid::new_v4().to_string(),
-            conversation_id: execution_id.to_string(),
+            conversation_id: conversation_id.to_string(),
             role: "system".to_string(),
             content: build_skill_loaded_content(skill_id, skill_name),
             metadata: Some(

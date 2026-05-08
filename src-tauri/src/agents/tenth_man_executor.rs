@@ -18,7 +18,7 @@ static TENTH_MAN_CONFIGS: Lazy<Arc<RwLock<HashMap<String, LlmConfig>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 /// Global task context storage (for providing context to reviews)
-static TASK_CONTEXTS: Lazy<Arc<RwLock<HashMap<String, String>>>> =
+static TASK_CONTEXTS: Lazy<Arc<RwLock<HashMap<String, TenthManTaskContext>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 /// Global AppHandle storage (for accessing database and sliding window)
@@ -29,6 +29,12 @@ const FULL_HISTORY_GLOBAL_SUMMARY_MAX_CHARS: usize = 8_000;
 const FULL_HISTORY_PER_MESSAGE_MAX_CHARS: usize = 1_500;
 const FULL_HISTORY_TOOL_SECTION_MAX_CHARS: usize = 1_200;
 const FULL_HISTORY_REASONING_MAX_CHARS: usize = 900;
+
+#[derive(Debug, Clone)]
+struct TenthManTaskContext {
+    task: String,
+    conversation_id: String,
+}
 
 /// System prompt for quick review
 const TENTH_MAN_QUICK_REVIEW_PROMPT: &str = r#"You are the "Tenth Man" performing a rapid risk assessment.
@@ -103,9 +109,15 @@ pub async fn set_tenth_man_config(execution_id: String, config: LlmConfig) {
 }
 
 /// Set task context for a specific execution
-pub async fn set_task_context(execution_id: String, task: String) {
+pub async fn set_task_context(execution_id: String, task: String, conversation_id: String) {
     let mut contexts = TASK_CONTEXTS.write().await;
-    contexts.insert(execution_id, task);
+    contexts.insert(
+        execution_id,
+        TenthManTaskContext {
+            task,
+            conversation_id,
+        },
+    );
 }
 
 /// Set AppHandle for accessing database
@@ -123,7 +135,7 @@ pub async fn clear_tenth_man_execution(execution_id: &str) {
 
 /// Build history context based on review mode
 async fn build_history_context(
-    execution_id: &str,
+    conversation_id: &str,
     review_mode: &ReviewMode,
 ) -> Result<String, TenthManToolError> {
     let app_handle = APP_HANDLE
@@ -135,7 +147,7 @@ async fn build_history_context(
             // Use SlidingWindow to get complete context with smart summarization
             use crate::agents::sliding_window::SlidingWindowManager;
 
-            let sw = SlidingWindowManager::new(app_handle, execution_id, None)
+            let sw = SlidingWindowManager::new(app_handle, conversation_id, None)
                 .await
                 .map_err(|e| {
                     TenthManToolError::InternalError(format!(
@@ -256,7 +268,7 @@ async fn build_history_context(
 
             let db = app_handle.state::<Arc<sentinel_db::DatabaseService>>();
             let messages: Vec<sentinel_core::models::database::AiMessage> = db
-                .get_ai_messages_by_conversation(execution_id)
+                .get_ai_messages_by_conversation(conversation_id)
                 .await
                 .map_err(|e| {
                     TenthManToolError::InternalError(format!("Failed to get messages: {}", e))
@@ -366,11 +378,15 @@ pub async fn execute_tenth_man_review(
         contexts
             .get(&args.execution_id)
             .cloned()
-            .unwrap_or_else(|| "Unknown task".to_string())
+            .unwrap_or_else(|| TenthManTaskContext {
+                task: "Unknown task".to_string(),
+                conversation_id: args.execution_id.clone(),
+            })
     };
 
     // Build history context based on review mode
-    let history_context = build_history_context(&args.execution_id, &args.review_mode).await?;
+    let history_context =
+        build_history_context(&task_context.conversation_id, &args.review_mode).await?;
 
     // Build review prompt
     let focus_area = args
@@ -396,13 +412,13 @@ pub async fn execute_tenth_man_review(
         "quick" => {
             format!(
                 "### Original Task:\n{}\n\n### Focus Area:\n{}\n\n### History Context:\n{}\n\n---\n\nPerform quick risk assessment:",
-                task_context, focus_area, history_context
+                task_context.task, focus_area, history_context
             )
         }
         "full" | _ => {
             format!(
                 "### Original Task:\n{}\n\n### Focus Area:\n{}\n\n### Complete History Context:\n{}\n\n---\n\nPerform your Tenth Man review now. Challenge the current conclusions and execution process.",
-                task_context, focus_area, history_context
+                task_context.task, focus_area, history_context
             )
         }
     };

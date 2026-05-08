@@ -15,10 +15,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use sentinel_tools::buildin_tools::{
-    CloseAgentTool, HttpRequestTool, ListAgentsTool, MemoryManagerTool, ShellTool, SkillsTool,
-    SpawnAgentTool, TasksTool, TenthManTool, ToolSearchTool, WaitAgentsTool,
-};
+#[cfg(test)]
+use sentinel_tools::buildin_tools::ShellTool;
+use sentinel_tools::buildin_tools::{MemoryManagerTool, SkillsTool, ToolSearchTool};
 pub use types::{
     SelectedSkill, ToolCategory, ToolConfig, ToolCost, ToolExposure, ToolMetadata,
     ToolSelectionPlan, ToolSelectionStrategy, ToolStatistics, ToolUsageRecord, ToolUsageStatistics,
@@ -171,40 +170,13 @@ impl ToolRouter {
             ToolSelectionStrategy::Keyword => self.select_by_keywords(task, config)?,
             ToolSelectionStrategy::LLM => self.select_by_llm(task, config, llm_config).await?,
             ToolSelectionStrategy::Hybrid => self.select_hybrid(task, config, llm_config).await?,
-            ToolSelectionStrategy::Skills(_allowed_groups) => {
-                if !self.is_skills_enabled().await {
-                    tracing::info!("Skills tool disabled via config; returning no tools.");
-                    return Ok(vec![]);
-                }
-                // Skills mode default toolset
-                let mut base_tools = vec![
-                    SkillsTool::NAME.to_string(),
-                    ShellTool::NAME.to_string(),
-                    HttpRequestTool::NAME.to_string(),
-                    SpawnAgentTool::NAME.to_string(),
-                    WaitAgentsTool::NAME.to_string(),
-                    ListAgentsTool::NAME.to_string(),
-                    CloseAgentTool::NAME.to_string(),
-                    TenthManTool::NAME.to_string(),
-                ];
-                if !config
-                    .disabled_tools
-                    .contains(&MemoryManagerTool::NAME.to_string())
-                {
-                    base_tools.push(MemoryManagerTool::NAME.to_string());
-                }
-                if !config.disabled_tools.contains(&TasksTool::NAME.to_string()) {
-                    base_tools.push(TasksTool::NAME.to_string());
-                }
-                base_tools
-            }
             ToolSelectionStrategy::Deferred => self.select_deferred_core_tools(config),
         };
 
         Ok(selected)
     }
 
-    /// Plan tools with full selection plan (supports Skills context injection)
+    /// Plan tools with full selection plan.
     pub async fn plan_tools(
         &self,
         task: &str,
@@ -233,44 +205,8 @@ impl ToolRouter {
                     selected_skill: None,
                 })
             }
-            ToolSelectionStrategy::Skills(_allowed_groups) => {
-                if !self.is_skills_enabled().await {
-                    tracing::info!("Skills tool disabled via config; skipping skills injection.");
-                    return Ok(ToolSelectionPlan {
-                        tool_ids: vec![],
-                        injected_system_prompt: None,
-                        selected_skill: None,
-                    });
-                }
-                // Skills mode default toolset
-                let mut all = vec![
-                    SkillsTool::NAME.to_string(),
-                    ShellTool::NAME.to_string(),
-                    HttpRequestTool::NAME.to_string(),
-                    SpawnAgentTool::NAME.to_string(),
-                    WaitAgentsTool::NAME.to_string(),
-                    ListAgentsTool::NAME.to_string(),
-                    CloseAgentTool::NAME.to_string(),
-                    TenthManTool::NAME.to_string(),
-                ];
-                if !config
-                    .disabled_tools
-                    .contains(&MemoryManagerTool::NAME.to_string())
-                {
-                    all.push(MemoryManagerTool::NAME.to_string());
-                }
-                if !config.disabled_tools.contains(&TasksTool::NAME.to_string()) {
-                    all.push(TasksTool::NAME.to_string());
-                }
-                let injected = self.build_skills_prompt_injection(Some(task)).await;
-                Ok(ToolSelectionPlan {
-                    tool_ids: all,
-                    injected_system_prompt: injected,
-                    selected_skill: None,
-                })
-            }
             _ => {
-                // For non-Skills strategies, just wrap select_tools result
+                // For regular strategies, wrap select_tools result.
                 let tool_ids = self.select_tools(task, config, llm_config).await?;
                 let injected_system_prompt = if tool_ids.iter().any(|id| id == SkillsTool::NAME)
                     && self.is_skills_enabled().await
@@ -431,30 +367,6 @@ impl ToolRouter {
     /// 关键词匹配选择工具（快速，无额外成本）
     fn select_by_keywords(&self, task: &str, config: &ToolConfig) -> Result<Vec<String>> {
         let task_lower = task.to_lowercase();
-        let is_binary_security_task = [
-            "pwn",
-            "reverse",
-            "binary",
-            "elf",
-            "rop",
-            "heap",
-            "format string",
-            "ret2libc",
-            "shellcode",
-            "gdb",
-            "pwndbg",
-            "gef",
-            "ctf",
-            "exploit",
-            "逆向",
-            "二进制",
-            "漏洞利用",
-            "缓冲区溢出",
-            "栈溢出",
-            "堆溢出",
-        ]
-        .iter()
-        .any(|kw| task_lower.contains(kw));
         let mut scored_tools = Vec::new();
 
         // 先添加显式预选工具
@@ -517,7 +429,7 @@ impl ToolRouter {
             }
 
             // 特殊关键词匹配
-            if task_lower.contains("scan") && tool.category == ToolCategory::Network {
+            if task_lower.contains("scan") && tool.category == ToolCategory::SecurityRecon {
                 score += 15;
             }
             if (task_lower.contains("http") || task_lower.contains("api"))
@@ -531,18 +443,6 @@ impl ToolRouter {
                 && tool.id == "shell"
             {
                 score += 15;
-            }
-            if is_binary_security_task && tool.id == "interactive_shell" {
-                // For reverse/pwn flows, prefer persistent interactive sessions (gdb/pwndbg/python repl).
-                score += 35;
-            }
-            if is_binary_security_task && tool.id == "skills" {
-                // Encourage loading specialized pwn/rev skills early.
-                score += 20;
-            }
-            if is_binary_security_task && tool.id == "shell" {
-                // Keep shell available, but lower priority than interactive_shell in binary tasks.
-                score += 3;
             }
             let memory_intent = task_lower.contains("memory")
                 || task_lower.contains("remember")
@@ -1155,7 +1055,7 @@ Return ONLY the tool names, one per line."#,
         }
     }
 
-    /// Skills mode: two-phase progressive disclosure
+    /// Skill-aware two-phase progressive disclosure.
     /// Phase 1: Show skill summaries to LLM, let it pick one
     /// Phase 2: Load full skill (content + tools), inject context
     #[allow(dead_code)]
@@ -1174,7 +1074,7 @@ Return ONLY the tool names, one per line."#,
         let db = match &self.db_service {
             Some(db) => db,
             None => {
-                tracing::warn!("Skills mode requires db_service, falling back to Keyword");
+                tracing::warn!("Skill-aware planning requires db_service, falling back to Keyword");
                 let tool_ids = self.select_by_keywords(task, config)?;
                 return Ok(ToolSelectionPlan {
                     tool_ids,
@@ -1221,7 +1121,7 @@ Instructions:
 
 Return ONLY:
 - "General" (one word), or
-- A JSON array of skill names (example: ["ctf-pwn","binary-analysis"]), or
+- A JSON array of skill names (example: ["code-audit","browser-automation"]), or
 - A single skill name."#,
             skills_summary
         );
@@ -1594,6 +1494,67 @@ mod tests {
             .await
             .unwrap();
         assert!(!selected.contains(&"shell".to_string()));
+    }
+
+    #[tokio::test]
+    async fn default_all_selection_hides_interactive_shell() {
+        let router = ToolRouter::new_with_all_tools(None).await;
+        let config = ToolConfig {
+            enabled: true,
+            selection_strategy: ToolSelectionStrategy::All,
+            max_tools: 100,
+            preselected_tools: vec![],
+            disabled_tools: vec![],
+            allowed_tools: vec![],
+        };
+
+        let selected = router
+            .select_tools("any task", &config, None)
+            .await
+            .unwrap();
+        assert!(selected.contains(&ShellTool::NAME.to_string()));
+        assert!(!selected.contains(&"interactive_shell".to_string()));
+    }
+
+    #[tokio::test]
+    async fn manual_selection_cannot_enable_removed_interactive_shell() {
+        let router = ToolRouter::new_with_all_tools(None).await;
+        let config = ToolConfig {
+            enabled: true,
+            selection_strategy: ToolSelectionStrategy::Manual(
+                vec!["interactive_shell".to_string()],
+            ),
+            max_tools: 5,
+            preselected_tools: vec![],
+            disabled_tools: vec![],
+            allowed_tools: vec![],
+        };
+
+        let selected = router
+            .select_tools("open a full terminal", &config, None)
+            .await
+            .unwrap();
+        assert!(selected.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keyword_command_selection_uses_shell_only() {
+        let router = ToolRouter::new_with_all_tools(None).await;
+        let config = ToolConfig {
+            enabled: true,
+            selection_strategy: ToolSelectionStrategy::Keyword,
+            max_tools: 5,
+            preselected_tools: vec![],
+            disabled_tools: vec![],
+            allowed_tools: vec![],
+        };
+
+        let selected = router
+            .select_tools("run a shell command and inspect output", &config, None)
+            .await
+            .unwrap();
+        assert!(selected.contains(&ShellTool::NAME.to_string()));
+        assert!(!selected.contains(&"interactive_shell".to_string()));
     }
 
     #[tokio::test]

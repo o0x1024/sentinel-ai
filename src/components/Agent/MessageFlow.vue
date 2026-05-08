@@ -44,6 +44,7 @@
           :message="msg" 
           :is-executing="isStreaming && index === displayedMessages.length - 1"
           :show-actions="msg.id === lastAssistantActionMessageId"
+          :show-session-stats="msg.id === lastAssistantActionMessageId"
           @focus-team-task="(taskId: string) => emit('focusTeamTask', taskId)"
           @resend="handleResend"
           @edit="handleEdit"
@@ -55,7 +56,9 @@
       <!-- Loading indicator (waiting for response or still working) -->
       <div v-if="isExecuting" class="loading-indicator flex items-center gap-3 px-4 py-3 bg-base-200/50 rounded-lg mr-4 mb-2">
         <span class="loading loading-dots loading-md text-primary"></span>
-        <span v-if="!streamingContent" class="text-sm text-base-content/70">{{ t('agent.aiIsThinking') }}</span>
+        <span v-if="!streamingContent" class="text-sm text-base-content/70">
+          {{ contextCompression?.active ? t('agent.contextCompressing') : t('agent.aiIsThinking') }}
+        </span>
         <span v-else class="text-xs text-base-content/50 italic">{{ t('agent.statusRunning') }}</span>
       </div>
       <!-- Streaming content is now rendered as an assistant message in the message list -->
@@ -89,6 +92,7 @@
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AgentMessage } from '@/types/agent'
+import type { ContextCompressionInfo } from '@/composables/useAgentEventTypes'
 import MessageBlock from './MessageBlock.vue'
 
 const { t } = useI18n()
@@ -98,6 +102,7 @@ const props = defineProps<{
   isExecuting?: boolean
   isStreaming?: boolean
   streamingContent?: string
+  contextCompression?: ContextCompressionInfo | null
   focusedMessageId?: string | null
 }>()
 

@@ -729,6 +729,7 @@ const props = defineProps<{
   message: AgentMessage
   isExecuting?: boolean
   showActions?: boolean
+  showSessionStats?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -832,6 +833,7 @@ const typeName = computed(() => getMessageTypeName(props.message.type))
 const ragInfo = computed(() => props.message.metadata?.rag_info)
 
 const sessionStats = computed(() => {
+  if (props.showSessionStats !== true) return null
   if (props.message.type !== 'final') return null
   return props.message.metadata?.session_stats || null
 })

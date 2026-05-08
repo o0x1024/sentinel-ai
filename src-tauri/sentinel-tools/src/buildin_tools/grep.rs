@@ -26,12 +26,24 @@ pub struct GrepArgs {
     /// Optional glob filter, for example `*.rs` or `src/**/*.ts`.
     #[serde(default)]
     pub glob: Option<String>,
+    /// Additional include glob filters. If any include filter is present, only matching files are searched.
+    #[serde(default)]
+    pub include_globs: Vec<String>,
+    /// Exclude glob filters. Matching files are skipped after include filters are applied.
+    #[serde(default)]
+    pub exclude_globs: Vec<String>,
+    /// Match regex case-insensitively.
+    #[serde(default)]
+    pub case_insensitive: bool,
     /// Result mode.
     #[serde(default = "default_output_mode")]
     pub output_mode: GrepOutputMode,
     /// Maximum number of matches or files to return.
     #[serde(default = "default_head_limit")]
     pub head_limit: usize,
+    /// Maximum number of matching candidate files to inspect.
+    #[serde(default = "default_max_files")]
+    pub max_files: usize,
     /// Number of matches to skip before collecting output.
     #[serde(default)]
     pub offset: usize,
@@ -43,6 +55,10 @@ fn default_output_mode() -> GrepOutputMode {
 
 fn default_head_limit() -> usize {
     50
+}
+
+fn default_max_files() -> usize {
+    10000
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +78,7 @@ pub struct GrepOutput {
     pub content: Vec<GrepContentMatch>,
     pub num_matches: usize,
     pub applied_limit: usize,
+    pub scanned_files: usize,
     pub truncated: bool,
 }
 
@@ -81,6 +98,7 @@ impl GrepTool {
     pub const DESCRIPTION: &'static str = concat!(
         "Search text content in files using a regex pattern. ",
         "Use this to find symbols, strings, config keys, or repeated snippets across the workspace. ",
+        "Supports case-insensitive matching, include/exclude globs, files-with-matches, count, and bounded result limits. ",
         "Prefer this over shell for bounded, structured search results."
     );
 }
@@ -105,29 +123,41 @@ impl Tool for GrepTool {
             .map_err(GrepError::InvalidBasePath)?;
         let regex = RegexBuilder::new(&args.pattern)
             .multi_line(false)
+            .case_insensitive(args.case_insensitive)
             .build()
             .map_err(|error| GrepError::InvalidPattern(error.to_string()))?;
-        let glob = args
-            .glob
-            .as_deref()
-            .and_then(|value| Pattern::new(value).ok());
+        let include_patterns = compile_patterns(
+            args.glob
+                .as_deref()
+                .into_iter()
+                .chain(args.include_globs.iter().map(String::as_str)),
+        )?;
+        let exclude_patterns = compile_patterns(args.exclude_globs.iter().map(String::as_str))?;
         let applied_limit = args.head_limit.max(1).min(1000);
+        let max_files = args.max_files.max(1).min(100000);
 
         let mut filenames = Vec::new();
         let mut content = Vec::new();
         let mut num_matches = 0_usize;
         let mut emitted = 0_usize;
+        let mut scanned_files = 0_usize;
         let mut truncated = false;
 
         'files: for entry in &listing.files {
             let relative = entry.display_path.clone();
-            if let Some(pattern) = &glob {
-                if !(pattern.matches(&relative)
-                    || pattern.matches_path(std::path::Path::new(&entry.logical_path)))
-                {
-                    continue;
-                }
+            if !include_patterns.is_empty()
+                && !matches_any_pattern(&include_patterns, &relative, &entry.logical_path)
+            {
+                continue;
             }
+            if matches_any_pattern(&exclude_patterns, &relative, &entry.logical_path) {
+                continue;
+            }
+            if scanned_files >= max_files {
+                truncated = true;
+                break;
+            }
+            scanned_files += 1;
 
             let bytes = match read_path_bytes(&entry.logical_path).await {
                 Ok(bytes) => bytes,
@@ -198,9 +228,28 @@ impl Tool for GrepTool {
             content,
             num_matches: num_matches.saturating_sub(args.offset),
             applied_limit,
+            scanned_files,
             truncated,
         })
     }
+}
+
+fn compile_patterns<'a>(values: impl Iterator<Item = &'a str>) -> Result<Vec<Pattern>, GrepError> {
+    values
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            Pattern::new(value).map_err(|error| {
+                GrepError::InvalidPattern(format!("invalid glob '{}': {}", value, error))
+            })
+        })
+        .collect()
+}
+
+fn matches_any_pattern(patterns: &[Pattern], display_path: &str, logical_path: &str) -> bool {
+    patterns.iter().any(|pattern| {
+        pattern.matches(display_path) || pattern.matches_path(std::path::Path::new(logical_path))
+    })
 }
 
 fn looks_binary(bytes: &[u8]) -> bool {
@@ -231,8 +280,12 @@ mod tests {
                 pattern: "println!".to_string(),
                 path: Some(temp_dir.to_string_lossy().to_string()),
                 glob: Some("src/*.rs".to_string()),
+                include_globs: vec![],
+                exclude_globs: vec![],
+                case_insensitive: false,
                 output_mode: GrepOutputMode::Content,
                 head_limit: 10,
+                max_files: 100,
                 offset: 0,
             })
             .await
@@ -242,6 +295,43 @@ mod tests {
         assert_eq!(output.content.len(), 1);
         assert_eq!(output.content[0].file_path, "src/main.rs");
         assert_eq!(output.content[0].line_number, 2);
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn grep_supports_case_insensitive_include_and_exclude_globs() {
+        let temp_dir = std::env::temp_dir().join(format!("grep-tool-{}", uuid::Uuid::new_v4()));
+        let nested = temp_dir.join("src");
+        tokio::fs::create_dir_all(&nested).await.unwrap();
+        tokio::fs::write(nested.join("main.c"), "int main() { return AEAD_OK; }\n")
+            .await
+            .unwrap();
+        tokio::fs::write(nested.join("skip.c"), "int skip() { return aead_skip; }\n")
+            .await
+            .unwrap();
+        tokio::fs::write(nested.join("readme.txt"), "aead docs\n")
+            .await
+            .unwrap();
+
+        let output = GrepTool
+            .call(GrepArgs {
+                pattern: "aead".to_string(),
+                path: Some(temp_dir.to_string_lossy().to_string()),
+                glob: None,
+                include_globs: vec!["src/*.c".to_string()],
+                exclude_globs: vec!["src/skip.c".to_string()],
+                case_insensitive: true,
+                output_mode: GrepOutputMode::FilesWithMatches,
+                head_limit: 10,
+                max_files: 100,
+                offset: 0,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(output.filenames, vec!["src/main.c"]);
+        assert_eq!(output.scanned_files, 1);
 
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }

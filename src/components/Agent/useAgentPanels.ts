@@ -2,7 +2,15 @@ import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { AgentTask } from '@/types/agentTask'
 import type { ParallelTaskSource } from '@/composables/useAgentParallelRunState'
 
-export type RightPanelKey = 'tasks' | 'html' | 'terminal' | 'browser-shell' | 'team' | 'work-config' | 'workspace-files'
+export type RightPanelKey =
+  | 'tasks'
+  | 'html'
+  | 'terminal'
+  | 'browser-shell'
+  | 'team'
+  | 'harness'
+  | 'work-config'
+  | 'workspace-files'
 
 interface TaskSourceOption {
   key: string
@@ -45,6 +53,7 @@ export const useAgentPanels = (params: {
   agentError: ComputedRef<string | null | undefined>
   clearTasksForExecution: (executionId: string) => void
   conversationId: Ref<string | null>
+  getConversationIdForExecution: (executionId: string) => string | undefined
   getTasksForExecution: (executionId: string) => AgentTask[]
   isTeamWorkspaceActive: Ref<boolean>
   isTaskPanelActive: ComputedRef<boolean>
@@ -79,10 +88,12 @@ export const useAgentPanels = (params: {
   error: ComputedRef<string | null>
   handleCloseHtmlPanel: () => void
   handleCloseBrowserShell: () => void
+  handleCloseHarness: () => void
   handleCloseTasks: () => void
   handleCloseTerminal: () => void
   handleRenderHtml: (htmlContent: string) => void
   handleToggleBrowserShell: () => void
+  handleToggleHarness: () => void
   handleTaskSourceChange: (sourceKey: string) => void
   handleToggleHtmlPanel: () => void
   handleToggleTasks: () => void
@@ -114,6 +125,7 @@ export const useAgentPanels = (params: {
   const isTaskExecutionInCurrentContext = (executionId: string) => {
     const convId = params.conversationId.value
     if (convId && executionId === convId) return true
+    if (convId && params.getConversationIdForExecution(executionId) === convId) return true
     if (convId && (params.parallelTaskSources?.value || []).some((source) =>
       source.parentConversationId === convId && source.executionId === executionId,
     )) return true
@@ -205,16 +217,42 @@ export const useAgentPanels = (params: {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   })
 
+  const conversationTaskBuckets = computed<ParallelTaskBucket[]>(() => {
+    const convId = params.conversationId.value
+    if (!convId) return []
+    const parallelExecutionIds = new Set(
+      (params.parallelTaskSources?.value || [])
+        .filter((source) => source.parentConversationId === convId)
+        .map((source) => source.executionId),
+    )
+    return scopedTaskEntries.value
+      .filter((entry) => {
+        if (parallelExecutionIds.has(entry.executionId)) return false
+        if (entry.executionId === convId) return true
+        return params.getConversationIdForExecution(entry.executionId) === convId
+      })
+      .map((entry, index) => ({
+        key: `execution:${entry.executionId}`,
+        label: index === 0 ? '最新执行' : `执行 ${index + 1}`,
+        tasks: entry.tasks,
+        updatedAt: entry.updatedAt,
+      }))
+  })
+
   const taskSourceOptions = computed<TaskSourceOption[]>(() => {
-    const buckets = params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value
+    const isTeamTaskSource = params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value
+    const isParallelTaskSource = !isTeamTaskSource && parallelTaskBuckets.value.length > 0
+    const buckets = isTeamTaskSource
       ? teamTaskBuckets.value
-      : parallelTaskBuckets.value
+      : isParallelTaskSource
+        ? parallelTaskBuckets.value
+        : conversationTaskBuckets.value
     if (buckets.length === 0) return []
     const allCount = buckets.reduce((acc, bucket) => acc + bucket.tasks.length, 0)
     return [
       {
         key: TASK_SOURCE_ALL_KEY,
-        label: params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value ? '全局' : '全部模型',
+        label: isTeamTaskSource ? '全局' : isParallelTaskSource ? '全部模型' : '全部执行',
         count: allCount,
       },
       ...buckets.map((bucket) => ({
@@ -240,9 +278,17 @@ export const useAgentPanels = (params: {
   })
 
   const conversationTasks = computed<AgentTask[]>(() => {
-    const convId = params.conversationId.value
-    if (!convId) return []
-    return params.getTasksForExecution(convId)
+    if (conversationTaskBuckets.value.length === 0) return []
+    const selected = selectedTaskSourceKey.value || TASK_SOURCE_ALL_KEY
+    if (selected !== TASK_SOURCE_ALL_KEY) {
+      return conversationTaskBuckets.value.find((bucket) => bucket.key === selected)?.tasks || []
+    }
+    if (conversationTaskBuckets.value.length === 1) {
+      return [...conversationTaskBuckets.value[0].tasks]
+    }
+    return conversationTaskBuckets.value
+      .flatMap((bucket) => buildLabeledTasks(bucket.tasks, bucket.label))
+      .sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))
   })
 
   const tasks = computed<AgentTask[]>(() => {
@@ -276,6 +322,9 @@ export const useAgentPanels = (params: {
     if (panel === 'work-config') {
       return
     }
+    if (panel === 'harness') {
+      return
+    }
     if (panel === 'workspace-files') {
       return
     }
@@ -291,6 +340,9 @@ export const useAgentPanels = (params: {
     }
     if (activePanel !== 'work-config') {
       // work-config panel is driven only by activeRightPanel
+    }
+    if (activePanel !== 'harness') {
+      // harness panel is driven only by activeRightPanel
     }
     if (activePanel !== 'team') params.isTeamWorkspaceActive.value = false
   }
@@ -350,6 +402,7 @@ export const useAgentPanels = (params: {
   const handleCloseHtmlPanel = () => deactivateRightPanel('html')
   const handleCloseTerminal = () => deactivateRightPanel('terminal')
   const handleCloseBrowserShell = () => deactivateRightPanel('browser-shell')
+  const handleCloseHarness = () => deactivateRightPanel('harness')
 
   const handleToggleTasks = () => {
     if (activeRightPanel.value === 'tasks') {
@@ -384,6 +437,14 @@ export const useAgentPanels = (params: {
       return
     }
     activateRightPanel('browser-shell')
+  }
+
+  const handleToggleHarness = () => {
+    if (activeRightPanel.value === 'harness') {
+      deactivateRightPanel('harness')
+      return
+    }
+    activateRightPanel('harness')
   }
 
   const clampWidth = (width: number, minWidth: number, maxWidth: number) => {
@@ -550,6 +611,11 @@ export const useAgentPanels = (params: {
     const convId = params.conversationId.value
     if (convId) {
       ids.add(convId)
+      for (const executionId of params.taskExecutionIds.value) {
+        if (params.getConversationIdForExecution(executionId) === convId) {
+          ids.add(executionId)
+        }
+      }
       for (const source of params.parallelTaskSources?.value || []) {
         if (source.parentConversationId === convId) {
           ids.add(source.executionId)
@@ -601,11 +667,13 @@ export const useAgentPanels = (params: {
     deactivateRightPanel,
     error,
     handleCloseBrowserShell,
+    handleCloseHarness,
     handleCloseHtmlPanel,
     handleCloseTasks,
     handleCloseTerminal,
     handleRenderHtml,
     handleToggleBrowserShell,
+    handleToggleHarness,
     handleTaskSourceChange,
     handleToggleHtmlPanel,
     handleToggleTasks,

@@ -106,6 +106,30 @@
                 :description="selectedProfile.description"
                 :meta-items="selectedProfileMetaItems"
               >
+                <template #title>
+                  <div class="min-w-0 flex-1">
+                    <input
+                      v-if="editingIdentityField === 'title'"
+                      v-model.trim="identityTitleDraft"
+                      ref="identityTitleInputRef"
+                      class="input input-bordered input-sm w-full max-w-xl text-lg font-semibold"
+                      type="text"
+                      aria-label="编辑显示名称"
+                      @blur="commitIdentityTitleEdit"
+                      @keydown.enter.prevent="commitIdentityTitleEdit"
+                      @keydown.esc.prevent="cancelIdentityEdit"
+                    />
+                    <div
+                      v-else
+                      class="cursor-text truncate text-lg font-semibold text-base-content rounded px-1 -mx-1 hover:bg-base-100"
+                      title="点击编辑显示名称"
+                      @click="startIdentityTitleEdit"
+                    >
+                      {{ selectedProfile.label || selectedProfile.id }}
+                    </div>
+                  </div>
+                </template>
+
                 <template #badges>
                   <span
                     v-if="draftDefaultAssistantProfileId === selectedProfile.id"
@@ -113,6 +137,29 @@
                   >
                     默认入口
                   </span>
+                </template>
+
+                <template #description>
+                  <div class="min-w-0">
+                    <textarea
+                      v-if="editingIdentityField === 'description'"
+                      v-model.trim="identityDescriptionDraft"
+                      ref="identityDescriptionInputRef"
+                      class="textarea textarea-bordered textarea-sm min-h-16 w-full max-w-3xl text-sm leading-6"
+                      aria-label="编辑描述"
+                      @blur="commitIdentityDescriptionEdit"
+                      @keydown.enter.exact.prevent="commitIdentityDescriptionEdit"
+                      @keydown.esc.prevent="cancelIdentityEdit"
+                    />
+                    <div
+                      v-else
+                      class="cursor-text rounded px-1 -mx-1 text-sm leading-6 text-base-content/70 hover:bg-base-100"
+                      title="点击编辑描述"
+                      @click="startIdentityDescriptionEdit"
+                    >
+                      {{ selectedProfile.description }}
+                    </div>
+                  </div>
                 </template>
 
                 <template #actions>
@@ -143,10 +190,6 @@
 
             <AgentWorkspaceTabs v-model="activeWorkspaceTab" :items="workspaceTabs" />
 
-            <div class="rounded-lg border border-base-300 bg-base-100 px-4 py-3 text-sm text-base-content/70">
-              {{ activeWorkspaceTabDescription }}
-            </div>
-
             <AssistantAgentOverviewPanel
               v-if="activeWorkspaceTab === 'overview'"
               :profile="selectedProfile"
@@ -155,19 +198,6 @@
             />
 
             <div v-else class="space-y-4">
-              <label class="form-control">
-                <span class="label-text mb-2">显示名称</span>
-                <input v-model.trim="selectedProfile.label" class="input input-bordered" type="text" />
-              </label>
-
-              <label class="form-control">
-                <span class="label-text mb-2">描述</span>
-                <textarea
-                  v-model.trim="selectedProfile.description"
-                  class="textarea textarea-bordered min-h-[110px]"
-                />
-              </label>
-
               <AgentModelPanel
                 title="默认模型"
                 description="配置交互型 Agent 默认使用的 provider/model；不设置时跟随 AI 全局默认。"
@@ -203,6 +233,17 @@
                 <label class="flex items-center justify-between gap-3">
                   <span class="text-sm font-medium">默认启用 10th Man</span>
                   <input v-model="selectedProfile.defaultTenthManEnabled" type="checkbox" class="toggle toggle-sm" />
+                </label>
+                <label class="form-control md:col-span-2">
+                  <span class="label-text mb-2">Harness 最大续跑次数</span>
+                  <input
+                    v-model.number="selectedProfile.defaultHarnessMaxContinuations"
+                    type="number"
+                    min="0"
+                    max="20"
+                    step="1"
+                    class="input input-bordered input-sm"
+                  />
                 </label>
               </div>
 
@@ -340,7 +381,7 @@
 
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core'
-import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { AssistantProfileOption } from '@/components/Agent/assistantProfiles'
 import { useAssistantProfiles } from '@/components/Agent/assistantProfiles'
 import ToolConfigPanel from '@/components/Agent/ToolConfigPanel.vue'
@@ -391,6 +432,7 @@ const {
 type WorkspaceTabKey = 'overview' | 'config'
 type RegistryTabKey = 'agents' | 'teams'
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
+type IdentityEditField = 'title' | 'description' | null
 
 interface AiCreatedAssistantProfileResponse {
   profile: AssistantProfileOption
@@ -402,12 +444,17 @@ const draftProfiles = ref<AssistantProfileOption[]>([])
 const draftDefaultAssistantProfileId = ref('')
 const selectedProfileId = ref('')
 const activeRegistryTab = ref<RegistryTabKey>('agents')
-const activeWorkspaceTab = ref<WorkspaceTabKey>('overview')
+const activeWorkspaceTab = ref<WorkspaceTabKey>('config')
 const aiConfig = ref<any | null>(null)
 const showAiAgentCreator = ref(false)
 const aiAgentDescription = ref('')
 const isAiCreatingAgent = ref(false)
 const selectedProfileModelDatalistId = 'assistant-profile-default-model-options'
+const editingIdentityField = ref<IdentityEditField>(null)
+const identityTitleDraft = ref('')
+const identityDescriptionDraft = ref('')
+const identityTitleInputRef = ref<HTMLInputElement | null>(null)
+const identityDescriptionInputRef = ref<HTMLTextAreaElement | null>(null)
 const autoSaveState = ref<AutoSaveState>('idle')
 const suspendAutoSave = ref(false)
 const lastSavedProfilesSnapshot = ref('')
@@ -547,6 +594,46 @@ const updateSelectedProfileDefaultModel = (value: string) => {
   selectedProfile.value.defaultModel = model ? `${provider}/${model}` : null
 }
 
+const startIdentityTitleEdit = async () => {
+  if (!selectedProfile.value || editingIdentityField.value === 'title') return
+  editingIdentityField.value = 'title'
+  identityTitleDraft.value = selectedProfile.value.label || selectedProfile.value.id
+  await nextTick()
+  identityTitleInputRef.value?.focus()
+  identityTitleInputRef.value?.select()
+}
+
+const startIdentityDescriptionEdit = async () => {
+  if (!selectedProfile.value || editingIdentityField.value === 'description') return
+  editingIdentityField.value = 'description'
+  identityDescriptionDraft.value = selectedProfile.value.description || ''
+  await nextTick()
+  identityDescriptionInputRef.value?.focus()
+  identityDescriptionInputRef.value?.select()
+}
+
+const commitIdentityTitleEdit = () => {
+  if (!selectedProfile.value || editingIdentityField.value !== 'title') return
+  const nextTitle = identityTitleDraft.value.trim()
+  if (nextTitle) {
+    selectedProfile.value.label = nextTitle
+  }
+  editingIdentityField.value = null
+}
+
+const commitIdentityDescriptionEdit = () => {
+  if (!selectedProfile.value || editingIdentityField.value !== 'description') return
+  const nextDescription = identityDescriptionDraft.value.trim()
+  if (nextDescription) {
+    selectedProfile.value.description = nextDescription
+  }
+  editingIdentityField.value = null
+}
+
+const cancelIdentityEdit = () => {
+  editingIdentityField.value = null
+}
+
 const selectedProfileToolConfig = computed(() =>
   selectedProfile.value ? profileToToolConfig(selectedProfile.value) : {
     enabled: false,
@@ -563,22 +650,16 @@ const selectedProfileResolvedModelLabel = computed(() =>
 const workspaceTabs: Array<{
   key: WorkspaceTabKey
   label: string
-  description: string
 }> = [
   {
     key: 'overview',
     label: '概览',
-    description: '先看默认能力、工具策略和 Team 预设，再决定是否进入配置区修改。',
   },
   {
     key: 'config',
     label: '配置',
-    description: '集中调整名称、描述、默认模型、工具策略、上下文模式和 Team 相关参数。',
   },
 ]
-const activeWorkspaceTabDescription = computed(() =>
-  workspaceTabs.find(tab => tab.key === activeWorkspaceTab.value)?.description || ''
-)
 
 const updateSelectedProfileToolConfig = (config: UiToolConfigPayload) => {
   if (!selectedProfile.value) return
@@ -789,7 +870,15 @@ const saveProfilesInternal = async (options?: { silent?: boolean }) => {
       draftDefaultAssistantProfileId.value = profileId
     }
 
-    autoSaveState.value = hasUnsavedChanges.value ? 'idle' : 'saved'
+    const savedAllChanges = !hasUnsavedChanges.value
+    autoSaveState.value = savedAllChanges ? 'saved' : 'idle'
+    if (savedAllChanges) {
+      dialog.toast.success(
+        options?.silent
+          ? '交互型 Agent 配置已自动保存'
+          : '交互型 Agent 配置已保存'
+      )
+    }
   } catch (error) {
     console.error('Failed to save assistant profiles:', error)
     autoSaveState.value = 'error'
@@ -845,6 +934,7 @@ const createProfile = () => {
     defaultTenthManEnabled: false,
     defaultToolSelectionStrategy: 'Keyword',
     defaultMaxTools: 5,
+    defaultHarnessMaxContinuations: 6,
     defaultPreselectedTools: [],
     defaultDisabledTools: [],
     defaultManualTools: [],
@@ -937,6 +1027,8 @@ watch(defaultAssistantProfileId, () => {
 })
 
 watch(selectedProfileId, () => {
+  activeWorkspaceTab.value = 'config'
+  cancelIdentityEdit()
   syncSelectedProfileModelDraft()
 })
 

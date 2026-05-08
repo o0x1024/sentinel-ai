@@ -22,9 +22,13 @@ use self::tool_bias::build_tool_search_runtime_context;
 
 mod browser_shell_frame_compactor;
 mod browser_shell_handler;
+mod context_compaction;
+mod context_pressure;
 mod file_tool_state;
+mod final_review;
 mod http_request_override;
 pub mod message_store;
+mod outcome;
 mod question_override;
 pub mod run_simple;
 pub mod run_with_tools;
@@ -33,13 +37,13 @@ mod shell_override;
 mod skill_loaded_events;
 mod team_runtime_log_context;
 mod tenth_man_hypothesis;
-mod terminal_override;
 mod terminal_session_store;
 mod tool_activation_events;
 mod tool_bias;
 pub mod tool_exec;
 mod tool_feedback;
 mod tool_progress;
+mod tool_protocol;
 mod tool_search_override;
 pub mod tool_trace_store;
 mod traffic_response_read_tool;
@@ -47,9 +51,13 @@ pub mod types;
 pub mod utils;
 
 pub(crate) use browser_shell_handler::build_browser_shell_handler;
+pub use outcome::{
+    AgentToolProtocolSummary, AgentTurnOutcome, AgentTurnStopReason, AgentTurnToolSummary,
+};
 pub use tool_exec::{
     execute_builtin_tool, execute_mcp_tool, execute_plugin_tool, execute_workflow_tool,
 };
+pub(crate) use tool_protocol::ToolProtocolTracker;
 pub use tool_trace_store::{
     append_execution_tool_trace, clear_execution_tool_trace, next_execution_tool_trace_sequence,
     take_execution_tool_trace,
@@ -60,6 +68,7 @@ pub use types::ToolCallRecord;
 #[derive(Debug, Clone)]
 pub struct AgentExecuteParams {
     pub execution_id: String,
+    pub conversation_id: Option<String>,
     /// Cancellation-token generation for this concrete execution attempt.
     /// When present, executor loops must stop if a newer generation replaces
     /// the token for the same execution_id.
@@ -72,6 +81,7 @@ pub struct AgentExecuteParams {
     pub active_terminal_session_fingerprint: Option<String>,
     pub active_terminal_session_id: Option<String>,
     pub working_directory: Option<String>,
+    pub provider_config_key: String,
     pub rig_provider: String,
     pub api_key: Option<String>,
     pub api_base: Option<String>,
@@ -85,13 +95,32 @@ pub struct AgentExecuteParams {
     pub referenced_traffic: Option<Vec<serde_json::Value>>,
     pub persist_messages: bool,
     pub subagent_run_id: Option<String>,
+    pub harness_run_id: Option<String>,
     pub context_policy: Option<ContextPolicy>,
     pub context_engine_mode: Option<ContextEngineMode>,
     pub recursion_depth: usize,
 }
 
-/// Execute agent task.
+impl AgentExecuteParams {
+    pub fn storage_conversation_id(&self) -> &str {
+        self.conversation_id
+            .as_deref()
+            .unwrap_or(self.execution_id.as_str())
+    }
+}
+
+/// Execute agent task and return only the final assistant text.
 pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -> Result<String> {
+    execute_agent_turn(app_handle, params)
+        .await
+        .map(|outcome| outcome.final_response)
+}
+
+/// Execute agent task with structured turn protocol metadata.
+pub async fn execute_agent_turn(
+    app_handle: &AppHandle,
+    params: AgentExecuteParams,
+) -> Result<AgentTurnOutcome> {
     let rig_provider = params.rig_provider.to_lowercase();
     let execution_id = params.execution_id.clone();
 
@@ -119,6 +148,7 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         active_terminal_session_fingerprint: params.active_terminal_session_fingerprint.clone(),
         active_terminal_session_id: params.active_terminal_session_id.clone(),
         working_directory: params.working_directory.clone(),
+        provider_config_key: params.provider_config_key.clone(),
         tool_config: params.tool_config.clone().unwrap_or_default(),
         max_iterations: params.max_iterations,
         timeout_secs: params.timeout_secs,
@@ -159,11 +189,12 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     set_tasks_app_handle(app_handle.clone()).await;
 
     use crate::agents::tenth_man_executor;
+    let storage_conversation_id = params.storage_conversation_id().to_string();
 
     let mut tenth_man_llm_config = LlmConfig::new(&rig_provider, &params.model)
         .with_timeout(params.timeout_secs)
         .with_rig_provider(&rig_provider)
-        .with_conversation_id(&params.execution_id);
+        .with_conversation_id(&storage_conversation_id);
 
     if let Some(ref api_key) = params.api_key {
         tenth_man_llm_config = tenth_man_llm_config.with_api_key(api_key);
@@ -179,7 +210,12 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
 
     tenth_man_executor::set_tenth_man_config(params.execution_id.clone(), tenth_man_llm_config)
         .await;
-    tenth_man_executor::set_task_context(params.execution_id.clone(), params.task.clone()).await;
+    tenth_man_executor::set_task_context(
+        params.execution_id.clone(),
+        params.task.clone(),
+        storage_conversation_id,
+    )
+    .await;
 
     tracing::info!(
         "Tenth Man initialized for execution_id: {} (rule_enabled: {})",

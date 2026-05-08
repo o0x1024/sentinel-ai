@@ -469,6 +469,125 @@ pub struct AiMessage {
     pub structured_data: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct BotAccount {
+    pub id: String,
+    pub transport: String,
+    pub account_id: String,
+    pub display_name: Option<String>,
+    pub status: Option<String>,
+    pub last_seen_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct BotPeer {
+    pub id: String,
+    pub transport: String,
+    pub account_id: String,
+    pub peer_type: String,
+    pub peer_id: String,
+    pub display_name: Option<String>,
+    pub last_sender_id: Option<String>,
+    pub last_message_at: Option<DateTime<Utc>>,
+    pub last_inbound_message_at: Option<DateTime<Utc>>,
+    pub last_outbound_message_at: Option<DateTime<Utc>>,
+    pub message_count: i64,
+    pub execution_run_count: i64,
+    pub failed_execution_count: i64,
+    pub running_execution_count: i64,
+    pub enabled_schedule_count: i64,
+    pub failed_schedule_run_count: i64,
+    pub latest_execution_status: Option<String>,
+    pub latest_execution_started_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct BotMessage {
+    pub id: String,
+    pub transport: String,
+    pub account_id: String,
+    pub peer_type: String,
+    pub peer_id: String,
+    pub sender_id: String,
+    pub direction: String,
+    pub content: String,
+    pub transport_message_id: Option<String>,
+    pub context_token: Option<String>,
+    pub conversation_id: Option<String>,
+    pub ai_message_id: Option<String>,
+    pub linked_execution_run_id: Option<String>,
+    pub metadata_json: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct BotExecutionRun {
+    pub id: String,
+    pub transport: String,
+    pub account_id: String,
+    pub peer_type: String,
+    pub peer_id: String,
+    pub sender_id: String,
+    pub conversation_id: String,
+    pub ai_execution_id: String,
+    pub assistant_profile_id: Option<String>,
+    pub trigger_kind: String,
+    pub trigger_bot_message_id: Option<String>,
+    pub trigger_ai_message_id: Option<String>,
+    pub task_text: String,
+    pub status: String,
+    pub result_text: Option<String>,
+    pub error_message: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct BotSchedule {
+    pub id: String,
+    pub transport: String,
+    pub account_id: String,
+    pub peer_type: String,
+    pub peer_id: String,
+    pub sender_id: String,
+    pub assistant_profile_id: Option<String>,
+    pub source_text: String,
+    pub task_text: String,
+    pub cron_expr: String,
+    pub timezone: String,
+    pub enabled: bool,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct BotScheduleRun {
+    pub id: String,
+    pub schedule_id: String,
+    pub transport: String,
+    pub account_id: String,
+    pub peer_type: String,
+    pub peer_id: String,
+    pub sender_id: String,
+    pub execution_run_id: Option<String>,
+    pub status: String,
+    pub result_text: Option<String>,
+    pub error_message: Option<String>,
+    pub triggered_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// AI 用量统计
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AiUsageStats {

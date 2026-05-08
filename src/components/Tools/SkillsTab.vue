@@ -70,14 +70,12 @@
       </div>
     </div>
 
-    <div class="card bg-base-200 p-4">
-      <div v-if="skillsEnabled">
-        <SkillsManager ref="skillsManagerRef" :embedded="true" :view-mode="skillsViewMode" @changed="handleSkillsChanged" />
-      </div>
-      <div v-else class="alert alert-warning">
-        <i class="fas fa-exclamation-triangle"></i>
-        <span>{{ $t('Tools.skillsDisabledWarning') }}</span>
-      </div>
+    <div v-if="skillsEnabled">
+      <SkillsManager ref="skillsManagerRef" :embedded="true" :view-mode="skillsViewMode" @changed="handleSkillsChanged" />
+    </div>
+    <div v-else class="alert alert-warning">
+      <i class="fas fa-exclamation-triangle"></i>
+      <span>{{ $t('Tools.skillsDisabledWarning') }}</span>
     </div>
 
     <div class="card bg-base-200 p-4">

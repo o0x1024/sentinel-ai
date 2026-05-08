@@ -131,42 +131,57 @@
                     {{ selectedTargetKeys.length }} {{ t('bugBounty.batch.selected') }}
                   </span>
                 </div>
+                <button
+                  v-if="selectedTargetKeys.length > 0"
+                  class="btn btn-xs btn-ghost"
+                  :disabled="loading || deleting"
+                  @click="clearSelection"
+                >
+                  <i class="fas fa-times mr-1"></i>
+                  {{ t('bugBounty.batch.clearSelection') }}
+                </button>
+              </div>
+
+              <div
+                v-if="selectedTargetKeys.length > 0"
+                class="flex flex-col gap-2 rounded-lg border border-base-300 bg-base-200/40 p-3"
+              >
+                <div class="text-xs text-base-content/60">
+                  {{ t('bugBounty.batch.selectionSummary', {
+                    selected: selectedTargetKeys.length,
+                    page: targets.length,
+                    total: filteredTargetCount,
+                  }) }}
+                </div>
                 <div class="flex flex-wrap items-center gap-2">
                   <button
-                    class="btn btn-xs btn-ghost"
-                    :disabled="loading || deleting || filteredTargetCount === 0 || allFilteredSelected"
+                    class="btn btn-xs btn-outline"
+                    :disabled="loading || selectingAll || deleting || filteredTargetCount === 0 || allFilteredSelected"
                     @click="selectAllFilteredTargets"
                   >
+                    <span v-if="selectingAll" class="loading loading-spinner loading-xs"></span>
                     <i class="fas fa-layer-group mr-2"></i>
                     {{ t('bugBounty.batch.selectAllFiltered') }}
                   </button>
                   <button
-                    v-if="selectedTargetKeys.length > 0"
                     class="btn btn-xs btn-error btn-outline"
-                    :disabled="loading || deleting"
+                    :disabled="selectedTargetKeys.length === 0 || loading || deleting"
                     @click="batchDeleteTargets"
                   >
                     <span v-if="deleting" class="loading loading-spinner loading-xs"></span>
                     <i v-else class="fas fa-trash mr-2"></i>
-                    {{ t('bugBounty.batch.delete') }}
+                    {{ t('bugBounty.apiInventory.deleteSelected') }}
                   </button>
                   <button
-                    v-if="selectedTargetKeys.length > 0"
-                    class="btn btn-xs btn-ghost"
-                    :disabled="loading || deleting"
-                    @click="clearSelection"
+                    class="btn btn-xs btn-error"
+                    :disabled="loading || selectingAll || deleting || filteredTargetCount === 0"
+                    @click="deleteAllFilteredTargets"
                   >
-                    <i class="fas fa-times"></i>
+                    <span v-if="deleting" class="loading loading-spinner loading-xs"></span>
+                    <i v-else class="fas fa-trash-alt mr-2"></i>
+                    {{ t('bugBounty.apiInventory.deleteAllFiltered') }}
                   </button>
                 </div>
-              </div>
-
-              <div v-if="selectedTargetKeys.length > 0" class="text-xs text-base-content/60">
-                {{ t('bugBounty.batch.selectionSummary', {
-                  selected: selectedTargetKeys.length,
-                  page: targets.length,
-                  total: filteredTargetCount,
-                }) }}
               </div>
             </div>
           </div>
@@ -181,75 +196,89 @@
           </div>
 
           <div v-else class="max-h-[72vh] overflow-auto" @scroll="handleTargetListScroll">
-            <div
-              v-for="target in targets"
-              :key="targetKeyOf(target)"
-              class="w-full border-b border-base-200 px-4 py-3 text-left transition-colors hover:bg-base-200/70"
-              :class="selectedTargetKey === targetKeyOf(target) ? 'bg-primary/10' : ''"
-              @click="selectTarget(target)"
-            >
-              <div class="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  class="checkbox checkbox-sm mt-1"
-                  :checked="isTargetSelected(target)"
-                  :disabled="loading || deleting"
-                  @click.stop
-                  @change="toggleTargetSelection(target)"
-                />
-
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <div class="truncate font-medium">{{ target.base_url }}</div>
-                      <div class="mt-2 flex flex-wrap gap-2 text-xs">
-                        <span class="badge badge-outline badge-sm">
-                          {{ programNameForId(target.program_id) }}
-                        </span>
-                        <span v-if="target.execution_mode" class="badge badge-ghost badge-sm">
-                          {{ target.execution_mode }}
-                        </span>
-                        <span v-if="target.task_name" class="badge badge-ghost badge-sm">
-                          {{ target.task_name }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div class="flex shrink-0 items-start gap-2">
-                      <span class="badge badge-sm" :class="target.success ? 'badge-success' : 'badge-error'">
-                        {{ target.success ? t('common.success') : t('common.failed') }}
+            <table class="table table-sm">
+              <thead class="sticky top-0 z-10 bg-base-100">
+                <tr>
+                  <th class="w-10">
+                    <input
+                      type="checkbox"
+                      class="checkbox checkbox-sm"
+                      :checked="allCurrentPageSelected"
+                      :indeterminate="hasCurrentPagePartialSelection"
+                      :disabled="loading || deleting || targets.length === 0"
+                      @change="toggleSelectCurrentPage"
+                    />
+                  </th>
+                  <th>{{ t('bugBounty.apiInventory.target') }}</th>
+                  <th>{{ t('bugBounty.apiInventory.status') }}</th>
+                  <th>{{ t('bugBounty.apiInventory.observedAt') }}</th>
+                  <th class="w-12">{{ t('bugBounty.apiInventory.actions') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="target in targets"
+                  :key="targetKeyOf(target)"
+                  class="cursor-pointer"
+                  :class="selectedTargetKey === targetKeyOf(target) ? 'bg-primary/10' : ''"
+                  @click="selectTarget(target)"
+                >
+                  <td @click.stop>
+                    <input
+                      type="checkbox"
+                      class="checkbox checkbox-sm"
+                      :checked="isTargetSelected(target)"
+                      :disabled="loading || deleting"
+                      @change="toggleTargetSelection(target)"
+                    />
+                  </td>
+                  <td class="min-w-[14rem] max-w-[18rem]">
+                    <div class="truncate font-medium">{{ target.base_url }}</div>
+                    <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                      <span class="badge badge-outline badge-sm">
+                        {{ programNameForId(target.program_id) }}
                       </span>
-                      <button
-                        type="button"
-                        class="btn btn-ghost btn-xs text-error"
-                        :disabled="loading || deleting"
-                        :title="t('common.delete')"
-                        @click.stop="deleteSingleTarget(target)"
-                      >
-                        <i class="fas fa-trash"></i>
-                      </button>
+                      <span v-if="target.execution_mode" class="badge badge-ghost badge-sm">
+                        {{ target.execution_mode }}
+                      </span>
+                      <span v-if="target.task_name" class="badge badge-ghost badge-sm">
+                        {{ target.task_name }}
+                      </span>
                     </div>
-                  </div>
-
-                  <div class="mt-2 flex flex-wrap items-center gap-3 text-xs text-base-content/60">
-                    <span>{{ t('bugBounty.apiInventory.endpoints') }}: {{ target.endpoint_count }}</span>
-                    <span v-if="target.added_endpoints_count > 0" class="text-success">
-                      +{{ target.added_endpoints_count }}
+                    <div class="mt-1 flex flex-wrap items-center gap-3 text-xs text-base-content/60">
+                      <span>{{ t('bugBounty.apiInventory.endpoints') }}: {{ target.endpoint_count }}</span>
+                      <span>
+                        {{ t('bugBounty.apiInventory.changes') }}:
+                        <span class="text-success">+{{ target.added_endpoints_count }}</span>
+                        <span class="ml-1 text-error">-{{ target.removed_endpoints_count }}</span>
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge badge-sm" :class="target.success ? 'badge-success' : 'badge-error'">
+                      {{ target.success ? t('common.success') : t('common.failed') }}
                     </span>
-                    <span v-if="target.removed_endpoints_count > 0" class="text-error">
-                      -{{ target.removed_endpoints_count }}
-                    </span>
-                    <span v-if="target.error_message" class="text-warning">
+                    <div v-if="target.error_message" class="mt-1 text-xs text-warning">
                       {{ t('bugBounty.apiInventory.withErrors') }}
-                    </span>
-                  </div>
-
-                  <div class="mt-2 text-xs text-base-content/50">
+                    </div>
+                  </td>
+                  <td class="min-w-[8rem] text-xs text-base-content/60">
                     {{ formatDateTime(target.observed_at) }}
-                  </div>
-                </div>
-              </div>
-            </div>
+                  </td>
+                  <td @click.stop>
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-xs text-error"
+                      :disabled="loading || deleting"
+                      :title="t('common.delete')"
+                      @click="deleteSingleTarget(target)"
+                    >
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
             <div v-if="loadingMore" class="flex justify-center py-4">
               <span class="loading loading-spinner loading-md"></span>
@@ -498,6 +527,7 @@ const programFilter = ref('')
 const programFilterTouched = ref(false)
 const advancedFiltersExpanded = ref(false)
 const deleting = ref(false)
+const selectingAll = ref(false)
 const targets = ref<ApiInventoryTargetSummary[]>([])
 const totalTargetCount = ref(0)
 const filteredTargetCount = ref(0)
@@ -572,6 +602,25 @@ const selectedTargetKeys = computed(() => (
 ))
 
 const selectedTargetSet = computed(() => new Set(selectedTargetKeys.value))
+
+const currentPageTargetEntries = computed<ApiInventoryDeleteTarget[]>(() => (
+  targets.value.map(target => ({
+    program_id: target.program_id,
+    base_url: target.base_url,
+  }))
+))
+
+const allCurrentPageSelected = computed(() => (
+  currentPageTargetEntries.value.length > 0
+  && currentPageTargetEntries.value.every(target => selectedTargetSet.value.has(targetKeyOf(target)))
+))
+
+const hasCurrentPagePartialSelection = computed(() => {
+  const selectedOnPage = currentPageTargetEntries.value.filter(target => (
+    selectedTargetSet.value.has(targetKeyOf(target))
+  )).length
+  return selectedOnPage > 0 && selectedOnPage < currentPageTargetEntries.value.length
+})
 
 const allFilteredSelected = computed(() => (
   filteredTargetCount.value > 0
@@ -747,8 +796,25 @@ const toggleTargetSelection = (target: ApiInventoryTargetSummary) => {
   selectedTargetEntries.value = [...next.values()]
 }
 
+const toggleSelectCurrentPage = () => {
+  if (!currentPageTargetEntries.value.length) return
+
+  const next = new Map(selectedTargetEntries.value.map(item => [targetKeyOf(item), item]))
+  if (allCurrentPageSelected.value) {
+    for (const target of currentPageTargetEntries.value) {
+      next.delete(targetKeyOf(target))
+    }
+  } else {
+    for (const target of currentPageTargetEntries.value) {
+      next.set(targetKeyOf(target), target)
+    }
+  }
+  selectedTargetEntries.value = [...next.values()]
+}
+
 const selectAllFilteredTargets = async () => {
   try {
+    selectingAll.value = true
     const rows = await invoke<RawApiInventoryDeleteTarget[]>('bounty_list_api_inventory_target_keys', {
       filter: buildFilterPayload(0, TARGET_PAGE_SIZE),
     })
@@ -760,6 +826,8 @@ const selectAllFilteredTargets = async () => {
   } catch (error) {
     console.error('Failed to select filtered API inventory targets:', error)
     toast.error(t('bugBounty.errors.loadFailed'))
+  } finally {
+    selectingAll.value = false
   }
 }
 
@@ -808,6 +876,31 @@ const batchDeleteTargets = async () => {
     return
   }
   await deleteTargets(selectedTargetEntries.value)
+}
+
+const deleteAllFilteredTargets = async () => {
+  if (!filteredTargetCount.value) return
+  if (!(await dialog.confirm(t('bugBounty.apiInventory.confirmDeleteAllFiltered', { count: filteredTargetCount.value })))) {
+    return
+  }
+
+  try {
+    selectingAll.value = true
+    const rows = await invoke<RawApiInventoryDeleteTarget[]>('bounty_list_api_inventory_target_keys', {
+      filter: buildFilterPayload(0, TARGET_PAGE_SIZE),
+    })
+    const targetRows = Array.isArray(rows)
+      ? rows
+        .map(normalizeDeleteTarget)
+        .filter((target): target is ApiInventoryDeleteTarget => Boolean(target))
+      : []
+    await deleteTargets(targetRows)
+  } catch (error) {
+    console.error('Failed to delete filtered API inventory targets:', error)
+    toast.error(t('bugBounty.errors.deleteFailed'))
+  } finally {
+    selectingAll.value = false
+  }
 }
 
 const handleTargetListScroll = async (event: Event) => {

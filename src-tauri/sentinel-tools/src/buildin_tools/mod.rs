@@ -1,6 +1,5 @@
 pub mod agent_control_tool;
 pub mod ask_user_question;
-pub mod browser;
 pub mod browser_shell;
 mod file_context;
 pub mod file_edit;
@@ -15,6 +14,8 @@ pub mod memory;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 pub mod plugin_authoring;
+#[cfg(feature = "plugins")]
+pub mod port_scan;
 pub mod route_discovery;
 pub mod search_exploit;
 pub mod shell;
@@ -36,7 +37,6 @@ pub mod web_search;
 
 pub use agent_control_tool::{CloseAgentTool, ListAgentsTool, SpawnAgentTool, WaitAgentsTool};
 pub use ask_user_question::AskUserQuestionTool;
-pub use browser::BrowserTool;
 pub use browser_shell::{set_browser_shell_handler, BrowserShellTool};
 pub use file_edit::FileEditTool;
 pub use file_read::FileReadTool;
@@ -49,6 +49,8 @@ pub use memory::MemoryManagerTool;
 #[cfg(feature = "ocr")]
 pub use ocr::OcrTool;
 pub use plugin_authoring::PluginAuthoringTool;
+#[cfg(feature = "plugins")]
+pub use port_scan::PortScanTool;
 pub use route_discovery::RouteDiscoveryTool;
 pub use search_exploit::SearchExploitTool;
 pub use shell::ShellTool;
@@ -72,7 +74,6 @@ use rig::tool::ToolSet;
 /// Create a ToolSet with all builtin security tools
 pub fn create_buildin_toolset() -> ToolSet {
     let mut toolset = ToolSet::default();
-    toolset.add_tool(BrowserTool::default());
     toolset.add_tool(BrowserShellTool::default());
     toolset.add_tool(HttpRequestTool::default());
     toolset.add_tool(AskUserQuestionTool::new());
@@ -94,6 +95,8 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(OcrTool);
     toolset.add_tool(SkillsTool);
     #[cfg(feature = "plugins")]
+    toolset.add_tool(PortScanTool);
+    #[cfg(feature = "plugins")]
     toolset.add_tool(SubdomainBruteTool);
     toolset.add_tool(ToolSearchTool);
     toolset.add_tool(SpawnAgentTool);
@@ -106,7 +109,6 @@ pub fn create_buildin_toolset() -> ToolSet {
 /// Create a minimal ToolSet for unattended contest solving.
 pub fn create_contest_toolset() -> ToolSet {
     let mut toolset = ToolSet::default();
-    toolset.add_tool(BrowserTool::default());
     toolset.add_tool(HttpRequestTool::default());
     toolset.add_tool(RouteDiscoveryTool);
     toolset.add_tool(ShellTool::new());
@@ -117,7 +119,6 @@ pub fn create_contest_toolset() -> ToolSet {
 /// Get all builtin tool definitions
 pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
     let tools: Vec<Box<dyn rig::tool::ToolDyn>> = vec![
-        Box::new(BrowserTool::default()),
         Box::new(BrowserShellTool::default()),
         Box::new(HttpRequestTool::default()),
         Box::new(AskUserQuestionTool::new()),
@@ -139,6 +140,8 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(OcrTool),
         Box::new(SkillsTool),
         #[cfg(feature = "plugins")]
+        Box::new(PortScanTool),
+        #[cfg(feature = "plugins")]
         Box::new(SubdomainBruteTool),
         Box::new(ToolSearchTool),
         Box::new(SpawnAgentTool),
@@ -157,7 +160,6 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
 /// Get contest-only builtin tool definitions.
 pub async fn get_contest_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
     let tools: Vec<Box<dyn rig::tool::ToolDyn>> = vec![
-        Box::new(BrowserTool::default()),
         Box::new(BrowserShellTool::default()),
         Box::new(HttpRequestTool::default()),
         Box::new(RouteDiscoveryTool),

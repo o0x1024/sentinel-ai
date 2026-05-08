@@ -555,7 +555,7 @@ pub fn render_sentinel_context(
 
     if clarification.needed {
         sections.push(format!(
-            "[Sentinel Clarification]\n- confidence_low: true\n- reason: {}\n- recommended_timeout_secs: {}\n- recommended_timeout_policy: {}\n- default_mode: {}\n- current_resolution_status: {}\n- current_resolution_source: {}\n- compression_aggressiveness: {:?}\n- When ambiguity blocks progress or could rewrite prior intent structure, call ask_user_question before taking the aggressive path. For low-risk continuation questions, prefer timeout_policy=`use_default` with a safe default answer. Otherwise prefer timeout_policy=`return_timeout`.",
+            "[Sentinel Clarification]\n- confidence_low: true\n- reason: {}\n- recommended_timeout_secs: {}\n- recommended_timeout_policy: {}\n- default_mode: {}\n- current_resolution_status: {}\n- current_resolution_source: {}\n- compression_aggressiveness: {:?}\n- When ambiguity blocks progress or could rewrite prior intent structure, call ask_user_question before taking the aggressive path. Provide a suitable default answer and use timeout_policy=`use_default` so execution continues if the user does not answer before timeout. Use timeout_policy=`return_timeout` only when no option should be selected automatically.",
             clarification.reason,
             clarification.recommended_timeout_secs,
             clarification.recommended_timeout_policy,
@@ -606,13 +606,9 @@ pub fn build_sentinel_clarification_state(
         default_mode: if intent.relation == SentinelIntentRelation::Continuation {
             "continue_current_intent".to_string()
         } else {
-            "return_timeout".to_string()
+            "choose_suitable_option".to_string()
         },
-        recommended_timeout_policy: if intent.relation == SentinelIntentRelation::Continuation {
-            "use_default".to_string()
-        } else {
-            "return_timeout".to_string()
-        },
+        recommended_timeout_policy: "use_default".to_string(),
         resolution_status: "pending".to_string(),
         resolution_source: "none".to_string(),
         compression_aggressiveness: if intent.clarification_needed {
@@ -1529,6 +1525,8 @@ mod tests {
         let clarification = build_sentinel_clarification_state(&intent);
 
         assert_eq!(clarification.recommended_timeout_secs, 120);
+        assert_eq!(clarification.recommended_timeout_policy, "use_default");
+        assert_eq!(clarification.default_mode, "choose_suitable_option");
     }
 
     #[test]

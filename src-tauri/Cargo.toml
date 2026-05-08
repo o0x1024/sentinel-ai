@@ -124,6 +124,7 @@ futures = "0.3"
 
 # 时间处理
 chrono = { version = "0.4", features = ["serde"] }
+cron = "0.15"
 
 # 额外的 AI 相关依赖
 base64 = "0.22"

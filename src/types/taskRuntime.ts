@@ -39,6 +39,7 @@ export interface TaskWriteItem {
 
 export interface TaskRuntimeList {
   execution_id: string
+  conversation_id?: string | null
   tasks: TaskRuntimeItem[]
   created_at: number
   updated_at: number
@@ -46,6 +47,7 @@ export interface TaskRuntimeList {
 
 export interface AgentTasksUpdatePayload {
   execution_id: string
+  conversation_id?: string | null
   tasks: TaskRuntimeItem[]
   timestamp: number
 }

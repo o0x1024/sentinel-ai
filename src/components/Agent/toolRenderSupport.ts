@@ -1,8 +1,5 @@
 const SHELL_TOOL_NAMES = new Set([
   'shell',
-  'interactive_shell',
-  'exec_command',
-  'write_stdin',
   'bash',
   'cmd',
   'powershell',

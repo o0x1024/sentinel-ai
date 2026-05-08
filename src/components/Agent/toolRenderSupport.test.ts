@@ -11,9 +11,7 @@ import {
 describe('toolRenderSupport', () => {
   it('detects shell-like tool names', () => {
     expect(isShellLikeToolName('shell')).toBe(true)
-    expect(isShellLikeToolName('interactive_shell')).toBe(true)
-    expect(isShellLikeToolName('exec_command')).toBe(true)
-    expect(isShellLikeToolName('write_stdin')).toBe(true)
+    expect(isShellLikeToolName('interactive_shell')).toBe(false)
     expect(isShellLikeToolName('powershell')).toBe(true)
     expect(isShellLikeToolName('file_read')).toBe(false)
   })

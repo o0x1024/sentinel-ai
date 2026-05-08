@@ -1,7 +1,7 @@
 <template>
-  <div class="rounded-lg border border-base-300 bg-base-100 p-4">
-    <div class="flex items-start justify-between gap-3">
-      <div>
+  <div class="min-w-0 max-w-full overflow-hidden rounded-lg border border-base-300 bg-base-100 p-4">
+    <div class="flex min-w-0 max-w-full items-start justify-between gap-3 overflow-hidden">
+      <div class="min-w-0 flex-1 overflow-hidden">
         <div class="text-sm font-semibold">{{ title }}</div>
         <div class="mt-1 text-xs text-base-content/60">
           {{ description }}
@@ -16,7 +16,7 @@
       <slot name="summary" />
     </div>
 
-    <div class="mt-4">
+    <div class="mt-4 min-w-0 max-w-full overflow-hidden">
       <slot />
     </div>
   </div>

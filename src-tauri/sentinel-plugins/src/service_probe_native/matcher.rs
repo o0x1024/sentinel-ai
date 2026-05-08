@@ -290,10 +290,11 @@ pub(crate) fn match_evidence(
         .or_else(|| matched_rule.map(|_| 0.94));
 
     ServiceProbeResult {
-        target: service_key(&host, port),
+        target: service_key(&host, port, None),
         success,
         available,
         host,
+        connect_ip: None,
         port,
         protocol,
         service_name: Some(matched_service.unwrap_or(service_name)),

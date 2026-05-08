@@ -299,6 +299,7 @@ pub async fn run_external_text_task(
             .await?;
         let params = AgentExecuteParams {
             execution_id: run_id.to_string(),
+            conversation_id: None,
             cancellation_generation: None,
             model: config.model.clone(),
             system_prompt: system_prompt.unwrap_or_default(),
@@ -308,6 +309,7 @@ pub async fn run_external_text_task(
             active_terminal_session_fingerprint: None,
             active_terminal_session_id: None,
             working_directory: None,
+            provider_config_key: config.provider.clone(),
             rig_provider: config
                 .rig_provider
                 .clone()
@@ -324,6 +326,7 @@ pub async fn run_external_text_task(
             referenced_traffic: None,
             persist_messages: false,
             subagent_run_id: None,
+            harness_run_id: None,
             context_policy: None,
             context_engine_mode: Some(crate::agents::ContextEngineMode::CodexLike),
             recursion_depth: 0,
@@ -379,6 +382,7 @@ pub async fn run_external_chat_task(
 
         let params = AgentExecuteParams {
             execution_id: run_id.to_string(),
+            conversation_id: None,
             cancellation_generation: None,
             model: config.model.clone(),
             system_prompt: system_prompt.unwrap_or_default(),
@@ -388,6 +392,7 @@ pub async fn run_external_chat_task(
             active_terminal_session_fingerprint: None,
             active_terminal_session_id: None,
             working_directory: None,
+            provider_config_key: config.provider.clone(),
             rig_provider: config
                 .rig_provider
                 .clone()
@@ -404,6 +409,7 @@ pub async fn run_external_chat_task(
             referenced_traffic: None,
             persist_messages: false,
             subagent_run_id: None,
+            harness_run_id: None,
             context_policy: None,
             context_engine_mode: Some(crate::agents::ContextEngineMode::CodexLike),
             recursion_depth: 0,

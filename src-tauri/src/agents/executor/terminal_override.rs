@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolCategory, ToolExecutor, ToolSource};
 use sentinel_tools::terminal::server::TerminalServer;
-use sentinel_tools::terminal::unified_exec_tool::{
-    execute_exec_command, execute_interactive_shell, execute_write_stdin, EXEC_COMMAND_TOOL_NAME,
-    WRITE_STDIN_TOOL_NAME,
-};
+use sentinel_tools::terminal::unified_exec_tool::execute_interactive_shell;
 use sentinel_tools::ToolServer;
 
 use crate::agents::executor::terminal_session_store::{
@@ -82,68 +79,11 @@ pub(super) async fn build_interactive_shell_override_def(
         input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: ToolCategory::System,
+        category: ToolCategory::Terminal,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
         execution_policy,
         executor: terminal_executor,
-    })
-}
-
-pub(super) async fn build_exec_command_override_def(
-    tool_server: &ToolServer,
-    execution_id: &str,
-    working_directory: Option<&str>,
-) -> Option<DynamicToolDef> {
-    let info = tool_server.get_tool(EXEC_COMMAND_TOOL_NAME).await?;
-    let execution_id = execution_id.to_string();
-    let working_directory = working_directory.map(str::to_string);
-    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-        let execution_id = execution_id.clone();
-        let working_directory = working_directory.clone();
-        Box::pin(async move {
-            execute_exec_command(args, Some(execution_id), working_directory).await
-        })
-    });
-
-    Some(DynamicToolDef {
-        name: EXEC_COMMAND_TOOL_NAME.to_string(),
-        description: info.description.clone(),
-        input_schema: info.input_schema.clone(),
-        output_schema: None,
-        source: ToolSource::Builtin,
-        category: ToolCategory::System,
-        tags: info.tags.clone(),
-        search_hint: info.search_hint.clone(),
-        exposure: info.exposure.clone(),
-        execution_policy: info.execution_policy.clone(),
-        executor,
-    })
-}
-
-pub(super) async fn build_write_stdin_override_def(
-    tool_server: &ToolServer,
-    execution_id: &str,
-) -> Option<DynamicToolDef> {
-    let info = tool_server.get_tool(WRITE_STDIN_TOOL_NAME).await?;
-    let execution_id = execution_id.to_string();
-    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-        let execution_id = execution_id.clone();
-        Box::pin(async move { execute_write_stdin(args, Some(execution_id)).await })
-    });
-
-    Some(DynamicToolDef {
-        name: WRITE_STDIN_TOOL_NAME.to_string(),
-        description: info.description.clone(),
-        input_schema: info.input_schema.clone(),
-        output_schema: None,
-        source: ToolSource::Builtin,
-        category: ToolCategory::System,
-        tags: info.tags.clone(),
-        search_hint: info.search_hint.clone(),
-        exposure: info.exposure.clone(),
-        execution_policy: info.execution_policy.clone(),
-        executor,
     })
 }

@@ -201,7 +201,8 @@ const matchCount = computed(() => Number(resultRecord.value?.num_matches || 0))
 const fileCount = computed(() => Number(resultRecord.value?.num_files || fileRows.value.length || 0))
 
 const title = computed(() => {
-  return isGlob.value ? t('agent.toolCardGlobTitle') : t('agent.toolCardGrepTitle')
+  const baseTitle = isGlob.value ? t('agent.toolCardGlobTitle') : t('agent.toolCardGrepTitle')
+  return `${baseTitle} ${patternText.value}`
 })
 
 const subtitle = computed(() => {

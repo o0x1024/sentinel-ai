@@ -721,6 +721,50 @@ impl DatabaseService {
         Ok(())
     }
 
+    pub async fn update_surface_web_favicon_hash(
+        &self,
+        asset_id: &str,
+        favicon_hash: &str,
+        observed_at: &str,
+    ) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let rows = match runtime {
+            DatabasePool::SQLite(pool) => sqlx::query(
+                "UPDATE surface_web_assets SET favicon_hash = ?, last_accessed_at = ? WHERE asset_id = ?",
+            )
+            .bind(favicon_hash)
+            .bind(observed_at)
+            .bind(asset_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query(
+                "UPDATE surface_web_assets SET favicon_hash = ?, last_accessed_at = ? WHERE asset_id = ?",
+            )
+            .bind(favicon_hash)
+            .bind(observed_at)
+            .bind(asset_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::PostgreSQL(pool) => sqlx::query(
+                "UPDATE surface_web_assets SET favicon_hash = $1, last_accessed_at = $2 WHERE asset_id = $3",
+            )
+            .bind(favicon_hash)
+            .bind(observed_at)
+            .bind(asset_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+        };
+
+        Ok(rows > 0)
+    }
+
     pub async fn upsert_surface_cert_extension(
         &self,
         asset_id: &str,

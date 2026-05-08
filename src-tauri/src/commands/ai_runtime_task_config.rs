@@ -8,6 +8,7 @@ fn contains_tool_id(items: &[String], tool_id: &str) -> bool {
 
 pub(crate) fn append_task_plan_contract(system_prompt: &str, force_tasks: bool) -> String {
     const TASK_PLAN_CONTRACT: &str = "[TaskPlanContract]
+- For simple single-step tasks, complete the work directly without creating a UI plan and without calling `tasks`.
 - For multi-step work, publish and maintain a visible plan with the `tasks` tool.
 - Each `tasks` call submits the complete desired `plan`; omitted old steps are removed from the displayed plan.
 - Keep at most one step `in_progress`, and update the plan when meaningful progress changes.

@@ -1,5 +1,5 @@
 <template>
-  <div 
+  <div
     class="input-area-container border-t border-base-300/50 bg-base-100 flex-shrink-0 relative z-0"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
@@ -75,7 +75,10 @@
             class="group relative flex items-center gap-2 px-2 py-1 bg-secondary/10 border border-secondary/25 rounded-lg text-xs"
           >
             <span class="badge badge-xs badge-outline badge-secondary">FILE</span>
-            <span class="font-medium text-base-content/80 truncate max-w-60" :title="file.relativePath">
+            <span
+              class="font-medium text-base-content/80 truncate max-w-60"
+              :title="file.relativePath"
+            >
               {{ file.relativePath }}
             </span>
             <span class="text-base-content/60 whitespace-nowrap">
@@ -99,7 +102,7 @@
             <i class="fas fa-network-wired text-accent"></i>
             引用的流量 ({{ props.referencedTraffic.length }})
           </span>
-          <button 
+          <button
             @click="clearReferencedTraffic"
             class="btn btn-xs btn-ghost text-base-content/60 hover:text-error"
             title="清除所有引用"
@@ -124,7 +127,10 @@
             <span class="text-base-content/80 truncate max-w-40" :title="traffic.url">
               {{ traffic.host }}{{ getUrlPath(traffic.url) }}
             </span>
-            <span v-if="traffic.sendType !== 'request'" :class="['badge badge-xs', getStatusBadgeClass(traffic.status_code)]">
+            <span
+              v-if="traffic.sendType !== 'request'"
+              :class="['badge badge-xs', getStatusBadgeClass(traffic.status_code)]"
+            >
               {{ traffic.status_code || 'N/A' }}
             </span>
             <button
@@ -181,12 +187,11 @@
       </div>
 
       <!-- 图片附件预览区 -->
-      <div v-if="pendingAttachments && pendingAttachments.length > 0" class="mb-2 flex flex-wrap gap-2">
-        <div
-          v-for="(att, idx) in pendingAttachments"
-          :key="idx"
-          class="relative group"
-        >
+      <div
+        v-if="pendingAttachments && pendingAttachments.length > 0"
+        class="mb-2 flex flex-wrap gap-2"
+      >
+        <div v-for="(att, idx) in pendingAttachments" :key="idx" class="relative group">
           <img
             :src="getAttachmentPreview(att)"
             class="h-16 w-16 object-cover rounded border border-base-300 bg-base-200"
@@ -210,7 +215,9 @@
           class="inline-flex items-center gap-2 px-2 py-1 rounded-lg border border-base-300 bg-base-200 text-xs"
         >
           <i class="fas fa-file-lines text-primary"></i>
-          <span class="font-medium truncate max-w-44" :title="doc.original_filename">{{ doc.original_filename }}</span>
+          <span class="font-medium truncate max-w-44" :title="doc.original_filename">{{
+            doc.original_filename
+          }}</span>
           <span class="text-base-content/60">({{ formatFileSize(doc.file_size) }})</span>
           <span v-if="doc.status === 'processing'" class="badge badge-xs badge-info">
             {{ t('common.loading') }}
@@ -244,7 +251,10 @@
         </div>
       </div>
 
-      <div ref="containerRef" class="chat-input rounded-2xl bg-base-200/60 border border-base-300/60 backdrop-blur-sm flex flex-col gap-2 px-3 py-2 shadow-sm focus-within:border-primary transition-colors">
+      <div
+        ref="containerRef"
+        class="chat-input rounded-2xl bg-base-200/60 border border-base-300/60 backdrop-blur-sm flex flex-col gap-2 px-3 py-2 shadow-sm focus-within:border-primary transition-colors"
+      >
         <!-- Text input (auto-resize textarea) -->
         <div class="input-editor-shell flex-1 min-w-0">
           <div
@@ -253,7 +263,9 @@
             class="textarea-mirror"
             aria-hidden="true"
           >
-            <pre class="textarea-mirror-content"><template v-for="(segment, idx) in mirrorRenderSegments" :key="segment.type === 'mention' ? `${segment.id}-${segment.start}-${idx}` : `${segment.type}-${segment.start}-${idx}`"><span v-if="segment.type === 'text'">{{ segment.value }}</span><span v-else-if="segment.type === 'caret'" class="textarea-mirror-caret" aria-hidden="true"></span><span v-else :class="['mention-inline-token', getMentionInlineClass(segment.kind)]" @mouseenter="showMentionPreview(segment, $event)" @mousemove="showMentionPreview(segment, $event)" @mousedown.prevent="handleMentionTokenPointerDown" @click.prevent="beginMentionReplacement(segment)" @mouseleave="scheduleHideMentionPreview">{{ segment.value }}</span></template>{{ highlightedPlainSuffix }}</pre>
+            <pre
+              class="textarea-mirror-content"
+            ><template v-for="(segment, idx) in mirrorRenderSegments" :key="segment.type === 'mention' ? `${segment.id}-${segment.start}-${idx}` : `${segment.type}-${segment.start}-${idx}`"><span v-if="segment.type === 'text'">{{ segment.value }}</span><span v-else-if="segment.type === 'caret'" class="textarea-mirror-caret" aria-hidden="true"></span><span v-else :class="['mention-inline-token', getMentionInlineClass(segment.kind)]" @mouseenter="showMentionPreview(segment, $event)" @mousemove="showMentionPreview(segment, $event)" @mousedown.prevent="handleMentionTokenPointerDown" @click.prevent="beginMentionReplacement(segment)" @mouseleave="scheduleHideMentionPreview">{{ segment.value }}</span></template>{{ highlightedPlainSuffix }}</pre>
           </div>
           <textarea
             ref="textareaRef"
@@ -272,7 +284,9 @@
             :placeholder="placeholderText"
             :class="[
               'w-full bg-transparent outline-none resize-none leading-relaxed text-sm placeholder:text-base-content/50 max-h-40 input-textarea',
-              showTextareaMirror ? 'text-transparent caret-base-content' : 'text-base-content caret-base-content'
+              showTextareaMirror
+                ? 'text-transparent caret-base-content'
+                : 'text-base-content caret-base-content',
             ]"
             rows="1"
           />
@@ -297,7 +311,9 @@
               <button
                 type="button"
                 class="mention-preview-btn"
-                :class="{ 'mention-preview-btn-active': activeMentionPreview.sendType === 'request' }"
+                :class="{
+                  'mention-preview-btn-active': activeMentionPreview.sendType === 'request',
+                }"
                 @click="setPreviewTrafficSendType('request')"
               >
                 Request
@@ -305,7 +321,9 @@
               <button
                 type="button"
                 class="mention-preview-btn"
-                :class="{ 'mention-preview-btn-active': activeMentionPreview.sendType === 'response' }"
+                :class="{
+                  'mention-preview-btn-active': activeMentionPreview.sendType === 'response',
+                }"
                 @click="setPreviewTrafficSendType('response')"
               >
                 Response
@@ -313,7 +331,10 @@
               <button
                 type="button"
                 class="mention-preview-btn"
-                :class="{ 'mention-preview-btn-active': activeMentionPreview.sendType === 'both' || !activeMentionPreview.sendType }"
+                :class="{
+                  'mention-preview-btn-active':
+                    activeMentionPreview.sendType === 'both' || !activeMentionPreview.sendType,
+                }"
                 @click="setPreviewTrafficSendType('both')"
               >
                 Both
@@ -321,7 +342,10 @@
             </template>
           </div>
         </div>
-        <div v-if="mentionOpen" class="slash-popover border border-base-300 bg-base-100 rounded-xl shadow-xl">
+        <div
+          v-if="mentionOpen"
+          class="slash-popover border border-base-300 bg-base-100 rounded-xl shadow-xl"
+        >
           <div class="px-3 py-2 border-b border-base-300/60 text-xs text-base-content/60">
             引用资源
           </div>
@@ -331,7 +355,10 @@
           <div v-else-if="mentionError" class="px-3 py-2 text-sm text-error">
             {{ mentionError }}
           </div>
-          <div v-else-if="filteredMentionItems.length === 0" class="px-3 py-2 text-sm text-base-content/60">
+          <div
+            v-else-if="filteredMentionItems.length === 0"
+            class="px-3 py-2 text-sm text-base-content/60"
+          >
             无匹配资源
           </div>
           <div v-else class="py-1 max-h-64 overflow-y-auto">
@@ -339,7 +366,11 @@
               v-for="(item, idx) in filteredMentionItems"
               :key="item.id"
               class="w-full text-left px-3 py-2 transition-colors"
-              :class="idx === mentionActiveIndex ? 'bg-primary/15 text-primary' : 'hover:bg-base-200 text-base-content'"
+              :class="
+                idx === mentionActiveIndex
+                  ? 'bg-primary/15 text-primary'
+                  : 'hover:bg-base-200 text-base-content'
+              "
               @mousedown.prevent="applyMentionSelection(item)"
             >
               <div class="flex items-center gap-4">
@@ -352,11 +383,17 @@
             </button>
           </div>
         </div>
-        <div v-if="slashOpen" class="slash-popover border border-base-300 bg-base-100 rounded-xl shadow-xl">
+        <div
+          v-if="slashOpen"
+          class="slash-popover border border-base-300 bg-base-100 rounded-xl shadow-xl"
+        >
           <div class="px-3 py-2 border-b border-base-300/60 text-xs text-base-content/60">
             Slash Commands
           </div>
-          <div v-if="filteredSlashCommands.length === 0" class="px-3 py-2 text-sm text-base-content/60">
+          <div
+            v-if="filteredSlashCommands.length === 0"
+            class="px-3 py-2 text-sm text-base-content/60"
+          >
             无匹配命令
           </div>
           <div v-else class="py-1 max-h-64 overflow-y-auto">
@@ -364,15 +401,26 @@
               v-for="(cmd, idx) in filteredSlashCommands"
               :key="cmd.id"
               class="w-full text-left px-3 py-2 transition-colors"
-              :class="idx === slashActiveIndex ? 'bg-primary/15 text-primary' : 'hover:bg-base-200 text-base-content'"
+              :class="
+                idx === slashActiveIndex
+                  ? 'bg-primary/15 text-primary'
+                  : 'hover:bg-base-200 text-base-content'
+              "
               @mousedown.prevent="applySlashCommand(cmd)"
             >
               <div class="flex items-center gap-4">
-                <span class="font-semibold text-base whitespace-nowrap min-w-28">/{{ cmd.name }}</span>
+                <span class="font-semibold text-base whitespace-nowrap min-w-28"
+                  >/{{ cmd.name }}</span
+                >
                 <div class="text-sm opacity-75 truncate flex-1">
-                  {{ cmd.description || (cmd.type === 'action' ? getActionLabel(cmd.action) : '自定义提示词命令') }}
+                  {{
+                    cmd.description ||
+                    (cmd.type === 'action' ? getActionLabel(cmd.action) : '自定义提示词命令')
+                  }}
                 </div>
-                <span class="text-xs opacity-70 whitespace-nowrap">{{ cmd.type === 'action' ? '功能' : '提示词' }}</span>
+                <span class="text-xs opacity-70 whitespace-nowrap">{{
+                  cmd.type === 'action' ? '功能' : '提示词'
+                }}</span>
               </div>
             </button>
           </div>
@@ -394,15 +442,18 @@
           <!-- Right side icons -->
           <div class="flex items-center gap-2 shrink-0">
             <!-- Context usage indicator -->
-            <div 
-              v-if="effectiveContextUsage" 
+            <div
+              v-if="effectiveContextUsage"
               class="context-usage-indicator flex items-center gap-1 px-2 py-1 rounded-md text-xs cursor-default"
               :class="contextUsageClass"
               :title="contextUsageTooltip"
             >
               <span class="font-medium">{{ contextUsagePercentage }}%</span>
               <span class="opacity-70">·</span>
-              <span class="opacity-80">{{ formatTokenCount(effectiveContextUsage.usedTokens) }} / {{ formatTokenCount(effectiveContextUsage.maxTokens) }}</span>
+              <span class="opacity-80"
+                >{{ formatTokenCount(effectiveContextUsage.usedTokens) }} /
+                {{ formatTokenCount(effectiveContextUsage.maxTokens) }}</span
+              >
               <span class="opacity-70 hidden sm:inline">{{ t('agent.contextUsed') }}</span>
             </div>
             <div class="assistant-agent-switch">
@@ -429,9 +480,19 @@
               :disabled="!canSend"
               :class="{ 'opacity-40 cursor-not-allowed': !canSend }"
               @click="emitSend"
-              :title="isLoading ? '接管并发送 (Enter)' : '发送 (Enter)'"
+              :title="isLoading ? '排队为下一轮 (Enter)' : '发送 (Enter)'"
             >
               <i class="fas fa-arrow-up"></i>
+            </button>
+            <button
+              v-if="isLoading && allowTakeover"
+              class="send-btn bg-warning text-warning-content hover:bg-warning/90"
+              :disabled="!canSend"
+              :class="{ 'opacity-40 cursor-not-allowed': !canSend }"
+              @click="emitInterruptSend"
+              title="中断当前执行并发送"
+            >
+              <i class="fas fa-bolt"></i>
             </button>
             <button
               v-if="isLoading"
@@ -455,10 +516,7 @@
       />
 
       <Teleport to="body">
-        <AppDialog
-          v-if="showSlashManager"
-          class="modal modal-open slash-manager-modal"
-        >
+        <AppDialog v-if="showSlashManager" class="modal modal-open slash-manager-modal">
           <div class="modal-box max-w-3xl">
             <h3 class="font-bold text-lg">Slash Commands</h3>
             <p class="text-sm text-base-content/70 mt-1">输入框中键入 <code>/</code> 可调用命令</p>
@@ -467,16 +525,29 @@
                 <option value="global">全局命令</option>
                 <option value="conversation" :disabled="!conversationScopeEnabled">会话命令</option>
               </select>
-              <button type="button" class="btn btn-outline btn-sm" @click="exportSlashCommands">导出 JSON</button>
-              <button type="button" class="btn btn-outline btn-sm" @click="triggerImportSlashCommands">导入 JSON</button>
-              <span v-if="slashManagerScope === 'conversation' && conversationScopeEnabled" class="text-xs text-base-content/70">
+              <button type="button" class="btn btn-outline btn-sm" @click="exportSlashCommands">
+                导出 JSON
+              </button>
+              <button
+                type="button"
+                class="btn btn-outline btn-sm"
+                @click="triggerImportSlashCommands"
+              >
+                导入 JSON
+              </button>
+              <span
+                v-if="slashManagerScope === 'conversation' && conversationScopeEnabled"
+                class="text-xs text-base-content/70"
+              >
                 当前会话：{{ conversationScopeKey }}
               </span>
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
               <div class="border border-base-300 rounded-lg p-3 max-h-80 overflow-y-auto">
-                <div class="text-xs uppercase tracking-wide text-base-content/60 mb-2">命令列表</div>
+                <div class="text-xs uppercase tracking-wide text-base-content/60 mb-2">
+                  命令列表
+                </div>
                 <div v-if="managerBuiltinCommands.length > 0" class="space-y-2 mb-2">
                   <div
                     v-for="cmd in managerBuiltinCommands"
@@ -485,7 +556,9 @@
                   >
                     <div class="flex items-center justify-between gap-2">
                       <div>
-                        <div class="font-medium">/{{ cmd.name }} <span class="text-xs opacity-60">(内置)</span></div>
+                        <div class="font-medium">
+                          /{{ cmd.name }} <span class="text-xs opacity-60">(内置)</span>
+                        </div>
                         <div class="text-xs opacity-70 truncate">{{ cmd.description || '-' }}</div>
                       </div>
                       <span class="badge badge-ghost badge-sm">只读</span>
@@ -505,17 +578,41 @@
                     <div class="rounded-lg border border-base-300/70 px-3 py-2 bg-base-100">
                       <div class="flex items-center justify-between gap-2">
                         <div class="flex items-center gap-2 min-w-0">
-                          <button type="button" class="btn btn-ghost btn-xs drag-handle cursor-grab" title="拖拽排序">
+                          <button
+                            type="button"
+                            class="btn btn-ghost btn-xs drag-handle cursor-grab"
+                            title="拖拽排序"
+                          >
                             <i class="fas fa-grip-vertical"></i>
                           </button>
                           <div class="min-w-0">
-                            <div class="font-medium">/{{ cmd.name }} <span v-if="cmd.scope" class="text-xs opacity-60">({{ getScopeLabel(cmd.scope) }})</span></div>
-                            <div class="text-xs opacity-70 truncate">{{ cmd.description || '-' }}</div>
+                            <div class="font-medium">
+                              /{{ cmd.name }}
+                              <span v-if="cmd.scope" class="text-xs opacity-60"
+                                >({{ getScopeLabel(cmd.scope) }})</span
+                              >
+                            </div>
+                            <div class="text-xs opacity-70 truncate">
+                              {{ cmd.description || '-' }}
+                            </div>
                           </div>
                         </div>
                         <div class="flex items-center gap-1">
-                          <button type="button" class="btn btn-ghost btn-xs" @click="startEditCommand(cmd)" title="编辑">编辑</button>
-                          <button type="button" class="btn btn-ghost btn-xs text-error" @click="deleteSlashCommand(cmd.id)">删除</button>
+                          <button
+                            type="button"
+                            class="btn btn-ghost btn-xs"
+                            @click="startEditCommand(cmd)"
+                            title="编辑"
+                          >
+                            编辑
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-ghost btn-xs text-error"
+                            @click="deleteSlashCommand(cmd.id)"
+                          >
+                            删除
+                          </button>
                         </div>
                       </div>
                       <label class="label py-1">
@@ -530,7 +627,10 @@
                     </div>
                   </template>
                 </draggable>
-                <div v-if="managerCustomCommands.length === 0" class="text-xs text-base-content/60 px-1 py-2">
+                <div
+                  v-if="managerCustomCommands.length === 0"
+                  class="text-xs text-base-content/60 px-1 py-2"
+                >
                   当前作用域暂无自定义命令
                 </div>
               </div>
@@ -542,11 +642,19 @@
                 <div class="space-y-3">
                   <label class="form-control">
                     <span class="label-text text-xs">命令名</span>
-                    <input v-model.trim="newSlashCommand.name" class="input input-bordered input-sm" placeholder="review" />
+                    <input
+                      v-model.trim="newSlashCommand.name"
+                      class="input input-bordered input-sm"
+                      placeholder="review"
+                    />
                   </label>
                   <label class="form-control">
                     <span class="label-text text-xs">描述</span>
-                    <input v-model.trim="newSlashCommand.description" class="input input-bordered input-sm" placeholder="审查当前改动" />
+                    <input
+                      v-model.trim="newSlashCommand.description"
+                      class="input input-bordered input-sm"
+                      placeholder="审查当前改动"
+                    />
                   </label>
                   <label class="form-control">
                     <span class="label-text text-xs">类型</span>
@@ -557,34 +665,67 @@
                   </label>
                   <label class="form-control">
                     <span class="label-text text-xs">作用域</span>
-                    <select v-model="newSlashCommand.scope" class="select select-bordered select-sm">
+                    <select
+                      v-model="newSlashCommand.scope"
+                      class="select select-bordered select-sm"
+                    >
                       <option value="global">全局</option>
-                      <option value="conversation" :disabled="!conversationScopeEnabled">会话</option>
+                      <option value="conversation" :disabled="!conversationScopeEnabled">
+                        会话
+                      </option>
                     </select>
                   </label>
                   <label v-if="newSlashCommand.type === 'prompt'" class="form-control">
                     <span class="label-text text-xs">提示词模板</span>
-                    <textarea v-model="newSlashCommand.template" class="textarea textarea-bordered textarea-sm h-24" placeholder="请审查当前改动：{{input}}"></textarea>
+                    <textarea
+                      v-model="newSlashCommand.template"
+                      class="textarea textarea-bordered textarea-sm h-24"
+                      placeholder="请审查当前改动：{{input}}"
+                    ></textarea>
                   </label>
                   <label v-else class="form-control">
                     <span class="label-text text-xs">功能</span>
-                    <select v-model="newSlashCommand.action" class="select select-bordered select-sm">
+                    <select
+                      v-model="newSlashCommand.action"
+                      class="select select-bordered select-sm"
+                    >
                       <option value="new_conversation">新建会话</option>
                       <option value="clear_conversation">清空会话</option>
                       <option value="open_tool_config">打开 Agent 配置</option>
                     </select>
                   </label>
-                  <label v-if="newSlashCommand.type === 'prompt'" class="label cursor-pointer justify-start gap-2">
-                    <input type="checkbox" class="checkbox checkbox-sm" v-model="newSlashCommand.auto_send" />
+                  <label
+                    v-if="newSlashCommand.type === 'prompt'"
+                    class="label cursor-pointer justify-start gap-2"
+                  >
+                    <input
+                      type="checkbox"
+                      class="checkbox checkbox-sm"
+                      v-model="newSlashCommand.auto_send"
+                    />
                     <span class="label-text text-xs">执行后立即发送</span>
                   </label>
-                  <div v-if="slashFormError" class="text-xs text-error bg-error/10 border border-error/20 rounded px-2 py-1">
+                  <div
+                    v-if="slashFormError"
+                    class="text-xs text-error bg-error/10 border border-error/20 rounded px-2 py-1"
+                  >
                     {{ slashFormError }}
                   </div>
-                  <button type="button" class="btn btn-primary btn-sm w-full" @click="editingSlashId ? saveEditedSlashCommand() : addCustomSlashCommand()">
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-sm w-full"
+                    @click="editingSlashId ? saveEditedSlashCommand() : addCustomSlashCommand()"
+                  >
                     {{ editingSlashId ? '保存修改' : '添加命令' }}
                   </button>
-                  <button v-if="editingSlashId" type="button" class="btn btn-ghost btn-sm w-full" @click="cancelEditCommand">取消编辑</button>
+                  <button
+                    v-if="editingSlashId"
+                    type="button"
+                    class="btn btn-ghost btn-sm w-full"
+                    @click="cancelEditCommand"
+                  >
+                    取消编辑
+                  </button>
                 </div>
               </div>
             </div>
@@ -605,7 +746,6 @@
         accept="application/json,.json"
         @change="onImportSlashFileChange"
       />
-
     </div>
   </div>
 </template>
@@ -654,7 +794,11 @@ import type {
   ReferencedTraffic,
   TrafficSendType,
 } from '@/components/Agent/agentDraftTypes'
-import type { AgentMessage, PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
+import type {
+  AgentMessage,
+  PendingDocumentAttachment,
+  ProcessedDocumentResult,
+} from '@/types/agent'
 import type { MentionTokenKind } from '@/components/InputArea/mentionTokenSupport'
 
 const { t } = useI18n()
@@ -679,6 +823,17 @@ interface ContextUsageInfo {
   usedTokens: number
   maxTokens: number
   usagePercentage: number
+  effectiveContextTokens?: number
+  remainingTokens?: number
+  contextPressure?: string | null
+  warningThresholdTokens?: number
+  autoCompactThresholdTokens?: number
+  blockingThresholdTokens?: number
+  outputReserveTokens?: number
+  shouldCompact?: boolean
+  shouldBlock?: boolean
+  pressurePhase?: string | null
+  taskTokens?: number
   systemPromptTokens: number
   historyTokens: number
   historyCount: number
@@ -729,6 +884,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:input-message', value: string): void
   (e: 'send-message'): void
+  (e: 'interrupt-message'): void
   (e: 'stop-execution'): void
   (e: 'toggle-debug', value: boolean): void
   (e: 'create-new-conversation'): void
@@ -768,7 +924,12 @@ const allowTakeover = computed(() => props.allowTakeover === true)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const textareaMirrorRef = ref<HTMLDivElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
-const hoveredMentionPreview = ref<{ id: string; kind: MentionTokenKind; x: number; y: number } | null>(null)
+const hoveredMentionPreview = ref<{
+  id: string
+  kind: MentionTokenKind
+  x: number
+  y: number
+} | null>(null)
 let hideMentionPreviewTimer: ReturnType<typeof setTimeout> | null = null
 
 // Feature states are fully controlled by parent.
@@ -796,7 +957,7 @@ const highlightedMentionSegments = computed<Array<MirrorTextSegment | MirrorMent
 })
 
 const showTextareaMirror = computed(() => {
-  return highlightedMentionSegments.value.some((segment) => segment.type === 'mention')
+  return highlightedMentionSegments.value.some(segment => segment.type === 'mention')
 })
 
 const highlightedPlainSuffix = computed(() => '\n')
@@ -807,7 +968,7 @@ const mirrorCaretIndex = computed<number | null>(() => {
     props.inputMessage || '',
     isTextareaFocused.value,
     selectionState.value.start,
-    selectionState.value.end,
+    selectionState.value.end
   )
 })
 
@@ -815,7 +976,7 @@ const mirrorRenderSegments = computed<MirrorRenderSegment[]>(() => {
   return buildMirrorRenderSegments(
     props.inputMessage || '',
     highlightedMentionSegments.value,
-    mirrorCaretIndex.value,
+    mirrorCaretIndex.value
   )
 })
 
@@ -838,7 +999,9 @@ const buildMentionReplacementQuery = (segment: {
 
 const getMentionPreviewPayload = (kind: MentionTokenKind, id: string) => {
   if (kind === 'file') {
-    const file = (props.referencedFiles || []).find((item) => item.relativePath === id || item.id === id)
+    const file = (props.referencedFiles || []).find(
+      item => item.relativePath === id || item.id === id
+    )
     if (!file) return null
     const body = file.preview.length > 280 ? `${file.preview.slice(0, 280)}...` : file.preview
     return {
@@ -848,13 +1011,15 @@ const getMentionPreviewPayload = (kind: MentionTokenKind, id: string) => {
   }
 
   if (kind === 'asset') {
-    const asset = (props.referencedAssets || []).find((item) => item.id === id)
+    const asset = (props.referencedAssets || []).find(item => item.id === id)
     if (!asset) return null
     const details = [
       asset.value,
       asset.description,
       asset.risk_level ? `risk=${asset.risk_level}` : '',
-    ].filter(Boolean).join('\n')
+    ]
+      .filter(Boolean)
+      .join('\n')
     return {
       body: details || asset.name,
       title: `ASSET · ${asset.name}`,
@@ -862,7 +1027,7 @@ const getMentionPreviewPayload = (kind: MentionTokenKind, id: string) => {
   }
 
   if (kind === 'message') {
-    const message = (props.referencedMessages || []).find((item) => item.id === id)
+    const message = (props.referencedMessages || []).find(item => item.id === id)
     if (!message) return null
     return {
       body: message.content,
@@ -870,7 +1035,7 @@ const getMentionPreviewPayload = (kind: MentionTokenKind, id: string) => {
     }
   }
 
-  const traffic = (props.referencedTraffic || []).find((item) => String(item.id) === id)
+  const traffic = (props.referencedTraffic || []).find(item => String(item.id) === id)
   if (!traffic) return null
   const responsePart = traffic.response_body
     ? `\n\n${traffic.response_body.slice(0, 220)}${traffic.response_body.length > 220 ? '...' : ''}`
@@ -887,7 +1052,7 @@ const activeMentionPreview = computed(() => {
   if (!hoveredMentionPreview.value) return null
   const payload = getMentionPreviewPayload(
     hoveredMentionPreview.value.kind,
-    hoveredMentionPreview.value.id,
+    hoveredMentionPreview.value.id
   )
   if (!payload) return null
   return {
@@ -913,7 +1078,10 @@ const syncSelectionState = (selectionStart: number, selectionEnd: number) => {
   }
 }
 
-const setCursorPosition = (cursor: number, preference: 'left' | 'right' | 'nearest' = 'nearest') => {
+const setCursorPosition = (
+  cursor: number,
+  preference: 'left' | 'right' | 'nearest' = 'nearest'
+) => {
   const el = textareaRef.value
   if (!el) return
   const normalizedCursor = snapCursorToMentionBoundary(props.inputMessage || '', cursor, preference)
@@ -921,11 +1089,7 @@ const setCursorPosition = (cursor: number, preference: 'left' | 'right' | 'neare
   syncSelectionState(normalizedCursor, normalizedCursor)
 }
 
-const normalizeSelectionRange = (
-  text: string,
-  selectionStart: number,
-  selectionEnd: number,
-) => {
+const normalizeSelectionRange = (text: string, selectionStart: number, selectionEnd: number) => {
   if (selectionStart === selectionEnd) {
     const cursor = snapCursorToMentionBoundary(text, selectionStart, 'nearest')
     return { end: cursor, start: cursor }
@@ -970,7 +1134,7 @@ const onTextareaScroll = (e: Event) => {
 
 const showMentionPreview = (
   segment: { id: string; kind: MentionTokenKind; type: 'mention' },
-  event: MouseEvent,
+  event: MouseEvent
 ) => {
   cancelHideMentionPreview()
   const payload = getMentionPreviewPayload(segment.kind, segment.id)
@@ -1040,7 +1204,9 @@ const removePreviewReference = () => {
   const preview = activeMentionPreview.value
   if (!preview) return
   if (preview.kind === 'file') {
-    const index = (props.referencedFiles || []).findIndex((item) => item.relativePath === preview.id || item.id === preview.id)
+    const index = (props.referencedFiles || []).findIndex(
+      item => item.relativePath === preview.id || item.id === preview.id
+    )
     if (index >= 0) {
       removeReferencedFile(index)
     }
@@ -1048,7 +1214,7 @@ const removePreviewReference = () => {
     return
   }
   if (preview.kind === 'asset') {
-    const index = (props.referencedAssets || []).findIndex((item) => item.id === preview.id)
+    const index = (props.referencedAssets || []).findIndex(item => item.id === preview.id)
     if (index >= 0) {
       removeReferencedAsset(index)
     }
@@ -1056,14 +1222,14 @@ const removePreviewReference = () => {
     return
   }
   if (preview.kind === 'message') {
-    const index = (props.referencedMessages || []).findIndex((item) => item.id === preview.id)
+    const index = (props.referencedMessages || []).findIndex(item => item.id === preview.id)
     if (index >= 0) {
       removeReferencedMessage(index)
     }
     hideMentionPreview()
     return
   }
-  const index = (props.referencedTraffic || []).findIndex((item) => String(item.id) === preview.id)
+  const index = (props.referencedTraffic || []).findIndex(item => String(item.id) === preview.id)
   if (index >= 0) {
     removeReferencedTraffic(index)
   }
@@ -1073,11 +1239,9 @@ const removePreviewReference = () => {
 const setPreviewTrafficSendType = (nextType: TrafficSendType) => {
   const preview = activeMentionPreview.value
   if (!preview || preview.kind !== 'traffic') return
-  const nextTraffic = (props.referencedTraffic || []).map((item) => (
-    String(item.id) === preview.id
-      ? { ...item, sendType: nextType }
-      : item
-  ))
+  const nextTraffic = (props.referencedTraffic || []).map(item =>
+    String(item.id) === preview.id ? { ...item, sendType: nextType } : item
+  )
   emit('sync-traffic-references', nextTraffic)
   hoveredMentionPreview.value = {
     ...hoveredMentionPreview.value!,
@@ -1093,10 +1257,7 @@ const onCaretChanged = (e: Event) => {
   const selectionStart = target.selectionStart || 0
   const selectionEnd = target.selectionEnd || selectionStart
   const normalizedSelection = normalizeSelectionRange(target.value, selectionStart, selectionEnd)
-  if (
-    normalizedSelection.start !== selectionStart ||
-    normalizedSelection.end !== selectionEnd
-  ) {
+  if (normalizedSelection.start !== selectionStart || normalizedSelection.end !== selectionEnd) {
     target.setSelectionRange(normalizedSelection.start, normalizedSelection.end)
   }
   syncSelectionState(normalizedSelection.start, normalizedSelection.end)
@@ -1126,19 +1287,19 @@ const {
   triggerFileSelect,
 } = useInputAttachments({
   conversationId: () => props.conversationId ?? null,
-  emitAddAttachments: (files) => {
+  emitAddAttachments: files => {
     emit('add-attachments', files)
   },
-  emitAddDocuments: (files) => {
+  emitAddDocuments: files => {
     emit('add-documents', files)
   },
-  emitDocumentProcessed: (result) => {
+  emitDocumentProcessed: result => {
     emit('document-processed', result)
   },
-  emitRemoveAttachment: (index) => {
+  emitRemoveAttachment: index => {
     emit('remove-attachment', index)
   },
-  emitRemoveDocument: (index) => {
+  emitRemoveDocument: index => {
     emit('remove-document', index)
   },
 })
@@ -1190,7 +1351,7 @@ const {
     emitSend()
   },
   getInputMessage: () => props.inputMessage || '',
-  onInputValueChange: (value) => {
+  onInputValueChange: value => {
     setInputValue(value)
   },
   toggleRAG: () => {
@@ -1215,41 +1376,48 @@ const {
   getReferencedFiles: () => props.referencedFiles || [],
   getReferencedMessages: () => props.referencedMessages || [],
   getReferencedTraffic: () => props.referencedTraffic || [],
-  getConversationMessages: () => (props.availableConversationMessages || [])
-    .filter((item) => item?.content?.trim())
-    .filter((item) => item.type === 'user' || item.type === 'final' || item.type === 'thinking' || item.type === 'planning')
-    .map((item) => ({
-      content: item.content,
-      id: item.id,
-      roleLabel: item.type === 'user' ? 'User' : item.type === 'final' ? 'Assistant' : item.type,
-      timestamp: item.timestamp,
-      type: item.type,
-    })),
-  onAddReferencedAsset: (asset) => {
+  getConversationMessages: () =>
+    (props.availableConversationMessages || [])
+      .filter(item => item?.content?.trim())
+      .filter(
+        item =>
+          item.type === 'user' ||
+          item.type === 'final' ||
+          item.type === 'thinking' ||
+          item.type === 'planning'
+      )
+      .map(item => ({
+        content: item.content,
+        id: item.id,
+        roleLabel: item.type === 'user' ? 'User' : item.type === 'final' ? 'Assistant' : item.type,
+        timestamp: item.timestamp,
+        type: item.type,
+      })),
+  onAddReferencedAsset: asset => {
     emit('add-asset-reference', [asset])
   },
-  onAddReferencedFile: (file) => {
+  onAddReferencedFile: file => {
     emit('add-file-reference', [file])
   },
-  onAddReferencedMessage: (message) => {
+  onAddReferencedMessage: message => {
     emit('add-message-reference', [message])
   },
-  onAddReferencedTraffic: (traffic) => {
+  onAddReferencedTraffic: traffic => {
     emit('add-traffic-reference', [traffic])
   },
   onInputValueChange: (value, cursor) => {
     setInputValue(value, cursor)
   },
-  onSyncReferencedAssets: (assets) => {
+  onSyncReferencedAssets: assets => {
     emit('sync-asset-references', assets)
   },
-  onSyncReferencedFiles: (files) => {
+  onSyncReferencedFiles: files => {
     emit('sync-file-references', files)
   },
-  onSyncReferencedMessages: (messages) => {
+  onSyncReferencedMessages: messages => {
     emit('sync-message-references', messages)
   },
-  onSyncReferencedTraffic: (traffic) => {
+  onSyncReferencedTraffic: traffic => {
     emit('sync-traffic-references', traffic)
   },
 })
@@ -1281,9 +1449,7 @@ const effectiveContextUsage = computed(() => {
     if (inputTokens === 0) return null
     const maxTokens = resolvedDefaultMaxContextTokens.value
     const usedTokens = inputTokens
-    const usagePercentage = maxTokens > 0
-      ? Math.min(100, (usedTokens / maxTokens) * 100)
-      : 0
+    const usagePercentage = maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : 0
     return {
       usedTokens,
       maxTokens,
@@ -1300,9 +1466,8 @@ const effectiveContextUsage = computed(() => {
   if (inputTokens === 0) return base
   const usedTokens = base.usedTokens + inputTokens
   const historyTokens = base.historyTokens + inputTokens
-  const usagePercentage = base.maxTokens > 0
-    ? Math.min(100, (usedTokens / base.maxTokens) * 100)
-    : 0
+  const usagePercentage =
+    base.maxTokens > 0 ? Math.min(100, (usedTokens / base.maxTokens) * 100) : 0
   return {
     ...base,
     usedTokens,
@@ -1317,6 +1482,12 @@ const contextUsagePercentage = computed(() => {
 })
 
 const contextUsageClass = computed(() => {
+  const pressure = effectiveContextUsage.value?.contextPressure
+  if (pressure === 'Blocking' || effectiveContextUsage.value?.shouldBlock)
+    return 'bg-error/20 text-error border border-error/30'
+  if (pressure === 'AutoCompact' || effectiveContextUsage.value?.shouldCompact)
+    return 'bg-warning/20 text-warning border border-warning/30'
+  if (pressure === 'Warning') return 'bg-info/20 text-info border border-info/30'
   const percentage = contextUsagePercentage.value
   if (percentage >= 90) return 'bg-error/20 text-error border border-error/30'
   if (percentage >= 70) return 'bg-warning/20 text-warning border border-warning/30'
@@ -1326,16 +1497,25 @@ const contextUsageClass = computed(() => {
 
 const contextUsageTooltip = computed(() => {
   if (!effectiveContextUsage.value) return ''
-  const { 
-    usedTokens, 
-    maxTokens, 
-    systemPromptTokens, 
-    historyTokens, 
-    historyCount, 
-    summaryTokens, 
-    summaryGlobalTokens, 
-    summarySegmentTokens, 
+  const {
+    usedTokens,
+    maxTokens,
+    systemPromptTokens,
+    historyTokens,
+    historyCount,
+    summaryTokens,
+    summaryGlobalTokens,
+    summarySegmentTokens,
     summarySegmentCount,
+    effectiveContextTokens,
+    remainingTokens,
+    contextPressure,
+    warningThresholdTokens,
+    autoCompactThresholdTokens,
+    blockingThresholdTokens,
+    outputReserveTokens,
+    pressurePhase,
+    taskTokens,
     sentinelMode,
     sentinelIntentId,
     sentinelIntentConfidence,
@@ -1346,13 +1526,23 @@ const contextUsageTooltip = computed(() => {
     sentinelCompressionAggressiveness,
     memoryRetrieval,
   } = effectiveContextUsage.value
-  const inputHint = inputTokenEstimate.value > 0 ? `\n${t('agent.inputTokens')}: ~${formatTokenCount(inputTokenEstimate.value)}` : ''
+  const inputHint =
+    inputTokenEstimate.value > 0
+      ? `\n${t('agent.inputTokens')}: ~${formatTokenCount(inputTokenEstimate.value)}`
+      : ''
   const sentinelHint = sentinelMode
-    ? `\nSentinel intent: ${sentinelIntentId || '-'}\nSentinel transition: ${sentinelIntentTransition || '-'}\nSentinel parent: ${sentinelParentIntentId || '-'}\nSentinel confidence: ${sentinelIntentConfidence == null ? '-' : sentinelIntentConfidence.toFixed(2)}\nSentinel clarification: ${sentinelClarificationNeeded ? 'needed' : (sentinelClarificationStatus || 'stable')}\nSentinel compression: ${sentinelCompressionAggressiveness || '-'}`
+    ? `\nSentinel intent: ${sentinelIntentId || '-'}\nSentinel transition: ${sentinelIntentTransition || '-'}\nSentinel parent: ${sentinelParentIntentId || '-'}\nSentinel confidence: ${sentinelIntentConfidence == null ? '-' : sentinelIntentConfidence.toFixed(2)}\nSentinel clarification: ${sentinelClarificationNeeded ? 'needed' : sentinelClarificationStatus || 'stable'}\nSentinel compression: ${sentinelCompressionAggressiveness || '-'}`
     : ''
   const memoryHint = memoryRetrieval
     ? `\nMemory query: ${memoryRetrieval.queryPreview || '-'}\nMemory hits: ${memoryRetrieval.hitCount}/${memoryRetrieval.requestedTopK}\nMemory fallback: ${memoryRetrieval.usedCanonicalFallback ? 'canonical' : 'hybrid'}\nMemory sources: ${formatMemoryTraceBreakdown(memoryRetrieval.sourceBreakdown)}\nMemory kinds: ${formatMemoryTraceBreakdown(memoryRetrieval.kindBreakdown)}`
     : ''
+  const pressureHint = contextPressure
+    ? `\n${t('agent.contextPressure')}: ${formatContextPressure(contextPressure)}\n${t('agent.effectiveContextTokens')}: ${formatTokenCount(effectiveContextTokens ?? maxTokens)}\n${t('agent.remainingContextTokens')}: ${formatTokenCount(remainingTokens ?? Math.max(0, maxTokens - usedTokens))}\n${t('agent.outputReserveTokens')}: ${formatTokenCount(outputReserveTokens ?? 0)}\n${t('agent.warningThresholdTokens')}: ${formatTokenCount(warningThresholdTokens ?? 0)}\n${t('agent.autoCompactThresholdTokens')}: ${formatTokenCount(autoCompactThresholdTokens ?? 0)}\n${t('agent.blockingThresholdTokens')}: ${formatTokenCount(blockingThresholdTokens ?? 0)}\n${t('agent.contextPressurePhase')}: ${pressurePhase || '-'}`
+    : ''
+  const taskHint =
+    typeof taskTokens === 'number'
+      ? `\n${t('agent.currentTaskTokens')}: ${formatTokenCount(taskTokens)}`
+      : ''
   return `${t('agent.contextUsageDetails')}
 ${t('agent.systemPromptTokens')}: ${formatTokenCount(systemPromptTokens)}
 ${t('agent.summaryTokens')}: ${formatTokenCount(summaryTokens)}
@@ -1360,7 +1550,7 @@ ${t('agent.summaryGlobalTokens')}: ${formatTokenCount(summaryGlobalTokens)}
 ${t('agent.summarySegmentTokens')}: ${formatTokenCount(summarySegmentTokens)} (${t('agent.summarySegments')}: ${summarySegmentCount})
 ${t('agent.historyTokens')}: ${formatTokenCount(historyTokens)}
 ${t('agent.historyMessages')}: ${historyCount}
-${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}${inputHint}${sentinelHint}${memoryHint}`
+${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}${taskHint}${inputHint}${pressureHint}${sentinelHint}${memoryHint}`
 })
 
 const formatTokenCount = (count: number): string => {
@@ -1373,17 +1563,23 @@ const formatTokenCount = (count: number): string => {
   return count.toString()
 }
 
+const formatContextPressure = (pressure: string): string => {
+  if (pressure === 'Low') return t('agent.contextPressureLow')
+  if (pressure === 'Warning') return t('agent.contextPressureWarning')
+  if (pressure === 'AutoCompact') return t('agent.contextPressureAutoCompact')
+  if (pressure === 'Blocking') return t('agent.contextPressureBlocking')
+  return pressure
+}
+
 const formatMemoryTraceBreakdown = (items: MemoryTraceCount[] | undefined): string => {
   if (!items || items.length === 0) return '-'
-  return items
-    .map(item => `${item.label}:${item.count}`)
-    .join(', ')
+  return items.map(item => `${item.label}:${item.count}`).join(', ')
 }
 
 // 检查是否可以发送
 const canSend = computed(() => {
   if (!props.inputMessage.trim()) return false
-  const hasProcessingUploads = (props.pendingDocuments || []).some((d) => d.status === 'processing')
+  const hasProcessingUploads = (props.pendingDocuments || []).some(d => d.status === 'processing')
   if (hasProcessingUploads) return false
   return true
 })
@@ -1400,6 +1596,12 @@ const emitSend = () => {
   lastSendEmitAt = now
   emit('send-message')
   // 发送后恢复高度
+  requestAnimationFrame(() => autoResize())
+}
+
+const emitInterruptSend = () => {
+  if (!canSend.value) return
+  emit('interrupt-message')
   requestAnimationFrame(() => autoResize())
 }
 
@@ -1422,10 +1624,7 @@ const onCompositionEnd = () => {
   const selectionStart = el.selectionStart || 0
   const selectionEnd = el.selectionEnd || selectionStart
   const normalizedSelection = normalizeSelectionRange(el.value || '', selectionStart, selectionEnd)
-  if (
-    normalizedSelection.start !== selectionStart ||
-    normalizedSelection.end !== selectionEnd
-  ) {
+  if (normalizedSelection.start !== selectionStart || normalizedSelection.end !== selectionEnd) {
     el.setSelectionRange(normalizedSelection.start, normalizedSelection.end)
   }
   syncSelectionState(normalizedSelection.start, normalizedSelection.end)
@@ -1441,7 +1640,12 @@ const onKeydown = (e: KeyboardEvent) => {
     const el = textareaRef.value
     const selectionStart = el?.selectionStart || 0
     const selectionEnd = el?.selectionEnd || selectionStart
-    const token = findMentionTokenForDeletion(props.inputMessage || '', selectionStart, selectionEnd, e.key)
+    const token = findMentionTokenForDeletion(
+      props.inputMessage || '',
+      selectionStart,
+      selectionEnd,
+      e.key
+    )
     if (token) {
       e.preventDefault()
       const nextValue = removeTextRange(props.inputMessage || '', token.start, token.end)
@@ -1459,7 +1663,7 @@ const onKeydown = (e: KeyboardEvent) => {
       const adjacentToken = findMentionTokenAdjacentToCursor(
         props.inputMessage || '',
         selectionStart,
-        direction,
+        direction
       )
       if (adjacentToken) {
         e.preventDefault()
@@ -1473,7 +1677,8 @@ const onKeydown = (e: KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (filteredMentionItems.value.length > 0) {
-        mentionActiveIndex.value = (mentionActiveIndex.value + 1) % filteredMentionItems.value.length
+        mentionActiveIndex.value =
+          (mentionActiveIndex.value + 1) % filteredMentionItems.value.length
       }
       return
     }
@@ -1481,7 +1686,8 @@ const onKeydown = (e: KeyboardEvent) => {
       e.preventDefault()
       if (filteredMentionItems.value.length > 0) {
         mentionActiveIndex.value =
-          (mentionActiveIndex.value - 1 + filteredMentionItems.value.length) % filteredMentionItems.value.length
+          (mentionActiveIndex.value - 1 + filteredMentionItems.value.length) %
+          filteredMentionItems.value.length
       }
       return
     }
@@ -1509,7 +1715,8 @@ const onKeydown = (e: KeyboardEvent) => {
       e.preventDefault()
       if (filteredSlashCommands.value.length > 0) {
         slashActiveIndex.value =
-          (slashActiveIndex.value - 1 + filteredSlashCommands.value.length) % filteredSlashCommands.value.length
+          (slashActiveIndex.value - 1 + filteredSlashCommands.value.length) %
+          filteredSlashCommands.value.length
       }
       return
     }
@@ -1534,7 +1741,7 @@ const onKeydown = (e: KeyboardEvent) => {
     return
   } else if (e.key === 'Escape') {
     // blur
-    (e.target as HTMLTextAreaElement).blur()
+    ;(e.target as HTMLTextAreaElement).blur()
   }
 }
 
@@ -1659,15 +1866,14 @@ const focusInput = () => {
   })
 }
 
-
 onMounted(async () => {
   autoResize()
   await loadSlashCommands()
   window.addEventListener('click', handleClickOutside, true)
-  
+
   // 设置 Tauri 拖放监听
   await setupNativeDragDrop()
-  
+
   // 自动聚焦输入框
   focusInput()
 })
@@ -1680,7 +1886,7 @@ onUnmounted(() => {
 
 watch(
   () => props.inputMessage,
-  (val) => {
+  val => {
     syncMentionBindings(val || '')
     if (!val || !val.includes('/')) {
       closeSlashPopover()
@@ -1709,8 +1915,8 @@ defineExpose({
   max-width: 100%;
 }
 
-.chat-input { 
-  position: relative; 
+.chat-input {
+  position: relative;
 }
 
 .input-editor-shell {
@@ -1827,7 +2033,10 @@ defineExpose({
   padding: 0.2rem 0.45rem;
   font-size: 11px;
   line-height: 1.2;
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .mention-preview-btn:hover {
@@ -1857,25 +2066,27 @@ defineExpose({
   max-height: calc(100vh - 3rem);
 }
 
-.icon-btn { 
-  width:1.75rem; 
-  height:1.75rem; 
-  display:flex; 
-  align-items:center; 
-  justify-content:center; 
-  border-radius:0.375rem; 
-  font-size:calc(var(--font-size-base, 14px) * 0.75); 
-  transition:background-color .15s,color .15s; 
+.icon-btn {
+  width: 1.75rem;
+  height: 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
-.icon-btn:hover { 
-  background-color: hsl(var(--b3)/0.7); 
+.icon-btn:hover {
+  background-color: hsl(var(--b3) / 0.7);
 }
 
-.icon-btn.active { 
-  background: hsl(var(--p)); 
-  color: hsl(var(--pc)); 
-  box-shadow:0 2px 4px rgba(0,0,0,.15); 
+.icon-btn.active {
+  background: hsl(var(--p));
+  color: hsl(var(--pc));
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
 }
 
 .assistant-agent-switch {
@@ -1895,26 +2106,28 @@ defineExpose({
   }
 }
 
-.send-btn { 
-  width:2rem; 
-  height:2rem; 
-  border-radius:9999px; 
-  background: hsl(var(--b3)); 
-  color: hsl(var(--bc)); 
-  display:flex; 
-  align-items:center; 
-  justify-content:center; 
-  transition: background-color .15s,color .15s; 
+.send-btn {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  background: hsl(var(--b3));
+  color: hsl(var(--bc));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
-.send-btn:hover { 
-  background: hsl(var(--p)); 
-  color: hsl(var(--pc)); 
+.send-btn:hover {
+  background: hsl(var(--p));
+  color: hsl(var(--pc));
 }
 
-.send-btn:disabled { 
-  opacity:.4; 
-  cursor:not-allowed; 
+.send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* Search popover positioned above the toolbar */
@@ -1928,8 +2141,8 @@ defineExpose({
 }
 
 @media (max-width: 640px) {
-  .search-popover { 
-    width: 18rem; 
+  .search-popover {
+    width: 18rem;
   }
 }
 
@@ -1972,11 +2185,13 @@ defineExpose({
 }
 
 @keyframes textarea-mirror-caret-blink {
-  0%, 49% {
+  0%,
+  49% {
     opacity: 1;
   }
 
-  50%, 100% {
+  50%,
+  100% {
     opacity: 0;
   }
 }

@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::QueryBuilder;
 use std::collections::HashMap;
 
+const SURFACE_MARK_VIEWED_BATCH_SIZE: usize = 200;
+
 /// Shared surface asset row used by all typed network mapping objects.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct SurfaceAssetRow {
@@ -860,20 +862,124 @@ impl DatabaseService {
 
         let rows = match runtime {
             DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut updated = 0u64;
+                for batch in asset_ids.chunks(SURFACE_MARK_VIEWED_BATCH_SIZE) {
+                    let mut query_builder =
+                        QueryBuilder::<sqlx::Sqlite>::new("UPDATE surface_assets SET viewed_at = ");
+                    query_builder
+                        .push_bind(viewed_at.to_string())
+                        .push(", viewed_by = ")
+                        .push_bind(viewed_by.to_string())
+                        .push(" WHERE viewed_at IS NULL AND id IN (");
+                    {
+                        let mut separated = query_builder.separated(", ");
+                        for asset_id in batch {
+                            separated.push_bind(asset_id.clone());
+                        }
+                    }
+                    query_builder.push(")");
+                    updated += query_builder
+                        .build()
+                        .execute(&mut *tx)
+                        .await?
+                        .rows_affected();
+                }
+                tx.commit().await?;
+                updated
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut updated = 0u64;
+                for batch in asset_ids.chunks(SURFACE_MARK_VIEWED_BATCH_SIZE) {
+                    let mut query_builder =
+                        QueryBuilder::<MySql>::new("UPDATE surface_assets SET viewed_at = ");
+                    query_builder
+                        .push_bind(viewed_at.to_string())
+                        .push(", viewed_by = ")
+                        .push_bind(viewed_by.to_string())
+                        .push(" WHERE viewed_at IS NULL AND id IN (");
+                    {
+                        let mut separated = query_builder.separated(", ");
+                        for asset_id in batch {
+                            separated.push_bind(asset_id.clone());
+                        }
+                    }
+                    query_builder.push(")");
+                    updated += query_builder
+                        .build()
+                        .execute(&mut *tx)
+                        .await?
+                        .rows_affected();
+                }
+                tx.commit().await?;
+                updated
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut updated = 0u64;
+                for batch in asset_ids.chunks(SURFACE_MARK_VIEWED_BATCH_SIZE) {
+                    let mut query_builder =
+                        QueryBuilder::<Postgres>::new("UPDATE surface_assets SET viewed_at = ");
+                    query_builder
+                        .push_bind(viewed_at.to_string())
+                        .push(", viewed_by = ")
+                        .push_bind(viewed_by.to_string())
+                        .push(" WHERE viewed_at IS NULL AND id IN (");
+                    {
+                        let mut separated = query_builder.separated(", ");
+                        for asset_id in batch {
+                            separated.push_bind(asset_id.clone());
+                        }
+                    }
+                    query_builder.push(")");
+                    updated += query_builder
+                        .build()
+                        .execute(&mut *tx)
+                        .await?
+                        .rows_affected();
+                }
+                tx.commit().await?;
+                updated
+            }
+        };
+
+        Ok(rows as usize)
+    }
+
+    pub async fn mark_surface_inventory_viewed(
+        &self,
+        filter: &SurfaceAssetFilter,
+        viewed_at: &str,
+        viewed_by: &str,
+    ) -> Result<usize> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let view_filter = SurfaceAssetFilter {
+            program_id: filter.program_id.clone(),
+            asset_type: filter.asset_type.clone(),
+            status: filter.status.clone(),
+            search: filter.search.clone(),
+            service_name: filter.service_name.clone(),
+            transport_protocol: filter.transport_protocol.clone(),
+            view_state: filter.view_state.clone(),
+            limit: None,
+            offset: None,
+        };
+
+        let rows = match runtime {
+            DatabasePool::SQLite(pool) => {
                 let mut query_builder =
                     QueryBuilder::<sqlx::Sqlite>::new("UPDATE surface_assets SET viewed_at = ");
                 query_builder
                     .push_bind(viewed_at.to_string())
                     .push(", viewed_by = ")
                     .push_bind(viewed_by.to_string())
-                    .push(" WHERE viewed_at IS NULL AND id IN (");
-                {
-                    let mut separated = query_builder.separated(", ");
-                    for asset_id in asset_ids {
-                        separated.push_bind(asset_id.clone());
-                    }
-                }
-                query_builder.push(")");
+                    .push(" WHERE viewed_at IS NULL");
+                push_surface_asset_filters(&mut query_builder, &view_filter);
                 query_builder.build().execute(pool).await?.rows_affected()
             }
             DatabasePool::MySQL(pool) => {
@@ -883,14 +989,8 @@ impl DatabaseService {
                     .push_bind(viewed_at.to_string())
                     .push(", viewed_by = ")
                     .push_bind(viewed_by.to_string())
-                    .push(" WHERE viewed_at IS NULL AND id IN (");
-                {
-                    let mut separated = query_builder.separated(", ");
-                    for asset_id in asset_ids {
-                        separated.push_bind(asset_id.clone());
-                    }
-                }
-                query_builder.push(")");
+                    .push(" WHERE viewed_at IS NULL");
+                push_surface_asset_filters(&mut query_builder, &view_filter);
                 query_builder.build().execute(pool).await?.rows_affected()
             }
             DatabasePool::PostgreSQL(pool) => {
@@ -900,14 +1000,8 @@ impl DatabaseService {
                     .push_bind(viewed_at.to_string())
                     .push(", viewed_by = ")
                     .push_bind(viewed_by.to_string())
-                    .push(" WHERE viewed_at IS NULL AND id IN (");
-                {
-                    let mut separated = query_builder.separated(", ");
-                    for asset_id in asset_ids {
-                        separated.push_bind(asset_id.clone());
-                    }
-                }
-                query_builder.push(")");
+                    .push(" WHERE viewed_at IS NULL");
+                push_surface_asset_filters(&mut query_builder, &view_filter);
                 query_builder.build().execute(pool).await?.rows_affected()
             }
         };
@@ -979,45 +1073,16 @@ impl DatabaseService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let exists = match runtime {
-            DatabasePool::SQLite(pool) => sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(1) FROM surface_relations WHERE program_id = ? AND from_asset_id = ? AND to_asset_id = ? AND relation_type = ?",
-            )
-            .bind(&relation.program_id)
-            .bind(&relation.from_asset_id)
-            .bind(&relation.to_asset_id)
-            .bind(&relation.relation_type)
-            .fetch_one(pool)
-            .await?,
-            DatabasePool::MySQL(pool) => sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(1) FROM surface_relations WHERE program_id = ? AND from_asset_id = ? AND to_asset_id = ? AND relation_type = ?",
-            )
-            .bind(&relation.program_id)
-            .bind(&relation.from_asset_id)
-            .bind(&relation.to_asset_id)
-            .bind(&relation.relation_type)
-            .fetch_one(pool)
-            .await?,
-            DatabasePool::PostgreSQL(pool) => sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(1) FROM surface_relations WHERE program_id = $1 AND from_asset_id = $2 AND to_asset_id = $3 AND relation_type = $4",
-            )
-            .bind(&relation.program_id)
-            .bind(&relation.from_asset_id)
-            .bind(&relation.to_asset_id)
-            .bind(&relation.relation_type)
-            .fetch_one(pool)
-            .await?,
-        };
-
-        if exists > 0 {
-            return Ok(());
-        }
-
         let sql = r#"
             INSERT INTO surface_relations (
                 id, program_id, from_asset_id, to_asset_id, relation_type, source, confidence_score,
                 evidence_id, first_seen_at, last_seen_at, active, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM surface_relations
+                WHERE program_id = ? AND from_asset_id = ? AND to_asset_id = ? AND relation_type = ?
+            )
         "#;
 
         match runtime {
@@ -1037,6 +1102,10 @@ impl DatabaseService {
                     .bind(&relation.metadata_json)
                     .bind(&relation.created_at)
                     .bind(&relation.updated_at)
+                    .bind(&relation.program_id)
+                    .bind(&relation.from_asset_id)
+                    .bind(&relation.to_asset_id)
+                    .bind(&relation.relation_type)
                     .execute(pool)
                     .await?;
             }
@@ -1056,6 +1125,10 @@ impl DatabaseService {
                     .bind(&relation.metadata_json)
                     .bind(&relation.created_at)
                     .bind(&relation.updated_at)
+                    .bind(&relation.program_id)
+                    .bind(&relation.from_asset_id)
+                    .bind(&relation.to_asset_id)
+                    .bind(&relation.relation_type)
                     .execute(pool)
                     .await?;
             }
@@ -1065,7 +1138,12 @@ impl DatabaseService {
                     INSERT INTO surface_relations (
                         id, program_id, from_asset_id, to_asset_id, relation_type, source, confidence_score,
                         evidence_id, first_seen_at, last_seen_at, active, metadata_json, created_at, updated_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    )
+                    SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM surface_relations
+                        WHERE program_id = $15 AND from_asset_id = $16 AND to_asset_id = $17 AND relation_type = $18
+                    )
                     "#,
                 )
                 .bind(&relation.id)
@@ -1082,6 +1160,10 @@ impl DatabaseService {
                 .bind(&relation.metadata_json)
                 .bind(&relation.created_at)
                 .bind(&relation.updated_at)
+                .bind(&relation.program_id)
+                .bind(&relation.from_asset_id)
+                .bind(&relation.to_asset_id)
+                .bind(&relation.relation_type)
                 .execute(pool)
                 .await?;
             }
@@ -1324,6 +1406,95 @@ impl DatabaseService {
                 .bind(&observation.metadata_json)
                 .execute(pool)
                 .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn create_surface_observations(
+        &self,
+        observations: &[SurfaceObservationRow],
+    ) -> Result<()> {
+        if observations.is_empty() {
+            return Ok(());
+        }
+
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        const OBSERVATION_BATCH_SIZE: usize = 80;
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                for batch in observations.chunks(OBSERVATION_BATCH_SIZE) {
+                    let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(
+                        "INSERT INTO surface_observations (id, run_id, program_id, artifact_type, object_key, payload_json, source_plugin, confidence_score, observed_at, normalized, metadata_json) ",
+                    );
+                    query_builder.push_values(batch, |mut row, observation| {
+                        row.push_bind(&observation.id)
+                            .push_bind(&observation.run_id)
+                            .push_bind(&observation.program_id)
+                            .push_bind(&observation.artifact_type)
+                            .push_bind(&observation.object_key)
+                            .push_bind(&observation.payload_json)
+                            .push_bind(&observation.source_plugin)
+                            .push_bind(observation.confidence_score)
+                            .push_bind(&observation.observed_at)
+                            .push_bind(observation.normalized)
+                            .push_bind(&observation.metadata_json);
+                    });
+                    query_builder.build().execute(&mut *tx).await?;
+                }
+                tx.commit().await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                for batch in observations.chunks(OBSERVATION_BATCH_SIZE) {
+                    let mut query_builder = QueryBuilder::<MySql>::new(
+                        "INSERT INTO surface_observations (id, run_id, program_id, artifact_type, object_key, payload_json, source_plugin, confidence_score, observed_at, normalized, metadata_json) ",
+                    );
+                    query_builder.push_values(batch, |mut row, observation| {
+                        row.push_bind(&observation.id)
+                            .push_bind(&observation.run_id)
+                            .push_bind(&observation.program_id)
+                            .push_bind(&observation.artifact_type)
+                            .push_bind(&observation.object_key)
+                            .push_bind(&observation.payload_json)
+                            .push_bind(&observation.source_plugin)
+                            .push_bind(observation.confidence_score)
+                            .push_bind(&observation.observed_at)
+                            .push_bind(observation.normalized)
+                            .push_bind(&observation.metadata_json);
+                    });
+                    query_builder.build().execute(&mut *tx).await?;
+                }
+                tx.commit().await?;
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                for batch in observations.chunks(OBSERVATION_BATCH_SIZE) {
+                    let mut query_builder = QueryBuilder::<Postgres>::new(
+                        "INSERT INTO surface_observations (id, run_id, program_id, artifact_type, object_key, payload_json, source_plugin, confidence_score, observed_at, normalized, metadata_json) ",
+                    );
+                    query_builder.push_values(batch, |mut row, observation| {
+                        row.push_bind(&observation.id)
+                            .push_bind(&observation.run_id)
+                            .push_bind(&observation.program_id)
+                            .push_bind(&observation.artifact_type)
+                            .push_bind(&observation.object_key)
+                            .push_bind(&observation.payload_json)
+                            .push_bind(&observation.source_plugin)
+                            .push_bind(observation.confidence_score)
+                            .push_bind(&observation.observed_at)
+                            .push_bind(observation.normalized)
+                            .push_bind(&observation.metadata_json);
+                    });
+                    query_builder.build().execute(&mut *tx).await?;
+                }
+                tx.commit().await?;
             }
         }
 

@@ -46,6 +46,7 @@ export interface AssistantSessionSettings {
   ragEnabled: boolean
   webSearchEnabled: boolean
   tenthManEnabled: boolean
+  harnessMaxContinuations: number
 }
 
 export interface AssistantConversationBinding extends AssistantSessionSettings {

@@ -3,6 +3,7 @@ import type { AgentTask } from '@/types/agentTask'
 export interface PersistedAgentTaskRow {
   id: string
   execution_id: string
+  conversation_id?: string | null
   item_index: number
   content: string
   status: string

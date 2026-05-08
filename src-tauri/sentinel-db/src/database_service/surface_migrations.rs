@@ -326,6 +326,7 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_risk ON surface_assets(risk_score DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_viewed ON surface_assets(viewed_at)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_viewed_type ON surface_assets(program_id, viewed_at, asset_type)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_type_status_seen ON surface_assets(program_id, asset_type, status, last_seen_at DESC, id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_fqdn ON surface_domain_assets(fqdn)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_root ON surface_domain_assets(root_domain)",
             "CREATE INDEX IF NOT EXISTS idx_surface_ip_assets_ip ON surface_ip_assets(ip_address)",
@@ -339,6 +340,7 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_from_asset ON surface_relations(from_asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_to_asset ON surface_relations(to_asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_from_to ON surface_relations(from_asset_id, to_asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_relations_program_from_to_type ON surface_relations(program_id, from_asset_id, to_asset_id, relation_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_type ON surface_relations(relation_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_asset ON surface_fingerprints(asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_program_category ON surface_fingerprints(program_id, normalized_category)",
@@ -355,6 +357,7 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_discovery_runs_started ON surface_discovery_runs(started_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_observations_run ON surface_observations(run_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_observations_type ON surface_observations(artifact_type)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_observations_plugin_artifact_target ON surface_observations(source_plugin, artifact_type, program_id, object_key, observed_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_seeds_program ON surface_seeds(program_id)",
         ];
 
@@ -739,6 +742,7 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_risk ON surface_assets(risk_score DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_viewed ON surface_assets(viewed_at)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_viewed_type ON surface_assets(program_id, viewed_at, asset_type)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_type_status_seen ON surface_assets(program_id, asset_type, status, last_seen_at DESC, id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_fqdn ON surface_domain_assets(fqdn)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_root ON surface_domain_assets(root_domain)",
             "CREATE INDEX IF NOT EXISTS idx_surface_ip_assets_ip ON surface_ip_assets(ip_address)",
@@ -752,6 +756,7 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_from_asset ON surface_relations(from_asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_to_asset ON surface_relations(to_asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_from_to ON surface_relations(from_asset_id, to_asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_relations_program_from_to_type ON surface_relations(program_id, from_asset_id, to_asset_id, relation_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_type ON surface_relations(relation_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_asset ON surface_fingerprints(asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_program_category ON surface_fingerprints(program_id, normalized_category)",
@@ -768,6 +773,7 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_discovery_runs_started ON surface_discovery_runs(started_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_observations_run ON surface_observations(run_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_observations_type ON surface_observations(artifact_type)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_observations_plugin_artifact_target ON surface_observations(source_plugin, artifact_type, program_id, object_key, observed_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_seeds_program ON surface_seeds(program_id)",
         ];
 

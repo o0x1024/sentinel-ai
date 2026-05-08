@@ -47,6 +47,7 @@ pub fn set_active_terminal_session(execution_id: &str, session_id: Option<&str>)
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn get_active_terminal_session(execution_id: &str) -> Option<String> {
     let Ok(sessions) = ACTIVE_TERMINAL_SESSIONS.lock() else {
         return None;

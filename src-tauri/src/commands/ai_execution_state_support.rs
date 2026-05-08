@@ -18,6 +18,9 @@ pub struct AiConversationListItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedAgentExecutionState {
+    pub execution_id: String,
+    pub conversation_id: Option<String>,
+    pub generation: Option<u64>,
     pub outcome: AgentExecutionOutcome,
     pub success: bool,
     pub error: Option<String>,
@@ -106,11 +109,18 @@ pub async fn persist_agent_execution_state(
         return Ok(());
     };
 
-    let Some(mut conversation) = db.get_ai_conversation(&event.execution_id).await? else {
+    let conversation_id = event
+        .conversation_id
+        .as_deref()
+        .unwrap_or(&event.execution_id);
+    let Some(mut conversation) = db.get_ai_conversation(conversation_id).await? else {
         return Ok(());
     };
 
     let state = PersistedAgentExecutionState {
+        execution_id: event.execution_id.clone(),
+        conversation_id: event.conversation_id.clone(),
+        generation: event.generation,
         outcome: event.outcome,
         success: event.success,
         error: event.error.clone(),
@@ -124,6 +134,24 @@ pub async fn persist_agent_execution_state(
     conversation.updated_at = Utc::now();
 
     db.update_ai_conversation(&conversation).await?;
+    if let Err(error) = db
+        .finish_agent_execution_turn(
+            &event.execution_id,
+            match event.outcome {
+                AgentExecutionOutcome::Succeeded => "succeeded",
+                AgentExecutionOutcome::Failed => "failed",
+                AgentExecutionOutcome::Cancelled => "cancelled",
+            },
+            event.error.as_deref().or(event.message.as_deref()),
+        )
+        .await
+    {
+        tracing::warn!(
+            "Failed to mirror execution state into agent_execution_turns for {}: {}",
+            event.execution_id,
+            error
+        );
+    }
     Ok(())
 }
 

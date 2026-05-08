@@ -39,9 +39,7 @@ pub(crate) const MAX_SAFE_OUTPUT_STORAGE_THRESHOLD: usize = 50_000;
 pub(crate) const USER_FORCED_RULES_CONFIG_CATEGORY: &str = "agent";
 pub(crate) const USER_FORCED_RULES_CONFIG_KEY: &str = "user_forced_rules";
 
-pub use crate::commands::ai_runtime_commands::{
-    AgentExecuteConfig, AgentExecuteRequest, HandleTaskExecutionStreamRequest,
-};
+pub use crate::commands::ai_runtime_commands::{AgentExecuteConfig, AgentExecuteRequest};
 
 // Re-export AI settings related types for backward compatibility
 pub use crate::commands::aisettings::{
@@ -434,6 +432,7 @@ pub(crate) async fn stream_chat_with_llm(
     service: &AiServiceWrapper,
     app_handle: &AppHandle,
     conversation_id: &str,
+    execution_id: &str,
     cancellation_generation: u64,
     message_id: &str,
     user_message: &str,
@@ -494,154 +493,186 @@ pub(crate) async fn stream_chat_with_llm(
     // 这里保持 stream_chat_with_llm 职责单一，仅负责流式输出。
 
     // 流式调用
-    let execution_id = conversation_id.to_string();
+    let execution_id = execution_id.to_string();
     let msg_id = message_id.to_string();
     let conv_id = conversation_id.to_string();
-    let app = app_handle.clone();
+    let stream_execution_id = execution_id.clone();
+    let stream_conversation_id = conv_id.clone();
     let execution_started_at_ms = chrono::Utc::now().timestamp_millis();
 
     // 记录用量
     let usage_data = Arc::new(std::sync::Mutex::new(None::<(u32, u32)>));
-    let usage_data_clone = usage_data.clone();
     let first_response_ms = Arc::new(std::sync::Mutex::new(None::<i64>));
-    let first_response_ms_clone = first_response_ms.clone();
 
-    let content = streaming_client
-        .stream_chat(
-            final_system_prompt.as_deref(),
-            user_message,
-            &history,
-            images.as_slice(),
-            move |chunk| {
-                if is_conversation_generation_cancelled(&conv_id, cancellation_generation) {
-                    return false;
-                }
-                match chunk {
-                    StreamContent::Text(text) => {
-                        mark_first_response_ms(
-                            first_response_ms_clone.as_ref(),
-                            execution_started_at_ms,
-                        );
-                        tracing::debug!("Stream chunk received: {} chars", text.len());
-                        crate::utils::ordered_message::emit_message_chunk_with_arch(
-                            &app,
-                            &execution_id,
-                            &msg_id,
-                            Some(&conv_id),
-                            ChunkType::Content,
-                            &text,
-                            false,
-                            None,
-                            None,
-                            None,
-                            Some(serde_json::json!({
-                                "generation": cancellation_generation,
-                            })),
-                        );
+    let mut empty_response_retries = 0usize;
+    let max_empty_response_retries = 2usize;
+    let content = loop {
+        let app = app_handle.clone();
+        let stream_execution_id = stream_execution_id.clone();
+        let stream_conversation_id = stream_conversation_id.clone();
+        let msg_id = msg_id.clone();
+        let usage_data_clone = usage_data.clone();
+        let first_response_ms_clone = first_response_ms.clone();
+        match streaming_client
+            .stream_chat(
+                final_system_prompt.as_deref(),
+                user_message,
+                &history,
+                images.as_slice(),
+                move |chunk| {
+                    if is_conversation_generation_cancelled(
+                        &stream_execution_id,
+                        cancellation_generation,
+                    ) {
+                        return false;
                     }
-                    StreamContent::Reasoning(text) => {
-                        mark_first_response_ms(
-                            first_response_ms_clone.as_ref(),
-                            execution_started_at_ms,
-                        );
-                        tracing::debug!("Stream reasoning received: {} chars", text.len());
-                        crate::utils::ordered_message::emit_message_chunk_with_arch(
-                            &app,
-                            &execution_id,
-                            &msg_id,
-                            Some(&conv_id),
-                            ChunkType::Thinking,
-                            &text,
-                            false,
-                            None,
-                            None,
-                            None,
-                            Some(serde_json::json!({
-                                "generation": cancellation_generation,
-                            })),
-                        );
-                    }
-                    StreamContent::Usage {
-                        input_tokens,
-                        output_tokens,
-                    } => {
-                        tracing::info!(
-                            "Stream usage received: input={}, output={}",
+                    match chunk {
+                        StreamContent::Text(text) => {
+                            mark_first_response_ms(
+                                first_response_ms_clone.as_ref(),
+                                execution_started_at_ms,
+                            );
+                            tracing::debug!("Stream chunk received: {} chars", text.len());
+                            crate::utils::ordered_message::emit_message_chunk_with_arch(
+                                &app,
+                                &stream_execution_id,
+                                &msg_id,
+                                Some(&stream_conversation_id),
+                                ChunkType::Content,
+                                &text,
+                                false,
+                                None,
+                                None,
+                                None,
+                                Some(serde_json::json!({
+                                    "generation": cancellation_generation,
+                                })),
+                            );
+                        }
+                        StreamContent::Reasoning(text) => {
+                            mark_first_response_ms(
+                                first_response_ms_clone.as_ref(),
+                                execution_started_at_ms,
+                            );
+                            tracing::debug!("Stream reasoning received: {} chars", text.len());
+                            crate::utils::ordered_message::emit_message_chunk_with_arch(
+                                &app,
+                                &stream_execution_id,
+                                &msg_id,
+                                Some(&stream_conversation_id),
+                                ChunkType::Thinking,
+                                &text,
+                                false,
+                                None,
+                                None,
+                                None,
+                                Some(serde_json::json!({
+                                    "generation": cancellation_generation,
+                                })),
+                            );
+                        }
+                        StreamContent::Usage {
                             input_tokens,
-                            output_tokens
-                        );
-                        if let Ok(mut guard) = usage_data_clone.lock() {
-                            *guard = Some((input_tokens, output_tokens));
+                            output_tokens,
+                        } => {
+                            tracing::info!(
+                                "Stream usage received: input={}, output={}",
+                                input_tokens,
+                                output_tokens
+                            );
+                            if let Ok(mut guard) = usage_data_clone.lock() {
+                                *guard = Some((input_tokens, output_tokens));
+                            }
+                        }
+                        StreamContent::ToolCallStart { id, name } => {
+                            tracing::info!("Tool call started: id={}, name={}", id, name);
+                            let _ = app.emit(
+                                "agent:tool_call_start",
+                                serde_json::json!({
+                                    "execution_id": &stream_execution_id,
+                                    "generation": cancellation_generation,
+                                    "tool_call_id": id,
+                                    "tool_name": name,
+                                }),
+                            );
+                        }
+                        StreamContent::ToolCallDelta { id, delta } => {
+                            tracing::debug!(
+                                "Tool call delta: id={}, delta_len={}",
+                                id,
+                                delta.len()
+                            );
+                            let _ = app.emit(
+                                "agent:tool_call_delta",
+                                serde_json::json!({
+                                    "execution_id": &stream_execution_id,
+                                    "generation": cancellation_generation,
+                                    "tool_call_id": id,
+                                    "delta": delta,
+                                }),
+                            );
+                        }
+                        StreamContent::ToolCallComplete {
+                            id,
+                            name,
+                            arguments,
+                        } => {
+                            tracing::info!("Tool call complete: id={}, name={}", id, name);
+                            let _ = app.emit(
+                                "agent:tool_call_complete",
+                                serde_json::json!({
+                                    "execution_id": &stream_execution_id,
+                                    "generation": cancellation_generation,
+                                    "tool_call_id": id,
+                                    "tool_name": name,
+                                    "arguments": arguments,
+                                }),
+                            );
+                        }
+                        StreamContent::ToolResult { id, result } => {
+                            tracing::info!("Tool result: id={}, result_len={}", id, result.len());
+                            let _ = app.emit(
+                                "agent:tool_result",
+                                serde_json::json!({
+                                    "execution_id": &stream_execution_id,
+                                    "generation": cancellation_generation,
+                                    "tool_call_id": id,
+                                    "result": result,
+                                }),
+                            );
+                        }
+                        StreamContent::Done => {
+                            tracing::debug!("Stream done received");
                         }
                     }
-                    StreamContent::ToolCallStart { id, name } => {
-                        tracing::info!("Tool call started: id={}, name={}", id, name);
-                        // 发送工具调用开始事件
-                        let _ = app.emit(
-                            "agent:tool_call_start",
-                            serde_json::json!({
-                                "execution_id": &execution_id,
-                                "generation": cancellation_generation,
-                                "tool_call_id": id,
-                                "tool_name": name,
-                            }),
-                        );
-                    }
-                    StreamContent::ToolCallDelta { id, delta } => {
-                        tracing::debug!("Tool call delta: id={}, delta_len={}", id, delta.len());
-                        // 发送工具调用参数增量
-                        let _ = app.emit(
-                            "agent:tool_call_delta",
-                            serde_json::json!({
-                                "execution_id": &execution_id,
-                                "generation": cancellation_generation,
-                                "tool_call_id": id,
-                                "delta": delta,
-                            }),
-                        );
-                    }
-                    StreamContent::ToolCallComplete {
-                        id,
-                        name,
-                        arguments,
-                    } => {
-                        tracing::info!("Tool call complete: id={}, name={}", id, name);
-                        // 发送工具调用完成事件
-                        let _ = app.emit(
-                            "agent:tool_call_complete",
-                            serde_json::json!({
-                                "execution_id": &execution_id,
-                                "generation": cancellation_generation,
-                                "tool_call_id": id,
-                                "tool_name": name,
-                                "arguments": arguments,
-                            }),
-                        );
-                    }
-                    StreamContent::ToolResult { id, result } => {
-                        tracing::info!("Tool result: id={}, result_len={}", id, result.len());
-                        // 发送工具执行结果事件
-                        let _ = app.emit(
-                            "agent:tool_result",
-                            serde_json::json!({
-                                "execution_id": &execution_id,
-                                "generation": cancellation_generation,
-                                "tool_call_id": id,
-                                "result": result,
-                            }),
-                        );
-                    }
-                    StreamContent::Done => {
-                        tracing::debug!("Stream done received");
-                    }
+                    true
+                },
+            )
+            .await
+        {
+            Ok(content) => break content,
+            Err(error) => {
+                if is_conversation_generation_cancelled(&execution_id, cancellation_generation) {
+                    return Err("Execution cancelled by user".to_string());
                 }
-                true
-            },
-        )
-        .await
-        .map_err(|e| format!("LLM stream error: {}", e))?;
+                let error_text = error.to_string();
+                if error_text.contains("LLM stream returned empty response")
+                    && empty_response_retries < max_empty_response_retries
+                {
+                    empty_response_retries += 1;
+                    tracing::warn!(
+                        "Retrying empty LLM stream with same model (attempt {}/{})",
+                        empty_response_retries,
+                        max_empty_response_retries
+                    );
+                    continue;
+                }
+                return Err(format!("LLM stream error: {}", error_text));
+            }
+        }
+    };
 
-    if is_conversation_generation_cancelled(conversation_id, cancellation_generation) {
+    if is_conversation_generation_cancelled(&execution_id, cancellation_generation) {
         return Err("Execution cancelled by user".to_string());
     }
 
@@ -649,7 +680,7 @@ pub(crate) async fn stream_chat_with_llm(
     if is_final && has_conversation {
         crate::utils::ordered_message::emit_message_chunk_with_arch(
             app_handle,
-            conversation_id,
+            &execution_id,
             message_id,
             Some(conversation_id),
             ChunkType::Meta,
@@ -736,7 +767,8 @@ pub(crate) async fn stream_chat_with_llm(
             let _ = app_handle.emit(
                 "agent:assistant_message_saved",
                 &serde_json::json!({
-                    "execution_id": conversation_id,
+	                    "execution_id": execution_id,
+                    "conversation_id": conversation_id,
                     "generation": cancellation_generation,
                     "message_id": message_id,
                     "content": content,
@@ -846,6 +878,8 @@ pub enum AgentExecutionOutcome {
 pub struct AgentExecutionFinishedEvent {
     pub execution_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub generation: Option<u64>,
     pub outcome: AgentExecutionOutcome,
     pub success: bool,
@@ -866,6 +900,7 @@ pub(crate) fn emit_agent_execution_finished(
         app_handle,
         execution_id,
         None,
+        None,
         outcome,
         error,
         response,
@@ -873,9 +908,10 @@ pub(crate) fn emit_agent_execution_finished(
     )
 }
 
-pub(crate) fn emit_agent_execution_finished_for_generation(
+pub(crate) fn emit_agent_execution_finished_for_generation_with_conversation(
     app_handle: &AppHandle,
     execution_id: &str,
+    conversation_id: &str,
     generation: u64,
     outcome: AgentExecutionOutcome,
     error: Option<String>,
@@ -885,6 +921,7 @@ pub(crate) fn emit_agent_execution_finished_for_generation(
     emit_agent_execution_finished_internal(
         app_handle,
         execution_id,
+        Some(conversation_id),
         Some(generation),
         outcome,
         error,
@@ -896,6 +933,7 @@ pub(crate) fn emit_agent_execution_finished_for_generation(
 fn emit_agent_execution_finished_internal(
     app_handle: &AppHandle,
     execution_id: &str,
+    conversation_id: Option<&str>,
     generation: Option<u64>,
     outcome: AgentExecutionOutcome,
     error: Option<String>,
@@ -916,6 +954,7 @@ fn emit_agent_execution_finished_internal(
     let success = matches!(outcome, AgentExecutionOutcome::Succeeded);
     let finished_payload = AgentExecutionFinishedEvent {
         execution_id: execution_id.to_string(),
+        conversation_id: conversation_id.map(str::to_string),
         generation,
         outcome,
         success,

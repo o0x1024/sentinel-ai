@@ -524,6 +524,14 @@ const BooleanPolicySwitch = defineComponent({
 
 const categoryDisplayName = (category: string) => {
   const nameMap: Record<string, string> = {
+    file_code: '文件与代码',
+    terminal: '终端与运行环境',
+    web_network: 'Web 与网络',
+    security_recon: '安全侦察与扫描',
+    vulnerability_research: '漏洞利用研究',
+    collaboration: '任务与人机协作',
+    agent_orchestration: 'Agent 编排',
+    knowledge_extension: '知识与扩展',
     network: '网络',
     security: '安全',
     data: '数据',
@@ -545,6 +553,14 @@ const categoryDisplayName = (category: string) => {
 
 const categoryBadgeClass = (category: string) => {
   const map: Record<string, string> = {
+    file_code: 'badge-info',
+    terminal: 'badge-neutral',
+    web_network: 'badge-primary',
+    security_recon: 'badge-warning',
+    vulnerability_research: 'badge-error',
+    collaboration: 'badge-secondary',
+    agent_orchestration: 'badge-accent',
+    knowledge_extension: 'badge-success',
     network: 'badge-info',
     security: 'badge-error',
     data: 'badge-success',
@@ -566,6 +582,14 @@ const categoryBadgeClass = (category: string) => {
 
 const categoryIcon = (category: string) => {
   const map: Record<string, string> = {
+    file_code: 'fas fa-code',
+    terminal: 'fas fa-terminal',
+    web_network: 'fas fa-globe',
+    security_recon: 'fas fa-binoculars',
+    vulnerability_research: 'fas fa-bug',
+    collaboration: 'fas fa-list-check',
+    agent_orchestration: 'fas fa-code-branch',
+    knowledge_extension: 'fas fa-lightbulb',
     network: 'fas fa-network-wired',
     security: 'fas fa-shield-alt',
     data: 'fas fa-database',

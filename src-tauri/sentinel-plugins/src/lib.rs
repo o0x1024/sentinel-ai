@@ -73,6 +73,10 @@ pub use runtime_config::{
     PluginRuntimeSettings,
 };
 pub use runtime_events::register_app_handle;
+pub use service_probe_runtime::{
+    op_probe_services, probe_services, ServiceProbeRequest, ServiceProbeResponse,
+    ServiceProbeResult, ServiceProbeRule, ServiceProbeTarget,
+};
 pub use types::*;
 
 /// 获取内置插件目录路径

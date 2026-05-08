@@ -223,6 +223,7 @@ impl DatabaseService {
         if !matches!(config.db_type, DatabaseType::PostgreSQL) {
             let runtime = DatabasePool::connect(&config).await?;
             self.ensure_compat_schema(&runtime).await?;
+            self.ensure_bot_compat_schema(&runtime).await?;
             self.runtime_pool = Some(runtime.clone());
             self.pool = None;
             self.ensure_runtime_default_data().await?;
@@ -920,6 +921,21 @@ impl DatabaseService {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS monitor_tasks (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                interval_secs BIGINT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                config_json TEXT NOT NULL,
+                task_json TEXT NOT NULL,
+                last_run_at TEXT,
+                next_run_at TEXT,
+                run_count BIGINT NOT NULL DEFAULT 0,
+                events_detected BIGINT NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"#,
             r#"CREATE TABLE IF NOT EXISTS ai_conversations (
                 id TEXT PRIMARY KEY,
                 title TEXT,
@@ -1395,6 +1411,11 @@ impl DatabaseService {
         self.execute_runtime_ddl(
             runtime,
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_configurations_category_key ON configurations(category, key)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_monitor_tasks_program_enabled_next_run ON monitor_tasks(program_id, enabled, next_run_at)",
         )
         .await?;
         self.execute_runtime_ddl(

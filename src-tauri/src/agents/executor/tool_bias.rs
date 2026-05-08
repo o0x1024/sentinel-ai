@@ -1,10 +1,8 @@
 use tauri::AppHandle;
 
 use sentinel_tools::buildin_tools::{
-    BrowserShellTool, BrowserTool, FileReadTool, ShellTool, ToolSearchRuntimeContext,
-    ToolSearchTool,
+    BrowserShellTool, FileReadTool, ShellTool, ToolSearchRuntimeContext, ToolSearchTool,
 };
-use sentinel_tools::terminal::server::TerminalServer;
 use serde_json::Value;
 
 use crate::agents::context_engineering::checkpoint::ContextRunState;
@@ -44,9 +42,7 @@ fn apply_browser_shell_bias(
     }
 
     if task_explicitly_targets_bound_browser_shell(task) {
-        tool_ids.retain(|id| {
-            id != ShellTool::NAME && id != TerminalServer::NAME && id != BrowserTool::NAME
-        });
+        tool_ids.retain(|id| id != ShellTool::NAME);
     }
 
     let browser_shell_id = BrowserShellTool::NAME.to_string();
@@ -497,12 +493,7 @@ mod tests {
         };
 
         let tool_ids = apply_browser_shell_bias(
-            vec![
-                "shell".to_string(),
-                "interactive_shell".to_string(),
-                "browser".to_string(),
-                "tool_search".to_string(),
-            ],
+            vec!["shell".to_string(), "tool_search".to_string()],
             "在当前浏览器shell中执行一个ls",
             Some("browser-shell-1"),
             &config,

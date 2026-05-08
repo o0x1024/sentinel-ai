@@ -5,7 +5,8 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 
 use crate::buildin_tools::shell::{
-    check_shell_permission, get_shell_config, ShellExecutionMode,
+    check_shell_permission, get_shell_config, shell_for_execution_mode, ShellExecutionMode,
+    ShellTool,
 };
 use crate::dynamic_tool::{
     DynamicToolBuilder, DynamicToolDef, ToolCategory, ToolExecutionPolicy, ToolSource,
@@ -14,20 +15,23 @@ use crate::terminal::{
     decode_transport_html_entities, detect_shell_prompt, normalize_command, ExecutionMode,
     TerminalServer, TerminalSessionConfig, WaitStrategy, TERMINAL_MANAGER,
 };
-use crate::terminal_output::{build_terminal_session_fingerprint, sanitize_interactive_output};
-
-pub const EXEC_COMMAND_TOOL_NAME: &str = "exec_command";
-pub const WRITE_STDIN_TOOL_NAME: &str = "write_stdin";
+use crate::terminal_output::{
+    build_terminal_session_fingerprint, detect_prompt_state, sanitize_interactive_output,
+    strip_ansi_codes,
+};
 
 const DEFAULT_DOCKER_IMAGE: &str = "sentinel-sandbox:latest";
-const DEFAULT_EXEC_YIELD_TIME_MS: u64 = 10_000;
+const DEFAULT_EXEC_YIELD_TIME_MS: u64 = 5_000;
 const DEFAULT_WRITE_STDIN_YIELD_TIME_MS: u64 = 250;
 const MIN_YIELD_TIME_MS: u64 = 250;
 const MIN_EMPTY_YIELD_TIME_MS: u64 = 5_000;
 const MAX_YIELD_TIME_MS: u64 = 30_000;
 const MAX_BACKGROUND_YIELD_TIME_MS: u64 = 300_000;
+const TTY_ENTER: char = '\r';
 
 static OUTPUT_CURSORS: Lazy<RwLock<HashMap<String, usize>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+static RENDERED_SCREENS: Lazy<RwLock<HashMap<String, String>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 #[derive(Debug, Clone)]
@@ -72,6 +76,24 @@ async fn get_cursor(execution_id: Option<&str>, session_id: &str) -> Option<usiz
         .await
         .get(&cursor_key(execution_id, session_id))
         .copied()
+}
+
+async fn set_rendered_screen(execution_id: Option<&str>, session_id: &str, output: &str) {
+    if output.trim().is_empty() {
+        return;
+    }
+    RENDERED_SCREENS
+        .write()
+        .await
+        .insert(cursor_key(execution_id, session_id), output.to_string());
+}
+
+async fn get_rendered_screen(execution_id: Option<&str>, session_id: &str) -> Option<String> {
+    RENDERED_SCREENS
+        .read()
+        .await
+        .get(&cursor_key(execution_id, session_id))
+        .cloned()
 }
 
 fn execution_mode_from_value(value: Option<&Value>) -> ExecutionMode {
@@ -151,6 +173,85 @@ fn collect_options_from_exec_args(args: &Value) -> CollectOptions {
             .and_then(Value::as_u64)
             .map(|value| value as usize),
     }
+}
+
+fn classify_session_status(output: &str, completed: bool, known_interactive: bool) -> &'static str {
+    if completed {
+        return "completed";
+    }
+    if ShellTool::output_looks_like_interactive_prompt(output, "") || known_interactive {
+        return "input_waiting";
+    }
+    "running"
+}
+
+fn remove_session_fields_for_completed_shell_result(result: &mut Value) {
+    let Some(obj) = result.as_object_mut() else {
+        return;
+    };
+    obj.remove("session_id");
+    obj.remove("process_id");
+}
+
+fn attach_prompt_state(result: &mut Value, rendered_output: &str) {
+    if let Some(prompt_state) = detect_prompt_state(rendered_output) {
+        result["prompt_state"] = prompt_state;
+        result["input_hint"] = json!(
+            "Use action=poll to read without writing, action=write with chars for raw input, action=key with explicit key names for terminal keys, or action=submit to press TTY Enter."
+        );
+    } else {
+        result["prompt_state"] = Value::Null;
+        result["input_hint"] = Value::Null;
+    }
+}
+
+fn target_option_from_args(args: &Value) -> Option<String> {
+    args.get("target_option")
+        .or_else(|| args.get("option"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn key_input_from_args(args: &Value) -> Result<String, String> {
+    let key = args
+        .get("key")
+        .or_else(|| args.get("key_name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "shell action=key requires key".to_string())?;
+    let normalized = key
+        .chars()
+        .filter(|ch| !matches!(ch, '-' | '_' | ' '))
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let input = match normalized.as_str() {
+        "arrowup" | "up" => "\x1b[A",
+        "arrowdown" | "down" => "\x1b[B",
+        "arrowright" | "right" => "\x1b[C",
+        "arrowleft" | "left" => "\x1b[D",
+        "enter" | "return" => "\r",
+        "escape" | "esc" => "\x1b",
+        "ctrlc" | "controlc" => "\x03",
+        "backspace" => "\x7f",
+        "tab" => "\t",
+        "space" => " ",
+        other => {
+            return Err(format!(
+                "unsupported shell key {:?}; supported keys: ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Enter, Escape, CtrlC, Backspace, Tab, Space",
+                other
+            ));
+        }
+    };
+    let repeat = args
+        .get("repeat")
+        .or_else(|| args.get("count"))
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .clamp(1, 100) as usize;
+    Ok(input.repeat(repeat))
 }
 
 fn collect_options_from_write_args(args: &Value, input_is_empty: bool) -> CollectOptions {
@@ -263,6 +364,7 @@ async fn resolve_terminal_session(
     fallback_active_session_id: Option<&str>,
     working_directory: Option<&str>,
     default_new_session: bool,
+    preflight_command: Option<&str>,
 ) -> Result<ResolvedTerminalSession, String> {
     let config = get_shell_config().await;
     let default_mode = match config.default_execution_mode {
@@ -278,7 +380,12 @@ async fn resolve_terminal_session(
         .get("docker_image")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .or_else(|| config.docker_config.as_ref().map(|value| value.image.clone()))
+        .or_else(|| {
+            config
+                .docker_config
+                .as_ref()
+                .map(|value| value.image.clone())
+        })
         .unwrap_or_else(|| DEFAULT_DOCKER_IMAGE.to_string());
     let requested_working_dir = args
         .get("working_dir")
@@ -312,6 +419,13 @@ async fn resolve_terminal_session(
             if let Some(session_lock) = TERMINAL_MANAGER.get_session(session_id).await {
                 let session = session_lock.read().await;
                 if session.is_healthy() {
+                    if session.config.execution_mode == ExecutionMode::Host {
+                        if let Some(command) = preflight_command {
+                            check_shell_permission(command, execution_id)
+                                .await
+                                .map_err(|err| format!("Permission denied: {}", err))?;
+                        }
+                    }
                     return Ok(ResolvedTerminalSession {
                         session_id: session.id.clone(),
                         execution_mode: session.config.execution_mode,
@@ -324,7 +438,13 @@ async fn resolve_terminal_session(
         }
     }
 
-    let shell = "bash".to_string();
+    let shell = shell_for_execution_mode(
+        &config,
+        match execution_mode {
+            ExecutionMode::Docker => ShellExecutionMode::Docker,
+            ExecutionMode::Host => ShellExecutionMode::Host,
+        },
+    );
     let working_dir = match execution_mode {
         ExecutionMode::Docker => "/workspace".to_string(),
         ExecutionMode::Host => requested_working_dir
@@ -350,6 +470,14 @@ async fn resolve_terminal_session(
         container_name: Some("sentinel-sandbox-main".to_string()),
     };
 
+    if execution_mode == ExecutionMode::Host {
+        if let Some(command) = preflight_command {
+            check_shell_permission(command, execution_id)
+                .await
+                .map_err(|err| format!("Permission denied: {}", err))?;
+        }
+    }
+
     let (session_id, _output_rx) = TERMINAL_MANAGER.create_session(session_config).await?;
     let cursor = TERMINAL_MANAGER.session_output_cursor(&session_id).await?;
     set_cursor(execution_id, &session_id, cursor).await;
@@ -370,6 +498,7 @@ async fn run_terminal_command(
     working_directory: Option<String>,
     codex_exec_shape: bool,
 ) -> Result<Value, String> {
+    let started_at = Instant::now();
     let execution_id = execution_id_override
         .as_deref()
         .or_else(|| args.get("execution_id").and_then(Value::as_str));
@@ -379,6 +508,29 @@ async fn run_terminal_command(
         .or_else(|| args.get("initial_command"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    let prepared_command = original_command.as_ref().map(|original_command| {
+        let decoded_command = decode_transport_html_entities(original_command);
+        let command_was_html_decoded = decoded_command != *original_command;
+        let skip_normalize = args
+            .get("skip_normalize")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let (command, was_normalized) = if skip_normalize {
+            (decoded_command.clone(), false)
+        } else {
+            normalize_command(&decoded_command)
+        };
+        (
+            command,
+            decoded_command,
+            original_command.clone(),
+            command_was_html_decoded,
+            was_normalized,
+        )
+    });
+    let preflight_command = prepared_command
+        .as_ref()
+        .map(|(command, _, _, _, _)| command.as_str());
 
     let session = resolve_terminal_session(
         &args,
@@ -386,6 +538,7 @@ async fn run_terminal_command(
         fallback_active_session_id.as_deref(),
         working_directory.as_deref(),
         codex_exec_shape,
+        preflight_command,
     )
     .await?;
     let session_fingerprint = build_terminal_session_fingerprint(
@@ -395,7 +548,14 @@ async fn run_terminal_command(
         &session.working_dir,
     );
 
-    let Some(original_command) = original_command else {
+    let Some((
+        command,
+        decoded_command,
+        original_command,
+        command_was_html_decoded,
+        was_normalized,
+    )) = prepared_command
+    else {
         return Ok(json!({
             "session_id": session.session_id,
             "process_id": session.session_id,
@@ -405,28 +565,14 @@ async fn run_terminal_command(
             "shell": session.shell,
             "working_dir": session.working_dir,
             "completed": false,
+            "status": "running",
+            "success": false,
             "message": "Connected to terminal session",
-            "instructions": "Use write_stdin with this session_id to send input or poll output."
+            "instructions": "Call shell with this session_id and chars to send input or poll output."
         }));
     };
 
-    let decoded_command = decode_transport_html_entities(&original_command);
-    let command_was_html_decoded = decoded_command != original_command;
-    let skip_normalize = args
-        .get("skip_normalize")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let (command, was_normalized) = if skip_normalize {
-        (decoded_command.clone(), false)
-    } else {
-        normalize_command(&decoded_command)
-    };
-
-    if session.execution_mode == ExecutionMode::Host {
-        check_shell_permission(&command, execution_id)
-            .await
-            .map_err(|err| format!("Permission denied: {}", err))?;
-    }
+    let known_interactive = ShellTool::command_looks_interactive(&command).is_some();
 
     let start_cursor = TERMINAL_MANAGER
         .session_output_cursor(&session.session_id)
@@ -444,8 +590,12 @@ async fn run_terminal_command(
     set_cursor(execution_id, &session.session_id, collected.next_cursor).await;
 
     let raw_output = String::from_utf8_lossy(&collected.output).to_string();
-    let clean_output =
-        truncate_for_tokens(sanitize_interactive_output(&raw_output, &command), options.max_output_tokens);
+    let clean_output = truncate_for_tokens(
+        sanitize_interactive_output(&raw_output, &command),
+        options.max_output_tokens,
+    );
+    set_rendered_screen(execution_id, &session.session_id, &clean_output).await;
+    let status = classify_session_status(&clean_output, collected.completed, known_interactive);
     let mut result = json!({
         "session_id": session.session_id,
         "process_id": session.session_id,
@@ -455,12 +605,18 @@ async fn run_terminal_command(
         "shell": session.shell,
         "working_dir": session.working_dir,
         "command": command,
-        "output": clean_output,
+        "output": clean_output.clone(),
+        "stdout": clean_output,
+        "stderr": "",
         "completed": collected.completed,
+        "status": status,
+        "success": collected.completed,
+        "execution_time_ms": started_at.elapsed().as_millis() as u64,
         "truncated": collected.timed_out && !collected.completed,
         "exit_code": Value::Null,
         "output_cursor": collected.next_cursor,
     });
+    attach_prompt_state(&mut result, &clean_output);
 
     if codex_exec_shape {
         result["raw_output"] = result["output"].clone();
@@ -474,8 +630,18 @@ async fn run_terminal_command(
     }
     if collected.timed_out && !collected.completed {
         result["hint"] = json!(
-            "The command is still running or waiting for input. Use write_stdin with the returned session_id to send input or poll output."
+            "The command is still running or waiting for input. Call shell with the returned session_id and chars to send input or poll output."
         );
+    }
+    if codex_exec_shape && collected.completed {
+        let session_id = result
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if let Some(session_id) = session_id {
+            let _ = TERMINAL_MANAGER.stop_session(&session_id).await;
+        }
+        remove_session_fields_for_completed_shell_result(&mut result);
     }
 
     Ok(result)
@@ -497,7 +663,7 @@ pub async fn execute_interactive_shell(
     .await
 }
 
-pub async fn execute_exec_command(
+pub async fn execute_shell_session_command(
     args: Value,
     execution_id_override: Option<String>,
     working_directory: Option<String>,
@@ -505,10 +671,14 @@ pub async fn execute_exec_command(
     run_terminal_command(args, execution_id_override, None, working_directory, true).await
 }
 
-pub async fn execute_write_stdin(
+pub async fn execute_shell_session_input(
     args: Value,
     execution_id_override: Option<String>,
 ) -> Result<Value, String> {
+    let action = args
+        .get("action")
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_ascii_lowercase());
     let execution_id = execution_id_override
         .as_deref()
         .or_else(|| args.get("execution_id").and_then(Value::as_str));
@@ -518,13 +688,73 @@ pub async fn execute_write_stdin(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "write_stdin requires session_id".to_string())?;
-    let input = args
+        .ok_or_else(|| "shell session continuation requires session_id".to_string())?;
+    if matches!(action.as_deref(), Some("cancel") | Some("stop")) {
+        TERMINAL_MANAGER.stop_session(session_id).await?;
+        return Ok(json!({
+            "session_id": session_id,
+            "process_id": session_id,
+            "output": "",
+            "stdout": "",
+            "stderr": "",
+            "completed": true,
+            "status": "cancelled",
+            "success": true,
+            "truncated": false,
+            "exit_code": Value::Null,
+        }));
+    }
+    let input_arg = args
         .get("chars")
         .or_else(|| args.get("input"))
-        .or_else(|| args.get("input_text"))
-        .and_then(Value::as_str)
+        .or_else(|| args.get("input_text"));
+    let action = match action.as_deref() {
+        Some("poll") | None if input_arg.is_none() => "poll",
+        Some("write") | None => "write",
+        Some("key") => "key",
+        Some("submit") => "submit",
+        Some("select_option") => {
+            return Err(
+                "shell action=select_option is not supported; use action=key with ArrowUp/ArrowDown/ArrowLeft/ArrowRight and Enter".to_string(),
+            )
+        }
+        Some("start") => {
+            return Err(
+                "shell action=start requires command/cmd and cannot continue a session".to_string(),
+            )
+        }
+        Some(other) => return Err(format!("unsupported shell session action: {}", other)),
+    };
+    if action == "poll" && input_arg.is_some() {
+        return Err("shell action=poll must not include chars/input/input_text".to_string());
+    }
+    if matches!(action, "key" | "submit") && input_arg.is_some() {
+        return Err(format!(
+            "shell action={} must not include chars/input/input_text; use action=write for raw input",
+            action
+        ));
+    }
+
+    let current_screen = get_rendered_screen(execution_id, session_id)
+        .await
         .unwrap_or_default();
+    let input = match action {
+        "poll" => String::new(),
+        "write" => input_arg
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "shell action=write requires chars/input/input_text".to_string())?,
+        "key" => key_input_from_args(&args)?,
+        "submit" => {
+            if target_option_from_args(&args).is_some() {
+                return Err(
+                    "shell action=submit does not select options; use action=key with explicit terminal keys".to_string(),
+                );
+            }
+            TTY_ENTER.to_string()
+        }
+        _ => unreachable!("session action was already normalized"),
+    };
 
     let input_is_empty = input.is_empty();
     let start_cursor = if input_is_empty {
@@ -548,16 +778,35 @@ pub async fn execute_write_stdin(
     set_cursor(execution_id, session_id, collected.next_cursor).await;
 
     let raw_output = String::from_utf8_lossy(&collected.output).to_string();
-    let clean_output = truncate_for_tokens(raw_output, options.max_output_tokens);
-    Ok(json!({
+    let clean_output =
+        truncate_for_tokens(strip_ansi_codes(&raw_output), options.max_output_tokens);
+    set_rendered_screen(execution_id, session_id, &clean_output).await;
+    let prompt_screen = if clean_output.trim().is_empty() {
+        current_screen
+    } else {
+        clean_output.clone()
+    };
+    let status = classify_session_status(&prompt_screen, collected.completed, false);
+    let mut result = json!({
         "session_id": session_id,
         "process_id": session_id,
-        "output": clean_output,
+        "action": action,
+        "output": clean_output.clone(),
+        "stdout": clean_output,
+        "stderr": "",
         "completed": collected.completed,
+        "status": status,
+        "success": collected.completed,
         "truncated": collected.timed_out && !collected.completed,
         "exit_code": Value::Null,
         "output_cursor": collected.next_cursor,
-    }))
+    });
+    attach_prompt_state(&mut result, &prompt_screen);
+    if collected.completed {
+        let _ = TERMINAL_MANAGER.stop_session(session_id).await;
+        remove_session_fields_for_completed_shell_result(&mut result);
+    }
+    Ok(result)
 }
 
 fn terminal_execution_policy() -> ToolExecutionPolicy {
@@ -570,11 +819,40 @@ fn terminal_execution_policy() -> ToolExecutionPolicy {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::key_input_from_args;
+    use serde_json::json;
+
+    #[test]
+    fn key_input_maps_arrow_down() {
+        assert_eq!(
+            key_input_from_args(&json!({ "key": "ArrowDown" })).as_deref(),
+            Ok("\x1b[B")
+        )
+    }
+
+    #[test]
+    fn key_input_maps_enter_to_tty_carriage_return() {
+        assert_eq!(
+            key_input_from_args(&json!({ "key": "Enter" })).as_deref(),
+            Ok("\r")
+        )
+    }
+
+    #[test]
+    fn key_input_repeats_keys() {
+        assert_eq!(
+            key_input_from_args(&json!({ "key": "ArrowDown", "repeat": 2 })).as_deref(),
+            Ok("\x1b[B\x1b[B")
+        )
+    }
+}
+
 fn interactive_shell_description() -> String {
     let base = concat!(
         "Interactive shell for iterative terminal work. ",
-        "Starts or reuses a persistent PTY session, returns after a bounded wait, ",
-        "and includes session_id/process_id for write_stdin. "
+        "Starts or reuses a persistent PTY session and returns after a bounded wait. "
     );
     format!(
         "{}Use this for prompts, REPLs, TUIs, installers, scaffolding commands, and long-lived processes.",
@@ -642,70 +920,15 @@ pub fn build_interactive_shell_tool_def() -> DynamicToolDef {
             }
         }))
         .source(ToolSource::Builtin)
-        .category(ToolCategory::System)
+        .category(ToolCategory::Terminal)
         .tags(vec![
             "terminal".to_string(),
             "shell".to_string(),
             "interactive".to_string(),
         ])
-        .search_hint("run interactive terminal commands and continue them with write_stdin")
+        .search_hint("run interactive terminal commands")
         .execution_policy(terminal_execution_policy())
         .executor(|args| async move { execute_interactive_shell(args, None, None, None).await })
         .build()
         .expect("Failed to build interactive_shell tool")
-}
-
-pub fn build_exec_command_tool_def() -> DynamicToolDef {
-    DynamicToolBuilder::new(EXEC_COMMAND_TOOL_NAME.to_string())
-        .description(concat!(
-            "Codex-compatible command execution. Starts a PTY-backed shell session, ",
-            "returns after yield_time_ms instead of waiting forever, and returns session_id/process_id ",
-            "for write_stdin when the command is still running or waiting for input."
-        ))
-        .input_schema(json!({
-            "type": "object",
-            "properties": {
-                "cmd": {"type": "string", "description": "Shell command to execute."},
-                "workdir": {"type": "string", "description": "Working directory for host execution."},
-                "execution_mode": {"type": "string", "enum": ["docker", "host"]},
-                "yield_time_ms": {"type": "integer", "default": DEFAULT_EXEC_YIELD_TIME_MS},
-                "max_output_tokens": {"type": "integer"},
-                "tty": {"type": "boolean", "default": true}
-            },
-            "required": ["cmd"]
-        }))
-        .source(ToolSource::Builtin)
-        .category(ToolCategory::System)
-        .tags(vec!["terminal".to_string(), "shell".to_string()])
-        .search_hint("codex-compatible bounded shell execution")
-        .execution_policy(terminal_execution_policy())
-        .executor(|args| async move { execute_exec_command(args, None, None).await })
-        .build()
-        .expect("Failed to build exec_command tool")
-}
-
-pub fn build_write_stdin_tool_def() -> DynamicToolDef {
-    DynamicToolBuilder::new(WRITE_STDIN_TOOL_NAME.to_string())
-        .description(concat!(
-            "Codex-compatible stdin writer and output poller for a running terminal session. ",
-            "Pass chars to send input, or chars=\"\" to poll buffered output."
-        ))
-        .input_schema(json!({
-            "type": "object",
-            "properties": {
-                "session_id": {"type": "string", "description": "Session id returned by exec_command or interactive_shell."},
-                "process_id": {"type": "string", "description": "Alias for session_id."},
-                "chars": {"type": "string", "description": "Characters to write. Include newline when submitting a prompt answer.", "default": ""},
-                "yield_time_ms": {"type": "integer", "default": DEFAULT_WRITE_STDIN_YIELD_TIME_MS},
-                "max_output_tokens": {"type": "integer"}
-            }
-        }))
-        .source(ToolSource::Builtin)
-        .category(ToolCategory::System)
-        .tags(vec!["terminal".to_string(), "stdin".to_string()])
-        .search_hint("send input to an exec_command or interactive_shell session")
-        .execution_policy(terminal_execution_policy())
-        .executor(|args| async move { execute_write_stdin(args, None).await })
-        .build()
-        .expect("Failed to build write_stdin tool")
 }

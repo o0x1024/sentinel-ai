@@ -126,8 +126,17 @@ mod tests {
 
         sanitize_edited_response_headers(&mut parsed.headers, parsed.body.len());
 
-        assert_eq!(parsed.headers.get("content-length").map(String::as_str), Some("5"));
-        assert!(!parsed.headers.keys().any(|key| key.eq_ignore_ascii_case("content-encoding")));
-        assert!(!parsed.headers.keys().any(|key| key.eq_ignore_ascii_case("transfer-encoding")));
+        assert_eq!(
+            parsed.headers.get("content-length").map(String::as_str),
+            Some("5")
+        );
+        assert!(!parsed
+            .headers
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case("content-encoding")));
+        assert!(!parsed
+            .headers
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case("transfer-encoding")));
     }
 }

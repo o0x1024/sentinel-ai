@@ -79,6 +79,7 @@ const DictionaryManagement = () => import('./views/DictionaryManagement.vue')
 
 const WorkflowStudio = () => import('./views/WorkflowStudio.vue')
 const AIAssistant = () => import('./views/AIAssistant.vue')
+const BotConsole = () => import('./views/BotConsole.vue')
 const RAGManagement = () => import('./views/RAGManagement.vue')
 const IntruderResultsWindow = () => import('./views/IntruderResultsWindow.vue')
 const TrafficAnalysis = () => import('./views/TrafficAnalysis.vue')
@@ -136,6 +137,12 @@ const routes = [
     name: 'AIAssistant',
     component: AIAssistant,
     meta: { title: 'AI助手' },
+  },
+  {
+    path: '/bot-console',
+    name: 'BotConsole',
+    component: BotConsole,
+    meta: { title: 'Bot 控制台' },
   },
   {
     path: '/rag-management',

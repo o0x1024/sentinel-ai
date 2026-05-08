@@ -22,7 +22,23 @@
             v-if="timeoutHint"
             class="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-base-content/75"
           >
-            {{ timeoutHint }}
+            <div>{{ timeoutHint }}</div>
+            <div
+              v-if="timeoutDefaultSummaries.length"
+              class="mt-2 space-y-1 text-xs text-base-content/70"
+            >
+              <div
+                v-for="item in timeoutDefaultSummaries"
+                :key="item.question"
+                class="flex items-start gap-2"
+              >
+                <span class="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-warning"></span>
+                <span class="min-w-0">
+                  <span class="font-medium text-base-content/80">{{ item.header }}:</span>
+                  <span class="ml-1">{{ item.label }}</span>
+                </span>
+              </div>
+            </div>
           </div>
 
           <section
@@ -50,7 +66,15 @@
                   @change="selectOption(question.question, option.label)"
                 >
                 <div class="min-w-0">
-                  <div class="text-sm font-medium text-base-content">{{ option.label }}</div>
+                  <div class="flex flex-wrap items-center gap-2 text-sm font-medium text-base-content">
+                    <span>{{ option.label }}</span>
+                    <span
+                      v-if="isTimeoutDefaultOption(question, option.label)"
+                      class="badge badge-warning badge-outline badge-xs"
+                    >
+                      超时默认
+                    </span>
+                  </div>
                   <div class="mt-1 text-xs leading-5 text-base-content/65">
                     {{ option.description }}
                   </div>
@@ -167,10 +191,34 @@ const clearDraft = () => {
   previewFocus.value = {}
 }
 
+const effectiveTimeoutPolicy = (request: PendingAskUserQuestionRequest | null) => (
+  request?.timeout_policy || 'use_default'
+)
+
+const resolveTimeoutDefaultAnswer = (
+  request: PendingAskUserQuestionRequest,
+  question: AskUserQuestionItem,
+) => {
+  const configured = (request.default_answers?.[question.question] || '').trim()
+  if (configured) return configured
+  return (question.options[0]?.label || '').trim()
+}
+
+const buildTimeoutDefaultAnswers = (request: PendingAskUserQuestionRequest | null) => {
+  if (!request || effectiveTimeoutPolicy(request) !== 'use_default') return {}
+  return Object.fromEntries(
+    request.questions
+      .map((question) => [question.question, resolveTimeoutDefaultAnswer(request, question)])
+      .filter(([, answer]) => !!answer),
+  )
+}
+
 const setPendingRequest = (request: PendingAskUserQuestionRequest | null) => {
   if (pendingRequest.value?.id === request?.id) return
   pendingRequest.value = request
   clearDraft()
+  selectedAnswers.value = buildTimeoutDefaultAnswers(request)
+  previewFocus.value = buildTimeoutDefaultAnswers(request)
 }
 
 const pickLatestRelevantRequest = (requests: PendingAskUserQuestionRequest[]) => {
@@ -206,14 +254,32 @@ const canSubmit = computed(() => {
 const timeoutHint = computed(() => {
   const request = pendingRequest.value
   if (!request?.timeout_secs) return ''
-  if (request.timeout_policy === 'use_default') {
+  if (effectiveTimeoutPolicy(request) === 'use_default') {
     return `若 ${request.timeout_secs} 秒内未回答，系统会使用默认选项继续执行。`
   }
-  if (request.timeout_policy === 'fail_closed') {
+  if (effectiveTimeoutPolicy(request) === 'fail_closed') {
     return `若 ${request.timeout_secs} 秒内未回答，当前高风险分支会停止执行。`
   }
   return `若 ${request.timeout_secs} 秒内未回答，这次澄清会返回超时状态。`
 })
+
+const timeoutDefaultSummaries = computed(() => {
+  const request = pendingRequest.value
+  if (!request || effectiveTimeoutPolicy(request) !== 'use_default') return []
+  return request.questions
+    .map((question) => ({
+      header: question.header,
+      question: question.question,
+      label: resolveTimeoutDefaultAnswer(request, question),
+    }))
+    .filter((item) => !!item.label)
+})
+
+const isTimeoutDefaultOption = (question: AskUserQuestionItem, label: string) => {
+  const request = pendingRequest.value
+  if (!request || effectiveTimeoutPolicy(request) !== 'use_default') return false
+  return resolveTimeoutDefaultAnswer(request, question) === label
+}
 
 const selectOption = (questionText: string, label: string) => {
   selectedAnswers.value = {

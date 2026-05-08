@@ -229,123 +229,6 @@
       </div>
     </div>
 
-    <div class="card bg-base-100 shadow-md mb-6">
-      <div class="card-body gap-4">
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <h2 class="card-title">{{ t('settings.network.weixin.title') }}</h2>
-            <p class="text-sm text-base-content/70">{{ t('settings.network.weixin.description') }}</p>
-          </div>
-          <input
-            type="checkbox"
-            class="toggle toggle-primary"
-            v-model="weixinConfig.enabled"
-            :disabled="props.saving || weixinBusy"
-            @change="handleWeixinToggle"
-          />
-        </div>
-
-        <div class="alert alert-warning text-sm">
-          <span>{{ t('settings.network.weixin.securityHint') }}</span>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.weixin.accountId') }}</span></label>
-            <input v-model.trim="weixinConfig.account_id" class="input input-bordered w-full" :disabled="props.saving || weixinBusy" />
-          </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.weixin.token') }}</span></label>
-            <input v-model.trim="weixinConfig.token" class="input input-bordered w-full" type="password" :disabled="props.saving || weixinBusy" />
-          </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.weixin.baseUrl') }}</span></label>
-            <input v-model.trim="weixinConfig.base_url" class="input input-bordered w-full" :disabled="props.saving || weixinBusy" />
-          </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.weixin.assistantProfile') }}</span></label>
-            <select v-model="weixinConfig.assistant_profile_id" class="select select-bordered w-full" :disabled="props.saving || weixinBusy">
-              <option :value="null">{{ t('settings.network.weixin.defaultAssistantProfile') }}</option>
-              <option v-for="profile in weixinAssistantProfiles" :key="profile.id" :value="profile.id">
-                {{ profile.label }}
-              </option>
-            </select>
-            <div class="text-xs text-base-content/60 mt-1">{{ t('settings.network.weixin.assistantProfileHint') }}</div>
-          </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.weixin.allowedUsers') }}</span></label>
-            <input
-              v-model.trim="weixinAllowedUsersText"
-              class="input input-bordered w-full"
-              :disabled="props.saving || weixinBusy"
-              placeholder="user_id_1,user_id_2"
-            />
-            <div class="text-xs text-base-content/60 mt-1">{{ t('settings.network.weixin.allowedUsersHint') }}</div>
-          </div>
-          <div class="flex items-end">
-            <label class="label cursor-pointer gap-3">
-              <input
-                type="checkbox"
-                class="checkbox checkbox-primary"
-                v-model="weixinGroupEnabled"
-                :disabled="props.saving || weixinBusy"
-              />
-              <span class="label-text">{{ t('settings.network.weixin.enableGroups') }}</span>
-            </label>
-          </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.weixin.maxIterations') }}</span></label>
-            <input v-model.number="weixinConfig.max_iterations" class="input input-bordered w-full" type="number" :disabled="props.saving || weixinBusy" />
-          </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.weixin.timeoutSecs') }}</span></label>
-            <input v-model.number="weixinConfig.timeout_secs" class="input input-bordered w-full" type="number" :disabled="props.saving || weixinBusy" />
-          </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <button class="btn btn-primary" :disabled="weixinBusy || props.saving" @click="saveWeixinOnly">
-            <span v-if="weixinBusy" class="loading loading-spinner loading-xs"></span>
-            {{ t('settings.network.weixin.save') }}
-          </button>
-          <button class="btn btn-accent" :disabled="weixinBusy || props.saving" @click="startWeixinQrLoginFlow">
-            {{ t('settings.network.weixin.qrLogin') }}
-          </button>
-          <button class="btn btn-secondary" :disabled="weixinBusy || props.saving" @click="refreshWeixinStatus">
-            {{ t('settings.network.weixin.refreshStatus') }}
-          </button>
-          <div class="rounded-lg border border-base-300 px-3 py-2 text-sm">
-            <div>
-              {{ t('settings.network.weixin.status') }}:
-              <span :class="weixinStatus.running ? 'text-success' : 'text-error'">
-                {{ weixinStatus.running ? t('settings.enabled') : t('settings.disabled') }}
-              </span>
-            </div>
-            <div v-if="weixinStatus.account_id" class="break-all">{{ weixinStatus.account_id }}</div>
-            <div v-if="weixinStatus.last_message_at" class="text-xs text-base-content/60">
-              {{ t('settings.network.weixin.lastMessageAt') }}: {{ weixinStatus.last_message_at }}
-            </div>
-          </div>
-        </div>
-
-        <div v-if="weixinQr.scan_data" class="rounded-xl border border-base-300 p-4 bg-base-200/30">
-          <div class="font-semibold mb-2">{{ t('settings.network.weixin.qrPending') }}</div>
-          <img
-            v-if="weixinQrImageSrc"
-            :src="weixinQrImageSrc"
-            class="h-48 w-48 object-contain rounded bg-white p-2"
-            alt="Weixin QR"
-          />
-          <div class="text-xs break-all mt-2">{{ weixinQr.scan_data }}</div>
-          <div class="text-xs text-base-content/60 mt-2">{{ weixinQrStatusText }}</div>
-        </div>
-
-        <div v-if="weixinStatus.last_error" class="alert alert-error">
-          <span>{{ weixinStatus.last_error }}</span>
-        </div>
-      </div>
-    </div>
-
 </template>
 
 
@@ -360,25 +243,11 @@ import {
   type HttpGatewayConfig,
   type HttpGatewayStatus,
 } from '@/api/httpGateway'
-import {
-  createWeixinQrLogin,
-  getWeixinGatewayConfig,
-  getWeixinGatewayStatus,
-  pollWeixinQrLogin,
-  saveWeixinGatewayConfig,
-  startWeixinGateway,
-  stopWeixinGateway,
-  type WeixinGatewayConfig,
-  type WeixinGatewayStatus,
-  type WeixinQrLoginResponse,
-} from '@/api/weixinGateway'
 import { dialog } from '@/composables/useDialog';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n'
-import { createQrCodeSvgDataUrl } from '@/services/qrCode'
-import type { AssistantProfileOption } from '@/components/Agent/assistantProfiles'
 
 
 const { t } = useI18n()
@@ -421,37 +290,6 @@ const gatewayStatus = reactive<HttpGatewayStatus>({
 })
 const gatewayBusy = ref(false)
 const lastGeneratedGatewayKey = ref('')
-const weixinConfig = reactive<WeixinGatewayConfig>({
-  enabled: false,
-  account_id: '',
-  token: '',
-  base_url: 'https://ilinkai.weixin.qq.com',
-  assistant_profile_id: null,
-  dm_policy: 'open',
-  allowed_users: [],
-  group_policy: 'open',
-  group_allowed_users: [],
-  default_service_name: 'default',
-  max_iterations: 50,
-  timeout_secs: 300,
-})
-const weixinStatus = reactive<WeixinGatewayStatus>({
-  running: false,
-  account_id: null,
-  started_at: null,
-  last_error: null,
-  last_message_at: null,
-})
-const weixinQr = reactive<WeixinQrLoginResponse>({
-  qrcode: '',
-  qrcode_img_content: '',
-  scan_data: '',
-})
-const weixinAllowedUsersText = ref('')
-const weixinAssistantProfiles = ref<AssistantProfileOption[]>([])
-const weixinBusy = ref(false)
-const weixinQrStatusText = ref('')
-let weixinQrTimer: number | null = null
 const BROWSER_GATEWAY_KEY_STORAGE = 'sentinel:http-gateway:api-key'
 const isGatewayWebMode = ref(false)
 const browserGatewayKey = ref('')
@@ -461,32 +299,6 @@ const globalProxyEndpoint = computed(() => {
   if (!network.proxy.enabled || !network.proxy.host || !network.proxy.port) return ''
   return `${network.proxy.scheme || 'http'}://${network.proxy.host}:${network.proxy.port}`
 })
-const weixinQrImageSrc = computed(() => {
-  const imageContent = weixinQr.qrcode_img_content.trim()
-  if (imageContent.startsWith('data:image')) return imageContent
-  if (looksLikeBase64Image(imageContent)) return `data:image/png;base64,${imageContent}`
-
-  const scanContent = (weixinQr.scan_data || weixinQr.qrcode_img_content || weixinQr.qrcode).trim()
-  if (!scanContent) return ''
-  try {
-    return createQrCodeSvgDataUrl(scanContent)
-  } catch (error) {
-    console.error('Failed to render Weixin QR code:', error)
-    return ''
-  }
-})
-const weixinGroupEnabled = computed({
-  get: () => weixinConfig.group_policy !== 'disabled',
-  set: (enabled: boolean) => {
-    weixinConfig.group_policy = enabled ? 'open' : 'disabled'
-  },
-})
-
-const looksLikeBase64Image = (value: string) => {
-  if (value.length < 120 || value.startsWith('http')) return false
-  return /^[A-Za-z0-9+/=\s]+$/.test(value)
-}
-
 interface NetworkInterface {
   name: string
   description?: string
@@ -604,114 +416,6 @@ const generateGatewayApiKey = async () => {
   }
 }
 
-const syncWeixinAllowedUsersFromText = () => {
-  weixinConfig.allowed_users = weixinAllowedUsersText.value
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean)
-  weixinConfig.dm_policy = weixinConfig.allowed_users.length > 0 ? 'allowlist' : 'open'
-}
-
-const loadWeixinConfig = async () => {
-  try {
-    const cfg = await getWeixinGatewayConfig()
-    Object.assign(weixinConfig, cfg)
-    weixinAllowedUsersText.value = cfg.allowed_users.join(',')
-  } catch (error) {
-    console.error('Failed to load Weixin config:', error)
-  }
-}
-
-const loadWeixinAssistantProfiles = async () => {
-  try {
-    const profiles = await invoke<AssistantProfileOption[]>('list_assistant_profiles')
-    weixinAssistantProfiles.value = profiles.filter((profile) => profile.runMode !== 'team')
-  } catch (error) {
-    console.error('Failed to load Weixin assistant profiles:', error)
-    weixinAssistantProfiles.value = []
-  }
-}
-
-const refreshWeixinStatus = async () => {
-  try {
-    const status = await getWeixinGatewayStatus()
-    Object.assign(weixinStatus, status)
-  } catch (error) {
-    console.error('Failed to load Weixin status:', error)
-  }
-}
-
-const saveWeixinOnly = async () => {
-  weixinBusy.value = true
-  try {
-    syncWeixinAllowedUsersFromText()
-    await saveWeixinGatewayConfig({ ...weixinConfig })
-    dialog.toast.success(t('settings.network.weixin.saved'))
-    await refreshWeixinStatus()
-  } catch (error) {
-    dialog.toast.error(t('settings.network.weixin.saveFailed', { error: String(error) }))
-  } finally {
-    weixinBusy.value = false
-  }
-}
-
-const handleWeixinToggle = async () => {
-  weixinBusy.value = true
-  try {
-    syncWeixinAllowedUsersFromText()
-    await saveWeixinGatewayConfig({ ...weixinConfig })
-    if (weixinConfig.enabled) {
-      await startWeixinGateway({ ...weixinConfig })
-      dialog.toast.success(t('settings.network.weixin.started'))
-    } else {
-      await stopWeixinGateway()
-      dialog.toast.success(t('settings.network.weixin.stopped'))
-    }
-    await refreshWeixinStatus()
-  } catch (error) {
-    weixinConfig.enabled = !weixinConfig.enabled
-    dialog.toast.error(t('settings.network.weixin.toggleFailed', { error: String(error) }))
-  } finally {
-    weixinBusy.value = false
-  }
-}
-
-const clearWeixinQrTimer = () => {
-  if (weixinQrTimer !== null) {
-    window.clearInterval(weixinQrTimer)
-    weixinQrTimer = null
-  }
-}
-
-const startWeixinQrLoginFlow = async () => {
-  weixinBusy.value = true
-  clearWeixinQrTimer()
-  try {
-    const qr = await createWeixinQrLogin()
-    Object.assign(weixinQr, qr)
-    weixinQrStatusText.value = t('settings.network.weixin.qrWaiting')
-    weixinQrTimer = window.setInterval(async () => {
-      try {
-        const status = await pollWeixinQrLogin(weixinQr.qrcode)
-        weixinQrStatusText.value = status.message || status.status
-        if (status.status === 'confirmed') {
-          clearWeixinQrTimer()
-          Object.assign(weixinQr, { qrcode: '', qrcode_img_content: '', scan_data: '' })
-          await loadWeixinConfig()
-          dialog.toast.success(t('settings.network.weixin.qrConfirmed'))
-        }
-      } catch (error) {
-        weixinQrStatusText.value = String(error)
-      }
-    }, 1500)
-  } catch (error) {
-    dialog.toast.error(t('settings.network.weixin.qrFailed', { error: String(error) }))
-  } finally {
-    weixinBusy.value = false
-  }
-}
-
-
 // 网络代理
 const loadProxy = async () => {
   try {
@@ -772,9 +476,6 @@ onMounted(() => {
   refreshRuntimeProxyStatus()
   loadGatewayConfig()
   refreshGatewayStatus()
-  loadWeixinConfig()
-  loadWeixinAssistantProfiles()
-  refreshWeixinStatus()
   loadEthernetIpv4()
 
   listen('proxy:status', (event: any) => {
@@ -796,7 +497,6 @@ onUnmounted(() => {
     unlistenProxyStatus()
     unlistenProxyStatus = null
   }
-  clearWeixinQrTimer()
   window.removeEventListener('focus', handleWindowFocus)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })

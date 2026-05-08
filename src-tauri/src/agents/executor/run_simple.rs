@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
 
-use super::AgentExecuteParams;
+use super::{AgentExecuteParams, AgentTurnOutcome};
 use crate::agents::apply_sentinel_execution_outcome;
 use crate::agents::executor::message_store::{
     build_assistant_session_stats_metadata, mark_first_response_ms, save_assistant_message,
@@ -17,14 +17,15 @@ use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 pub async fn execute_agent_simple(
     app_handle: &AppHandle,
     params: AgentExecuteParams,
-) -> Result<String> {
+) -> Result<AgentTurnOutcome> {
     let execution_started_at_ms = chrono::Utc::now().timestamp_millis();
     let rig_provider = params.rig_provider.to_lowercase();
+    let storage_conversation_id = params.storage_conversation_id().to_string();
 
     let mut config = LlmConfig::new(&rig_provider, &params.model)
         .with_timeout(params.timeout_secs)
         .with_rig_provider(&rig_provider)
-        .with_conversation_id(&params.execution_id);
+        .with_conversation_id(&storage_conversation_id);
 
     if let Some(ref api_key) = params.api_key {
         config = config.with_api_key(api_key);
@@ -142,6 +143,7 @@ pub async fn execute_agent_simple(
             save_assistant_message(
                 app_handle,
                 &params.execution_id,
+                &storage_conversation_id,
                 params.cancellation_generation,
                 &response,
                 None,
@@ -164,7 +166,7 @@ pub async fn execute_agent_simple(
             }
 
             cleanup_container_context_async(app_handle, &params.execution_id).await;
-            Ok(response)
+            Ok(AgentTurnOutcome::direct(response))
         }
         Err(e) => {
             tracing::error!(

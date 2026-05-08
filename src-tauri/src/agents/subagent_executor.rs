@@ -63,6 +63,7 @@ const SUBAGENT_TOOL_IDS: [&str; 4] = ["spawn_agent", "wait_agents", "list_agents
 
 #[derive(Debug, Clone)]
 pub struct SubagentParentContext {
+    pub provider_config_key: String,
     pub rig_provider: String,
     pub model: String,
     pub api_key: Option<String>,
@@ -729,6 +730,7 @@ async fn run_task(task_id: String) {
 
     let params = super::AgentExecuteParams {
         execution_id: task_id.clone(),
+        conversation_id: None,
         cancellation_generation: None,
         model: pending_data.parent.model,
         system_prompt,
@@ -742,6 +744,7 @@ async fn run_task(task_id: String) {
         active_browser_shell_session_id: pending_data.parent.active_browser_shell_session_id,
         active_terminal_session_id: pending_data.parent.active_terminal_session_id,
         working_directory: pending_data.parent.working_directory,
+        provider_config_key: pending_data.parent.provider_config_key,
         rig_provider: pending_data.parent.rig_provider,
         api_key: pending_data.parent.api_key,
         api_base: pending_data.parent.api_base,
@@ -755,6 +758,7 @@ async fn run_task(task_id: String) {
         referenced_traffic: None,
         persist_messages: false,
         subagent_run_id: Some(task_id.clone()),
+        harness_run_id: None,
         context_policy: Some(subagent_context_policy()),
         context_engine_mode: Some(crate::agents::ContextEngineMode::CodexLike),
         recursion_depth: pending_data.recursion_depth,

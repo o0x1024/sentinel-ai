@@ -4,6 +4,7 @@ pub mod ai_manager;
 pub mod ai_task_plugin_fix;
 pub mod ai_tasks;
 pub mod asset_service;
+pub mod bot_execution;
 pub mod builtin_bounty_plugins;
 pub mod feature_entitlements;
 pub mod finding_ai_review;

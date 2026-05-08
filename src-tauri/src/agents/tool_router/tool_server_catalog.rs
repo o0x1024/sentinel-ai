@@ -23,16 +23,15 @@ fn builtin_tool_policy(tool_name: &str) -> BuiltinToolPolicy {
         "shell" => BuiltinToolPolicy {
             cost_estimate: ToolCost::Medium,
         },
-        "glob" | "grep" | "file_read" | "lsp" | "interactive_shell" | "exec_command"
-        | "write_stdin" | "skills" | "tasks" | "memory" => BuiltinToolPolicy {
-            cost_estimate: ToolCost::Low,
-        },
-        "file_edit" | "file_write" | "http_request" | "browser" | "browser_shell"
-        | "web_search" | "route_discovery" | "search_exploit" | "ocr" | "tenth_man_review" => {
+        "glob" | "grep" | "file_read" | "lsp" | "skills" | "tasks" | "memory" => {
             BuiltinToolPolicy {
-                cost_estimate: ToolCost::Medium,
+                cost_estimate: ToolCost::Low,
             }
         }
+        "file_edit" | "file_write" | "http_request" | "browser_shell" | "web_search"
+        | "route_discovery" | "search_exploit" | "ocr" | "tenth_man_review" => BuiltinToolPolicy {
+            cost_estimate: ToolCost::Medium,
+        },
         "spawn_agent" => BuiltinToolPolicy {
             cost_estimate: ToolCost::High,
         },
@@ -47,6 +46,14 @@ fn builtin_tool_policy(tool_name: &str) -> BuiltinToolPolicy {
 
 pub(crate) fn parse_tool_category(raw: &str) -> ToolCategory {
     match raw.trim().to_lowercase().as_str() {
+        "file_code" => ToolCategory::FileCode,
+        "terminal" => ToolCategory::Terminal,
+        "web_network" => ToolCategory::WebNetwork,
+        "security_recon" => ToolCategory::SecurityRecon,
+        "vulnerability_research" => ToolCategory::VulnerabilityResearch,
+        "collaboration" => ToolCategory::Collaboration,
+        "agent_orchestration" => ToolCategory::AgentOrchestration,
+        "knowledge_extension" => ToolCategory::KnowledgeExtension,
         "network" => ToolCategory::Network,
         "security" => ToolCategory::Security,
         "data" => ToolCategory::Data,
@@ -68,6 +75,14 @@ pub(crate) fn parse_tool_category(raw: &str) -> ToolCategory {
 
 fn convert_tool_category(category: SentinelToolCategory) -> ToolCategory {
     match category {
+        SentinelToolCategory::FileCode => ToolCategory::FileCode,
+        SentinelToolCategory::Terminal => ToolCategory::Terminal,
+        SentinelToolCategory::WebNetwork => ToolCategory::WebNetwork,
+        SentinelToolCategory::SecurityRecon => ToolCategory::SecurityRecon,
+        SentinelToolCategory::VulnerabilityResearch => ToolCategory::VulnerabilityResearch,
+        SentinelToolCategory::Collaboration => ToolCategory::Collaboration,
+        SentinelToolCategory::AgentOrchestration => ToolCategory::AgentOrchestration,
+        SentinelToolCategory::KnowledgeExtension => ToolCategory::KnowledgeExtension,
         SentinelToolCategory::Network => ToolCategory::Network,
         SentinelToolCategory::Security => ToolCategory::Security,
         SentinelToolCategory::Data => ToolCategory::Data,
@@ -89,7 +104,6 @@ fn convert_tool_category(category: SentinelToolCategory) -> ToolCategory {
 
 pub(crate) fn is_configurable_tool_name(tool_name: &str) -> bool {
     tool_name != sentinel_tools::buildin_tools::SopsTool::NAME
-        && tool_name != sentinel_tools::buildin_tools::SkillsTool::NAME
 }
 
 pub(crate) fn convert_tool_info_to_metadata(tool: ToolInfo) -> ToolMetadata {
@@ -132,6 +146,14 @@ mod tests {
     fn tool_info(source: &str, category: &str) -> ToolInfo {
         let source = SentinelToolSource::from_wire_str(source).expect("valid test tool source");
         let category = match category {
+            "file_code" => SentinelToolCategory::FileCode,
+            "terminal" => SentinelToolCategory::Terminal,
+            "web_network" => SentinelToolCategory::WebNetwork,
+            "security_recon" => SentinelToolCategory::SecurityRecon,
+            "vulnerability_research" => SentinelToolCategory::VulnerabilityResearch,
+            "collaboration" => SentinelToolCategory::Collaboration,
+            "agent_orchestration" => SentinelToolCategory::AgentOrchestration,
+            "knowledge_extension" => SentinelToolCategory::KnowledgeExtension,
             "network" => SentinelToolCategory::Network,
             "security" => SentinelToolCategory::Security,
             "data" => SentinelToolCategory::Data,
@@ -173,8 +195,18 @@ mod tests {
 
     #[test]
     fn builtin_tool_metadata_preserves_registered_category() {
-        let metadata = convert_tool_info_to_metadata(tool_info("builtin", "network"));
+        let metadata = convert_tool_info_to_metadata(tool_info("builtin", "file_code"));
 
-        assert_eq!(metadata.category, ToolCategory::Network);
+        assert_eq!(metadata.category, ToolCategory::FileCode);
+    }
+
+    #[test]
+    fn skills_tool_is_configurable_but_sops_remains_internal() {
+        assert!(is_configurable_tool_name(
+            sentinel_tools::buildin_tools::SkillsTool::NAME
+        ));
+        assert!(!is_configurable_tool_name(
+            sentinel_tools::buildin_tools::SopsTool::NAME
+        ));
     }
 }

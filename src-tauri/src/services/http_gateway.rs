@@ -1575,7 +1575,7 @@ async fn auth_and_rate_limit_middleware(
                 StatusCode::TOO_MANY_REQUESTS,
                 "RATE_LIMITED",
                 "Too many concurrent requests",
-            )
+            );
         }
     };
 
@@ -1722,6 +1722,7 @@ async fn run_agent_execution(
     };
     let params = AgentExecuteParams {
         execution_id: session_id.to_string(),
+        conversation_id: None,
         cancellation_generation: None,
         model: model_name,
         system_prompt: system_prompt.unwrap_or_default().to_string(),
@@ -1733,6 +1734,7 @@ async fn run_agent_execution(
             .map(|v| v.to_string()),
         active_terminal_session_id: active_terminal_session_id.map(|v| v.to_string()),
         working_directory: None,
+        provider_config_key: provider.to_string(),
         rig_provider,
         api_key: provider_config.api_key.clone(),
         api_base: provider_config.api_base.clone(),
@@ -1748,6 +1750,7 @@ async fn run_agent_execution(
         referenced_traffic: None,
         persist_messages: true,
         subagent_run_id: None,
+        harness_run_id: None,
         context_policy: None,
         context_engine_mode: Some(crate::agents::ContextEngineMode::ClaudeLike),
         recursion_depth: 0,
@@ -3558,7 +3561,7 @@ async fn chat(State(state): State<GatewayAppState>, Json(payload): Json<ChatRequ
                 "BAD_REQUEST",
                 &e,
                 &request_id,
-            )
+            );
         }
     };
 
@@ -3758,7 +3761,7 @@ async fn chat_stream(
                 "BAD_REQUEST",
                 &e,
                 &request_id,
-            )
+            );
         }
     };
 

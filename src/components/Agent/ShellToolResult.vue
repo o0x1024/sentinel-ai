@@ -82,7 +82,7 @@
                isExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-32 overflow-hidden']"
     >
       <!-- Command line with copy button -->
-      <div class="command-line flex items-start gap-2 mb-2 group">
+      <div v-if="command" class="command-line flex items-start gap-2 mb-2 group">
         <div class="flex-1 text-[#d4d4d4] flex items-start gap-2">
           <span class="text-[#808080] flex-shrink-0">$</span>
           <span class="flex-1 break-all" v-html="highlightedCommand"></span>

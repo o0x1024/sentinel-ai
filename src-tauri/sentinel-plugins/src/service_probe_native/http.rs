@@ -2,6 +2,7 @@ use super::common::{is_tls_port, normalize_protocol};
 use super::probe::{ProbeEvidence, ProbeStageReporter};
 use crate::service_probe_runtime::ServiceProbeTarget;
 use std::collections::BTreeMap;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 pub(super) async fn probe_http_evidence(
@@ -24,14 +25,21 @@ pub(super) async fn probe_http_evidence(
     };
     let url = format!("{protocol}://{}:{}/", target.host, target.port);
 
-    let client = match reqwest::Client::builder()
-        .redirect(if follow_http_redirects {
-            reqwest::redirect::Policy::limited(5)
-        } else {
-            reqwest::redirect::Policy::none()
-        })
-        .build()
-    {
+    let mut client_builder = reqwest::Client::builder().redirect(if follow_http_redirects {
+        reqwest::redirect::Policy::limited(5)
+    } else {
+        reqwest::redirect::Policy::none()
+    });
+    if let Some(connect_ip) = target.connect_ip.as_deref() {
+        if let Ok(connect_ip) = connect_ip.parse::<IpAddr>() {
+            client_builder = client_builder.resolve(
+                target.host.as_str(),
+                SocketAddr::new(connect_ip, target.port),
+            );
+        }
+    }
+
+    let client = match client_builder.build() {
         Ok(client) => client,
         Err(error) => {
             return ProbeEvidence {

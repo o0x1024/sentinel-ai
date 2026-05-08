@@ -9,6 +9,28 @@ use sentinel_db::{
 use serde_json::Value;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SurfaceMaterializationStats {
+    pub created_assets: usize,
+    pub enriched_assets: usize,
+    pub changed_assets: usize,
+    pub skipped_missing_assets: usize,
+}
+
+#[derive(Debug, Default)]
+struct SurfaceEnrichmentOutcome {
+    existing_asset_ids: Vec<String>,
+    skipped_missing_assets: usize,
+}
+
+impl SurfaceEnrichmentOutcome {
+    fn record_existing_asset(&mut self, asset_id: String) {
+        if !self.existing_asset_ids.contains(&asset_id) {
+            self.existing_asset_ids.push(asset_id);
+        }
+    }
+}
+
 async fn upsert_surface_shell_asset(
     db_service: &Arc<DatabaseService>,
     program_id: &str,
@@ -120,6 +142,25 @@ fn is_topology_asset_type(asset_type: &str) -> bool {
 
 fn json_to_string(value: Option<&Value>) -> Option<String> {
     value.map(ToString::to_string)
+}
+
+fn fingerprint_identity(asset_type: &str, asset_key: &str) -> (String, String) {
+    (asset_type.to_string(), asset_key.to_string())
+}
+
+fn favicon_hash_from_evidence(object: &serde_json::Map<String, Value>) -> Option<&str> {
+    let evidence_type = object
+        .get("evidence_type")
+        .and_then(|value| value.as_str())?;
+    if evidence_type != "favicon_metadata" {
+        return None;
+    }
+
+    object
+        .get("content_json")
+        .and_then(|value| value.get("sha256"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn required_string_field(
@@ -280,12 +321,13 @@ async fn materialize_surface_fingerprints(
     program_id: &str,
     plugin_id: &str,
     artifacts: &serde_json::Map<String, Value>,
-) -> Result<(), String> {
+) -> Result<SurfaceEnrichmentOutcome, String> {
+    let mut outcome = SurfaceEnrichmentOutcome::default();
     let Some(fingerprints) = artifacts
         .get("fingerprints")
         .and_then(|value| value.as_array())
     else {
-        return Ok(());
+        return Ok(outcome);
     };
 
     let mut affected_asset_ids = Vec::new();
@@ -299,6 +341,8 @@ async fn materialize_surface_fingerprints(
             required_string_field(object, "asset_type", plugin_id, "fingerprints", index)?;
         let asset_key =
             required_string_field(object, "asset_key", plugin_id, "fingerprints", index)?;
+        let created_in_current_run =
+            ids.contains_key(&fingerprint_identity(&asset_type, &asset_key));
         let fingerprint_value = required_string_field(
             object,
             "fingerprint_value",
@@ -311,27 +355,24 @@ async fn materialize_surface_fingerprints(
             resolve_surface_asset_id(db_service, ids, program_id, Some(&asset_type), &asset_key)
                 .await?
         else {
+            outcome.skipped_missing_assets += 1;
             continue;
         };
         affected_asset_ids.push(asset_id.clone());
 
         let observed_at = Utc::now().to_rfc3339();
+        let fingerprint_type =
+            required_string_field(object, "fingerprint_type", plugin_id, "fingerprints", index)?;
         let fingerprint_row = SurfaceFingerprintRow {
             id: Uuid::new_v4().to_string(),
             program_id: program_id.to_string(),
             asset_id: asset_id.clone(),
-            fingerprint_type: required_string_field(
-                object,
-                "fingerprint_type",
-                plugin_id,
-                "fingerprints",
-                index,
-            )?,
+            fingerprint_type: fingerprint_type.clone(),
             fingerprint_key: object
                 .get("fingerprint_key")
                 .and_then(|value| value.as_str())
                 .map(str::to_string),
-            fingerprint_value,
+            fingerprint_value: fingerprint_value.clone(),
             rule_id: Some(required_string_field(
                 object,
                 "rule_id",
@@ -395,6 +436,17 @@ async fn materialize_surface_fingerprints(
             .await
             .map_err(|e| e.to_string())?;
 
+        if asset_type == "web" && fingerprint_type == "favicon" {
+            db_service
+                .update_surface_web_favicon_hash(&asset_id, &fingerprint_value, &observed_at)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        if !created_in_current_run {
+            outcome.record_existing_asset(asset_id.clone());
+        }
+
         if let Some(evidence_text) = object.get("evidence").and_then(|value| value.as_str()) {
             let evidence_row = SurfaceEvidenceRow {
                 id: Uuid::new_v4().to_string(),
@@ -436,7 +488,7 @@ async fn materialize_surface_fingerprints(
             .map_err(|e| e.to_string())?;
     }
 
-    Ok(())
+    Ok(outcome)
 }
 
 async fn materialize_surface_evidence(
@@ -445,12 +497,13 @@ async fn materialize_surface_evidence(
     program_id: &str,
     plugin_id: &str,
     artifacts: &serde_json::Map<String, Value>,
-) -> Result<(), String> {
+) -> Result<SurfaceEnrichmentOutcome, String> {
+    let mut outcome = SurfaceEnrichmentOutcome::default();
     let Some(evidences) = artifacts
         .get("evidences")
         .and_then(|value| value.as_array())
     else {
-        return Ok(());
+        return Ok(outcome);
     };
 
     for (index, evidence) in evidences.iter().enumerate() {
@@ -462,15 +515,20 @@ async fn materialize_surface_evidence(
         let asset_type =
             required_string_field(object, "asset_type", plugin_id, "evidences", index)?;
         let asset_key = required_string_field(object, "asset_key", plugin_id, "evidences", index)?;
+        let created_in_current_run =
+            ids.contains_key(&fingerprint_identity(&asset_type, &asset_key));
         let asset_id =
             resolve_surface_asset_id(db_service, ids, program_id, Some(&asset_type), &asset_key)
                 .await?;
         let collected_at = Utc::now().to_rfc3339();
+        if asset_id.is_none() {
+            outcome.skipped_missing_assets += 1;
+        }
 
         let row = SurfaceEvidenceRow {
             id: Uuid::new_v4().to_string(),
             program_id: program_id.to_string(),
-            asset_id,
+            asset_id: asset_id.clone(),
             evidence_type: required_string_field(
                 object,
                 "evidence_type",
@@ -494,7 +552,7 @@ async fn materialize_surface_evidence(
                 .and_then(|value| value.as_str())
                 .map(str::to_string),
             content_json: json_to_string(object.get("content_json")),
-            collected_at,
+            collected_at: collected_at.clone(),
             collected_by: Some(plugin_id.to_string()),
             probe_node: object
                 .get("probe_node")
@@ -507,9 +565,24 @@ async fn materialize_surface_evidence(
             .create_surface_evidence(&row)
             .await
             .map_err(|e| e.to_string())?;
+
+        if let Some(asset_id) = asset_id {
+            if asset_type == "web" {
+                if let Some(favicon_hash) = favicon_hash_from_evidence(object) {
+                    db_service
+                        .update_surface_web_favicon_hash(&asset_id, favicon_hash, &collected_at)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+
+            if !created_in_current_run {
+                outcome.record_existing_asset(asset_id);
+            }
+        }
     }
 
-    Ok(())
+    Ok(outcome)
 }
 
 async fn materialize_surface_changes(
@@ -586,9 +659,9 @@ pub(crate) async fn materialize_surface_artifacts(
     run_id: Option<&str>,
     plugin_id: &str,
     artifacts: &serde_json::Map<String, serde_json::Value>,
-) -> Result<usize, String> {
+) -> Result<SurfaceMaterializationStats, String> {
     let mut ids: HashMap<(String, String), String> = HashMap::new();
-    let mut materialized = 0usize;
+    let mut stats = SurfaceMaterializationStats::default();
 
     if let Some(domains) = artifacts.get("domains").and_then(|value| value.as_array()) {
         for domain in domains {
@@ -605,7 +678,7 @@ pub(crate) async fn materialize_surface_artifacts(
                     domain.clone(),
                 )
                 .await?;
-                materialized += 1;
+                stats.created_assets += 1;
             }
         }
     }
@@ -629,7 +702,7 @@ pub(crate) async fn materialize_surface_artifacts(
                     ip.clone(),
                 )
                 .await?;
-                materialized += 1;
+                stats.created_assets += 1;
             }
         }
     }
@@ -653,7 +726,7 @@ pub(crate) async fn materialize_surface_artifacts(
                     host.clone(),
                 )
                 .await?;
-                materialized += 1;
+                stats.created_assets += 1;
             }
         }
     }
@@ -687,7 +760,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 port.clone(),
             )
             .await?;
-            materialized += 1;
+            stats.created_assets += 1;
         }
     }
 
@@ -725,7 +798,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 service.clone(),
             )
             .await?;
-            materialized += 1;
+            stats.created_assets += 1;
         }
     }
 
@@ -756,7 +829,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 web.clone(),
             )
             .await?;
-            materialized += 1;
+            stats.created_assets += 1;
         }
     }
 
@@ -778,7 +851,7 @@ pub(crate) async fn materialize_surface_artifacts(
                     certificate.clone(),
                 )
                 .await?;
-                materialized += 1;
+                stats.created_assets += 1;
             }
         }
     }
@@ -868,9 +941,24 @@ pub(crate) async fn materialize_surface_artifacts(
         }
     }
 
-    materialize_surface_fingerprints(db_service, &ids, program_id, plugin_id, artifacts).await?;
-    materialize_surface_evidence(db_service, &ids, program_id, plugin_id, artifacts).await?;
+    let mut enriched_asset_ids = Vec::new();
+    let fingerprint_outcome =
+        materialize_surface_fingerprints(db_service, &ids, program_id, plugin_id, artifacts)
+            .await?;
+    stats.skipped_missing_assets += fingerprint_outcome.skipped_missing_assets;
+    enriched_asset_ids.extend(fingerprint_outcome.existing_asset_ids);
+
+    let evidence_outcome =
+        materialize_surface_evidence(db_service, &ids, program_id, plugin_id, artifacts).await?;
+    stats.skipped_missing_assets += evidence_outcome.skipped_missing_assets;
+    enriched_asset_ids.extend(evidence_outcome.existing_asset_ids);
+
     materialize_surface_changes(db_service, &ids, program_id, run_id, plugin_id, artifacts).await?;
 
-    Ok(materialized)
+    enriched_asset_ids.sort();
+    enriched_asset_ids.dedup();
+    stats.enriched_assets = enriched_asset_ids.len();
+    stats.changed_assets = enriched_asset_ids.len();
+
+    Ok(stats)
 }

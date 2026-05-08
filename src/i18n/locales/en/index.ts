@@ -26,6 +26,7 @@ import ragManagement from '../rag/en'
 import notifications from '../notifications/en'
 import aiAssistant from '../aiAssistant/en'
 import agent from '../agent/en'
+import botConsole from '../botConsole/en'
 import bugBounty from '../bugBounty/en'
 
 // Import other modules as needed
@@ -63,6 +64,7 @@ export default {
   notifications,
   aiAssistant,
   agent,
+  botConsole,
   bugBounty,
 
   // Top-level aliases for sidebar navigation

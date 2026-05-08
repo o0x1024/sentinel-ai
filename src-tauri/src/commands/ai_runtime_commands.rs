@@ -1,9 +1,27 @@
+use crate::agents::executor::execute_agent_turn;
+use crate::commands::agent_turn_completion::assess_agent_turn_completion;
 use crate::commands::ai::{
-    create_cancellation_token, emit_agent_execution_finished_for_generation,
+    create_cancellation_token, emit_agent_execution_finished_for_generation_with_conversation,
     is_conversation_cancelled, is_conversation_generation_cancelled, perform_rag_enhancement,
     stream_chat_with_llm, AgentExecutionOutcome, CancellationGuard,
     MAX_SAFE_OUTPUT_STORAGE_THRESHOLD, USER_FORCED_RULES_CONFIG_CATEGORY,
     USER_FORCED_RULES_CONFIG_KEY,
+};
+use crate::commands::ai_runtime_command_support::{
+    build_vision_unsupported_message, emit_agent_harness_outcome, load_image_attachment_settings,
+    load_tool_config_from_db, persist_agent_execution_turn_start, sanitize_image_attachments,
+    save_tool_config_to_db, settle_running_tool_messages, tool_config_allows_tool,
+    EffectiveImageAttachmentMode, TENTH_MAN_REVIEW_TOOL_ID,
+};
+use crate::commands::ai_runtime_harness::{
+    agent_harness_completion_payload, agent_harness_continuation_payload,
+    append_agent_harness_event, assess_agent_harness_success,
+    build_agent_harness_continuation_task, checkpoint_agent_harness, create_agent_harness_run,
+    final_agent_harness_assessment, finish_agent_harness, is_empty_llm_stream_error,
+    mark_agent_harness_ledger_stalled, observe_agent_harness_ledger_progress,
+    resolve_agent_harness_max_continuations, resolve_empty_stream_harness_decision,
+    should_continue_agent_harness, snapshot_agent_harness_ledger, start_agent_harness_heartbeat,
+    AgentHarnessLedgerWatchdog, AgentHarnessMode, AgentHarnessStreamEmptyDecision,
 };
 use crate::commands::ai_task_support::{
     build_virtual_tool_context, complete_external_profile_run_failure,
@@ -23,22 +41,16 @@ use crate::services::SystemAgentRuntime;
 use chrono::Utc;
 use sentinel_db::Database;
 use sentinel_workflow::WorkflowGraph;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct HandleTaskExecutionStreamRequest {
-    pub user_input: String,
-    pub conversation_id: String,
-    pub message_id: String,
-    pub execution_id: String,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentExecuteConfig {
     pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub execution_id: Option<String>,
     pub message_id: Option<String>,
     pub enable_rag: Option<bool>,
     pub attachments: Option<serde_json::Value>,
@@ -80,6 +92,10 @@ pub struct AgentExecuteConfig {
     #[serde(default)]
     pub force_tasks: Option<bool>,
     #[serde(default)]
+    pub harness_mode: Option<String>,
+    #[serde(default)]
+    pub harness_max_continuations: Option<usize>,
+    #[serde(default)]
     pub enable_tenth_man_rule: Option<bool>,
     #[serde(default)]
     pub tenth_man_config: Option<crate::agents::tenth_man::TenthManConfig>,
@@ -93,197 +109,10 @@ pub struct AgentExecuteRequest {
     pub config: Option<AgentExecuteConfig>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EffectiveImageAttachmentMode {
-    Auto,
-    LocalOcr,
-    ModelVision,
-}
-
-fn build_vision_unsupported_message(provider: &str, model_name: &str) -> String {
-    format!(
-        "Current model does not support image understanding: {}/{}. Switch to a vision-capable model in the conversation work config, or explicitly change image handling to local OCR.",
-        provider, model_name
-    )
-}
-
 fn is_agent_execution_cancelled(execution_id: &str, generation: Option<u64>) -> bool {
     generation
         .map(|value| is_conversation_generation_cancelled(execution_id, value))
         .unwrap_or_else(|| is_conversation_cancelled(execution_id))
-}
-
-async fn settle_running_tool_messages(
-    app_handle: &AppHandle,
-    execution_id: &str,
-    terminal_status: &str,
-    reason: &str,
-) {
-    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
-        return;
-    };
-    if let Err(error) = db
-        .settle_running_ai_tool_messages(execution_id, terminal_status, reason)
-        .await
-    {
-        tracing::warn!(
-            "Failed to settle running tool messages for {} as {}: {}",
-            execution_id,
-            terminal_status,
-            error
-        );
-    }
-}
-
-async fn create_agent_harness_run(
-    app_handle: &AppHandle,
-    run_id: &str,
-    conversation_id: &str,
-    generation: u64,
-    task: &str,
-    model: &str,
-    provider: &str,
-) {
-    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
-        return;
-    };
-    if let Err(error) = db
-        .create_agent_harness_run(sentinel_db::AgentHarnessRunInput {
-            id: run_id.to_string(),
-            conversation_id: conversation_id.to_string(),
-            generation: generation as i64,
-            task: task.to_string(),
-            model: Some(model.to_string()),
-            provider: Some(provider.to_string()),
-            metadata: Some(serde_json::json!({
-                "runtime": "ai_assistant",
-                "generation": generation,
-            })),
-        })
-        .await
-    {
-        tracing::warn!(
-            "Failed to create agent harness run {} for {}: {}",
-            run_id,
-            conversation_id,
-            error
-        );
-    }
-}
-
-async fn append_agent_harness_event(
-    app_handle: &AppHandle,
-    run_id: &str,
-    conversation_id: &str,
-    generation: u64,
-    event_type: &str,
-    payload: Option<serde_json::Value>,
-) {
-    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
-        return;
-    };
-    if let Err(error) = db
-        .append_agent_harness_event(
-            run_id,
-            conversation_id,
-            generation as i64,
-            event_type,
-            payload,
-        )
-        .await
-    {
-        tracing::warn!(
-            "Failed to append agent harness event {} for {}: {}",
-            event_type,
-            conversation_id,
-            error
-        );
-    }
-}
-
-async fn update_agent_harness_state(
-    app_handle: &AppHandle,
-    run_id: &str,
-    state: &str,
-    error: Option<&str>,
-    completed: bool,
-) {
-    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
-        return;
-    };
-    if let Err(update_error) = db
-        .update_agent_harness_state(run_id, state, error, completed.then(chrono::Utc::now))
-        .await
-    {
-        tracing::warn!(
-            "Failed to update agent harness run {} to {}: {}",
-            run_id,
-            state,
-            update_error
-        );
-    }
-}
-
-async fn checkpoint_agent_harness(
-    app_handle: &AppHandle,
-    run_id: &str,
-    checkpoint_type: &str,
-    payload: Option<serde_json::Value>,
-) {
-    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
-        return;
-    };
-    if let Err(error) = db
-        .append_agent_harness_checkpoint(run_id, checkpoint_type, payload)
-        .await
-    {
-        tracing::warn!(
-            "Failed to append agent harness checkpoint {} for {}: {}",
-            checkpoint_type,
-            run_id,
-            error
-        );
-    }
-}
-
-async fn finish_agent_harness(
-    app_handle: &AppHandle,
-    run_id: &str,
-    conversation_id: &str,
-    generation: u64,
-    state: &str,
-    error: Option<&str>,
-) {
-    append_agent_harness_event(
-        app_handle,
-        run_id,
-        conversation_id,
-        generation,
-        "generation_finished",
-        Some(serde_json::json!({
-            "state": state,
-            "error": error,
-        })),
-    )
-    .await;
-    update_agent_harness_state(app_handle, run_id, state, error, true).await;
-}
-
-async fn emit_success_outcome(
-    app_handle: &AppHandle,
-    execution_id: &str,
-    generation: u64,
-    response: String,
-) {
-    emit_agent_execution_finished_for_generation(
-        app_handle,
-        execution_id,
-        generation,
-        AgentExecutionOutcome::Succeeded,
-        None,
-        Some(response),
-        None,
-    );
 }
 
 pub async fn get_subagent_runs(
@@ -477,7 +306,6 @@ Schema:
 CRITICAL RULES:
 1) node_type selection:
    - Use "trigger_schedule" for scheduled/timed triggers
-   - Use "tool::browser" for opening URLs and web scraping
    - Use "tool::http_request" for HTTP API calls
    - Use "ai_chat" for AI text generation/summarization
    - Use "notify" for sending notifications/emails
@@ -486,7 +314,6 @@ CRITICAL RULES:
 
 2) params MUST contain actual values extracted from user description:
    - For "trigger_schedule": {{"trigger_type":"daily","hour":8,"minute":0,"second":0,"weekdays":"1,2,3,4,5"}}
-   - For "tool::browser": {{"url":"https://example.com","action":"navigate","wait_until":"networkidle"}}
    - For "tool::http_request": {{"url":"https://api.example.com","method":"GET"}}
    - For "ai_chat": {{"prompt":"Summarize the following content: {{{{input}}}}","system_prompt":"You are a helpful assistant"}}
    - For "notify": {{"title":"Notification","content":"{{{{input}}}}","use_input_as_content":true}}
@@ -816,6 +643,7 @@ pub async fn agent_execute(
 
     let config = config.unwrap_or(AgentExecuteConfig {
         conversation_id: None,
+        execution_id: None,
         message_id: None,
         enable_rag: Some(false),
         attachments: None,
@@ -837,6 +665,8 @@ pub async fn agent_execute(
         max_iterations: None,
         timeout_secs: None,
         force_tasks: None,
+        harness_mode: None,
+        harness_max_continuations: None,
         enable_tenth_man_rule: None,
         tenth_man_config: None,
         persist_messages: None,
@@ -846,6 +676,22 @@ pub async fn agent_execute(
         .conversation_id
         .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let requested_execution_id = config
+        .execution_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let continue_resolution =
+        crate::commands::agent_continue_resolver::resolve_agent_continue_execution(
+            &app_handle,
+            &conversation_id,
+            &requested_execution_id,
+            &task,
+        )
+        .await?;
+    let execution_id = continue_resolution.execution_id;
     let message_id = config
         .message_id
         .clone()
@@ -889,16 +735,36 @@ pub async fn agent_execute(
     } else {
         effective_tool_config
     };
+    let harness_mode = AgentHarnessMode::resolve(
+        config.harness_mode.as_deref(),
+        force_tasks,
+        effective_tool_config
+            .as_ref()
+            .map(|tool_config| tool_config.enabled)
+            .unwrap_or(false),
+    )?;
+    let harness_max_continuations =
+        resolve_agent_harness_max_continuations(config.harness_max_continuations);
+    let effective_enable_tenth_man_rule = config.enable_tenth_man_rule.unwrap_or(false)
+        && effective_tool_config
+            .as_ref()
+            .map(|tool_config| tool_config_allows_tool(tool_config, TENTH_MAN_REVIEW_TOOL_ID))
+            .unwrap_or(false);
 
     tracing::info!(
-        "Agent execute: conv={}, msg={}, rag={}, tools={}",
+        "Agent execute: conv={}, exec={}, msg={}, rag={}, tools={}, tenth_man_rule={}, harness_mode={}, continue_resumed={}, continue_reason={}",
         conversation_id,
+        execution_id,
         message_id,
         enable_rag,
         effective_tool_config
             .as_ref()
             .map(|c| c.enabled)
-            .unwrap_or(false)
+            .unwrap_or(false),
+        effective_enable_tenth_man_rule,
+        harness_mode.as_str(),
+        continue_resolution.resumed,
+        continue_resolution.reason
     );
 
     if let Err(e) =
@@ -947,7 +813,9 @@ pub async fn agent_execute(
             (provider, model)
         }
         Some(_) => {
-            return Err("Invalid model_override format, expected 'provider/model_name'".to_string())
+            return Err(
+                "Invalid model_override format, expected 'provider/model_name'".to_string(),
+            );
         }
         None => match ai_manager.get_default_llm_model().await {
             Ok(Some((p, m))) => {
@@ -1010,11 +878,21 @@ pub async fn agent_execute(
         }
     }
 
-    let (_cancellation_token, cancel_gen) = create_cancellation_token(&conversation_id);
-    let harness_run_id = Uuid::new_v4().to_string();
+    let (_cancellation_token, cancel_gen) = create_cancellation_token(&execution_id);
+    let harness_run_id = execution_id.clone();
+    persist_agent_execution_turn_start(
+        db_service.inner(),
+        &execution_id,
+        &conversation_id,
+        &message_id,
+        &task,
+        harness_mode.as_str(),
+    )
+    .await;
 
     let service_clone = service.clone();
     let conv_id = conversation_id.clone();
+    let exec_id = execution_id.clone();
     let msg_id = message_id.clone();
     let task_clone = task.clone();
     let display_content_clone = config.display_content.clone();
@@ -1034,7 +912,7 @@ pub async fn agent_execute(
     let rig_provider_for_capability_cache = provider_config.rig_provider.clone();
 
     tokio::spawn(async move {
-        let _guard = CancellationGuard(conv_id.clone(), cancel_gen);
+        let _guard = CancellationGuard(exec_id.clone(), cancel_gen);
         create_agent_harness_run(
             &app_handle,
             &harness_run_id,
@@ -1043,8 +921,11 @@ pub async fn agent_execute(
             &task_clone,
             &model_name_for_closure,
             &provider_for_closure,
+            harness_mode,
         )
         .await;
+        let _harness_heartbeat =
+            start_agent_harness_heartbeat(app_handle.clone(), harness_run_id.clone());
         append_agent_harness_event(
             &app_handle,
             &harness_run_id,
@@ -1052,8 +933,11 @@ pub async fn agent_execute(
             cancel_gen,
             "generation_started",
             Some(serde_json::json!({
-                "message_id": msg_id.clone(),
+                    "execution_id": exec_id.clone(),
+                    "message_id": msg_id.clone(),
                 "persist_messages": persist_messages,
+                "harness_mode": harness_mode.as_str(),
+                "max_continuations": harness_max_continuations,
             })),
         )
         .await;
@@ -1062,8 +946,9 @@ pub async fn agent_execute(
             &harness_run_id,
             "generation_created",
             Some(serde_json::json!({
-                "conversation_id": conv_id.clone(),
-                "generation": cancel_gen,
+                    "conversation_id": conv_id.clone(),
+                    "execution_id": exec_id.clone(),
+                    "generation": cancel_gen,
             })),
         )
         .await;
@@ -1207,8 +1092,9 @@ pub async fn agent_execute(
                     let _ = app_handle.emit(
                         "agent:user_message",
                         &serde_json::json!({
-                            "execution_id": conv_id,
-                            "generation": cancel_gen,
+                                "execution_id": exec_id.clone(),
+                                "conversation_id": conv_id.clone(),
+                                "generation": cancel_gen,
                             "message_id": user_msg_id,
                             "content": display_text,
                             "timestamp": user_msg.timestamp.timestamp_millis(),
@@ -1371,8 +1257,9 @@ pub async fn agent_execute(
                 Some(&error_message),
             )
             .await;
-            emit_agent_execution_finished_for_generation(
+            emit_agent_execution_finished_for_generation_with_conversation(
                 &app_handle,
+                &exec_id,
                 &conv_id,
                 cancel_gen,
                 AgentExecutionOutcome::Failed,
@@ -1443,8 +1330,9 @@ pub async fn agent_execute(
                             let _ = app_handle.emit(
                                 "ai_meta_info",
                                 &serde_json::json!({
-                                    "conversation_id": conv_id,
-                                    "generation": cancel_gen,
+                                        "conversation_id": conv_id.clone(),
+                                        "execution_id": exec_id.clone(),
+                                        "generation": cancel_gen,
                                     "message_id": msg_id,
                                     "rag_applied": true,
                                     "rag_sources_used": !citations.is_empty(),
@@ -1462,9 +1350,10 @@ pub async fn agent_execute(
         if let Err(e) = app_handle.emit(
             "ai_stream_start",
             &serde_json::json!({
-                "conversation_id": conv_id,
-                "generation": cancel_gen,
-                "message_id": msg_id
+                    "conversation_id": conv_id.clone(),
+                    "execution_id": exec_id.clone(),
+                    "generation": cancel_gen,
+                    "message_id": msg_id
             }),
         ) {
             tracing::error!("Failed to emit stream start event: {}", e);
@@ -1500,8 +1389,9 @@ pub async fn agent_execute(
                                     Some(&error_message),
                                 )
                                 .await;
-                                emit_agent_execution_finished_for_generation(
+                                emit_agent_execution_finished_for_generation_with_conversation(
                                     &app_handle,
+                                    &exec_id,
                                     &conv_id,
                                     cancel_gen,
                                     AgentExecutionOutcome::Failed,
@@ -1525,8 +1415,9 @@ pub async fn agent_execute(
                     None
                 };
 
-                let executor_params = crate::agents::executor::AgentExecuteParams {
-                    execution_id: conv_id.clone(),
+                let mut executor_params = crate::agents::executor::AgentExecuteParams {
+                    execution_id: exec_id.clone(),
+                    conversation_id: Some(conv_id.clone()),
                     cancellation_generation: Some(cancel_gen),
                     model: model_name_for_closure.clone(),
                     system_prompt: base_system_prompt.unwrap_or_default(),
@@ -1542,6 +1433,7 @@ pub async fn agent_execute(
                         .clone(),
                     active_terminal_session_id: config.current_terminal_session_id.clone(),
                     working_directory: effective_working_directory.clone(),
+                    provider_config_key: provider.clone(),
                     rig_provider: provider_for_closure.clone(),
                     api_key: provider_config_for_closure.api_key.clone(),
                     api_base: provider_config_for_closure.api_base.clone(),
@@ -1551,13 +1443,14 @@ pub async fn agent_execute(
                         .max(1),
                     timeout_secs: config.timeout_secs.unwrap_or(300),
                     tool_config: effective_tool_config.clone(),
-                    enable_tenth_man_rule: config.enable_tenth_man_rule.unwrap_or(false),
+                    enable_tenth_man_rule: effective_enable_tenth_man_rule,
                     tenth_man_config: config.tenth_man_config.clone(),
                     document_attachments: doc_attachments,
                     image_attachments: image_attachments_for_execution.clone(),
                     referenced_traffic: config.referenced_traffic.clone(),
                     persist_messages,
                     subagent_run_id: None,
+                    harness_run_id: Some(harness_run_id.clone()),
                     context_policy: None,
                     context_engine_mode: config
                         .context_mode
@@ -1566,421 +1459,531 @@ pub async fn agent_execute(
                     recursion_depth: 0,
                 };
 
-                match crate::agents::executor::execute_agent(&app_handle, executor_params.clone())
-                    .await
-                {
-                    Ok(response) => {
-                        if is_agent_execution_cancelled(&conv_id, Some(cancel_gen)) {
-                            tracing::info!(
-                                "Agent execution ended after cancellation for conversation: {}",
-                                conv_id
-                            );
-                            finish_agent_harness(
-                                &app_handle,
-                                &harness_run_id,
-                                &conv_id,
-                                cancel_gen,
-                                "cancelled",
-                                None,
-                            )
-                            .await;
-                            emit_agent_execution_finished_for_generation(
-                                &app_handle,
-                                &conv_id,
-                                cancel_gen,
-                                AgentExecutionOutcome::Cancelled,
-                                None,
-                                None,
-                                Some("Execution cancelled by user".to_string()),
-                            );
-                            return;
-                        }
-                        if attempted_model_vision {
-                            if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
-                                if let Err(e) = save_cached_model_vision_capability(
-                                    db.inner(),
-                                    &provider_for_capability_cache,
-                                    &model_for_capability_cache,
-                                    api_base_for_capability_cache.as_deref(),
-                                    rig_provider_for_capability_cache.as_deref(),
-                                    ModelVisionCapabilityStatus::Supported,
-                                    Some("Vision request completed successfully".to_string()),
+                let mut harness_continuation_count = 0usize;
+                let mut ledger_watchdog = AgentHarnessLedgerWatchdog::default();
+                loop {
+                    match execute_agent_turn(&app_handle, executor_params.clone()).await {
+                        Ok(turn_outcome) => {
+                            let response = turn_outcome.final_response.clone();
+                            if is_agent_execution_cancelled(&exec_id, Some(cancel_gen)) {
+                                tracing::info!(
+                                    "Agent execution ended after cancellation for conversation: {}",
+                                    conv_id
+                                );
+                                finish_agent_harness(
+                                    &app_handle,
+                                    &harness_run_id,
+                                    &conv_id,
+                                    cancel_gen,
+                                    "cancelled",
+                                    None,
                                 )
-                                .await
-                                {
-                                    tracing::warn!(
-                                        "Failed to persist supported model vision capability: {}",
-                                        e
-                                    );
-                                }
+                                .await;
+                                emit_agent_execution_finished_for_generation_with_conversation(
+                                    &app_handle,
+                                    &exec_id,
+                                    &conv_id,
+                                    cancel_gen,
+                                    AgentExecutionOutcome::Cancelled,
+                                    None,
+                                    None,
+                                    Some("Execution cancelled by user".to_string()),
+                                );
+                                return;
                             }
-                        }
-                        tracing::info!("Agent with tools completed for conversation: {}", conv_id);
-                        append_agent_harness_event(
-                            &app_handle,
-                            &harness_run_id,
-                            &conv_id,
-                            cancel_gen,
-                            "model_turn_finished",
-                            Some(serde_json::json!({
-                                "response_chars": response.chars().count(),
-                            })),
-                        )
-                        .await;
-                        settle_running_tool_messages(
-                            &app_handle,
-                            &conv_id,
-                            "timed_out",
-                            "Execution finished before the tool result was recorded",
-                        )
-                        .await;
-                        checkpoint_agent_harness(
-                            &app_handle,
-                            &harness_run_id,
-                            "generation_succeeded",
-                            Some(serde_json::json!({
-                                "response_chars": response.chars().count(),
-                            })),
-                        )
-                        .await;
-                        finish_agent_harness(
-                            &app_handle,
-                            &harness_run_id,
-                            &conv_id,
-                            cancel_gen,
-                            "succeeded",
-                            None,
-                        )
-                        .await;
-                        emit_success_outcome(&app_handle, &conv_id, cancel_gen, response).await;
-                    }
-                    Err(e) => {
-                        if is_agent_execution_cancelled(&conv_id, Some(cancel_gen)) {
-                            tracing::info!(
-                                "Agent execution failed after cancellation for conversation: {}",
-                                conv_id
-                            );
-                            finish_agent_harness(
-                                &app_handle,
-                                &harness_run_id,
-                                &conv_id,
-                                cancel_gen,
-                                "cancelled",
-                                None,
-                            )
-                            .await;
-                            emit_agent_execution_finished_for_generation(
-                                &app_handle,
-                                &conv_id,
-                                cancel_gen,
-                                AgentExecutionOutcome::Cancelled,
-                                None,
-                                None,
-                                Some("Execution cancelled by user".to_string()),
-                            );
-                            return;
-                        }
-                        if attempted_model_vision {
-                            let error_text = e.to_string();
-                            if matches!(
-                                classify_model_vision_capability_error(&error_text),
-                                Some(ModelVisionCapabilityStatus::Unsupported)
-                            ) {
+                            if attempted_model_vision {
                                 if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
-                                    if let Err(save_error) = save_cached_model_vision_capability(
+                                    if let Err(e) = save_cached_model_vision_capability(
                                         db.inner(),
                                         &provider_for_capability_cache,
                                         &model_for_capability_cache,
                                         api_base_for_capability_cache.as_deref(),
                                         rig_provider_for_capability_cache.as_deref(),
-                                        ModelVisionCapabilityStatus::Unsupported,
-                                        Some(error_text.clone()),
+                                        ModelVisionCapabilityStatus::Supported,
+                                        Some("Vision request completed successfully".to_string()),
                                     )
                                     .await
                                     {
                                         tracing::warn!(
-                                            "Failed to persist unsupported model vision capability: {}",
-                                            save_error
+                                            "Failed to persist supported model vision capability: {}",
+                                            e
                                         );
                                     }
                                 }
                             }
+                            tracing::info!(
+                                "Agent with tools completed for conversation: {}",
+                                conv_id
+                            );
+                            append_agent_harness_event(
+                                &app_handle,
+                                &harness_run_id,
+                                &conv_id,
+                                cancel_gen,
+                                "model_turn_finished",
+                                Some(serde_json::json!({
+                                    "response_chars": response.chars().count(),
+                                })),
+                            )
+                            .await;
+                            settle_running_tool_messages(
+                                &app_handle,
+                                &exec_id,
+                                "timed_out",
+                                "Execution finished before the tool result was recorded",
+                            )
+                            .await;
+                            let task_assessment =
+                                assess_agent_harness_success(&app_handle, &exec_id, harness_mode)
+                                    .await;
+                            let mut harness_success = assess_agent_turn_completion(
+                                &turn_outcome,
+                                task_assessment,
+                                harness_mode,
+                            );
+                            let ledger_snapshot =
+                                snapshot_agent_harness_ledger(&app_handle, &exec_id).await;
+                            let ledger_decision = observe_agent_harness_ledger_progress(
+                                harness_mode,
+                                &harness_success,
+                                ledger_snapshot.as_ref(),
+                                &response,
+                                &mut ledger_watchdog,
+                            );
+                            if matches!(
+                                ledger_decision,
+                                crate::commands::ai_runtime_harness::AgentHarnessLedgerWatchdogDecision::Stalled
+                            ) {
+                                harness_success = mark_agent_harness_ledger_stalled(
+                                    harness_success,
+                                    ledger_watchdog.no_progress_count(),
+                                );
+                            }
+                            if should_continue_agent_harness(
+                                harness_mode,
+                                &harness_success,
+                                harness_continuation_count,
+                                harness_max_continuations,
+                            ) {
+                                checkpoint_agent_harness(
+                                    &app_handle,
+                                    &harness_run_id,
+                                    "generation_continuing",
+                                    Some(agent_harness_continuation_payload(
+                                        response.chars().count(),
+                                        harness_mode,
+                                        &harness_success,
+                                        harness_continuation_count,
+                                        harness_max_continuations,
+                                        ledger_decision.continuation_kind(),
+                                        ledger_watchdog.no_progress_count(),
+                                    )),
+                                )
+                                .await;
+                                append_agent_harness_event(
+                                    &app_handle,
+                                    &harness_run_id,
+                                    &conv_id,
+                                    cancel_gen,
+                                    "harness_continuation_scheduled",
+                                    Some(agent_harness_continuation_payload(
+                                        response.chars().count(),
+                                        harness_mode,
+                                        &harness_success,
+                                        harness_continuation_count,
+                                        harness_max_continuations,
+                                        ledger_decision.continuation_kind(),
+                                        ledger_watchdog.no_progress_count(),
+                                    )),
+                                )
+                                .await;
+                                executor_params.task = build_agent_harness_continuation_task(
+                                    &app_handle,
+                                    &exec_id,
+                                    &augmented_task,
+                                    &harness_success,
+                                    harness_continuation_count,
+                                    harness_max_continuations,
+                                    ledger_decision.continuation_kind(),
+                                )
+                                .await;
+                                harness_continuation_count += 1;
+                                continue;
+                            }
+                            let harness_success = final_agent_harness_assessment(
+                                harness_success,
+                                harness_continuation_count,
+                                harness_max_continuations,
+                            );
+                            checkpoint_agent_harness(
+                                &app_handle,
+                                &harness_run_id,
+                                if harness_success.succeeded() {
+                                    "generation_succeeded"
+                                } else {
+                                    "generation_incomplete"
+                                },
+                                Some(agent_harness_completion_payload(
+                                    response.chars().count(),
+                                    harness_mode,
+                                    &harness_success,
+                                    harness_continuation_count,
+                                    harness_max_continuations,
+                                )),
+                            )
+                            .await;
+                            finish_agent_harness(
+                                &app_handle,
+                                &harness_run_id,
+                                &conv_id,
+                                cancel_gen,
+                                harness_success.state,
+                                harness_success.error.as_deref(),
+                            )
+                            .await;
+                            emit_agent_harness_outcome(
+                                &app_handle,
+                                &exec_id,
+                                &conv_id,
+                                cancel_gen,
+                                &harness_success,
+                                response,
+                            )
+                            .await;
                         }
-                        tracing::error!("Agent with tools execution failed: {}", e);
-                        settle_running_tool_messages(
-                            &app_handle,
-                            &conv_id,
-                            "failed",
-                            "Execution failed before the tool result was recorded",
-                        )
-                        .await;
-                        let error_message = e.to_string();
-                        finish_agent_harness(
-                            &app_handle,
-                            &harness_run_id,
-                            &conv_id,
-                            cancel_gen,
-                            "failed",
-                            Some(&error_message),
-                        )
-                        .await;
-                        emit_agent_execution_finished_for_generation(
-                            &app_handle,
-                            &conv_id,
-                            cancel_gen,
-                            AgentExecutionOutcome::Failed,
-                            Some(error_message),
-                            None,
-                            None,
-                        );
+                        Err(e) => {
+                            if is_agent_execution_cancelled(&exec_id, Some(cancel_gen)) {
+                                tracing::info!(
+                                    "Agent execution failed after cancellation for conversation: {}",
+                                    conv_id
+                                );
+                                finish_agent_harness(
+                                    &app_handle,
+                                    &harness_run_id,
+                                    &conv_id,
+                                    cancel_gen,
+                                    "cancelled",
+                                    None,
+                                )
+                                .await;
+                                emit_agent_execution_finished_for_generation_with_conversation(
+                                    &app_handle,
+                                    &exec_id,
+                                    &conv_id,
+                                    cancel_gen,
+                                    AgentExecutionOutcome::Cancelled,
+                                    None,
+                                    None,
+                                    Some("Execution cancelled by user".to_string()),
+                                );
+                                return;
+                            }
+                            if attempted_model_vision {
+                                let error_text = e.to_string();
+                                if matches!(
+                                    classify_model_vision_capability_error(&error_text),
+                                    Some(ModelVisionCapabilityStatus::Unsupported)
+                                ) {
+                                    if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>()
+                                    {
+                                        if let Err(save_error) =
+                                            save_cached_model_vision_capability(
+                                                db.inner(),
+                                                &provider_for_capability_cache,
+                                                &model_for_capability_cache,
+                                                api_base_for_capability_cache.as_deref(),
+                                                rig_provider_for_capability_cache.as_deref(),
+                                                ModelVisionCapabilityStatus::Unsupported,
+                                                Some(error_text.clone()),
+                                            )
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                "Failed to persist unsupported model vision capability: {}",
+                                                save_error
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            tracing::error!("Agent with tools execution failed: {}", e);
+                            settle_running_tool_messages(
+                                &app_handle,
+                                &exec_id,
+                                "failed",
+                                "Execution failed before the tool result was recorded",
+                            )
+                            .await;
+                            let error_message = e.to_string();
+                            finish_agent_harness(
+                                &app_handle,
+                                &harness_run_id,
+                                &conv_id,
+                                cancel_gen,
+                                "failed",
+                                Some(&error_message),
+                            )
+                            .await;
+                            emit_agent_execution_finished_for_generation_with_conversation(
+                                &app_handle,
+                                &exec_id,
+                                &conv_id,
+                                cancel_gen,
+                                AgentExecutionOutcome::Failed,
+                                Some(error_message),
+                                None,
+                                None,
+                            );
+                        }
                     }
+                    break;
                 }
 
                 return;
             }
         }
 
-        match stream_chat_with_llm(
-            &service_clone,
-            &app_handle,
-            &conv_id,
-            cancel_gen,
-            &msg_id,
-            &augmented_task,
-            base_system_prompt.as_deref(),
-            image_attachments_for_execution,
-            persist_messages,
-        )
-        .await
-        {
-            Ok(response) => {
-                if is_agent_execution_cancelled(&conv_id, Some(cancel_gen)) {
-                    tracing::info!(
-                        "Stream chat ended after cancellation for conversation: {}",
-                        conv_id
-                    );
-                    finish_agent_harness(
-                        &app_handle,
-                        &harness_run_id,
-                        &conv_id,
-                        cancel_gen,
-                        "cancelled",
-                        None,
-                    )
-                    .await;
-                    emit_agent_execution_finished_for_generation(
-                        &app_handle,
-                        &conv_id,
-                        cancel_gen,
-                        AgentExecutionOutcome::Cancelled,
-                        None,
-                        None,
-                        Some("Execution cancelled by user".to_string()),
-                    );
-                    return;
-                }
-                if attempted_model_vision {
-                    if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
-                        if let Err(e) = save_cached_model_vision_capability(
-                            db.inner(),
-                            &provider_for_capability_cache,
-                            &model_for_capability_cache,
-                            api_base_for_capability_cache.as_deref(),
-                            rig_provider_for_capability_cache.as_deref(),
-                            ModelVisionCapabilityStatus::Supported,
-                            Some("Vision request completed successfully".to_string()),
+        let mut stream_task = augmented_task.clone();
+        let mut stream_continuation_count = 0usize;
+        loop {
+            match stream_chat_with_llm(
+                &service_clone,
+                &app_handle,
+                &conv_id,
+                &exec_id,
+                cancel_gen,
+                &msg_id,
+                &stream_task,
+                base_system_prompt.as_deref(),
+                image_attachments_for_execution.clone(),
+                persist_messages,
+            )
+            .await
+            {
+                Ok(response) => {
+                    if is_agent_execution_cancelled(&exec_id, Some(cancel_gen)) {
+                        tracing::info!(
+                            "Stream chat ended after cancellation for conversation: {}",
+                            conv_id
+                        );
+                        finish_agent_harness(
+                            &app_handle,
+                            &harness_run_id,
+                            &conv_id,
+                            cancel_gen,
+                            "cancelled",
+                            None,
                         )
-                        .await
-                        {
-                            tracing::warn!(
-                                "Failed to persist supported model vision capability: {}",
-                                e
-                            );
-                        }
+                        .await;
+                        emit_agent_execution_finished_for_generation_with_conversation(
+                            &app_handle,
+                            &exec_id,
+                            &conv_id,
+                            cancel_gen,
+                            AgentExecutionOutcome::Cancelled,
+                            None,
+                            None,
+                            Some("Execution cancelled by user".to_string()),
+                        );
+                        return;
                     }
-                }
-                tracing::info!("Stream chat completed for conversation: {}", conv_id);
-                checkpoint_agent_harness(
-                    &app_handle,
-                    &harness_run_id,
-                    "generation_succeeded",
-                    Some(serde_json::json!({
-                        "response_chars": response.chars().count(),
-                    })),
-                )
-                .await;
-                finish_agent_harness(
-                    &app_handle,
-                    &harness_run_id,
-                    &conv_id,
-                    cancel_gen,
-                    "succeeded",
-                    None,
-                )
-                .await;
-                emit_success_outcome(&app_handle, &conv_id, cancel_gen, response).await;
-            }
-            Err(e) => {
-                if is_agent_execution_cancelled(&conv_id, Some(cancel_gen)) {
-                    tracing::info!(
-                        "Stream chat failed after cancellation for conversation: {}",
-                        conv_id
-                    );
-                    finish_agent_harness(
-                        &app_handle,
-                        &harness_run_id,
-                        &conv_id,
-                        cancel_gen,
-                        "cancelled",
-                        None,
-                    )
-                    .await;
-                    emit_agent_execution_finished_for_generation(
-                        &app_handle,
-                        &conv_id,
-                        cancel_gen,
-                        AgentExecutionOutcome::Cancelled,
-                        None,
-                        None,
-                        Some("Execution cancelled by user".to_string()),
-                    );
-                    return;
-                }
-                if attempted_model_vision {
-                    if matches!(
-                        classify_model_vision_capability_error(&e),
-                        Some(ModelVisionCapabilityStatus::Unsupported)
-                    ) {
+                    if attempted_model_vision {
                         if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
-                            if let Err(save_error) = save_cached_model_vision_capability(
+                            if let Err(e) = save_cached_model_vision_capability(
                                 db.inner(),
                                 &provider_for_capability_cache,
                                 &model_for_capability_cache,
                                 api_base_for_capability_cache.as_deref(),
                                 rig_provider_for_capability_cache.as_deref(),
-                                ModelVisionCapabilityStatus::Unsupported,
-                                Some(e.clone()),
+                                ModelVisionCapabilityStatus::Supported,
+                                Some("Vision request completed successfully".to_string()),
                             )
                             .await
                             {
                                 tracing::warn!(
-                                    "Failed to persist unsupported model vision capability: {}",
-                                    save_error
+                                    "Failed to persist supported model vision capability: {}",
+                                    e
                                 );
                             }
                         }
                     }
+                    tracing::info!("Stream chat completed for conversation: {}", conv_id);
+                    let harness_success =
+                        assess_agent_harness_success(&app_handle, &exec_id, harness_mode).await;
+                    let harness_success = final_agent_harness_assessment(
+                        harness_success,
+                        stream_continuation_count,
+                        harness_max_continuations,
+                    );
+                    checkpoint_agent_harness(
+                        &app_handle,
+                        &harness_run_id,
+                        if harness_success.succeeded() {
+                            "generation_succeeded"
+                        } else {
+                            "generation_incomplete"
+                        },
+                        Some(agent_harness_completion_payload(
+                            response.chars().count(),
+                            harness_mode,
+                            &harness_success,
+                            stream_continuation_count,
+                            harness_max_continuations,
+                        )),
+                    )
+                    .await;
+                    finish_agent_harness(
+                        &app_handle,
+                        &harness_run_id,
+                        &conv_id,
+                        cancel_gen,
+                        harness_success.state,
+                        harness_success.error.as_deref(),
+                    )
+                    .await;
+                    emit_agent_harness_outcome(
+                        &app_handle,
+                        &exec_id,
+                        &conv_id,
+                        cancel_gen,
+                        &harness_success,
+                        response,
+                    )
+                    .await;
                 }
-                tracing::error!("Stream chat failed: {}", e);
-                finish_agent_harness(
-                    &app_handle,
-                    &harness_run_id,
-                    &conv_id,
-                    cancel_gen,
-                    "failed",
-                    Some(&e),
-                )
-                .await;
-                emit_agent_execution_finished_for_generation(
-                    &app_handle,
-                    &conv_id,
-                    cancel_gen,
-                    AgentExecutionOutcome::Failed,
-                    Some(e),
-                    None,
-                    None,
-                );
+                Err(e) => {
+                    if is_agent_execution_cancelled(&exec_id, Some(cancel_gen)) {
+                        tracing::info!(
+                            "Stream chat failed after cancellation for conversation: {}",
+                            conv_id
+                        );
+                        finish_agent_harness(
+                            &app_handle,
+                            &harness_run_id,
+                            &conv_id,
+                            cancel_gen,
+                            "cancelled",
+                            None,
+                        )
+                        .await;
+                        emit_agent_execution_finished_for_generation_with_conversation(
+                            &app_handle,
+                            &exec_id,
+                            &conv_id,
+                            cancel_gen,
+                            AgentExecutionOutcome::Cancelled,
+                            None,
+                            None,
+                            Some("Execution cancelled by user".to_string()),
+                        );
+                        return;
+                    }
+                    if attempted_model_vision {
+                        if matches!(
+                            classify_model_vision_capability_error(&e),
+                            Some(ModelVisionCapabilityStatus::Unsupported)
+                        ) {
+                            if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+                                if let Err(save_error) = save_cached_model_vision_capability(
+                                    db.inner(),
+                                    &provider_for_capability_cache,
+                                    &model_for_capability_cache,
+                                    api_base_for_capability_cache.as_deref(),
+                                    rig_provider_for_capability_cache.as_deref(),
+                                    ModelVisionCapabilityStatus::Unsupported,
+                                    Some(e.clone()),
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        "Failed to persist unsupported model vision capability: {}",
+                                        save_error
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    if is_empty_llm_stream_error(&e) {
+                        match resolve_empty_stream_harness_decision(
+                            &app_handle,
+                            &harness_run_id,
+                            &conv_id,
+                            cancel_gen,
+                            &exec_id,
+                            &augmented_task,
+                            &e,
+                            harness_mode,
+                            stream_continuation_count,
+                            harness_max_continuations,
+                        )
+                        .await
+                        {
+                            AgentHarnessStreamEmptyDecision::Continue { next_task } => {
+                                stream_task = next_task;
+                                stream_continuation_count += 1;
+                                continue;
+                            }
+                            AgentHarnessStreamEmptyDecision::Stop { assessment } => {
+                                checkpoint_agent_harness(
+                                    &app_handle,
+                                    &harness_run_id,
+                                    "generation_incomplete",
+                                    Some(agent_harness_completion_payload(
+                                        0,
+                                        harness_mode,
+                                        &assessment,
+                                        stream_continuation_count,
+                                        harness_max_continuations,
+                                    )),
+                                )
+                                .await;
+                                finish_agent_harness(
+                                    &app_handle,
+                                    &harness_run_id,
+                                    &conv_id,
+                                    cancel_gen,
+                                    assessment.state,
+                                    assessment.error.as_deref(),
+                                )
+                                .await;
+                                emit_agent_harness_outcome(
+                                    &app_handle,
+                                    &exec_id,
+                                    &conv_id,
+                                    cancel_gen,
+                                    &assessment,
+                                    String::new(),
+                                )
+                                .await;
+                                break;
+                            }
+                        }
+                    }
+                    tracing::error!("Stream chat failed: {}", e);
+                    finish_agent_harness(
+                        &app_handle,
+                        &harness_run_id,
+                        &conv_id,
+                        cancel_gen,
+                        "failed",
+                        Some(&e),
+                    )
+                    .await;
+                    emit_agent_execution_finished_for_generation_with_conversation(
+                        &app_handle,
+                        &exec_id,
+                        &conv_id,
+                        cancel_gen,
+                        AgentExecutionOutcome::Failed,
+                        Some(e),
+                        None,
+                        None,
+                    );
+                }
             }
+            break;
         }
     });
 
     Ok(message_id)
-}
-
-fn sanitize_image_attachments(attachments: &serde_json::Value) -> serde_json::Value {
-    fn sanitize_one(v: &mut serde_json::Value) {
-        let img = if v.get("type").and_then(|t| t.as_str()) == Some("image") {
-            Some(v)
-        } else {
-            v.get_mut("image")
-        };
-        let Some(img) = img else { return };
-        if let Some(obj) = img.as_object_mut() {
-            obj.remove("source_path");
-        }
-    }
-
-    let mut cloned = attachments.clone();
-    if let Some(arr) = cloned.as_array_mut() {
-        for item in arr.iter_mut() {
-            sanitize_one(item);
-        }
-    } else if cloned.is_object() {
-        sanitize_one(&mut cloned);
-    }
-    cloned
-}
-
-async fn load_image_attachment_settings(
-    db: &DatabaseService,
-) -> (EffectiveImageAttachmentMode, bool) {
-    let mode_str = db
-        .get_config("agent", "image_attachment_mode")
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "auto".to_string());
-    let mode = match mode_str.as_str() {
-        "auto" => EffectiveImageAttachmentMode::Auto,
-        "model_vision" => EffectiveImageAttachmentMode::ModelVision,
-        _ => EffectiveImageAttachmentMode::LocalOcr,
-    };
-
-    let allow_upload = db
-        .get_config("agent", "allow_image_upload_to_model")
-        .await
-        .ok()
-        .flatten()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    (mode, allow_upload)
-}
-
-async fn load_tool_config_from_db(app_handle: &AppHandle) -> Option<crate::agents::ToolConfig> {
-    if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
-        if let Ok(Some(config_str)) = db.get_config("agent", "tool_config").await {
-            if let Ok(config) = crate::agents::ToolConfig::from_json_str(&config_str) {
-                tracing::info!("Loaded global tool config from database");
-                return Some(config);
-            }
-        }
-    }
-
-    tracing::info!("No global tool config found, using default");
-    None
-}
-
-async fn save_tool_config_to_db(
-    app_handle: &AppHandle,
-    config: &crate::agents::ToolConfig,
-) -> Result<(), String> {
-    if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
-        let config_str = serde_json::to_string(config)
-            .map_err(|e| format!("Failed to serialize tool config: {}", e))?;
-
-        db.set_config(
-            "agent",
-            "tool_config",
-            &config_str,
-            Some("Global tool configuration"),
-        )
-        .await
-        .map_err(|e| format!("Failed to save tool config: {}", e))?;
-
-        tracing::info!("Saved global tool config to database");
-        Ok(())
-    } else {
-        Err("Database service not available".to_string())
-    }
 }

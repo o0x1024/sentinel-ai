@@ -343,20 +343,8 @@ pub async fn surface_mark_inventory_viewed(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: SurfaceAssetFilter,
 ) -> Result<usize, String> {
-    let mut view_filter = filter;
-    view_filter.limit = None;
-    view_filter.offset = None;
-
-    let asset_ids = db_service
-        .list_surface_assets(&view_filter)
-        .await
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|asset| asset.id)
-        .collect::<Vec<_>>();
-
     db_service
-        .mark_surface_assets_viewed(&asset_ids, &Utc::now().to_rfc3339(), "surface_inventory")
+        .mark_surface_inventory_viewed(&filter, &Utc::now().to_rfc3339(), "surface_inventory")
         .await
         .map_err(|e| e.to_string())
 }

@@ -1333,6 +1333,7 @@ pub async fn agent_execute_parallel(
 fn empty_agent_config() -> AgentExecuteConfig {
     AgentExecuteConfig {
         conversation_id: None,
+        execution_id: None,
         message_id: None,
         enable_rag: Some(false),
         attachments: None,
@@ -1354,6 +1355,8 @@ fn empty_agent_config() -> AgentExecuteConfig {
         max_iterations: None,
         timeout_secs: None,
         force_tasks: None,
+        harness_mode: None,
+        harness_max_continuations: None,
         enable_tenth_man_rule: None,
         tenth_man_config: None,
         persist_messages: None,

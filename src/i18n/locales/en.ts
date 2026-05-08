@@ -26,6 +26,7 @@ import ragManagement from './rag/en'
 import notifications from './notifications/en'
 import aiAssistant from './aiAssistant/en'
 import agent from './agent/en'
+import botConsole from './botConsole/en'
 import bugBounty from './bugBounty/en'
 import llmSecurity from './llmSecurity/en'
 
@@ -64,6 +65,7 @@ export default {
   notifications,
   aiAssistant,
   agent,
+  botConsole,
   bugBounty,
   llmSecurity,
 

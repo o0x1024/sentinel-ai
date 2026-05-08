@@ -242,13 +242,14 @@ export default {
   skills: 'Skills',
   skillManagement: 'Skill Management',
   skillManagementSubtitle: 'Curate reusable skills and memory feedback from one place.',
-  skillsMode: 'Skills mode (progressive disclosure)',
   manage: 'Manage',
   manageInTools: 'Manage in Tools',
   skillsManagedInTools: 'Skills are managed in Tools > Skills',
   quickActionsTitle: 'Quick Actions',
   quickActionsDescription: 'Create, refresh, and inspect the current library view.',
   refreshAll: 'Refresh All',
+  enableAllSkills: 'Enable All',
+  disableAllSkills: 'Disable All',
   quickToggle: 'Quick toggle',
   textFiles: 'Text Files',
   skillCount: '{count} Skills',
@@ -607,6 +608,7 @@ export default {
 
   // MessageFlow
   aiIsThinking: 'AI is thinking...',
+  contextCompressing: 'Compressing context...',
   agentReady: 'Agent Ready',
   startConversation: "Start a conversation to see the Agent's responses and task execution.",
   loadMoreMessages: 'Load {count} earlier messages',
@@ -706,6 +708,19 @@ export default {
   historyTokens: 'History',
   historyMessages: 'Messages',
   totalUsed: 'Total Used',
+  contextPressure: 'Context Pressure',
+  contextPressureLow: 'Low',
+  contextPressureWarning: 'Warning',
+  contextPressureAutoCompact: 'Auto compact',
+  contextPressureBlocking: 'Blocking',
+  effectiveContextTokens: 'Effective Context',
+  remainingContextTokens: 'Remaining Context',
+  outputReserveTokens: 'Output Reserve',
+  warningThresholdTokens: 'Warning Threshold',
+  autoCompactThresholdTokens: 'Auto Compact Threshold',
+  blockingThresholdTokens: 'Blocking Threshold',
+  contextPressurePhase: 'Pressure Phase',
+  currentTaskTokens: 'Current Task',
 
   // Document attachment
   document: {

@@ -150,11 +150,12 @@ impl WeixinIlinkClient {
         to_user_id: &str,
         text: &str,
         context_token: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
+        let client_id = uuid::Uuid::new_v4().to_string();
         let mut msg = json!({
             "from_user_id": "",
             "to_user_id": to_user_id,
-            "client_id": uuid::Uuid::new_v4().to_string(),
+            "client_id": client_id.clone(),
             "message_type": MSG_TYPE_BOT,
             "message_state": MSG_STATE_FINISH,
             "item_list": [{
@@ -182,7 +183,7 @@ impl WeixinIlinkClient {
                 compact_json(&response)
             ));
         }
-        Ok(())
+        Ok(client_id)
     }
 
     async fn api_get(&self, base_url: &str, endpoint: &str) -> Result<Value, String> {

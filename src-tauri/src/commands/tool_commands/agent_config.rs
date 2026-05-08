@@ -52,6 +52,12 @@ pub struct TerminalConfig {
     /// Whether to use host network mode for Docker
     #[serde(default)]
     pub docker_use_host_network: bool,
+    /// Shell executable used by host interactive sessions.
+    #[serde(default = "default_host_shell")]
+    pub host_shell: String,
+    /// Shell executable used inside Docker interactive sessions.
+    #[serde(default = "default_docker_shell")]
+    pub docker_shell: String,
 }
 
 fn default_docker_memory_limit() -> String {
@@ -62,6 +68,25 @@ fn default_docker_cpu_limit() -> String {
     "4.0".to_string()
 }
 
+#[cfg(target_os = "macos")]
+fn default_host_shell() -> String {
+    "/bin/zsh".to_string()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn default_host_shell() -> String {
+    "/bin/bash".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn default_host_shell() -> String {
+    "powershell".to_string()
+}
+
+fn default_docker_shell() -> String {
+    "bash".to_string()
+}
+
 impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
@@ -70,6 +95,8 @@ impl Default for TerminalConfig {
             docker_memory_limit: default_docker_memory_limit(),
             docker_cpu_limit: default_docker_cpu_limit(),
             docker_use_host_network: false,
+            host_shell: default_host_shell(),
+            docker_shell: default_docker_shell(),
         }
     }
 }
@@ -273,6 +300,8 @@ pub async fn save_agent_config(
     config: AgentConfig,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<(), String> {
+    validate_terminal_config(&config.terminal)?;
+
     // Save shell config to database
     save_shell_config_to_db(&config.shell, db_service.inner()).await?;
     // Save terminal config to database
@@ -289,6 +318,8 @@ pub async fn save_agent_config(
     let mut shell_cfg = config.shell.clone();
     // Unify execution mode with terminal setting.
     shell_cfg.default_execution_mode = config.terminal.default_execution_mode.into();
+    shell_cfg.host_shell = config.terminal.host_shell.clone();
+    shell_cfg.docker_shell = config.terminal.docker_shell.clone();
     // Ensure docker_config exists and matches selected docker image.
     if shell_cfg.docker_config.is_none() {
         shell_cfg.docker_config = Some(DockerSandboxConfig::default());
@@ -443,6 +474,8 @@ pub async fn init_agent_config(db: &sentinel_db::DatabaseService) -> Result<(), 
 
     // Unify execution mode with terminal setting.
     shell_cfg.default_execution_mode = terminal_config.default_execution_mode.into();
+    shell_cfg.host_shell = terminal_config.host_shell.clone();
+    shell_cfg.docker_shell = terminal_config.docker_shell.clone();
 
     // Ensure docker_config exists and matches selected docker image/resources.
     if shell_cfg.docker_config.is_none() {
@@ -596,7 +629,46 @@ pub async fn load_terminal_config_from_db(db: &sentinel_db::DatabaseService) -> 
         config.docker_use_host_network = value == "1" || value.eq_ignore_ascii_case("true");
     }
 
+    if let Ok(Some(value)) = db.get_config("agent", "terminal_host_shell").await {
+        config.host_shell = value.trim().to_string();
+    }
+
+    if let Ok(Some(value)) = db.get_config("agent", "terminal_docker_shell").await {
+        config.docker_shell = value.trim().to_string();
+    }
+
     config
+}
+
+fn validate_terminal_config(config: &TerminalConfig) -> Result<(), String> {
+    let host_shell = config.host_shell.trim();
+    if host_shell.is_empty() {
+        return Err("Host shell cannot be empty".to_string());
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::path::Path::new(host_shell);
+        if !path.is_absolute() {
+            return Err("Host shell must be an absolute executable path".to_string());
+        }
+        let metadata =
+            std::fs::metadata(path).map_err(|e| format!("Host shell is not accessible: {}", e))?;
+        if !metadata.is_file() {
+            return Err("Host shell must point to an executable file".to_string());
+        }
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err("Host shell is not executable".to_string());
+        }
+    }
+
+    if config.docker_shell.trim().is_empty() {
+        return Err("Docker shell cannot be empty".to_string());
+    }
+
+    Ok(())
 }
 
 /// Load image attachment config from database
@@ -718,13 +790,33 @@ async fn save_terminal_config_to_db(
     .await
     .map_err(|e| e.to_string())?;
 
+    db.set_config(
+        "agent",
+        "terminal_host_shell",
+        config.host_shell.trim(),
+        Some("Shell executable used by host interactive terminal sessions"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "agent",
+        "terminal_docker_shell",
+        config.docker_shell.trim(),
+        Some("Shell executable used inside Docker interactive terminal sessions"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     tracing::info!(
-        "Terminal config saved: execution_mode={:?}, docker_image={}, memory={}, cpu={}, host_network={}",
+        "Terminal config saved: execution_mode={:?}, docker_image={}, memory={}, cpu={}, host_network={}, host_shell={}, docker_shell={}",
         config.default_execution_mode,
         config.docker_image,
         config.docker_memory_limit,
         config.docker_cpu_limit,
-        config.docker_use_host_network
+        config.docker_use_host_network,
+        config.host_shell,
+        config.docker_shell
     );
 
     Ok(())

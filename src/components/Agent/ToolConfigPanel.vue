@@ -1,5 +1,5 @@
 <template>
-  <div class="tool-config-panel min-w-0 w-full max-w-full">
+  <div class="tool-config-panel min-w-0 w-full max-w-full overflow-hidden">
     <!-- Header -->
     <div v-if="props.showHeader" class="panel-header flex items-center justify-between p-4 border-b border-base-300">
       <div class="flex items-center gap-2">
@@ -12,13 +12,13 @@
     </div>
 
     <!-- Content -->
-    <div class="panel-content min-w-0 overflow-x-hidden overflow-y-auto p-4 space-y-4">
+    <div class="panel-content min-w-0 w-full max-w-full overflow-x-hidden overflow-y-auto p-4 space-y-4">
       <!-- Enable Tools Toggle -->
       <div class="form-control min-w-0">
         <label class="label min-w-0 cursor-pointer justify-start gap-3">
-          <input 
-            type="checkbox" 
-            v-model="localConfig.enabled" 
+          <input
+            type="checkbox"
+            v-model="localConfig.enabled"
             class="checkbox checkbox-primary"
             @change="emitUpdate"
           />
@@ -29,49 +29,51 @@
         </label>
       </div>
 
-      <div v-if="localConfig.enabled" class="min-w-0 space-y-4">
-        <!-- Tool Selection Strategy -->
-        <div class="form-control min-w-0">
-          <label class="label">
-            <span class="label-text font-medium">{{ t('agent.toolSelectionStrategy') }}</span>
-          </label>
-          <select 
-            v-model="localConfig.selection_strategy" 
-            class="select select-bordered w-full"
-            @change="emitUpdate"
-          >
-            <option value="Keyword">{{ t('agent.keywordMatching') }}</option>
-            <option value="LLM">{{ t('agent.intelligentAnalysis') }}</option>
-            <option value="Hybrid">{{ t('agent.hybridStrategy') }}</option>
-            <option value="Manual">{{ t('agent.manualSelection') }}</option>
-            <option value="All">{{ t('agent.allTools') }}</option>
-          </select>
-          <label class="label">
-            <span class="label-text-alt text-base-content/60">
-              {{ getStrategyDescription(localConfig.selection_strategy) }}
-            </span>
-          </label>
-        </div>
+      <div v-if="localConfig.enabled" class="min-w-0 w-full max-w-full overflow-hidden space-y-4">
+        <div class="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_180px]">
+          <!-- Tool Selection Strategy -->
+          <div class="form-control min-w-0">
+            <label class="label">
+              <span class="label-text font-medium">{{ t('agent.toolSelectionStrategy') }}</span>
+            </label>
+            <select
+              v-model="localConfig.selection_strategy"
+              class="select select-bordered w-full"
+              @change="emitUpdate"
+            >
+              <option value="Keyword">{{ t('agent.keywordMatching') }}</option>
+              <option value="LLM">{{ t('agent.intelligentAnalysis') }}</option>
+              <option value="Hybrid">{{ t('agent.hybridStrategy') }}</option>
+              <option value="Manual">{{ t('agent.manualSelection') }}</option>
+              <option value="All">{{ t('agent.allTools') }}</option>
+            </select>
+            <label class="label">
+              <span class="label-text-alt text-base-content/60">
+                {{ getStrategyDescription(localConfig.selection_strategy) }}
+              </span>
+            </label>
+          </div>
 
-        <!-- Max Tools -->
-        <div class="form-control min-w-0">
-          <label class="label">
-            <span class="label-text font-medium">{{ t('agent.maxTools') }}</span>
-          </label>
-          <input 
-            type="number" 
-            v-model.number="localConfig.max_tools" 
-            min="1" 
-            class="input input-bordered input-sm w-full"
-            @change="emitUpdate"
-          />
-          <label class="label">
-            <span class="label-text-alt text-base-content/60">{{ t('agent.maxToolsHint') || '每轮对话最多可使用的工具数量，最小为 1' }}</span>
-          </label>
+          <!-- Max Tools -->
+          <div class="form-control min-w-0">
+            <label class="label">
+              <span class="label-text font-medium">{{ t('agent.maxTools') }}</span>
+            </label>
+            <input
+              type="number"
+              v-model.number="localConfig.max_tools"
+              min="1"
+              class="input input-bordered input-sm w-full"
+              @change="emitUpdate"
+            />
+            <label class="label">
+              <span class="label-text-alt text-base-content/60">{{ t('agent.maxToolsHint') || '最小为 1' }}</span>
+            </label>
+          </div>
         </div>
 
         <!-- Tool Management -->
-        <div class="form-control min-w-0">
+        <div class="form-control min-w-0 w-full max-w-full overflow-hidden">
           <label class="label">
             <span class="label-text font-medium">
               {{ shouldUseCheckboxSelection ? t('agent.selectTools') : t('agent.toolManagement') }}
@@ -80,24 +82,24 @@
               <i class="fas fa-sync-alt"></i>
             </button>
           </label>
-          
+
           <div v-if="loading" class="flex justify-center py-4">
             <span class="loading loading-spinner loading-md"></span>
           </div>
-          
-          <div v-else class="min-w-0 max-w-full space-y-2 overflow-x-hidden overflow-y-auto max-h-96 rounded-lg border border-base-300 p-3">
-            <!-- Search Box -->
-            <div class="sticky top-0 z-10 -mt-1 min-w-0 bg-base-100 pb-2 pt-1">
+
+          <div v-else class="min-w-0 w-full max-w-full overflow-hidden rounded-lg border border-base-300">
+            <div class="min-w-0 w-full max-w-full space-y-2 overflow-hidden border-b border-base-300 bg-base-100 p-3">
+              <!-- Search Box -->
               <div class="relative w-full">
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   v-model="searchQuery"
-                  :placeholder="t('agent.searchToolNamesOrDescriptions')" 
-                  class="input input-sm input-bordered w-full pr-8" 
+                  :placeholder="t('agent.searchToolNamesOrDescriptions')"
+                  class="input input-sm input-bordered w-full pr-8"
                 />
                 <div class="absolute inset-y-0 right-0 flex items-center pr-2">
-                  <button 
-                    v-if="searchQuery" 
+                  <button
+                    v-if="searchQuery"
                     @click="searchQuery = ''"
                     class="btn btn-ghost btn-xs btn-circle h-5 w-5 min-h-0"
                   >
@@ -106,133 +108,135 @@
                   <i v-else class="fas fa-search text-xs text-base-content/50"></i>
                 </div>
               </div>
-            </div>
 
-            <!-- Category Filters -->
-            <div class="mb-3 min-w-0 space-y-2 border-b border-base-300 pb-3">
-              <div class="flex min-w-0 flex-wrap gap-2">
-                <!-- 全部按钮 -->
-                <button 
-                  @click="clearCategoryFilter"
-                  class="btn btn-xs"
-                  :class="selectedCategories.length === 0 && !showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
-                >
-                  {{ t('agent.all') }}
-                </button>
+              <!-- Category Filters -->
+              <div class="min-w-0 space-y-2 pt-1">
+                <div class="flex min-w-0 flex-wrap gap-2">
+                  <!-- 全部按钮 -->
+                  <button
+                    @click="clearCategoryFilter"
+                    class="btn btn-xs"
+                    :class="selectedCategories.length === 0 && !showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
+                  >
+                    {{ t('agent.all') }}
+                  </button>
 
-                <!-- 已选按钮 (仅手动模式) -->
-                <button 
+                  <!-- 已选按钮 (仅手动模式) -->
+                  <button
+                    v-if="shouldUseCheckboxSelection"
+                    @click="toggleShowSelected"
+                    class="btn btn-xs"
+                    :class="showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
+                  >
+                    {{ t('agent.selected') }} ({{ currentSelectionCount }})
+                  </button>
+
+                  <!-- 所有分类按钮（包括插件和浏览器） -->
+                  <button
+                    v-for="cat in allCategories"
+                    :key="cat"
+                    @click="toggleCategory(cat)"
+                    class="btn btn-xs"
+                    :class="selectedCategories.includes(cat) ? getCategoryBadgeClass(cat) : 'btn-ghost'"
+                  >
+                    <i :class="getCategoryIcon(cat)" class="mr-1"></i>
+                    {{ getCategoryDisplayName(cat) }}
+                  </button>
+                </div>
+
+                <!-- 全选/取消全选按钮 (仅手动模式) -->
+                <div
                   v-if="shouldUseCheckboxSelection"
-                  @click="toggleShowSelected"
-                  class="btn btn-xs"
-                  :class="showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
+                  class="flex min-w-0 flex-wrap gap-2 sm:justify-end"
                 >
-                  {{ t('agent.selected') }} ({{ currentSelectionCount }})
-                </button>
-                
-                <!-- 所有分类按钮（包括插件和浏览器） -->
-                <button 
-                  v-for="cat in allCategories" 
-                  :key="cat"
-                  @click="toggleCategory(cat)"
-                  class="btn btn-xs"
-                  :class="selectedCategories.includes(cat) ? getCategoryBadgeClass(cat) : 'btn-ghost'"
-                >
-                  <i :class="getCategoryIcon(cat)" class="mr-1"></i>
-                  {{ getCategoryDisplayName(cat) }}
-                </button>
-              </div>
-
-              <!-- 全选/取消全选按钮 (仅手动模式) -->
-              <div
-                v-if="shouldUseCheckboxSelection"
-                class="flex min-w-0 flex-wrap gap-2 sm:justify-end"
-              >
-                <button 
-                  @click="selectAllFilteredTools"
-                  class="btn btn-xs btn-outline btn-success"
-                  :title="t('agent.selectAll')"
-                >
-                  <i class="fas fa-check-double mr-1"></i>
-                  {{ t('agent.selectAll') }}
-                </button>
-                <button 
-                  @click="deselectAllFilteredTools"
-                  class="btn btn-xs btn-outline btn-error"
-                  :title="t('agent.deselectAll')"
-                >
-                  <i class="fas fa-times mr-1"></i>
-                  {{ t('agent.deselectAll') }}
-                </button>
+                  <button
+                    @click="selectAllFilteredTools"
+                    class="btn btn-xs btn-outline btn-success"
+                    :title="t('agent.selectAll')"
+                  >
+                    <i class="fas fa-check-double mr-1"></i>
+                    {{ t('agent.selectAll') }}
+                  </button>
+                  <button
+                    @click="deselectAllFilteredTools"
+                    class="btn btn-xs btn-outline btn-error"
+                    :title="t('agent.deselectAll')"
+                  >
+                    <i class="fas fa-times mr-1"></i>
+                    {{ t('agent.deselectAll') }}
+                  </button>
+                </div>
               </div>
             </div>
 
             <!-- Tool List -->
-            <div v-for="tool in filteredTools" :key="tool.id" class="form-control min-w-0 hover:bg-base-200 rounded px-2 transition-colors">
-              <label v-if="shouldUseCheckboxSelection" class="label min-w-0 w-full cursor-pointer justify-start gap-3 py-2">
-                <input 
-                  type="checkbox" 
-                  :checked="isToolSelected(tool.id)"
-                  class="checkbox checkbox-sm checkbox-primary"
-                  @change="toggleToolSelection(tool.id)"
-                />
-                <div class="flex-1 min-w-0 overflow-hidden">
-                  <div class="flex min-w-0 flex-wrap items-center gap-2">
-                    <span class="truncate font-medium text-sm">{{ tool.name }}</span>
-                    <span class="badge badge-xs shrink-0" :class="getCategoryBadgeClass(tool.category)">
-                      {{ getCategoryDisplayName(tool.category) }}
-                    </span>
+            <div class="max-h-96 min-w-0 w-full max-w-full space-y-2 overflow-x-hidden overflow-y-auto p-3">
+              <div v-for="tool in filteredTools" :key="tool.id" class="form-control min-w-0 max-w-full overflow-hidden hover:bg-base-200 rounded px-2 transition-colors">
+                <label v-if="shouldUseCheckboxSelection" class="grid min-w-0 w-full max-w-full grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3 overflow-hidden py-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    :checked="isToolSelected(tool.id)"
+                    class="checkbox checkbox-sm checkbox-primary justify-self-center self-center"
+                    @change="toggleToolSelection(tool.id)"
+                  />
+                  <div class="min-w-0 w-full max-w-full overflow-hidden">
+                    <div class="flex min-w-0 w-full max-w-full items-center gap-2 overflow-hidden">
+                      <span class="min-w-0 max-w-full truncate font-medium text-sm">{{ tool.name }}</span>
+                      <span class="badge badge-xs shrink-0" :class="getCategoryBadgeClass(tool.category)">
+                        {{ getCategoryDisplayName(tool.category) }}
+                      </span>
+                    </div>
+                    <p
+                      class="tool-description mt-1 text-xs leading-5 text-base-content/60"
+                      :title="tool.description"
+                    >
+                      {{ tool.description }}
+                    </p>
                   </div>
-                  <p
-                    class="mt-1 w-full whitespace-normal break-words text-xs leading-5 text-base-content/60 [overflow-wrap:anywhere]"
-                    :title="tool.description"
-                  >
-                    {{ tool.description }}
-                  </p>
-                </div>
-              </label>
+                </label>
 
-              <div v-else class="flex min-w-0 items-center justify-between gap-2 py-2">
-                <div class="mr-2 flex-1 min-w-0 overflow-hidden">
-                  <div class="flex min-w-0 flex-wrap items-center gap-2">
-                    <span class="font-medium text-sm truncate">{{ tool.name }}</span>
-                    <span class="badge badge-xs shrink-0" :class="getCategoryBadgeClass(tool.category)">
-                      {{ getCategoryDisplayName(tool.category) }}
-                    </span>
+                <div v-else class="grid min-w-0 w-full max-w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden py-2">
+                  <div class="mr-2 min-w-0 w-full max-w-full overflow-hidden">
+                    <div class="flex min-w-0 w-full max-w-full items-center gap-2 overflow-hidden">
+                      <span class="min-w-0 max-w-full truncate font-medium text-sm">{{ tool.name }}</span>
+                      <span class="badge badge-xs shrink-0" :class="getCategoryBadgeClass(tool.category)">
+                        {{ getCategoryDisplayName(tool.category) }}
+                      </span>
+                    </div>
+                    <p
+                      class="tool-description mt-1 text-xs leading-5 text-base-content/60"
+                      :title="tool.description"
+                    >
+                      {{ tool.description }}
+                    </p>
                   </div>
-                  <p
-                    class="mt-1 w-full whitespace-normal break-words text-xs leading-5 text-base-content/60 [overflow-wrap:anywhere]"
-                    :title="tool.description"
-                  >
-                    {{ tool.description }}
-                  </p>
-                </div>
-                <div class="join shrink-0">
-                   <button 
-                     class="join-item btn btn-xs" 
-                     :class="!isPreselected(tool.id) && !isDisabled(tool.id) ? 'btn-active shadow-inner' : 'btn-ghost'"
-                     @click="setToolStatus(tool.id, 'auto')"
-                     :title="t('agent.autoSelect')"
-                   >{{ t('agent.autoSelect') }}</button>
-                   <button 
-                     class="join-item btn btn-xs"
-                     :class="isPreselected(tool.id) ? 'btn-primary' : 'btn-ghost'"
-                     @click="setToolStatus(tool.id, 'preselected')"
-                     :title="t('agent.preselected')"
-                   >{{ t('agent.preselected') }}</button>
-                   <button 
-                     class="join-item btn btn-xs"
-                     :class="isDisabled(tool.id) ? 'btn-error' : 'btn-ghost'"
-                     @click="setToolStatus(tool.id, 'disabled')"
-                     :title="t('agent.disableTool')"
-                   >{{ t('agent.disableTool') }}</button>
+                  <div class="join shrink-0">
+                    <button
+                      class="join-item btn btn-xs"
+                      :class="!isPreselected(tool.id) && !isDisabled(tool.id) ? 'btn-active shadow-inner' : 'btn-ghost'"
+                      @click="setToolStatus(tool.id, 'auto')"
+                      :title="t('agent.autoSelect')"
+                    >{{ t('agent.autoSelect') }}</button>
+                    <button
+                      class="join-item btn btn-xs"
+                      :class="isPreselected(tool.id) ? 'btn-primary' : 'btn-ghost'"
+                      @click="setToolStatus(tool.id, 'preselected')"
+                      :title="t('agent.preselected')"
+                    >{{ t('agent.preselected') }}</button>
+                    <button
+                      class="join-item btn btn-xs"
+                      :class="isDisabled(tool.id) ? 'btn-error' : 'btn-ghost'"
+                      @click="setToolStatus(tool.id, 'disabled')"
+                      :title="t('agent.disableTool')"
+                    >{{ t('agent.disableTool') }}</button>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div v-if="filteredTools.length === 0" class="text-center py-4 text-base-content/60">
-              <i class="fas fa-inbox text-2xl mb-2"></i>
-              <p class="text-sm">{{ t('agent.noToolsFound') }}</p>
+              <div v-if="filteredTools.length === 0" class="text-center py-4 text-base-content/60">
+                <i class="fas fa-inbox text-2xl mb-2"></i>
+                <p class="text-sm">{{ t('agent.noToolsFound') }}</p>
+              </div>
             </div>
           </div>
         </div>
@@ -246,20 +250,20 @@
             这里只定义当前 Profile 明确预选的工具，不再表示系统会无条件强制注入。
           </p>
           <div class="flex flex-wrap gap-2">
-            <div 
-              v-for="tool in localConfig.preselected_tools" 
+            <div
+              v-for="tool in localConfig.preselected_tools"
               :key="tool"
               class="badge badge-primary gap-2"
             >
               {{ tool }}
-              <button 
+              <button
                 @click="removePreselectedTool(tool)"
                 class="btn btn-xs btn-ghost btn-circle"
               >
                 <i class="fas fa-times text-xs"></i>
               </button>
             </div>
-            <button 
+            <button
               v-if="localConfig.preselected_tools.length === 0"
               class="badge badge-ghost"
             >
@@ -274,9 +278,9 @@
             <div class="stat-title">{{ t('agent.totalAvailableTools') }}</div>
             <div class="stat-value text-primary">{{ statistics.total_tools }}</div>
             <div class="stat-desc">
-              {{ t('agent.builtin') }}: {{ statistics.builtin_tools }} | 
-              {{ t('agent.workflow') }}: {{ statistics.workflow_tools }} | 
-              MCP: {{ statistics.mcp_tools }} | 
+              {{ t('agent.builtin') }}: {{ statistics.builtin_tools }} |
+              {{ t('agent.workflow') }}: {{ statistics.workflow_tools }} |
+              MCP: {{ statistics.mcp_tools }} |
               {{ t('agent.plugins') }}: {{ statistics.plugin_tools }}
             </div>
           </div>
@@ -284,7 +288,7 @@
 
         <!-- Tool Usage Statistics -->
         <div class="divider">{{ t('agent.usageStatistics') }}</div>
-        
+
         <div v-if="usageStats" class="space-y-3">
           <div class="stats stats-vertical w-full min-w-0 shadow lg:stats-horizontal">
             <div class="stat">
@@ -310,15 +314,15 @@
               </button>
             </div>
             <div class="space-y-1">
-              <div 
-                v-for="tool in topUsedTools.slice(0, 5)" 
+              <div
+                v-for="tool in topUsedTools.slice(0, 5)"
                 :key="tool.tool_id"
                 class="flex min-w-0 items-center justify-between gap-2 rounded bg-base-200 p-2 text-xs"
               >
                 <div class="min-w-0 flex-1">
                   <div class="truncate font-medium">{{ tool.tool_name }}</div>
                   <div class="truncate text-base-content/60">
-                    {{ t('agent.successRate') }}: {{ ((tool.success_count / tool.execution_count) * 100).toFixed(1) }}% | 
+                    {{ t('agent.successRate') }}: {{ ((tool.success_count / tool.execution_count) * 100).toFixed(1) }}% |
                     {{ t('agent.averageTime') }}: {{ tool.avg_execution_time_ms.toFixed(0) }}ms
                   </div>
                 </div>
@@ -331,13 +335,13 @@
           <div v-if="usageStats.recent_executions.length > 0" class="space-y-2">
             <div class="text-sm font-medium">{{ t('agent.recentExecutions') }}</div>
             <div class="space-y-1 max-h-48 overflow-y-auto">
-              <div 
-                v-for="record in usageStats.recent_executions.slice(0, 10)" 
+              <div
+                v-for="record in usageStats.recent_executions.slice(0, 10)"
                 :key="`${record.execution_id}-${record.timestamp}`"
                 class="flex min-w-0 items-center gap-2 rounded bg-base-200 p-2 text-xs"
               >
-                <i 
-                  class="fas" 
+                <i
+                  class="fas"
                   :class="record.success ? 'fa-check-circle text-success' : 'fa-times-circle text-error'"
                 ></i>
                 <div class="min-w-0 flex-1">
@@ -497,8 +501,8 @@ const filteredTools = computed(() => {
   // Filter by search query
   if (searchQuery.value.trim()) {
     const query = searchQuery.value.toLowerCase()
-    tools = tools.filter(t => 
-      t.name.toLowerCase().includes(query) || 
+    tools = tools.filter(t =>
+      t.name.toLowerCase().includes(query) ||
       t.description.toLowerCase().includes(query)
     )
   }
@@ -523,12 +527,8 @@ const topUsedTools = computed(() => {
 })
 
 const toggleCategory = (cat: string) => {
-  const index = selectedCategories.value.indexOf(cat)
-  if (index > -1) {
-    selectedCategories.value.splice(index, 1)
-  } else {
-    selectedCategories.value.push(cat)
-  }
+  showSelectedOnly.value = false
+  selectedCategories.value = selectedCategories.value.includes(cat) ? [] : [cat]
 }
 
 const showSelectedOnly = ref(false)
@@ -536,7 +536,6 @@ const showSelectedOnly = ref(false)
 const toggleShowSelected = () => {
   showSelectedOnly.value = !showSelectedOnly.value
   if (showSelectedOnly.value) {
-    // Optional: Clear other filters if desired, but user might want to filter selected list by category
     selectedCategories.value = []
   }
 }
@@ -548,6 +547,14 @@ const clearCategoryFilter = () => {
 
 const getCategoryDisplayName = (category: string) => {
   const nameMap: Record<string, string> = {
+    'file_code': '文件与代码',
+    'terminal': '终端与运行环境',
+    'web_network': 'Web 与网络',
+    'security_recon': '安全侦察与扫描',
+    'vulnerability_research': '漏洞利用研究',
+    'collaboration': '任务与人机协作',
+    'agent_orchestration': 'Agent 编排',
+    'knowledge_extension': '知识与扩展',
     'network': '网络',
     'security': '安全',
     'data': '数据',
@@ -570,6 +577,14 @@ const getCategoryDisplayName = (category: string) => {
 
 const getCategoryBadgeClass = (category: string) => {
   const map: Record<string, string> = {
+    'file_code': 'btn-info',
+    'terminal': 'btn-neutral',
+    'web_network': 'btn-primary',
+    'security_recon': 'btn-warning',
+    'vulnerability_research': 'btn-error',
+    'collaboration': 'btn-secondary',
+    'agent_orchestration': 'btn-accent',
+    'knowledge_extension': 'btn-success',
     'network': 'btn-info',
     'security': 'btn-error',
     'data': 'btn-success',
@@ -592,6 +607,14 @@ const getCategoryBadgeClass = (category: string) => {
 
 const getCategoryIcon = (category: string) => {
   const map: Record<string, string> = {
+    'file_code': 'fas fa-code',
+    'terminal': 'fas fa-terminal',
+    'web_network': 'fas fa-globe',
+    'security_recon': 'fas fa-binoculars',
+    'vulnerability_research': 'fas fa-bug',
+    'collaboration': 'fas fa-list-check',
+    'agent_orchestration': 'fas fa-code-branch',
+    'knowledge_extension': 'fas fa-lightbulb',
     'network': 'fas fa-network-wired',
     'security': 'fas fa-shield-alt',
     'data': 'fas fa-database',
@@ -667,7 +690,7 @@ const loadUsageStats = async () => {
 
 const clearUsageStats = async () => {
   if (!(await dialog.confirm(t('agent.areYouSureClearStatistics')))) return
-  
+
   try {
     await invoke('clear_tool_usage_stats')
     usageStats.value = null
@@ -681,7 +704,7 @@ const formatTimestamp = (timestamp: number) => {
   const date = new Date(timestamp * 1000)
   const now = new Date()
   const diff = now.getTime() - date.getTime()
-  
+
   if (diff < 60000) return '刚刚'
   if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`
@@ -694,17 +717,17 @@ const isDisabled = (id: string) => localConfig.value.disabled_tools?.includes(id
 const setToolStatus = (id: string, status: 'auto' | 'preselected' | 'disabled') => {
   if (!localConfig.value.preselected_tools) localConfig.value.preselected_tools = []
   if (!localConfig.value.disabled_tools) localConfig.value.disabled_tools = []
-  
+
   // Remove from both
   localConfig.value.preselected_tools = localConfig.value.preselected_tools.filter(t => t !== id)
   localConfig.value.disabled_tools = localConfig.value.disabled_tools.filter(t => t !== id)
-  
+
   if (status === 'preselected') {
     localConfig.value.preselected_tools.push(id)
   } else if (status === 'disabled') {
     localConfig.value.disabled_tools.push(id)
   }
-  
+
   emitUpdate()
 }
 
@@ -748,7 +771,7 @@ const toggleToolSelection = (toolId: string) => {
 const emitUpdate = () => {
   // 处理枚举格式的策略转换
   const configToEmit = { ...localConfig.value }
-  
+
   if (configToEmit.selection_strategy === 'Manual' && configToEmit.manual_tools) {
     // 统一工具 ID 格式：将 :: 替换为 __，并去重
     const normalizedTools = [...new Set(
@@ -759,7 +782,7 @@ const emitUpdate = () => {
     configToEmit.selection_strategy = { Manual: normalizedTools } as any
     delete configToEmit.manual_tools
   }
-  
+
   emit('update:config', configToEmit)
 }
 
@@ -792,5 +815,15 @@ onMounted(() => {
 
 .icon-btn.active {
   @apply btn-primary;
+}
+
+.tool-description {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

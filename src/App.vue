@@ -436,7 +436,7 @@ watch(
           'ml-64': shouldShowSidebar && !sidebarCollapsed
         }">
           <router-view v-slot="{ Component }">
-            <keep-alive :include="['TrafficAnalysis','CyberChefView', 'AIAssistant', 'Vulnerabilities','Settings','Plugin','SecurityCenter','WorkflowStudio','BugBountyView','AgentManagement']">
+            <keep-alive :include="['TrafficAnalysis','CyberChefView', 'AIAssistant', 'BotConsole', 'Vulnerabilities','Settings','Plugin','SecurityCenter','WorkflowStudio','BugBountyView','AgentManagement']">
               <component
                 :is="Component"
                 class="min-h-full"

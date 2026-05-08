@@ -114,18 +114,27 @@ fn push_match_pagination<'args, DB>(
     query_builder: &mut QueryBuilder<'args, DB>,
     limit: Option<i64>,
     offset: Option<i64>,
-    offset_prefix: Option<&str>,
+    offset_without_limit_prefix: Option<&str>,
 ) where
     DB: Database,
     i64: for<'q> Encode<'q, DB> + Type<DB>,
 {
-    if let Some(limit) = limit {
-        query_builder.push(" LIMIT ").push_bind(limit.max(1));
-    }
-
-    if let Some(offset) = offset {
-        let prefix = offset_prefix.unwrap_or(" OFFSET ");
-        query_builder.push(prefix).push_bind(offset.max(0));
+    match (limit, offset) {
+        (Some(limit), Some(offset)) => {
+            query_builder
+                .push(" LIMIT ")
+                .push_bind(limit.max(1))
+                .push(" OFFSET ")
+                .push_bind(offset.max(0));
+        }
+        (Some(limit), None) => {
+            query_builder.push(" LIMIT ").push_bind(limit.max(1));
+        }
+        (None, Some(offset)) => {
+            let prefix = offset_without_limit_prefix.unwrap_or(" OFFSET ");
+            query_builder.push(prefix).push_bind(offset.max(0));
+        }
+        (None, None) => {}
     }
 }
 
@@ -142,6 +151,41 @@ fn normalize_unique_strings(values: impl IntoIterator<Item = Option<String>>) ->
         }
     }
     set.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_pagination_uses_single_limit_when_limit_and_offset_are_set() {
+        let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM matches");
+
+        push_match_pagination(
+            &mut query_builder,
+            Some(10),
+            Some(20),
+            Some(" LIMIT -1 OFFSET "),
+        );
+
+        let sql = query_builder.sql();
+        assert!(sql.contains(" LIMIT ? OFFSET ?"));
+        assert!(!sql.contains(" LIMIT ? LIMIT "));
+    }
+
+    #[test]
+    fn match_pagination_uses_sqlite_offset_prefix_without_limit() {
+        let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM matches");
+
+        push_match_pagination(
+            &mut query_builder,
+            None,
+            Some(20),
+            Some(" LIMIT -1 OFFSET "),
+        );
+
+        assert!(query_builder.sql().contains(" LIMIT -1 OFFSET ?"));
+    }
 }
 
 impl DatabaseService {

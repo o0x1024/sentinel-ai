@@ -341,7 +341,7 @@ pub async fn execute_workflow_steps(
                 let params_json = serde_json::to_string(&resolved_inputs).unwrap_or_default();
                 let toolset_result = toolset_clone.call(&tool_name, params_json.clone()).await;
 
-                // 如果 ToolSet 找不到工具，回退到 ToolServer（包含 browser 等动态工具）
+                // 如果 ToolSet 找不到工具，回退到 ToolServer（包含动态工具）
                 let tool_result: Result<String, String> = match &toolset_result {
                     Err(e) if e.to_string().contains("ToolNotFoundError") => {
                         tracing::info!("Tool '{}' not in ToolSet, trying ToolServer...", tool_name);

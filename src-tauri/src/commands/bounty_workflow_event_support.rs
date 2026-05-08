@@ -1,4 +1,4 @@
-use super::bounty_commands::{execute_workflow_steps, WorkflowStepDefinition};
+use super::bounty_workflow_template_commands::{execute_workflow_steps, WorkflowStepDefinition};
 use crate::services::ensure_bug_bounty_access;
 use chrono::Utc;
 use sentinel_db::{

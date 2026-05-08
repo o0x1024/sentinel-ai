@@ -38,6 +38,7 @@ describe('agentConversationSessionSupport', () => {
         ragEnabled: true,
         webSearchEnabled: true,
         tenthManEnabled: false,
+        harnessMaxContinuations: 6,
         selectedModel: 'openai/gpt-5.5',
         toolsEnabled: true,
         toolConfig: null,

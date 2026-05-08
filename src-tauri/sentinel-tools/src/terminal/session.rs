@@ -39,17 +39,40 @@ pub struct TerminalSessionConfig {
     pub container_name: Option<String>,
 }
 
+pub fn default_shell_for_execution_mode(execution_mode: ExecutionMode) -> String {
+    match execution_mode {
+        ExecutionMode::Docker => "bash".to_string(),
+        ExecutionMode::Host => default_host_shell().to_string(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn default_host_shell() -> &'static str {
+    "/bin/zsh"
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn default_host_shell() -> &'static str {
+    "/bin/bash"
+}
+
+#[cfg(target_os = "windows")]
+fn default_host_shell() -> &'static str {
+    "powershell"
+}
+
 impl Default for TerminalSessionConfig {
     fn default() -> Self {
         let mut env_vars = std::collections::HashMap::new();
         env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
 
+        let execution_mode = ExecutionMode::Docker;
         Self {
-            execution_mode: ExecutionMode::Docker,
+            execution_mode,
             docker_image: "sentinel-sandbox:latest".to_string(),
             working_dir: Some("/workspace".to_string()),
             env_vars,
-            shell: "bash".to_string(),
+            shell: default_shell_for_execution_mode(execution_mode),
             initial_command: None,
             reuse_container: true,
             // Keep terminal container isolated from one-shot shell sandbox container.
@@ -557,9 +580,7 @@ impl TerminalSession {
             if !actual_image.eq_ignore_ascii_case(self.config.docker_image.trim()) {
                 info!(
                     "Reusable container image mismatch (container={}, actual={}, expected={}), skip reuse",
-                    container_id,
-                    actual_image,
-                    self.config.docker_image
+                    container_id, actual_image, self.config.docker_image
                 );
                 return Ok(None);
             }

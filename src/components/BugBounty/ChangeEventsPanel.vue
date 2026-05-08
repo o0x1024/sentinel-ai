@@ -419,10 +419,8 @@ const batchUpdateStatus = async (status: string) => {
   try {
     loading.value = true
     const ids = [...selectedIds.value]
-    await Promise.all(
-      ids.map(id => invoke('bounty_update_change_event_status', { id, status }))
-    )
-    toast.success(t('bugBounty.batch.updateSuccess', { count: ids.length }))
+    const updated = await invoke<number>('bounty_batch_update_change_event_status', { ids, status })
+    toast.success(t('bugBounty.batch.updateSuccess', { count: Number(updated) }))
     clearSelection()
     await loadEvents()
     await loadStats()
@@ -441,8 +439,8 @@ const batchDelete = async () => {
   try {
     loading.value = true
     const ids = [...selectedIds.value]
-    await Promise.all(ids.map(id => invoke('bounty_delete_change_event', { id })))
-    toast.success(t('bugBounty.batch.deleteSuccess', { count: ids.length }))
+    const deleted = await invoke<number>('bounty_batch_delete_change_events', { ids })
+    toast.success(t('bugBounty.batch.deleteSuccess', { count: Number(deleted) }))
     clearSelection()
     if (events.value.length === ids.length && page.value > 1) {
       page.value -= 1

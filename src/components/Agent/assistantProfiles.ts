@@ -14,6 +14,7 @@ export interface AssistantProfileOption {
   defaultTenthManEnabled?: boolean | null
   defaultToolSelectionStrategy?: string | null
   defaultMaxTools?: number | null
+  defaultHarnessMaxContinuations?: number | null
   defaultPreselectedTools?: string[] | null
   defaultDisabledTools?: string[] | null
   defaultManualTools?: string[] | null
@@ -58,9 +59,11 @@ let loadTeamProfilesPromise: Promise<void> | null = null
 let loadDefaultTeamProfilePromise: Promise<void> | null = null
 
 const TOOL_SELECTION_STRATEGIES = new Set(['Keyword', 'LLM', 'Hybrid', 'Manual', 'All'])
+export const DEFAULT_AGENT_HARNESS_MAX_CONTINUATIONS = 6
+export const MAX_AGENT_HARNESS_MAX_CONTINUATIONS = 20
 const DEFAULT_TEAM_ROLE_TOOLS: Record<string, string[]> = {
   orchestrator: ['ask_user_question'],
-  specialist: ['interactive_shell', 'file_read', 'file_edit', 'file_write', 'grep', 'http_request', 'web_search'],
+  specialist: ['shell', 'file_read', 'file_edit', 'file_write', 'grep', 'http_request', 'web_search'],
   monitor: ['tenth_man_review'],
 }
 
@@ -68,12 +71,19 @@ const normalizeToolIds = (items: string[] | null | undefined) => {
   const seen = new Set<string>()
   const out: string[] = []
   for (const item of Array.isArray(items) ? items : []) {
-    const normalized = item.trim().replace(/::/g, '__')
+    let normalized = item.trim().replace(/::/g, '__')
+    if (normalized === 'interactive_shell') normalized = 'shell'
     if (!normalized || seen.has(normalized)) continue
     seen.add(normalized)
     out.push(normalized)
   }
   return out
+}
+
+export const normalizeHarnessMaxContinuations = (value: unknown): number => {
+  const parsed = Math.floor(Number(value))
+  if (!Number.isFinite(parsed)) return DEFAULT_AGENT_HARNESS_MAX_CONTINUATIONS
+  return Math.min(MAX_AGENT_HARNESS_MAX_CONTINUATIONS, Math.max(0, parsed))
 }
 
 const normalizeAssistantProfile = (profile: AssistantProfileOption): AssistantProfileOption => ({
@@ -93,6 +103,7 @@ const normalizeAssistantProfile = (profile: AssistantProfileOption): AssistantPr
     ? profile.defaultToolSelectionStrategy
     : 'Keyword',
   defaultMaxTools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
+  defaultHarnessMaxContinuations: normalizeHarnessMaxContinuations(profile.defaultHarnessMaxContinuations),
   defaultPreselectedTools: normalizeToolIds(profile.defaultPreselectedTools),
   defaultDisabledTools: normalizeToolIds(profile.defaultDisabledTools),
   defaultManualTools: normalizeToolIds(profile.defaultManualTools),

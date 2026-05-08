@@ -22,6 +22,7 @@ import {
 export interface UseTaskRuntimeReturn {
   tasks: ComputedRef<TaskRuntimeItem[]>
   tasksByExecutionId: ComputedRef<Record<string, TaskRuntimeItem[]>>
+  conversationIdByExecutionId: ComputedRef<Record<string, string>>
   executionIds: ComputedRef<string[]>
   lastExecutionId: ComputedRef<string | undefined>
   rootTasks: ComputedRef<TaskRuntimeItem[]>
@@ -32,11 +33,12 @@ export interface UseTaskRuntimeReturn {
   isTaskPanelActive: Ref<boolean>
   currentTask: ComputedRef<TaskRuntimeItem | undefined>
   getTasksForExecution: (executionId: string) => TaskRuntimeItem[]
+  getConversationIdForExecution: (executionId: string) => string | undefined
   getChildren: (parentId: string) => TaskRuntimeItem[]
   getIndicator: (status: TaskRuntimeStatus) => string
   clearTasks: () => void
   clearTasksForExecution: (executionId: string) => void
-  setTasksForExecution: (executionId: string, tasks: TaskRuntimeItem[]) => void
+  setTasksForExecution: (executionId: string, tasks: TaskRuntimeItem[], conversationId?: string | null) => void
   open: () => void
   close: () => void
   toggle: () => void
@@ -58,10 +60,12 @@ interface AgentExecutionFinishedEvent {
 
 const globalTaskRuntimeState = ref<{
   tasksByExecutionId: Record<string, TaskRuntimeItem[]>
+  conversationIdByExecutionId: Record<string, string>
   isTaskPanelActive: boolean
   lastExecutionId: string | undefined
 }>({
   tasksByExecutionId: {},
+  conversationIdByExecutionId: {},
   isTaskPanelActive: false,
   lastExecutionId: undefined,
 })
@@ -84,6 +88,7 @@ export function useTaskRuntime(executionId?: Ref<string> | string): UseTaskRunti
   })
 
   const tasksByExecutionId = computed(() => globalTaskRuntimeState.value.tasksByExecutionId)
+  const conversationIdByExecutionId = computed(() => globalTaskRuntimeState.value.conversationIdByExecutionId)
   const executionIds = computed(() => Object.keys(globalTaskRuntimeState.value.tasksByExecutionId))
   const lastExecutionId = computed(() => globalTaskRuntimeState.value.lastExecutionId)
   const rootTasks = computed(() => getRootTaskRuntimeItems(tasks.value))
@@ -107,6 +112,11 @@ export function useTaskRuntime(executionId?: Ref<string> | string): UseTaskRunti
     return globalTaskRuntimeState.value.tasksByExecutionId[id] || []
   }
 
+  const getConversationIdForExecution = (id: string): string | undefined => {
+    if (!id) return undefined
+    return globalTaskRuntimeState.value.conversationIdByExecutionId[id]
+  }
+
   const getChildren = (parentId: string): TaskRuntimeItem[] => {
     return getChildTaskRuntimeItems(tasks.value, parentId)
   }
@@ -119,12 +129,14 @@ export function useTaskRuntime(executionId?: Ref<string> | string): UseTaskRunti
     const targetId = getExecutionId()
     if (targetId) {
       delete globalTaskRuntimeState.value.tasksByExecutionId[targetId]
+      delete globalTaskRuntimeState.value.conversationIdByExecutionId[targetId]
       if (globalTaskRuntimeState.value.lastExecutionId === targetId) {
         globalTaskRuntimeState.value.lastExecutionId = undefined
       }
       return
     }
     globalTaskRuntimeState.value.tasksByExecutionId = {}
+    globalTaskRuntimeState.value.conversationIdByExecutionId = {}
     globalTaskRuntimeState.value.lastExecutionId = undefined
   }
 
@@ -132,16 +144,24 @@ export function useTaskRuntime(executionId?: Ref<string> | string): UseTaskRunti
     if (!id) return
     if (!(id in globalTaskRuntimeState.value.tasksByExecutionId)) return
     delete globalTaskRuntimeState.value.tasksByExecutionId[id]
+    delete globalTaskRuntimeState.value.conversationIdByExecutionId[id]
     if (globalTaskRuntimeState.value.lastExecutionId === id) {
       globalTaskRuntimeState.value.lastExecutionId = undefined
     }
   }
 
-  const setTasksForExecution = (id: string, items: TaskRuntimeItem[]): void => {
+  const setTasksForExecution = (id: string, items: TaskRuntimeItem[], conversationId?: string | null): void => {
     if (!id) return
+    const normalizedConversationId = String(conversationId || '').trim()
     globalTaskRuntimeState.value.tasksByExecutionId = {
       ...globalTaskRuntimeState.value.tasksByExecutionId,
       [id]: items,
+    }
+    if (normalizedConversationId) {
+      globalTaskRuntimeState.value.conversationIdByExecutionId = {
+        ...globalTaskRuntimeState.value.conversationIdByExecutionId,
+        [id]: normalizedConversationId,
+      }
     }
     globalTaskRuntimeState.value.lastExecutionId = id
   }
@@ -171,6 +191,13 @@ export function useTaskRuntime(executionId?: Ref<string> | string): UseTaskRunti
       globalTaskRuntimeState.value.tasksByExecutionId = {
         ...globalTaskRuntimeState.value.tasksByExecutionId,
         [event.payload.execution_id]: event.payload.tasks,
+      }
+      const conversationId = String(event.payload.conversation_id || '').trim()
+      if (conversationId) {
+        globalTaskRuntimeState.value.conversationIdByExecutionId = {
+          ...globalTaskRuntimeState.value.conversationIdByExecutionId,
+          [event.payload.execution_id]: conversationId,
+        }
       }
       globalTaskRuntimeState.value.lastExecutionId = event.payload.execution_id
 
@@ -213,6 +240,7 @@ export function useTaskRuntime(executionId?: Ref<string> | string): UseTaskRunti
   return {
     tasks,
     tasksByExecutionId,
+    conversationIdByExecutionId,
     executionIds,
     lastExecutionId,
     rootTasks,
@@ -223,6 +251,7 @@ export function useTaskRuntime(executionId?: Ref<string> | string): UseTaskRunti
     isTaskPanelActive: computed(() => globalTaskRuntimeState.value.isTaskPanelActive),
     currentTask,
     getTasksForExecution,
+    getConversationIdForExecution,
     getChildren,
     getIndicator,
     clearTasks,

@@ -7,19 +7,15 @@
         {{ t('agent.conversationList') }}
       </h3>
       <div class="flex items-center gap-2">
-        <button 
-          @click="createNewConversation" 
+        <button
+          @click="createNewConversation"
           class="btn btn-xs btn-primary gap-1"
           :title="t('agent.newConversation')"
         >
           <i class="fas fa-plus"></i>
           {{ t('agent.newConversation') }}
         </button>
-        <button 
-          @click="$emit('close')"
-          class="btn btn-xs btn-ghost"
-          :title="t('agent.close')"
-        >
+        <button @click="$emit('close')" class="btn btn-xs btn-ghost" :title="t('agent.close')">
           <i class="fas fa-times"></i>
         </button>
       </div>
@@ -27,27 +23,29 @@
 
     <!-- Search -->
     <div class="p-2">
-      <input 
+      <input
         ref="searchInputRef"
         v-model="searchQuery"
-        type="text" 
-        :placeholder="t('agent.searchConversations')" 
+        type="text"
+        :placeholder="t('agent.searchConversations')"
         class="input input-sm input-bordered w-full"
         @input="handleSearch"
       />
     </div>
 
     <!-- Conversation List -->
-    <div 
-      ref="scrollContainer"
-      class="flex-1 overflow-y-auto"
-      @scroll="handleScroll"
-    >
-      <div v-if="isLoading && conversations.length === 0" class="flex items-center justify-center py-8">
+    <div ref="scrollContainer" class="flex-1 overflow-y-auto" @scroll="handleScroll">
+      <div
+        v-if="isLoading && conversations.length === 0"
+        class="flex items-center justify-center py-8"
+      >
         <span class="loading loading-spinner loading-md text-primary"></span>
       </div>
 
-      <div v-else-if="conversations.length === 0" class="text-center py-8 text-base-content/50 text-sm">
+      <div
+        v-else-if="conversations.length === 0"
+        class="text-center py-8 text-base-content/50 text-sm"
+      >
         <i class="fas fa-inbox text-3xl mb-2 opacity-50"></i>
         <p>{{ searchQuery ? t('agent.noMatchingConversations') : t('agent.noConversations') }}</p>
       </div>
@@ -58,9 +56,9 @@
           :key="conv.id"
           :class="[
             'conversation-item group relative rounded-lg transition-all',
-            currentConversationId === conv.id 
-              ? 'bg-primary/10 border-l-2 border-primary' 
-              : 'hover:bg-base-300/50 focus-within:bg-base-300/50'
+            currentConversationId === conv.id
+              ? 'bg-primary/10 border-l-2 border-primary'
+              : 'hover:bg-base-300/50 focus-within:bg-base-300/50',
           ]"
         >
           <div class="flex items-start justify-between gap-2 p-3">
@@ -97,7 +95,9 @@
             </div>
 
             <!-- Actions -->
-            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+            <div
+              class="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+            >
               <button
                 type="button"
                 @click.stop="renameConversation(conv)"
@@ -148,6 +148,7 @@ import type { AiConversationDetail } from './conversationTypes'
 
 interface AgentStartEvent {
   execution_id: string
+  conversation_id?: string | null
   task: string
 }
 
@@ -239,7 +240,7 @@ const loadConversations = async (reset = false) => {
 
     const result = await invoke<Conversation[]>('get_ai_conversations_paginated', {
       limit: PAGE_SIZE,
-      offset: currentOffset
+      offset: currentOffset,
     })
 
     if (reset) {
@@ -284,11 +285,11 @@ const handleSearch = () => {
       try {
         const allConversations = await invoke<Conversation[]>('get_ai_conversations')
         const query = searchQuery.value.toLowerCase()
-        conversations.value = allConversations
-          .filter(conv =>
+        conversations.value = allConversations.filter(
+          conv =>
             (conv.title || '').toLowerCase().includes(query) ||
             conv.model_name.toLowerCase().includes(query)
-          )
+        )
         sortConversationsByCreatedAt()
         hasMore.value = false
       } catch (error) {
@@ -324,7 +325,7 @@ const renameConversation = async (conv: Conversation) => {
     await invoke('update_ai_conversation_title', {
       conversationId: conv.id,
       title: newTitle.trim(),
-      serviceName: 'default'
+      serviceName: 'default',
     })
     const index = conversations.value.findIndex(c => c.id === conv.id)
     if (index !== -1) {
@@ -347,7 +348,7 @@ const deleteConversation = async (conv: Conversation) => {
   try {
     await invoke('delete_ai_conversation', {
       conversationId: conv.id,
-      serviceName: 'default'
+      serviceName: 'default',
     })
     // Remove from local list instead of reloading
     conversations.value = conversations.value.filter(c => c.id !== conv.id)
@@ -361,37 +362,44 @@ const formatDate = (dateStr: string) => {
   const date = new Date(dateStr)
   const now = new Date()
   const diff = now.getTime() - date.getTime()
-  
+
   const minutes = Math.floor(diff / 60000)
   const hours = Math.floor(diff / 3600000)
   const days = Math.floor(diff / 86400000)
-  
+
   if (minutes < 1) return t('agent.justNow')
   if (minutes < 60) return `${minutes} ${t('agent.minutesAgo')}`
   if (hours < 24) return `${hours} ${t('agent.hoursAgo')}`
   if (days < 7) return `${days} ${t('agent.daysAgo')}`
-  
+
   return date.toLocaleDateString()
 }
 
 onMounted(async () => {
   await loadConversations(true)
 
-  unlistenAgentStart = await listen<AgentStartEvent>('agent:start', (event) => {
-    updateConversationExecutionState(event.payload.execution_id, null, new Date().toISOString())
-  })
-
-  unlistenExecutionFinished = await listen<AgentExecutionFinishedEvent>('agent:execution_finished', (event) => {
-    const completedAt = new Date().toISOString()
+  unlistenAgentStart = await listen<AgentStartEvent>('agent:start', event => {
     updateConversationExecutionState(
-      event.payload.execution_id,
-      {
-        ...event.payload,
-        completed_at: completedAt,
-      },
-      completedAt
+      event.payload.conversation_id || event.payload.execution_id,
+      null,
+      new Date().toISOString()
     )
   })
+
+  unlistenExecutionFinished = await listen<AgentExecutionFinishedEvent>(
+    'agent:execution_finished',
+    event => {
+      const completedAt = new Date().toISOString()
+      updateConversationExecutionState(
+        event.payload.conversation_id || event.payload.execution_id,
+        {
+          ...event.payload,
+          completed_at: completedAt,
+        },
+        completedAt
+      )
+    }
+  )
 })
 
 onUnmounted(() => {

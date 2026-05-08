@@ -70,4 +70,43 @@ describe('BuiltinToolsTab', () => {
     expect(wrapper.text()).toContain('工作流工具 (3)')
     expect(wrapper.text()).toContain('插件工具 (2)')
   })
+
+  it('renders purpose-based builtin categories', async () => {
+    global.testUtils.mockInvoke.mockImplementation((command: string) => {
+      if (command === 'get_builtin_tools_with_status') {
+        return Promise.resolve([
+          {
+            id: 'file_read',
+            name: 'file_read',
+            description: 'Read files',
+            category: 'file_code',
+            version: '1.0.0',
+            enabled: true,
+          },
+          {
+            id: 'port_scan',
+            name: 'port_scan',
+            description: 'Scan ports',
+            category: 'security_recon',
+            version: '1.0.0',
+            enabled: true,
+          },
+        ])
+      }
+      if (command === 'list_durable_memory_diagnostics') {
+        return Promise.resolve([])
+      }
+      if (command === 'get_durable_memory_diagnostics_by_ids') {
+        return Promise.resolve([])
+      }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+
+    const wrapper = shallowMount(BuiltinToolsTab)
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('文件与代码 (1)')
+    expect(wrapper.text()).toContain('安全侦察与扫描 (1)')
+  })
 })

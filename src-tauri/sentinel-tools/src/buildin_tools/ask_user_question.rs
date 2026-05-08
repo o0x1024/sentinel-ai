@@ -30,8 +30,8 @@ pub struct AskUserQuestionItem {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AskUserQuestionTimeoutPolicy {
-    UseDefault,
     #[default]
+    UseDefault,
     ReturnTimeout,
     FailClosed,
 }
@@ -246,7 +246,9 @@ impl AskUserQuestionTool {
         "Ask the user one or more structured multiple-choice questions and wait for answers. ",
         "Use when requirements are ambiguous, when you need the user to choose between concrete options, ",
         "or when you must confirm a preference before continuing. Keep questions concise and decision-focused. ",
-        "If you set timeout_policy=use_default, provide safe default_answers for low-risk clarifications."
+        "Timeout defaults to use_default so execution can continue. Provide default_answers for the suitable timeout choice; ",
+        "if default_answers is omitted, the first option for each question is used, so put the safest suitable continuation first. ",
+        "Use timeout_policy=return_timeout only when no option should be selected automatically, and fail_closed only for high-risk choices."
     );
 
     pub fn new() -> Self {
@@ -319,11 +321,11 @@ impl Tool for AskUserQuestionTool {
                     "timeout_policy": {
                         "type": "string",
                         "enum": ["use_default", "return_timeout", "fail_closed"],
-                        "description": "What to do when the user does not answer before timeout."
+                        "description": "What to do when the user does not answer before timeout. Defaults to use_default so the flow continues with default_answers or the first option."
                     },
                     "default_answers": {
                         "type": "object",
-                        "description": "Optional default answers keyed by exact question text. Only use for low-risk clarifications.",
+                        "description": "Optional suitable timeout answers keyed by exact question text. Use labels from the options array.",
                         "additionalProperties": {
                             "type": "string"
                         }
@@ -406,5 +408,13 @@ mod tests {
             "Broken".to_string(),
         );
         assert!(validate_default_answers(&questions, &defaults).is_err());
+    }
+
+    #[test]
+    fn timeout_policy_defaults_to_use_default() {
+        assert_eq!(
+            AskUserQuestionTimeoutPolicy::default(),
+            AskUserQuestionTimeoutPolicy::UseDefault
+        );
     }
 }

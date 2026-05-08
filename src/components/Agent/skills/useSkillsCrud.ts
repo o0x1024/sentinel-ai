@@ -22,6 +22,7 @@ export const useSkillsCrud = ({
   const skillEnabledMap = ref<Record<string, boolean>>({})
   const loading = ref(false)
   const deletingSkillIds = ref<string[]>([])
+  const bulkUpdatingSkillState = ref(false)
 
   const enabledSkillCount = computed(() =>
     skills.value.filter(skill => isSkillEnabled(skill.id)).length
@@ -74,6 +75,29 @@ export const useSkillsCrud = ({
     }
   }
 
+  const setAllSkillsEnabled = async (enabled: boolean) => {
+    if (skills.value.length === 0 || bulkUpdatingSkillState.value) return
+    bulkUpdatingSkillState.value = true
+    const next = { ...skillEnabledMap.value }
+    try {
+      await Promise.all(skills.value.map(skill =>
+        invoke('set_config', {
+          category: 'skills',
+          key: `enabled::${skill.id}`,
+          value: enabled ? 'true' : 'false',
+        })
+      ))
+      for (const skill of skills.value) {
+        next[skill.id] = enabled
+      }
+      skillEnabledMap.value = next
+    } catch (error) {
+      console.error('Failed to save all skill enabled settings:', error)
+    } finally {
+      bulkUpdatingSkillState.value = false
+    }
+  }
+
   const loadSkills = async () => {
     loading.value = true
     try {
@@ -114,11 +138,13 @@ export const useSkillsCrud = ({
     skills,
     loading,
     deletingSkillIds,
+    bulkUpdatingSkillState,
     enabledSkillCount,
     disabledSkillCount,
     skillsWithContentCount,
     isSkillEnabled,
     toggleSkillEnabled,
+    setAllSkillsEnabled,
     loadSkills,
     confirmDelete,
   }

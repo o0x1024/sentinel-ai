@@ -557,13 +557,14 @@ interface DurableMemoryDiagnosticsItem {
 }
 
 const categoryConfigs: CategoryConfig[] = [
-  { key: 'network', label: '网络', icon: 'fas fa-network-wired', btnClass: 'btn-info', badgeClass: 'badge-info', bgClass: 'bg-info/10', textClass: 'text-info' },
-  { key: 'system', label: '系统', icon: 'fas fa-cog', btnClass: 'btn-neutral', badgeClass: 'badge-neutral', bgClass: 'bg-neutral/10', textClass: 'text-neutral' },
-  { key: 'ai', label: 'AI', icon: 'fas fa-brain', btnClass: 'btn-warning', badgeClass: 'badge-warning', bgClass: 'bg-warning/10', textClass: 'text-warning' },
-  { key: 'browser', label: '浏览器', icon: 'fas fa-window-maximize', btnClass: 'btn-primary', badgeClass: 'badge-primary', bgClass: 'bg-primary/10', textClass: 'text-primary' },
-  { key: 'utility', label: '工具', icon: 'fas fa-tools', btnClass: 'btn-success', badgeClass: 'badge-success', bgClass: 'bg-success/10', textClass: 'text-success' },
-  { key: 'exploitation', label: '利用', icon: 'fas fa-bug', btnClass: 'btn-error', badgeClass: 'badge-error', bgClass: 'bg-error/10', textClass: 'text-error' },
-  { key: 'monitoring', label: '监控', icon: 'fas fa-satellite-dish', btnClass: 'btn-secondary', badgeClass: 'badge-secondary', bgClass: 'bg-secondary/10', textClass: 'text-secondary' },
+  { key: 'file_code', label: '文件与代码', icon: 'fas fa-code', btnClass: 'btn-info', badgeClass: 'badge-info', bgClass: 'bg-info/10', textClass: 'text-info' },
+  { key: 'terminal', label: '终端与运行环境', icon: 'fas fa-terminal', btnClass: 'btn-neutral', badgeClass: 'badge-neutral', bgClass: 'bg-neutral/10', textClass: 'text-neutral' },
+  { key: 'web_network', label: 'Web 与网络', icon: 'fas fa-globe', btnClass: 'btn-primary', badgeClass: 'badge-primary', bgClass: 'bg-primary/10', textClass: 'text-primary' },
+  { key: 'security_recon', label: '安全侦察与扫描', icon: 'fas fa-binoculars', btnClass: 'btn-warning', badgeClass: 'badge-warning', bgClass: 'bg-warning/10', textClass: 'text-warning' },
+  { key: 'vulnerability_research', label: '漏洞利用研究', icon: 'fas fa-bug', btnClass: 'btn-error', badgeClass: 'badge-error', bgClass: 'bg-error/10', textClass: 'text-error' },
+  { key: 'collaboration', label: '任务与人机协作', icon: 'fas fa-list-check', btnClass: 'btn-secondary', badgeClass: 'badge-secondary', bgClass: 'bg-secondary/10', textClass: 'text-secondary' },
+  { key: 'agent_orchestration', label: 'Agent 编排', icon: 'fas fa-code-branch', btnClass: 'btn-accent', badgeClass: 'badge-accent', bgClass: 'bg-accent/10', textClass: 'text-accent' },
+  { key: 'knowledge_extension', label: '知识与扩展', icon: 'fas fa-lightbulb', btnClass: 'btn-success', badgeClass: 'badge-success', bgClass: 'bg-success/10', textClass: 'text-success' },
   { key: 'other', label: '其他', icon: 'fas fa-tools', btnClass: 'btn-ghost', badgeClass: 'badge-ghost', bgClass: 'bg-base-200', textClass: 'text-base-content' },
 ]
 
@@ -679,11 +680,9 @@ function selectSourceFilter(filter: BuiltinSourceFilter) {
 function getToolIcon(toolName: string) {
   const iconMap: Record<string, string> = {
     'ask_user_question': 'fas fa-list-check',
-    'browser': 'fas fa-window-maximize',
     'browser_shell': 'fas fa-terminal',
     'tool_search': 'fas fa-magnifying-glass',
     'shell': 'fas fa-terminal',
-    'interactive_shell': 'fas fa-terminal',
     'glob': 'fas fa-folder-tree',
     'grep': 'fas fa-file-lines',
     'file_read': 'fas fa-file-arrow-down',

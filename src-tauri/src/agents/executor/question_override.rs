@@ -48,7 +48,7 @@ pub(super) async fn build_ask_user_question_override_def(
         input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: ToolCategory::System,
+        category: ToolCategory::Collaboration,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),

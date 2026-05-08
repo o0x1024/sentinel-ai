@@ -6,6 +6,11 @@ import type {
   AssistantSessionSettings,
 } from './agentDraftTypes'
 import { buildPersistableToolConfig } from './agentToolConfigPersistenceSupport'
+import {
+  DEFAULT_AGENT_HARNESS_MAX_CONTINUATIONS,
+  normalizeHarnessMaxContinuations,
+  type AssistantProfileOption,
+} from './assistantProfiles'
 import type { UiToolConfigPayload } from './toolConfigRuntime'
 
 export const DEFAULT_ASSISTANT_PROFILE_ID = 'assistant.default'
@@ -21,7 +26,34 @@ export const createDefaultAssistantSessionSettings = (): AssistantSessionSetting
   ragEnabled: false,
   webSearchEnabled: false,
   tenthManEnabled: false,
+  harnessMaxContinuations: DEFAULT_AGENT_HARNESS_MAX_CONTINUATIONS,
 })
+
+export const buildBaseAssistantConversationBinding = (params: {
+  profile: AssistantProfileOption
+  workingDirectoryOverride: string
+}): AssistantConversationBinding => {
+  const profileId = params.profile.id.trim()
+  if (!profileId) {
+    throw new Error('Assistant profile id is required for a new conversation binding.')
+  }
+
+  return {
+    schemaVersion: ASSISTANT_CONVERSATION_BINDING_VERSION,
+    profileId,
+    contextMode: params.profile.contextMode,
+    runMode: params.profile.runMode,
+    workingDirectoryOverride: params.workingDirectoryOverride.trim(),
+    ragEnabled: params.profile.defaultRagEnabled === true,
+    webSearchEnabled: params.profile.defaultWebSearchEnabled === true,
+    tenthManEnabled: params.profile.defaultTenthManEnabled === true,
+    harnessMaxContinuations: normalizeHarnessMaxContinuations(params.profile.defaultHarnessMaxContinuations),
+    browserShellDirectWriteEnabled: false,
+    browserShellSessionId: null,
+    selectedModel: null,
+    toolConfig: null,
+  }
+}
 
 export const useAssistantSessionSettings = () => {
   const sessionSettings = ref<AssistantSessionSettings>(createDefaultAssistantSessionSettings())
@@ -88,6 +120,7 @@ export const useAssistantSessionSettings = () => {
     defaultRagEnabled?: boolean | null
     defaultWebSearchEnabled?: boolean | null
     defaultTenthManEnabled?: boolean | null
+    defaultHarnessMaxContinuations?: number | null
   }) => {
     const normalized = profile.id.trim()
     if (!normalized) return
@@ -98,6 +131,7 @@ export const useAssistantSessionSettings = () => {
       ragEnabled: profile.defaultRagEnabled === true,
       webSearchEnabled: profile.defaultWebSearchEnabled === true,
       tenthManEnabled: profile.defaultTenthManEnabled === true,
+      harnessMaxContinuations: normalizeHarnessMaxContinuations(profile.defaultHarnessMaxContinuations),
     })
   }
 
@@ -153,6 +187,7 @@ export const useAssistantSessionSettings = () => {
       ragEnabled: binding.ragEnabled === true,
       webSearchEnabled: binding.webSearchEnabled === true,
       tenthManEnabled: binding.tenthManEnabled === true,
+      harnessMaxContinuations: normalizeHarnessMaxContinuations(binding.harnessMaxContinuations),
     })
   }
 

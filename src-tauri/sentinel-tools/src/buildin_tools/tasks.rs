@@ -197,6 +197,22 @@ async fn delete_tasks_from_db(execution_id: &str) {
     }
 }
 
+async fn resolve_conversation_id_for_execution(execution_id: &str) -> Option<String> {
+    let db = get_db_service().await?;
+    match db.get_agent_execution_turn(execution_id).await {
+        Ok(Some(turn)) => Some(turn.conversation_id),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to resolve conversation_id for execution {}: {}",
+                execution_id,
+                e
+            );
+            None
+        }
+    }
+}
+
 /// Get or load tasks list for an execution
 async fn get_or_load_tasks(execution_id: &str) -> TasksList {
     // Check cache first
@@ -316,10 +332,14 @@ impl Tool for TasksTool {
         if let Ok(ref output) = result {
             if let Some(ref list) = output.list {
                 if let Some(handle) = &*APP_HANDLE.read().await {
+                    let conversation_id =
+                        resolve_conversation_id_for_execution(&execution_id).await;
+
                     let _ = handle.emit(
                         "agent:plan_updated",
                         serde_json::json!({
                             "execution_id": execution_id,
+                            "conversation_id": conversation_id,
                             "plan": {
                                 "tasks": list.items,
                                 "current_task_index": list.current_index
@@ -350,6 +370,7 @@ impl Tool for TasksTool {
                         "agent-tasks-update",
                         serde_json::json!({
                             "execution_id": execution_id,
+                            "conversation_id": conversation_id,
                             "tasks": tasks_json,
                             "timestamp": chrono::Utc::now().timestamp_millis()
                         }),

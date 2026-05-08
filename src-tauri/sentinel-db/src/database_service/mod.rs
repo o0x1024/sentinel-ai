@@ -1,13 +1,21 @@
 pub mod agent;
+pub mod agent_execution_turns;
 pub mod agent_harness;
 pub mod ai;
 pub mod ai_tool_messages;
 pub mod asset;
+pub mod bot;
 pub mod bounty;
+pub mod bounty_asset_ops;
+pub mod bounty_change_event_ops;
 pub mod bounty_domain_support;
 pub mod bounty_event_workflow_runs;
+pub mod bounty_evidence_submission_ops;
+pub mod bounty_finding_ops;
 pub mod bounty_knowledge;
+pub mod bounty_program_ops;
 pub mod bounty_queries;
+pub mod bounty_workflow_ops;
 
 pub mod cache;
 pub mod config;
@@ -18,6 +26,7 @@ pub mod init;
 pub mod memory;
 pub mod migration;
 pub mod migrations;
+pub mod monitor_tasks;
 pub mod plugin;
 pub mod proxifier;
 pub mod rag;
@@ -53,6 +62,8 @@ pub mod workflow;
 #[allow(unused_imports)]
 pub use agent::*;
 #[allow(unused_imports)]
+pub use agent_execution_turns::*;
+#[allow(unused_imports)]
 pub use agent_harness::*;
 #[allow(unused_imports)]
 pub use ai::*;
@@ -61,15 +72,29 @@ pub use ai_tool_messages::*;
 #[allow(unused_imports)]
 pub use asset::*;
 #[allow(unused_imports)]
+pub use bot::*;
+#[allow(unused_imports)]
 pub use bounty::*;
+#[allow(unused_imports)]
+pub use bounty_asset_ops::*;
+#[allow(unused_imports)]
+pub use bounty_change_event_ops::*;
 #[allow(unused_imports)]
 pub use bounty_domain_support::*;
 #[allow(unused_imports)]
 pub use bounty_event_workflow_runs::*;
 #[allow(unused_imports)]
+pub use bounty_evidence_submission_ops::*;
+#[allow(unused_imports)]
+pub use bounty_finding_ops::*;
+#[allow(unused_imports)]
 pub use bounty_knowledge::*;
 #[allow(unused_imports)]
+pub use bounty_program_ops::*;
+#[allow(unused_imports)]
 pub use bounty_queries::*;
+#[allow(unused_imports)]
+pub use bounty_workflow_ops::*;
 #[allow(unused_imports)]
 pub use cache::*;
 #[allow(unused_imports)]
@@ -86,6 +111,8 @@ pub use init::*;
 pub use memory::*;
 #[allow(unused_imports)]
 pub use migration::*;
+#[allow(unused_imports)]
+pub use monitor_tasks::*;
 #[allow(unused_imports)]
 pub use plugin::*;
 #[allow(unused_imports)]

@@ -487,7 +487,7 @@ impl Drop for PluginExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Severity;
+    use crate::types::{PluginCategory, PluginMainCategory, Severity};
 
     fn create_test_metadata() -> PluginMetadata {
         PluginMetadata {
@@ -495,8 +495,9 @@ mod tests {
             name: "Test Executor Plugin".to_string(),
             version: "1.0.0".to_string(),
             author: None,
-            main_category: "traffic".to_string(),
-            category: "test".to_string(),
+            main_category: PluginMainCategory::Traffic,
+            category: PluginCategory::parse_for_main_category(PluginMainCategory::Traffic, "test")
+                .expect("test category should parse"),
             default_severity: Severity::Info,
             tags: vec![],
             description: None,

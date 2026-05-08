@@ -1,7 +1,9 @@
 <template>
-  <div class="agent-view h-full flex bg-gradient-to-br from-base-100 to-base-200 overflow-hidden relative">
+  <div
+    class="agent-view h-full flex bg-gradient-to-br from-base-100 to-base-200 overflow-hidden relative"
+  >
     <!-- Backdrop -->
-    <div 
+    <div
       v-if="showConversations"
       class="conversation-backdrop absolute inset-0 bg-black/20 z-40 transition-opacity"
       @click="closeAllOverlays()"
@@ -9,12 +11,12 @@
 
     <!-- Conversation List Drawer -->
     <Transition name="slide-drawer">
-      <div 
+      <div
         v-if="showConversations"
         ref="conversationDrawerRef"
         class="conversation-drawer absolute left-0 top-0 bottom-0 w-80 bg-base-100 shadow-2xl z-50 overflow-hidden"
       >
-        <ConversationList 
+        <ConversationList
           ref="conversationListRef"
           :current-conversation-id="conversationId"
           @select="handleSelectConversation"
@@ -27,9 +29,11 @@
     <!-- Main content area -->
     <div class="flex-1 flex flex-col overflow-hidden min-h-0">
       <!-- {{ t('agent.conversationHeader') }} -->
-      <div class="conversation-header grid grid-cols-[minmax(0,1fr)_minmax(14rem,32rem)_minmax(0,1fr)] items-center gap-3 border-b border-base-300 bg-base-100/50 px-4 py-2">
+      <div
+        class="conversation-header grid grid-cols-[minmax(0,1fr)_minmax(14rem,32rem)_minmax(0,1fr)] items-center gap-3 border-b border-base-300 bg-base-100/50 px-4 py-2"
+      >
         <div class="flex min-w-0 items-center gap-2">
-          <button 
+          <button
             @click="toggleConversationDrawer()"
             class="btn btn-sm btn-ghost shrink-0"
             :title="`${t('agent.switchConversationList')} (Ctrl/Cmd+Shift+B)`"
@@ -54,23 +58,35 @@
           <input
             v-model.trim="conversationWorkingDirectoryOverride"
             type="text"
-            class="input input-sm h-8 w-full border-transparent bg-transparent pr-10 text-center font-mono text-xs shadow-none placeholder:text-base-content/65 hover:border-base-300 hover:bg-base-100/70 hover:text-left focus:border-base-300 focus:bg-base-100/70 focus:text-left focus:outline-none"
+            class="input input-sm h-8 w-full border-transparent bg-transparent pr-20 text-center font-mono text-xs shadow-none placeholder:text-base-content/65 hover:border-base-300 hover:bg-base-100/70 hover:text-left focus:border-base-300 focus:bg-base-100/70 focus:text-left focus:outline-none"
             :placeholder="conversationWorkingDirectoryPlaceholder"
             :title="conversationWorkingDirectoryTooltip"
             aria-label="当前会话工作目录"
           />
-          <button
-            class="btn btn-sm btn-outline absolute right-0 top-0 h-8 min-h-8 rounded-l-none px-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-            title="选择当前会话工作目录"
-            aria-label="选择当前会话工作目录"
-            @click="selectConversationWorkingDirectory"
+          <div
+            class="absolute right-0 top-0 flex h-8 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
           >
-            <i class="fas fa-folder-open"></i>
-          </button>
+            <button
+              class="btn btn-sm btn-outline h-8 min-h-8 rounded-none border-r-0 px-3"
+              :disabled="!canOpenConversationWorkingDirectory"
+              :title="openConversationWorkingDirectoryTitle"
+              aria-label="打开当前会话工作目录"
+              @click="openConversationWorkingDirectory"
+            >
+              <i class="fas fa-up-right-from-square"></i>
+            </button>
+            <button
+              class="btn btn-sm btn-outline h-8 min-h-8 rounded-l-none px-3"
+              title="选择当前会话工作目录"
+              aria-label="选择当前会话工作目录"
+              @click="selectConversationWorkingDirectory"
+            >
+              <i class="fas fa-folder-open"></i>
+            </button>
+          </div>
         </div>
         <div class="flex shrink-0 items-center justify-self-end gap-2">
-          <!-- Tasks Button - always visible -->
-          <button 
+          <button
             @click="handleToggleTasks()"
             class="btn btn-sm gap-1"
             :class="activeRightPanel === 'tasks' ? 'btn-primary' : 'btn-ghost text-primary'"
@@ -78,28 +94,52 @@
           >
             <i class="fas fa-tasks"></i>
             <span>{{ t('agent.tasks') }}</span>
-            <span v-if="taskBadgeCount > 0" class="badge badge-xs badge-primary">{{ taskBadgeCount }}</span>
+            <span v-if="taskBadgeCount > 0" class="badge badge-xs badge-primary">{{
+              taskBadgeCount
+            }}</span>
           </button>
-          <!-- HTML Panel Button - shows when there is HTML content -->
-          <button 
+          <button
+            @click="handleToggleHarness()"
+            class="btn btn-sm gap-1"
+            :class="activeRightPanel === 'harness' ? 'btn-primary' : 'btn-ghost text-primary'"
+            title="Harness"
+          >
+            <i class="fas fa-shield-alt"></i>
+            <span>Harness</span>
+          </button>
+          <button
             v-if="hasHtmlPanelContent"
             @click="handleToggleHtmlPanel()"
             class="btn btn-sm gap-1"
             :class="activeRightPanel === 'html' ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="activeRightPanel === 'html' ? t('agent.htmlPanelOpen') : t('agent.viewHtmlPanel')"
+            :title="
+              activeRightPanel === 'html' ? t('agent.htmlPanelOpen') : t('agent.viewHtmlPanel')
+            "
           >
             <i class="fas fa-code"></i>
             <span>{{ t('agent.htmlPanel') }}</span>
           </button>
-          <!-- Terminal Button - always visible -->
-          <button 
+          <button
             @click="handleToggleTerminal()"
             class="btn btn-sm gap-1"
             :class="activeRightPanel === 'terminal' ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="activeRightPanel === 'terminal' ? t('agent.terminalPanelOpen') : t('agent.viewTerminal')"
+            :title="
+              activeRightPanel === 'terminal'
+                ? t('agent.terminalPanelOpen')
+                : t('agent.viewTerminal')
+            "
           >
             <i class="fas fa-terminal"></i>
             <span>{{ t('agent.terminal') }}</span>
+          </button>
+          <button
+            @click="activeRightPanel === 'workspace-files' ? deactivateRightPanel('workspace-files') : activateRightPanel('workspace-files')"
+            class="btn btn-sm gap-1"
+            :class="activeRightPanel === 'workspace-files' ? 'btn-primary' : 'btn-ghost text-primary'"
+            title="工作目录面板"
+          >
+            <i class="fas fa-folder-tree"></i>
+            <span>工作目录</span>
           </button>
           <button
             v-if="hasConnectedBrowserShellSessions"
@@ -120,9 +160,11 @@
           >
             <i class="fas fa-users"></i>
             <span>Team</span>
-            <span v-if="teamWorkspaceBadgeCount > 0" class="badge badge-xs badge-primary">{{ teamWorkspaceBadgeCount }}</span>
+            <span v-if="teamWorkspaceBadgeCount > 0" class="badge badge-xs badge-primary">{{
+              teamWorkspaceBadgeCount
+            }}</span>
           </button>
-          <button 
+          <button
             @click="handleCreateConversation()"
             class="btn btn-sm btn-ghost gap-1"
             :title="`${t('agent.newConversation')} (Ctrl/Cmd+Shift+N)`"
@@ -148,23 +190,40 @@
           >
             <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
               <div class="min-w-0">
-                <div class="text-sm font-medium text-primary">当前对话已绑定第三方{{ browserShellDisplayName }}</div>
+                <div class="text-sm font-medium text-primary">
+                  当前对话已绑定第三方{{ browserShellDisplayName }}
+                </div>
                 <div class="text-xs text-base-content/70 break-all">
                   session: {{ currentBrowserShellSessionId }}
                 </div>
                 <div class="mt-1 text-xs text-base-content/60">
-                  本次对话会优先使用 <code>browser_shell</code> 操作这个第三方网页终端，而不是普通 DOM 浏览器动作。
+                  本次对话会优先使用 <code>browser_shell</code> 操作这个第三方网页终端，而不是普通
+                  DOM 浏览器动作。
                 </div>
                 <div class="mt-1 text-xs">
-                  <span :class="currentBrowserShellDirectWriteEnabled ? 'text-warning' : 'text-base-content/60'">
-                    {{ currentBrowserShellDirectWriteEnabled ? '已授权 AI 直接写入，无需逐条审批。' : '当前仍需逐条审批写入请求。' }}
+                  <span
+                    :class="
+                      currentBrowserShellDirectWriteEnabled
+                        ? 'text-warning'
+                        : 'text-base-content/60'
+                    "
+                  >
+                    {{
+                      currentBrowserShellDirectWriteEnabled
+                        ? '已授权 AI 直接写入，无需逐条审批。'
+                        : '当前仍需逐条审批写入请求。'
+                    }}
                   </span>
                 </div>
               </div>
               <div class="flex flex-wrap gap-2">
                 <button
                   class="btn btn-xs"
-                  :class="currentBrowserShellDirectWriteEnabled ? 'btn-warning' : 'btn-outline btn-warning'"
+                  :class="
+                    currentBrowserShellDirectWriteEnabled
+                      ? 'btn-warning'
+                      : 'btn-outline btn-warning'
+                  "
                   @click="toggleBrowserShellDirectWrite()"
                 >
                   <i class="fas fa-bolt mr-1"></i>
@@ -177,10 +236,7 @@
                   <i class="fas fa-terminal mr-1"></i>
                   打开{{ browserShellDisplayName }}
                 </button>
-                <button
-                  class="btn btn-xs btn-outline"
-                  @click="clearBoundBrowserShellSession"
-                >
+                <button class="btn btn-xs btn-outline" @click="clearBoundBrowserShellSession">
                   <i class="fas fa-link-slash mr-1"></i>
                   解除绑定
                 </button>
@@ -196,7 +252,9 @@
                 <div class="text-sm font-medium text-info">已定位到 memory 关联消息</div>
                 <div class="text-xs text-base-content/70 break-all">
                   <span v-if="focusBannerMemoryId">memory: {{ focusBannerMemoryId }}</span>
-                  <span v-if="focusedMemoryMessageId" class="ml-2">message: {{ focusedMemoryMessageId }}</span>
+                  <span v-if="focusedMemoryMessageId" class="ml-2"
+                    >message: {{ focusedMemoryMessageId }}</span
+                  >
                 </div>
               </div>
               <div class="flex flex-wrap gap-2">
@@ -208,10 +266,7 @@
                   <i class="fas fa-external-link-alt mr-1"></i>
                   返回 Tools
                 </button>
-                <button
-                  class="btn btn-xs btn-outline"
-                  @click="clearFocusedLocation"
-                >
+                <button class="btn btn-xs btn-outline" @click="clearFocusedLocation">
                   <i class="fas fa-times mr-1"></i>
                   清除定位
                 </button>
@@ -226,6 +281,7 @@
               :is-executing="isExecuting"
               :is-streaming="isStreaming"
               :streaming-content="streamingContent"
+              :context-compression="contextCompression"
               :focused-message-id="focusedMemoryMessageId"
               class="h-full"
               @resend="handleResendMessage"
@@ -242,7 +298,7 @@
               <p class="text-sm">{{ t('agent.loadingConversation', '正在加载历史对话...') }}</p>
             </div>
           </div>
-          
+
           <!-- {{ t('agent.inputArea') }} -->
           <InputAreaComponent
             ref="inputAreaRef"
@@ -267,6 +323,7 @@
             :selected-agent="assistantSessionSettings.profileId"
             :agent-loading="isLoadingAssistantProfiles"
             @send-message="handleSubmit"
+            @interrupt-message="handleInterruptSubmit"
             @stop-execution="handleStop"
             @toggle-rag="handleToggleRAG"
             @toggle-web-search="handleToggleWebSearch"
@@ -297,110 +354,126 @@
             @open-tool-config="toggleToolConfigDrawer"
           />
         </div>
-        
-        <!-- Right: Side Panel (Task, HTML, Terminal, or Team) -->
-        <div 
+
+        <!-- Right: Side Panel -->
+        <div
           v-if="activeRightPanel"
           class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
-          :style="{ width: activeRightPanel === 'work-config' ? `${toolConfigDrawerWidth}px` : `${sidebarWidth}px` }"
+          :style="{
+            width:
+              activeRightPanel === 'work-config'
+                ? `${toolConfigDrawerWidth}px`
+                : `${sidebarWidth}px`,
+          }"
         >
-            <!-- Resize Handle -->
-            <div 
-              class="resize-handle absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10"
-              @mousedown="activeRightPanel === 'work-config' ? startToolConfigDrawerResize($event) : startResize($event)"
-            ></div>
+          <!-- Resize Handle -->
+          <div
+            class="resize-handle absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10"
+            @mousedown="
+              activeRightPanel === 'work-config'
+                ? startToolConfigDrawerResize($event)
+                : startResize($event)
+            "
+          ></div>
 
-            <AssistantWorkConfigPanel
-              v-if="activeRightPanel === 'work-config'"
-              :available-models="assistantModelOptions"
-              :context-mode="assistantSessionSettings.contextMode"
-              :execution-mode="assistantExecutionMode"
-              :model-loading="isLoadingAssistantModels"
-              :parallel-judge-model="assistantParallelJudgeModel"
-              :parallel-selected-models="assistantParallelSelectedModels"
-              :profile-id="assistantSessionSettings.profileId"
-              :profile-loading="isLoadingAssistantProfiles"
-              :profile-options="assistantProfileOptions"
-              :run-mode="assistantSessionSettings.runMode"
-              :selected-model="assistantSelectedModel"
-              :tool-config="toolConfig"
-              @update:context-mode="handleAssistantContextModeChange"
-              @update:execution-mode="setAssistantExecutionMode"
-              @update:model="handleAssistantModelSelection"
-              @update:parallel-judge-model="setAssistantParallelJudgeModel"
-              @update:parallel-models="setAssistantParallelSelectedModels"
-              @update:profile-id="handleAssistantProfileChange"
-              @update:run-mode="handleAssistantRunModeChange"
-              @update:tool-config="handleToolConfigUpdate"
-              @close="closeToolConfigDrawer()"
-            />
-            
-            <TeamWorkspacePanel
-              v-else-if="activeRightPanel === 'team' && !activeTeamV4RunId"
-              v-model:tab="teamWorkspaceTab"
-              :loading="teamWorkspaceLoading"
-              :pending-create-task="pendingTeamCreateTask"
-              :tasks="teamTasks"
-              :selected-task-id="selectedTeamTaskId"
-              :selected-task-title="selectedTeamTaskTitle"
-              :pending-task-action-kind="pendingTeamTaskActionKind"
-              :pending-task-action-task-id="pendingTeamTaskActionTaskId"
-              :session-messages="teamSessionMessages"
-              :blackboard-entries="teamBlackboardEntries"
-              :session-detail="teamSessionDetail"
-              :resolve-agent-name="resolveAgentName"
-              @block-task="handleBlockTeamTask"
-              @clear-selected-task="clearSelectedTeamTask"
-              @claim-task="handleClaimTeamTask"
-              @complete-task="handleCompleteTeamTask"
-              @create-task="handleCreateTeamTask"
-              @fail-task="handleFailTeamTask"
-              @release-task="handleReleaseTeamTask"
-              @toggle-selected-task="toggleSelectedTeamTask"
-            />
+          <AssistantWorkConfigPanel
+            v-if="activeRightPanel === 'work-config'"
+            :available-models="assistantModelOptions"
+            :context-mode="assistantSessionSettings.contextMode"
+            :execution-mode="assistantExecutionMode"
+            :model-loading="isLoadingAssistantModels"
+            :parallel-judge-model="assistantParallelJudgeModel"
+            :parallel-selected-models="assistantParallelSelectedModels"
+            :profile-id="assistantSessionSettings.profileId"
+            :profile-loading="isLoadingAssistantProfiles"
+            :profile-options="assistantProfileOptions"
+            :run-mode="assistantSessionSettings.runMode"
+            :selected-model="assistantSelectedModel"
+            :tool-config="toolConfig"
+            @update:context-mode="handleAssistantContextModeChange"
+            @update:execution-mode="setAssistantExecutionMode"
+            @update:model="handleAssistantModelSelection"
+            @update:parallel-judge-model="setAssistantParallelJudgeModel"
+            @update:parallel-models="setAssistantParallelSelectedModels"
+            @update:profile-id="handleAssistantProfileChange"
+            @update:run-mode="handleAssistantRunModeChange"
+            @update:tool-config="handleToolConfigUpdate"
+            @close="closeToolConfigDrawer()"
+          />
 
-            <TeamV4WorkspacePanel
-              v-else-if="activeRightPanel === 'team'"
-              :agents="teamV4Agents"
-              :events="teamV4Events"
-              :harness-runs="teamV4HarnessRuns"
-              :loading="teamV4WorkspaceLoading"
-              :memories="teamV4Memories"
-              :run="teamV4Run"
-              :tasks="teamV4Tasks"
-              @cancel-harness="cancelTeamV4HarnessRun"
-              @resume-harness="resumeTeamV4HarnessRun"
-            />
+          <TeamWorkspacePanel
+            v-else-if="activeRightPanel === 'team' && !activeTeamV4RunId"
+            v-model:tab="teamWorkspaceTab"
+            :loading="teamWorkspaceLoading"
+            :pending-create-task="pendingTeamCreateTask"
+            :tasks="teamTasks"
+            :selected-task-id="selectedTeamTaskId"
+            :selected-task-title="selectedTeamTaskTitle"
+            :pending-task-action-kind="pendingTeamTaskActionKind"
+            :pending-task-action-task-id="pendingTeamTaskActionTaskId"
+            :session-messages="teamSessionMessages"
+            :blackboard-entries="teamBlackboardEntries"
+            :session-detail="teamSessionDetail"
+            :resolve-agent-name="resolveAgentName"
+            @block-task="handleBlockTeamTask"
+            @clear-selected-task="clearSelectedTeamTask"
+            @claim-task="handleClaimTeamTask"
+            @complete-task="handleCompleteTeamTask"
+            @create-task="handleCreateTeamTask"
+            @fail-task="handleFailTeamTask"
+            @release-task="handleReleaseTeamTask"
+            @toggle-selected-task="toggleSelectedTeamTask"
+          />
 
-            <TaskPanel 
-              v-else-if="activeRightPanel === 'tasks'" 
-              :tasks="tasks"
-              :is-active="activeRightPanel === 'tasks'"
-              :source-options="taskSourceOptions"
-              :selected-source-key="selectedTaskSourceKey"
-              class="h-full p-4 overflow-y-auto border-0 bg-transparent"
-              @close="handleCloseTasks"
-              @source-change="handleTaskSourceChange"
-            />
-            <HtmlPanel
-              v-else-if="activeRightPanel === 'html'"
-              :html-content="htmlPanelContent"
-              :is-active="activeRightPanel === 'html'"
-              class="h-full p-4 overflow-y-auto border-0 bg-transparent"
-              @close="handleCloseHtmlPanel"
-            />
-            <InteractiveTerminal
-              v-else-if="isViewActive && activeRightPanel === 'terminal'"
-              class="h-full border-0 rounded-none bg-transparent"
-              :working-directory="effectiveConversationWorkingDirectory || undefined"
-              @close="handleCloseTerminal"
-            />
-            <BrowserShellBridgePanel
-              v-else-if="activeRightPanel === 'browser-shell' && hasConnectedBrowserShellSessions"
-              class="h-full overflow-y-auto border-0 rounded-none bg-transparent p-4"
-              :auto-authorize-direct-write-on-bind="true"
-              :show-tool-test-actions="false"
-            />
+          <TeamV4WorkspacePanel
+            v-else-if="activeRightPanel === 'team'"
+            :agents="teamV4Agents"
+            :events="teamV4Events"
+            :harness-runs="teamV4HarnessRuns"
+            :loading="teamV4WorkspaceLoading"
+            :memories="teamV4Memories"
+            :run="teamV4Run"
+            :tasks="teamV4Tasks"
+            @cancel-harness="cancelTeamV4HarnessRun"
+            @resume-harness="resumeTeamV4HarnessRun"
+          />
+
+          <TaskPanel
+            v-else-if="activeRightPanel === 'tasks'"
+            :tasks="tasks"
+            :is-active="activeRightPanel === 'tasks'"
+            :source-options="taskSourceOptions"
+            :selected-source-key="selectedTaskSourceKey"
+            class="h-full p-4 overflow-y-auto border-0 bg-transparent"
+            @close="handleCloseTasks"
+            @source-change="handleTaskSourceChange"
+          />
+          <AgentHarnessPanel
+            v-else-if="activeRightPanel === 'harness'"
+            :active="activeRightPanel === 'harness'"
+            :conversation-id="conversationId"
+            @close="handleCloseHarness"
+          />
+          <HtmlPanel
+            v-else-if="activeRightPanel === 'html'"
+            :html-content="htmlPanelContent"
+            :is-active="activeRightPanel === 'html'"
+            class="h-full p-4 overflow-y-auto border-0 bg-transparent"
+            @close="handleCloseHtmlPanel"
+          />
+          <WorkspaceFilesPanel v-else-if="activeRightPanel === 'workspace-files'" :conversation-id="conversationId" :working-directory="effectiveConversationWorkingDirectory" @close="deactivateRightPanel('workspace-files')" />
+          <InteractiveTerminal
+            v-else-if="isViewActive && activeRightPanel === 'terminal'"
+            class="h-full border-0 rounded-none bg-transparent"
+            :working-directory="effectiveConversationWorkingDirectory || undefined"
+            @close="handleCloseTerminal"
+          />
+          <BrowserShellBridgePanel
+            v-else-if="activeRightPanel === 'browser-shell' && hasConnectedBrowserShellSessions"
+            class="h-full overflow-y-auto border-0 rounded-none bg-transparent p-4"
+            :auto-authorize-direct-write-on-bind="true"
+            :show-tool-test-actions="false"
+          />
         </div>
       </div>
 
@@ -420,7 +493,13 @@
             {{ t('agent.openWorkConfig') }}
           </button>
         </div>
-        <button @click="clearError" class="error-close bg-transparent border-none text-error cursor-pointer text-xl leading-none px-1 hover:text-base-content" :title="t('agent.close')">×</button>
+        <button
+          @click="clearError"
+          class="error-close bg-transparent border-none text-error cursor-pointer text-xl leading-none px-1 hover:text-base-content"
+          :title="t('agent.close')"
+        >
+          ×
+        </button>
       </div>
     </div>
 
@@ -461,6 +540,7 @@ import { useBrowserShell } from '@/composables/useBrowserShell'
 import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import AskUserQuestionModal from './AskUserQuestionModal.vue'
+import AgentHarnessPanel from './AgentHarnessPanel.vue'
 import MessageFlow from './MessageFlow.vue'
 import TaskPanel from './TaskPanel.vue'
 import HtmlPanel from './HtmlPanel.vue'
@@ -473,26 +553,25 @@ import ConversationList from './ConversationList.vue'
 import AssistantWorkConfigPanel from './AssistantWorkConfigPanel.vue'
 import TeamWorkspacePanel from './TeamWorkspacePanel.vue'
 import TeamV4WorkspacePanel from './TeamV4WorkspacePanel.vue'
+import WorkspaceFilesPanel from './WorkspaceFilesPanel.vue'
 import {
   type AgentExecutionFinishedEvent,
   getExecutionStateBadgeClass,
   getExecutionStateLabelKey,
   type PersistedAgentExecutionState,
 } from './executionState'
-import {
-} from './teamOrchestrationSupport'
+import {} from './teamOrchestrationSupport'
 import { useAgentConversationFlow } from './useAgentConversationFlow'
 import { useAgentModelAndToolConfig } from './useAgentModelAndToolConfig'
 import { useAgentPanels } from './useAgentPanels'
-import { useAssistantProfiles } from './assistantProfiles'
-import { useAssistantSessionSettings } from './useAssistantSessionSettings'
+import { normalizeHarnessMaxContinuations, useAssistantProfiles } from './assistantProfiles'
+import {
+  buildBaseAssistantConversationBinding,
+  useAssistantSessionSettings,
+} from './useAssistantSessionSettings'
 import { useAgentTeamRuntime } from './useAgentTeamRuntime'
 import { useAgentTeamViewState } from './useAgentTeamViewState'
-import type {
-  ReferencedAsset,
-  ReferencedTraffic,
-  TrafficSendType,
-} from './agentDraftTypes'
+import type { ReferencedAsset, ReferencedTraffic, TrafficSendType } from './agentDraftTypes'
 import { useAgentDraftArtifacts } from './useAgentDraftArtifacts'
 import type {
   TeamOrchestrationPresetId,
@@ -503,9 +582,7 @@ import type {
   TeamRuntimeFailureMode,
   TeamRuntimeStepStat,
 } from './teamOrchestrationTypes'
-import {
-  type UiToolConfigPayload,
-} from './toolConfigRuntime'
+import { type UiToolConfigPayload } from './toolConfigRuntime'
 import { mapPersistedAgentTasks } from './agentTaskHistorySupport'
 import { useAgentMessageFocus } from './useAgentMessageFocus'
 import { useAgentTeamOrchestration } from './useAgentTeamOrchestration'
@@ -529,29 +606,35 @@ interface AgentRuntimeSettings {
   working_directory?: string | null
 }
 
-const props = withDefaults(defineProps<{
-  executionId?: string
-  showTasks?: boolean
-  selectedRole?: any
-  focusedMemoryId?: string | null
-  focusedMessageId?: string | null
-  active?: boolean
-}>(), {
-  showTasks: true,
-  focusedMemoryId: null,
-  focusedMessageId: null,
-  active: true,
-})
+const props = withDefaults(
+  defineProps<{
+    executionId?: string
+    showTasks?: boolean
+    selectedRole?: any
+    focusedMemoryId?: string | null
+    focusedMessageId?: string | null
+    active?: boolean
+  }>(),
+  {
+    showTasks: true,
+    focusedMemoryId: null,
+    focusedMessageId: null,
+    active: true,
+  }
+)
 
 const emit = defineEmits<{
   (e: 'submit', task: string): void
   (e: 'complete', result: any): void
   (e: 'error', error: string): void
-  (e: 'conversation-changed', payload: {
-    previousConversationId: string | null
-    conversationId: string
-    title: string | null
-  }): void
+  (
+    e: 'conversation-changed',
+    payload: {
+      previousConversationId: string | null
+      conversationId: string
+      title: string | null
+    }
+  ): void
   (e: 'memory-message-focused', payload: { memoryId: string; messageId: string }): void
 }>()
 
@@ -560,8 +643,12 @@ const { t, locale } = useI18n()
 
 const isViewActive = computed(() => props.active)
 const isChineseUi = computed(() => locale.value.toLowerCase().startsWith('zh'))
-const browserShellDisplayName = computed(() => (isChineseUi.value ? '浏览器 Shell' : 'Browser Shell'))
-const browserShellPanelTitle = computed(() => (isChineseUi.value ? '打开浏览器 Shell 面板' : 'Open Browser Shell Bridge'))
+const browserShellDisplayName = computed(() =>
+  isChineseUi.value ? '浏览器 Shell' : 'Browser Shell'
+)
+const browserShellPanelTitle = computed(() =>
+  isChineseUi.value ? '打开浏览器 Shell 面板' : 'Open Browser Shell Bridge'
+)
 
 // Refs
 const messageFlowRef = ref<InstanceType<typeof MessageFlow> | null>(null)
@@ -605,11 +692,11 @@ const {
   teamProfileOptions,
 } = useAssistantProfiles()
 const assistantAgentOptions = computed(() =>
-  assistantProfileOptions.value.map((profile) => ({
+  assistantProfileOptions.value.map(profile => ({
     value: profile.id,
     label: profile.label,
     description: profile.runMode === 'team' ? 'Team' : 'Assistant',
-  })),
+  }))
 )
 
 // Feature toggles
@@ -628,6 +715,9 @@ const {
   toConversationBinding,
   webSearchEnabled,
 } = useAssistantSessionSettings()
+const assistantHarnessMaxContinuations = computed(() =>
+  normalizeHarnessMaxContinuations(assistantSessionSettings.value.harnessMaxContinuations)
+)
 const conversationWorkingDirectoryOverride = computed({
   get: () => assistantSessionSettings.value.workingDirectoryOverride,
   set: (value: string) => {
@@ -652,6 +742,27 @@ const conversationWorkingDirectoryTooltip = computed(() => {
   const resolved = effectiveConversationWorkingDirectoryLabel.value
   return overrideValue ? `当前会话工作目录: ${resolved}` : `继承默认工作目录: ${resolved}`
 })
+const canOpenConversationWorkingDirectory = computed(
+  () => effectiveConversationWorkingDirectory.value.trim().length > 0
+)
+const openConversationWorkingDirectoryTitle = computed(() => {
+  const directory = effectiveConversationWorkingDirectory.value.trim()
+  return directory ? `打开工作目录: ${directory}` : '未配置工作目录'
+})
+const openConversationWorkingDirectory = async () => {
+  const directory = effectiveConversationWorkingDirectory.value.trim()
+  if (!directory) {
+    localError.value = '未配置工作目录，无法打开。'
+    return
+  }
+
+  try {
+    await invoke('plugin:opener|open_path', { path: directory, with: null })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    localError.value = `打开工作目录失败: ${message}`
+  }
+}
 const selectConversationWorkingDirectory = async () => {
   const { open } = await import('@tauri-apps/plugin-dialog')
   const selected = await open({
@@ -758,11 +869,14 @@ const matchesCurrentTeamSubagentParent = (parentExecutionId: string) => {
   )
 }
 
-const agentEvents = useAgentEvents(computed(() => conversationId.value || ''), {
-  suppressUserMessages: computed(() => teamModeEnabled.value),
-  defaultMaxContextTokens: assistantDefaultMaxContextTokens,
-  subagentParentExecutionMatcher: matchesCurrentTeamSubagentParent,
-})
+const agentEvents = useAgentEvents(
+  computed(() => conversationId.value || ''),
+  {
+    suppressUserMessages: computed(() => teamModeEnabled.value),
+    defaultMaxContextTokens: assistantDefaultMaxContextTokens,
+    subagentParentExecutionMatcher: matchesCurrentTeamSubagentParent,
+  }
+)
 const messages = computed(() => agentEvents.messages.value)
 const isTeamScopedMainFlowMessage = (message: AgentMessage) => {
   const metadata = message.metadata || {}
@@ -831,11 +945,15 @@ const {
 const isTeamRunActive = computed(() => {
   if (activeTeamV4RunId.value) {
     return ['draft', 'planning', 'running', 'waiting_human'].includes(
-      String(teamV4Run.value?.state || '').trim().toLowerCase(),
+      String(teamV4Run.value?.state || '')
+        .trim()
+        .toLowerCase()
     )
   }
   if (!teamModeEnabled.value || !activeTeamSessionId.value) return false
-  const normalized = String(teamSessionState.value || '').trim().toUpperCase()
+  const normalized = String(teamSessionState.value || '')
+    .trim()
+    .toUpperCase()
   return [
     'EXECUTING',
     'INITIALIZING',
@@ -851,24 +969,27 @@ const isTeamRunActive = computed(() => {
 const teamWorkspaceAvailable = computed(() =>
   Boolean(
     teamModeEnabled.value ||
-    activeTeamSessionId.value ||
-    activeTeamV4RunId.value ||
-    teamSessionDetail.value ||
-    teamSessionMessages.value.length ||
-    teamTasks.value.length ||
-    teamBlackboardEntries.value.length ||
-    teamV4Agents.value.length ||
-    teamV4Events.value.length ||
-    teamV4HarnessRuns.value.length ||
-    teamV4Memories.value.length ||
-    teamV4Run.value ||
-    teamV4Tasks.value.length,
-  ),
+      activeTeamSessionId.value ||
+      activeTeamV4RunId.value ||
+      teamSessionDetail.value ||
+      teamSessionMessages.value.length ||
+      teamTasks.value.length ||
+      teamBlackboardEntries.value.length ||
+      teamV4Agents.value.length ||
+      teamV4Events.value.length ||
+      teamV4HarnessRuns.value.length ||
+      teamV4Memories.value.length ||
+      teamV4Run.value ||
+      teamV4Tasks.value.length
+  )
 )
 const isExecuting = computed(() => agentEvents.isExecuting.value || isTeamRunActive.value)
-const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
+const isStreaming = computed(
+  () => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value
+)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 const contextUsage = computed(() => agentEvents.contextUsage.value)
+const contextCompression = computed(() => agentEvents.contextCompression.value)
 const focusTeamTaskInWorkspace = (taskId: string) => {
   const normalizedTaskId = String(taskId || '').trim()
   if (!normalizedTaskId) return
@@ -889,7 +1010,7 @@ const {
   focusedMemoryId: computed(() => props.focusedMemoryId),
   focusedMessageId: computed(() => props.focusedMessageId),
   visibleMessages,
-  emitMemoryMessageFocused: (payload) => emit('memory-message-focused', payload),
+  emitMemoryMessageFocused: payload => emit('memory-message-focused', payload),
   focusTeamTaskInWorkspace,
 })
 
@@ -904,16 +1025,12 @@ const taskStatusBadgeClass = (status: string) => {
   if (normalized === 'blocked') return 'badge-warning'
   return 'badge-ghost'
 }
-const {
-  handleViewSubagentDetails,
-  loadSubagentRuns,
-  selectedSubagent,
-  showSubagentDetailModal,
-} = useAgentSubagents({
-  conversationId,
-  historyLoadToken,
-  subagents: agentEvents.subagents,
-})
+const { handleViewSubagentDetails, loadSubagentRuns, selectedSubagent, showSubagentDetailModal } =
+  useAgentSubagents({
+    conversationId,
+    historyLoadToken,
+    subagents: agentEvents.subagents,
+  })
 
 const taskComposable = useAgentTasks()
 const parseTeamTaskExecutionId = (executionId: string) => {
@@ -933,27 +1050,41 @@ const parseTeamTaskExecutionId = (executionId: string) => {
 const terminalComposable = useTerminal()
 const browserShellComposable = useBrowserShell()
 const currentBrowserShellSessionId = computed(() => browserShellComposable.currentSessionId.value)
-const currentBrowserShellDirectWriteEnabled = computed(() =>
-  browserShellComposable.directWriteEnabled.value,
+const currentBrowserShellDirectWriteEnabled = computed(
+  () => browserShellComposable.directWriteEnabled.value
 )
-const buildCurrentConversationBinding = () => toConversationBinding({
-  browserShellDirectWriteEnabled: currentBrowserShellDirectWriteEnabled.value,
-  browserShellSessionId: currentBrowserShellSessionId.value,
-  selectedModel: assistantSelectedModel.value,
-  toolsEnabled: toolsEnabled.value,
-  toolConfig: toolConfig.value,
-})
+const buildCurrentConversationBinding = () =>
+  toConversationBinding({
+    browserShellDirectWriteEnabled: currentBrowserShellDirectWriteEnabled.value,
+    browserShellSessionId: currentBrowserShellSessionId.value,
+    selectedModel: assistantSelectedModel.value,
+    toolsEnabled: toolsEnabled.value,
+    toolConfig: toolConfig.value,
+  })
+const buildNewConversationBinding = () => {
+  const profileId = assistantSessionSettings.value.profileId.trim()
+  const profile = getAssistantProfileOption(profileId)
+  if (!profile) {
+    throw new Error(`Assistant profile is unavailable: ${profileId}`)
+  }
+  return buildBaseAssistantConversationBinding({
+    profile,
+    workingDirectoryOverride: conversationWorkingDirectoryOverride.value,
+  })
+}
 const {
   activeRightPanel,
   activateRightPanel,
   clearError,
   deactivateRightPanel,
   error,
+  handleCloseHarness,
   handleCloseHtmlPanel,
   handleCloseTasks,
   handleCloseTerminal,
   handleRenderHtml,
   handleTaskSourceChange,
+  handleToggleHarness,
   handleToggleBrowserShell,
   handleToggleHtmlPanel,
   handleToggleTasks,
@@ -976,6 +1107,7 @@ const {
   agentError: computed(() => agentEvents.error.value),
   clearTasksForExecution: taskComposable.clearTasksForExecution,
   conversationId,
+  getConversationIdForExecution: taskComposable.getConversationIdForExecution,
   getTasksForExecution: taskComposable.getTasksForExecution,
   isTeamWorkspaceActive,
   isTaskPanelActive: computed(() => taskComposable.isTaskPanelActive.value),
@@ -994,7 +1126,9 @@ const {
     agentEvents.resetError()
   },
   resolveAgentName,
-  selectedTeamTaskAssigneeId: computed(() => normalizeOptionalText(selectedTeamTask.value?.assignee_agent_id) || null),
+  selectedTeamTaskAssigneeId: computed(
+    () => normalizeOptionalText(selectedTeamTask.value?.assignee_agent_id) || null
+  ),
   setTasksForExecution: taskComposable.setTasksForExecution,
   teamWorkspaceAvailable,
   terminalClose: () => {
@@ -1020,13 +1154,15 @@ const {
 const isVisionModelUnsupportedFailure = computed(() => isVisionModelUnsupportedError(error.value))
 
 const openToolConfigDrawer = () => {
-  lastOverlayTrigger.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  lastOverlayTrigger.value =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null
   showConversations.value = false
   activateRightPanel('work-config')
 }
 
 const toggleToolConfigDrawer = () => {
-  lastOverlayTrigger.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  lastOverlayTrigger.value =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null
   showConversations.value = false
   if (activeRightPanel.value === 'work-config') {
     closeToolConfigDrawer()
@@ -1052,7 +1188,8 @@ const toggleConversationDrawer = () => {
     closeConversationDrawer()
     return
   }
-  lastOverlayTrigger.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  lastOverlayTrigger.value =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null
   if (activeRightPanel.value === 'work-config') {
     closeToolConfigDrawer()
   }
@@ -1069,7 +1206,12 @@ const restoreOverlayTriggerFocus = () => {
 const isEditableTarget = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) return false
   const tagName = target.tagName.toLowerCase()
-  return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable
+  return (
+    tagName === 'input' ||
+    tagName === 'textarea' ||
+    tagName === 'select' ||
+    target.isContentEditable
+  )
 }
 
 const handleGlobalKeydown = (event: KeyboardEvent) => {
@@ -1125,21 +1267,19 @@ const toggleBrowserShellDirectWrite = () => {
   browserShellComposable.setDirectWriteEnabled(!browserShellComposable.directWriteEnabled.value)
 }
 
-const {
-  hasConnectedBrowserShellSessions,
-  isCurrentBoundBrowserShellConnected,
-} = useAgentBrowserShellAvailability({
-  currentBrowserShellSessionId,
-  clearBoundBrowserShellSession,
-})
+const { hasConnectedBrowserShellSessions, isCurrentBoundBrowserShellConnected } =
+  useAgentBrowserShellAvailability({
+    currentBrowserShellSessionId,
+    clearBoundBrowserShellSession,
+  })
 
-watch(hasConnectedBrowserShellSessions, (hasConnected) => {
+watch(hasConnectedBrowserShellSessions, hasConnected => {
   if (!hasConnected && activeRightPanel.value === 'browser-shell') {
     deactivateRightPanel('browser-shell')
   }
 })
 
-watch(showConversations, (open) => {
+watch(showConversations, open => {
   if (open) {
     nextTick(() => {
       conversationListRef.value?.focusSearch?.()
@@ -1162,10 +1302,10 @@ onMounted(() => {
   window.addEventListener('agent:parallel-task-source-focus', handleParallelTaskSourceFocus)
   window.addEventListener('keydown', handleGlobalKeydown)
   void invoke<AgentRuntimeSettings>('get_agent_config')
-    .then((config) => {
+    .then(config => {
       agentDefaultWorkingDirectory.value = String(config?.working_directory || '').trim()
     })
-    .catch((error) => {
+    .catch(error => {
       console.warn('[AgentView] Failed to load default working directory:', error)
     })
 })
@@ -1187,8 +1327,24 @@ const handleToggleWebSearch = (enabled: boolean) => {
 }
 
 const hydrateTaskHistory = async (targetConversationId: string) => {
-  const persistedTasks = await invoke<any[]>('get_agent_tasks', { executionId: targetConversationId })
-  taskComposable.setTasksForExecution(targetConversationId, mapPersistedAgentTasks(persistedTasks))
+  const persistedTasks = await invoke<any[]>('get_agent_tasks_for_conversation', {
+    conversationId: targetConversationId,
+  })
+  const rowsByExecutionId = new Map<string, any[]>()
+  for (const row of persistedTasks || []) {
+    const executionId = String(row?.execution_id || '').trim()
+    if (!executionId) continue
+    const rows = rowsByExecutionId.get(executionId) || []
+    rows.push(row)
+    rowsByExecutionId.set(executionId, rows)
+  }
+  for (const [executionId, rows] of rowsByExecutionId.entries()) {
+    taskComposable.setTasksForExecution(
+      executionId,
+      mapPersistedAgentTasks(rows),
+      targetConversationId,
+    )
+  }
 }
 
 const handleAssistantModelSelection = (value: string | null) => {
@@ -1221,7 +1377,7 @@ const {
   activateRightPanel,
   activeRightPanel,
   agentMessages: agentEvents.messages,
-  buildCurrentConversationBinding,
+  buildNewConversationBinding,
   buildToolPolicyFromUiConfig: buildTeamToolPolicyFromUiConfig,
   clearLocalError: () => {
     localError.value = null
@@ -1233,7 +1389,8 @@ const {
     await flushPendingToolConfigSave()
   },
   getDisplayConversationTitle: () => t('agent.newConversationTitle'),
-  getNewConversationTitle: () => `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
+  getNewConversationTitle: () =>
+    `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
   handleStopExecution: async () => {
     await handleStop()
   },
@@ -1251,7 +1408,7 @@ const {
   },
   ragEnabled,
   selectedTeamTaskId,
-  setLocalError: (message) => {
+  setLocalError: message => {
     localError.value = message
   },
   teamBlackboardEntries,
@@ -1325,10 +1482,10 @@ const {
   loadConversationBinding,
   schedulePersistConversationBinding,
 } = useAgentConversationBinding({
-  bindBrowserShellSession: (sessionId) => {
+  bindBrowserShellSession: sessionId => {
     browserShellComposable.bindSession(sessionId)
   },
-  setBrowserShellDirectWriteEnabled: (enabled) => {
+  setBrowserShellDirectWriteEnabled: enabled => {
     browserShellComposable.setDirectWriteEnabled(enabled)
   },
   conversationId,
@@ -1411,16 +1568,15 @@ const persistTeamV4Message = async (message: AgentMessage, role: 'user' | 'assis
 
 const startTeamV4AssistantRun = async (goal: string) => {
   await flushPendingToolConfigSave()
-  await Promise.all([
-    loadTeamProfiles(),
-    loadDefaultTeamProfile(),
-  ])
-  const selectedAssistantProfile = getAssistantProfileOption(assistantSessionSettings.value.profileId)
+  await Promise.all([loadTeamProfiles(), loadDefaultTeamProfile()])
+  const selectedAssistantProfile = getAssistantProfileOption(
+    assistantSessionSettings.value.profileId
+  )
   const selectedTeamProfileId =
-    selectedAssistantProfile?.defaultTeamProfileId?.trim()
-    || defaultTeamProfileId.value.trim()
-    || teamProfileOptions.value[0]?.id
-    || null
+    selectedAssistantProfile?.defaultTeamProfileId?.trim() ||
+    defaultTeamProfileId.value.trim() ||
+    teamProfileOptions.value[0]?.id ||
+    null
   const selectedTeamProfile = selectedTeamProfileId
     ? getTeamProfileOption(selectedTeamProfileId)
     : null
@@ -1455,10 +1611,10 @@ const startTeamV4AssistantRun = async (goal: string) => {
   activeTeamV4RunId.value = bootstrap.run.id
   teamV4Run.value = bootstrap.run
   teamV4Agents.value = [bootstrap.orchestrator, bootstrap.monitor, ...bootstrap.specialists]
-  teamV4Tasks.value = bootstrap.specialistAssignments.map((assignment) => assignment.task)
+  teamV4Tasks.value = bootstrap.specialistAssignments.map(assignment => assignment.task)
   teamV4Events.value = bootstrap.events
   teamV4Memories.value = []
-  teamV4HarnessRuns.value = bootstrap.specialistAssignments.map((assignment) => assignment.harnessRun)
+  teamV4HarnessRuns.value = bootstrap.specialistAssignments.map(assignment => assignment.harnessRun)
   teamSessionState.value = 'EXECUTING'
   isTeamWorkspaceActive.value = true
   activateRightPanel('team')
@@ -1506,7 +1662,7 @@ const startTeamV4AssistantRun = async (goal: string) => {
     persistTeamV4Message(userMessage, 'user'),
     persistTeamV4Message(assistantMessage, 'assistant'),
     loadTeamV4WorkspaceData(bootstrap.run.id),
-  ]).catch((error) => {
+  ]).catch(error => {
     console.warn('[AgentView] Team v4 bootstrap side effects failed:', error)
   })
   return bootstrap
@@ -1534,6 +1690,7 @@ const {
   handleConversationExecutionStateUpdate,
   handleCreateConversation: handleCreateConversationFlow,
   handleEditMessage,
+  handleInterruptSubmit,
   handleResendMessage,
   handleSelectConversation: handleSelectConversationFlow,
   handleStop,
@@ -1552,7 +1709,7 @@ const {
   assistantParallelJudgeModel,
   assistantParallelSelectedModels,
   assistantSelectedModel,
-  buildCurrentConversationBinding,
+  buildNewConversationBinding,
   effectiveWorkingDirectory: effectiveConversationWorkingDirectory,
   buildToolConfig: () => toolConfig.value as unknown as UiToolConfigPayload,
   clearAgentMessages: () => {
@@ -1564,22 +1721,25 @@ const {
   },
   conversationExecutionState,
   conversationId,
+  currentExecutionId: agentEvents.currentExecutionId,
   currentConversationTitle,
-  emitComplete: (payload) => {
+  emitComplete: payload => {
     emit('complete', payload)
   },
-  emitError: (message) => {
+  emitError: message => {
     emit('error', message)
   },
-  emitSubmit: (task) => {
+  emitSubmit: task => {
     emit('submit', task)
   },
   ensureConversationForTeamSession,
   executionIdProp: props.executionId,
   forceTaskPlanContract: false,
+  harnessMaxContinuations: assistantHarnessMaxContinuations,
   getFailedToClearConversationLabel: () => t('agent.failedToClearConversation'),
   getFailedToStopExecutionLabel: () => t('agent.failedToStopExecution'),
-  getNewConversationTitle: () => `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
+  getNewConversationTitle: () =>
+    `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
   getToolCallCompletedLabel: () => t('agent.toolCallCompleted'),
   getUnnamedConversationTitle: () => t('agent.newConversationTitle'),
   getAssistantProfileOption,
@@ -1612,7 +1772,7 @@ const {
   routeTeamMessage,
   scrollMessageViewportToBottom,
   setMirroredConversationMessageIds,
-  setPendingDocumentAttachments: (documents) => {
+  setPendingDocumentAttachments: documents => {
     agentEvents.setPendingDocumentAttachments(documents)
   },
   startTeamV4AssistantRun,
@@ -1694,7 +1854,7 @@ watch(
     if (!ready) return
     void loadConversationBinding(value)
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 watch(
@@ -1713,10 +1873,10 @@ watch(
   ],
   () => {
     schedulePersistConversationBinding()
-  },
+  }
 )
 
-watch(error, (value) => {
+watch(error, value => {
   const normalized = typeof value === 'string' ? value.trim() : ''
   if (!normalized) {
     lastAutoOpenedVisionError.value = null
@@ -1814,7 +1974,7 @@ body.resizing {
   .agent-main {
     flex-direction: column;
   }
-  
+
   .task-sidebar {
     width: 100%;
     border-left: none;
@@ -1832,7 +1992,7 @@ body.resizing {
     border-left: none;
     border-top: 1px solid hsl(var(--b3));
   }
-  
+
   .resize-handle {
     display: none;
   }

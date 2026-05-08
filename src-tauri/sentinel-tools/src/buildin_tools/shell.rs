@@ -175,6 +175,31 @@ pub struct ShellConfig {
     /// Docker sandbox configuration
     #[serde(default)]
     pub docker_config: Option<DockerSandboxConfig>,
+    /// Shell used for host interactive terminal sessions.
+    #[serde(default = "default_host_shell")]
+    pub host_shell: String,
+    /// Shell used for Docker interactive terminal sessions.
+    #[serde(default = "default_docker_shell")]
+    pub docker_shell: String,
+}
+
+#[cfg(target_os = "macos")]
+fn default_host_shell() -> String {
+    "/bin/zsh".to_string()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn default_host_shell() -> String {
+    "/bin/bash".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn default_host_shell() -> String {
+    "powershell".to_string()
+}
+
+fn default_docker_shell() -> String {
+    "bash".to_string()
 }
 
 impl Default for ShellConfig {
@@ -192,7 +217,16 @@ impl Default for ShellConfig {
             default_timeout_secs: default_timeout(),
             max_timeout_secs: None,
             docker_config: Some(DockerSandboxConfig::default()),
+            host_shell: default_host_shell(),
+            docker_shell: default_docker_shell(),
         }
+    }
+}
+
+pub fn shell_for_execution_mode(config: &ShellConfig, mode: ShellExecutionMode) -> String {
+    match mode {
+        ShellExecutionMode::Docker => config.docker_shell.clone(),
+        ShellExecutionMode::Host => config.host_shell.clone(),
     }
 }
 
@@ -462,12 +496,11 @@ impl ShellTool {
 
     pub const NAME: &'static str = "shell";
     pub const DESCRIPTION: &'static str = concat!(
-        "Execute a one-shot shell command and return stdout/stderr when the command finishes. ",
-        "Use for filesystem inspection, CLI utilities, scripting, build/test commands, and quick network tools ",
-        "that exit on their own. Prefer this over other tools when direct command execution is the simplest path. ",
+        "Execute shell commands with a bounded wait. Short commands return stdout/stderr when they finish; ",
+        "commands still running or waiting for input return a session_id that can be polled, continued with chars, or cancelled. ",
+        "Use for filesystem inspection, CLI utilities, scripting, build/test commands, quick network tools, and prompt-capable command execution. ",
         "Arguments must be a JSON object like {\"command\":\"pwd\"}; never pass a bare string. ",
-        "Do not use for interactive REPLs or TUIs. For long-lived services or watchers, either set run_in_background=true ",
-        "to launch a dedicated terminal session, or use interactive_shell directly."
+        "For long-lived services or watchers, set run_in_background=true or cancel the returned session when finished."
     );
 
     /// Check if command is reading files from /workspace/context/ to avoid recursive storage
@@ -598,7 +631,7 @@ impl ShellTool {
         Some(
             "Detected a background shell command that keeps stdout/stderr attached. The one-shot \
 shell tool waits for those pipes to close, so this command would stay in running state. Use \
-run_in_background=true / interactive_shell for long-lived processes, or fully detach the command, for example: \
+run_in_background=true for long-lived processes, or fully detach the command, for example: \
 `nohup <command> >/tmp/sentinel-shell.log 2>&1 < /dev/null & echo $!`."
                 .to_string(),
         )
@@ -668,7 +701,7 @@ run_in_background=true / interactive_shell for long-lived processes, or fully de
         Some(
             "Detected a long-running foreground shell command. The one-shot shell tool waits for \
 the process to exit, so commands that start servers, watchers, or follow logs will block the \
-conversation until they are manually stopped or time out. Use run_in_background=true or interactive_shell for long-lived \
+conversation until they are manually stopped or time out. Use run_in_background=true for long-lived \
 processes, or fully detach the command, for example: `nohup <command> >/tmp/sentinel-shell.log \
 2>&1 < /dev/null & echo $!`."
                 .to_string(),
@@ -696,8 +729,40 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
             .any(|token| matches!(*token, "-y" | "--yes" | "--force"))
     }
 
-    fn command_looks_interactive(command: &str) -> Option<&'static str> {
+    fn interactive_scan_segments(command: &str) -> Vec<&str> {
+        let mut segments = Vec::new();
+        for part in command.split(';') {
+            for and_part in part.split("&&") {
+                for or_part in and_part.split("||") {
+                    let segment = or_part.trim();
+                    if !segment.is_empty() {
+                        segments.push(segment);
+                    }
+                }
+            }
+        }
+        segments
+    }
+
+    pub fn command_looks_interactive(command: &str) -> Option<&'static str> {
         let trimmed = command.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        for segment in Self::interactive_scan_segments(trimmed) {
+            if segment != trimmed {
+                if let Some(kind) = Self::command_looks_interactive_segment(segment) {
+                    return Some(kind);
+                }
+            }
+        }
+
+        Self::command_looks_interactive_segment(trimmed)
+    }
+
+    fn command_looks_interactive_segment(trimmed: &str) -> Option<&'static str> {
+        let trimmed = trimmed.trim();
         if trimmed.is_empty() {
             return None;
         }
@@ -755,6 +820,9 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         if Self::command_equals_any(trimmed, &["ssh", "sftp", "ftp", "telnet"]) {
             return Some("repl");
         }
+        if Self::command_equals_any(trimmed, &["cat", "read"]) {
+            return Some("stdin");
+        }
 
         let lower = trimmed.to_lowercase();
         if !Self::command_has_non_interactive_yes_flag(trimmed) {
@@ -782,13 +850,13 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         let interaction_kind = Self::command_looks_interactive(command)?;
         Some(ShellError::InteractionRequired {
             message: format!(
-                "Detected an interactive shell command. The one-shot shell tool does not support continued stdin/TTY interaction. Use exec_command or interactive_shell, then continue with write_stdin using the returned session_id/process_id; or rewrite the command with non-interactive flags or piped input. Command: {}",
+                "Detected an interactive shell command. The one-shot shell path does not support continued stdin/TTY interaction. Call shell with yield_time_ms to start a prompt-capable session, then call shell again with session_id/process_id and chars to continue it; or rewrite the command with non-interactive flags or piped input. Command: {}",
                 command
             ),
             stdout: String::new(),
             stderr: String::new(),
             interaction_kind: interaction_kind.to_string(),
-            recommended_tool: "interactive_shell".to_string(),
+            recommended_tool: "shell".to_string(),
         })
     }
 
@@ -831,7 +899,7 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         chars[start..].iter().collect()
     }
 
-    fn output_looks_like_interactive_prompt(stdout: &str, stderr: &str) -> bool {
+    pub(crate) fn output_looks_like_interactive_prompt(stdout: &str, stderr: &str) -> bool {
         let tail = Self::output_tail_for_detection(stdout, stderr);
         let last_line = tail
             .trim_end()
@@ -858,13 +926,13 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         if Self::output_looks_like_interactive_prompt(&stdout, &stderr) {
             return ShellError::InteractionRequired {
                 message: format!(
-                    "The command appears to be waiting for interactive input. The one-shot shell tool cannot continue an stdin/TTY conversation after launch. Use exec_command or interactive_shell, then continue with write_stdin using the returned session_id/process_id; or rerun non-interactively with piped input or confirmation flags. Command: {}",
+                    "The command appears to be waiting for interactive input. The one-shot shell path cannot continue an stdin/TTY conversation after launch. Call shell with yield_time_ms to start a prompt-capable session, then call shell again with session_id/process_id and chars to continue it; or rerun non-interactively with piped input or confirmation flags. Command: {}",
                     command
                 ),
                 stdout,
                 stderr,
                 interaction_kind: "prompt".to_string(),
-                recommended_tool: "interactive_shell".to_string(),
+                recommended_tool: "shell".to_string(),
             };
         }
 
@@ -1651,7 +1719,15 @@ mod tests {
         assert!(ShellTool::build_interactive_command_guidance("vim README.md").is_some());
         assert!(ShellTool::build_interactive_command_guidance("python").is_some());
         assert!(ShellTool::build_interactive_command_guidance("python3 script.py").is_none());
+        assert!(ShellTool::build_interactive_command_guidance("cat").is_some());
+        assert!(ShellTool::build_interactive_command_guidance("cat README.md").is_none());
         assert!(ShellTool::build_interactive_command_guidance("ssh user@host uptime").is_none());
+        assert!(
+            ShellTool::build_interactive_command_guidance(
+                "cd /Users/like/code/baby-learning && npm create vite@latest . -- --template react 2>&1"
+            )
+            .is_some()
+        );
     }
 
     #[test]

@@ -1,3 +1,6 @@
+use crate::commands::ai_runtime_harness::{
+    DEFAULT_AGENT_HARNESS_MAX_CONTINUATIONS, MAX_AGENT_HARNESS_MAX_CONTINUATIONS,
+};
 use crate::services::ai::AiServiceManager;
 use sentinel_db::Database;
 use sentinel_llm::LlmClient;
@@ -22,6 +25,8 @@ pub struct AssistantProfilePayload {
     pub default_tenth_man_enabled: bool,
     pub default_tool_selection_strategy: String,
     pub default_max_tools: u32,
+    #[serde(default = "default_profile_harness_max_continuations")]
+    pub default_harness_max_continuations: u32,
     pub default_preselected_tools: Vec<String>,
     pub default_disabled_tools: Vec<String>,
     pub default_manual_tools: Vec<String>,
@@ -94,7 +99,7 @@ const TOOL_SELECTION_STRATEGIES: &[&str] =
     &["Keyword", "LLM", "Hybrid", "Manual", "All", "Deferred"];
 const PROFILE_TEAM_ROLES: &[&str] = &["assistant", "orchestrator", "specialist", "monitor"];
 const DEFAULT_TEAM_SPECIALIST_TOOLS: &[&str] = &[
-    "interactive_shell",
+    "shell",
     "file_read",
     "file_edit",
     "file_write",
@@ -103,7 +108,7 @@ const DEFAULT_TEAM_SPECIALIST_TOOLS: &[&str] = &[
     "web_search",
 ];
 const DEFAULT_TEAM_SPECIALIST_TOOLS_WITH_REVIEW: &[&str] = &[
-    "interactive_shell",
+    "shell",
     "file_read",
     "file_edit",
     "file_write",
@@ -142,6 +147,7 @@ Return exactly one JSON object matching this camelCase schema:
   "defaultTenthManEnabled": false,
   "defaultToolSelectionStrategy": "Keyword|LLM|Hybrid|Manual|All",
   "defaultMaxTools": 1,
+  "defaultHarnessMaxContinuations": 6,
   "defaultPreselectedTools": [],
   "defaultDisabledTools": [],
   "defaultManualTools": [],
@@ -155,7 +161,7 @@ Rules:
 - Do not include markdown, comments, prose, or extra keys.
 - Do not include an id field; the application assigns ids.
 - Prefer runMode "assistant" unless the user explicitly asks for a Team entry Agent.
-- Use only these tool ids when needed: interactive_shell, ask_user_question, spawn_agent, wait_agents, list_agents, close_agent, tenth_man_review.
+- Use only these tool ids when needed: shell, ask_user_question, spawn_agent, wait_agents, list_agents, close_agent, tenth_man_review.
 - Use null for optional preset/model fields unless the user explicitly requires them.
 "#;
 const AI_TEAM_PROFILE_SYSTEM_PROMPT: &str = r#"You create Sentinel AI Team profiles and their required member Agent profiles.
@@ -173,6 +179,7 @@ Return exactly one JSON object matching this camelCase schema:
       "defaultTenthManEnabled": false,
       "defaultToolSelectionStrategy": "Keyword|LLM|Hybrid|Manual|All",
       "defaultMaxTools": 1,
+      "defaultHarnessMaxContinuations": 6,
       "defaultPreselectedTools": [],
       "defaultDisabledTools": [],
       "defaultManualTools": [],
@@ -194,7 +201,7 @@ Return exactly one JSON object matching this camelCase schema:
     "memoryPolicy": {"monitorGate":"candidate_then_orchestrator_accept","shareScope":"high_value_only","longTermMemory":true},
     "toolPolicyMatrix": {
       "orchestrator": {"tools":["ask_user_question"]},
-      "specialist": {"tools":["interactive_shell","file_read","file_edit","file_write","grep","http_request","web_search"]},
+      "specialist": {"tools":["shell","file_read","file_edit","file_write","grep","http_request","web_search"]},
       "monitor": {"tools":["tenth_man_review"]}
     },
     "harnessPolicy": {"heartbeatSecs":30,"leaseSecs":600,"checkpoint":"event_sequence","allowResume":true},
@@ -216,6 +223,10 @@ fn default_profile_team_role() -> String {
     "assistant".to_string()
 }
 
+fn default_profile_harness_max_continuations() -> u32 {
+    DEFAULT_AGENT_HARNESS_MAX_CONTINUATIONS as u32
+}
+
 fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
     vec![
         AssistantProfilePayload {
@@ -230,6 +241,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_tenth_man_enabled: false,
             default_tool_selection_strategy: "Keyword".to_string(),
             default_max_tools: 12,
+            default_harness_max_continuations: default_profile_harness_max_continuations(),
             default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
@@ -251,6 +263,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_tenth_man_enabled: true,
             default_tool_selection_strategy: "Hybrid".to_string(),
             default_max_tools: 5,
+            default_harness_max_continuations: default_profile_harness_max_continuations(),
             default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
@@ -272,6 +285,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_tenth_man_enabled: true,
             default_tool_selection_strategy: "Keyword".to_string(),
             default_max_tools: 12,
+            default_harness_max_continuations: default_profile_harness_max_continuations(),
             default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
@@ -293,6 +307,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_tenth_man_enabled: false,
             default_tool_selection_strategy: "Hybrid".to_string(),
             default_max_tools: 8,
+            default_harness_max_continuations: default_profile_harness_max_continuations(),
             default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
@@ -314,6 +329,7 @@ fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
             default_tenth_man_enabled: true,
             default_tool_selection_strategy: "Hybrid".to_string(),
             default_max_tools: 8,
+            default_harness_max_continuations: default_profile_harness_max_continuations(),
             default_preselected_tools: vec![],
             default_disabled_tools: vec![],
             default_manual_tools: vec![],
@@ -343,6 +359,9 @@ fn normalize_profile(mut profile: AssistantProfilePayload) -> AssistantProfilePa
     profile.default_tool_selection_strategy =
         profile.default_tool_selection_strategy.trim().to_string();
     profile.default_max_tools = profile.default_max_tools.max(1);
+    profile.default_harness_max_continuations = profile
+        .default_harness_max_continuations
+        .min(MAX_AGENT_HARNESS_MAX_CONTINUATIONS as u32);
     profile.default_preselected_tools = normalize_tool_ids(profile.default_preselected_tools);
     profile.default_disabled_tools = normalize_tool_ids(profile.default_disabled_tools);
     profile.default_manual_tools = normalize_tool_ids(profile.default_manual_tools);
@@ -481,7 +500,10 @@ fn normalize_tool_ids(tool_ids: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for tool_id in tool_ids {
-        let normalized = tool_id.trim().replace("::", "__");
+        let mut normalized = tool_id.trim().replace("::", "__");
+        if normalized == "interactive_shell" {
+            normalized = "shell".to_string();
+        }
         if normalized.is_empty() || !seen.insert(normalized.clone()) {
             continue;
         }
@@ -898,6 +920,12 @@ fn validate_profiles(profiles: &[AssistantProfilePayload]) -> Result<(), String>
             return Err(format!(
                 "assistant profile {} max tools must be greater than 0",
                 profile.id
+            ));
+        }
+        if profile.default_harness_max_continuations > MAX_AGENT_HARNESS_MAX_CONTINUATIONS as u32 {
+            return Err(format!(
+                "assistant profile {} harness max continuations must be <= {}",
+                profile.id, MAX_AGENT_HARNESS_MAX_CONTINUATIONS
             ));
         }
         if let Some(preset_id) = &profile.default_team_orchestration_preset_id {
@@ -1746,5 +1774,16 @@ mod tests {
         let (profiles, _) = seed_missing_builtin_profiles(persisted);
 
         validate_team_profiles(&teams, &profiles).unwrap();
+    }
+
+    #[test]
+    fn rejects_skills_tool_selection_strategy() {
+        let mut profile = default_assistant_profiles()
+            .into_iter()
+            .next()
+            .expect("default profile");
+        profile.default_tool_selection_strategy = "Skills".to_string();
+
+        assert!(validate_profiles(&[profile]).is_err());
     }
 }

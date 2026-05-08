@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import type { AssistantProfileOption } from '@/components/Agent/assistantProfiles'
+import {
+  normalizeHarnessMaxContinuations,
+  type AssistantProfileOption,
+} from '@/components/Agent/assistantProfiles'
 import { applyToolConfigToProfile, profileToToolConfig } from '@/components/Settings/assistantProfileRegistrySupport'
 
 const createProfile = (): AssistantProfileOption => ({
@@ -14,6 +17,7 @@ const createProfile = (): AssistantProfileOption => ({
   defaultTenthManEnabled: false,
   defaultToolSelectionStrategy: 'Keyword',
   defaultMaxTools: 5,
+  defaultHarnessMaxContinuations: 6,
   defaultPreselectedTools: [],
   defaultDisabledTools: [],
   defaultManualTools: [],
@@ -33,12 +37,12 @@ describe('assistantProfileRegistrySupport', () => {
       max_tools: 5,
       preselected_tools: [],
       disabled_tools: [],
-      manual_tools: ['browser__open', 'http_request'],
+      manual_tools: ['browser_shell__list', 'http_request'],
     })
 
     expect(profile.defaultToolSelectionStrategy).toBe('Manual')
-    expect(profile.defaultManualTools).toEqual(['browser__open', 'http_request'])
-    expect(profileToToolConfig(profile).manual_tools).toEqual(['browser__open', 'http_request'])
+    expect(profile.defaultManualTools).toEqual(['browser_shell__list', 'http_request'])
+    expect(profileToToolConfig(profile).manual_tools).toEqual(['browser_shell__list', 'http_request'])
   })
 
   it('reads manual tools from the enum-shaped strategy payload', () => {
@@ -46,7 +50,7 @@ describe('assistantProfileRegistrySupport', () => {
 
     applyToolConfigToProfile(profile, {
       enabled: true,
-      selection_strategy: { Manual: ['browser::open', 'browser::open', 'http_request'] },
+      selection_strategy: { Manual: ['browser_shell::list', 'browser_shell::list', 'http_request'] },
       max_tools: 5,
       preselected_tools: [],
       disabled_tools: [],
@@ -54,7 +58,30 @@ describe('assistantProfileRegistrySupport', () => {
     })
 
     expect(profile.defaultToolSelectionStrategy).toBe('Manual')
-    expect(profile.defaultManualTools).toEqual(['browser__open', 'http_request'])
-    expect(profileToToolConfig(profile).manual_tools).toEqual(['browser__open', 'http_request'])
+    expect(profile.defaultManualTools).toEqual(['browser_shell__list', 'http_request'])
+    expect(profileToToolConfig(profile).manual_tools).toEqual(['browser_shell__list', 'http_request'])
+  })
+
+  it('normalizes removed Skills strategy to Keyword', () => {
+    const profile = createProfile()
+
+    applyToolConfigToProfile(profile, {
+      enabled: true,
+      selection_strategy: 'Skills',
+      max_tools: 8,
+      preselected_tools: [],
+      disabled_tools: [],
+      manual_tools: ['shell'],
+    })
+
+    expect(profile.defaultToolSelectionStrategy).toBe('Keyword')
+    expect(profile.defaultManualTools).toEqual([])
+    expect(profileToToolConfig(profile).selection_strategy).toBe('Keyword')
+  })
+
+  it('normalizes harness continuation limits', () => {
+    expect(normalizeHarnessMaxContinuations(undefined)).toBe(6)
+    expect(normalizeHarnessMaxContinuations(-1)).toBe(0)
+    expect(normalizeHarnessMaxContinuations(99)).toBe(20)
   })
 })

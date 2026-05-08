@@ -1,22 +1,5 @@
 <template>
   <div :class="['skills-manager', { 'fullscreen': isFullscreen }]">
-    <SkillsOverviewHeader
-      :is-fullscreen="isFullscreen"
-      :embedded="props.embedded"
-      :loading="loading"
-      :loading-candidates="loadingCandidates"
-      :skills-count="skills.length"
-      :enabled-skill-count="enabledSkillCount"
-      :disabled-skill-count="disabledSkillCount"
-      :skills-with-content-count="skillsWithContentCount"
-      :active-draft-count="activeSkillCandidates.length"
-      :rule-count="suppressionRules.length"
-      :current-view-mode-label="currentViewModeLabel"
-      @start-create="startCreate"
-      @refresh-all="refreshAllData"
-      @toggle-fullscreen="$emit('toggle-fullscreen')"
-      @close="$emit('close')"
-    />
     <SkillEditorDialog
       :open="showSkillDialog"
       :skill="editingSkill"
@@ -51,55 +34,77 @@
       @save-file="saveFile"
       @delete-file="deleteFile"
     />
+    <AppDialog :class="['modal', { 'modal-open': showMemoryFeedbackDialog }]">
+      <div class="modal-box w-11/12 max-w-6xl">
+        <div class="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 class="text-lg font-semibold">{{ t('agent.memoryFeedbackTitle') }}</h3>
+            <p class="text-sm text-base-content/60">
+              {{ t('agent.memoryFeedbackDescription') }}
+            </p>
+          </div>
+          <button class="btn btn-sm btn-ghost btn-circle" @click="closeMemoryFeedbackDialog">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+          <MemoryFeedbackSummary
+            :skills-count="skills.length"
+            :total-draft-count="skillCandidates.length"
+            :active-draft-count="activeSkillCandidates.length"
+            :reviewed-draft-count="reviewedSkillCandidateCount"
+            :rule-count="suppressionRules.length"
+            :total-rule-hits="suppressionRuleTotalHits"
+            :loading-candidates="loadingCandidates"
+            :show-candidate-details="showCandidateDetails"
+            :show-suppression-rule-details="showSuppressionRuleDetails"
+            @refresh-candidates="loadSkillCandidates"
+            @refresh-rules="loadSuppressionRules"
+            @toggle-candidate-details="toggleCandidateDetails"
+            @toggle-rule-details="toggleSuppressionRuleDetails"
+          />
+
+          <div
+            v-if="showCandidateDetails && (skillCandidates.length > 0 || loadingCandidates)"
+          >
+            <CandidateDraftPanel
+              :loading-candidates="loadingCandidates"
+              :show-reviewed-candidates="showReviewedCandidates"
+              :visible-skill-candidates="visibleSkillCandidates"
+              :promoting-candidate-ids="promotingCandidateIds"
+              :reviewing-candidate-ids="reviewingCandidateIds"
+              :ai-generating="aiGenerating"
+              :rejection-category-options="rejectionCategoryOptions"
+              @update:show-reviewed-candidates="showReviewedCandidates = $event"
+              @use-draft="useCandidateAsDraft"
+              @refine-ai="refineCandidateWithAI"
+              @promote="promoteCandidate"
+              @review="reviewCandidate"
+            />
+          </div>
+
+          <div
+            v-if="showSuppressionRuleDetails && suppressionRules.length > 0"
+          >
+            <SuppressionRulePanel
+              :suppression-rules="suppressionRules"
+              :action-by-id="suppressionRuleActionById"
+              @refresh="loadSuppressionRules"
+              @extend="extendSuppressionRule"
+              @expire="expireSuppressionRule"
+              @delete="deleteSuppressionRule"
+            />
+          </div>
+        </div>
+        <div class="modal-action">
+          <button class="btn" @click="closeMemoryFeedbackDialog">{{ t('common.close') }}</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop bg-black/50" @click="closeMemoryFeedbackDialog">
+        <button>{{ t('common.close') }}</button>
+      </form>
+    </AppDialog>
     <div class="space-y-4">
-      <MemoryFeedbackSummary
-        :skills-count="skills.length"
-        :total-draft-count="skillCandidates.length"
-        :active-draft-count="activeSkillCandidates.length"
-        :reviewed-draft-count="reviewedSkillCandidateCount"
-        :rule-count="suppressionRules.length"
-        :total-rule-hits="suppressionRuleTotalHits"
-        :loading-candidates="loadingCandidates"
-        :show-candidate-details="showCandidateDetails"
-        :show-suppression-rule-details="showSuppressionRuleDetails"
-        @refresh-candidates="loadSkillCandidates"
-        @refresh-rules="loadSuppressionRules"
-        @toggle-candidate-details="toggleCandidateDetails"
-        @toggle-rule-details="toggleSuppressionRuleDetails"
-      />
-
-      <div
-        v-if="showCandidateDetails && (skillCandidates.length > 0 || loadingCandidates)"
-      >
-        <CandidateDraftPanel
-          :loading-candidates="loadingCandidates"
-          :show-reviewed-candidates="showReviewedCandidates"
-          :visible-skill-candidates="visibleSkillCandidates"
-          :promoting-candidate-ids="promotingCandidateIds"
-          :reviewing-candidate-ids="reviewingCandidateIds"
-          :ai-generating="aiGenerating"
-          :rejection-category-options="rejectionCategoryOptions"
-          @update:show-reviewed-candidates="showReviewedCandidates = $event"
-          @use-draft="useCandidateAsDraft"
-          @refine-ai="refineCandidateWithAI"
-          @promote="promoteCandidate"
-          @review="reviewCandidate"
-        />
-      </div>
-
-      <div
-        v-if="showSuppressionRuleDetails && suppressionRules.length > 0"
-      >
-        <SuppressionRulePanel
-          :suppression-rules="suppressionRules"
-          :action-by-id="suppressionRuleActionById"
-          @refresh="loadSuppressionRules"
-          @extend="extendSuppressionRule"
-          @expire="expireSuppressionRule"
-          @delete="deleteSuppressionRule"
-        />
-      </div>
-
       <SkillLibraryPanel
         :loading="loading"
         :skills="skills"
@@ -107,6 +112,10 @@
         :current-view-mode-label="currentViewModeLabel"
         :enabled-skill-count="enabledSkillCount"
         :disabled-skill-count="disabledSkillCount"
+        :skills-with-content-count="skillsWithContentCount"
+        :active-draft-count="activeSkillCandidates.length"
+        :rule-count="suppressionRules.length"
+        :bulk-updating-skill-state="bulkUpdatingSkillState"
         :deleting-skill-ids="deletingSkillIds"
         :is-skill-enabled="isSkillEnabled"
         :get-skill-icon="getSkillIcon"
@@ -115,16 +124,18 @@
         @edit="startEdit"
         @delete="confirmDelete"
         @toggle-enabled="toggleSkillEnabled"
+        @set-all-enabled="setAllSkillsEnabled"
+        @open-memory-feedback="openMemoryFeedbackDialog"
       />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppDialog from '@/components/AppDialog.vue'
 import { dialog } from '../../composables/useDialog'
-import SkillsOverviewHeader from './skills/SkillsOverviewHeader.vue'
 import SkillEditorDialog from './skills/SkillEditorDialog.vue'
 import MemoryFeedbackSummary from './skills/MemoryFeedbackSummary.vue'
 import CandidateDraftPanel from './skills/CandidateDraftPanel.vue'
@@ -172,6 +183,7 @@ const skillIconPalette = [
 ]
 
 const isFullscreen = computed(() => props.isFullscreen)
+const showMemoryFeedbackDialog = ref(false)
 
 const rejectionCategoryOptions = computed(() => createRejectionCategoryOptions(t))
 
@@ -183,11 +195,13 @@ const {
   skills,
   loading,
   deletingSkillIds,
+  bulkUpdatingSkillState,
   enabledSkillCount,
   disabledSkillCount,
   skillsWithContentCount,
   isSkillEnabled,
   toggleSkillEnabled,
+  setAllSkillsEnabled,
   loadSkills,
   confirmDelete,
 } = useSkillsCrud({
@@ -290,6 +304,14 @@ const getSkillIcon = (id: string) => {
 const getSkillIconClass = (id: string) => {
   const idx = hashSkillId(id) % skillIconPalette.length
   return skillIconPalette[idx].cls
+}
+
+const openMemoryFeedbackDialog = () => {
+  showMemoryFeedbackDialog.value = true
+}
+
+const closeMemoryFeedbackDialog = () => {
+  showMemoryFeedbackDialog.value = false
 }
 
 onMounted(() => {

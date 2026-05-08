@@ -14,20 +14,23 @@ use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::buildin_tools::{ShellTool, ToolSearchTool};
 use sentinel_tools::ToolServer;
 
+use super::context_compaction::{ContextCompactionOrchestrator, ContextCompactionRequest};
 use super::run_with_tools_support::{
-    accumulate_retry_progress, apply_allowed_tools_policy, build_retry_history,
-    clear_retry_turn_state, collect_all_tool_calls, ensure_ai_conversation_exists_for_persistence,
-    final_response_needs_evidence_review, final_response_needs_verification_review,
-    finalize_response_state, infer_tool_result_success, is_empty_response_error,
+    accumulate_retry_progress, apply_tool_config_scope_policy, build_retry_history,
+    clear_retry_turn_state, collect_all_tool_calls, emit_team_stream_done,
+    ensure_ai_conversation_exists_for_persistence, finalize_response_state,
+    infer_tool_result_success, is_context_length_error, is_empty_response_error,
     is_high_risk_tool_call, is_retryable_error, is_side_effectful_tool_call,
     looks_like_verification_tool_call, parse_team_stream_context, patch_builtin_dynamic_tools,
-    persist_ai_message_with_retry, register_skills_tool_guard,
-    streaming_content_needs_evidence_review, tool_loop_fingerprint, trailing_failed_tool_calls,
+    persist_ai_message_with_retry, record_failed_agent_execution, register_skills_tool_guard,
+    settle_running_tool_messages_for_interrupted_turn, streaming_content_needs_evidence_review,
+    tool_loop_fingerprint, trailing_failed_tool_calls,
 };
-use super::AgentExecuteParams;
+use super::{AgentExecuteParams, AgentTurnOutcome, ToolProtocolTracker};
 use crate::agents::context_engineering::reflection::{
     record_execution_reflection, ExecutionOutcome,
 };
+use crate::agents::executor::final_review::run_final_tenth_man_review;
 use crate::agents::executor::message_store::{
     build_assistant_session_stats_metadata, mark_first_response_ms, save_assistant_message,
 };
@@ -49,7 +52,7 @@ use crate::agents::executor::tool_trace_store::{
 use crate::agents::executor::types::ToolCallRecord;
 use crate::agents::executor::utils::{cleanup_container_context_async, truncate_for_memory};
 use crate::agents::tenth_man::{
-    InterventionContext, InterventionMode, TenthMan, TenthManTriggerPolicy, TriggerReason,
+    InterventionContext, TenthMan, TenthManTriggerPolicy, TriggerReason,
 };
 use crate::agents::tool_router::ToolRouter;
 use crate::agents::{
@@ -61,32 +64,13 @@ use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 
 type PendingToolCalls = std::collections::HashMap<String, (String, String, i64, u32)>;
 
-async fn settle_running_tool_messages_for_interrupted_turn(
-    db: Option<&Arc<sentinel_db::DatabaseService>>,
-    execution_id: &str,
-    reason: &str,
-) {
-    let Some(db) = db else {
-        return;
-    };
-    if let Err(error) = db
-        .settle_running_ai_tool_messages(execution_id, "failed", reason)
-        .await
-    {
-        tracing::warn!(
-            "Failed to settle interrupted running tool messages for {}: {}",
-            execution_id,
-            error
-        );
-    }
-}
-
 pub async fn execute_agent_with_tools(
     app_handle: &AppHandle,
     params: AgentExecuteParams,
     tool_server: &ToolServer,
-) -> Result<String> {
+) -> Result<AgentTurnOutcome> {
     let execution_started_at_ms = chrono::Utc::now().timestamp_millis();
+    let storage_conversation_id = params.storage_conversation_id().to_string();
     clear_execution_tool_trace(&params.execution_id);
     let _active_terminal_session_guard = scope_active_terminal_session(
         &params.execution_id,
@@ -109,7 +93,7 @@ pub async fn execute_agent_with_tools(
         .with_timeout(params.timeout_secs)
         .with_max_turns(params.max_iterations)
         .with_rig_provider(&rig_provider)
-        .with_conversation_id(&params.execution_id);
+        .with_conversation_id(&storage_conversation_id);
 
     if let Some(ref api_key) = params.api_key {
         llm_config = llm_config.with_api_key(api_key);
@@ -131,7 +115,7 @@ pub async fn execute_agent_with_tools(
         app_handle,
         &params.execution_id,
         &params.task,
-        apply_allowed_tools_policy(selection_plan.tool_ids.clone(), &tool_config.allowed_tools),
+        apply_tool_config_scope_policy(selection_plan.tool_ids.clone(), &tool_config),
         &tool_config,
         params.active_browser_shell_session_id.as_deref(),
     )
@@ -168,6 +152,7 @@ pub async fn execute_agent_with_tools(
     let context_result = build_context(ContextBuildInput {
         app_handle: app_handle.clone(),
         execution_id: params.execution_id.clone(),
+        conversation_id: storage_conversation_id.clone(),
         generation: params.cancellation_generation,
         active_browser_shell_direct_write_enabled: params.active_browser_shell_direct_write_enabled,
         active_browser_shell_session_id: params.active_browser_shell_session_id.clone(),
@@ -177,6 +162,7 @@ pub async fn execute_agent_with_tools(
         base_system_prompt: params.system_prompt.clone(),
         injected_skill_prompt: selection_plan.injected_system_prompt.clone(),
         task: params.task.clone(),
+        provider_config_key: params.provider_config_key.clone(),
         rig_provider: rig_provider.clone(),
         llm_config: llm_config.clone(),
         selected_tool_ids: selected_tool_ids.clone(),
@@ -186,7 +172,8 @@ pub async fn execute_agent_with_tools(
     })
     .await?;
 
-    let final_system_prompt_content = Some(context_result.system_prompt);
+    let mut context_budget_analyzer = context_result.budget_analyzer;
+    let mut final_system_prompt_content = Some(context_result.system_prompt);
     let mut history_chat_messages = context_result.history_messages;
 
     if let Some(last) = history_chat_messages.last() {
@@ -197,7 +184,7 @@ pub async fn execute_agent_with_tools(
 
     let image_attachments = parse_images_from_json(params.image_attachments.as_ref());
 
-    let client = StreamingLlmClient::new(llm_config);
+    let client = StreamingLlmClient::new(llm_config.clone());
     let execution_id = params.execution_id.clone();
     let cancellation_generation = params.cancellation_generation;
     let team_stream_context = parse_team_stream_context(&execution_id);
@@ -215,7 +202,7 @@ pub async fn execute_agent_with_tools(
     if let Some(db) = db_for_stream.as_ref() {
         ensure_ai_conversation_exists_for_persistence(
             db.as_ref(),
-            &execution_id,
+            &storage_conversation_id,
             &params.model,
             &params.rig_provider,
         )
@@ -242,6 +229,7 @@ pub async fn execute_agent_with_tools(
     // the last turn's response to avoid duplicating earlier segments.
     let persisted_segment_count: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let reasoning_content_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let tool_protocol_tracker = Arc::new(Mutex::new(ToolProtocolTracker::default()));
     let pending_tool_digests: Arc<Mutex<Vec<crate::agents::ToolDigest>>> =
         Arc::new(Mutex::new(Vec::new()));
     let tracked_artifacts_state: Arc<Mutex<Vec<TrackedArtifact>>> = Arc::new(Mutex::new(
@@ -271,6 +259,7 @@ pub async fn execute_agent_with_tools(
     let tracked_artifacts_for_stream = tracked_artifacts_state.clone();
     let persisted_seg_count = persisted_segment_count.clone();
     let team_log_context_for_stream = team_log_context.clone();
+    let tool_protocol_for_stream = tool_protocol_tracker.clone();
 
     // Ensure skills tool enforces per-skill enable flags at execution time.
     if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
@@ -293,7 +282,7 @@ pub async fn execute_agent_with_tools(
     let accumulated_tool_calls: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
     // 累积的助手输出（跨重试保留）
     let accumulated_assistant_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
-    let base_history_messages = history_chat_messages.clone();
+    let mut base_history_messages = history_chat_messages.clone();
 
     let skill_reload_requested = Arc::new(AtomicBool::new(false));
     let loaded_skill_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -305,6 +294,9 @@ pub async fn execute_agent_with_tools(
     let team_stream_had_delta = Arc::new(AtomicBool::new(false));
 
     let mut force_history_with_tools = false;
+    let mut pressure_rebuild_attempted = false;
+    let mut reactive_context_compaction_requested = false;
+    let mut reactive_context_compaction_attempted = false;
     while retries <= max_retries {
         // Early exit if cancelled before starting a new stream turn
         if cancellation_generation
@@ -320,7 +312,7 @@ pub async fn execute_agent_with_tools(
                 "Execution cancelled before new stream turn: {}",
                 params.execution_id
             );
-            return Ok(String::new());
+            return Ok(AgentTurnOutcome::cancelled_before_start());
         }
 
         let mut dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
@@ -356,9 +348,15 @@ pub async fn execute_agent_with_tools(
                 "Retrying agent execution (attempt {}/{}) due to error: {}. Accumulated {} tool calls and {} chars output.",
                 retries,
                 max_retries,
-                last_error.as_ref().map(|e| e.to_string()).unwrap_or_default(),
+                last_error
+                    .as_ref()
+                    .map(|e| e.to_string())
+                    .unwrap_or_default(),
                 accumulated_tool_calls.lock().map(|c| c.len()).unwrap_or(0),
-                accumulated_assistant_output.lock().map(|s| s.len()).unwrap_or(0)
+                accumulated_assistant_output
+                    .lock()
+                    .map(|s| s.len())
+                    .unwrap_or(0)
             );
 
             if !silent_retry_pending {
@@ -406,6 +404,44 @@ pub async fn execute_agent_with_tools(
             ));
         }
         force_history_with_tools = false;
+        let compaction_phase = if reactive_context_compaction_requested {
+            "reactive_context_length_error"
+        } else {
+            "pre_stream_request"
+        };
+        let force_context_compaction = reactive_context_compaction_requested;
+        let compaction_attempted = if reactive_context_compaction_requested {
+            &mut reactive_context_compaction_attempted
+        } else {
+            &mut pressure_rebuild_attempted
+        };
+        let compaction_outcome =
+            ContextCompactionOrchestrator::assess_and_rebuild(ContextCompactionRequest {
+                app_handle,
+                params: &params,
+                phase: compaction_phase,
+                analyzer: &mut context_budget_analyzer,
+                system_prompt: &mut final_system_prompt_content,
+                base_history_messages: &mut base_history_messages,
+                history_for_retry: &mut history_for_retry,
+                compaction_attempted,
+                force_compaction: force_context_compaction,
+                injected_skill_prompt: &selection_plan.injected_system_prompt,
+                rig_provider: &rig_provider,
+                llm_config: &llm_config,
+                current_tool_ids: &current_tool_ids,
+                context_policy: &context_policy,
+                accumulated_tool_calls: &accumulated_tool_calls,
+                accumulated_assistant_output: &accumulated_assistant_output,
+                retries: retries as u32,
+                include_accumulated,
+            })
+            .await?;
+        if compaction_outcome.compacted {
+            force_history_with_tools = false;
+        }
+        let _latest_context_pressure = compaction_outcome.pressure.analysis.pressure;
+        reactive_context_compaction_requested = false;
         let result = client
             .stream_chat_with_dynamic_tools(
                 final_system_prompt_content.as_deref(),
@@ -427,6 +463,9 @@ pub async fn execute_agent_with_tools(
                     }
                     match content {
                         StreamContent::Text(text) => {
+                            let _ = tool_protocol_for_stream
+                                .lock()
+                                .map(|mut tracker| tracker.observe_text(&text));
                             mark_first_response_ms(first_response_ms_for_stream.as_ref(), execution_started_at_ms);
                             if let Some(ctx) = team_stream_context.as_ref() {
                                 if !team_stream_started.swap(true, Ordering::SeqCst) {
@@ -639,6 +678,9 @@ pub async fn execute_agent_with_tools(
                             name,
                             arguments,
                         } => {
+                            let _ = tool_protocol_for_stream
+                                .lock()
+                                .map(|mut tracker| tracker.observe_tool_call());
                             mark_first_response_ms(first_response_ms_for_stream.as_ref(), execution_started_at_ms);
                             low_evidence_warning_flag.store(false, Ordering::SeqCst);
                             if let Ok(mut tracker) = hypothesis_tracker_for_stream.lock() {
@@ -647,7 +689,7 @@ pub async fn execute_agent_with_tools(
                             tracing::debug!("Tool call complete via rig-core: {} ({})", name, id);
                             sentinel_llm::log::log_tool_call(
                                 &execution_id,
-                                Some(&execution_id),
+                                Some(&storage_conversation_id),
                                 &params.rig_provider,
                                 &params.model,
                                 &name,
@@ -759,7 +801,7 @@ pub async fn execute_agent_with_tools(
 
                                     let seg_msg = core_db::AiMessage {
                                         id: uuid::Uuid::new_v4().to_string(),
-                                        conversation_id: execution_id.clone(),
+                                        conversation_id: storage_conversation_id.clone(),
                                         role: "assistant".to_string(),
                                         content: seg_trimmed.clone(),
                                         metadata: None,
@@ -813,7 +855,7 @@ pub async fn execute_agent_with_tools(
 
                                 let tool_msg = core_db::AiMessage {
                                     id: id.clone(),
-                                    conversation_id: execution_id.clone(),
+                                    conversation_id: storage_conversation_id.clone(),
                                     role: "tool".to_string(),
                                     content: String::new(),
                                     metadata: Some(meta.to_string()),
@@ -864,6 +906,9 @@ pub async fn execute_agent_with_tools(
                             }
                         }
                         StreamContent::ToolResult { id, result } => {
+                            let _ = tool_protocol_for_stream
+                                .lock()
+                                .map(|mut tracker| tracker.observe_tool_result());
                             // tracing::info!(
                             //     "Tool result via rig-core: id={}, result_preview={}",
                 //     id,
@@ -882,7 +927,7 @@ pub async fn execute_agent_with_tools(
                                     let tool_success = infer_tool_result_success(&result);
                                     sentinel_llm::log::log_tool_result(
                                         &execution_id,
-                                        Some(&execution_id),
+                                        Some(&storage_conversation_id),
                                         &params.rig_provider,
                                         &params.model,
                                         &name_for_meta,
@@ -957,7 +1002,7 @@ pub async fn execute_agent_with_tools(
                                         });
                                         let tool_msg = core_db::AiMessage {
                                             id: id.clone(),
-                                            conversation_id: execution_id.clone(),
+                                            conversation_id: storage_conversation_id.clone(),
                                             role: "tool".to_string(),
                                             content: String::new(),
                                             metadata: Some(meta.to_string()),
@@ -1430,8 +1475,7 @@ pub async fn execute_agent_with_tools(
                     next_tools.retain(|id| seen.insert(id.clone()));
                     next_tools.retain(|id| available_tools.contains(id));
                     next_tools.retain(|id| !tool_config.disabled_tools.contains(id));
-                    current_tool_ids =
-                        apply_allowed_tools_policy(next_tools, &tool_config.allowed_tools);
+                    current_tool_ids = apply_tool_config_scope_policy(next_tools, &tool_config);
 
                     if current_tool_ids.len() > tool_config.max_tools {
                         current_tool_ids.truncate(tool_config.max_tools);
@@ -1442,6 +1486,7 @@ pub async fn execute_agent_with_tools(
                     emit_and_persist_tool_activation(
                         app_handle,
                         &params.execution_id,
+                        &storage_conversation_id,
                         params.cancellation_generation,
                         &requested_tools,
                         activation_query,
@@ -1519,10 +1564,8 @@ pub async fn execute_agent_with_tools(
                             next_tools.retain(|id| seen.insert(id.clone()));
                             next_tools.retain(|id| available_tools.contains(id));
                             next_tools.retain(|id| !tool_config.disabled_tools.contains(id));
-                            current_tool_ids = apply_allowed_tools_policy(
-                                next_tools.clone(),
-                                &tool_config.allowed_tools,
-                            );
+                            current_tool_ids =
+                                apply_tool_config_scope_policy(next_tools.clone(), &tool_config);
                             let _ = app_handle.emit(
                                 "agent:tools_selected",
                                 &json!({
@@ -1534,6 +1577,7 @@ pub async fn execute_agent_with_tools(
                             emit_and_persist_skill_loaded(
                                 app_handle,
                                 &params.execution_id,
+                                &storage_conversation_id,
                                 params.cancellation_generation,
                                 &skill.id,
                                 &skill.name,
@@ -1699,6 +1743,7 @@ pub async fn execute_agent_with_tools(
                 save_assistant_message(
                     app_handle,
                     &params.execution_id,
+                    &storage_conversation_id,
                     params.cancellation_generation,
                     &final_response,
                     tool_calls_slice,
@@ -1709,182 +1754,70 @@ pub async fn execute_agent_with_tools(
                 )
                 .await;
 
-                // Tenth Man Rule: Adversarial Review (System-enforced final check)
-                if params.enable_tenth_man_rule {
-                    let tenth_man = TenthMan::new(&params);
-                    let final_focus_hint = hypothesis_tracker
-                        .lock()
-                        .ok()
-                        .and_then(|tracker| tracker.focus_hint().map(str::to_string));
-                    let requires_verification_review = tenth_man_trigger_policy
-                        .review_final_response_without_verification
-                        && final_response_needs_verification_review(
-                            &final_response,
-                            &all_tool_calls,
-                        );
-                    let requires_evidence_review = tenth_man_trigger_policy
-                        .review_low_evidence_high_confidence
-                        && final_response_needs_evidence_review(
-                            &final_response,
-                            final_focus_hint.as_deref(),
-                            &all_tool_calls,
-                            tenth_man_trigger_policy.minimum_evidence_score(),
-                        );
+                run_final_tenth_man_review(
+                    &app,
+                    &params,
+                    db_for_stream.clone(),
+                    &final_response,
+                    &all_tool_calls,
+                    &hypothesis_tracker,
+                    &tenth_man_trigger_policy,
+                )
+                .await;
 
-                    // Check if we should run final review based on mode
-                    let mut final_trigger = "final_review";
-                    let should_run_final = if let Some(ref config) = params.tenth_man_config {
-                        match &config.mode {
-                            InterventionMode::SystemOnly => true,
-                            InterventionMode::Hybrid {
-                                force_final_review, ..
-                            } => {
-                                if requires_evidence_review && requires_verification_review {
-                                    final_trigger = "final_response_low_evidence_and_unverified";
-                                    true
-                                } else if requires_evidence_review {
-                                    final_trigger = "final_response_low_evidence_high_confidence";
-                                    true
-                                } else if requires_verification_review {
-                                    final_trigger = "final_response_without_verification";
-                                    true
-                                } else {
-                                    *force_final_review
-                                }
-                            }
-                            InterventionMode::ToolOnly => false,
-                            _ => {
-                                if requires_evidence_review && requires_verification_review {
-                                    final_trigger = "final_response_low_evidence_and_unverified";
-                                } else if requires_evidence_review {
-                                    final_trigger = "final_response_low_evidence_high_confidence";
-                                } else if requires_verification_review {
-                                    final_trigger = "final_response_without_verification";
-                                }
-                                true
-                            } // Legacy modes default to true
-                        }
-                    } else {
-                        if requires_evidence_review && requires_verification_review {
-                            final_trigger = "final_response_low_evidence_and_unverified";
-                        } else if requires_evidence_review {
-                            final_trigger = "final_response_low_evidence_high_confidence";
-                        } else if requires_verification_review {
-                            final_trigger = "final_response_without_verification";
-                        }
-                        true // Default: run final review
-                    };
-
-                    if should_run_final {
-                        tracing::info!(
-                            "Running Tenth Man final review with full history for execution_id: {} (trigger={})",
-                            params.execution_id,
-                            final_trigger
-                        );
-
-                        match tenth_man.review_with_history(&params.execution_id).await {
-                            Ok(critique) => {
-                                tracing::info!(
-                                    "Tenth Man Critique generated ({} chars)",
-                                    critique.len()
-                                );
-
-                                if params.persist_messages {
-                                    if let Some(db) = db_for_stream.clone() {
-                                        use sentinel_core::models::database as core_db;
-                                        let review_msg = core_db::AiMessage {
-                                            id: uuid::Uuid::new_v4().to_string(),
-                                            conversation_id: params.execution_id.clone(),
-                                            role: "system".to_string(),
-                                            content: critique.clone(),
-                                            metadata: Some(
-                                                json!({
-                                                    "kind": "tenth_man_critique",
-                                                    "trigger": final_trigger,
-                                                    "mode": "system_enforced"
-                                                })
-                                                .to_string(),
-                                            ),
-                                            token_count: Some(critique.len() as i32),
-                                            cost: None,
-                                            tool_calls: None,
-                                            attachments: None,
-                                            reasoning_content: None,
-                                            timestamp: chrono::Utc::now(),
-                                            architecture_type: None,
-                                            architecture_meta: None,
-                                            structured_data: None,
-                                        };
-
-                                        if let Err(e) = db.create_ai_message(&review_msg).await {
-                                            tracing::warn!(
-                                                "Failed to save Tenth Man critique: {}",
-                                                e
-                                            );
-                                        }
-
-                                        // Emit event to frontend
-                                        let _ = app.emit(
-                                            "agent:tenth_man_critique",
-                                            &json!({
-                                                "execution_id": params.execution_id,
-                                                "generation": params.cancellation_generation,
-                                                "critique": critique,
-                                                "message_id": review_msg.id,
-                                                "trigger": final_trigger,
-                                                "mode": "system_enforced"
-                                            }),
-                                        );
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("Tenth Man Review failed: {}", e);
-                            }
-                        }
-                    } else {
-                        tracing::info!("Skipping final Tenth Man review (mode: ToolOnly)");
-                    }
-                }
-
-                // Cleanup Tenth Man execution context
                 if params.enable_tenth_man_rule {
                     use crate::agents::tenth_man_executor;
                     tenth_man_executor::clear_tenth_man_execution(&params.execution_id).await;
                 }
 
-                // Cleanup container context files (keep history.txt)
                 cleanup_container_context_async(&app, &params.execution_id).await;
 
-                if let Some(ctx) = team_stream_context.as_ref() {
-                    let _ = app.emit(
-                        "agent_team:message_stream_done",
-                        &json!({
-                            "session_id": ctx.session_id.clone(),
-                            "stream_id": ctx.stream_id.clone(),
-                            "member_id": ctx.member_id.clone(),
-                            "member_name": ctx.member_id.clone(),
-                            "phase": ctx.phase.clone(),
-                            "content": final_response.clone(),
-                            "had_delta": team_stream_had_delta.load(Ordering::SeqCst),
-                        }),
-                    );
-                }
+                emit_team_stream_done(
+                    &app,
+                    team_stream_context.as_ref(),
+                    Some(final_response.clone()),
+                    None,
+                    team_stream_had_delta.load(Ordering::SeqCst),
+                );
 
-                return Ok(final_response);
+                return Ok(AgentTurnOutcome::tool_run(
+                    final_response,
+                    &all_tool_calls,
+                    pending_calls
+                        .lock()
+                        .map(|pending| pending.len())
+                        .unwrap_or_default()
+                        .max(
+                            tool_protocol_tracker
+                                .lock()
+                                .map(|tracker| tracker.pending_tool_call_count())
+                                .unwrap_or_default(),
+                        ),
+                    tool_protocol_tracker
+                        .lock()
+                        .map(|tracker| {
+                            tracker.final_assistant_after_last_tool_result(&full_response)
+                        })
+                        .unwrap_or_else(|_| !full_response.trim().is_empty()),
+                ));
             }
             Err(e) => {
                 let err_msg = e.to_string();
 
-                // Cleanup container context files even on error
                 cleanup_container_context_async(&app, &params.execution_id).await;
 
                 // 优化错误消息
                 let friendly_err = if err_msg.contains("error decoding response body") {
                     if err_msg.contains("UnexpectedEof") || err_msg.contains("unexpected EOF") {
-                        anyhow::anyhow!("LLM provider connection closed unexpectedly. This might be a temporary issue with the provider or proxy. (Original error: {})", err_msg)
+                        anyhow::anyhow!(
+                            "LLM provider connection closed unexpectedly. This might be a temporary issue with the provider or proxy. (Original error: {})",
+                            err_msg
+                        )
                     } else {
-                        anyhow::anyhow!("Failed to decode LLM response. The provider may have returned an invalid format. (Original error: {})", err_msg)
+                        anyhow::anyhow!(
+                            "Failed to decode LLM response. The provider may have returned an invalid format. (Original error: {})",
+                            err_msg
+                        )
                     }
                 } else {
                     e
@@ -1902,7 +1835,46 @@ pub async fn execute_agent_with_tools(
                         .map(|pending| !pending.is_empty())
                         .unwrap_or(false);
 
-                if is_retryable && retries < max_retries {
+                if is_context_length_error(&err_msg)
+                    && !reactive_context_compaction_attempted
+                    && retries < max_retries
+                {
+                    retries += 1;
+                    silent_retry_pending = true;
+                    reactive_context_compaction_requested = true;
+                    last_error = Some(anyhow::anyhow!("{}", friendly_err));
+                    tracing::warn!(
+                        "Provider rejected request for context length; scheduling one reactive context compaction - execution_id: {}",
+                        params.execution_id
+                    );
+
+                    accumulate_retry_progress(
+                        &tool_calls_collector,
+                        &accumulated_tool_calls,
+                        &assistant_segment_buf,
+                        &accumulated_assistant_output,
+                    );
+                    clear_retry_turn_state(
+                        &assistant_segment_buf,
+                        &reasoning_content_buf,
+                        &pending_calls,
+                        &tool_calls_collector,
+                        Some(&last_tool_fingerprint),
+                        Some(repeated_tool_fingerprint_count.as_ref()),
+                    );
+                    settle_running_tool_messages_for_interrupted_turn(
+                        db_for_stream.as_ref(),
+                        &params.execution_id,
+                        "Reactive context compaction interrupted a pending tool call before its result was recorded",
+                    )
+                    .await;
+                    low_evidence_warning_issued.store(false, Ordering::SeqCst);
+                    if let Ok(mut tracker) = hypothesis_tracker.lock() {
+                        tracker.clear();
+                    }
+                    force_history_with_tools = true;
+                    continue;
+                } else if is_retryable && retries < max_retries {
                     retries += 1;
                     if is_empty_response {
                         silent_retry_pending = true;
@@ -1982,86 +1954,26 @@ pub async fn execute_agent_with_tools(
                     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
                     continue;
                 } else {
-                    // Final failure recording
-                    let tool_summaries = tool_calls_collector
+                    let failed_tool_calls = tool_calls_collector
                         .lock()
-                        .map(|calls| {
-                            calls
-                                .iter()
-                                .map(|call| ToolCallSummary {
-                                    name: call.name.clone(),
-                                    success: call.success,
-                                    duration_ms: Some(call.duration_ms),
-                                })
-                                .collect::<Vec<_>>()
-                        })
+                        .map(|calls| calls.clone())
                         .unwrap_or_default();
-
-                    let fail_tool_names: Vec<String> = tool_summaries
-                        .iter()
-                        .map(|t| t.name.clone())
-                        .collect::<std::collections::HashSet<_>>()
-                        .into_iter()
-                        .collect();
-                    let err_msg_clone = err_msg.clone();
-
-                    if let Err(err) = get_global_memory()
-                        .record_execution(ExecutionRecord {
-                            id: params.execution_id.clone(),
-                            task: params.task.clone(),
-                            environment: Some(rig_provider.clone()),
-                            tool_calls: tool_summaries,
-                            success: false,
-                            error: Some(err_msg),
-                            response_excerpt: None,
-                            created_at: chrono::Utc::now().timestamp(),
-                        })
-                        .await
-                    {
-                        tracing::warn!("Failed to store memory record: {}", err);
-                    }
-
-                    record_execution_reflection(
+                    record_failed_agent_execution(
                         app_handle,
-                        &ExecutionOutcome {
-                            execution_id: params.execution_id.clone(),
-                            task: params.task.clone(),
-                            success: false,
-                            error: Some(err_msg_clone.clone()),
-                            tool_names_used: fail_tool_names,
-                            response_excerpt: None,
-                        },
+                        &params,
+                        &rig_provider,
+                        &failed_tool_calls,
+                        &err_msg,
                     )
                     .await;
-                    if let Err(update_err) = apply_sentinel_execution_outcome(
-                        app_handle,
-                        &params.execution_id,
-                        false,
-                        None,
-                        Some(&err_msg_clone),
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            "Failed to update sentinel execution outcome after error: {}",
-                            update_err
-                        );
-                    }
 
-                    if let Some(ctx) = team_stream_context.as_ref() {
-                        let _ = app.emit(
-                            "agent_team:message_stream_done",
-                            &json!({
-                                "session_id": ctx.session_id.clone(),
-                                "stream_id": ctx.stream_id.clone(),
-                                "member_id": ctx.member_id.clone(),
-                                "member_name": ctx.member_id.clone(),
-                                "phase": ctx.phase.clone(),
-                                "error": friendly_err.to_string(),
-                                "had_delta": team_stream_had_delta.load(Ordering::SeqCst),
-                            }),
-                        );
-                    }
+                    emit_team_stream_done(
+                        &app,
+                        team_stream_context.as_ref(),
+                        None,
+                        Some(friendly_err.to_string()),
+                        team_stream_had_delta.load(Ordering::SeqCst),
+                    );
 
                     return Err(friendly_err);
                 }
@@ -2070,19 +1982,12 @@ pub async fn execute_agent_with_tools(
     }
 
     let final_error = last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries reached"));
-    if let Some(ctx) = team_stream_context.as_ref() {
-        let _ = app.emit(
-            "agent_team:message_stream_done",
-            &json!({
-                "session_id": ctx.session_id.clone(),
-                "stream_id": ctx.stream_id.clone(),
-                "member_id": ctx.member_id.clone(),
-                "member_name": ctx.member_id.clone(),
-                "phase": ctx.phase.clone(),
-                "error": final_error.to_string(),
-                "had_delta": team_stream_had_delta.load(Ordering::SeqCst),
-            }),
-        );
-    }
+    emit_team_stream_done(
+        &app,
+        team_stream_context.as_ref(),
+        None,
+        Some(final_error.to_string()),
+        team_stream_had_delta.load(Ordering::SeqCst),
+    );
     Err(final_error)
 }

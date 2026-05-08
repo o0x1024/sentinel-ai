@@ -25,6 +25,20 @@ fn default_exposure() -> ToolExposure {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolCategory {
+    #[serde(rename = "file_code")]
+    FileCode,
+    Terminal,
+    #[serde(rename = "web_network")]
+    WebNetwork,
+    #[serde(rename = "security_recon")]
+    SecurityRecon,
+    #[serde(rename = "vulnerability_research")]
+    VulnerabilityResearch,
+    Collaboration,
+    #[serde(rename = "agent_orchestration")]
+    AgentOrchestration,
+    #[serde(rename = "knowledge_extension")]
+    KnowledgeExtension,
     Network,
     Security,
     Data,
@@ -46,6 +60,14 @@ pub enum ToolCategory {
 impl std::fmt::Display for ToolCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ToolCategory::FileCode => write!(f, "file_code"),
+            ToolCategory::Terminal => write!(f, "terminal"),
+            ToolCategory::WebNetwork => write!(f, "web_network"),
+            ToolCategory::SecurityRecon => write!(f, "security_recon"),
+            ToolCategory::VulnerabilityResearch => write!(f, "vulnerability_research"),
+            ToolCategory::Collaboration => write!(f, "collaboration"),
+            ToolCategory::AgentOrchestration => write!(f, "agent_orchestration"),
+            ToolCategory::KnowledgeExtension => write!(f, "knowledge_extension"),
             ToolCategory::Network => write!(f, "network"),
             ToolCategory::Security => write!(f, "security"),
             ToolCategory::Data => write!(f, "data"),
@@ -83,7 +105,6 @@ pub enum ToolSelectionStrategy {
     LLM,
     Hybrid,
     Manual(Vec<String>),
-    Skills(Vec<String>),
     Deferred,
     None,
 }

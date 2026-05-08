@@ -16,6 +16,7 @@ describe('agentTeamEntrySupport', () => {
         ragEnabled: true,
         webSearchEnabled: false,
         tenthManEnabled: false,
+        harnessMaxContinuations: 6,
         selectedModel: 'anthropic/claude-4',
         toolsEnabled: true,
         toolConfig: null,

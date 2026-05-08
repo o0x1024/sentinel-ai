@@ -58,6 +58,44 @@
               </div>
             </div>
 
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.agent.terminal.hostShell') }}</span>
+                </label>
+                <input
+                  type="text"
+                  :value="terminalConfig.host_shell"
+                  @input="updateHostShell"
+                  :placeholder="t('settings.agent.terminal.hostShellPlaceholder')"
+                  class="input input-bordered w-full font-mono"
+                />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.agent.terminal.hostShellDesc') }}
+                  </span>
+                </label>
+              </div>
+
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.agent.terminal.dockerShell') }}</span>
+                </label>
+                <input
+                  type="text"
+                  :value="terminalConfig.docker_shell"
+                  @input="updateDockerShell"
+                  :placeholder="t('settings.agent.terminal.dockerShellPlaceholder')"
+                  class="input input-bordered w-full font-mono"
+                />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.agent.terminal.dockerShellDesc') }}
+                  </span>
+                </label>
+              </div>
+            </div>
+
             <!-- Docker Image Input -->
             <div v-if="terminalConfig.default_execution_mode === 'docker'" class="form-control">
               <label class="label">
@@ -672,6 +710,8 @@ interface TerminalConfig {
   docker_memory_limit: string
   docker_cpu_limit: string
   docker_use_host_network: boolean
+  host_shell: string
+  docker_shell: string
 }
 
 interface ImageAttachmentsConfig {
@@ -726,12 +766,19 @@ const shellConfig = ref<ShellConfig>({
   denied_commands: ['rm', 'rm -rf', 'mkfs', 'dd']
 })
 
+const defaultHostShell = typeof navigator !== 'undefined'
+  && navigator.platform.toLowerCase().includes('mac')
+  ? '/bin/zsh'
+  : '/bin/bash'
+
 const terminalConfig = ref<TerminalConfig>({
   docker_image: 'sentinel-sandbox:latest',
   default_execution_mode: 'host',
   docker_memory_limit: '2g',
   docker_cpu_limit: '4.0',
-  docker_use_host_network: false
+  docker_use_host_network: false,
+  host_shell: defaultHostShell,
+  docker_shell: 'bash'
 })
 
 const imageAttachments = ref<ImageAttachmentsConfig>({
@@ -829,7 +876,9 @@ async function loadConfig() {
         default_execution_mode: result.terminal.default_execution_mode || 'host',
         docker_memory_limit: result.terminal.docker_memory_limit || '2g',
         docker_cpu_limit: result.terminal.docker_cpu_limit || '4.0',
-        docker_use_host_network: !!result.terminal.docker_use_host_network
+        docker_use_host_network: !!result.terminal.docker_use_host_network,
+        host_shell: result.terminal.host_shell || defaultHostShell,
+        docker_shell: result.terminal.docker_shell || 'bash'
       }
     }
     if (result?.image_attachments) {
@@ -1004,6 +1053,7 @@ async function autoSaveConfig() {
       }
       await invoke('save_agent_config', { config: agentConfig })
       console.log('Agent config auto-saved')
+      dialog.toast.success(t('settings.saveSuccess'))
     } catch (e) {
       console.error('Failed to auto-save agent config:', e)
       dialog.toast.error(t('settings.agent.autoSaveFailed'))
@@ -1033,6 +1083,24 @@ function updateDockerImage(event: Event) {
     clearActiveTerminalBinding()
   }
   terminalConfig.value.docker_image = target.value
+  autoSaveConfig()
+}
+
+function updateHostShell(event: Event) {
+  const target = event.target as HTMLInputElement
+  if (terminalConfig.value.host_shell !== target.value) {
+    clearActiveTerminalBinding()
+  }
+  terminalConfig.value.host_shell = target.value
+  autoSaveConfig()
+}
+
+function updateDockerShell(event: Event) {
+  const target = event.target as HTMLInputElement
+  if (terminalConfig.value.docker_shell !== target.value) {
+    clearActiveTerminalBinding()
+  }
+  terminalConfig.value.docker_shell = target.value
   autoSaveConfig()
 }
 

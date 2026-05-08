@@ -545,6 +545,7 @@ async fn generate_team_v3_execution_plan_with_main_agent(
     let execution_id = format!("team-v3-planner:{}:{}", session_id, Uuid::new_v4());
     let planner_params = AgentExecuteParams {
         execution_id,
+        conversation_id: None,
         cancellation_generation: None,
         model: model.to_string(),
         system_prompt: build_team_v3_planner_system_prompt(main_agent_id),
@@ -554,6 +555,7 @@ async fn generate_team_v3_execution_plan_with_main_agent(
         active_terminal_session_fingerprint: None,
         active_terminal_session_id: None,
         working_directory: None,
+        provider_config_key: provider_config.provider.clone(),
         rig_provider: rig_provider.to_string(),
         api_key: provider_config.api_key.clone(),
         api_base: provider_config.api_base.clone(),
@@ -567,6 +569,7 @@ async fn generate_team_v3_execution_plan_with_main_agent(
         referenced_traffic: None,
         persist_messages: false,
         subagent_run_id: None,
+        harness_run_id: None,
         context_policy: Some(ContextPolicy {
             include_working_dir: false,
             include_context_storage: false,
@@ -649,8 +652,14 @@ pub(crate) async fn prepare_team_v3_execution_tasks_with_main_agent(
         blackboard_context_result.diagnostics.mode,
         blackboard_context_result.diagnostics.query_terms,
         blackboard_context_result.diagnostics.context_chars,
-        blackboard_context_result.diagnostics.structured_memory.selected,
-        blackboard_context_result.diagnostics.structured_memory.total,
+        blackboard_context_result
+            .diagnostics
+            .structured_memory
+            .selected,
+        blackboard_context_result
+            .diagnostics
+            .structured_memory
+            .total,
         blackboard_context_result.diagnostics.task_outputs.selected,
         blackboard_context_result.diagnostics.task_outputs.total,
         blackboard_context_result.diagnostics.artifacts.selected,

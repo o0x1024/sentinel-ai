@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ensureConversationForExecution,
+  resolveAgentHarnessMode,
+  resolveTenthManRuleForExecution,
   shouldReuseTerminalSession,
 } from '@/components/Agent/agentConversationExecutionSupport'
 
@@ -14,6 +16,7 @@ describe('agentConversationExecutionSupport', () => {
         terminalConfig: {
           default_execution_mode: 'host',
           docker_image: 'sentinel-sandbox:latest',
+          host_shell: 'bash',
         },
         workingDirectory: '/tmp/project',
       }),
@@ -28,6 +31,7 @@ describe('agentConversationExecutionSupport', () => {
         terminalConfig: {
           default_execution_mode: 'host',
           docker_image: 'sentinel-sandbox:latest',
+          host_shell: 'bash',
         },
         workingDirectory: '/tmp/project',
       }),
@@ -68,10 +72,75 @@ describe('agentConversationExecutionSupport', () => {
         terminalConfig: {
           default_execution_mode: 'host',
           docker_image: 'sentinel-sandbox:latest',
+          host_shell: 'bash',
         },
         workingDirectory: '/tmp/project-b',
       }),
     ).toBe(false)
+  })
+
+  it('rejects a host session when the configured host shell changes', () => {
+    expect(
+      shouldReuseTerminalSession({
+        currentSessionId: 'session-host',
+        currentSessionFingerprint: 'host|sentinel-sandbox:latest|bash|/tmp/project',
+        terminalConfig: {
+          default_execution_mode: 'host',
+          docker_image: 'sentinel-sandbox:latest',
+          host_shell: '/bin/zsh',
+        },
+        workingDirectory: '/tmp/project',
+      }),
+    ).toBe(false)
+  })
+
+  it('uses direct harness mode for short requests without tools or a task plan', () => {
+    expect(resolveAgentHarnessMode({
+      forceTaskPlanContract: false,
+      runtimeToolConfig: { enabled: false },
+    })).toBe('direct')
+  })
+
+  it('uses tool_run harness mode when tools are enabled without a task plan', () => {
+    expect(resolveAgentHarnessMode({
+      forceTaskPlanContract: false,
+      runtimeToolConfig: { enabled: true },
+    })).toBe('tool_run')
+  })
+
+  it('uses planned harness mode when task planning is forced', () => {
+    expect(resolveAgentHarnessMode({
+      forceTaskPlanContract: true,
+      runtimeToolConfig: { enabled: false },
+    })).toBe('planned')
+  })
+
+  it('disables tenth man rule when runtime tool scope excludes tenth_man_review', () => {
+    expect(resolveTenthManRuleForExecution({
+      enabled: true,
+      runtimeToolConfig: {
+        enabled: true,
+        selection_strategy: { Manual: ['file_read', 'grep'] },
+        max_tools: 4,
+        preselected_tools: [],
+        disabled_tools: [],
+        allowed_tools: ['file_read', 'grep'],
+      },
+    })).toBe(false)
+  })
+
+  it('keeps tenth man rule enabled when runtime tool scope includes tenth_man_review', () => {
+    expect(resolveTenthManRuleForExecution({
+      enabled: true,
+      runtimeToolConfig: {
+        enabled: true,
+        selection_strategy: { Manual: ['tenth_man_review'] },
+        max_tools: 1,
+        preselected_tools: [],
+        disabled_tools: [],
+        allowed_tools: ['tenth_man_review'],
+      },
+    })).toBe(true)
   })
 
   it('passes the current conversation binding when execution creates a new conversation', async () => {
@@ -87,6 +156,7 @@ describe('agentConversationExecutionSupport', () => {
         ragEnabled: false,
         webSearchEnabled: true,
         tenthManEnabled: true,
+        harnessMaxContinuations: 8,
         selectedModel: 'openai/gpt-5.5',
         toolsEnabled: true,
         toolConfig: null,
@@ -108,6 +178,7 @@ describe('agentConversationExecutionSupport', () => {
         contextMode: 'sentinel-like',
         selectedModel: 'openai/gpt-5.5',
         tenthManEnabled: true,
+        harnessMaxContinuations: 8,
       },
     })
   })

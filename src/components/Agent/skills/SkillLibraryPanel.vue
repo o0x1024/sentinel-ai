@@ -8,10 +8,36 @@
             {{ t('agent.skillLibraryDescription', { mode: currentViewModeLabel }) }}
           </div>
         </div>
-        <div class="flex flex-wrap gap-2 text-[11px]">
+        <div class="flex flex-wrap items-center justify-end gap-2 text-[11px]">
+          <span class="badge badge-sm badge-outline">{{ t('agent.skillCount', { count: skills.length }) }}</span>
+          <span class="badge badge-sm badge-success badge-outline">{{ t('agent.enabledCount', { count: enabledSkillCount }) }}</span>
+          <span class="badge badge-sm badge-ghost">{{ t('agent.disabledCount', { count: disabledSkillCount }) }}</span>
+          <span class="badge badge-sm badge-info badge-outline">{{ t('agent.withContentCount', { count: skillsWithContentCount }) }}</span>
+          <span class="badge badge-sm badge-warning badge-outline">{{ t('agent.draftCount', { count: activeDraftCount }) }}</span>
+          <span class="badge badge-sm badge-error badge-outline">{{ t('agent.ruleCount', { count: ruleCount }) }}</span>
+          <button class="btn btn-xs btn-outline" @click="$emit('open-memory-feedback')">
+            <i class="fas fa-comment-dots mr-1"></i>
+            {{ t('agent.memoryFeedbackTitle') }}
+          </button>
+          <div class="join">
+            <button
+              class="join-item btn btn-xs btn-outline"
+              :disabled="bulkUpdatingSkillState || skills.length === 0 || disabledSkillCount === 0"
+              @click="$emit('set-all-enabled', true)"
+            >
+              <i :class="bulkUpdatingSkillState ? 'fas fa-spinner fa-spin mr-1' : 'fas fa-toggle-on mr-1'"></i>
+              {{ t('agent.enableAllSkills') }}
+            </button>
+            <button
+              class="join-item btn btn-xs btn-outline"
+              :disabled="bulkUpdatingSkillState || skills.length === 0 || enabledSkillCount === 0"
+              @click="$emit('set-all-enabled', false)"
+            >
+              <i :class="bulkUpdatingSkillState ? 'fas fa-spinner fa-spin mr-1' : 'fas fa-toggle-off mr-1'"></i>
+              {{ t('agent.disableAllSkills') }}
+            </button>
+          </div>
           <span class="badge badge-sm badge-outline">{{ currentViewModeLabel }}</span>
-          <span class="badge badge-sm badge-success badge-outline">{{ t('agent.enabledCountLower', { count: enabledSkillCount }) }}</span>
-          <span class="badge badge-sm badge-ghost">{{ t('agent.disabledCountLower', { count: disabledSkillCount }) }}</span>
         </div>
       </div>
     </div>
@@ -41,7 +67,11 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="skill in skills" :key="skill.id" class="align-top">
+          <tr
+            v-for="skill in orderedSkills"
+            :key="skill.id"
+            :class="skillRowClass(skill)"
+          >
             <td>
               <div class="flex min-w-0 items-center gap-3">
                 <div :class="['skill-icon', getSkillIconClass(skill.id)]">
@@ -85,6 +115,7 @@
                     type="checkbox"
                     class="toggle toggle-xs"
                     :checked="isSkillEnabled(skill.id)"
+                    :disabled="bulkUpdatingSkillState"
                     @change="$emit('toggle-enabled', skill.id, ($event.target as HTMLInputElement).checked)"
                   />
                   <span>{{ t('agent.quickToggle') }}</span>
@@ -114,9 +145,9 @@
 
     <div v-else class="skills-cards-grid">
       <div
-        v-for="skill in skills"
+        v-for="skill in orderedSkills"
         :key="skill.id"
-        class="group rounded-2xl border border-base-300 bg-base-100 p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-base-content/20 hover:shadow-md"
+        :class="skillCardClass(skill)"
       >
         <div class="flex h-full flex-col">
           <div class="flex items-start justify-between gap-3">
@@ -179,6 +210,7 @@
                   type="checkbox"
                   class="toggle toggle-xs"
                   :checked="isSkillEnabled(skill.id)"
+                  :disabled="bulkUpdatingSkillState"
                   @change="$emit('toggle-enabled', skill.id, ($event.target as HTMLInputElement).checked)"
                 />
               </label>
@@ -191,16 +223,21 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Skill } from './skillsManagerTypes'
 
-defineProps<{
+const props = defineProps<{
   loading: boolean
   skills: Skill[]
   viewMode: 'card' | 'list'
   currentViewModeLabel: string
   enabledSkillCount: number
   disabledSkillCount: number
+  skillsWithContentCount: number
+  activeDraftCount: number
+  ruleCount: number
+  bulkUpdatingSkillState: boolean
   deletingSkillIds: string[]
   isSkillEnabled: (id: string) => boolean
   getSkillIcon: (id: string) => string
@@ -212,15 +249,45 @@ defineEmits<{
   'edit': [skill: Skill]
   'delete': [skill: Skill]
   'toggle-enabled': [id: string, enabled: boolean]
+  'set-all-enabled': [enabled: boolean]
+  'open-memory-feedback': []
 }>()
 
 const { t } = useI18n()
+
+const orderedSkills = computed(() =>
+  props.skills
+    .map((skill, index) => ({ skill, index }))
+    .sort((left, right) => {
+      const leftEnabled = props.isSkillEnabled(left.skill.id)
+      const rightEnabled = props.isSkillEnabled(right.skill.id)
+      if (leftEnabled !== rightEnabled) {
+        return leftEnabled ? -1 : 1
+      }
+      return left.index - right.index
+    })
+    .map(item => item.skill)
+)
 
 const skillEnabledLabel = (enabled: boolean) =>
   enabled ? t('common.enabled') : t('common.disabled')
 
 const skillEnabledBadgeClass = (enabled: boolean) =>
   enabled ? 'badge-success badge-outline' : 'badge-error badge-outline'
+
+const skillRowClass = (skill: Skill) => [
+  'align-top border-l-4',
+  props.isSkillEnabled(skill.id)
+    ? 'border-l-success bg-success/5'
+    : 'border-l-transparent'
+]
+
+const skillCardClass = (skill: Skill) => [
+  'group rounded-2xl border bg-base-100 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md',
+  props.isSkillEnabled(skill.id)
+    ? 'border-success/70 ring-1 ring-success/25 shadow-success/10 hover:border-success'
+    : 'border-base-300 hover:border-base-content/20'
+]
 </script>
 
 <style scoped>

@@ -4,6 +4,7 @@ import type { ParallelTaskSource } from '@/composables/useAgentParallelRunState'
 
 export interface AgentStartEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   task: string
 }
@@ -87,6 +88,7 @@ export type AgentExecutionOutcome = 'succeeded' | 'failed' | 'cancelled'
 
 export interface AgentExecutionFinishedEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   outcome: AgentExecutionOutcome
   success: boolean
@@ -106,6 +108,68 @@ export interface AgentGlobalSummaryUpdatedEvent {
   conversation_id: string
   summary: string
   tokens: number
+}
+
+export interface AgentContextCompressionStartedEvent {
+  execution_id: string
+  generation?: number | null
+  conversation_id?: string
+  status?: 'running'
+  reason?: string
+  recent_tokens?: number
+  threshold_tokens?: number
+  message_count?: number
+  recent_message_count?: number
+}
+
+export interface AgentContextCompressionFinishedEvent {
+  execution_id: string
+  generation?: number | null
+  conversation_id?: string
+  status?: 'completed' | 'failed'
+  reason?: string
+  recent_tokens?: number
+  threshold_tokens?: number
+  message_count?: number
+  recent_message_count?: number
+  summary_segment_count?: number
+  summary_segment_tokens?: number
+  summary_global_tokens?: number
+  merged_global?: boolean
+  error?: string
+}
+
+export type AgentContextPressureLevel = 'Low' | 'Warning' | 'AutoCompact' | 'Blocking'
+
+export interface AgentContextPressureEvent {
+  execution_id: string
+  generation?: number | null
+  phase?: string
+  used_tokens: number
+  remaining_tokens: number
+  usage_percentage: number
+  context_pressure: AgentContextPressureLevel | string
+  should_compact?: boolean
+  should_block?: boolean
+  system_prompt_tokens?: number
+  task_tokens?: number
+  history_tokens?: number
+  history_count?: number
+  max_context_tokens?: number
+  effective_context_tokens?: number
+  warning_threshold_tokens?: number
+  auto_compact_threshold_tokens?: number
+  blocking_threshold_tokens?: number
+  output_reserve_tokens?: number
+}
+
+export interface AgentContextCompactionRequestedEvent {
+  execution_id: string
+  generation?: number | null
+  phase?: string
+  used_tokens?: number
+  remaining_tokens?: number
+  context_pressure?: AgentContextPressureLevel | string
 }
 
 export interface AgentRetryEvent {
@@ -210,6 +274,17 @@ export interface ContextUsageInfo {
   usedTokens: number
   maxTokens: number
   usagePercentage: number
+  effectiveContextTokens?: number
+  remainingTokens?: number
+  contextPressure?: AgentContextPressureLevel | string | null
+  warningThresholdTokens?: number
+  autoCompactThresholdTokens?: number
+  blockingThresholdTokens?: number
+  outputReserveTokens?: number
+  shouldCompact?: boolean
+  shouldBlock?: boolean
+  pressurePhase?: string | null
+  taskTokens?: number
   systemPromptTokens: number
   historyTokens: number
   historyCount: number
@@ -228,6 +303,18 @@ export interface ContextUsageInfo {
   memoryRetrieval?: MemoryRetrievalInfo | null
 }
 
+export interface ContextCompressionInfo {
+  active: boolean
+  executionId: string
+  generation?: number | null
+  reason?: string
+  recentTokens: number
+  thresholdTokens: number
+  messageCount: number
+  recentMessageCount: number
+  startedAt: number
+}
+
 export interface UseAgentEventsReturn {
   messages: Ref<AgentMessage[]>
   isExecuting: Ref<boolean>
@@ -239,6 +326,7 @@ export interface UseAgentEventsReturn {
   lastMessage: ComputedRef<AgentMessage | undefined>
   ragMetaInfo: Ref<RagMetaInfo | null>
   contextUsage: Ref<ContextUsageInfo | null>
+  contextCompression: Ref<ContextCompressionInfo | null>
   parallelTaskSources: ComputedRef<ParallelTaskSource[]>
   clearMessages: () => void
   resetError: () => void

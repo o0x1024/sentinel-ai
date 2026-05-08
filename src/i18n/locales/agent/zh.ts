@@ -238,13 +238,14 @@ export default {
   skills: 'Skills',
   skillManagement: 'Skills 管理',
   skillManagementSubtitle: '在一个地方统一整理可复用技能与记忆反馈。',
-  skillsMode: 'Skills 模式（渐进式披露）',
   manage: '管理',
   manageInTools: '在工具中管理',
   skillsManagedInTools: 'Skills 需在「工具与管理 > Skills」中管理',
   quickActionsTitle: '快捷操作',
   quickActionsDescription: '创建、刷新并查看当前技能库视图。',
   refreshAll: '全部刷新',
+  enableAllSkills: '全部打开',
+  disableAllSkills: '全部禁用',
   quickToggle: '快速切换',
   textFiles: '文本文件',
   skillCount: '{count} 个 Skills',
@@ -583,6 +584,7 @@ export default {
 
   // MessageFlow
   aiIsThinking: 'AI 正在思考...',
+  contextCompressing: '正在压缩上下文...',
   agentReady: 'Agent 已就绪',
   startConversation: '开始对话，查看Agent的响应和任务执行。',
   loadMoreMessages: '加载更早的 {count} 条消息',
@@ -682,6 +684,19 @@ export default {
   historyTokens: '历史消息',
   historyMessages: '消息数量',
   totalUsed: '总计使用',
+  contextPressure: '上下文压力',
+  contextPressureLow: '低',
+  contextPressureWarning: '预警',
+  contextPressureAutoCompact: '自动压缩',
+  contextPressureBlocking: '阻塞',
+  effectiveContextTokens: '有效上下文',
+  remainingContextTokens: '剩余上下文',
+  outputReserveTokens: '输出预留',
+  warningThresholdTokens: '预警阈值',
+  autoCompactThresholdTokens: '自动压缩阈值',
+  blockingThresholdTokens: '阻塞阈值',
+  contextPressurePhase: '压力检测阶段',
+  currentTaskTokens: '当前任务',
 
   // Document attachment
   document: {

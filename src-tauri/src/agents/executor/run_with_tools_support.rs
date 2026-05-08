@@ -1,9 +1,9 @@
 use anyhow::Result;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use sentinel_db::Database;
 use sentinel_db::DatabaseService;
@@ -15,25 +15,31 @@ use sentinel_tools::buildin_tools::{
 use sentinel_tools::dynamic_tool::{
     DynamicTool, DynamicToolDef, ToolCategory, ToolExecutionPolicy, ToolExecutor, ToolSource,
 };
-use sentinel_tools::terminal::server::TerminalServer;
-use sentinel_tools::terminal::{EXEC_COMMAND_TOOL_NAME, WRITE_STDIN_TOOL_NAME};
 use sentinel_tools::ToolServer;
 
+use crate::agents::apply_sentinel_execution_outcome;
+use crate::agents::context_engineering::reflection::{
+    record_execution_reflection, ExecutionOutcome,
+};
 use crate::agents::executor::file_tool_state::{
     ensure_file_snapshot_is_editable, record_file_read_snapshot, record_file_revision_snapshot,
 };
 use crate::agents::executor::http_request_override::build_http_override_def;
 use crate::agents::executor::question_override::build_ask_user_question_override_def;
 use crate::agents::executor::shell_override::build_shell_override_def;
-use crate::agents::executor::terminal_override::{
-    build_exec_command_override_def, build_interactive_shell_override_def,
-    build_write_stdin_override_def,
-};
 use crate::agents::executor::tool_search_override::build_tool_search_override_def;
 use crate::agents::executor::traffic_response_read_tool::build_traffic_response_read_tool;
 use crate::agents::executor::types::ToolCallRecord;
+use crate::agents::executor::AgentExecuteParams;
+use crate::agents::{ToolConfig, ToolSelectionStrategy};
+use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 
 type PendingToolCalls = std::collections::HashMap<String, (String, String, i64, u32)>;
+
+const RETRY_TOOL_RESULT_MAX_CHARS: usize = 12_000;
+const RETRY_TOOL_RESULT_FIELD_MAX_CHARS: usize = 4_000;
+const RETRY_TOOL_RESULT_PLAIN_PREVIEW_CHARS: usize = 8_000;
+const RETRY_TOOL_RESULT_HEAD_LINES: usize = 80;
 
 async fn is_skills_enabled_in_db(db: &DatabaseService) -> bool {
     match db.get_config("agent", "skills_enabled").await {
@@ -123,7 +129,7 @@ pub(super) async fn register_skills_tool_guard(
         input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: ToolCategory::System,
+        category: ToolCategory::KnowledgeExtension,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -133,6 +139,89 @@ pub(super) async fn register_skills_tool_guard(
 
     tool_server.register_tool(def).await;
     Ok(())
+}
+
+pub(super) async fn record_failed_agent_execution(
+    app_handle: &AppHandle,
+    params: &AgentExecuteParams,
+    rig_provider: &str,
+    tool_calls: &[ToolCallRecord],
+    error: &str,
+) {
+    let tool_summaries = tool_calls
+        .iter()
+        .map(|call| ToolCallSummary {
+            name: call.name.clone(),
+            success: call.success,
+            duration_ms: Some(call.duration_ms),
+        })
+        .collect::<Vec<_>>();
+
+    let fail_tool_names = tool_summaries
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    if let Err(err) = get_global_memory()
+        .record_execution(ExecutionRecord {
+            id: params.execution_id.clone(),
+            task: params.task.clone(),
+            environment: Some(rig_provider.to_string()),
+            tool_calls: tool_summaries,
+            success: false,
+            error: Some(error.to_string()),
+            response_excerpt: None,
+            created_at: chrono::Utc::now().timestamp(),
+        })
+        .await
+    {
+        tracing::warn!("Failed to store memory record: {}", err);
+    }
+
+    record_execution_reflection(
+        app_handle,
+        &ExecutionOutcome {
+            execution_id: params.execution_id.clone(),
+            task: params.task.clone(),
+            success: false,
+            error: Some(error.to_string()),
+            tool_names_used: fail_tool_names,
+            response_excerpt: None,
+        },
+    )
+    .await;
+
+    if let Err(update_err) =
+        apply_sentinel_execution_outcome(app_handle, &params.execution_id, false, None, Some(error))
+            .await
+    {
+        tracing::warn!(
+            "Failed to update sentinel execution outcome after error: {}",
+            update_err
+        );
+    }
+}
+
+pub(super) async fn settle_running_tool_messages_for_interrupted_turn(
+    db: Option<&Arc<sentinel_db::DatabaseService>>,
+    execution_id: &str,
+    reason: &str,
+) {
+    let Some(db) = db else {
+        return;
+    };
+    if let Err(error) = db
+        .settle_running_ai_tool_messages(execution_id, "failed", reason)
+        .await
+    {
+        tracing::warn!(
+            "Failed to settle interrupted running tool messages for {}: {}",
+            execution_id,
+            error
+        );
+    }
 }
 
 pub(super) fn apply_allowed_tools_policy(
@@ -149,6 +238,21 @@ pub(super) fn apply_allowed_tools_policy(
         .map(|id| id.to_string())
         .collect::<std::collections::HashSet<_>>();
     tool_ids.retain(|id| allowed.contains(id));
+    tool_ids
+}
+
+pub(super) fn apply_tool_config_scope_policy(
+    tool_ids: Vec<String>,
+    tool_config: &ToolConfig,
+) -> Vec<String> {
+    if !tool_config.allowed_tools.is_empty() {
+        return apply_allowed_tools_policy(tool_ids, &tool_config.allowed_tools);
+    }
+
+    if let ToolSelectionStrategy::Manual(tools) = &tool_config.selection_strategy {
+        return apply_allowed_tools_policy(tool_ids, tools);
+    }
+
     tool_ids
 }
 
@@ -351,11 +455,9 @@ fn http_method(arguments: &str) -> Option<String> {
 
 pub(super) fn is_high_risk_tool_call(tool_name: &str, arguments: &str) -> bool {
     match tool_name {
-        "shell" | "interactive_shell" => {
-            lower_tool_argument(arguments, &["command", "initial_command"])
-                .map(|cmd| is_shell_like_high_risk_command(&cmd))
-                .unwrap_or(false)
-        }
+        "shell" => lower_tool_argument(arguments, &["command", "initial_command"])
+            .map(|cmd| is_shell_like_high_risk_command(&cmd))
+            .unwrap_or(false),
         "http_request" => matches!(
             http_method(arguments).as_deref(),
             Some("POST" | "PUT" | "PATCH" | "DELETE")
@@ -368,11 +470,9 @@ pub(super) fn is_high_risk_tool_call(tool_name: &str, arguments: &str) -> bool {
 
 pub(super) fn is_side_effectful_tool_call(tool_name: &str, arguments: &str) -> bool {
     match tool_name {
-        "shell" | "interactive_shell" => {
-            lower_tool_argument(arguments, &["command", "initial_command"])
-                .map(|cmd| is_shell_like_side_effect_command(&cmd))
-                .unwrap_or(false)
-        }
+        "shell" => lower_tool_argument(arguments, &["command", "initial_command"])
+            .map(|cmd| is_shell_like_side_effect_command(&cmd))
+            .unwrap_or(false),
         "http_request" => matches!(
             http_method(arguments).as_deref(),
             Some("POST" | "PUT" | "PATCH" | "DELETE")
@@ -401,44 +501,41 @@ pub(super) fn looks_like_verification_tool_call(
     }
 
     match tool_name {
-        "shell" | "interactive_shell" => {
-            lower_tool_argument(arguments, &["command", "initial_command"])
-                .map(|command| {
-                    let markers = [
-                        "cargo test",
-                        "cargo check",
-                        "cargo clippy",
-                        "go test",
-                        "pytest",
-                        "npm test",
-                        "pnpm test",
-                        "yarn test",
-                        "vitest",
-                        "jest",
-                        "ruff",
-                        "mypy",
-                        "eslint",
-                        "npm run lint",
-                        "pnpm lint",
-                        "git diff",
-                        "git status",
-                        "rg ",
-                        "grep ",
-                        "cat ",
-                        "sed -n",
-                        "head ",
-                        "tail ",
-                        "ls ",
-                        "find ",
-                        "wc ",
-                    ];
-                    markers.iter().any(|marker| command.contains(marker))
-                })
-                .unwrap_or(false)
-        }
+        "shell" => lower_tool_argument(arguments, &["command", "initial_command"])
+            .map(|command| {
+                let markers = [
+                    "cargo test",
+                    "cargo check",
+                    "cargo clippy",
+                    "go test",
+                    "pytest",
+                    "npm test",
+                    "pnpm test",
+                    "yarn test",
+                    "vitest",
+                    "jest",
+                    "ruff",
+                    "mypy",
+                    "eslint",
+                    "npm run lint",
+                    "pnpm lint",
+                    "git diff",
+                    "git status",
+                    "rg ",
+                    "grep ",
+                    "cat ",
+                    "sed -n",
+                    "head ",
+                    "tail ",
+                    "ls ",
+                    "find ",
+                    "wc ",
+                ];
+                markers.iter().any(|marker| command.contains(marker))
+            })
+            .unwrap_or(false),
         "http_request" => matches!(http_method(arguments).as_deref(), Some("GET" | "HEAD")),
         "file_read" | "grep" | "glob" => true,
-        "browser" => true,
         _ => false,
     }
 }
@@ -583,24 +680,22 @@ pub(super) fn evidence_score_for_tool_call(tool_name: &str, arguments: &str, suc
     }
 
     match tool_name {
-        "shell" | "interactive_shell" => {
-            lower_tool_argument(arguments, &["command", "initial_command"])
-                .map(|command| {
-                    if is_side_effectful_tool_call(tool_name, arguments) {
-                        0
-                    } else {
-                        shell_evidence_score(&command)
-                    }
-                })
-                .unwrap_or(0)
-        }
+        "shell" => lower_tool_argument(arguments, &["command", "initial_command"])
+            .map(|command| {
+                if is_side_effectful_tool_call(tool_name, arguments) {
+                    0
+                } else {
+                    shell_evidence_score(&command)
+                }
+            })
+            .unwrap_or(0),
         "http_request" => match http_method(arguments).as_deref() {
             Some("GET" | "HEAD") => 2,
             _ => 0,
         },
         "file_read" | "grep" => 2,
         "glob" => 1,
-        "browser" | "web_search" | "ocr" => 2,
+        "web_search" | "ocr" => 2,
         "memory" | "tool_search" => 1,
         _ => 0,
     }
@@ -743,6 +838,33 @@ pub(super) fn parse_team_stream_context(execution_id: &str) -> Option<TeamStream
     })
 }
 
+pub(super) fn emit_team_stream_done(
+    app: &AppHandle,
+    context: Option<&TeamStreamContext>,
+    content: Option<String>,
+    error: Option<String>,
+    had_delta: bool,
+) {
+    let Some(ctx) = context else {
+        return;
+    };
+    let mut payload = json!({
+        "session_id": ctx.session_id.clone(),
+        "stream_id": ctx.stream_id.clone(),
+        "member_id": ctx.member_id.clone(),
+        "member_name": ctx.member_id.clone(),
+        "phase": ctx.phase.clone(),
+        "had_delta": had_delta,
+    });
+    if let Some(content) = content {
+        payload["content"] = json!(content);
+    }
+    if let Some(error) = error {
+        payload["error"] = json!(error);
+    }
+    let _ = app.emit("agent_team:message_stream_done", &payload);
+}
+
 pub(super) async fn persist_ai_message_with_retry(
     db: Arc<sentinel_db::DatabaseService>,
     msg: sentinel_core::models::database::AiMessage,
@@ -769,17 +891,17 @@ pub(super) async fn persist_ai_message_with_retry(
 
 pub(super) async fn ensure_ai_conversation_exists_for_persistence(
     db: &DatabaseService,
-    execution_id: &str,
+    conversation_id: &str,
     model: &str,
     provider: &str,
 ) {
-    match db.get_ai_conversation(execution_id).await {
+    match db.get_ai_conversation(conversation_id).await {
         Ok(Some(_)) => return,
         Ok(None) => {}
         Err(e) => {
             tracing::warn!(
-                "Failed to check ai_conversation before persistence (execution_id={}): {}",
-                execution_id,
+                "Failed to check ai_conversation before persistence (conversation_id={}): {}",
+                conversation_id,
                 e
             );
             return;
@@ -789,7 +911,7 @@ pub(super) async fn ensure_ai_conversation_exists_for_persistence(
     use sentinel_core::models::database as core_db;
     let now = chrono::Utc::now();
     let conv = core_db::AiConversation {
-        id: execution_id.to_string(),
+        id: conversation_id.to_string(),
         title: None,
         service_name: if provider.trim().is_empty() {
             "default".to_string()
@@ -826,8 +948,8 @@ pub(super) async fn ensure_ai_conversation_exists_for_persistence(
             || err.contains("constraint failed");
         if !already_exists {
             tracing::warn!(
-                "Failed to create ai_conversation for persistence (execution_id={}): {}",
-                execution_id,
+                "Failed to create ai_conversation for persistence (conversation_id={}): {}",
+                conversation_id,
                 e
             );
         }
@@ -884,7 +1006,10 @@ pub(super) fn build_retry_history(
 
         for call in &ordered_calls {
             if let Some(result) = &call.result {
-                history.push(ChatMessage::tool(result.clone(), call.id.clone()));
+                history.push(ChatMessage::tool(
+                    compact_tool_result_for_context(&call.name, result),
+                    call.id.clone(),
+                ));
             }
         }
     }
@@ -896,6 +1021,93 @@ pub(super) fn build_retry_history(
     history
 }
 
+pub(super) fn compact_tool_result_for_context(tool_name: &str, result: &str) -> String {
+    if result.chars().count() <= RETRY_TOOL_RESULT_MAX_CHARS {
+        return result.to_string();
+    }
+
+    if let Ok(mut value) = serde_json::from_str::<Value>(result) {
+        let original_chars = result.chars().count();
+        compact_json_value(&mut value);
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "_context_microcompact".to_string(),
+                json!({
+                    "tool": tool_name,
+                    "original_chars": original_chars,
+                    "policy": "large tool result compacted for retry context"
+                }),
+            );
+        }
+        if let Ok(rendered) = serde_json::to_string(&value) {
+            if rendered.chars().count() <= RETRY_TOOL_RESULT_MAX_CHARS {
+                return rendered;
+            }
+            return compact_plain_tool_result(tool_name, &rendered, original_chars);
+        }
+    }
+
+    compact_plain_tool_result(tool_name, result, result.chars().count())
+}
+
+fn compact_json_value(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for nested in object.values_mut() {
+                compact_json_value(nested);
+            }
+        }
+        Value::Array(items) => {
+            for nested in items.iter_mut() {
+                compact_json_value(nested);
+            }
+        }
+        Value::String(text) => {
+            if text.chars().count() > RETRY_TOOL_RESULT_FIELD_MAX_CHARS {
+                let original_chars = text.chars().count();
+                *text = compact_text_preview(text, RETRY_TOOL_RESULT_FIELD_MAX_CHARS);
+                text.push_str(&format!(
+                    "\n[context microcompact: original_chars={}]",
+                    original_chars
+                ));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn compact_plain_tool_result(tool_name: &str, result: &str, original_chars: usize) -> String {
+    json!({
+        "tool": tool_name,
+        "context_microcompact": true,
+        "original_chars": original_chars,
+        "preview": compact_text_preview(result, RETRY_TOOL_RESULT_PLAIN_PREVIEW_CHARS),
+    })
+    .to_string()
+}
+
+fn compact_text_preview(text: &str, max_chars: usize) -> String {
+    let mut preview = String::new();
+    for line in text.lines().take(RETRY_TOOL_RESULT_HEAD_LINES) {
+        if !preview.is_empty() {
+            preview.push('\n');
+        }
+        preview.push_str(line);
+        if preview.chars().count() >= max_chars {
+            break;
+        }
+    }
+
+    if preview.is_empty() {
+        preview = text.chars().take(max_chars).collect();
+    } else if preview.chars().count() > max_chars {
+        preview = preview.chars().take(max_chars).collect();
+    }
+
+    preview.push_str("\n[context microcompact: tool result preview truncated]");
+    preview
+}
+
 pub(super) fn accumulate_retry_progress(
     tool_calls_collector: &Arc<Mutex<Vec<ToolCallRecord>>>,
     accumulated_tool_calls: &Arc<Mutex<Vec<ToolCallRecord>>>,
@@ -904,7 +1116,12 @@ pub(super) fn accumulate_retry_progress(
 ) {
     if let Ok(current_calls) = tool_calls_collector.lock() {
         if let Ok(mut acc) = accumulated_tool_calls.lock() {
-            acc.extend(current_calls.clone());
+            acc.extend(current_calls.iter().cloned().map(|mut call| {
+                if let Some(result) = call.result.as_deref() {
+                    call.result = Some(compact_tool_result_for_context(&call.name, result));
+                }
+                call
+            }));
         }
     }
 
@@ -1059,7 +1276,7 @@ async fn build_glob_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: ToolCategory::Utility,
+        category: ToolCategory::FileCode,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1111,7 +1328,7 @@ async fn build_grep_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: ToolCategory::Utility,
+        category: ToolCategory::FileCode,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1163,7 +1380,7 @@ async fn build_lsp_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: ToolCategory::Utility,
+        category: ToolCategory::FileCode,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1236,7 +1453,7 @@ async fn build_file_read_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: ToolCategory::Utility,
+        category: ToolCategory::FileCode,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1311,7 +1528,7 @@ async fn build_file_edit_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: ToolCategory::Utility,
+        category: ToolCategory::FileCode,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1398,7 +1615,7 @@ async fn build_file_write_override_def(
         input_schema,
         output_schema: info.output_schema.clone(),
         source: ToolSource::Builtin,
-        category: ToolCategory::Utility,
+        category: ToolCategory::FileCode,
         tags: info.tags.clone(),
         search_hint: info.search_hint.clone(),
         exposure: info.exposure.clone(),
@@ -1463,7 +1680,7 @@ async fn build_tasks_override_def(
         input_schema: tasks_input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: ToolCategory::System,
+        category: ToolCategory::Collaboration,
         tags: tasks_info.tags.clone(),
         search_hint: tasks_info.search_hint.clone(),
         exposure: tasks_info.exposure.clone(),
@@ -1487,7 +1704,9 @@ pub(super) async fn patch_builtin_dynamic_tools(
     }
 
     if current_tool_ids.iter().any(|id| id == ShellTool::NAME) {
-        if let Some(def) = build_shell_override_def(tool_server, execution_id).await {
+        if let Some(def) =
+            build_shell_override_def(tool_server, execution_id, host_working_directory).await
+        {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
@@ -1597,50 +1816,6 @@ pub(super) async fn patch_builtin_dynamic_tools(
         }
     }
 
-    if current_tool_ids.iter().any(|id| id == TerminalServer::NAME) {
-        if let Some(def) = build_interactive_shell_override_def(
-            tool_server,
-            execution_id,
-            active_terminal_session_id,
-            host_working_directory,
-        )
-        .await
-        {
-            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
-        }
-        if let Some(def) =
-            build_exec_command_override_def(tool_server, execution_id, host_working_directory).await
-        {
-            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
-        }
-        if let Some(def) = build_write_stdin_override_def(tool_server, execution_id).await {
-            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
-        }
-    }
-
-    if current_tool_ids
-        .iter()
-        .any(|id| id == EXEC_COMMAND_TOOL_NAME)
-    {
-        if let Some(def) =
-            build_exec_command_override_def(tool_server, execution_id, host_working_directory).await
-        {
-            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
-        }
-        if let Some(def) = build_write_stdin_override_def(tool_server, execution_id).await {
-            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
-        }
-    }
-
-    if current_tool_ids
-        .iter()
-        .any(|id| id == WRITE_STDIN_TOOL_NAME)
-    {
-        if let Some(def) = build_write_stdin_override_def(tool_server, execution_id).await {
-            dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
-        }
-    }
-
     dynamic_tools
 }
 
@@ -1669,486 +1844,19 @@ pub(super) fn is_empty_response_error(err_msg: &str) -> bool {
     err_lower.contains("empty response") || err_lower.contains("without textual response")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn infer_tool_result_success_detects_timeout_failure() {
-        assert!(!infer_tool_result_success(
-            "Tool execution failed: command timeout after 180000ms"
-        ));
-    }
-
-    #[test]
-    fn infer_tool_result_success_respects_success_field() {
-        assert!(infer_tool_result_success(
-            r#"{"success":true,"output":"ok"}"#
-        ));
-        assert!(!infer_tool_result_success(
-            r#"{"success":false,"error":"boom"}"#
-        ));
-    }
-
-    #[test]
-    fn infer_tool_result_success_treats_http_response_body_as_payload() {
-        assert!(infer_tool_result_success(
-            r#"{"url":"http://example.com","status_code":200,"status_text":"200 OK","headers":{"content-type":"text/html"},"body":"Warning: file_get_contents(/home/flag): failed to open stream: No such file or directory","body_length":123}"#
-        ));
-    }
-
-    #[test]
-    fn infer_tool_result_success_treats_http_404_as_tool_success() {
-        assert!(infer_tool_result_success(
-            r#"{"url":"http://example.com/missing","status_code":404,"status_text":"404 Not Found","headers":{"content-type":"application/json"},"body":"{\"error\":\"resource not found\",\"code\":404}","body_length":43}"#
-        ));
-    }
-
-    #[test]
-    fn infer_tool_result_success_prefers_http_shape_over_generic_error_field() {
-        assert!(infer_tool_result_success(
-            r#"{"url":"http://example.com","status_code":500,"status_text":"500 Internal Server Error","headers":{"content-type":"application/json"},"error":"upstream application error","body":"{\"message\":\"boom\"}","body_length":18}"#
-        ));
-    }
-
-    #[test]
-    fn detects_high_risk_mutating_tool_calls() {
-        assert!(is_high_risk_tool_call(
-            "shell",
-            r#"{"command":"sed -i 's/a/b/' src/app.rs"}"#
-        ));
-        assert!(is_high_risk_tool_call(
-            "http_request",
-            r#"{"method":"POST","url":"https://example.com/api"}"#
-        ));
-        assert!(!is_high_risk_tool_call(
-            "shell",
-            r#"{"command":"rg tenth_man src-tauri/src"}"#
-        ));
-    }
-
-    #[test]
-    fn counts_trailing_failed_tool_calls() {
-        let records = vec![
-            ToolCallRecord {
-                id: "1".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"rg foo ."}"#.to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 0,
-                started_at_ms: 0,
-                completed_at_ms: 1,
-                duration_ms: 1,
-            },
-            ToolCallRecord {
-                id: "2".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"cargo test"}"#.to_string(),
-                result: Some("failed".to_string()),
-                success: false,
-                sequence: 1,
-                started_at_ms: 2,
-                completed_at_ms: 3,
-                duration_ms: 1,
-            },
-            ToolCallRecord {
-                id: "3".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"cargo test"}"#.to_string(),
-                result: Some("failed".to_string()),
-                success: false,
-                sequence: 2,
-                started_at_ms: 4,
-                completed_at_ms: 5,
-                duration_ms: 1,
-            },
-        ];
-
-        assert_eq!(trailing_failed_tool_calls(&records), 2);
-    }
-
-    #[test]
-    fn final_response_review_required_when_changes_lack_verification() {
-        let records = vec![ToolCallRecord {
-            id: "1".to_string(),
-            name: "shell".to_string(),
-            arguments: r#"{"command":"sed -i 's/a/b/' src/app.rs"}"#.to_string(),
-            result: Some("ok".to_string()),
-            success: true,
-            sequence: 0,
-            started_at_ms: 0,
-            completed_at_ms: 1,
-            duration_ms: 1,
-        }];
-
-        assert!(final_response_needs_verification_review(
-            "问题已修复，已经完成。",
-            &records
-        ));
-    }
-
-    #[test]
-    fn final_response_review_skipped_when_verification_exists() {
-        let records = vec![
-            ToolCallRecord {
-                id: "1".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"sed -i 's/a/b/' src/app.rs"}"#.to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 0,
-                started_at_ms: 0,
-                completed_at_ms: 1,
-                duration_ms: 1,
-            },
-            ToolCallRecord {
-                id: "2".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"cargo check"}"#.to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 1,
-                started_at_ms: 2,
-                completed_at_ms: 3,
-                duration_ms: 1,
-            },
-        ];
-
-        assert!(!final_response_needs_verification_review(
-            "问题已修复，已经完成。",
-            &records
-        ));
-    }
-
-    #[test]
-    fn final_response_review_required_for_low_evidence_high_confidence() {
-        let records = vec![ToolCallRecord {
-            id: "1".to_string(),
-            name: "shell".to_string(),
-            arguments: r#"{"command":"ls src"}"#.to_string(),
-            result: Some("ok".to_string()),
-            success: true,
-            sequence: 0,
-            started_at_ms: 0,
-            completed_at_ms: 1,
-            duration_ms: 1,
-        }];
-
-        assert!(final_response_needs_evidence_review(
-            "可以确定根因就是这里，最佳方案已经明确。",
-            None,
-            &records,
-            3,
-        ));
-    }
-
-    #[test]
-    fn final_response_review_skipped_when_evidence_is_sufficient() {
-        let records = vec![
-            ToolCallRecord {
-                id: "1".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"rg tenth_man src-tauri/src"}"#.to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 0,
-                started_at_ms: 0,
-                completed_at_ms: 1,
-                duration_ms: 1,
-            },
-            ToolCallRecord {
-                id: "2".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"sed -n '1,120p' src-tauri/src/agents/tenth_man.rs"}"#
-                    .to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 1,
-                started_at_ms: 2,
-                completed_at_ms: 3,
-                duration_ms: 1,
-            },
-        ];
-
-        assert!(!final_response_needs_evidence_review(
-            "可以确定根因就是这里，最佳方案已经明确。",
-            None,
-            &records,
-            3,
-        ));
-    }
-
-    #[test]
-    fn streaming_review_required_for_low_evidence_conclusion() {
-        let records = vec![ToolCallRecord {
-            id: "1".to_string(),
-            name: "shell".to_string(),
-            arguments: r#"{"command":"ls src"}"#.to_string(),
-            result: Some("ok".to_string()),
-            success: true,
-            sequence: 0,
-            started_at_ms: 0,
-            completed_at_ms: 1,
-            duration_ms: 1,
-        }];
-
-        assert!(streaming_content_needs_evidence_review(
-            "基于当前情况，可以确定根因就是这里，因此应该直接按这个方向修改。",
-            None,
-            &records,
-            3,
-        ));
-    }
-
-    #[test]
-    fn streaming_review_skipped_for_short_conclusion_fragment() {
-        let records = vec![ToolCallRecord {
-            id: "1".to_string(),
-            name: "shell".to_string(),
-            arguments: r#"{"command":"ls src"}"#.to_string(),
-            result: Some("ok".to_string()),
-            success: true,
-            sequence: 0,
-            started_at_ms: 0,
-            completed_at_ms: 1,
-            duration_ms: 1,
-        }];
-
-        assert!(!streaming_content_needs_evidence_review(
-            "因此可以先看这里。",
-            None,
-            &records,
-            3,
-        ));
-    }
-
-    #[test]
-    fn evidence_score_distinguishes_broad_scan_from_direct_inspection() {
-        let broad_scan = evidence_score_for_tool_call("shell", r#"{"command":"ls src"}"#, true);
-        let direct_read = evidence_score_for_tool_call(
-            "shell",
-            r#"{"command":"sed -n '1,120p' src/main.rs"}"#,
-            true,
-        );
-        let verification =
-            evidence_score_for_tool_call("shell", r#"{"command":"cargo check"}"#, true);
-
-        assert_eq!(broad_scan, 1);
-        assert_eq!(direct_read, 2);
-        assert_eq!(verification, 3);
-    }
-
-    #[test]
-    fn total_evidence_score_adds_weighted_evidence() {
-        let records = vec![
-            ToolCallRecord {
-                id: "1".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"ls src"}"#.to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 0,
-                started_at_ms: 0,
-                completed_at_ms: 1,
-                duration_ms: 1,
-            },
-            ToolCallRecord {
-                id: "2".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"sed -n '1,120p' src/main.rs"}"#.to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 1,
-                started_at_ms: 2,
-                completed_at_ms: 3,
-                duration_ms: 1,
-            },
-        ];
-
-        assert_eq!(total_evidence_score(&records), 3);
-    }
-
-    #[test]
-    fn relevant_evidence_score_ignores_unrelated_evidence() {
-        let records = vec![
-            ToolCallRecord {
-                id: "1".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"rg metrics src-tauri/src"}"#.to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 0,
-                started_at_ms: 0,
-                completed_at_ms: 1,
-                duration_ms: 1,
-            },
-            ToolCallRecord {
-                id: "2".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"sed -n '1,120p' src-tauri/src/agents/metrics.rs"}"#
-                    .to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 1,
-                started_at_ms: 2,
-                completed_at_ms: 3,
-                duration_ms: 1,
-            },
-        ];
-
-        assert!(final_response_needs_evidence_review(
-            "可以确定问题就在 src-tauri/src/agents/tenth_man.rs 这里。",
-            None,
-            &records,
-            3,
-        ));
-    }
-
-    #[test]
-    fn relevant_evidence_score_counts_matching_evidence() {
-        let records = vec![
-            ToolCallRecord {
-                id: "1".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"rg tenth_man src-tauri/src"}"#.to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 0,
-                started_at_ms: 0,
-                completed_at_ms: 1,
-                duration_ms: 1,
-            },
-            ToolCallRecord {
-                id: "2".to_string(),
-                name: "shell".to_string(),
-                arguments: r#"{"command":"sed -n '1,120p' src-tauri/src/agents/tenth_man.rs"}"#
-                    .to_string(),
-                result: Some("ok".to_string()),
-                success: true,
-                sequence: 1,
-                started_at_ms: 2,
-                completed_at_ms: 3,
-                duration_ms: 1,
-            },
-        ];
-
-        assert!(!final_response_needs_evidence_review(
-            "可以确定问题就在 src-tauri/src/agents/tenth_man.rs 这里。",
-            None,
-            &records,
-            3,
-        ));
-    }
-
-    #[tokio::test]
-    async fn file_snapshot_requires_prior_read_and_fresh_mtime() {
-        let execution_id = format!("exec-{}", uuid::Uuid::new_v4());
-        let temp_dir = std::env::temp_dir().join(format!("file-state-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-        let file_path: PathBuf = temp_dir.join("sample.txt");
-        tokio::fs::write(&file_path, "a\nb\nc\n").await.unwrap();
-        let revision_token = sentinel_tools::buildin_tools::file_runtime::revision_token(
-            &file_path.to_string_lossy(),
-        )
-        .await
-        .unwrap();
-
-        record_file_read_snapshot(
-            &execution_id,
-            &file_path.to_string_lossy(),
-            &revision_token,
-            1,
-            2,
-            3,
-            true,
-        )
-        .await
-        .unwrap();
-        ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
-            .await
-            .unwrap();
-
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        tokio::fs::write(&file_path, "changed\n").await.unwrap();
-        let stale_err =
-            ensure_file_snapshot_is_editable(&execution_id, &file_path.to_string_lossy())
-                .await
-                .unwrap_err()
-                .to_string();
-        assert!(stale_err.contains("changed since it was read"));
-
-        crate::agents::executor::file_tool_state::clear_file_tool_state(&execution_id).await;
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    }
-
-    #[tokio::test]
-    async fn file_read_edit_override_allows_consecutive_edits_after_snapshot_update() {
-        use rig::tool::Tool;
-        use sentinel_tools::buildin_tools::shell::{
-            get_shell_config, set_shell_config, ShellExecutionMode,
-        };
-
-        let execution_id = format!("exec-{}", uuid::Uuid::new_v4());
-        let temp_dir =
-            std::env::temp_dir().join(format!("file-override-state-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-        let file_path: PathBuf = temp_dir.join("sample.txt");
-        tokio::fs::write(&file_path, "alpha\nbeta\ngamma\n")
-            .await
-            .unwrap();
-        let original_shell_config = get_shell_config().await;
-        let mut host_shell_config = original_shell_config.clone();
-        host_shell_config.default_execution_mode = ShellExecutionMode::Host;
-        set_shell_config(host_shell_config).await;
-
-        let tool_server = ToolServer::new();
-        tool_server.init_builtin_tools().await;
-        let working_dir = temp_dir.to_string_lossy().to_string();
-        let read_def =
-            build_file_read_override_def(&tool_server, &execution_id, None, Some(&working_dir))
-                .await
-                .expect("file_read override should be available");
-        let edit_def =
-            build_file_edit_override_def(&tool_server, &execution_id, None, Some(&working_dir))
-                .await
-                .expect("file_edit override should be available");
-        let read_tool = DynamicTool::new(read_def);
-        let edit_tool = DynamicTool::new(edit_def);
-
-        read_tool
-            .call(json!({
-                "file_path": file_path.to_string_lossy(),
-                "offset": 1,
-                "limit": 200,
-            }))
-            .await
-            .expect("file_read should record an editable snapshot");
-
-        edit_tool
-            .call(json!({
-                "file_path": file_path.to_string_lossy(),
-                "old_string": "beta",
-                "new_string": "delta",
-            }))
-            .await
-            .expect("first edit should update the snapshot to the new revision");
-
-        edit_tool
-            .call(json!({
-                "file_path": file_path.to_string_lossy(),
-                "old_string": "gamma",
-                "new_string": "epsilon",
-            }))
-            .await
-            .expect("second edit should not require another file_read");
-
-        let updated = tokio::fs::read_to_string(&file_path).await.unwrap();
-        assert_eq!(updated, "alpha\ndelta\nepsilon\n");
-
-        crate::agents::executor::file_tool_state::clear_file_tool_state(&execution_id).await;
-        set_shell_config(original_shell_config).await;
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    }
+pub(super) fn is_context_length_error(err_msg: &str) -> bool {
+    let err_lower = err_msg.to_lowercase();
+    err_lower.contains("context length")
+        || err_lower.contains("context_length")
+        || err_lower.contains("maximum context")
+        || err_lower.contains("max context")
+        || err_lower.contains("prompt too long")
+        || err_lower.contains("prompt is too long")
+        || err_lower.contains("token limit")
+        || err_lower.contains("too many tokens")
+        || err_lower.contains("input is too large")
 }
+
+#[cfg(test)]
+#[path = "run_with_tools_support_tests.rs"]
+mod run_with_tools_support_tests;

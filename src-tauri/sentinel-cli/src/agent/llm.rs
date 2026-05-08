@@ -16,7 +16,6 @@ use crate::state::sentinel_state_dir;
 use anyhow::{Context, Result};
 use reqwest::Client;
 use sentinel_llm::{ChatMessage, LlmConfig, StreamingLlmClient};
-use sentinel_tools::buildin_tools::browser::close_browser_session;
 use sentinel_tools::buildin_tools::shell::{
     set_shell_config, ShellConfig, ShellDefaultPolicy, ShellExecutionMode,
 };
@@ -72,7 +71,6 @@ pub async fn solve_challenge_with_llm(
         .clone()
         .filter(|_| resumed)
         .unwrap_or_else(|| build_attempt_id(&code));
-    let browser_session_id = format!("browser-{}-{}", code, attempt_id);
     let attempt_deadline_at =
         ensure_attempt_deadline(&store, &mut run_state, resumed, max_challenge_duration_secs)
             .await?;
@@ -223,7 +221,7 @@ pub async fn solve_challenge_with_llm(
                     Some(&system_prompt),
                     &user_prompt,
                     &codex_like_history,
-                    None,
+                    &[],
                     dynamic_tools.clone(),
                     |_| true,
                 )
@@ -650,7 +648,6 @@ pub async fn solve_challenge_with_llm(
         }
     }
 
-    let _ = close_browser_session(&browser_session_id).await;
     clear_review_context(&llm.execution_id).await;
     solve_result
 }
@@ -757,10 +754,7 @@ fn shell_heavy_review_feedback(
 
     let shell_heavy = tool_window.trailing_shell >= 6
         || (tool_window.shell >= 12
-            && tool_window.browser
-                + tool_window.http_request
-                + tool_window.route_discovery
-                + tool_window.search_exploit
+            && tool_window.http_request + tool_window.route_discovery + tool_window.search_exploit
                 <= 4);
 
     if !shell_heavy {
@@ -772,7 +766,7 @@ fn shell_heavy_review_feedback(
     }
 
     Some(format!(
-        "Runner intervention: the last {} tool calls are shell-heavy (shell={}, trailing_shell={}) with no tenth_man_review. Before any more shell probing, call tenth_man_review to challenge the current path. After that, switch to a higher-leverage action: use browser/http_request for precise verification, use route_discovery for authenticated route enumeration, use search_exploit for product/CVE hypotheses, or install and run a specialized scanner through shell. Do not continue handcrafting repetitive curl/find/grep loops. Hint already used: {}.",
+        "Runner intervention: the last {} tool calls are shell-heavy (shell={}, trailing_shell={}) with no tenth_man_review. Before any more shell probing, call tenth_man_review to challenge the current path. After that, switch to a higher-leverage action: use http_request for precise verification, use route_discovery for authenticated route enumeration, use search_exploit for product/CVE hypotheses, or install and run a specialized scanner through shell. Do not continue handcrafting repetitive curl/find/grep loops. Hint already used: {}.",
         tool_window.total,
         tool_window.shell,
         tool_window.trailing_shell,

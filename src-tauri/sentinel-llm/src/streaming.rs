@@ -335,7 +335,7 @@ impl StreamingLlmClient {
         }
         if tool_count > 0 && !system_prompt_with_hack.contains("function.arguments") {
             system_prompt_with_hack.push_str(
-                "\n\nIMPORTANT: Every tool call must use function.arguments as a JSON object that matches the tool schema. Never send bare strings. For example, call shell with {\"command\":\"pwd\"} and interactive_shell with {\"command\":\"top\",\"session_policy\":\"reuse\"}.",
+                "\n\nIMPORTANT: Every tool call must use function.arguments as a JSON object that matches the tool schema. Never send bare strings. For shell, start commands with {\"command\":\"pwd\"}; continue returned sessions with {\"session_id\":\"...\",\"action\":\"poll\"}, {\"session_id\":\"...\",\"action\":\"write\",\"chars\":\"...\"}, {\"session_id\":\"...\",\"action\":\"key\",\"key\":\"ArrowDown\"}, or {\"session_id\":\"...\",\"action\":\"submit\"}. Use action=key for terminal navigation and action=submit for terminal prompt confirmation.",
             );
         }
         let preamble = &system_prompt_with_hack;
@@ -1625,7 +1625,7 @@ impl StreamingLlmClient {
 
     fn harden_tool_calling_preamble(preamble: &str) -> String {
         format!(
-            "{}\n\nCRITICAL TOOL-CALLING RULES: Never emit XML-like tags such as <tool_call>, <function>, or <parameter>. Use native tool calling only. Every tool call must use function.arguments as a strict JSON object matching the schema. Never emit raw strings, pseudo-XML, or malformed argument payloads. If calling shell, the arguments must look like {{\"command\":\"pwd\"}}. If you are not ready to produce a valid tool call, answer in plain text first and wait until you can emit valid JSON arguments.",
+            "{}\n\nCRITICAL TOOL-CALLING RULES: Never emit XML-like tags such as <tool_call>, <function>, or <parameter>. Use native tool calling only. Every tool call must use function.arguments as a strict JSON object matching the schema. Never emit raw strings, pseudo-XML, or malformed argument payloads. If calling shell, start commands with {{\"command\":\"pwd\"}}; continue returned sessions with {{\"session_id\":\"...\",\"action\":\"poll\"}}, {{\"session_id\":\"...\",\"action\":\"write\",\"chars\":\"...\"}}, {{\"session_id\":\"...\",\"action\":\"key\",\"key\":\"ArrowDown\"}}, or {{\"session_id\":\"...\",\"action\":\"submit\"}}. Use action=key for terminal navigation and action=submit for terminal prompt confirmation. If you are not ready to produce a valid tool call, answer in plain text first and wait until you can emit valid JSON arguments.",
             preamble
         )
     }

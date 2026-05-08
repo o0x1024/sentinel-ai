@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::info; // Removed warn
 
+use crate::agents::context_engineering::budget::ContextBudgetAnalyzer;
 use crate::agents::context_engineering::token_utils::estimate_tokens;
 use crate::agents::context_engineering::tool_digest::condense_text;
 use sentinel_db::Database;
@@ -34,6 +35,12 @@ pub struct SlidingWindowSummaryStats {
     pub global_summary_tokens: usize,
     pub segment_summary_tokens: usize,
     pub segment_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct SlidingWindowCompressionEventContext<'a> {
+    pub execution_id: &'a str,
+    pub generation: Option<u64>,
 }
 
 impl Default for SlidingWindowConfig {
@@ -70,7 +77,6 @@ pub struct SlidingWindowManager {
     total_processed_messages: i32,
 }
 
-const SAFE_CONTEXT_RATIO: f64 = 0.85;
 const SUMMARY_INPUT_MAX_CHARS: usize = 12_000;
 
 impl SlidingWindowManager {
@@ -222,7 +228,11 @@ impl SlidingWindowManager {
 
     /// Check and compress history if needed
     /// Returns true if compression occurred
-    pub async fn compress_if_needed(&mut self, llm_config: &LlmConfig) -> Result<bool> {
+    pub async fn compress_if_needed(
+        &mut self,
+        llm_config: &LlmConfig,
+        event_context: Option<SlidingWindowCompressionEventContext<'_>>,
+    ) -> Result<bool> {
         // Calculate tokens for all message components
         let recent_tokens: usize = self
             .recent_messages
@@ -239,17 +249,25 @@ impl SlidingWindowManager {
             })
             .sum();
 
-        // Align with builder safe limit ratio and reserve summary allocations
-        let history_ratio = SAFE_CONTEXT_RATIO
-            - self.config.global_summary_ratio
-            - self.config.segment_summary_ratio;
-        let threshold_tokens =
-            (self.config.max_context_tokens as f64 * history_ratio.max(0.3)) as usize;
+        let budget = ContextBudgetAnalyzer::new(self.config.max_context_tokens);
+        let threshold_tokens = budget.history_segment_threshold(
+            self.config.global_summary_ratio,
+            self.config.segment_summary_ratio,
+        );
 
         let should_segment = self.recent_messages.len() > self.config.recent_message_count
             || recent_tokens > threshold_tokens;
 
         if should_segment {
+            let reason = match (
+                self.recent_messages.len() > self.config.recent_message_count,
+                recent_tokens > threshold_tokens,
+            ) {
+                (true, true) => "message_count_and_token_threshold",
+                (true, false) => "message_count",
+                (false, true) => "token_threshold",
+                (false, false) => "unknown",
+            };
             info!(
                 "Triggering sliding window compression. Messages: {}, Tokens: {}/{}",
                 self.recent_messages.len(),
@@ -257,17 +275,106 @@ impl SlidingWindowManager {
                 threshold_tokens
             );
 
-            self.create_segment_summary(llm_config).await?;
+            self.emit_compression_event(
+                "agent:context_compression_started",
+                event_context.as_ref(),
+                json!({
+                    "status": "running",
+                    "reason": reason,
+                    "recent_tokens": recent_tokens,
+                    "threshold_tokens": threshold_tokens,
+                    "message_count": self.recent_messages.len(),
+                    "recent_message_count": self.config.recent_message_count,
+                }),
+            );
+
+            if let Err(error) = self.create_segment_summary(llm_config).await {
+                self.emit_compression_event(
+                    "agent:context_compression_finished",
+                    event_context.as_ref(),
+                    json!({
+                        "status": "failed",
+                        "reason": reason,
+                        "recent_tokens": recent_tokens,
+                        "threshold_tokens": threshold_tokens,
+                        "message_count": self.recent_messages.len(),
+                        "recent_message_count": self.config.recent_message_count,
+                        "error": error.to_string(),
+                    }),
+                );
+                return Err(error);
+            }
 
             // After creating a segment, check if we need to merge to global summary
+            let mut merged_global = false;
             if self.segments.len() > self.config.max_segment_summaries {
-                self.merge_to_global_summary(llm_config).await?;
+                if let Err(error) = self.merge_to_global_summary(llm_config).await {
+                    self.emit_compression_event(
+                        "agent:context_compression_finished",
+                        event_context.as_ref(),
+                        json!({
+                            "status": "failed",
+                            "reason": reason,
+                            "recent_tokens": recent_tokens,
+                            "threshold_tokens": threshold_tokens,
+                            "message_count": self.recent_messages.len(),
+                            "recent_message_count": self.config.recent_message_count,
+                            "error": error.to_string(),
+                        }),
+                    );
+                    return Err(error);
+                }
+                merged_global = true;
             }
+
+            let summary_stats = self.summary_stats();
+            self.emit_compression_event(
+                "agent:context_compression_finished",
+                event_context.as_ref(),
+                json!({
+                    "status": "completed",
+                    "reason": reason,
+                    "recent_tokens": recent_tokens,
+                    "threshold_tokens": threshold_tokens,
+                    "message_count": self.recent_messages.len(),
+                    "recent_message_count": self.config.recent_message_count,
+                    "summary_segment_count": summary_stats.segment_count,
+                    "summary_segment_tokens": summary_stats.segment_summary_tokens,
+                    "summary_global_tokens": summary_stats.global_summary_tokens,
+                    "merged_global": merged_global,
+                }),
+            );
 
             return Ok(true);
         }
 
         Ok(false)
+    }
+
+    fn emit_compression_event(
+        &self,
+        event_name: &str,
+        context: Option<&SlidingWindowCompressionEventContext<'_>>,
+        mut payload: Value,
+    ) {
+        let Some(context) = context else {
+            return;
+        };
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "conversation_id".to_string(),
+                Value::String(self.conversation_id.clone()),
+            );
+            object.insert(
+                "execution_id".to_string(),
+                Value::String(context.execution_id.to_string()),
+            );
+            object.insert(
+                "generation".to_string(),
+                context.generation.map(Value::from).unwrap_or(Value::Null),
+            );
+        }
+        let _ = self.app_handle.emit(event_name, &payload);
     }
 
     async fn create_segment_summary(&mut self, llm_config: &LlmConfig) -> Result<()> {
@@ -466,7 +573,7 @@ impl SlidingWindowManager {
         }
 
         let prompt = format!(
-            "Summarize the following conversation segment. Use only facts explicitly present in the messages; do not infer completion or success unless a tool result or assistant message states it. If uncertain, label as Unknown. Focus on task key facts, decisions, and tool results. For shell/interactive_shell, keep command, completion status, and only short output snippets; omit long logs. Preserve exact user-provided literals (URLs, file paths, host:port, identifiers, commands) and include them verbatim in a 'Key User Inputs' section.\n\n{}",
+            "Summarize the following conversation segment. Use only facts explicitly present in the messages; do not infer completion or success unless a tool result or assistant message states it. If uncertain, label as Unknown. Focus on task key facts, decisions, and tool results. For shell, keep command, completion status, and only short output snippets; omit long logs. Preserve exact user-provided literals (URLs, file paths, host:port, identifiers, commands) and include them verbatim in a 'Key User Inputs' section.\n\n{}",
             content
         );
 
@@ -565,7 +672,7 @@ fn condense_tool_output(raw: &str) -> Option<String> {
         ));
     }
 
-    // interactive_shell output
+    // PTY-backed shell session output
     if obj.contains_key("session_id") && obj.contains_key("output") && obj.contains_key("completed")
     {
         let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("");
@@ -580,7 +687,7 @@ fn condense_tool_output(raw: &str) -> Option<String> {
         let output = obj.get("output").and_then(|v| v.as_str()).unwrap_or("");
         let output_snip = trim_text(output, 10, 600);
         return Some(format!(
-            "interactive_shell: command=\"{}\" completed={} truncated={} output_snip=\"{}\"",
+            "shell_session: command=\"{}\" completed={} truncated={} output_snip=\"{}\"",
             command, completed, truncated, output_snip
         ));
     }

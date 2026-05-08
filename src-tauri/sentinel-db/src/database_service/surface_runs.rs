@@ -293,6 +293,91 @@ impl DatabaseService {
         }
     }
 
+    pub async fn list_latest_surface_observations_by_target(
+        &self,
+        program_id: Option<&str>,
+        source_plugin: Option<&str>,
+        artifact_type: Option<&str>,
+    ) -> Result<Vec<SurfaceObservationRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let sql = "SELECT id, run_id, program_id, artifact_type, object_key, payload_json, source_plugin, confidence_score, observed_at, normalized, metadata_json FROM (SELECT id, run_id, program_id, artifact_type, object_key, payload_json, source_plugin, confidence_score, observed_at, normalized, metadata_json, ROW_NUMBER() OVER (PARTITION BY program_id, source_plugin, artifact_type, object_key ORDER BY observed_at DESC, id DESC) AS rn FROM surface_observations WHERE 1=1";
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(sql);
+                if let Some(program_id) = program_id {
+                    query_builder
+                        .push(" AND program_id = ")
+                        .push_bind(program_id.to_string());
+                }
+                if let Some(source_plugin) = source_plugin {
+                    query_builder
+                        .push(" AND source_plugin = ")
+                        .push_bind(source_plugin.to_string());
+                }
+                if let Some(artifact_type) = artifact_type {
+                    query_builder
+                        .push(" AND artifact_type = ")
+                        .push_bind(artifact_type.to_string());
+                }
+                query_builder.push(") latest WHERE rn = 1 ORDER BY observed_at DESC, id DESC");
+                Ok(query_builder
+                    .build_query_as::<SurfaceObservationRow>()
+                    .fetch_all(pool)
+                    .await?)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder = QueryBuilder::<MySql>::new(sql);
+                if let Some(program_id) = program_id {
+                    query_builder
+                        .push(" AND program_id = ")
+                        .push_bind(program_id.to_string());
+                }
+                if let Some(source_plugin) = source_plugin {
+                    query_builder
+                        .push(" AND source_plugin = ")
+                        .push_bind(source_plugin.to_string());
+                }
+                if let Some(artifact_type) = artifact_type {
+                    query_builder
+                        .push(" AND artifact_type = ")
+                        .push_bind(artifact_type.to_string());
+                }
+                query_builder.push(") latest WHERE rn = 1 ORDER BY observed_at DESC, id DESC");
+                Ok(query_builder
+                    .build_query_as::<SurfaceObservationRow>()
+                    .fetch_all(pool)
+                    .await?)
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder = QueryBuilder::<Postgres>::new(sql);
+                if let Some(program_id) = program_id {
+                    query_builder
+                        .push(" AND program_id = ")
+                        .push_bind(program_id.to_string());
+                }
+                if let Some(source_plugin) = source_plugin {
+                    query_builder
+                        .push(" AND source_plugin = ")
+                        .push_bind(source_plugin.to_string());
+                }
+                if let Some(artifact_type) = artifact_type {
+                    query_builder
+                        .push(" AND artifact_type = ")
+                        .push_bind(artifact_type.to_string());
+                }
+                query_builder.push(") latest WHERE rn = 1 ORDER BY observed_at DESC, id DESC");
+                Ok(query_builder
+                    .build_query_as::<SurfaceObservationRow>()
+                    .fetch_all(pool)
+                    .await?)
+            }
+        }
+    }
+
     async fn list_surface_assets_for_run(
         &self,
         program_id: &str,

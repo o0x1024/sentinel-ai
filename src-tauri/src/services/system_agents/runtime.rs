@@ -1011,6 +1011,7 @@ impl SystemAgentRuntime {
             .await?;
         let params = AgentExecuteParams {
             execution_id: run_id.to_string(),
+            conversation_id: None,
             cancellation_generation: None,
             model: config.model.clone(),
             system_prompt,
@@ -1020,6 +1021,7 @@ impl SystemAgentRuntime {
             active_terminal_session_fingerprint: None,
             active_terminal_session_id: None,
             working_directory: None,
+            provider_config_key: config.provider.clone(),
             rig_provider: config
                 .rig_provider
                 .clone()
@@ -1036,6 +1038,7 @@ impl SystemAgentRuntime {
             referenced_traffic: None,
             persist_messages: false,
             subagent_run_id: None,
+            harness_run_id: None,
             context_policy: None,
             context_engine_mode: Some(crate::agents::ContextEngineMode::CodexLike),
             recursion_depth: 0,

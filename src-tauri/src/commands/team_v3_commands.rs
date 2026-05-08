@@ -1075,6 +1075,7 @@ pub(crate) async fn run_team_v3_execution_orchestrator(
         let wave_results = execute_team_wave_tasks(
             &app_handle,
             &session_id,
+            provider_config.provider.as_str(),
             rig_provider.as_str(),
             model.as_str(),
             provider_config.api_key.clone(),

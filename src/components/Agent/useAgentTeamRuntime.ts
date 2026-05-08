@@ -74,7 +74,7 @@ export const useAgentTeamRuntime = (params: {
   activateRightPanel: (panel: 'team') => void
   activeRightPanel: Ref<string | null>
   agentMessages: Ref<AgentMessage[]>
-  buildCurrentConversationBinding: () => AssistantConversationBinding
+  buildNewConversationBinding: () => AssistantConversationBinding
   buildToolPolicyFromUiConfig: (config: UiToolConfigPayload) => Record<string, unknown>
   clearLocalError: () => void
   conversationId: Ref<string | null>
@@ -724,7 +724,7 @@ export const useAgentTeamRuntime = (params: {
   const ensureConversationForTeamSession = async () =>
     ensureConversationForTeamSessionSupport({
       conversationId: params.conversationId.value,
-      conversationBinding: params.buildCurrentConversationBinding(),
+      conversationBinding: params.buildNewConversationBinding(),
       createConversation: async (request) => invoke<string>('create_ai_conversation', { request }),
       getConversationTitle: params.getNewConversationTitle,
       getDisplayTitle: params.getDisplayConversationTitle,

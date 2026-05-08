@@ -108,7 +108,7 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
                     "HTTP {} {} {} ({} bytes, truncated: {})",
                     status_code, status_text, url, body_len, truncated
                 )
-            } else if tool_name.contains("shell") || tool_name.contains("interactive_shell") {
+            } else if tool_name.contains("shell") {
                 let command = map
                     .get("command")
                     .and_then(|v| v.as_str())
@@ -517,9 +517,7 @@ fn build_tool_metadata(tool_name: &str, map: &serde_json::Map<String, Value>) ->
             }))
         }
         _ if tool_name.contains("http") => build_http_metadata(map),
-        _ if tool_name.contains("shell") || tool_name.contains("interactive_shell") => {
-            build_shell_metadata(map)
-        }
+        _ if tool_name.contains("shell") => build_shell_metadata(map),
         _ => None,
     }
 }

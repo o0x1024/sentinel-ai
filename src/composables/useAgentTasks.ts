@@ -14,6 +14,7 @@ export interface AgentTaskStats {
 export interface UseAgentTasksReturn {
   tasks: ComputedRef<AgentTask[]>
   tasksByExecutionId: ComputedRef<Record<string, AgentTask[]>>
+  conversationIdByExecutionId: ComputedRef<Record<string, string>>
   executionIds: ComputedRef<string[]>
   lastExecutionId: ComputedRef<string | undefined>
   rootTasks: ComputedRef<AgentTask[]>
@@ -24,10 +25,11 @@ export interface UseAgentTasksReturn {
   isTaskPanelActive: Ref<boolean>
   currentTask: ComputedRef<AgentTask | undefined>
   getTasksForExecution: (executionId: string) => AgentTask[]
+  getConversationIdForExecution: (executionId: string) => string | undefined
   getChildren: (parentId: string) => AgentTask[]
   clearTasks: () => void
   clearTasksForExecution: (executionId: string) => void
-  setTasksForExecution: (executionId: string, tasks: AgentTask[]) => void
+  setTasksForExecution: (executionId: string, tasks: AgentTask[], conversationId?: string | null) => void
   open: () => void
   close: () => void
   toggle: () => void
@@ -75,6 +77,7 @@ export function useAgentTasks(executionId?: Ref<string> | string): UseAgentTasks
   return {
     tasks,
     tasksByExecutionId,
+    conversationIdByExecutionId: taskRuntime.conversationIdByExecutionId,
     executionIds: taskRuntime.executionIds,
     lastExecutionId: taskRuntime.lastExecutionId,
     rootTasks,
@@ -87,15 +90,17 @@ export function useAgentTasks(executionId?: Ref<string> | string): UseAgentTasks
     getTasksForExecution: (targetExecutionId: string) => (
       mapTaskRuntimeItemsToAgentTasks(taskRuntime.getTasksForExecution(targetExecutionId), targetExecutionId)
     ),
+    getConversationIdForExecution: taskRuntime.getConversationIdForExecution,
     getChildren: (parentId: string) => (
       mapTaskRuntimeItemsToAgentTasks(taskRuntime.getChildren(parentId), taskRuntime.lastExecutionId.value)
     ),
     clearTasks: taskRuntime.clearTasks,
     clearTasksForExecution: taskRuntime.clearTasksForExecution,
-    setTasksForExecution: (targetExecutionId: string, nextTasks: AgentTask[]) => {
+    setTasksForExecution: (targetExecutionId: string, nextTasks: AgentTask[], conversationId?: string | null) => {
       taskRuntime.setTasksForExecution(
         targetExecutionId,
         nextTasks.map((task) => mapAgentTaskToRuntimeTask(task)),
+        conversationId,
       )
     },
     open: taskRuntime.open,

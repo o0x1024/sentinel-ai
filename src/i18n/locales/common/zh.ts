@@ -38,6 +38,7 @@ export default {
   close: '关闭',
   clear: '清空',
   expand: '展开',
+  collapse: '收起',
   edit: '编辑',
   export: '导出',
   duplicate: '复制',

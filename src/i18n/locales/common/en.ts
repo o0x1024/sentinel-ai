@@ -14,6 +14,7 @@ export default {
   close: 'Close',
   clear: 'Clear',
   expand: 'Expand',
+  collapse: 'Collapse',
   enabled: 'Enabled',
   disabled: 'Disabled',
   minimize: 'Minimize',

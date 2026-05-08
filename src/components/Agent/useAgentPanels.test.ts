@@ -16,6 +16,7 @@ const createPanelController = () => {
     agentError: computed(() => null),
     clearTasksForExecution: () => {},
     conversationId: ref('conversation-1'),
+    getConversationIdForExecution: () => undefined,
     getTasksForExecution: () => [],
     isTeamWorkspaceActive,
     isTaskPanelActive: computed(() => isTaskPanelActive.value),
@@ -102,6 +103,7 @@ describe('useAgentPanels', () => {
         cleared.push(executionId)
       },
       conversationId: ref('conversation-1'),
+      getConversationIdForExecution: () => undefined,
       getTasksForExecution: () => [],
       isTeamWorkspaceActive: ref(false),
       isTaskPanelActive: computed(() => false),
@@ -140,5 +142,48 @@ describe('useAgentPanels', () => {
     ])
     expect(applied['conversation-1']).toEqual(remainingByExecution['conversation-1'])
     expect(cleared).toEqual(['parallel-1'])
+  })
+
+  it('shows execution task buckets that belong to the current conversation', () => {
+    const controller = useAgentPanels({
+      activeTeamSessionId: ref(null),
+      agentError: computed(() => null),
+      clearTasksForExecution: () => {},
+      conversationId: ref('conversation-1'),
+      getConversationIdForExecution: (executionId) => (
+        executionId === 'execution-1' ? 'conversation-1' : undefined
+      ),
+      getTasksForExecution: () => [],
+      isTeamWorkspaceActive: ref(false),
+      isTaskPanelActive: computed(() => false),
+      localError: ref(null),
+      parseTeamTaskExecutionId: () => null,
+      parallelTaskSources: computed(() => []),
+      propsShowTasks: true,
+      pruneTasksForExecutionAfter: async () => [],
+      resetAgentError: () => {},
+      resolveAgentName: () => 'Agent',
+      selectedTeamTaskAssigneeId: computed(() => null),
+      setTasksForExecution: () => {},
+      teamWorkspaceAvailable: computed(() => false),
+      terminalClose: () => {},
+      terminalHasHistory: computed(() => false),
+      terminalIsActive: computed(() => false),
+      terminalOpen: () => {},
+      tasksByExecutionId: computed(() => ({
+        'execution-1': [
+          { id: 'execution-1_0', title: 'mapped task', status: 'pending', created_at: 100, updated_at: 100 },
+        ],
+        'other-execution': [
+          { id: 'other_0', title: 'other task', status: 'pending', created_at: 200, updated_at: 200 },
+        ],
+      })),
+      taskExecutionIds: computed(() => ['execution-1', 'other-execution']),
+      tasksClose: () => {},
+      tasksOpen: () => {},
+    })
+
+    expect(controller.tasks.value.map((task) => task.title)).toEqual(['mapped task'])
+    expect(controller.taskBadgeCount.value).toBe(1)
   })
 })

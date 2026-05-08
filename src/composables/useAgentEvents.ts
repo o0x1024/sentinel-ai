@@ -1,20 +1,11 @@
-/**
- * Agent 事件监听 Composable
- * 监听后端 Agent 执行事件
- */
-
 import { ref, onMounted, onUnmounted, computed, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage, MessageType } from '@/types/agent'
 import { useAgentTasks } from '@/composables/useAgentTasks'
-import { buildTerminalSessionFingerprint, useTerminal } from '@/composables/useTerminal'
-import {
-  buildToolsActivatedMessage,
-  buildToolsPreview,
-} from '@/utils/agentToolActivation'
+import { useTerminal } from '@/composables/useTerminal'
+import { buildToolsActivatedMessage, buildToolsPreview } from '@/utils/agentToolActivation'
 import { applyFileVerificationStatuses } from '@/components/Agent/fileVerificationSupport'
-import { buildAgentSessionStats } from '@/components/Agent/agentSessionStatsSupport'
 import {
   appendParallelChunk,
   applyParallelSessionStats,
@@ -28,6 +19,10 @@ import type { AgentTasksUpdatePayload } from '@/types/taskRuntime'
 import type {
   AgentChunkEvent,
   AgentCompletionGuardFailedEvent,
+  AgentContextCompactionRequestedEvent,
+  AgentContextCompressionFinishedEvent,
+  AgentContextCompressionStartedEvent,
+  AgentContextPressureEvent,
   AgentExecutionFinishedEvent,
   AgentGlobalSummaryUpdatedEvent,
   AgentIterationEvent,
@@ -43,6 +38,7 @@ import type {
   AgentToolsActivatedEvent,
   AgentToolsSelectedEvent,
   ContextUsageInfo,
+  ContextCompressionInfo,
   MemoryRetrievalInfo,
   OrderedMessageChunk,
   RagMetaInfo,
@@ -53,6 +49,22 @@ import type {
   UseAgentEventsOptions,
   UseAgentEventsReturn,
 } from '@/composables/useAgentEventTypes'
+import {
+  buildContextUsageSkeleton as buildContextUsageSkeletonFromMax,
+  createAgentEventTargetMatcher,
+  deriveInteractiveShellFingerprint,
+  hasMeaningfulShellResult,
+  handleAgentExecutionFinished,
+  inferToolSuccess,
+  insertMessageBeforeFollowingFinal,
+  isShellContinuation,
+  mapMemoryRetrieval,
+  normalizeTrackedArtifacts,
+  readGeneration,
+  resolveDefaultMaxContextTokens as resolveDefaultMaxContextTokensFromOption,
+  pushShellFallbackNotice,
+  tryParseJsonObject,
+} from '@/composables/agentEventSupport'
 
 /**
  * Agent 事件监听
@@ -60,7 +72,7 @@ import type {
  */
 export function useAgentEvents(
   executionId?: Ref<string> | string,
-  options?: UseAgentEventsOptions,
+  options?: UseAgentEventsOptions
 ): UseAgentEventsReturn {
   const messages = ref<AgentMessage[]>([])
   const isExecuting = ref(false)
@@ -71,23 +83,29 @@ export function useAgentEvents(
   const ragMetaInfo = ref<RagMetaInfo | null>(null)
   const subagents = ref<SubagentItem[]>([])
   const contextUsage = ref<ContextUsageInfo | null>(null)
+  const contextCompression = ref<ContextCompressionInfo | null>(null)
   const suppressedExecutionId = ref<string | null>(null)
   const settledExecutionId = ref<string | null>(null)
   const currentGeneration = ref<number | null>(null)
   const executionStartedAt = ref<number | null>(null)
   const latestUsage = ref<{ inputTokens: number; outputTokens: number } | null>(null)
 
-  // Thinking content buffer for incremental display
   const thinkingBuffer = ref('')
   const currentThinkingMessageId = ref<string | null>(null)
 
-  // Assistant streaming message (so message order reflects arrival order)
   const currentAssistantMessageId = ref<string | null>(null)
-  // Current assistant segment buffer (reset on tool-call boundaries)
   const assistantSegmentBuffer = ref('')
 
-  // 工具调用追踪 Map: tool_call_id -> { tool_name, arguments, message_id, message_index }
-  const toolCallTracker = new Map<string, { tool_name: string; arguments: any; message_id: string; message_index: number }>()
+  const toolCallTracker = new Map<
+    string,
+    {
+      tool_name: string
+      arguments: any
+      message_id: string
+      message_index: number
+      silent?: boolean
+    }
+  >()
   const parallelAgentChunkExecutions = new Set<string>()
   const {
     clearParallelRuns,
@@ -99,7 +117,7 @@ export function useAgentEvents(
     upsertParallelRunMessage,
   } = useAgentParallelRunState({
     isExecuting,
-    markExecutionSettled: (id) => markExecutionSettled(id),
+    markExecutionSettled: id => markExecutionSettled(id),
     messages,
     streamingContent,
   })
@@ -109,7 +127,6 @@ export function useAgentEvents(
     schedulePersistParallelModelEvents(child.run, child.item)
   }
 
-  // Pending document attachments to inject into next user message
   const pendingDocumentAttachments = ref<any[]>([])
 
   const unlisteners: UnlistenFn[] = []
@@ -123,95 +140,20 @@ export function useAgentEvents(
   }
 
   const resolveDefaultMaxContextTokens = () => {
-    const raw = options?.defaultMaxContextTokens
-    if (typeof raw === 'number') {
-      return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 128000
-    }
-    if (raw && typeof raw === 'object' && 'value' in raw) {
-      const value = Number(raw.value)
-      return Number.isFinite(value) && value > 0 ? Math.floor(value) : 128000
-    }
-    return 128000
+    return resolveDefaultMaxContextTokensFromOption(options?.defaultMaxContextTokens)
   }
 
-  const buildContextUsageSkeleton = (): ContextUsageInfo => ({
-    usedTokens: 0,
-    maxTokens: resolveDefaultMaxContextTokens(),
-    usagePercentage: 0,
-    systemPromptTokens: 0,
-    historyTokens: 0,
-    historyCount: 0,
-    summaryTokens: 0,
-    summaryGlobalTokens: 0,
-    summarySegmentTokens: 0,
-    summarySegmentCount: 0,
-    memoryRetrieval: null,
-  })
+  const buildContextUsageSkeleton = (): ContextUsageInfo =>
+    buildContextUsageSkeletonFromMax(resolveDefaultMaxContextTokens())
 
-  const mapMemoryRetrieval = (raw: any): MemoryRetrievalInfo | null => {
-    if (!raw || typeof raw !== 'object') return null
-    return {
-      queryPreview: typeof raw.query_preview === 'string' ? raw.query_preview : '',
-      requestedTopK: Number(raw.requested_top_k ?? 0) || 0,
-      hitCount: Number(raw.hit_count ?? 0) || 0,
-      usedCanonicalFallback: raw.used_canonical_fallback === true,
-      includeReflection: raw.include_reflection === true,
-      sourceBreakdown: Array.isArray(raw.source_breakdown) ? raw.source_breakdown : [],
-      kindBreakdown: Array.isArray(raw.kind_breakdown) ? raw.kind_breakdown : [],
-    }
-  }
-
-  const hasExplicitTarget = executionId !== undefined
-
-  const getTargetId = (): string | undefined => {
-    if (!hasExplicitTarget) return undefined
-    const raw = typeof executionId === 'string' ? executionId : executionId.value
-    return typeof raw === 'string' && raw.trim().length > 0 ? raw : undefined
-  }
-
-  const readGeneration = (payload?: any): number | null => {
-    const raw = payload?.generation ?? payload?.structured_data?.generation
-    const value = Number(raw)
-    return Number.isFinite(value) && value > 0 ? value : null
-  }
-
-  const matchesTarget = (eventExecId: string, payload?: any): boolean => {
-    const targetId = getTargetId()
-    // If caller provided an explicit target but it's currently empty (e.g. session switching),
-    // reject all events to avoid cross-session message bleed.
-    if (hasExplicitTarget && !targetId) return false
-    if (suppressedExecutionId.value && eventExecId === suppressedExecutionId.value) {
-      return false
-    }
-    if (targetId && eventExecId !== targetId) return false
-    const generation = readGeneration(payload)
-    if (generation !== null) {
-      if (currentGeneration.value !== null && currentGeneration.value !== generation) {
-        if (generation < currentGeneration.value) {
-          return false
-        }
-        if (isExecuting.value && currentExecutionId.value === eventExecId) {
-          return false
-        }
-      }
-      currentGeneration.value = generation
-      return true
-    }
-    if (targetId && currentGeneration.value !== null && eventExecId === targetId) {
-      return false
-    }
-    return true
-  }
-
-  const isSuppressedExecution = (eventExecId: string): boolean => {
-    return !!suppressedExecutionId.value && suppressedExecutionId.value === eventExecId
-  }
-
-  const releaseSuppressedExecution = (eventExecId: string): void => {
-    if (!isSuppressedExecution(eventExecId)) return
-    console.log('[useAgentEvents] Releasing suppressed execution:', eventExecId)
-    suppressedExecutionId.value = null
-  }
+  const { getTargetId, isSuppressedExecution, matchesTarget, releaseSuppressedExecution } =
+    createAgentEventTargetMatcher({
+      currentExecutionId,
+      currentGeneration,
+      executionId,
+      isExecuting,
+      suppressedExecutionId,
+    })
 
   const matchesSubagentParent = (parentExecutionId: string): boolean => {
     if (isSuppressedExecution(parentExecutionId)) return false
@@ -226,105 +168,6 @@ export function useAgentEvents(
     }
   }
 
-  const deriveInteractiveShellFingerprint = (
-    parsedResult: any,
-    toolArgs?: any,
-  ): string | undefined => {
-    const explicit = typeof parsedResult?.session_fingerprint === 'string'
-      ? parsedResult.session_fingerprint.trim()
-      : ''
-    if (explicit) {
-      return explicit
-    }
-
-    const executionMode = parsedResult?.execution_mode ?? toolArgs?.execution_mode ?? 'docker'
-    const dockerImage = parsedResult?.docker_image ?? toolArgs?.docker_image ?? 'sentinel-sandbox:latest'
-    const shell = parsedResult?.shell ?? toolArgs?.shell ?? 'bash'
-    const workingDirectory = parsedResult?.working_dir ?? toolArgs?.working_dir ?? ''
-    if (
-      typeof executionMode !== 'string'
-      || typeof dockerImage !== 'string'
-      || typeof shell !== 'string'
-      || typeof workingDirectory !== 'string'
-    ) {
-      return undefined
-    }
-
-    return buildTerminalSessionFingerprint(
-      executionMode === 'host' ? 'host' : 'docker',
-      dockerImage,
-      shell,
-      workingDirectory,
-    )
-  }
-
-  const inferToolSuccess = (raw: any): boolean => {
-    const isStructuredHttpResponse = (value: Record<string, any>): boolean => {
-      return typeof value.status_code === 'number'
-        && typeof value.headers === 'object'
-        && value.headers !== null
-        && (
-          typeof value.url === 'string'
-          || typeof value.status_text === 'string'
-        )
-    }
-
-    const visit = (value: any): boolean => {
-      if (value == null) return true
-      if (typeof value === 'boolean') return value
-      if (typeof value === 'number') return value === 0
-      if (typeof value === 'string') {
-        const trimmed = value.trim()
-        if (!trimmed) return true
-        const lower = trimmed.toLowerCase()
-        if (lower.startsWith('error:') || lower.startsWith('failed:')) return false
-        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-          try {
-            return visit(JSON.parse(trimmed))
-          } catch {
-            return !lower.includes(' no such file or directory')
-          }
-        }
-        return !lower.includes(' no such file or directory')
-      }
-      if (Array.isArray(value)) return value.every(item => visit(item))
-      if (typeof value === 'object') {
-        if (typeof value.success === 'boolean') return value.success
-        if (typeof value.ok === 'boolean') return value.ok
-        if (typeof value.completed === 'boolean' && value.completed === false) return false
-        if (typeof value.exit_code === 'number') return value.exit_code === 0
-        if (typeof value.code === 'number') return value.code === 0
-        if (typeof value.error === 'string' && value.error.trim()) return false
-        if (isStructuredHttpResponse(value)) return true
-        return Object.values(value).every(item => visit(item))
-      }
-      return true
-    }
-
-    return visit(raw)
-  }
-
-  const tryParseJsonObject = (raw: unknown): Record<string, any> | null => {
-    if (!raw) return null
-    if (typeof raw === 'object' && !Array.isArray(raw)) {
-      return raw as Record<string, any>
-    }
-    if (typeof raw !== 'string') return null
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, any>
-      }
-      return null
-    } catch {
-      return null
-    }
-  }
-
-  const normalizeTrackedArtifacts = (raw: unknown): any[] | undefined => {
-    return Array.isArray(raw) ? raw : undefined
-  }
-
   const resetExecutionBuffers = (): void => {
     isExecuting.value = false
     streamingContent.value = ''
@@ -333,9 +176,13 @@ export function useAgentEvents(
     currentAssistantMessageId.value = null
     assistantSegmentBuffer.value = ''
     contentBuffer.value = ''
+    contextCompression.value = null
   }
 
   const markExecutionActive = (executionId: string): void => {
+    if (currentExecutionId.value && currentExecutionId.value !== executionId) {
+      contextCompression.value = null
+    }
     settledExecutionId.value = null
     isExecuting.value = true
     currentExecutionId.value = executionId
@@ -345,120 +192,12 @@ export function useAgentEvents(
     settledExecutionId.value = executionId
   }
 
-  const isSettledActivityEvent = (executionId: string): boolean => (
+  const isSettledActivityEvent = (executionId: string): boolean =>
     settledExecutionId.value === executionId
-  )
 
   const startExecutionTiming = (): void => {
     executionStartedAt.value = Date.now()
     latestUsage.value = null
-  }
-
-  const attachSessionStatsToLatestAssistant = (executionId: string): void => {
-    const stats = buildAgentSessionStats({
-      startedAt: executionStartedAt.value,
-      endedAt: Date.now(),
-      inputTokens: latestUsage.value?.inputTokens,
-      outputTokens: latestUsage.value?.outputTokens,
-    })
-    if (!stats) return
-
-    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
-      const message = messages.value[i]
-      if (message.type !== 'final') continue
-      if (message.metadata?.execution_id !== executionId) continue
-      message.metadata = {
-        ...(message.metadata || {}),
-        session_stats: stats,
-      }
-      return
-    }
-  }
-
-  const handleExecutionFinished = (payload: AgentExecutionFinishedEvent): void => {
-    if (!matchesTarget(payload.execution_id, payload)) return
-
-    if (
-      payload.outcome === 'cancelled'
-      && isExecuting.value
-      && currentExecutionId.value === payload.execution_id
-    ) {
-      console.log('[useAgentEvents] Ignoring stale cancelled event for active execution:', payload.execution_id)
-      return
-    }
-
-    resetExecutionBuffers()
-    markExecutionSettled(payload.execution_id)
-
-    if (payload.outcome === 'failed') {
-      const err = payload.error || 'Agent execution failed'
-      error.value = err
-      messages.value.push({
-        id: crypto.randomUUID(),
-        type: 'error',
-        content: err,
-        timestamp: Date.now(),
-      })
-      return
-    }
-
-    error.value = null
-
-    if (payload.outcome === 'succeeded') {
-      attachSessionStatsToLatestAssistant(payload.execution_id)
-      if (ragMetaInfo.value) {
-        const lastAssistant = [...messages.value].reverse().find(m => m.type === 'final')
-        if (lastAssistant) {
-          lastAssistant.metadata = { ...(lastAssistant.metadata || {}), rag_info: ragMetaInfo.value }
-        }
-      }
-      return
-    }
-
-    console.log('[useAgentEvents] Execution cancelled:', payload.execution_id)
-  }
-
-  const buildShellFallbackNotice = (resultRaw: unknown): string | null => {
-    const parsed = tryParseJsonObject(resultRaw)
-    if (!parsed) return null
-    const fallbackFrom = String(parsed.fallback_from || '').trim().toLowerCase()
-    const executionMode = String(parsed.execution_mode || '').trim().toLowerCase()
-    if (fallbackFrom !== 'docker' || executionMode !== 'host') return null
-    const reason = String(parsed.fallback_reason || '').trim()
-    if (reason) {
-      return `系统提示: shell 工具在 Docker 中执行失败，已自动回退到宿主机。原因: ${reason}`
-    }
-    return '系统提示: shell 工具在 Docker 中执行失败，已自动回退到宿主机。'
-  }
-
-  const pushShellFallbackNotice = (
-    toolName: string | undefined,
-    resultRaw: unknown,
-    executionIdForMsg: string,
-    toolCallId?: string,
-  ) => {
-    if ((toolName || '').toLowerCase() !== 'shell') return
-    const notice = buildShellFallbackNotice(resultRaw)
-    if (!notice) return
-    const normalizedToolCallId = String(toolCallId || '').trim()
-    if (normalizedToolCallId) {
-      const existed = messages.value.some((item) => {
-        if (item.metadata?.kind !== 'shell_fallback_notice') return false
-        return String(item.metadata?.tool_call_id || '').trim() === normalizedToolCallId
-      })
-      if (existed) return
-    }
-    messages.value.push({
-      id: crypto.randomUUID(),
-      type: 'system',
-      content: notice,
-      timestamp: Date.now(),
-      metadata: {
-        kind: 'shell_fallback_notice',
-        execution_id: executionIdForMsg,
-        tool_call_id: normalizedToolCallId || undefined,
-      },
-    })
   }
 
   const hasMessages = computed(() => messages.value.length > 0)
@@ -478,6 +217,7 @@ export function useAgentEvents(
     ragMetaInfo.value = null
     subagents.value = []
     contextUsage.value = null
+    contextCompression.value = null
     suppressedExecutionId.value = null
     settledExecutionId.value = null
     currentGeneration.value = null
@@ -492,13 +232,17 @@ export function useAgentEvents(
 
   // 停止执行：清空流式内容并更新状态
   const stopExecution = () => {
-    console.log('[useAgentEvents] Stopping execution, current execution_id:', currentExecutionId.value)
+    console.log(
+      '[useAgentEvents] Stopping execution, current execution_id:',
+      currentExecutionId.value
+    )
     const executionToSuppress = currentExecutionId.value || getTargetId() || null
     const targetId = getTargetId()
     const activeParallelRun = targetId
-      ? Array.from(parallelRuns.values()).find((run) =>
-          run.parentConversationId === targetId &&
-          run.items.some((item) => item.status === 'pending' || item.status === 'running'),
+      ? Array.from(parallelRuns.values()).find(
+          run =>
+            run.parentConversationId === targetId &&
+            run.items.some(item => item.status === 'pending' || item.status === 'running')
         )
       : null
     if (activeParallelRun) {
@@ -507,7 +251,7 @@ export function useAgentEvents(
           parallel_run_id: activeParallelRun.id,
           parent_execution_id: activeParallelRun.parentConversationId,
         },
-      }).catch((cancelError) => {
+      }).catch(cancelError => {
         console.warn('[useAgentEvents] Failed to cancel parallel run:', cancelError)
       })
     }
@@ -523,13 +267,14 @@ export function useAgentEvents(
     assistantSegmentBuffer.value = ''
     executionStartedAt.value = null
     latestUsage.value = null
+    contextCompression.value = null
 
     // 如果有正在流式输出的内容，将其作为最终消息添加
     // 注意：后端取消后可能不会发送 complete 事件，所以这里处理残留内容
   }
 
   const startListening = async () => {
-    const unlistenParallelRunStarted = await listen<any>('agent:parallel_run_started', (event) => {
+    const unlistenParallelRunStarted = await listen<any>('agent:parallel_run_started', event => {
       const run = rememberParallelRun(event.payload)
       if (!matchesTarget(run.parentConversationId)) return
       markExecutionActive(run.parentConversationId)
@@ -538,7 +283,7 @@ export function useAgentEvents(
     })
     unlisteners.push(unlistenParallelRunStarted)
 
-    const unlistenParallelRunUpdated = await listen<any>('agent:parallel_run_updated', (event) => {
+    const unlistenParallelRunUpdated = await listen<any>('agent:parallel_run_updated', event => {
       const run = rememberParallelRun(event.payload)
       if (!matchesTarget(run.parentConversationId)) return
       upsertParallelRunMessage(run)
@@ -549,6 +294,7 @@ export function useAgentEvents(
     // 监听用户消息事件（从后端保存后推送）
     const unlistenUserMessage = await listen<{
       execution_id: string
+      conversation_id?: string
       message_id: string
       content: string
       timestamp: number
@@ -558,7 +304,7 @@ export function useAgentEvents(
       referenced_messages?: any[]
       referenced_assets?: any[]
       referenced_traffic?: any[]
-    }>('agent:user_message', (event) => {
+    }>('agent:user_message', event => {
       const payload = event.payload
       releaseSuppressedExecution(payload.execution_id)
       if (!matchesTarget(payload.execution_id, payload)) return
@@ -572,13 +318,20 @@ export function useAgentEvents(
       currentThinkingMessageId.value = null
       currentAssistantMessageId.value = null
       assistantSegmentBuffer.value = ''
+      if (
+        contextCompression.value &&
+        (contextCompression.value.executionId !== payload.execution_id ||
+          contextCompression.value.generation !== readGeneration(payload))
+      ) {
+        contextCompression.value = null
+      }
 
       // 添加用户消息，注入待处理的文档附件和图片附件
-      const docAttachments = payload.document_attachments || (
-        pendingDocumentAttachments.value.length > 0 
-          ? [...pendingDocumentAttachments.value] 
-          : undefined
-      )
+      const docAttachments =
+        payload.document_attachments ||
+        (pendingDocumentAttachments.value.length > 0
+          ? [...pendingDocumentAttachments.value]
+          : undefined)
       const imgAttachments = payload.image_attachments
       const referencedFiles = payload.referenced_files
       const referencedMessages = payload.referenced_messages
@@ -588,7 +341,7 @@ export function useAgentEvents(
       if (shouldSuppressUserMessages()) {
         return
       }
-      
+
       // Build metadata
       const metadata: any = {}
       if (docAttachments) {
@@ -640,7 +393,7 @@ export function useAgentEvents(
         target.metadata = Object.keys(metadata).length > 0 ? metadata : undefined
         return
       }
-      
+
       messages.value.push({
         id: payload.message_id,
         type: 'user',
@@ -651,14 +404,14 @@ export function useAgentEvents(
     })
     unlisteners.push(unlistenUserMessage)
 
-    const unlistenTasks = await listen<AgentTasksUpdatePayload>('agent-tasks-update', (event) => {
+    const unlistenTasks = await listen<AgentTasksUpdatePayload>('agent-tasks-update', event => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id, payload)) return
     })
     unlisteners.push(unlistenTasks)
 
     // 监听 agent:start 事件（兼容旧版）
-    const unlistenStart = await listen<AgentStartEvent>('agent:start', (event) => {
+    const unlistenStart = await listen<AgentStartEvent>('agent:start', event => {
       const payload = event.payload
       releaseSuppressedExecution(payload.execution_id)
       if (!matchesTarget(payload.execution_id, payload)) return
@@ -672,21 +425,29 @@ export function useAgentEvents(
       currentThinkingMessageId.value = null
       currentAssistantMessageId.value = null
       assistantSegmentBuffer.value = ''
+      if (
+        contextCompression.value &&
+        (contextCompression.value.executionId !== payload.execution_id ||
+          contextCompression.value.generation !== readGeneration(payload))
+      ) {
+        contextCompression.value = null
+      }
       if (shouldSuppressUserMessages()) {
         return
       }
 
       // 添加用户任务消息（如果没有通过 user_message 事件收到）
-      const hasUserMessage = messages.value.some(m =>
-        m.type === 'user' && m.content === payload.task
+      const hasUserMessage = messages.value.some(
+        m => m.type === 'user' && m.content === payload.task
       )
       if (!hasUserMessage) {
         // 注入待处理的文档附件
-        const docAttachments = pendingDocumentAttachments.value.length > 0 
-          ? [...pendingDocumentAttachments.value] 
-          : undefined
+        const docAttachments =
+          pendingDocumentAttachments.value.length > 0
+            ? [...pendingDocumentAttachments.value]
+            : undefined
         pendingDocumentAttachments.value = [] // Clear after use
-        
+
         messages.value.push({
           id: crypto.randomUUID(),
           type: 'user',
@@ -713,6 +474,13 @@ export function useAgentEvents(
       summary_global_tokens?: number
       summary_segment_tokens?: number
       summary_segment_count?: number
+      effective_context_tokens?: number
+      remaining_tokens?: number
+      context_pressure?: string
+      warning_threshold_tokens?: number
+      auto_compact_threshold_tokens?: number
+      blocking_threshold_tokens?: number
+      output_reserve_tokens?: number
       sentinel_mode?: boolean
       sentinel_active_intent?: {
         intent_id?: string
@@ -727,7 +495,7 @@ export function useAgentEvents(
         source?: string
         compression_aggressiveness?: string
       } | null
-    }>('agent:context_usage', (event) => {
+    }>('agent:context_usage', event => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id, payload)) return
 
@@ -735,6 +503,17 @@ export function useAgentEvents(
         usedTokens: payload.used_tokens,
         maxTokens: payload.max_tokens,
         usagePercentage: payload.usage_percentage,
+        effectiveContextTokens: payload.effective_context_tokens,
+        remainingTokens: payload.remaining_tokens,
+        contextPressure: payload.context_pressure || null,
+        warningThresholdTokens: payload.warning_threshold_tokens,
+        autoCompactThresholdTokens: payload.auto_compact_threshold_tokens,
+        blockingThresholdTokens: payload.blocking_threshold_tokens,
+        outputReserveTokens: payload.output_reserve_tokens,
+        shouldCompact:
+          payload.context_pressure === 'AutoCompact' || payload.context_pressure === 'Blocking',
+        shouldBlock: payload.context_pressure === 'Blocking',
+        pressurePhase: 'context_build',
         systemPromptTokens: payload.system_prompt_tokens,
         historyTokens: payload.history_tokens,
         historyCount: payload.history_count,
@@ -756,6 +535,78 @@ export function useAgentEvents(
     })
     unlisteners.push(unlistenContextUsage)
 
+    const unlistenContextPressure = await listen<AgentContextPressureEvent>(
+      'agent:context_pressure',
+      event => {
+        const payload = event.payload
+        if (!matchesTarget(payload.execution_id, payload)) return
+
+        const maxTokens = Number(
+          payload.max_context_tokens ??
+            contextUsage.value?.maxTokens ??
+            resolveDefaultMaxContextTokens()
+        )
+        const usedTokens = Number(payload.used_tokens ?? 0) || 0
+        const remainingTokens =
+          Number(payload.remaining_tokens ?? Math.max(0, maxTokens - usedTokens)) || 0
+        const usagePercentage = Number.isFinite(Number(payload.usage_percentage))
+          ? Number(payload.usage_percentage)
+          : maxTokens > 0
+            ? Math.min(100, (usedTokens / maxTokens) * 100)
+            : 0
+        const next = contextUsage.value ? { ...contextUsage.value } : buildContextUsageSkeleton()
+        contextUsage.value = {
+          ...next,
+          usedTokens,
+          maxTokens,
+          usagePercentage,
+          effectiveContextTokens: payload.effective_context_tokens ?? next.effectiveContextTokens,
+          remainingTokens,
+          contextPressure: payload.context_pressure || next.contextPressure || null,
+          warningThresholdTokens: payload.warning_threshold_tokens ?? next.warningThresholdTokens,
+          autoCompactThresholdTokens:
+            payload.auto_compact_threshold_tokens ?? next.autoCompactThresholdTokens,
+          blockingThresholdTokens:
+            payload.blocking_threshold_tokens ?? next.blockingThresholdTokens,
+          outputReserveTokens: payload.output_reserve_tokens ?? next.outputReserveTokens,
+          shouldCompact: payload.should_compact === true,
+          shouldBlock: payload.should_block === true,
+          pressurePhase: payload.phase || next.pressurePhase || null,
+          systemPromptTokens: payload.system_prompt_tokens ?? next.systemPromptTokens,
+          taskTokens: payload.task_tokens ?? next.taskTokens,
+          historyTokens: payload.history_tokens ?? next.historyTokens,
+          historyCount: payload.history_count ?? next.historyCount,
+        }
+      }
+    )
+    unlisteners.push(unlistenContextPressure)
+
+    const unlistenContextCompactionRequested = await listen<AgentContextCompactionRequestedEvent>(
+      'agent:context_compaction_requested',
+      event => {
+        const payload = event.payload
+        if (!matchesTarget(payload.execution_id, payload)) return
+        if (isSettledActivityEvent(payload.execution_id)) return
+
+        if (!isExecuting.value) {
+          markExecutionActive(payload.execution_id)
+        }
+        error.value = null
+        contextCompression.value = {
+          active: true,
+          executionId: payload.execution_id,
+          generation: payload.generation ?? null,
+          reason: payload.phase || 'context_pressure',
+          recentTokens: Number(payload.used_tokens ?? 0) || 0,
+          thresholdTokens: 0,
+          messageCount: 0,
+          recentMessageCount: 0,
+          startedAt: Date.now(),
+        }
+      }
+    )
+    unlisteners.push(unlistenContextCompactionRequested)
+
     const unlistenContextSnapshot = await listen<{
       execution_id: string
       memory_retrieval?: any
@@ -767,7 +618,7 @@ export function useAgentEvents(
       sentinel_clarification_needed?: boolean
       sentinel_clarification_status?: string | null
       sentinel_compression_aggressiveness?: string | null
-    }>('agent:context_snapshot', (event) => {
+    }>('agent:context_snapshot', event => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id, payload)) return
 
@@ -788,14 +639,52 @@ export function useAgentEvents(
       next.sentinelClarificationStatus =
         payload.sentinel_clarification_status || next.sentinelClarificationStatus || null
       next.sentinelCompressionAggressiveness =
-        payload.sentinel_compression_aggressiveness
-        || next.sentinelCompressionAggressiveness
-        || null
+        payload.sentinel_compression_aggressiveness ||
+        next.sentinelCompressionAggressiveness ||
+        null
       contextUsage.value = next
     })
     unlisteners.push(unlistenContextSnapshot)
 
-    const unlistenSubagentStart = await listen<SubagentStartEvent>('subagent:start', (event) => {
+    const unlistenContextCompressionStarted = await listen<AgentContextCompressionStartedEvent>(
+      'agent:context_compression_started',
+      event => {
+        const payload = event.payload
+        if (!matchesTarget(payload.execution_id, payload)) return
+        if (isSettledActivityEvent(payload.execution_id)) return
+
+        if (!isExecuting.value) {
+          markExecutionActive(payload.execution_id)
+        }
+        error.value = null
+        contextCompression.value = {
+          active: true,
+          executionId: payload.execution_id,
+          generation: payload.generation ?? null,
+          reason: payload.reason,
+          recentTokens: Number(payload.recent_tokens ?? 0) || 0,
+          thresholdTokens: Number(payload.threshold_tokens ?? 0) || 0,
+          messageCount: Number(payload.message_count ?? 0) || 0,
+          recentMessageCount: Number(payload.recent_message_count ?? 0) || 0,
+          startedAt: Date.now(),
+        }
+      }
+    )
+    unlisteners.push(unlistenContextCompressionStarted)
+
+    const unlistenContextCompressionFinished = await listen<AgentContextCompressionFinishedEvent>(
+      'agent:context_compression_finished',
+      event => {
+        const payload = event.payload
+        if (!matchesTarget(payload.execution_id, payload)) return
+        if (contextCompression.value?.executionId === payload.execution_id) {
+          contextCompression.value = null
+        }
+      }
+    )
+    unlisteners.push(unlistenContextCompressionFinished)
+
+    const unlistenSubagentStart = await listen<SubagentStartEvent>('subagent:start', event => {
       const payload = event.payload
       if (!matchesSubagentParent(payload.parent_execution_id)) return
 
@@ -820,7 +709,7 @@ export function useAgentEvents(
     unlisteners.push(unlistenSubagentStart)
 
     // 监听 agent:iteration 事件
-    const unlistenIteration = await listen<AgentIterationEvent>('agent:iteration', (event) => {
+    const unlistenIteration = await listen<AgentIterationEvent>('agent:iteration', event => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id, payload)) return
       if (isSettledActivityEvent(payload.execution_id)) return
@@ -840,26 +729,21 @@ export function useAgentEvents(
         metadata: {
           step_index: payload.iteration,
           total_steps: payload.max_iterations,
-        }
+        },
       })
     })
     unlisteners.push(unlistenIteration)
 
     // 监听 agent:chunk 事件
-    const unlistenChunk = await listen<AgentChunkEvent>('agent:chunk', (event) => {
+    const unlistenChunk = await listen<AgentChunkEvent>('agent:chunk', event => {
       const payload = event.payload
       const parallelChild = getParallelChild(payload.execution_id)
       if (parallelChild) {
         parallelAgentChunkExecutions.add(payload.execution_id)
-        appendParallelChunk(
-          parallelChild.item,
-          payload.chunk_type,
-          payload.content,
-          {
-            inputTokens: payload.input_tokens,
-            outputTokens: payload.output_tokens,
-          },
-        )
+        appendParallelChunk(parallelChild.item, payload.chunk_type, payload.content, {
+          inputTokens: payload.input_tokens,
+          outputTokens: payload.output_tokens,
+        })
         flushParallelChild(parallelChild)
         if (parallelChild.item.status === 'failed') {
           settleParallelRunIfDone(parallelChild.run)
@@ -914,25 +798,25 @@ export function useAgentEvents(
             inputTokens,
             outputTokens,
           }
-          
+
           // Update context usage with real values from LLM
           if (contextUsage.value) {
             // Use the real input_tokens from LLM as used_tokens (more accurate than our estimate)
             const maxTokens = contextUsage.value.maxTokens
             const usedTokens = inputTokens + outputTokens
-            const usagePercentage = maxTokens > 0
-              ? Math.min(100, (usedTokens / maxTokens * 100))
-              : 0
+            const usagePercentage =
+              maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : 0
             contextUsage.value = {
               ...contextUsage.value,
               usedTokens,
+              remainingTokens: Math.max(0, maxTokens - usedTokens),
               usagePercentage,
             }
           } else {
             // If no context usage yet, create a basic one from configured context window.
             const maxTokens = resolveDefaultMaxContextTokens()
             const usedTokens = inputTokens + outputTokens
-            const usagePercentage = Math.min(100, (usedTokens / maxTokens * 100))
+            const usagePercentage = Math.min(100, (usedTokens / maxTokens) * 100)
             contextUsage.value = {
               usedTokens,
               maxTokens,
@@ -973,11 +857,16 @@ export function useAgentEvents(
     unlisteners.push(unlistenChunk)
 
     // 监听 agent:tool_call 事件
-    const unlistenToolCall = await listen<AgentToolCallEvent>('agent:tool_call', (event) => {
+    const unlistenToolCall = await listen<AgentToolCallEvent>('agent:tool_call', event => {
       const payload = event.payload
       const parallelChild = getParallelChild(payload.execution_id)
       if (parallelChild) {
-        appendParallelToolCall(parallelChild.item, payload.tool_name, payload.tool_input, payload.tool_id)
+        appendParallelToolCall(
+          parallelChild.item,
+          payload.tool_name,
+          payload.tool_input,
+          payload.tool_id
+        )
         flushParallelChild(parallelChild)
         return
       }
@@ -988,6 +877,10 @@ export function useAgentEvents(
       if (!isExecuting.value) {
         console.log('[useAgentEvents] Auto-recovering execution state from tool_call event')
         markExecutionActive(payload.execution_id)
+      }
+
+      if (isShellContinuation(payload.tool_name, payload.tool_input)) {
+        return
       }
 
       // Close current assistant segment so later assistant text won't appear above this tool call
@@ -1004,105 +897,133 @@ export function useAgentEvents(
           tool_args: payload.tool_input,
           status: 'running',
           execution_id: payload.execution_id,
-        }
+        },
       })
 
       // ❌ 不要在这里打开终端，等待 tool_result 事件中的 session_id
-      // 检测 interactive_shell 工具调用
-      if (['interactive_shell', 'exec_command', 'write_stdin'].includes(payload.tool_name)) {
-        console.log('[Agent] Detected interactive_shell call, will open terminal when result arrives')
+      // 检测可能返回 terminal session 的 shell 调用
+      if (payload.tool_name === 'shell') {
+        console.log(
+          '[Agent] Detected terminal-capable shell call, will sync terminal session when result arrives'
+        )
       }
     })
     unlisteners.push(unlistenToolCall)
 
     // 监听 agent:tool_call_complete 事件（新格式 - rig-core）
-    const unlistenToolCallComplete = await listen<AgentToolCallCompleteEvent>('agent:tool_call_complete', (event) => {
-      const payload = event.payload
-      const parallelChild = getParallelChild(payload.execution_id)
-      if (parallelChild) {
+    const unlistenToolCallComplete = await listen<AgentToolCallCompleteEvent>(
+      'agent:tool_call_complete',
+      event => {
+        const payload = event.payload
+        const parallelChild = getParallelChild(payload.execution_id)
+        if (parallelChild) {
+          let parsedArgs: any = {}
+          try {
+            parsedArgs = JSON.parse(payload.arguments || '{}')
+          } catch (e) {
+            parsedArgs = { raw: payload.arguments }
+          }
+          toolCallTracker.set(payload.tool_call_id, {
+            tool_name: payload.tool_name,
+            arguments: parsedArgs,
+            message_id: '',
+            message_index: -1,
+          })
+          appendParallelToolCall(
+            parallelChild.item,
+            payload.tool_name,
+            parsedArgs,
+            payload.tool_call_id
+          )
+          flushParallelChild(parallelChild)
+          return
+        }
+        if (!matchesTarget(payload.execution_id, payload)) return
+        if (isSettledActivityEvent(payload.execution_id)) return
+
+        // Auto-recover execution state after page refresh
+        if (!isExecuting.value) {
+          console.log(
+            '[useAgentEvents] Auto-recovering execution state from tool_call_complete event'
+          )
+          markExecutionActive(payload.execution_id)
+        }
+
+        // 解析参数 JSON
         let parsedArgs: any = {}
         try {
           parsedArgs = JSON.parse(payload.arguments || '{}')
         } catch (e) {
           parsedArgs = { raw: payload.arguments }
         }
+
+        const silentShellContinuation = isShellContinuation(payload.tool_name, parsedArgs)
+
+        const messageId = crypto.randomUUID()
+        const messageIndex = messages.value.length // 记录消息索引便于后续更新
+
+        // 保存到追踪 Map，用于后续关联结果
         toolCallTracker.set(payload.tool_call_id, {
           tool_name: payload.tool_name,
           arguments: parsedArgs,
-          message_id: '',
-          message_index: -1,
+          message_id: silentShellContinuation ? '' : messageId,
+          message_index: silentShellContinuation ? -1 : messageIndex,
+          silent: silentShellContinuation,
         })
-        appendParallelToolCall(parallelChild.item, payload.tool_name, parsedArgs, payload.tool_call_id)
-        flushParallelChild(parallelChild)
-        return
-      }
-      if (!matchesTarget(payload.execution_id, payload)) return
-      if (isSettledActivityEvent(payload.execution_id)) return
 
-      // Auto-recover execution state after page refresh
-      if (!isExecuting.value) {
-        console.log('[useAgentEvents] Auto-recovering execution state from tool_call_complete event')
-        markExecutionActive(payload.execution_id)
-      }
-
-      // 解析参数 JSON
-      let parsedArgs: any = {}
-      try {
-        parsedArgs = JSON.parse(payload.arguments || '{}')
-      } catch (e) {
-        parsedArgs = { raw: payload.arguments }
-      }
-
-      const messageId = crypto.randomUUID()
-      const messageIndex = messages.value.length  // 记录消息索引便于后续更新
-
-      // 保存到追踪 Map，用于后续关联结果
-      toolCallTracker.set(payload.tool_call_id, {
-        tool_name: payload.tool_name,
-        arguments: parsedArgs,
-        message_id: messageId,
-        message_index: messageIndex,
-      })
-
-      // Close current assistant segment so later assistant text won't appear above this tool call
-      currentAssistantMessageId.value = null
-      assistantSegmentBuffer.value = ''
-
-      messages.value.push({
-        id: messageId,
-        type: 'tool_call',
-        content: `正在调用工具: ${payload.tool_name}`,
-        timestamp: Date.now(),
-        metadata: {
-          tool_name: payload.tool_name,
-          tool_args: parsedArgs,
-          tool_call_id: payload.tool_call_id,
-          status: 'running',
-          execution_id: payload.execution_id,
+        if (silentShellContinuation) {
+          return
         }
-      })
 
-      // ❌ 不要在这里打开终端，等待 tool_result 事件中的 session_id
-      // 检测 interactive_shell 工具调用
-      if (['interactive_shell', 'exec_command', 'write_stdin'].includes(payload.tool_name)) {
-        console.log('[Agent] Detected interactive_shell call (complete), will open terminal when result arrives')
+        // Close current assistant segment so later assistant text won't appear above this tool call
+        currentAssistantMessageId.value = null
+        assistantSegmentBuffer.value = ''
+
+        messages.value.push({
+          id: messageId,
+          type: 'tool_call',
+          content: `正在调用工具: ${payload.tool_name}`,
+          timestamp: Date.now(),
+          metadata: {
+            tool_name: payload.tool_name,
+            tool_args: parsedArgs,
+            tool_call_id: payload.tool_call_id,
+            status: 'running',
+            execution_id: payload.execution_id,
+          },
+        })
+
+        // ❌ 不要在这里打开终端，等待 tool_result 事件中的 session_id
+        // 检测可能返回 terminal session 的 shell 调用
+        if (payload.tool_name === 'shell') {
+          console.log(
+            '[Agent] Detected terminal-capable shell call (complete), will sync terminal session when result arrives'
+          )
+        }
       }
-    })
+    )
     unlisteners.push(unlistenToolCallComplete)
 
     // 监听 agent:tool_result 事件（旧格式兼容）
-    const unlistenToolResult = await listen<AgentToolResultEvent>('agent:tool_result', (event) => {
+    const unlistenToolResult = await listen<AgentToolResultEvent>('agent:tool_result', event => {
       const payload = event.payload
       const parallelChild = getParallelChild(payload.execution_id)
       if (parallelChild) {
         const nextPayload = payload as any
-        const callInfo = nextPayload.tool_call_id ? toolCallTracker.get(nextPayload.tool_call_id) : null
+        const callInfo = nextPayload.tool_call_id
+          ? toolCallTracker.get(nextPayload.tool_call_id)
+          : null
         const toolName = payload.tool_name || callInfo?.tool_name || 'unknown'
         const result = nextPayload.result ?? payload.tool_result ?? ''
-        const success = typeof nextPayload.success === 'boolean'
-          ? nextPayload.success
-          : inferToolSuccess(result)
-        appendParallelToolResult(parallelChild.item, toolName, result, success, nextPayload.tool_call_id)
+        const success =
+          typeof nextPayload.success === 'boolean' ? nextPayload.success : inferToolSuccess(result)
+        appendParallelToolResult(
+          parallelChild.item,
+          toolName,
+          result,
+          success,
+          nextPayload.tool_call_id
+        )
         flushParallelChild(parallelChild)
         return
       }
@@ -1119,8 +1040,6 @@ export function useAgentEvents(
       const newPayload = payload as any
       if (newPayload.tool_call_id && !newPayload.tool_name) {
         // 新格式：从追踪 Map 获取工具信息
-        const callInfo = toolCallTracker.get(newPayload.tool_call_id)
-
         // 解析结果 JSON
         let resultContent = newPayload.result || ''
         try {
@@ -1130,35 +1049,62 @@ export function useAgentEvents(
           // 保持原始字符串
         }
 
+        const callInfo = toolCallTracker.get(newPayload.tool_call_id)
+        if (callInfo?.silent && !hasMeaningfulShellResult(resultContent)) {
+          toolCallTracker.delete(newPayload.tool_call_id)
+          return
+        }
+
         // 更新原有的 tool_call 消息状态，并将结果合并到该消息中
         if (callInfo) {
           const existingMsg = messages.value.find(m => m.id === callInfo.message_id)
-          if (existingMsg && existingMsg.metadata) {
-            const success = typeof newPayload.success === 'boolean'
-              ? newPayload.success
-              : inferToolSuccess(newPayload.result)
+          if (callInfo.silent && !existingMsg) {
+            const success =
+              typeof newPayload.success === 'boolean'
+                ? newPayload.success
+                : inferToolSuccess(newPayload.result)
+            insertMessageBeforeFollowingFinal(
+              messages,
+              {
+                id: crypto.randomUUID(),
+                type: 'tool_call',
+                content: `工具调用完成: ${callInfo.tool_name}`,
+                timestamp: Date.now(),
+                metadata: {
+                  tool_name: callInfo.tool_name,
+                  tool_args: callInfo.arguments,
+                  tool_result: resultContent,
+                  tool_call_id: newPayload.tool_call_id,
+                  status: success ? 'completed' : 'failed',
+                  success,
+                  execution_id: payload.execution_id,
+                  tracked_artifacts: normalizeTrackedArtifacts(newPayload.tracked_artifacts),
+                },
+              },
+              callInfo.message_index
+            )
+          } else if (existingMsg && existingMsg.metadata) {
+            const success =
+              typeof newPayload.success === 'boolean'
+                ? newPayload.success
+                : inferToolSuccess(newPayload.result)
             existingMsg.metadata.status = success ? 'completed' : 'failed'
             existingMsg.metadata.tool_result = resultContent
             existingMsg.metadata.success = success
             existingMsg.metadata.tracked_artifacts = normalizeTrackedArtifacts(
-              newPayload.tracked_artifacts,
+              newPayload.tracked_artifacts
             )
             existingMsg.content = `工具调用完成: ${callInfo.tool_name}`
-            pushShellFallbackNotice(
-              callInfo.tool_name,
-              newPayload.result,
-              payload.execution_id,
-              newPayload.tool_call_id,
-            )
-            
-            // 如果是 interactive_shell 工具，自动打开终端面板，关闭任务面板
-            if (['interactive_shell', 'exec_command', 'write_stdin'].includes(callInfo.tool_name)) {
-              // First close task panel
-              const tasks = useAgentTasks()
-              tasks.close()
+            pushShellFallbackNotice({
+              executionIdForMsg: payload.execution_id,
+              messages,
+              resultRaw: newPayload.result,
+              toolCallId: newPayload.tool_call_id,
+              toolName: callInfo.tool_name,
+            })
 
-              const terminal = useTerminal()
-
+            // 如果 shell 返回 session_id，只同步终端会话绑定，不自动打开终端面板。
+            if (callInfo.tool_name === 'shell') {
               // 深度解析函数：自动挖掘嵌套的 JSON 字符串或数组
               const deepParse = (input: any, depth = 0): any => {
                 // 如果输入是字符串，尝试解析
@@ -1198,17 +1144,13 @@ export function useAgentEvents(
               try {
                 const parsed = deepParse(resultContent)
                 if (parsed.session_id) {
+                  const terminal = useTerminal()
                   terminal.syncActiveSession(
                     parsed.session_id,
-                    deriveInteractiveShellFingerprint(parsed, callInfo.arguments),
+                    deriveInteractiveShellFingerprint(parsed, callInfo.arguments)
                   )
-                  terminal.openTerminal()
-                } else {
-                  terminal.openTerminal()
                 }
-              } catch (e) {
-                terminal.openTerminal()
-              }
+              } catch (e) {}
             }
           }
         }
@@ -1216,12 +1158,23 @@ export function useAgentEvents(
         // 从追踪 Map 中移除（不再创建单独的 tool_result 消息）
         toolCallTracker.delete(newPayload.tool_call_id)
       } else {
+        if (
+          isShellContinuation(payload.tool_name, payload.tool_input) &&
+          !hasMeaningfulShellResult(payload.tool_result)
+        ) {
+          return
+        }
+
         // 旧格式：尝试合并到最近的匹配 tool_call 消息
-        const matchingToolCall = messages.value.slice().reverse().find(m =>
-          m.type === 'tool_call' &&
-          m.metadata?.tool_name === payload.tool_name &&
-          !m.metadata?.tool_result  // 还没有结果的
-        )
+        const matchingToolCall = messages.value
+          .slice()
+          .reverse()
+          .find(
+            m =>
+              m.type === 'tool_call' &&
+              m.metadata?.tool_name === payload.tool_name &&
+              !m.metadata?.tool_result // 还没有结果的
+          )
 
         if (matchingToolCall && matchingToolCall.metadata) {
           const success = inferToolSuccess(payload.tool_result)
@@ -1229,24 +1182,19 @@ export function useAgentEvents(
           matchingToolCall.metadata.tool_result = payload.tool_result
           matchingToolCall.metadata.success = success
           matchingToolCall.metadata.tracked_artifacts = normalizeTrackedArtifacts(
-            (payload as any).tracked_artifacts,
+            (payload as any).tracked_artifacts
           )
           matchingToolCall.content = `工具调用完成: ${payload.tool_name}`
-          pushShellFallbackNotice(
-            payload.tool_name,
-            payload.tool_result,
-            payload.execution_id,
-            String(matchingToolCall.metadata?.tool_call_id || ''),
-          )
-          
-          // 旧格式路径：如果是 interactive_shell 工具，也自动打开终端面板，关闭任务面板
-          if (['interactive_shell', 'exec_command', 'write_stdin'].includes(payload.tool_name)) {
-            // First close task panel
-            const tasks = useAgentTasks()
-            tasks.close()
+          pushShellFallbackNotice({
+            executionIdForMsg: payload.execution_id,
+            messages,
+            resultRaw: payload.tool_result,
+            toolCallId: String(matchingToolCall.metadata?.tool_call_id || ''),
+            toolName: payload.tool_name,
+          })
 
-            const terminal = useTerminal()
-
+          // 旧格式路径：如果 shell 返回 session_id，只同步终端会话绑定，不自动打开终端面板。
+          if (payload.tool_name === 'shell') {
             const deepParse = (input: any): any => {
               if (typeof input !== 'string') {
                 if (Array.isArray(input) && input.length > 0) return deepParse(input[0])
@@ -1271,17 +1219,13 @@ export function useAgentEvents(
             try {
               const parsed = deepParse(payload.tool_result)
               if (parsed.session_id) {
+                const terminal = useTerminal()
                 terminal.syncActiveSession(
                   parsed.session_id,
-                  deriveInteractiveShellFingerprint(parsed, matchingToolCall.metadata?.tool_args),
+                  deriveInteractiveShellFingerprint(parsed, matchingToolCall.metadata?.tool_args)
                 )
-                terminal.openTerminal()
-              } else {
-                terminal.openTerminal()
               }
-            } catch (e) {
-              terminal.openTerminal()
-            }
+            } catch (e) {}
           }
         } else {
           // 找不到匹配的 tool_call，创建独立消息（兜底）
@@ -1295,7 +1239,7 @@ export function useAgentEvents(
               tool_args: payload.tool_input,
               success: !payload.tool_result.startsWith('Error:'),
               tracked_artifacts: normalizeTrackedArtifacts((payload as any).tracked_artifacts),
-            }
+            },
           })
         }
       }
@@ -1305,40 +1249,50 @@ export function useAgentEvents(
     unlisteners.push(unlistenToolResult)
 
     // 监听 agent:tools_selected 事件（仅记录日志，不显示消息）
-    const unlistenToolsSelected = await listen<AgentToolsSelectedEvent>('agent:tools_selected', (event) => {
-      const payload = event.payload
-      if (!matchesTarget(payload.execution_id, payload)) return
+    const unlistenToolsSelected = await listen<AgentToolsSelectedEvent>(
+      'agent:tools_selected',
+      event => {
+        const payload = event.payload
+        if (!matchesTarget(payload.execution_id, payload)) return
 
-      // 仅记录日志，不再添加到消息列表显示
-      console.log(`[Agent] Selected ${payload.tools.length} tools:`, payload.tools)
-    })
+        // 仅记录日志，不再添加到消息列表显示
+        console.log(`[Agent] Selected ${payload.tools.length} tools:`, payload.tools)
+      }
+    )
     unlisteners.push(unlistenToolsSelected)
 
-    const unlistenToolsActivated = await listen<AgentToolsActivatedEvent>('agent:tools_activated', (event) => {
-      const payload = event.payload
-      const parallelChild = getParallelChild(payload.execution_id)
-      if (parallelChild) {
-        appendParallelSystemEvent(parallelChild.item, '工具已启用', buildToolsPreview(payload.tools))
-        flushParallelChild(parallelChild)
-        return
-      }
-      if (!matchesTarget(payload.execution_id, payload)) return
-
-      messages.value.push({
-        id: crypto.randomUUID(),
-        type: 'system',
-        content: buildToolsActivatedMessage(payload),
-        timestamp: Date.now(),
-        metadata: {
-          kind: 'tools_activated',
-          tool_ids: payload.tool_ids,
-          tools: payload.tools,
-          tools_preview: buildToolsPreview(payload.tools),
-          query: payload.query || undefined,
-          runtime_hint: payload.runtime_hint || undefined,
+    const unlistenToolsActivated = await listen<AgentToolsActivatedEvent>(
+      'agent:tools_activated',
+      event => {
+        const payload = event.payload
+        const parallelChild = getParallelChild(payload.execution_id)
+        if (parallelChild) {
+          appendParallelSystemEvent(
+            parallelChild.item,
+            '工具已启用',
+            buildToolsPreview(payload.tools)
+          )
+          flushParallelChild(parallelChild)
+          return
         }
-      })
-    })
+        if (!matchesTarget(payload.execution_id, payload)) return
+
+        messages.value.push({
+          id: crypto.randomUUID(),
+          type: 'system',
+          content: buildToolsActivatedMessage(payload),
+          timestamp: Date.now(),
+          metadata: {
+            kind: 'tools_activated',
+            tool_ids: payload.tool_ids,
+            tools: payload.tools,
+            tools_preview: buildToolsPreview(payload.tools),
+            query: payload.query || undefined,
+            runtime_hint: payload.runtime_hint || undefined,
+          },
+        })
+      }
+    )
     unlisteners.push(unlistenToolsActivated)
 
     // 监听 agent:skill_loaded 事件（显示技能加载提示）
@@ -1346,11 +1300,15 @@ export function useAgentEvents(
       execution_id: string
       skill_id: string
       skill_name: string
-    }>('agent:skill_loaded', (event) => {
+    }>('agent:skill_loaded', event => {
       const payload = event.payload
       const parallelChild = getParallelChild(payload.execution_id)
       if (parallelChild) {
-        appendParallelSystemEvent(parallelChild.item, '技能已加载', `${payload.skill_name} (${payload.skill_id})`)
+        appendParallelSystemEvent(
+          parallelChild.item,
+          '技能已加载',
+          `${payload.skill_name} (${payload.skill_id})`
+        )
         flushParallelChild(parallelChild)
         return
       }
@@ -1365,35 +1323,43 @@ export function useAgentEvents(
           kind: 'skill_loaded',
           skill_id: payload.skill_id,
           skill_name: payload.skill_name,
-        }
+        },
       })
     })
     unlisteners.push(unlistenSkillLoaded)
 
     // 监听 agent:tool_executed 事件
-    const unlistenToolExecuted = await listen<AgentToolExecutedEvent>('agent:tool_executed', (event) => {
-      const payload = event.payload
-      const parallelChild = getParallelChild(payload.execution_id)
-      if (parallelChild) {
-        appendParallelToolResult(parallelChild.item, payload.tool, payload.result, payload.success)
-        flushParallelChild(parallelChild)
-        return
-      }
-      if (!matchesTarget(payload.execution_id, payload)) return
-
-      messages.value.push({
-        id: crypto.randomUUID(),
-        type: 'tool_result',
-        content: payload.result,
-        timestamp: Date.now(),
-        metadata: {
-          tool_name: payload.tool,
-          tool_args: payload.arguments,
-          success: payload.success,
-          iteration: payload.iteration,
+    const unlistenToolExecuted = await listen<AgentToolExecutedEvent>(
+      'agent:tool_executed',
+      event => {
+        const payload = event.payload
+        const parallelChild = getParallelChild(payload.execution_id)
+        if (parallelChild) {
+          appendParallelToolResult(
+            parallelChild.item,
+            payload.tool,
+            payload.result,
+            payload.success
+          )
+          flushParallelChild(parallelChild)
+          return
         }
-      })
-    })
+        if (!matchesTarget(payload.execution_id, payload)) return
+
+        messages.value.push({
+          id: crypto.randomUUID(),
+          type: 'tool_result',
+          content: payload.result,
+          timestamp: Date.now(),
+          metadata: {
+            tool_name: payload.tool,
+            tool_args: payload.arguments,
+            success: payload.success,
+            iteration: payload.iteration,
+          },
+        })
+      }
+    )
     unlisteners.push(unlistenToolExecuted)
 
     // 监听助手消息保存成功事件
@@ -1404,7 +1370,7 @@ export function useAgentEvents(
       metadata?: Record<string, any> | null
       reasoning_content?: string | null
       timestamp: number
-    }>('agent:assistant_message_saved', (event) => {
+    }>('agent:assistant_message_saved', event => {
       const payload = event.payload
       const parallelChild = getParallelChild(payload.execution_id)
       if (parallelChild) {
@@ -1419,9 +1385,8 @@ export function useAgentEvents(
       if (!matchesTarget(payload.execution_id, payload)) return
 
       console.log('[useAgentEvents] Assistant message saved:', payload.message_id)
-      const reasoningContent = typeof payload.reasoning_content === 'string'
-        ? payload.reasoning_content.trim()
-        : ''
+      const reasoningContent =
+        typeof payload.reasoning_content === 'string' ? payload.reasoning_content.trim() : ''
 
       // 检测是否引用了知识库内容
       if (ragMetaInfo.value?.rag_applied) {
@@ -1450,7 +1415,8 @@ export function useAgentEvents(
         const lastAssistant = lastAssistantIndex >= 0 ? messages.value[lastAssistantIndex] : null
 
         if (lastAssistant && reasoningContent) {
-          const previousMessage = lastAssistantIndex > 0 ? messages.value[lastAssistantIndex - 1] : null
+          const previousMessage =
+            lastAssistantIndex > 0 ? messages.value[lastAssistantIndex - 1] : null
           if (previousMessage?.type === 'thinking') {
             previousMessage.content = reasoningContent
           } else {
@@ -1492,7 +1458,7 @@ export function useAgentEvents(
       rag_sources_used?: boolean
       source_count?: number
       citations?: any[]
-    }>('ai_meta_info', (event) => {
+    }>('ai_meta_info', event => {
       const payload = event.payload
       if (!matchesTarget(payload.conversation_id, payload)) return
 
@@ -1505,7 +1471,7 @@ export function useAgentEvents(
           rag_applied: true,
           rag_sources_used: used,
           source_count: count,
-          citations: payload.citations
+          citations: payload.citations,
         }
       }
     })
@@ -1515,7 +1481,7 @@ export function useAgentEvents(
     const unlistenRagComplete = await listen<{
       execution_id: string
       citations: any[]
-    }>('agent:rag_retrieval_complete', (event) => {
+    }>('agent:rag_retrieval_complete', event => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id, payload)) return
 
@@ -1527,7 +1493,7 @@ export function useAgentEvents(
             rag_applied: true,
             rag_sources_used: payload.citations.length > 0,
             source_count: payload.citations.length,
-            citations: payload.citations
+            citations: payload.citations,
           }
         } else {
           ragMetaInfo.value.citations = payload.citations
@@ -1538,31 +1504,43 @@ export function useAgentEvents(
     })
     unlisteners.push(unlistenRagComplete)
 
-    const unlistenExecutionFinished = await listen<AgentExecutionFinishedEvent>('agent:execution_finished', (event) => {
-      const payload = event.payload
-      const parallelChild = getParallelChild(payload.execution_id)
-      if (parallelChild) {
-        parallelChild.item.status = payload.outcome === 'cancelled'
-          ? 'cancelled'
-          : payload.success
-            ? 'succeeded'
-            : 'failed'
-        if (payload.response && payload.response.trim()) {
-          parallelChild.item.content = payload.response
+    const unlistenExecutionFinished = await listen<AgentExecutionFinishedEvent>(
+      'agent:execution_finished',
+      event => {
+        const payload = event.payload
+        const parallelChild = getParallelChild(payload.execution_id)
+        if (parallelChild) {
+          parallelChild.item.status =
+            payload.outcome === 'cancelled' ? 'cancelled' : payload.success ? 'succeeded' : 'failed'
+          if (payload.response && payload.response.trim()) {
+            parallelChild.item.content = payload.response
+          }
+          parallelChild.item.completedAtMs = Date.now()
+          if (payload.error || payload.message) {
+            parallelChild.item.error = payload.error || payload.message || undefined
+          }
+          flushParallelChild(parallelChild)
+          settleParallelRunIfDone(parallelChild.run)
+          return
         }
-        parallelChild.item.completedAtMs = Date.now()
-        if (payload.error || payload.message) {
-          parallelChild.item.error = payload.error || payload.message || undefined
-        }
-        flushParallelChild(parallelChild)
-        settleParallelRunIfDone(parallelChild.run)
-        return
+        handleAgentExecutionFinished({
+          currentExecutionId,
+          error,
+          executionStartedAt,
+          isExecuting,
+          latestUsage,
+          markExecutionSettled,
+          matchesTarget,
+          messages,
+          payload,
+          ragMetaInfo,
+          resetExecutionBuffers,
+        })
       }
-      handleExecutionFinished(payload)
-    })
+    )
     unlisteners.push(unlistenExecutionFinished)
 
-    const unlistenSubagentDone = await listen<SubagentDoneEvent>('subagent:done', (event) => {
+    const unlistenSubagentDone = await listen<SubagentDoneEvent>('subagent:done', event => {
       const payload = event.payload
       if (!matchesSubagentParent(payload.parent_execution_id)) return
 
@@ -1585,7 +1563,7 @@ export function useAgentEvents(
     })
     unlisteners.push(unlistenSubagentDone)
 
-    const unlistenSubagentError = await listen<SubagentErrorEvent>('subagent:error', (event) => {
+    const unlistenSubagentError = await listen<SubagentErrorEvent>('subagent:error', event => {
       const payload = event.payload
       if (!matchesSubagentParent(payload.parent_execution_id)) return
 
@@ -1609,56 +1587,62 @@ export function useAgentEvents(
     unlisteners.push(unlistenSubagentError)
 
     // 监听 agent:segment_summary_created 事件（滑动窗口段落摘要）
-    const unlistenSegmentSummary = await listen<AgentSegmentSummaryCreatedEvent>('agent:segment_summary_created', (event) => {
-      const payload = event.payload
-      if (!matchesTarget(payload.conversation_id, payload)) return
+    const unlistenSegmentSummary = await listen<AgentSegmentSummaryCreatedEvent>(
+      'agent:segment_summary_created',
+      event => {
+        const payload = event.payload
+        if (!matchesTarget(payload.conversation_id, payload)) return
 
-      console.log('[useAgentEvents] Segment summary created:', payload)
+        console.log('[useAgentEvents] Segment summary created:', payload)
 
-      messages.value.push({
-        id: crypto.randomUUID(),
-        type: 'system',
-        content: `Memory segment #${payload.segment_index} compressed (${payload.tokens} tokens)`,
-        timestamp: Date.now(),
-        metadata: {
-          kind: 'segment_summary',
-          segment_index: payload.segment_index,
-          summary_tokens: payload.tokens,
-          summary_content: payload.summary,
-        }
-      })
-    })
+        messages.value.push({
+          id: crypto.randomUUID(),
+          type: 'system',
+          content: `Memory segment #${payload.segment_index} compressed (${payload.tokens} tokens)`,
+          timestamp: Date.now(),
+          metadata: {
+            kind: 'segment_summary',
+            segment_index: payload.segment_index,
+            summary_tokens: payload.tokens,
+            summary_content: payload.summary,
+          },
+        })
+      }
+    )
     unlisteners.push(unlistenSegmentSummary)
 
     // 监听 agent:global_summary_updated 事件（滑动窗口全局摘要）
-    const unlistenGlobalSummary = await listen<AgentGlobalSummaryUpdatedEvent>('agent:global_summary_updated', (event) => {
-      const payload = event.payload
-      if (!matchesTarget(payload.conversation_id, payload)) return
+    const unlistenGlobalSummary = await listen<AgentGlobalSummaryUpdatedEvent>(
+      'agent:global_summary_updated',
+      event => {
+        const payload = event.payload
+        if (!matchesTarget(payload.conversation_id, payload)) return
 
-      console.log('[useAgentEvents] Global summary updated:', payload)
+        console.log('[useAgentEvents] Global summary updated:', payload)
 
-      messages.value.push({
-        id: crypto.randomUUID(),
-        type: 'system',
-        content: `Long-term memory updated (${payload.tokens} tokens)`,
-        timestamp: Date.now(),
-        metadata: {
-          kind: 'global_summary',
-          summary_tokens: payload.tokens,
-          summary_content: payload.summary,
-        }
-      })
-    })
+        messages.value.push({
+          id: crypto.randomUUID(),
+          type: 'system',
+          content: `Long-term memory updated (${payload.tokens} tokens)`,
+          timestamp: Date.now(),
+          metadata: {
+            kind: 'global_summary',
+            summary_tokens: payload.tokens,
+            summary_content: payload.summary,
+          },
+        })
+      }
+    )
     unlisteners.push(unlistenGlobalSummary)
 
     // 监听 agent:retry 事件
-    const unlistenRetry = await listen<AgentRetryEvent>('agent:retry', (event) => {
+    const unlistenRetry = await listen<AgentRetryEvent>('agent:retry', event => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id, payload)) return
 
       console.warn('[useAgentEvents] Agent retry event received:', payload)
       error.value = null
-      
+
       // 保留已完成的工具调用和助手消息，只清理流式状态
       // 不再清空 messages 数组，让用户看到已完成的进度
       assistantSegmentBuffer.value = ''
@@ -1670,10 +1654,10 @@ export function useAgentEvents(
 
       // 添加一条重试系统消息（显示累积的进度）
       const accProgress = (payload as any).accumulated_progress
-      const progressInfo = accProgress 
+      const progressInfo = accProgress
         ? ` (Progress saved: ${accProgress.tool_calls} tools, ${accProgress.output_chars} chars)`
         : ''
-      
+
       messages.value.push({
         id: crypto.randomUUID(),
         type: 'system',
@@ -1683,64 +1667,72 @@ export function useAgentEvents(
           kind: 'retry_notification',
           retry_count: payload.retry_count,
           error: payload.error,
-        }
+        },
       })
     })
     unlisteners.push(unlistenRetry)
 
     // 监听 agent:completion_guard_failed 事件
-    const unlistenCompletionGuardFailed = await listen<AgentCompletionGuardFailedEvent>('agent:completion_guard_failed', (event) => {
-      const payload = event.payload
-      if (!matchesTarget(payload.execution_id, payload)) return
+    const unlistenCompletionGuardFailed = await listen<AgentCompletionGuardFailedEvent>(
+      'agent:completion_guard_failed',
+      event => {
+        const payload = event.payload
+        if (!matchesTarget(payload.execution_id, payload)) return
 
-      const reasons = Array.isArray(payload.reasons)
-        ? payload.reasons.filter(reason => typeof reason === 'string' && reason.trim().length > 0)
-        : []
-      const reasonContent = reasons.length > 0
-        ? `\nReasons:\n${reasons.map((reason, index) => `${index + 1}. ${reason}`).join('\n')}`
-        : ''
-      const artifactContent = payload.required_artifact
-        ? `\nRequired artifact: ${payload.required_artifact}`
-        : ''
-      const statsContent = (typeof payload.response_length === 'number' || typeof payload.tool_calls === 'number')
-        ? `\nStats: response_length=${payload.response_length ?? 'n/a'}, tool_calls=${payload.tool_calls ?? 'n/a'}`
-        : ''
+        const reasons = Array.isArray(payload.reasons)
+          ? payload.reasons.filter(reason => typeof reason === 'string' && reason.trim().length > 0)
+          : []
+        const reasonContent =
+          reasons.length > 0
+            ? `\nReasons:\n${reasons.map((reason, index) => `${index + 1}. ${reason}`).join('\n')}`
+            : ''
+        const artifactContent = payload.required_artifact
+          ? `\nRequired artifact: ${payload.required_artifact}`
+          : ''
+        const statsContent =
+          typeof payload.response_length === 'number' || typeof payload.tool_calls === 'number'
+            ? `\nStats: response_length=${payload.response_length ?? 'n/a'}, tool_calls=${payload.tool_calls ?? 'n/a'}`
+            : ''
 
-      messages.value.push({
-        id: crypto.randomUUID(),
-        type: 'system',
-        content: `Completion guard blocked a false completion.${artifactContent}${reasonContent}${statsContent}`,
-        timestamp: Date.now(),
-        metadata: {
-          kind: 'completion_guard_failed',
-          execution_id: payload.execution_id,
-        }
-      })
-    })
+        messages.value.push({
+          id: crypto.randomUUID(),
+          type: 'system',
+          content: `Completion guard blocked a false completion.${artifactContent}${reasonContent}${statsContent}`,
+          timestamp: Date.now(),
+          metadata: {
+            kind: 'completion_guard_failed',
+            execution_id: payload.execution_id,
+          },
+        })
+      }
+    )
     unlisteners.push(unlistenCompletionGuardFailed)
 
     // 监听 agent:tenth_man_critique 事件
-    const unlistenTenthMan = await listen<AgentTenthManCritiqueEvent>('agent:tenth_man_critique', (event) => {
-      const payload = event.payload
-      if (!matchesTarget(payload.execution_id, payload)) return
+    const unlistenTenthMan = await listen<AgentTenthManCritiqueEvent>(
+      'agent:tenth_man_critique',
+      event => {
+        const payload = event.payload
+        if (!matchesTarget(payload.execution_id, payload)) return
 
-      console.log('[useAgentEvents] Tenth Man critique received:', payload.message_id)
+        console.log('[useAgentEvents] Tenth Man critique received:', payload.message_id)
 
-      messages.value.push({
-        id: payload.message_id,
-        type: 'system',
-        content: payload.critique,
-        timestamp: Date.now(),
-        metadata: {
-          kind: 'tenth_man_critique',
-          execution_id: payload.execution_id
-        }
-      })
-    })
+        messages.value.push({
+          id: payload.message_id,
+          type: 'system',
+          content: payload.critique,
+          timestamp: Date.now(),
+          metadata: {
+            kind: 'tenth_man_critique',
+            execution_id: payload.execution_id,
+          },
+        })
+      }
+    )
     unlisteners.push(unlistenTenthMan)
 
     // 兼容旧的 message_chunk 事件
-    const unlistenOldChunk = await listen<OrderedMessageChunk>('message_chunk', (event) => {
+    const unlistenOldChunk = await listen<OrderedMessageChunk>('message_chunk', event => {
       const chunk = event.payload
       const parallelChild = getParallelChild(chunk.execution_id)
       if (parallelChild) {
@@ -1862,7 +1854,7 @@ export function useAgentEvents(
       tool_name: string
       critique: string
       requires_confirmation: boolean
-    }>('agent:tenth_man_warning', (event) => {
+    }>('agent:tenth_man_warning', event => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id, payload)) return
 
@@ -1882,7 +1874,7 @@ export function useAgentEvents(
           trigger: payload.trigger,
           tool_name: payload.tool_name,
           requires_confirmation: payload.requires_confirmation,
-        }
+        },
       })
     })
     unlisteners.push(unlistenTenthManWarning)
@@ -1893,7 +1885,7 @@ export function useAgentEvents(
       trigger: string
       critique: string
       timestamp: number
-    }>('agent:tenth_man_intervention', (event) => {
+    }>('agent:tenth_man_intervention', event => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id, payload)) return
 
@@ -1909,7 +1901,7 @@ export function useAgentEvents(
         metadata: {
           kind: 'tenth_man_intervention',
           trigger: payload.trigger,
-        }
+        },
       })
     })
     unlisteners.push(unlistenTenthManIntervention)
@@ -1922,20 +1914,20 @@ export function useAgentEvents(
       status: 'running' | 'completed' | 'failed' | 'cancelled'
       exit_code?: number | null
       output_preview?: string
-    }>('shell-background-task-update', (event) => {
+    }>('shell-background-task-update', event => {
       const payload = event.payload
       if (!payload?.execution_id || !matchesTarget(payload.execution_id, payload)) return
       if (payload.status === 'running') return
 
       const msgId = crypto.randomUUID()
-      const statusLabel = payload.status === 'completed'
-        ? '后台 Shell 任务完成'
-        : payload.status === 'failed'
-          ? '后台 Shell 任务失败'
-          : '后台 Shell 任务已停止'
-      const exitSuffix = typeof payload.exit_code === 'number'
-        ? `\n\nExit code: ${payload.exit_code}`
-        : ''
+      const statusLabel =
+        payload.status === 'completed'
+          ? '后台 Shell 任务完成'
+          : payload.status === 'failed'
+            ? '后台 Shell 任务失败'
+            : '后台 Shell 任务已停止'
+      const exitSuffix =
+        typeof payload.exit_code === 'number' ? `\n\nExit code: ${payload.exit_code}` : ''
       const preview = String(payload.output_preview || '').trim()
       const previewBlock = preview ? `\n\n${preview}` : ''
 
@@ -1981,6 +1973,7 @@ export function useAgentEvents(
     lastMessage,
     ragMetaInfo,
     contextUsage,
+    contextCompression,
     parallelTaskSources,
     clearMessages,
     resetError,

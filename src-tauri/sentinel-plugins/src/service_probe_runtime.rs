@@ -53,6 +53,8 @@ struct ServiceProbeAggregateProgress {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceProbeTarget {
     pub host: String,
+    #[serde(default)]
+    pub connect_ip: Option<String>,
     pub port: u16,
     #[serde(default)]
     pub protocol: String,
@@ -101,6 +103,7 @@ pub struct ServiceProbeResult {
     pub success: bool,
     pub available: bool,
     pub host: String,
+    pub connect_ip: Option<String>,
     pub port: u16,
     pub protocol: String,
     pub service_name: Option<String>,
@@ -232,9 +235,7 @@ fn emit_service_probe_progress(
     });
 }
 
-#[op2(async)]
-#[serde]
-pub async fn op_probe_services(#[serde] request: ServiceProbeRequest) -> ServiceProbeResponse {
+pub async fn probe_services(request: ServiceProbeRequest) -> ServiceProbeResponse {
     if request.targets.is_empty() {
         let engine_resolution = resolve_service_probe_engine(request.engine.as_deref());
         return ServiceProbeResponse {
@@ -272,7 +273,11 @@ pub async fn op_probe_services(#[serde] request: ServiceProbeRequest) -> Service
     let mut deduped_targets = Vec::new();
     let mut seen = BTreeSet::new();
     for target in request.targets {
-        let key = service_key(target.host.trim(), target.port);
+        let key = service_key(
+            target.host.trim(),
+            target.port,
+            target.connect_ip.as_deref(),
+        );
         if key == ":" || !seen.insert(key) {
             continue;
         }
@@ -309,7 +314,12 @@ pub async fn op_probe_services(#[serde] request: ServiceProbeRequest) -> Service
             let completed_targets = Arc::clone(&completed_targets);
             let aggregate_state = aggregate_state.clone();
             async move {
-                let target_label = service_key(target.host.trim(), target.port);
+                let target_label = service_key(
+                    target.host.trim(),
+                    target.port,
+                    target.connect_ip.as_deref(),
+                );
+                let connect_ip = target.connect_ip.clone();
                 let emit_stage = |completed_units: u32, total_units: u32, message: &str| {
                     if let (Some(context), Some(state)) =
                         (progress_context.as_ref(), aggregate_state.as_ref())
@@ -342,9 +352,16 @@ pub async fn op_probe_services(#[serde] request: ServiceProbeRequest) -> Service
                     Ok(evidence) => {
                         emit_stage(3, 4, "Matching fingerprints");
 
-                        match_evidence(evidence, rules.as_ref())
+                        let mut result = match_evidence(evidence, rules.as_ref());
+                        result.target = target_label.clone();
+                        result.connect_ip = connect_ip.clone();
+                        result
                     }
-                    Err(invalid_result) => invalid_result,
+                    Err(mut invalid_result) => {
+                        invalid_result.target = target_label.clone();
+                        invalid_result.connect_ip = connect_ip.clone();
+                        invalid_result
+                    }
                 };
 
                 if let (Some(context), Some(state)) =
@@ -386,5 +403,83 @@ pub async fn op_probe_services(#[serde] request: ServiceProbeRequest) -> Service
         engine_experimental: engine_resolution.experimental,
         fallback_reason: engine_resolution.fallback_reason,
         error: None,
+    }
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_probe_services(#[serde] request: ServiceProbeRequest) -> ServiceProbeResponse {
+    probe_services(request).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+    use std::net::Ipv4Addr;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn probe_services_uses_logical_host_with_connect_ip_override() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("test listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should expose local address");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test listener should accept one client");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer).await;
+            let _ = stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nServer: TestHTTP/1.0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await;
+            let _ = stream.shutdown().await;
+        });
+
+        let response = probe_services(ServiceProbeRequest {
+            targets: vec![ServiceProbeTarget {
+                host: "app.example.test".to_string(),
+                connect_ip: Some(Ipv4Addr::LOCALHOST.to_string()),
+                port: addr.port(),
+                protocol: "http".to_string(),
+            }],
+            rules: vec![ServiceProbeRule {
+                id: None,
+                word: "__never_match__".to_string(),
+                category: None,
+                metadata: Value::Null,
+            }],
+            dictionary_id: None,
+            timeout_ms: Some(500),
+            concurrency: Some(1),
+            follow_http_redirects: Some(false),
+            read_banner: Some(true),
+            engine: None,
+            monitor_progress: None,
+        })
+        .await;
+
+        server.await.expect("test server task should complete");
+
+        assert!(response.error.is_none(), "service probe should not fail");
+        assert_eq!(response.results.len(), 1);
+        let result = &response.results[0];
+        assert_eq!(result.host, "app.example.test");
+        assert_eq!(result.connect_ip.as_deref(), Some("127.0.0.1"));
+        assert_eq!(
+            result.target,
+            format!("app.example.test@127.0.0.1:{}", addr.port())
+        );
+        assert_eq!(result.service_name.as_deref(), Some("http"));
+        assert_eq!(result.server_header.as_deref(), Some("TestHTTP/1.0"));
+        assert_eq!(result.status_code, Some(200));
     }
 }

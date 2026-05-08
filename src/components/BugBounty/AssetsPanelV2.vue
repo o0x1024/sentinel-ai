@@ -91,13 +91,6 @@
               <option value="new">{{ t('bugBounty.surface.inventory.viewStates.new') }}</option>
               <option value="viewed">{{ t('bugBounty.surface.inventory.viewStates.viewed') }}</option>
             </select>
-            <button
-              class="btn btn-outline btn-sm"
-              :disabled="!inventoryTotal || inventoryLoading || bulkDeleting"
-              @click="markFilteredAssetsViewed"
-            >
-              {{ t('bugBounty.surface.inventory.actions.markFilteredViewed') }}
-            </button>
             <select
               v-if="showServiceFacetFilters"
               v-model="serviceNameFilter"
@@ -135,21 +128,24 @@
           </div>
         </div>
         <div
-          v-if="inventoryTotal > 0 && hasSelectedAssets"
+          v-if="inventoryTotal > 0 && selectedAssetIds.length > 0"
           class="flex flex-col gap-3 rounded-lg border border-base-300 bg-base-200/40 p-3 lg:flex-row lg:items-center lg:justify-between"
         >
           <div class="text-sm text-base-content/70">
             {{ t('bugBounty.surface.inventory.actions.selectionSummary', { selected: selectedAssetIds.length, page: inventoryItems.length, total: inventoryTotal }) }}
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <button class="btn btn-sm btn-outline" :disabled="!selectedAssetIds.length || inventoryLoading || bulkDeleting" @click="markSelectedAssetsViewed">
-              {{ t('bugBounty.surface.inventory.actions.markSelectedViewed') }}
-            </button>
             <button class="btn btn-sm btn-warning" :disabled="!selectedAssetIds.length || inventoryLoading || bulkDeleting" @click="deleteSelectedAssets">
               {{ t('bugBounty.surface.inventory.actions.deleteSelected') }}
             </button>
             <button class="btn btn-sm btn-error" :disabled="!inventoryTotal || inventoryLoading || bulkDeleting" @click="deleteAllFilteredAssets">
-              {{ deleteAllActionLabel }}
+              {{ t('bugBounty.surface.inventory.actions.deleteAll') }}
+            </button>
+            <button class="btn btn-sm btn-outline" :disabled="!selectedAssetIds.length || inventoryLoading || bulkDeleting" @click="markSelectedAssetsViewed">
+              {{ t('bugBounty.surface.inventory.actions.markSelectedViewed') }}
+            </button>
+            <button class="btn btn-sm btn-outline" :disabled="!inventoryTotal || inventoryLoading || bulkDeleting" @click="markFilteredAssetsViewed">
+              {{ t('bugBounty.surface.inventory.actions.markFilteredViewed') }}
             </button>
           </div>
         </div>
@@ -448,6 +444,7 @@
     :program-id="selectedProgramId || null"
     :status-filter="assetStatsFilter"
     @close="closeAssetStatsModal"
+    @select-type="applyAssetStatsFilter"
   />
   <SurfaceDiscoveryRunDetailModal
     :visible="showRunDetailModal"
@@ -620,18 +617,12 @@ const pagedRuns = computed(() => {
 })
 const currentPageAssetIds = computed(() => inventoryItems.value.map((item) => item.asset.id).filter(Boolean))
 const selectedAssetIdSet = computed(() => new Set(selectedAssetIds.value))
-const hasSelectedAssets = computed(() => selectedAssetIds.value.length > 0)
 const allCurrentPageSelected = computed(() =>
   currentPageAssetIds.value.length > 0 &&
   currentPageAssetIds.value.every((id) => selectedAssetIdSet.value.has(id)),
 )
 const hasInventoryFilters = computed(() =>
   Boolean(selectedProgramId.value || assetTypeFilter.value || statusFilter.value || viewStateFilter.value || search.value.trim()),
-)
-const deleteAllActionLabel = computed(() =>
-  hasInventoryFilters.value
-    ? t('bugBounty.surface.inventory.actions.deleteFiltered', { count: inventoryTotal.value })
-    : t('bugBounty.surface.inventory.actions.deleteAll', { count: inventoryTotal.value }),
 )
 
 const inventoryColumns = computed(() => {
@@ -794,7 +785,7 @@ const loadInventoryFacets = async (programId = selectedProgramId.value || null) 
 
 const loadNewAssetCount = async (programId = selectedProgramId.value || null) => {
   try {
-    const response = await invoke<any>('surface_list_inventory', {
+    const count = await invoke<number>('surface_count_assets', {
       filter: {
         program_id: programId,
         asset_type: null,
@@ -803,12 +794,12 @@ const loadNewAssetCount = async (programId = selectedProgramId.value || null) =>
         search: null,
         service_name: null,
         transport_protocol: null,
-        limit: 0,
-        offset: 0,
+        limit: null,
+        offset: null,
       },
     })
 
-    newAssetTotal.value = Number(response?.total || 0)
+    newAssetTotal.value = Number(count)
   } catch (error) {
     console.error('Failed to load new surface asset count:', error)
     newAssetTotal.value = 0
@@ -934,6 +925,21 @@ const openAssetStatsModal = (scope: 'all' | 'new') => {
 
 const closeAssetStatsModal = () => {
   showAssetStatsModal.value = false
+}
+
+const applyAssetStatsFilter = (assetType?: string | null) => {
+  if (!assetType) return
+  showAssetStatsModal.value = false
+  activeTab.value = 'inventory'
+  assetTypeFilter.value = assetType
+  statusFilter.value = ''
+  viewStateFilter.value = assetStatsFilter.value === 'new' ? 'new' : ''
+  serviceNameFilter.value = ''
+  transportProtocolFilter.value = ''
+  search.value = ''
+  clearSelection()
+  reloadInventoryFromFirstPage()
+  loadInventoryFacets()
 }
 
 const closeDetailModal = () => {

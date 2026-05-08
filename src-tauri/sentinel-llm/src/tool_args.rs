@@ -39,10 +39,7 @@ fn parse_embedded_json_value(value: Value, depth: usize) -> Value {
 }
 
 fn requires_command_object(tool_name: &str) -> bool {
-    matches!(
-        tool_name.trim().to_lowercase().as_str(),
-        "shell" | "interactive_shell"
-    )
+    matches!(tool_name.trim().to_lowercase().as_str(), "shell")
 }
 
 fn empty_object() -> Value {
@@ -97,76 +94,58 @@ pub fn normalize_tool_call_arguments_json(tool_name: &str, value: &Value) -> Str
 pub fn tool_call_argument_repair_message(tool_name: &str, raw: &str) -> Option<String> {
     match tool_name.trim().to_lowercase().as_str() {
         "shell" => shell_argument_repair_message(raw),
-        "interactive_shell" => interactive_shell_argument_repair_message(raw),
         _ => None,
     }
+}
+
+fn has_non_empty_string(map: &Map<String, Value>, key: &str) -> bool {
+    map.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+}
+
+fn has_valid_shell_call_shape(map: &Map<String, Value>) -> bool {
+    has_non_empty_string(map, "command")
+        || has_non_empty_string(map, "cmd")
+        || has_non_empty_string(map, "session_id")
+        || has_non_empty_string(map, "process_id")
+        || has_non_empty_string(map, "action")
+        || has_shell_stdin_key(map)
+}
+
+fn has_shell_stdin_key(map: &Map<String, Value>) -> bool {
+    map.contains_key("chars") || map.contains_key("input") || map.contains_key("input_text")
 }
 
 fn shell_argument_repair_message(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Some(
-            "Tool call rejected: `shell` requires `function.arguments` to be a JSON object with a non-empty `command` string, for example {\"command\":\"pwd\"}.".to_string(),
-        );
-    }
-
-    let parsed = serde_json::from_str::<Value>(trimmed).ok();
-    match parsed {
-        Some(Value::Object(map)) => match map.get("command").and_then(|value| value.as_str()) {
-            Some(command) if !command.trim().is_empty() => None,
-            _ => Some(
-                "Tool call rejected: `shell` requires `function.arguments.command` to be a non-empty string. Retry with a JSON object like {\"command\":\"pwd\"}.".to_string(),
-            ),
-        },
-        Some(Value::String(command)) => Some(format!(
-            "Tool call rejected: `shell` does not accept a bare string in `function.arguments`. Retry with this JSON object instead: {}",
-            command_object(command)
-        )),
-        None => Some(format!(
-            "Tool call rejected: `shell` does not accept a bare string in `function.arguments`. Retry with this JSON object instead: {}",
-            command_object(trimmed.to_string())
-        )),
-        _ => Some(
-            "Tool call rejected: `shell` requires `function.arguments` to be a JSON object like {\"command\":\"pwd\"}.".to_string(),
-        ),
-    }
-}
-
-fn interactive_shell_argument_repair_message(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Some(
-            "Tool call rejected: `interactive_shell` requires `function.arguments` to be a JSON object, for example {\"command\":\"top\",\"session_policy\":\"reuse\"}.".to_string(),
-        );
+        return None;
     }
 
     let parsed = serde_json::from_str::<Value>(trimmed).ok();
     match parsed {
         Some(Value::Object(map)) => {
-            if let Some(command_value) = map.get("command") {
-                match command_value.as_str() {
-                    Some(command) if !command.trim().is_empty() => None,
-                    Some(_) => Some(
-                        "Tool call rejected: `interactive_shell.command` must be a non-empty string when provided.".to_string(),
-                    ),
-                    None => Some(
-                        "Tool call rejected: `interactive_shell.command` must be a string when provided.".to_string(),
-                    ),
-                }
-            } else {
+            if has_valid_shell_call_shape(&map) {
                 None
+            } else {
+                Some(
+                    "Tool call rejected: `shell` requires a non-empty `command`/`cmd` to start a command, or `session_id`/`process_id` plus an explicit action to continue one. Retry with {\"command\":\"pwd\"}, {\"session_id\":\"...\",\"action\":\"poll\"}, {\"session_id\":\"...\",\"action\":\"write\",\"chars\":\"...\"}, {\"session_id\":\"...\",\"action\":\"key\",\"key\":\"ArrowDown\"}, or {\"session_id\":\"...\",\"action\":\"submit\"}.".to_string(),
+                )
             }
         }
         Some(Value::String(command)) => Some(format!(
-            "Tool call rejected: `interactive_shell` does not accept a bare string in `function.arguments`. Retry with a JSON object instead: {}",
+            "Tool call rejected: `shell` does not accept a bare string in `function.arguments`. Retry with this JSON object instead: {}",
             command_object(command)
         )),
         None => Some(format!(
-            "Tool call rejected: `interactive_shell` does not accept a bare string in `function.arguments`. Retry with a JSON object instead: {}",
+            "Tool call rejected: `shell` does not accept a bare string in `function.arguments`. Retry with this JSON object instead: {}",
             command_object(trimmed.to_string())
         )),
         _ => Some(
-            "Tool call rejected: `interactive_shell` requires `function.arguments` to be a JSON object.".to_string(),
+            "Tool call rejected: `shell` requires `function.arguments` to be a JSON object like {\"command\":\"pwd\"}, {\"session_id\":\"...\",\"action\":\"poll\"}, {\"session_id\":\"...\",\"action\":\"write\",\"chars\":\"...\"}, {\"session_id\":\"...\",\"action\":\"key\",\"key\":\"ArrowDown\"}, or {\"session_id\":\"...\",\"action\":\"submit\"}.".to_string(),
         ),
     }
 }
@@ -219,7 +198,57 @@ mod tests {
     }
 
     #[test]
+    fn shell_repair_message_uses_explicit_session_actions() {
+        let message = tool_call_argument_repair_message("shell", r#"{"foo":"bar"}"#)
+            .expect("invalid shell object should be rejected");
+
+        assert!(message.contains(r#""action":"poll""#));
+        assert!(message.contains(r#""action":"write""#));
+        assert!(message.contains(r#""action":"key""#));
+        assert!(message.contains(r#""action":"submit""#));
+        assert!(!message.contains(r#""chars":"\n""#));
+    }
+
+    #[test]
     fn accepts_valid_shell_command_object() {
         assert!(tool_call_argument_repair_message("shell", r#"{"command":"pwd"}"#).is_none());
+    }
+
+    #[test]
+    fn accepts_valid_shell_cmd_alias_object() {
+        assert!(tool_call_argument_repair_message("shell", r#"{"cmd":"pwd"}"#).is_none());
+    }
+
+    #[test]
+    fn accepts_shell_session_continuation_without_command() {
+        assert!(tool_call_argument_repair_message(
+            "shell",
+            r#"{"session_id":"abc123","chars":"\n"}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn accepts_shell_session_cancel_without_command() {
+        assert!(tool_call_argument_repair_message(
+            "shell",
+            r#"{"process_id":"abc123","action":"cancel"}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn accepts_shell_action_without_explicit_session_for_active_session_repair() {
+        assert!(tool_call_argument_repair_message("shell", r#"{"action":"poll"}"#).is_none());
+    }
+
+    #[test]
+    fn accepts_shell_stdin_without_explicit_session_for_active_session_repair() {
+        assert!(tool_call_argument_repair_message("shell", r#"{"chars":"\n"}"#).is_none());
+    }
+
+    #[test]
+    fn accepts_empty_shell_arguments_for_active_session_repair() {
+        assert!(tool_call_argument_repair_message("shell", "").is_none());
     }
 }

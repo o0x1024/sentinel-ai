@@ -12,6 +12,7 @@ use sentinel_tools::output_storage::{
 };
 use sentinel_tools::shell::ShellExecutionMode;
 
+use crate::agents::context_engineering::budget::{ContextBudgetAnalysis, ContextBudgetAnalyzer};
 use crate::agents::context_engineering::checkpoint::{
     load_or_init_run_state, save_run_state, ContextRunState,
 };
@@ -33,7 +34,9 @@ use crate::agents::context_engineering::token_utils::{
 };
 use crate::agents::context_engineering::tool_digest::condense_text;
 use crate::agents::context_engineering::types::{trim_history_preserve_tool_pairs, ContextPacket};
-use crate::agents::sliding_window::{SlidingWindowConfig, SlidingWindowManager};
+use crate::agents::sliding_window::{
+    SlidingWindowCompressionEventContext, SlidingWindowConfig, SlidingWindowManager,
+};
 use crate::agents::types::DocumentAttachmentInfo;
 use crate::memory::build_memory_retrieval_trace;
 use sentinel_rag::canonicalize_memory_kind;
@@ -45,6 +48,7 @@ const USER_FORCED_RULES_BLOCK_MARKER: &str = "[User Forced Rules]";
 pub struct ContextBuildInput {
     pub app_handle: AppHandle,
     pub execution_id: String,
+    pub conversation_id: String,
     pub generation: Option<u64>,
     pub active_browser_shell_direct_write_enabled: bool,
     pub active_browser_shell_session_id: Option<String>,
@@ -54,6 +58,7 @@ pub struct ContextBuildInput {
     pub base_system_prompt: String,
     pub injected_skill_prompt: Option<String>,
     pub task: String,
+    pub provider_config_key: String,
     pub rig_provider: String,
     pub llm_config: LlmConfig,
     pub selected_tool_ids: Vec<String>,
@@ -66,6 +71,8 @@ pub struct ContextBuildResult {
     pub system_prompt: String,
     pub history_messages: Vec<ChatMessage>,
     pub context_packet: ContextPacket,
+    pub budget_analyzer: ContextBudgetAnalyzer,
+    pub budget_analysis: ContextBudgetAnalysis,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -125,12 +132,13 @@ fn tool_is_selected(selected_tool_ids: &[String], tool_id: &str) -> bool {
 fn build_tool_usage_priority_block(
     selected_tool_ids: &[String],
     has_bound_browser_shell_session: bool,
-    is_binary_security_task: bool,
 ) -> String {
     let has_ask_user_question = tool_is_selected(selected_tool_ids, "ask_user_question");
     let has_shell = tool_is_selected(selected_tool_ids, "shell");
-    let has_interactive_shell = tool_is_selected(selected_tool_ids, "interactive_shell");
     let has_browser_shell = tool_is_selected(selected_tool_ids, "browser_shell");
+    let has_glob = tool_is_selected(selected_tool_ids, "glob");
+    let has_grep = tool_is_selected(selected_tool_ids, "grep");
+    let has_file_read = tool_is_selected(selected_tool_ids, "file_read");
 
     let mut lines = vec![
         "Use only tools that are actually available in this run. Do not guess or call tool names outside the active toolset.".to_string(),
@@ -142,63 +150,57 @@ fn build_tool_usage_priority_block(
         );
     }
 
-    if has_shell {
-        lines.push(
-            "Use one-shot `shell` only for commands that should finish on their own and return output promptly.".to_string(),
-        );
-        if has_interactive_shell {
-            lines.push(
-                "If a command starts a server, watcher, log follower, dev process, installer, scaffolder, or anything expected to keep running or ask for input, prefer `interactive_shell`/`exec_command` and continue with `write_stdin` using the returned session_id. Use `shell` with `run_in_background=true` only for non-interactive background processes.".to_string(),
-            );
-        } else {
-            lines.push(
-                "If a command starts a server, watcher, log follower, dev process, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive. Example: starting a dev server should be `shell {\"command\":\"npm run dev\",\"run_in_background\":true}` instead of a foreground `shell {\"command\":\"npm run dev\"}`. Example: following logs should be `shell {\"command\":\"docker logs -f api\",\"run_in_background\":true}`.".to_string(),
-            );
-        }
+    let mut file_search_tools = Vec::new();
+    if has_glob {
+        file_search_tools.push("`glob` for filename discovery");
+    }
+    if has_grep {
+        file_search_tools.push("`grep` for file content search");
+    }
+    if has_file_read {
+        file_search_tools.push("`file_read` for exact file inspection");
+    }
+    if !file_search_tools.is_empty() {
+        lines.push(format!(
+            "For workspace file discovery and code/content search, prefer {} because they return structured bounded results.",
+            file_search_tools.join(", ")
+        ));
     }
 
-    if has_interactive_shell {
+    if has_shell {
         lines.push(
-            "Use `interactive_shell` or `exec_command` for iterative terminal work, REPLs, TUIs, installers, scaffolders, debugger sessions, or live long-running processes. These tools return a session_id/process_id after a bounded wait; use `write_stdin` with that id to answer prompts or poll output.".to_string(),
+            "`shell` uses a bounded wait: short commands return `status:\"completed\"`; commands still running return `status:\"running\"` or `status:\"input_waiting\"` with a session_id.".to_string(),
         );
-        if has_shell {
+        if !file_search_tools.is_empty() {
             lines.push(
-                "If one-shot `shell` returns a structured failure with `interaction_required=true`, do not retry the same command with `shell`. Switch to `interactive_shell`/`exec_command` and continue with `write_stdin`, or rewrite the command to be non-interactive.".to_string(),
+                "Use `shell` when the task requires command execution, project scripts, build/test, package managers, git commands, interactive terminal work, system inspection, or search semantics not supported by the active file/search tools.".to_string(),
             );
         }
+        lines.push(
+            "When `shell` returns `completed:false`, do not rerun the same command. Poll with `action:\"poll\"`; write raw stdin with `action:\"write\"` and explicit `chars`; send terminal navigation keys with `action:\"key\"` and `key` such as `ArrowDown` or `Enter`; use `action:\"submit\"` for TTY Enter; do not use `select_option` or depend on `prompt_state`; cancel with `action:\"cancel\"` when needed.".to_string(),
+        );
+        lines.push(
+            "If a command starts a server, watcher, log follower, or anything expected to keep running, prefer `shell` with `run_in_background=true` so the conversation stays responsive. Example: starting a dev server should be `shell {\"command\":\"npm run dev\",\"run_in_background\":true}` instead of a foreground `shell {\"command\":\"npm run dev\"}`. Example: following logs should be `shell {\"command\":\"docker logs -f api\",\"run_in_background\":true}`.".to_string(),
+        );
     }
 
     if has_browser_shell {
         let mut browser_shell_line = "Use `browser_shell` when the target terminal is a third-party browser WebSocket shell captured by the Sentinel Chrome extension.".to_string();
         if has_bound_browser_shell_session {
-            browser_shell_line.push_str(" Prefer the currently bound `browser_shell` session over DOM `browser` actions when you need the actual terminal stream rather than the page DOM.");
+            browser_shell_line.push_str(" Prefer the currently bound `browser_shell` session when you need the actual terminal stream rather than page content.");
         } else {
-            browser_shell_line.push_str(" Prefer it over DOM `browser` actions when you need the actual terminal stream rather than the page DOM.");
+            browser_shell_line.push_str(
+                " Use it when you need the actual terminal stream rather than page content.",
+            );
         }
         lines.push(browser_shell_line);
     }
 
-    if has_shell || has_interactive_shell {
+    if has_shell {
         lines.push(
             "Never leave the conversation blocked on a long-lived foreground shell command."
                 .to_string(),
         );
-    }
-
-    if is_binary_security_task {
-        if has_interactive_shell && has_shell {
-            lines.push(
-                "For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and multi-step terminal exploration. Use one-off `shell` only for short non-interactive commands.".to_string(),
-            );
-        } else if has_interactive_shell {
-            lines.push(
-                "For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and multi-step terminal exploration.".to_string(),
-            );
-        } else if has_shell {
-            lines.push(
-                "For reverse engineering / pwn / binary exploitation tasks, limit `shell` usage to short non-interactive commands that produce immediate output.".to_string(),
-            );
-        }
     }
 
     format!("\n\n[Tool Usage Priority]\n- {}", lines.join("\n- "))
@@ -265,6 +267,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         ));
         system_prompt.push_str(
             "\n\n[TaskProgressContract]\n\
+            - For simple single-step tasks, complete the work directly without creating a UI plan and without calling `tasks`.\n\
             - Use the `tasks` tool to publish the current multi-step plan for the UI.\n\
             - Each call must submit the complete desired `plan`; omitted previous steps are removed from the displayed plan.\n\
             - Keep at most one step `in_progress` and update the plan as meaningful progress happens.\n\
@@ -272,7 +275,9 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         );
     }
 
-    if policy.include_stuck_resolution_rule {
+    if policy.include_stuck_resolution_rule
+        && tool_is_selected(&input.selected_tool_ids, "tenth_man_review")
+    {
         system_prompt.push_str(
             "\n\n[Stuck Resolution Rule]\n\
             Do not rely on your subjective feeling of being stuck. You MUST immediately call the `tenth_man_review` tool with `review_mode: { mode: 'full_history' }` and `review_type: 'full'` before another retry when any of these are true: you have already spent 3-4 turns on the same path; you are repeating the same tool family, route family, command pattern, or parameter pattern without clear new evidence; your next step is only a small variation of a failed attempt; you cannot clearly state what new information the next attempt should produce; or your current plan still depends on an unverified assumption. Before repeating a path, explicitly ask yourself: \"What new evidence will this attempt produce?\" If the answer is weak, unclear, or mostly the same as before, call `tenth_man_review` first. Do NOT continue guessing."
@@ -473,34 +478,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     }
 
     let has_shell = tool_is_selected(&input.selected_tool_ids, "shell");
-    let has_interactive_shell = tool_is_selected(&input.selected_tool_ids, "interactive_shell");
     let has_browser_shell = tool_is_selected(&input.selected_tool_ids, "browser_shell");
-
-    if has_interactive_shell
-        && input
-            .active_terminal_session_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .is_some()
-    {
-        system_prompt.push_str(
-            "\n\n[Interactive Terminal Session]\n\
-            - An interactive terminal session is already active.\n\
-            - `interactive_shell` reuses the current terminal session by default; `write_stdin` can continue a returned session_id/process_id.\n\
-            - Use `session_policy: \"new\"` only when you intentionally need a fresh terminal session.\n\
-            - Do not invent, guess, or manage terminal session IDs yourself.",
-        );
-
-        if let Some(fingerprint) = input
-            .active_terminal_session_fingerprint
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        {
-            system_prompt.push_str(&format!("\n- Active terminal fingerprint: {}", fingerprint));
-        }
-    }
 
     if has_browser_shell {
         if let Some(browser_shell_session_id) = input
@@ -518,15 +496,12 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             if has_shell {
                 alternatives.push("local `shell`");
             }
-            if has_interactive_shell {
-                alternatives.push("`interactive_shell`");
+            if !alternatives.is_empty() {
+                browser_shell_note.push(format!(
+                    "If the user asks to use the current browser shell / browser terminal / third-party shell, do not use {} for that command.",
+                    alternatives.join(", ")
+                ));
             }
-            alternatives.push("DOM `browser` actions");
-
-            browser_shell_note.push(format!(
-                "If the user asks to use the current browser shell / browser terminal / third-party shell, do not use {} for that command.",
-                alternatives.join(", ")
-            ));
             browser_shell_note.push(
                 "Reuse the selected browser shell session unless the user explicitly asks for a different one.".to_string(),
             );
@@ -552,31 +527,6 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
-    let task_lower = input.task.to_lowercase();
-    let is_binary_security_task = [
-        "pwn",
-        "reverse",
-        "binary",
-        "elf",
-        "rop",
-        "heap",
-        "ret2libc",
-        "shellcode",
-        "gdb",
-        "pwndbg",
-        "gef",
-        "ctf",
-        "exploit",
-        "逆向",
-        "二进制",
-        "漏洞利用",
-        "缓冲区溢出",
-        "栈溢出",
-        "堆溢出",
-    ]
-    .iter()
-    .any(|kw| task_lower.contains(kw));
-
     system_prompt.push_str(&build_tool_usage_priority_block(
         &input.selected_tool_ids,
         input
@@ -585,7 +535,6 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .is_some(),
-        is_binary_security_task,
     ));
 
     system_prompt.push_str(
@@ -646,8 +595,9 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     system_prompt = trim_layer(system_prompt, policy.layer_max_chars);
 
     let max_context_length =
-        get_provider_max_context_length(&input.app_handle, &input.rig_provider).await?;
+        get_provider_max_context_length(&input.app_handle, &input.provider_config_key).await?;
     let max_tokens = max_context_length as usize;
+    let budget_analyzer = ContextBudgetAnalyzer::new(max_tokens);
     let budget = policy.budget.scale_to_context(max_tokens);
 
     let mut packet = ContextPacket::new(system_prompt);
@@ -667,9 +617,19 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     };
 
     let mut sliding_window =
-        SlidingWindowManager::new(&input.app_handle, &input.execution_id, Some(sw_config)).await?;
+        SlidingWindowManager::new(&input.app_handle, &input.conversation_id, Some(sw_config))
+            .await?;
 
-    if let Err(e) = sliding_window.compress_if_needed(&input.llm_config).await {
+    if let Err(e) = sliding_window
+        .compress_if_needed(
+            &input.llm_config,
+            Some(SlidingWindowCompressionEventContext {
+                execution_id: &input.execution_id,
+                generation: input.generation,
+            }),
+        )
+        .await
+    {
         tracing::warn!("Sliding window compression failed: {}", e);
     }
 
@@ -722,13 +682,13 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     if history_messages.is_empty() {
         if let Some(fallback) =
-            load_fallback_history(&input.app_handle, &input.execution_id, 6).await
+            load_fallback_history(&input.app_handle, &input.conversation_id, 6).await
         {
             history_messages = fallback;
         }
     }
 
-    let safe_limit = (max_context_length as f64 * 0.85) as usize;
+    let safe_limit = budget_analyzer.safe_limit_tokens;
     let mut trim_trace = Vec::new();
 
     // Single system prompt trim pass (after sliding window summaries are included)
@@ -866,11 +826,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         .map(estimate_message_tokens)
         .sum();
     let used_tokens = system_prompt_tokens + history_tokens;
-    let usage_percentage = if max_tokens > 0 {
-        (used_tokens as f64 / max_tokens as f64 * 100.0).min(100.0)
-    } else {
-        0.0
-    };
+    let budget_analysis = budget_analyzer.analyze(used_tokens);
 
     let _ = input.app_handle.emit(
         "agent:context_usage",
@@ -879,7 +835,14 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             "generation": input.generation,
             "used_tokens": used_tokens,
             "max_tokens": max_tokens,
-            "usage_percentage": usage_percentage,
+            "effective_context_tokens": budget_analyzer.effective_context_tokens,
+            "remaining_tokens": budget_analysis.remaining_tokens,
+            "usage_percentage": budget_analysis.usage_percentage,
+            "context_pressure": format!("{:?}", budget_analysis.pressure),
+            "warning_threshold_tokens": budget_analyzer.warning_threshold_tokens,
+            "auto_compact_threshold_tokens": budget_analyzer.auto_compact_threshold_tokens,
+            "blocking_threshold_tokens": budget_analyzer.blocking_threshold_tokens,
+            "output_reserve_tokens": budget_analyzer.output_reserve_tokens,
             "system_prompt_tokens": system_prompt_tokens,
             "run_state_tokens": run_state_tokens,
             "history_tokens": history_tokens,
@@ -995,6 +958,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         system_prompt: packet.render_system_prompt(),
         history_messages: packet.window_messages.clone(),
         context_packet: packet,
+        budget_analyzer,
+        budget_analysis,
     })
 }
 
@@ -1202,12 +1167,12 @@ async fn load_execution_tasks(
 
 async fn load_fallback_history(
     app_handle: &AppHandle,
-    execution_id: &str,
+    conversation_id: &str,
     limit: usize,
 ) -> Option<Vec<ChatMessage>> {
     let db = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>()?;
     let messages = db
-        .get_ai_messages_by_conversation(execution_id)
+        .get_ai_messages_by_conversation(conversation_id)
         .await
         .ok()?;
     if messages.is_empty() {
@@ -1277,14 +1242,10 @@ async fn get_provider_max_context_length(app_handle: &AppHandle, provider: &str)
                 std::collections::HashMap<String, serde_json::Value>,
             >(&config_str)
             {
-                for (key, value) in providers.iter() {
-                    if key.to_lowercase() == provider.to_lowercase() {
-                        if let Some(max_ctx) =
-                            value.get("max_context_length").and_then(|v| v.as_u64())
-                        {
-                            return Ok(max_ctx as u32);
-                        }
-                    }
+                if let Some(max_ctx) =
+                    resolve_provider_max_context_length_from_config(&providers, provider)
+                {
+                    return Ok(max_ctx);
                 }
             }
         }
@@ -1305,26 +1266,101 @@ async fn get_provider_max_context_length(app_handle: &AppHandle, provider: &str)
     Ok(default)
 }
 
+fn resolve_provider_max_context_length_from_config(
+    providers: &std::collections::HashMap<String, serde_json::Value>,
+    provider: &str,
+) -> Option<u32> {
+    let provider = provider.trim();
+    if provider.is_empty() {
+        return None;
+    }
+
+    providers.iter().find_map(|(key, value)| {
+        let key_matches = key.eq_ignore_ascii_case(provider);
+        let configured_provider_matches = value
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .map(|configured| configured.eq_ignore_ascii_case(provider))
+            .unwrap_or(false);
+
+        if !key_matches && !configured_provider_matches {
+            return None;
+        }
+
+        value
+            .get("max_context_length")
+            .and_then(|v| v.as_u64())
+            .and_then(|value| u32::try_from(value).ok())
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::build_tool_usage_priority_block;
+    use super::{build_tool_usage_priority_block, resolve_provider_max_context_length_from_config};
+    use std::collections::HashMap;
+
+    #[test]
+    fn provider_context_length_uses_logical_custom_provider() {
+        let providers =
+            serde_json::from_value::<HashMap<String, serde_json::Value>>(serde_json::json!({
+                "Mimo": {
+                    "provider": "Mimo",
+                    "rig_provider": "openai",
+                    "max_context_length": 1_000_000
+                },
+                "OpenAI": {
+                    "provider": "openai",
+                    "max_context_length": 128_000
+                }
+            }))
+            .unwrap();
+
+        assert_eq!(
+            resolve_provider_max_context_length_from_config(&providers, "mimo"),
+            Some(1_000_000)
+        );
+        assert_eq!(
+            resolve_provider_max_context_length_from_config(&providers, "openai"),
+            Some(128_000)
+        );
+    }
 
     #[test]
     fn tool_usage_priority_omits_shell_guidance_when_shell_tools_are_unavailable() {
         let rendered = build_tool_usage_priority_block(
             &vec!["file_read".to_string(), "grep".to_string()],
             false,
-            false,
         );
 
         assert!(rendered.contains("Use only tools that are actually available in this run"));
+        assert!(rendered.contains("prefer `grep` for file content search"));
+        assert!(rendered.contains("`file_read` for exact file inspection"));
         assert!(!rendered.contains("Use one-shot `shell`"));
         assert!(!rendered.contains("Use `interactive_shell`"));
         assert!(!rendered.contains("Use `browser_shell`"));
     }
 
     #[test]
-    fn tool_usage_priority_includes_only_selected_terminal_guidance() {
+    fn tool_usage_priority_keeps_shell_available_for_execution_work() {
+        let rendered = build_tool_usage_priority_block(
+            &vec![
+                "shell".to_string(),
+                "glob".to_string(),
+                "grep".to_string(),
+                "file_read".to_string(),
+            ],
+            false,
+        );
+
+        assert!(rendered.contains("prefer `glob` for filename discovery"));
+        assert!(rendered.contains("`grep` for file content search"));
+        assert!(rendered.contains("Use `shell` when the task requires command execution"));
+        assert!(rendered.contains("build/test"));
+        assert!(rendered.contains("git commands"));
+    }
+
+    #[test]
+    fn tool_usage_priority_ignores_removed_interactive_shell_tool() {
         let rendered = build_tool_usage_priority_block(
             &vec![
                 "ask_user_question".to_string(),
@@ -1332,30 +1368,26 @@ mod tests {
                 "browser_shell".to_string(),
             ],
             true,
-            true,
         );
 
         assert!(rendered.contains("Use `ask_user_question`"));
         assert!(!rendered.contains("Use one-shot `shell`"));
-        assert!(rendered.contains("Use `interactive_shell`"));
+        assert!(!rendered.contains("Use `interactive_shell`"));
         assert!(rendered.contains("Use `browser_shell`"));
-        assert!(rendered.contains(
-            "For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell`"
-        ));
+        assert!(!rendered.contains("pwn"));
+        assert!(!rendered.contains("reverse engineering"));
     }
 
     #[test]
-    fn tool_usage_priority_includes_shell_to_interactive_handoff_guidance() {
+    fn tool_usage_priority_includes_shell_to_exec_handoff_guidance() {
         let rendered = build_tool_usage_priority_block(
             &vec!["shell".to_string(), "interactive_shell".to_string()],
             false,
-            false,
         );
 
-        assert!(rendered.contains("Use one-shot `shell` only for commands that should finish"));
-        assert!(rendered.contains(
-            "If one-shot `shell` returns a structured failure with `interaction_required=true`, do not retry the same command with `shell`."
-        ));
-        assert!(rendered.contains("Switch to `interactive_shell`"));
+        assert!(rendered.contains("`shell` uses a bounded wait"));
+        assert!(rendered
+            .contains("When `shell` returns `completed:false`, do not rerun the same command."));
+        assert!(!rendered.contains("Use `interactive_shell`"));
     }
 }

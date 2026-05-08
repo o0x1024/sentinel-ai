@@ -1,6 +1,7 @@
 //! Context Engineering module.
 
 pub mod artifact_readback;
+pub mod budget;
 pub mod builder;
 pub mod checkpoint;
 pub mod engine;
@@ -21,6 +22,9 @@ mod tests;
 pub use artifact_readback::{
     apply_tool_digest_artifact_updates, apply_tool_digest_to_tracked_artifacts,
     has_incomplete_host_artifacts, render_artifact_readback_summary, TrackedArtifact,
+};
+pub use budget::{
+    ContextBudgetAnalysis, ContextBudgetAnalyzer, ContextBudgetStrategy, ContextPressure,
 };
 pub use builder::{build_context, ContextBuildInput, ContextBuildResult};
 pub use checkpoint::{

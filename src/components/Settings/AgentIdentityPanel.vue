@@ -1,5 +1,5 @@
 <template>
-  <div class="rounded-lg border border-base-300 bg-base-200/40 p-4">
+  <div class="group/agent-identity rounded-lg border border-base-300 bg-base-200/40 p-4">
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div class="min-w-0 flex-1 space-y-2">
         <div v-if="eyebrow" class="text-xs font-medium uppercase tracking-wide text-base-content/50">
@@ -7,13 +7,17 @@
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <div class="text-lg font-semibold text-base-content">{{ title }}</div>
+          <slot name="title">
+            <div class="text-lg font-semibold text-base-content">{{ title }}</div>
+          </slot>
           <slot name="badges" />
         </div>
 
-        <div v-if="description" class="text-sm leading-6 text-base-content/70">
-          {{ description }}
-        </div>
+        <slot name="description">
+          <div v-if="description" class="text-sm leading-6 text-base-content/70">
+            {{ description }}
+          </div>
+        </slot>
 
         <div v-if="normalizedMetaItems.length" class="flex flex-wrap gap-2 pt-1">
           <div

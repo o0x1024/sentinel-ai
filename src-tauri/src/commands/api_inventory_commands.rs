@@ -360,12 +360,10 @@ pub async fn bounty_list_api_inventory_targets(
 
     let filter = filter.unwrap_or_default();
     let observations = db_service
-        .list_surface_observations_filtered(
+        .list_latest_surface_observations_by_target(
             filter.program_id.as_deref(),
             Some(API_MONITOR_PLUGIN_ID),
             Some(API_SNAPSHOT_ARTIFACT_TYPE),
-            None,
-            None,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -451,12 +449,10 @@ pub async fn bounty_list_api_inventory_target_keys(
 
     let filter = filter.unwrap_or_default();
     let observations = db_service
-        .list_surface_observations_filtered(
+        .list_latest_surface_observations_by_target(
             filter.program_id.as_deref(),
             Some(API_MONITOR_PLUGIN_ID),
             Some(API_SNAPSHOT_ARTIFACT_TYPE),
-            None,
-            None,
         )
         .await
         .map_err(|e| e.to_string())?;

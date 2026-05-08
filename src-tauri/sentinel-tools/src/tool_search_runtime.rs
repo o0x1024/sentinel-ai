@@ -4,6 +4,10 @@ use crate::buildin_tools::{
 };
 use crate::tool_server::{get_tool_server, ToolInfo};
 
+fn is_hidden_from_default_tool_search(tool_id: &str) -> bool {
+    tool_id == "interactive_shell"
+}
+
 fn tool_search_tokens(query_lower: &str) -> Vec<&str> {
     query_lower
         .split(|ch: char| !ch.is_alphanumeric() && ch != '_')
@@ -321,7 +325,12 @@ pub(crate) fn recommend_tool_bundle(
 
 pub(crate) async fn run_tool_search(args: ToolSearchArgs) -> Result<ToolSearchOutput, String> {
     let tool_server = get_tool_server();
-    let catalog = tool_server.list_tools().await;
+    let catalog = tool_server
+        .list_tools()
+        .await
+        .into_iter()
+        .filter(|tool| !is_hidden_from_default_tool_search(&tool.name))
+        .collect::<Vec<_>>();
     let runtime_context = load_tool_search_runtime_context(args.execution_id.as_deref()).await;
     let runtime_hint = build_runtime_hint(runtime_context.as_ref());
 
@@ -508,6 +517,30 @@ mod tests {
                 .unwrap_or(0);
 
         assert!(lsp_score > shell_score);
+    }
+
+    #[tokio::test]
+    async fn tool_search_hides_interactive_shell_from_default_search() {
+        crate::get_tool_server().init_builtin_tools().await;
+
+        let result = run_tool_search(ToolSearchArgs {
+            action: ToolSearchAction::Search,
+            query: Some("interactive shell terminal".to_string()),
+            tool_ids: None,
+            max_results: 20,
+            execution_id: None,
+        })
+        .await
+        .expect("tool_search should run");
+
+        assert!(!result
+            .matches
+            .iter()
+            .any(|item| item.tool_id == "interactive_shell"));
+        assert!(!result
+            .recommended_tool_ids
+            .iter()
+            .any(|tool_id| tool_id == "interactive_shell"));
     }
 
     #[test]

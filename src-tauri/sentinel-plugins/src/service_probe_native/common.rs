@@ -14,10 +14,11 @@ pub(crate) fn invalid_target_result(
     message: &str,
 ) -> ServiceProbeResult {
     ServiceProbeResult {
-        target: service_key(&target.host, target.port),
+        target: service_key(&target.host, target.port, target.connect_ip.as_deref()),
         success: false,
         available: false,
         host: target.host,
+        connect_ip: target.connect_ip,
         port: target.port,
         protocol: target.protocol,
         service_name: None,
@@ -34,8 +35,14 @@ pub(crate) fn invalid_target_result(
     }
 }
 
-pub fn service_key(host: &str, port: u16) -> String {
-    format!("{host}:{port}")
+pub fn service_key(host: &str, port: u16, connect_ip: Option<&str>) -> String {
+    match connect_ip
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != host)
+    {
+        Some(connect_ip) => format!("{host}@{connect_ip}:{port}"),
+        None => format!("{host}:{port}"),
+    }
 }
 
 pub fn normalize_protocol(protocol: &str, port: u16) -> String {

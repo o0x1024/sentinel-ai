@@ -10,14 +10,13 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
-    AskUserQuestionTool, BrowserTool, CloseAgentTool, FileEditTool, FileReadTool, FileWriteTool,
-    GlobTool, GrepTool, HttpRequestTool, ListAgentsTool, LspTool, OcrTool, PluginAuthoringTool,
+    AskUserQuestionTool, CloseAgentTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
+    GrepTool, HttpRequestTool, ListAgentsTool, LspTool, OcrTool, PluginAuthoringTool,
     RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool, SpawnAgentTool, TasksTool,
     TenthManTool, ToolSearchTool, WaitAgentsTool,
 };
 use sentinel_tools::dynamic_tool::ToolSource;
 use sentinel_tools::get_tool_server;
-use sentinel_tools::terminal::server::TerminalServer;
 
 use crate::agents::tool_router::tool_server_catalog::{
     build_builtin_tool_metadata, convert_tool_info_to_metadata, is_configurable_tool_name,
@@ -54,7 +53,6 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     // All tools enabled by default
     map.insert(HttpRequestTool::NAME.to_string(), true);
     map.insert(AskUserQuestionTool::NAME.to_string(), true);
-    map.insert(BrowserTool::NAME.to_string(), true);
     map.insert(RouteDiscoveryTool::NAME.to_string(), true);
     map.insert(ShellTool::NAME.to_string(), true);
     map.insert(GlobTool::NAME.to_string(), true);
@@ -75,7 +73,6 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
         true,
     );
     map.insert(OcrTool::NAME.to_string(), true);
-    map.insert(TerminalServer::NAME.to_string(), true);
     map.insert(TenthManTool::NAME.to_string(), true);
     map.insert(TasksTool::NAME.to_string(), true);
     map.insert(SpawnAgentTool::NAME.to_string(), true);
@@ -1343,7 +1340,6 @@ mod tests {
 
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
         assert!(names.contains(&"tool_search"));
-        assert!(names.contains(&"browser"));
         assert!(names.contains(&"route_discovery"));
         assert!(names.contains(&"file_read"));
         assert!(names.contains(&"grep"));

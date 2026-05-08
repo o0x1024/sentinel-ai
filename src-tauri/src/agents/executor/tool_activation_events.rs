@@ -95,6 +95,7 @@ pub(super) fn emit_initial_tool_selection(
 pub(super) fn emit_and_persist_tool_activation(
     app_handle: &AppHandle,
     execution_id: &str,
+    conversation_id: &str,
     generation: Option<u64>,
     requested_tools: &[String],
     activation_query: Option<String>,
@@ -130,7 +131,7 @@ pub(super) fn emit_and_persist_tool_activation(
         );
         let msg = core_db::AiMessage {
             id: uuid::Uuid::new_v4().to_string(),
-            conversation_id: execution_id.to_string(),
+            conversation_id: conversation_id.to_string(),
             role: "system".to_string(),
             content: "Deferred tools activated".to_string(),
             metadata: Some(meta.to_string()),

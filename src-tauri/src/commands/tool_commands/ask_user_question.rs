@@ -232,7 +232,32 @@ pub async fn reject_ask_user_question(id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_timeout_secs;
+    use std::collections::HashMap;
+
+    use super::{build_default_answers, handle_timeout_response, normalize_timeout_secs};
+    use sentinel_tools::buildin_tools::ask_user_question::{
+        AskUserQuestionItem, AskUserQuestionOption, AskUserQuestionResponseSource,
+        AskUserQuestionResponseStatus, AskUserQuestionTimeoutPolicy,
+    };
+
+    fn sample_question() -> AskUserQuestionItem {
+        AskUserQuestionItem {
+            header: "Mode".to_string(),
+            question: "Which mode should continue?".to_string(),
+            options: vec![
+                AskUserQuestionOption {
+                    label: "Continue safely".to_string(),
+                    description: "Proceed with the conservative path".to_string(),
+                    preview: None,
+                },
+                AskUserQuestionOption {
+                    label: "Stop".to_string(),
+                    description: "Wait for explicit user input".to_string(),
+                    preview: None,
+                },
+            ],
+        }
+    }
 
     #[test]
     fn ask_user_question_defaults_to_two_minutes() {
@@ -243,5 +268,76 @@ mod tests {
     fn ask_user_question_timeout_still_respects_bounds() {
         assert_eq!(normalize_timeout_secs(Some(1)), 5);
         assert_eq!(normalize_timeout_secs(Some(9_999)), 1800);
+    }
+
+    #[test]
+    fn ask_user_question_timeout_uses_configured_default_answer() {
+        let questions = vec![sample_question()];
+        let mut defaults = HashMap::new();
+        defaults.insert(
+            "Which mode should continue?".to_string(),
+            "Continue safely".to_string(),
+        );
+
+        let response = handle_timeout_response(
+            &questions,
+            &defaults,
+            AskUserQuestionTimeoutPolicy::UseDefault,
+        )
+        .expect("timeout should continue with default answer");
+
+        assert_eq!(
+            response
+                .answers
+                .get("Which mode should continue?")
+                .map(String::as_str),
+            Some("Continue safely")
+        );
+        assert_eq!(
+            response.status,
+            AskUserQuestionResponseStatus::TimeoutWithDefault
+        );
+        assert_eq!(
+            response.source,
+            AskUserQuestionResponseSource::SystemDefault
+        );
+    }
+
+    #[test]
+    fn ask_user_question_timeout_uses_first_option_without_configured_default() {
+        let questions = vec![sample_question()];
+        let response = handle_timeout_response(
+            &questions,
+            &HashMap::new(),
+            AskUserQuestionTimeoutPolicy::UseDefault,
+        )
+        .expect("timeout should continue with first suitable option");
+
+        assert_eq!(
+            response
+                .answers
+                .get("Which mode should continue?")
+                .map(String::as_str),
+            Some("Continue safely")
+        );
+    }
+
+    #[test]
+    fn ask_user_question_default_answer_builder_prefers_configured_answer() {
+        let questions = vec![sample_question()];
+        let mut defaults = HashMap::new();
+        defaults.insert(
+            "Which mode should continue?".to_string(),
+            "Stop".to_string(),
+        );
+
+        let answers = build_default_answers(&questions, &defaults);
+
+        assert_eq!(
+            answers
+                .get("Which mode should continue?")
+                .map(String::as_str),
+            Some("Stop")
+        );
     }
 }

@@ -64,7 +64,7 @@ pub(super) async fn build_http_override_def(
         input_schema: http_input_schema,
         output_schema: None,
         source: ToolSource::Builtin,
-        category: ToolCategory::Network,
+        category: ToolCategory::WebNetwork,
         tags: http_info.tags.clone(),
         search_hint: http_info.search_hint.clone(),
         exposure: http_info.exposure.clone(),

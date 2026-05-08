@@ -66,7 +66,10 @@ pub(super) fn build_traffic_response_read_tool(
                     .id
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
-                format!("- referenced_traffic_index={} id={} {}", entry.index, id, entry.url)
+                format!(
+                    "- referenced_traffic_index={} id={} {}",
+                    entry.index, id, entry.url
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")

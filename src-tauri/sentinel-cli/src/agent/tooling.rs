@@ -2,7 +2,6 @@ use crate::runtime::RuntimeStateStore;
 use anyhow::Result;
 use chrono::Utc;
 use rig::tool::Tool;
-use sentinel_tools::buildin_tools::browser::{BrowserTool, BrowserToolArgs};
 use sentinel_tools::buildin_tools::http_request::{HttpRequestArgs, HttpRequestTool};
 use sentinel_tools::buildin_tools::route_discovery::{RouteDiscoveryArgs, RouteDiscoveryTool};
 use sentinel_tools::buildin_tools::search_exploit::{SearchExploitArgs, SearchExploitTool};
@@ -10,7 +9,7 @@ use sentinel_tools::buildin_tools::shell::{ShellArgs, ShellTool};
 use sentinel_tools::buildin_tools::tenth_man_tool::{TenthManTool, TenthManToolArgs};
 use sentinel_tools::buildin_tools::web_search::{WebSearchArgs, WebSearchTool};
 use sentinel_tools::dynamic_tool::{
-    DynamicTool, DynamicToolBuilder, ToolExecutionPolicy, ToolSource,
+    DynamicTool, DynamicToolBuilder, ToolCategory, ToolExecutionPolicy, ToolSource,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,7 +50,6 @@ pub struct ContestToolDigest {
 pub struct ContestToolWindowStats {
     pub total: usize,
     pub shell: usize,
-    pub browser: usize,
     pub http_request: usize,
     pub route_discovery: usize,
     pub search_exploit: usize,
@@ -126,7 +124,6 @@ impl ContestTraceRecorder {
         ContestToolWindowStats {
             total: slice.len(),
             shell: counts.get("shell").copied().unwrap_or(0),
-            browser: counts.get("browser").copied().unwrap_or(0),
             http_request: counts.get("http_request").copied().unwrap_or(0),
             route_discovery: counts.get("route_discovery").copied().unwrap_or(0),
             search_exploit: counts.get("search_exploit").copied().unwrap_or(0),
@@ -135,10 +132,6 @@ impl ContestTraceRecorder {
             trailing_shell,
         }
     }
-
-    pub fn default_browser_session_id(&self) -> String {
-        format!("browser-{}-{}", self.code, self.attempt_id)
-    }
 }
 
 pub async fn build_contest_dynamic_tools(
@@ -146,7 +139,6 @@ pub async fn build_contest_dynamic_tools(
 ) -> Result<Vec<DynamicTool>> {
     let sequence = Arc::new(AtomicU32::new(0));
     Ok(vec![
-        build_browser_tool(recorder.clone(), sequence.clone()).await?,
         build_http_tool(recorder.clone(), sequence.clone()).await?,
         build_route_discovery_tool(recorder.clone(), sequence.clone()).await?,
         build_shell_tool(recorder.clone(), sequence.clone()).await?,
@@ -158,29 +150,6 @@ pub async fn build_contest_dynamic_tools(
 
 fn build_signature(record: &ContestToolCallRecord) -> String {
     match record.name.as_str() {
-        "browser" => {
-            let action = record
-                .arguments
-                .get("action")
-                .and_then(|value| value.as_str())
-                .unwrap_or("unknown");
-            let session_id = record
-                .arguments
-                .get("session_id")
-                .and_then(|value| value.as_str())
-                .unwrap_or("default");
-            let url = record
-                .arguments
-                .get("url")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default();
-            let selector = record
-                .arguments
-                .get("selector")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default();
-            format!("browser:{}:{}:{}:{}", action, session_id, url, selector)
-        }
         "http_request" => {
             let method = record
                 .arguments
@@ -273,26 +242,6 @@ fn build_signature(record: &ContestToolCallRecord) -> String {
 fn build_result_signature(record: &ContestToolCallRecord) -> Option<String> {
     let result = record.result.as_ref()?;
     match record.name.as_str() {
-        "browser" => {
-            let action = result
-                .get("action")
-                .and_then(|value| value.as_str())
-                .unwrap_or("unknown");
-            let session_id = result
-                .get("session_id")
-                .and_then(|value| value.as_str())
-                .unwrap_or("default");
-            let data_preview = result
-                .get("data")
-                .and_then(|value| serde_json::to_string(value).ok())
-                .unwrap_or_default();
-            Some(format!(
-                "browser:{}:{}:{}",
-                action,
-                session_id,
-                normalize_preview(&data_preview.chars().take(200).collect::<String>())
-            ))
-        }
         "http_request" => {
             let status = result.get("status_code").and_then(|value| value.as_u64())?;
             let url = result
@@ -423,82 +372,6 @@ fn normalize_preview(value: &str) -> String {
         .collect()
 }
 
-async fn build_browser_tool(
-    recorder: ContestTraceRecorder,
-    sequence: Arc<AtomicU32>,
-) -> Result<DynamicTool> {
-    let tool = BrowserTool::default();
-    let definition = tool.definition(String::new()).await;
-
-    let def = DynamicToolBuilder::new(BrowserTool::NAME.to_string())
-        .description(definition.description)
-        .input_schema(definition.parameters)
-        .source(ToolSource::Builtin)
-        .category("browser")
-        .execution_policy(ToolExecutionPolicy {
-            read_only: false,
-            mutating: true,
-            concurrency_safe: false,
-            requires_permission: false,
-            supports_background: false,
-        })
-        .executor(move |args| {
-            let tool = BrowserTool::default();
-            let recorder = recorder.clone();
-            let sequence = sequence.clone();
-            async move {
-                let started_at = Utc::now().timestamp_millis();
-                let started = Instant::now();
-                let current_sequence = sequence.fetch_add(1, Ordering::Relaxed);
-                let call_id = format!("browser-{}-{}", started_at, current_sequence);
-                let mut parsed_args: BrowserToolArgs = serde_json::from_value(args.clone())
-                    .map_err(|error| format!("invalid browser args: {}", error))?;
-                if parsed_args
-                    .session_id
-                    .as_deref()
-                    .unwrap_or_default()
-                    .trim()
-                    .is_empty()
-                {
-                    parsed_args.session_id = Some(recorder.default_browser_session_id());
-                }
-
-                let call_result = tool.call(parsed_args).await;
-                let completed_at = Utc::now().timestamp_millis();
-                let duration_ms = started.elapsed().as_millis() as i64;
-                let (success, result_value, response) = match call_result {
-                    Ok(output) => {
-                        let value = serde_json::to_value(&output).map_err(|error| {
-                            format!("failed to serialize browser output: {}", error)
-                        })?;
-                        (true, Some(value.clone()), Ok(value))
-                    }
-                    Err(error) => (false, None, Err(format!("browser failed: {}", error))),
-                };
-
-                recorder
-                    .append(&ContestToolCallRecord {
-                        id: call_id,
-                        name: BrowserTool::NAME.to_string(),
-                        arguments: args,
-                        result: result_value,
-                        success,
-                        sequence: current_sequence,
-                        started_at_ms: started_at,
-                        completed_at_ms: completed_at,
-                        duration_ms,
-                    })
-                    .await;
-
-                response
-            }
-        })
-        .build()
-        .map_err(anyhow::Error::msg)?;
-
-    Ok(DynamicTool::new(def))
-}
-
 async fn build_http_tool(
     recorder: ContestTraceRecorder,
     sequence: Arc<AtomicU32>,
@@ -510,7 +383,7 @@ async fn build_http_tool(
         .description(definition.description)
         .input_schema(definition.parameters)
         .source(ToolSource::Builtin)
-        .category("network")
+        .category(ToolCategory::Network)
         .execution_policy(ToolExecutionPolicy {
             read_only: true,
             mutating: false,
@@ -577,7 +450,7 @@ async fn build_route_discovery_tool(
         .description(definition.description)
         .input_schema(definition.parameters)
         .source(ToolSource::Builtin)
-        .category("network")
+        .category(ToolCategory::Network)
         .execution_policy(ToolExecutionPolicy {
             read_only: true,
             mutating: false,
@@ -648,7 +521,7 @@ async fn build_shell_tool(
         .description(definition.description)
         .input_schema(definition.parameters)
         .source(ToolSource::Builtin)
-        .category("system")
+        .category(ToolCategory::System)
         .execution_policy(ToolExecutionPolicy {
             read_only: false,
             mutating: true,
@@ -715,7 +588,7 @@ async fn build_web_search_tool(
         .description(definition.description)
         .input_schema(definition.parameters)
         .source(ToolSource::Builtin)
-        .category("research")
+        .category(ToolCategory::AI)
         .execution_policy(ToolExecutionPolicy {
             read_only: true,
             mutating: false,
@@ -782,7 +655,7 @@ async fn build_tenth_man_tool(
         .description(definition.description)
         .input_schema(definition.parameters)
         .source(ToolSource::Builtin)
-        .category("reasoning")
+        .category(ToolCategory::AI)
         .execution_policy(ToolExecutionPolicy {
             read_only: true,
             mutating: false,
@@ -853,7 +726,7 @@ async fn build_search_exploit_tool(
         .description(definition.description)
         .input_schema(definition.parameters)
         .source(ToolSource::Builtin)
-        .category("exploitation")
+        .category(ToolCategory::Exploitation)
         .execution_policy(ToolExecutionPolicy {
             read_only: false,
             mutating: true,

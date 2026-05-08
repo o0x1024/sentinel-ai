@@ -1,17 +1,5 @@
 export const WEB_SEARCH_TOOL_ID = 'web_search'
-
-export const LEGACY_SKILLS_TOOL_IDS = [
-  'skills',
-  'shell',
-  'http_request',
-  'spawn_agent',
-  'wait_agents',
-  'list_agents',
-  'close_agent',
-  'tenth_man_review',
-  'memory',
-  'tasks',
-]
+export const TENTH_MAN_REVIEW_TOOL_ID = 'tenth_man_review'
 
 export interface UiToolConfigPayload {
   enabled: boolean
@@ -20,18 +8,24 @@ export interface UiToolConfigPayload {
   preselected_tools: string[]
   disabled_tools: string[]
   manual_tools?: string[]
-  skills?: string[]
   allowed_tools?: string[]
 }
 
 export type TeamToolPolicyRole = 'orchestrator' | 'specialist' | 'monitor' | 'harness'
+export type ParsedToolSelectionStrategy = {
+  mode: string
+  manualTools: string[]
+}
+
+const TOOL_SELECTION_STRATEGIES = new Set(['Keyword', 'LLM', 'Hybrid', 'Manual', 'All', 'Deferred'])
 
 const dedupeToolIds = (items: string[]) => {
   const seen = new Set<string>()
   const out: string[] = []
 
   for (const item of items) {
-    const normalized = item.trim().replace(/::/g, '__')
+    let normalized = item.trim().replace(/::/g, '__')
+    if (normalized === 'interactive_shell') normalized = 'shell'
     if (!normalized || seen.has(normalized)) continue
     seen.add(normalized)
     out.push(normalized)
@@ -48,24 +42,21 @@ export const normalizeToolIdList = (items: unknown): string[] => {
 export const parseToolSelectionStrategy = (
   strategyRaw: unknown,
   fallbackManualTools: string[],
-) => {
+): ParsedToolSelectionStrategy => {
   if (strategyRaw && typeof strategyRaw === 'object' && !Array.isArray(strategyRaw)) {
     const strategyObj = strategyRaw as Record<string, unknown>
     if (Array.isArray(strategyObj.Manual)) {
       return { mode: 'Manual', manualTools: normalizeToolIdList(strategyObj.Manual) }
     }
-    if (Array.isArray(strategyObj.Skills)) {
-      return { mode: 'Manual', manualTools: [...LEGACY_SKILLS_TOOL_IDS] }
-    }
   }
 
   if (typeof strategyRaw === 'string') {
     const mode = strategyRaw.trim() || 'Keyword'
-    if (mode === 'Skills') {
-      return { mode: 'Manual', manualTools: [...LEGACY_SKILLS_TOOL_IDS] }
-    }
     if (mode === 'Manual') {
       return { mode, manualTools: normalizeToolIdList(fallbackManualTools) }
+    }
+    if (!TOOL_SELECTION_STRATEGIES.has(mode)) {
+      return { mode: 'Keyword', manualTools: [] as string[] }
     }
     return { mode, manualTools: [] as string[] }
   }
@@ -134,6 +125,9 @@ export const buildRuntimeToolConfigForExecution = (
   const runtimeSelectionStrategy = strategy.mode === 'Manual'
     ? { Manual: strategy.manualTools }
     : strategy.mode
+  const manualAllowedTools = strategy.mode === 'Manual'
+    ? unionToolIds(strategy.manualTools, preselectedTools)
+    : allowedTools
 
   if (!webSearchEnabled) {
     return {
@@ -142,7 +136,7 @@ export const buildRuntimeToolConfigForExecution = (
       max_tools: Math.max(1, Number(config.max_tools) || 1),
       preselected_tools: preselectedTools,
       disabled_tools: disabledTools,
-      allowed_tools: allowedTools,
+      allowed_tools: manualAllowedTools,
     }
   }
 
@@ -169,7 +163,7 @@ export const buildRuntimeToolConfigForExecution = (
       max_tools: Math.max(Number(config.max_tools) || 1, manualTools.length),
       preselected_tools: unionToolIds(preselectedTools, [WEB_SEARCH_TOOL_ID]),
       disabled_tools: disabledTools,
-      allowed_tools: nextAllowedTools,
+      allowed_tools: unionToolIds(manualAllowedTools, [WEB_SEARCH_TOOL_ID]),
     }
   }
 
@@ -220,4 +214,44 @@ export const buildRuntimeToolConfigForTeamRole = (
     disabled_tools: disabledTools,
     allowed_tools: effectiveTools,
   }
+}
+
+export const runtimeToolConfigAllowsTool = (
+  runtimeConfigRaw: unknown,
+  toolId: string,
+): boolean => {
+  if (!runtimeConfigRaw || typeof runtimeConfigRaw !== 'object' || Array.isArray(runtimeConfigRaw)) {
+    return false
+  }
+
+  const runtimeConfig = runtimeConfigRaw as Record<string, unknown>
+  if (runtimeConfig.enabled !== true) {
+    return false
+  }
+
+  const normalizedToolId = normalizeToolIdList([toolId])[0]
+  if (!normalizedToolId) {
+    return false
+  }
+
+  const disabledTools = normalizeToolIdList(runtimeConfig.disabled_tools)
+  if (disabledTools.includes(normalizedToolId)) {
+    return false
+  }
+
+  const allowedTools = normalizeToolIdList(runtimeConfig.allowed_tools)
+  if (allowedTools.length > 0) {
+    return allowedTools.includes(normalizedToolId)
+  }
+
+  const preselectedTools = normalizeToolIdList(runtimeConfig.preselected_tools)
+  const strategy = parseToolSelectionStrategy(
+    runtimeConfig.selection_strategy,
+    normalizeToolIdList(runtimeConfig.manual_tools),
+  )
+  if (strategy.mode === 'Manual') {
+    return unionToolIds(strategy.manualTools, preselectedTools).includes(normalizedToolId)
+  }
+
+  return true
 }

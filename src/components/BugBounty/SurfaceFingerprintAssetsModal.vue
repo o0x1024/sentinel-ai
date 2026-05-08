@@ -3,7 +3,10 @@
     <div v-if="visible" class="fixed inset-0 z-[70]">
       <div class="absolute inset-0 bg-black/45 backdrop-blur-sm" @click="$emit('close')"></div>
 
-      <div class="relative flex min-h-full items-start justify-center overflow-y-auto px-4 py-20 md:px-6 md:py-24">
+      <div
+        class="relative flex min-h-full items-start justify-center overflow-y-auto px-4 py-20 md:px-6 md:py-24"
+        @click.self="$emit('close')"
+      >
         <div class="modal-box relative flex max-h-[calc(100vh-6rem)] w-full max-w-6xl flex-col overflow-hidden p-0 md:max-h-[calc(100vh-8rem)]">
           <div class="sticky top-0 z-10 border-b border-base-300 bg-base-100/95 px-6 py-4 backdrop-blur">
             <div class="flex items-start justify-between gap-4">

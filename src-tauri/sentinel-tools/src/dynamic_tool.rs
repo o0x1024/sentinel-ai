@@ -149,6 +149,20 @@ impl Default for ToolExposure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolCategory {
+    #[serde(rename = "file_code")]
+    FileCode,
+    Terminal,
+    #[serde(rename = "web_network")]
+    WebNetwork,
+    #[serde(rename = "security_recon")]
+    SecurityRecon,
+    #[serde(rename = "vulnerability_research")]
+    VulnerabilityResearch,
+    Collaboration,
+    #[serde(rename = "agent_orchestration")]
+    AgentOrchestration,
+    #[serde(rename = "knowledge_extension")]
+    KnowledgeExtension,
     Network,
     Security,
     Data,
@@ -170,6 +184,14 @@ pub enum ToolCategory {
 impl ToolCategory {
     pub fn as_str(self) -> &'static str {
         match self {
+            ToolCategory::FileCode => "file_code",
+            ToolCategory::Terminal => "terminal",
+            ToolCategory::WebNetwork => "web_network",
+            ToolCategory::SecurityRecon => "security_recon",
+            ToolCategory::VulnerabilityResearch => "vulnerability_research",
+            ToolCategory::Collaboration => "collaboration",
+            ToolCategory::AgentOrchestration => "agent_orchestration",
+            ToolCategory::KnowledgeExtension => "knowledge_extension",
             ToolCategory::Network => "network",
             ToolCategory::Security => "security",
             ToolCategory::Data => "data",

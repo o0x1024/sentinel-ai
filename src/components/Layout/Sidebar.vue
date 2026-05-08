@@ -325,6 +325,13 @@ const mainMenuItems = computed<SidebarMenuItem[]>(() => {
       badgeClass: '',
     },
     {
+      path: '/bot-console',
+      name: t('sidebar.botConsole', 'Bot Console'),
+      icon: 'fas fa-comments',
+      badge: null,
+      badgeClass: '',
+    },
+    {
       path: '/workflow-studio',
       name: t('sidebar.workflowStudio', '工作流'),
       icon: 'fas fa-project-diagram',

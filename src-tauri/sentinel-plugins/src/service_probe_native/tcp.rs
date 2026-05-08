@@ -18,9 +18,10 @@ pub(super) async fn probe_tcp_evidence(
     }
 
     let protocol = normalize_protocol(&target.protocol, target.port);
+    let connect_host = target.connect_ip.as_deref().unwrap_or(target.host.as_str());
     let connect_result = timeout(
         Duration::from_millis(timeout_ms),
-        TcpStream::connect((target.host.as_str(), target.port)),
+        TcpStream::connect((connect_host, target.port)),
     )
     .await;
 

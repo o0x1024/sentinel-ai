@@ -31,6 +31,32 @@ impl DatabaseService {
         .execute(pool)
         .await?;
 
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS monitor_tasks (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                interval_secs BIGINT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                config_json TEXT NOT NULL,
+                task_json TEXT NOT NULL,
+                last_run_at TEXT,
+                next_run_at TEXT,
+                run_count BIGINT NOT NULL DEFAULT 0,
+                events_detected BIGINT NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_monitor_tasks_program_enabled_next_run ON monitor_tasks(program_id, enabled, next_run_at)",
+        )
+        .execute(pool)
+        .await?;
+
         // LLM 测试套件表
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS llm_test_suites (
@@ -1566,12 +1592,14 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_bounty_findings_program_created ON bounty_findings(program_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_findings_program_status_created ON bounty_findings(program_id, status, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_findings_program_severity_created ON bounty_findings(program_id, severity, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_findings_program_status_severity_created ON bounty_findings(program_id, status, severity, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_program ON bounty_submissions(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_status ON bounty_submissions(status)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_finding ON bounty_submissions(finding_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_created ON bounty_submissions(created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_program_created ON bounty_submissions(program_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_program_status_created ON bounty_submissions(program_id, status, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_program_finding_status_created ON bounty_submissions(program_id, finding_id, status, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_evidence_finding ON bounty_evidence(finding_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_program ON bounty_change_events(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_status ON bounty_change_events(status)",
@@ -1579,6 +1607,7 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_created ON bounty_change_events(created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_program_created ON bounty_change_events(program_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_program_status_created ON bounty_change_events(program_id, status, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_program_type_created ON bounty_change_events(program_id, event_type, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_workflow_templates_category ON bounty_workflow_templates(category)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_workflow_bindings_program ON bounty_workflow_bindings(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_workflow_bindings_template ON bounty_workflow_bindings(workflow_template_id)",
@@ -1586,6 +1615,7 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_scope ON bounty_assets(scope_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_hostname ON bounty_assets(hostname)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_canonical_url ON bounty_assets(canonical_url)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_program_canonical_url ON bounty_assets(program_id, canonical_url)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_root_domain ON bounty_assets(root_domain)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_subdomain_level ON bounty_assets(subdomain_level)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_assets_fingerprint ON bounty_assets(fingerprint)",
@@ -1597,6 +1627,8 @@ impl DatabaseService {
         for index_sql in bounty_indices {
             sqlx::query(index_sql).execute(pool).await?;
         }
+
+        self.create_bot_schema(pool).await?;
 
         info!("Database schema creation completed");
 

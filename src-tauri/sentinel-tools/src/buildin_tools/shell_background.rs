@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::RwLock;
 
-use crate::buildin_tools::shell::ShellExecutionMode;
+use crate::buildin_tools::shell::{get_shell_config, shell_for_execution_mode, ShellExecutionMode};
 use crate::terminal::{
     detect_shell_prompt, ExecutionMode, SessionState, TerminalSessionConfig, TERMINAL_MANAGER,
 };
@@ -231,14 +231,16 @@ pub async fn launch_background_shell_task(
     let task_id = uuid::Uuid::new_v4().to_string();
     let (wrapped_command, begin_marker, exit_prefix) =
         build_wrapped_command(&request.command, &task_id);
+    let shell_config = get_shell_config().await;
 
     let mut session_config = TerminalSessionConfig::default();
-    session_config.execution_mode = to_terminal_execution_mode(request.execution_mode.clone());
+    let terminal_execution_mode = to_terminal_execution_mode(request.execution_mode.clone());
+    session_config.execution_mode = terminal_execution_mode;
     session_config.docker_image = request
         .docker_image
         .unwrap_or_else(|| DEFAULT_DOCKER_IMAGE.to_string());
     session_config.working_dir = request.cwd;
-    session_config.shell = "bash".to_string();
+    session_config.shell = shell_for_execution_mode(&shell_config, request.execution_mode.clone());
     session_config.initial_command = Some(wrapped_command.clone());
     session_config.reuse_container = true;
     session_config.container_name = Some("sentinel-sandbox-main".to_string());

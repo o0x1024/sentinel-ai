@@ -500,6 +500,20 @@ fn append_install_history(root: &Path, record: SkillInstallHistory) -> Result<()
     save_install_history(root, &records)
 }
 
+fn format_git_clone_failure(stderr: &[u8], stdout: &[u8]) -> String {
+    let stderr_text = String::from_utf8_lossy(stderr).trim().to_string();
+    if !stderr_text.is_empty() {
+        return format!("git clone failed:\n{}", stderr_text);
+    }
+
+    let stdout_text = String::from_utf8_lossy(stdout).trim().to_string();
+    if !stdout_text.is_empty() {
+        return format!("git clone failed:\n{}", stdout_text);
+    }
+
+    "git clone failed: Git did not return an error message.".to_string()
+}
+
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| e.to_string())?;
     for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
@@ -728,20 +742,20 @@ pub async fn discover_skills_from_git(
     fs::create_dir_all(&import_root).map_err(|e| e.to_string())?;
     let temp_dir = import_root.join(format!("git-{}", Uuid::new_v4()));
 
-    let status = std::process::Command::new("git")
+    let output = std::process::Command::new("git")
         .arg("clone")
         .arg("--depth")
         .arg("1")
         .arg(&url)
         .arg(&temp_dir)
-        .status();
+        .output();
 
-    match status {
-        Ok(s) if s.success() => {
+    match output {
+        Ok(output) if output.status.success() => {
             let candidates = discover_skills_in_dir(&temp_dir)?;
             Ok((temp_dir.to_string_lossy().to_string(), candidates))
         }
-        Ok(s) => Err(format!("git clone failed (exit {})", s)),
+        Ok(output) => Err(format_git_clone_failure(&output.stderr, &output.stdout)),
         Err(e) => Err(format!("git clone failed: {}", e)),
     }
 }
@@ -859,4 +873,28 @@ pub async fn delete_skill_install_history(
     }
     save_install_history(&root, &records)?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_git_clone_failure;
+
+    #[test]
+    fn git_clone_failure_prefers_stderr_detail() {
+        let message = format_git_clone_failure(
+            b"remote: Repository not found.\nfatal: repository 'https://github.com/acme/missing' not found\n",
+            b"",
+        );
+
+        assert!(message.contains("Repository not found"));
+        assert!(message.contains("fatal: repository"));
+        assert!(!message.contains("exit status"));
+    }
+
+    #[test]
+    fn git_clone_failure_uses_stdout_when_stderr_empty() {
+        let message = format_git_clone_failure(b"", b"authentication failed\n");
+
+        assert_eq!(message, "git clone failed:\nauthentication failed");
+    }
 }

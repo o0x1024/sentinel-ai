@@ -1,4 +1,7 @@
-import type { AssistantProfileOption } from '@/components/Agent/assistantProfiles'
+import {
+  normalizeHarnessMaxContinuations,
+  type AssistantProfileOption,
+} from '@/components/Agent/assistantProfiles'
 import type { UiToolConfigPayload } from '@/components/Agent/toolConfigRuntime'
 import {
   TEAM_ORCHESTRATION_PRESET_METAS,
@@ -31,9 +34,10 @@ const parseToolSelectionStrategy = (
   fallbackManualTools: string[] = [],
 ) => {
   if (typeof strategy === 'string') {
+    const normalizedStrategy = toolSelectionStrategyOptions.includes(strategy) ? strategy : 'Keyword'
     return {
-      manualTools: strategy === 'Manual' ? normalizeToolIds(fallbackManualTools) : [] as string[],
-      strategy,
+      manualTools: normalizedStrategy === 'Manual' ? normalizeToolIds(fallbackManualTools) : [] as string[],
+      strategy: normalizedStrategy,
     }
   }
   if (strategy && typeof strategy === 'object' && Array.isArray((strategy as any).Manual)) {
@@ -50,7 +54,9 @@ const parseToolSelectionStrategy = (
 
 export const profileToToolConfig = (profile: AssistantProfileOption): UiToolConfigPayload => ({
   enabled: profile.defaultToolsEnabled === true,
-  selection_strategy: profile.defaultToolSelectionStrategy || 'Keyword',
+  selection_strategy: toolSelectionStrategyOptions.includes(profile.defaultToolSelectionStrategy || '')
+    ? profile.defaultToolSelectionStrategy
+    : 'Keyword',
   max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
   preselected_tools: normalizeToolIds(profile.defaultPreselectedTools),
   disabled_tools: normalizeToolIds(profile.defaultDisabledTools),
@@ -72,7 +78,7 @@ export const applyToolConfigToProfile = (
   profile.defaultDisabledTools = normalizeToolIds(config.disabled_tools)
   profile.defaultManualTools = parsedStrategy.strategy === 'Manual'
     ? parsedStrategy.manualTools
-    : normalizeToolIds(config.manual_tools)
+    : []
 }
 
 export const createNextProfileIdentity = (profiles: AssistantProfileOption[]) => {
@@ -97,8 +103,11 @@ export const normalizeAssistantProfileDraft = (profile: AssistantProfileOption):
   defaultWebSearchEnabled: profile.defaultWebSearchEnabled === true,
   defaultToolsEnabled: profile.defaultToolsEnabled === true,
   defaultTenthManEnabled: profile.defaultTenthManEnabled === true,
-  defaultToolSelectionStrategy: profile.defaultToolSelectionStrategy || 'Keyword',
+  defaultToolSelectionStrategy: toolSelectionStrategyOptions.includes(profile.defaultToolSelectionStrategy || '')
+    ? profile.defaultToolSelectionStrategy
+    : 'Keyword',
   defaultMaxTools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
+  defaultHarnessMaxContinuations: normalizeHarnessMaxContinuations(profile.defaultHarnessMaxContinuations),
   defaultPreselectedTools: normalizeToolIds(profile.defaultPreselectedTools),
   defaultDisabledTools: normalizeToolIds(profile.defaultDisabledTools),
   defaultManualTools: normalizeToolIds(profile.defaultManualTools),

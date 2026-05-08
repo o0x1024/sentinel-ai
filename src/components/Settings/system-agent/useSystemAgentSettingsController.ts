@@ -597,7 +597,7 @@ export function useSystemAgentSettingsController() {
     })
   }
 
-  const saveSelectedProfile = async (options?: { silent?: boolean }) => {
+  const saveSelectedProfile = async (options?: { autoSave?: boolean; silent?: boolean }) => {
     try {
       const profile = buildProfilePayload()
       if (!profile) return
@@ -622,7 +622,9 @@ export function useSystemAgentSettingsController() {
       autoSaveState.value = 'saved'
       await loadAutoVerificationStatus()
       await loadVersions()
-      if (!options?.silent) {
+      if (options?.autoSave) {
+        dialog.toast.success('后台 Agent 配置已自动保存')
+      } else if (!options?.silent) {
         dialog.toast.success('智能体配置已保存')
       }
     } catch (error) {
@@ -650,7 +652,7 @@ export function useSystemAgentSettingsController() {
       autoSaveTimer = null
       if (saving.value || !selectedProfile.value) return
       if (editableProfileSnapshot.value === lastSavedSnapshot.value) return
-      void saveSelectedProfile({ silent: true })
+      void saveSelectedProfile({ autoSave: true })
     }, 600)
   }
 

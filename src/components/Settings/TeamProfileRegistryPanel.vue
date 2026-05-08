@@ -435,7 +435,15 @@ const saveTeamProfilesInternal = async (options?: { silent?: boolean }) => {
       draftDefaultTeamProfileId.value = profileId
     }
 
-    autoSaveState.value = hasUnsavedChanges.value ? 'idle' : 'saved'
+    const savedAllChanges = !hasUnsavedChanges.value
+    autoSaveState.value = savedAllChanges ? 'saved' : 'idle'
+    if (savedAllChanges) {
+      dialog.toast.success(
+        options?.silent
+          ? 'Team Profile 已自动保存'
+          : 'Team Profile 已保存'
+      )
+    }
   } catch (error) {
     console.error('Failed to save Team profiles:', error)
     autoSaveState.value = 'error'
@@ -497,7 +505,7 @@ const createTeamProfile = () => {
     },
     toolPolicyMatrix: {
       orchestrator: { tools: ['ask_user_question'] },
-      specialist: { tools: ['interactive_shell', 'file_read', 'file_edit', 'file_write', 'grep', 'http_request', 'web_search'] },
+      specialist: { tools: ['shell', 'file_read', 'file_edit', 'file_write', 'grep', 'http_request', 'web_search'] },
       monitor: { tools: ['tenth_man_review'] },
     },
     harnessPolicy: { heartbeatSecs: 30, leaseSecs: 600, checkpoint: 'event_sequence', allowResume: true },
