@@ -95,6 +95,12 @@ fn extract_plugin_header_tag(content: &str, tag: &str) -> Option<String> {
     None
 }
 
+fn validate_store_plugin_manifest_entry(plugin: &StorePluginInfo) -> Result<(), String> {
+    let main_category = PluginMainCategory::parse(&plugin.main_category)?;
+    validate_plugin_monitor_type(main_category, plugin.monitor_type.clone())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn fetch_store_plugins(repo_url: String) -> Result<StorePluginListResponse, String> {
     tracing::info!("Fetching store plugins from: {}", repo_url);
@@ -134,6 +140,7 @@ pub async fn fetch_store_plugins(repo_url: String) -> Result<StorePluginListResp
                 match serde_json::from_str::<serde_json::Value>(&text) {
                     Ok(manifest) => {
                         let mut plugins = Vec::new();
+                        let mut manifest_errors = Vec::new();
 
                         if let Some(plugin_list) =
                             manifest.get("plugins").and_then(|v| v.as_array())
@@ -144,6 +151,15 @@ pub async fn fetch_store_plugins(repo_url: String) -> Result<StorePluginListResp
                                     plugin_value.clone(),
                                 ) {
                                     Ok(mut plugin) => {
+                                        if let Err(error) =
+                                            validate_store_plugin_manifest_entry(&plugin)
+                                        {
+                                            manifest_errors.push(format!(
+                                                "{}: {}",
+                                                plugin.id, error
+                                            ));
+                                            continue;
+                                        }
                                         if plugin.download_url.is_empty() {
                                             plugin.download_url = format!(
                                                 "https://raw.githubusercontent.com/{}/{}/main/plugins/{}.ts",
@@ -165,6 +181,19 @@ pub async fn fetch_store_plugins(repo_url: String) -> Result<StorePluginListResp
                                     }
                                 }
                             }
+                        }
+
+                        if !manifest_errors.is_empty() {
+                            let error = format!(
+                                "Invalid plugin manifest entries: {}",
+                                manifest_errors.join("; ")
+                            );
+                            tracing::error!("{}", error);
+                            return Ok(StorePluginListResponse {
+                                success: false,
+                                plugins: vec![],
+                                error: Some(error),
+                            });
                         }
 
                         tracing::info!("Fetched {} plugins from store", plugins.len());
