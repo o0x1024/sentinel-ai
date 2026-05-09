@@ -401,6 +401,12 @@ pub async fn update_store_plugin(
         _ => Severity::Medium,
     };
 
+    let db = state.get_db_service();
+    let existing_plugin = db
+        .get_plugin_from_registry(&plugin.id)
+        .await
+        .map_err(|e| format!("Failed to read existing plugin metadata: {}", e))?;
+
     let manifest_monitor_type = plugin.monitor_type.clone();
     let metadata = PluginMetadata {
         id: plugin.id.clone(),
@@ -414,7 +420,9 @@ pub async fn update_store_plugin(
         main_category: PluginMainCategory::parse(&plugin.main_category)?,
         monitor_type: validate_plugin_monitor_type(
             PluginMainCategory::parse(&plugin.main_category)?,
-            manifest_monitor_type.or_else(|| extract_plugin_header_tag(&plugin_code, "monitor_type")),
+            manifest_monitor_type
+                .or_else(|| extract_plugin_header_tag(&plugin_code, "monitor_type"))
+                .or_else(|| resolved_explicit_plugin_monitor_type(existing_plugin.as_ref())),
         )?,
         input_mode: plugin.input_mode.clone(),
         description: Some(plugin.description),
@@ -423,12 +431,6 @@ pub async fn update_store_plugin(
         target_asset_types: Vec::new(),
         seed_bindings: plugin.seed_bindings,
     };
-
-    let db = state.get_db_service();
-    let existing_plugin = db
-        .get_plugin_from_registry(&plugin.id)
-        .await
-        .map_err(|e| format!("Failed to read existing plugin metadata: {}", e))?;
 
     use sentinel_db::TrafficPluginMetadata;
     let traffic_metadata = TrafficPluginMetadata {
