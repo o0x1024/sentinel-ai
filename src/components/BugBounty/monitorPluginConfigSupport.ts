@@ -63,6 +63,8 @@ export const inferDefaultTargetAssetTypes = (pluginId: string): string[] => {
       return ['web']
     case 'http_prober':
       return ['web', 'domain', 'service']
+    case 'fofa_asset_monitor':
+      return ['web', 'domain']
     case 'subdomain_enumerator':
     case 'subdomain_brute':
       return ['domain']
