@@ -120,13 +120,31 @@
 
         <div v-if="newPluginMetadata.mainCategory === 'agent' || newPluginMetadata.mainCategory === 'bounty'" class="form-control">
           <label class="label">
-            <span class="label-text">{{ $t('plugins.monitorType', '监控调度分类') }}</span>
+            <span class="label-text">{{ $t('plugins.monitorType', '监控调度分类') }} <span class="text-error">*</span></span>
           </label>
           <select :value="newPluginMetadata.monitorType" @change="updateMetadata('monitorType', ($event.target as HTMLSelectElement).value)"
             class="select select-bordered select-sm" :disabled="editingPlugin && !isEditing">
-            <option value="">{{ $t('plugins.none', '不参与监控调度') }}</option>
+            <option value="" disabled>{{ $t('plugins.selectMonitorType', '请选择监控调度分类') }}</option>
             <option v-for="option in monitorTypeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
+          <label class="label">
+            <span class="label-text-alt text-warning">{{ $t('plugins.monitorTypeRequired', 'Agent/Bounty 插件必须显式声明监控调度分类') }}</span>
+          </label>
+        </div>
+
+        <div
+          v-if="newPluginMetadata.mainCategory === 'agent' || newPluginMetadata.mainCategory === 'bounty'"
+          class="form-control col-span-2"
+        >
+          <SeedBindingsEditor
+            :model-value="newPluginMetadata.seedBindingsText"
+            :json-error="seedBindingsError"
+            :input-key-options="seedBindingInputKeyOptions"
+            :input-key-loading="seedBindingInputKeyOptionsLoading"
+            :input-key-error="seedBindingInputKeyOptionsError"
+            :disabled="Boolean(editingPlugin && !isEditing)"
+            @update:model-value="updateMetadata('seedBindingsText', $event)"
+          />
         </div>
 
         <div class="form-control">
@@ -201,14 +219,14 @@
           </button>
           <template v-else>
             <button class="btn btn-warning btn-sm" @click="$emit('cancelEditing')">{{ $t('plugins.cancelEdit', '取消编辑') }}</button>
-            <button class="btn btn-success btn-sm" :disabled="saving" @click="$emit('savePlugin')">
+            <button class="btn btn-success btn-sm" :disabled="saving || !isPluginMetadataValid" @click="$emit('savePlugin')">
               <span v-if="saving" class="loading loading-spinner"></span>
               {{ saving ? $t('common.saving', '保存中...') : $t('common.save', '保存') }}
             </button>
           </template>
         </template>
         <template v-else>
-          <button class="btn btn-success btn-sm" :disabled="saving || !isNewPluginValid" @click="$emit('createNewPlugin')">
+          <button class="btn btn-success btn-sm" :disabled="saving || !isPluginMetadataValid" @click="$emit('createNewPlugin')">
             <span v-if="saving" class="loading loading-spinner"></span>
             {{ saving ? $t('plugins.creating', '创建中...') : $t('plugins.createPlugin', '创建插件') }}
           </button>
@@ -408,8 +426,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
 import type { PluginRecord, NewPluginMetadata, SubCategory, CodeReference, TestResultReference, AiChatMessage } from './types'
-import type { AiValidationReport } from './aiGeneratedPluginGate'
+import { extractSeedBindingInputKeyOptions, parseSeedBindingsText, type SeedBindingInputKeyOption } from './seedBindingsSupport'
+import SeedBindingsEditor from './SeedBindingsEditor.vue'
+import type { AiValidationReport, PluginRuntimeSchemaValidationResult } from './aiGeneratedPluginGate'
 import { summarizeAiValidationReport } from './aiGeneratedPluginGate'
 import { mainCategories } from './types'
 import AiAssistantPanel from './AiAssistantPanel.vue'
@@ -453,6 +474,7 @@ const vClickOutside = {
 const props = withDefaults(defineProps<{
   editingPlugin: PluginRecord | null
   newPluginMetadata: NewPluginMetadata
+  pluginCodeText: string
   isEditing: boolean
   saving: boolean
   codeError: string
@@ -534,6 +556,11 @@ const codeEditorContainerRef = ref<HTMLDivElement>()
 const fullscreenCodeEditorContainerRef = ref<HTMLDivElement>()
 const fullscreenDiffEditorContainerRef = ref<HTMLDivElement>()
 const fullscreenOverlayRef = ref<HTMLDivElement>()
+const seedBindingInputKeyOptions = ref<SeedBindingInputKeyOption[]>([])
+const seedBindingInputKeyOptionsLoading = ref(false)
+const seedBindingInputKeyOptionsError = ref('')
+let seedBindingSchemaTimer: ReturnType<typeof setTimeout> | null = null
+let seedBindingSchemaRequestId = 0
 
 // Toolbar state
 const isCompactToolbar = ref(false)
@@ -612,8 +639,120 @@ const resetToolbarPosition = () => {
   toolbarPosition.value = { x: null, y: null }
 }
 
-const isNewPluginValid = computed(() => {
-  return props.newPluginMetadata.id.trim() !== '' && props.newPluginMetadata.name.trim() !== ''
+const requiresExplicitMonitorType = computed(() =>
+  props.newPluginMetadata.mainCategory === 'agent' || props.newPluginMetadata.mainCategory === 'bounty'
+)
+
+const buildRuntimeSchemaValidationMetadata = (metadata: NewPluginMetadata) => ({
+  id: metadata.id,
+  name: metadata.name,
+  main_category: metadata.mainCategory,
+  category: metadata.category,
+  author: metadata.author || null,
+  description: metadata.description || null,
+  default_severity: metadata.default_severity || null,
+  monitor_type: metadata.monitorType || null,
+})
+
+const refreshSeedBindingInputKeyOptions = async () => {
+  const requestId = ++seedBindingSchemaRequestId
+
+  if (!requiresExplicitMonitorType.value) {
+    seedBindingInputKeyOptions.value = []
+    seedBindingInputKeyOptionsError.value = ''
+    seedBindingInputKeyOptionsLoading.value = false
+    return
+  }
+
+  const code = props.pluginCodeText.trim()
+  if (!code) {
+    seedBindingInputKeyOptions.value = []
+    seedBindingInputKeyOptionsError.value = '当前插件代码为空，无法提取 input schema。'
+    seedBindingInputKeyOptionsLoading.value = false
+    return
+  }
+
+  seedBindingInputKeyOptionsLoading.value = true
+  seedBindingInputKeyOptionsError.value = ''
+
+  try {
+    const result = await invoke<PluginRuntimeSchemaValidationResult>('get_plugin_input_schema_from_code', {
+      code,
+      metadata: buildRuntimeSchemaValidationMetadata(props.newPluginMetadata),
+    })
+
+    if (requestId !== seedBindingSchemaRequestId) {
+      return
+    }
+
+    seedBindingInputKeyOptions.value = extractSeedBindingInputKeyOptions(result.schema)
+    seedBindingInputKeyOptionsError.value = result.success
+      ? ''
+      : (result.error || '当前代码的 input schema 无法解析。')
+  } catch (error) {
+    if (requestId !== seedBindingSchemaRequestId) {
+      return
+    }
+    seedBindingInputKeyOptions.value = []
+    seedBindingInputKeyOptionsError.value =
+      error instanceof Error ? error.message : '当前代码的 input schema 无法解析。'
+  } finally {
+    if (requestId === seedBindingSchemaRequestId) {
+      seedBindingInputKeyOptionsLoading.value = false
+    }
+  }
+}
+
+watch(
+  () => [
+    props.pluginCodeText,
+    props.newPluginMetadata.id,
+    props.newPluginMetadata.name,
+    props.newPluginMetadata.mainCategory,
+    props.newPluginMetadata.category,
+    props.newPluginMetadata.author,
+    props.newPluginMetadata.description,
+    props.newPluginMetadata.default_severity,
+    props.newPluginMetadata.monitorType,
+  ],
+  () => {
+    if (seedBindingSchemaTimer) {
+      clearTimeout(seedBindingSchemaTimer)
+    }
+    seedBindingSchemaTimer = setTimeout(() => {
+      void refreshSeedBindingInputKeyOptions()
+    }, 250)
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (seedBindingSchemaTimer) {
+    clearTimeout(seedBindingSchemaTimer)
+  }
+})
+
+const seedBindingsError = computed(() => {
+  if (!requiresExplicitMonitorType.value) {
+    return ''
+  }
+  return parseSeedBindingsText(props.newPluginMetadata.seedBindingsText || '[]').error
+})
+
+const isPluginMetadataValid = computed(() => {
+  if (props.newPluginMetadata.id.trim() === '' || props.newPluginMetadata.name.trim() === '') {
+    return false
+  }
+
+  if (requiresExplicitMonitorType.value && props.newPluginMetadata.monitorType.trim() === '') {
+    return false
+  }
+
+  if (seedBindingsError.value) {
+    return false
+  }
+
+  return true
 })
 
 const monitorTypeOptions = [

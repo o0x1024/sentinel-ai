@@ -9,6 +9,7 @@ use crate::generators::{
     validate_agent_plugin_source_contract, validate_schema_object,
     validator::{PluginValidator, ValidationResult},
 };
+use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::services::database::DatabaseService;
 use crate::services::{PluginCategory, PluginMainCategory};
 use sentinel_db::Database;
@@ -43,6 +44,28 @@ pub struct RuntimeSchemaValidationResult {
     pub error: Option<String>,
     pub issue_code: Option<String>,
     pub warnings: Vec<String>,
+}
+
+fn build_runtime_plugin_metadata(
+    metadata: RuntimeSchemaValidationMetadata,
+) -> Result<PluginMetadata, String> {
+    let main_category = PluginMainCategory::parse(&metadata.main_category)?;
+    let category = PluginCategory::parse_for_main_category(main_category, &metadata.category)?;
+    Ok(PluginMetadata {
+        id: metadata.id,
+        name: metadata.name,
+        version: "1.0.0".to_string(),
+        author: metadata.author,
+        main_category,
+        category,
+        default_severity: parse_plugin_severity(metadata.default_severity.as_deref()),
+        tags: vec![],
+        description: metadata.description,
+        monitor_type: validate_plugin_monitor_type(main_category, metadata.monitor_type)?,
+        target_asset_types: Vec::new(),
+        input_mode: None,
+        seed_bindings: Vec::new(),
+    })
 }
 
 fn parse_plugin_severity(value: Option<&str>) -> Severity {
@@ -592,21 +615,8 @@ pub async fn validate_plugin_runtime_schema(
     code: String,
     metadata: RuntimeSchemaValidationMetadata,
 ) -> Result<RuntimeSchemaValidationResult, String> {
-    let main_category = PluginMainCategory::parse(&metadata.main_category)?;
-    let category = PluginCategory::parse_for_main_category(main_category, &metadata.category)?;
-    let plugin_metadata = PluginMetadata {
-        id: metadata.id,
-        name: metadata.name,
-        version: "1.0.0".to_string(),
-        author: metadata.author,
-        main_category,
-        category,
-        default_severity: parse_plugin_severity(metadata.default_severity.as_deref()),
-        tags: vec![],
-        description: metadata.description,
-        monitor_type: metadata.monitor_type,
-        target_asset_types: Vec::new(),
-    };
+    let plugin_metadata = build_runtime_plugin_metadata(metadata)?;
+    let main_category = plugin_metadata.main_category;
 
     match main_category {
         PluginMainCategory::Agent | PluginMainCategory::Bounty => {
@@ -630,6 +640,33 @@ pub async fn validate_plugin_runtime_schema(
             schemas: None,
             error: Some(error.to_string()),
             issue_code: Some("runtime_schema_execution_failed".to_string()),
+            warnings: Vec::new(),
+        }),
+    }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_plugin_input_schema_from_code(
+    code: String,
+    metadata: RuntimeSchemaValidationMetadata,
+) -> Result<RuntimeSchemaValidationResult, String> {
+    let plugin_metadata = build_runtime_plugin_metadata(metadata)?;
+
+    match sentinel_plugins::get_input_schema_from_code(&code, plugin_metadata).await {
+        Ok(schema) => Ok(RuntimeSchemaValidationResult {
+            success: true,
+            schema: Some(schema),
+            schemas: None,
+            error: None,
+            issue_code: None,
+            warnings: Vec::new(),
+        }),
+        Err(error) => Ok(RuntimeSchemaValidationResult {
+            success: false,
+            schema: None,
+            schemas: None,
+            error: Some(error.to_string()),
+            issue_code: Some("runtime_input_schema_execution_failed".to_string()),
             warnings: Vec::new(),
         }),
     }

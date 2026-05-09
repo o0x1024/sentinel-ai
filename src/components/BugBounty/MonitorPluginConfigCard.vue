@@ -42,6 +42,9 @@
 
         <div v-if="plugin.plugin_id" v-show="!contentExpanded" class="flex flex-wrap items-center gap-2 text-xs text-base-content/60">
           <span class="badge badge-sm badge-outline">{{ selectedPluginName }}</span>
+          <span v-if="selectedPluginMeta?.seed_bindings?.length" class="badge badge-sm badge-ghost">
+            seed bindings {{ selectedPluginMeta.seed_bindings.length }}
+          </span>
           <span v-if="plugin.fallback_plugins.length > 0">
             {{ t('bugBounty.monitor.fallbackPlugins') }}: {{ plugin.fallback_plugins.length }}
           </span>
@@ -51,6 +54,13 @@
         </div>
 
         <div v-show="contentExpanded" class="space-y-2">
+        <MonitorPluginSeedConfigSection
+          v-if="selectedPluginMeta?.seed_bindings?.length"
+          :plugin="plugin"
+          :program-id="programId"
+          :declared-bindings="selectedPluginMeta.seed_bindings"
+        />
+
         <div v-if="supportsServiceProbeEngine(plugin)" class="form-control">
           <label class="label py-1">
             <span class="label-text-alt">{{ t('bugBounty.monitor.serviceProbeEngine') }}</span>
@@ -70,6 +80,7 @@
         </div>
 
         <MonitorTargetAssetSelector
+          v-if="shouldShowTargetAssetSelector"
           v-model="plugin.target_asset_types"
           :allowed-values="getAllowedTargetAssetTypes(monitorType, plugin.plugin_id)"
         />
@@ -90,6 +101,7 @@
             :key="`${depth}-${fallbackIndex}-${fallback.plugin_id}`"
             :plugin="fallback"
             :monitor-type="monitorType"
+            :program-id="programId"
             :plugin-options="pluginOptions"
             :depth="depth + 1"
             :can-remove="true"
@@ -121,12 +133,15 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MonitorPluginParamsEditor from './MonitorPluginParamsEditor.vue'
+import MonitorPluginSeedConfigSection from './MonitorPluginSeedConfigSection.vue'
 import MonitorSubdomainBruteConfig from './MonitorSubdomainBruteConfig.vue'
 import MonitorTargetAssetSelector from './MonitorTargetAssetSelector.vue'
+import type { MonitorSeedBinding } from '@/components/PluginManagement/seedBindingsSupport'
 import {
   createEmptyPluginConfig,
   getAllowedTargetAssetTypes,
   getServiceProbeEngine,
+  normalizePluginInputMode,
   resetPluginForSelection,
   setServiceProbeEngine,
   supportsServiceProbeEngine,
@@ -139,7 +154,14 @@ const props = withDefaults(
   defineProps<{
     plugin: MonitorPluginConfigLike
     monitorType: string
-    pluginOptions: Array<{ id: string; name: string }>
+    programId: string
+    pluginOptions: Array<{
+      id: string
+      name: string
+      description?: string
+      input_mode?: string
+      seed_bindings?: MonitorSeedBinding[]
+    }>
     depth?: number
     canRemove?: boolean
     introText?: string
@@ -164,6 +186,16 @@ const selectedPluginName = computed(() => {
   return selected?.name || props.plugin.plugin_id
 })
 
+const selectedPluginMeta = computed(() =>
+  props.pluginOptions.find(plugin => plugin.id === props.plugin.plugin_id)
+)
+
+const selectedPluginInputMode = computed(() =>
+  normalizePluginInputMode(selectedPluginMeta.value?.input_mode)
+)
+
+const shouldShowTargetAssetSelector = computed(() => selectedPluginInputMode.value !== 'seed')
+
 const hasCustomizedParams = computed(() => {
   const params = props.plugin.plugin_params
   if (!params || typeof params !== 'object' || Array.isArray(params)) {
@@ -175,6 +207,9 @@ const hasCustomizedParams = computed(() => {
 
 const handlePluginChanged = () => {
   resetPluginForSelection(props.plugin)
+  if (selectedPluginInputMode.value === 'seed') {
+    props.plugin.target_asset_types = []
+  }
   contentExpanded.value = true
 }
 
@@ -196,6 +231,9 @@ watch(
   () => props.plugin.plugin_id,
   (nextPluginId, previousPluginId) => {
     if (nextPluginId !== previousPluginId) {
+      if (selectedPluginInputMode.value === 'seed') {
+        props.plugin.target_asset_types = []
+      }
       contentExpanded.value = true
     }
   },

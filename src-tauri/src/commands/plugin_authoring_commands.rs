@@ -4,6 +4,7 @@ use serde::Deserialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::command_response_support::CommandResponse;
+use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::generators::{
     parse_agent_plugin_definition, render_agent_plugin_definition, AgentPluginRenderContext,
 };
@@ -29,6 +30,7 @@ pub struct RenderAgentPluginMetadata {
     pub author: String,
     pub category: String,
     pub main_category: String,
+    pub monitor_type: Option<String>,
     #[serde(alias = "default_severity")]
     pub default_severity: String,
     pub description: String,
@@ -67,6 +69,11 @@ pub async fn render_agent_plugin_definition_command(
         }
     }
 
+    let main_category = PluginMainCategory::parse(&request.metadata.main_category)?;
+    let monitor_type = validate_plugin_monitor_type(
+        main_category,
+        request.metadata.monitor_type.clone(),
+    )?;
     let definition =
         parse_agent_plugin_definition(&request.definition).map_err(|error| error.to_string())?;
     let context = AgentPluginRenderContext {
@@ -74,7 +81,9 @@ pub async fn render_agent_plugin_definition_command(
         name: request.metadata.name,
         version: request.metadata.version,
         author: request.metadata.author,
+        main_category: request.metadata.main_category,
         plugin_business_category: request.metadata.category,
+        monitor_type,
         default_severity: request.metadata.default_severity,
         tags: parse_tags(&request.metadata.tags_string),
         description: request.metadata.description,

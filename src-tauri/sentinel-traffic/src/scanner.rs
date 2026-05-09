@@ -820,6 +820,8 @@ impl ScanPipeline {
                 tags: tags_array,
                 target_asset_types: Vec::new(),
                 monitor_type: None,
+                input_mode: None,
+                seed_bindings: Vec::new(),
             };
 
             // 创建 PluginExecutor
@@ -935,6 +937,8 @@ impl ScanPipeline {
             tags: tags_array,
             target_asset_types: Vec::new(),
             monitor_type: None,
+            input_mode: None,
+            seed_bindings: Vec::new(),
         };
 
         // 替换旧实例

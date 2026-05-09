@@ -557,10 +557,12 @@ async function editPlugin(plugin: PluginRecord) {
          author: plugin.metadata.author,
          mainCategory: plugin.metadata.main_category,
          category: plugin.metadata.category,
-         monitorType: '',
-         default_severity: 'medium',
-         description: plugin.metadata.description,
-         tagsString: (plugin.metadata.permissions || []).join(', ')
+          monitorType: '',
+          inputMode: '',
+          default_severity: 'medium',
+          description: plugin.metadata.description,
+         tagsString: (plugin.metadata.permissions || []).join(', '),
+         seedBindingsText: '[]',
        }
        
        isEditing.value = false
@@ -582,8 +584,8 @@ const editingPlugin = ref<any>(null)
 const editPluginMetadata = ref<NewPluginMetadata>({
   id: '', name: '', version: '1.0.0', author: '',
   mainCategory: 'traffic', category: 'custom',
-  monitorType: '',
-  default_severity: 'medium', description: '', tagsString: ''
+  monitorType: '', inputMode: '',
+  default_severity: 'medium', description: '', tagsString: '', seedBindingsText: '[]'
 })
 const isEditing = ref(false)
 const isSavingWait = ref(false)

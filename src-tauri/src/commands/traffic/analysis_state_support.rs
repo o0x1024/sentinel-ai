@@ -353,6 +353,8 @@ impl TrafficAnalysisState {
                 },
                 tags: db_rec.metadata.tags,
                 target_asset_types: db_rec.metadata.target_asset_types,
+                input_mode: db_rec.metadata.input_mode,
+                seed_bindings: db_rec.metadata.seed_bindings,
             };
 
             let status = match db_rec.status {
@@ -530,6 +532,8 @@ async fn ensure_execution_plugin_loaded(
             },
             tags: plugin_record.metadata.tags.clone(),
             target_asset_types: plugin_record.metadata.target_asset_types.clone(),
+            input_mode: plugin_record.metadata.input_mode.clone(),
+            seed_bindings: plugin_record.metadata.seed_bindings.clone(),
         };
 
         let enabled = plugin_record.status == sentinel_plugins::PluginStatus::Enabled;

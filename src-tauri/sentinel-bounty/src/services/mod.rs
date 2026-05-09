@@ -12,7 +12,10 @@ pub mod workflow_artifact;
 pub mod workflow_orchestrator;
 
 pub use asset_enrichment::{AssetEnrichmentService, IpEnrichment};
-pub use change_monitor::{AssetSnapshot, ChangeMonitor, ChangeMonitorConfig, MonitorPluginConfig};
+pub use change_monitor::{
+    AssetSnapshot, ChangeMonitor, ChangeMonitorConfig, MonitorPluginConfig,
+    MonitorPluginSeedBindingConfig, MonitorPluginSeedConfig,
+};
 pub use data_flow::*;
 pub use finding_service::{CreateFindingInput, FindingService, UpdateFindingInput};
 pub use monitor_scheduler::{MonitorScheduler, MonitorStats, MonitorTask};

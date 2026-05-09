@@ -1,9 +1,27 @@
+export type MonitorPluginSeedBindingConfig = {
+  seed_type: string
+  input_key: string
+  use_project_seeds: boolean
+  selected_project_values: string[]
+  manual_values: string[]
+}
+
+export type MonitorPluginSeedConfig = {
+  bindings: MonitorPluginSeedBindingConfig[]
+}
+
 export type MonitorPluginConfigLike = {
   plugin_id: string
   fallback_plugins: MonitorPluginConfigLike[]
   plugin_params: Record<string, unknown>
   target_asset_types: string[]
+  seed_config: MonitorPluginSeedConfig
   [key: string]: unknown
+}
+
+export const normalizePluginInputMode = (value: unknown) => {
+  const normalized = String(value || '').trim().toLowerCase()
+  return ['asset', 'seed', 'hybrid'].includes(normalized) ? normalized : ''
 }
 
 export const DOMAIN_HIERARCHY_TARGET_ASSET_TYPES = [
@@ -33,7 +51,52 @@ export const createEmptyPluginConfig = (): MonitorPluginConfigLike => ({
   fallback_plugins: [],
   plugin_params: {},
   target_asset_types: [],
+  seed_config: { bindings: [] },
 })
+
+const normalizeStringList = (value: unknown) =>
+  Array.from(
+    new Set(
+      (Array.isArray(value) ? value : [])
+        .map(item => String(item || '').trim())
+        .filter(Boolean)
+    )
+  )
+
+export const normalizeSeedBindingConfig = (value: unknown): MonitorPluginSeedBindingConfig | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const seedType = String((value as Record<string, unknown>).seed_type || '').trim().toLowerCase()
+  const inputKey = String((value as Record<string, unknown>).input_key || '').trim()
+  if (!seedType || !inputKey) {
+    return null
+  }
+
+  return {
+    seed_type: seedType,
+    input_key: inputKey,
+    use_project_seeds: Boolean((value as Record<string, unknown>).use_project_seeds),
+    selected_project_values: normalizeStringList((value as Record<string, unknown>).selected_project_values),
+    manual_values: normalizeStringList((value as Record<string, unknown>).manual_values),
+  }
+}
+
+export const normalizeSeedConfig = (value: unknown): MonitorPluginSeedConfig => {
+  const rawBindings =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>).bindings
+      : []
+
+  const bindings = Array.isArray(rawBindings)
+    ? rawBindings
+        .map(normalizeSeedBindingConfig)
+        .filter((item): item is MonitorPluginSeedBindingConfig => Boolean(item))
+    : []
+
+  return { bindings }
+}
 
 export const normalizeTargetAssetTypes = (value: unknown) =>
   Array.from(
@@ -188,6 +251,7 @@ export const resetPluginForSelection = (plugin: MonitorPluginConfigLike) => {
   plugin.plugin_id = normalizeMonitorPluginId(plugin.plugin_id)
   plugin.plugin_params = {}
   applyDefaultTargetAssetTypes(plugin)
+  plugin.seed_config = { bindings: [] }
   if (supportsServiceProbeEngine(plugin)) {
     setServiceProbeEngine(plugin, getServiceProbeEngine())
   }
@@ -210,6 +274,7 @@ export const normalizePluginConfig = (plugin: any, monitorType = ''): MonitorPlu
       pluginId,
       plugin?.target_asset_types,
     ),
+    seed_config: normalizeSeedConfig(plugin?.seed_config),
   }
 
   if (supportsServiceProbeEngine(normalizedPlugin)) {

@@ -16,9 +16,10 @@ use crate::commands::plugin_review_commands::{
     RuntimeSchemaValidationMetadata, RuntimeSchemaValidationResult,
 };
 use crate::commands::traffic::plugin_commands::{
-    refresh_active_agent_plugin_tools, resolved_store_plugin_monitor_type,
+    refresh_active_agent_plugin_tools, resolved_explicit_plugin_monitor_type,
 };
 use crate::commands::traffic::TrafficAnalysisState;
+use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::generators::{
     parse_agent_plugin_definition, render_agent_plugin_definition, AgentPluginRenderContext,
@@ -374,6 +375,10 @@ async fn build_generation_prompt(
         format!("requirements:\n{}", requirements),
     ];
 
+    if let Some(monitor_type) = context.monitor_type.as_deref() {
+        sections.push(format!("monitor_type: {}", monitor_type));
+    }
+
     if let Some(existing_plugin_id) = request.existing_plugin_id.as_deref() {
         sections.push(format!("existing_plugin_id: {existing_plugin_id}"));
     }
@@ -420,7 +425,9 @@ fn render_generated_agent_plugin(
             .author
             .clone()
             .unwrap_or_else(|| "Sentinel AI".to_string()),
+        main_category: context.main_category.to_string(),
         plugin_business_category: context.plugin_business_category.to_string(),
+        monitor_type: context.monitor_type.clone(),
         default_severity: context.default_severity.clone(),
         tags: vec![
             "ai-authored".to_string(),
@@ -586,15 +593,14 @@ async fn resolve_authoring_context(
                 .and_then(|plugin| plugin.metadata.author.clone())
         });
 
-    let monitor_type = match request.monitor_type.clone() {
-        Some(monitor_type) => Some(monitor_type),
-        None => resolved_store_plugin_monitor_type(
-            existing.as_ref(),
-            &plugin_id,
-            main_category,
-            &plugin_business_category,
-        ),
-    };
+    let monitor_type = validate_plugin_monitor_type(
+        main_category,
+        request
+            .monitor_type
+            .clone()
+            .or_else(|| resolved_explicit_plugin_monitor_type(existing.as_ref())),
+    )
+    .map_err(anyhow::Error::msg)?;
 
     Ok(PluginAuthoringContext {
         plugin_id,
@@ -742,6 +748,13 @@ async fn save_plugin_draft(
         target_asset_types: existing
             .as_ref()
             .map(|plugin| plugin.metadata.target_asset_types.clone())
+            .unwrap_or_default(),
+        input_mode: existing
+            .as_ref()
+            .and_then(|plugin| plugin.metadata.input_mode.clone()),
+        seed_bindings: existing
+            .as_ref()
+            .map(|plugin| plugin.metadata.seed_bindings.clone())
             .unwrap_or_default(),
     };
 

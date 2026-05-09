@@ -1,14 +1,15 @@
 use sentinel_db::Database;
-use sentinel_plugins::{PluginCategory, PluginMainCategory, PluginMetadata, Severity};
+use sentinel_plugins::{MonitorSeedBinding, PluginCategory, PluginMainCategory, PluginMetadata, Severity};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use super::plugin_commands::{
     is_agent_tool_plugin_main_category, refresh_active_agent_plugin_tools,
-    resolved_store_plugin_monitor_type,
+    resolved_explicit_plugin_monitor_type,
 };
 use super::TrafficAnalysisState;
 use crate::commands::command_response_support::CommandResponse;
+use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::services::ensure_plugin_catalog_write_access;
 
@@ -23,6 +24,12 @@ pub struct StorePluginInfo {
     pub description: String,
     pub default_severity: String,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub monitor_type: Option<String>,
+    #[serde(default)]
+    pub input_mode: Option<String>,
+    #[serde(default)]
+    pub seed_bindings: Vec<MonitorSeedBinding>,
     pub download_url: String,
 }
 
@@ -70,6 +77,22 @@ async fn download_plugin_source(
     }
 
     Err(last_error.unwrap_or_else(|| "HTTP 404 Not Found".to_string()))
+}
+
+fn extract_plugin_header_tag(content: &str, tag: &str) -> Option<String> {
+    for line in content.lines().take(80) {
+        let trimmed = line.trim().trim_start_matches('*').trim();
+        let Some(rest) = trimmed.strip_prefix('@') else {
+            continue;
+        };
+        let mut parts = rest.splitn(2, char::is_whitespace);
+        let key = parts.next().unwrap_or("").trim();
+        let value = parts.next().unwrap_or("").trim();
+        if key == tag && !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 #[tauri::command]
@@ -238,6 +261,7 @@ pub async fn install_store_plugin(
         _ => Severity::Medium,
     };
 
+    let manifest_monitor_type = plugin.monitor_type.clone();
     let metadata = PluginMetadata {
         id: plugin.id.clone(),
         name: plugin.name.clone(),
@@ -248,11 +272,16 @@ pub async fn install_store_plugin(
             &plugin.category,
         )?,
         main_category: PluginMainCategory::parse(&plugin.main_category)?,
-        monitor_type: None,
+        monitor_type: validate_plugin_monitor_type(
+            PluginMainCategory::parse(&plugin.main_category)?,
+            manifest_monitor_type.or_else(|| extract_plugin_header_tag(&plugin_code, "monitor_type")),
+        )?,
+        input_mode: plugin.input_mode.clone(),
         description: Some(plugin.description),
         default_severity: severity,
         tags: plugin.tags,
         target_asset_types: Vec::new(),
+        seed_bindings: plugin.seed_bindings,
     };
 
     let db = state.get_db_service();
@@ -283,16 +312,22 @@ pub async fn install_store_plugin(
         .map_err(|e| format!("Failed to enable installed plugin: {}", e))?;
 
     let metadata_json = serde_json::to_value(&PluginMetadata {
-        monitor_type: resolved_store_plugin_monitor_type(
-            existing_plugin.as_ref(),
-            &metadata.id,
-            metadata.main_category,
-            &metadata.category,
-        ),
+        monitor_type: metadata
+            .monitor_type
+            .clone()
+            .or_else(|| resolved_explicit_plugin_monitor_type(existing_plugin.as_ref())),
         target_asset_types: existing_plugin
             .as_ref()
             .map(|record| record.metadata.target_asset_types.clone())
             .unwrap_or_default(),
+        seed_bindings: if metadata.seed_bindings.is_empty() {
+            existing_plugin
+                .as_ref()
+                .map(|record| record.metadata.seed_bindings.clone())
+                .unwrap_or_default()
+        } else {
+            metadata.seed_bindings.clone()
+        },
         ..metadata.clone()
     })
     .map_err(|e| format!("Failed to serialize plugin metadata: {}", e))?;
@@ -366,6 +401,7 @@ pub async fn update_store_plugin(
         _ => Severity::Medium,
     };
 
+    let manifest_monitor_type = plugin.monitor_type.clone();
     let metadata = PluginMetadata {
         id: plugin.id.clone(),
         name: plugin.name.clone(),
@@ -376,11 +412,16 @@ pub async fn update_store_plugin(
             &plugin.category,
         )?,
         main_category: PluginMainCategory::parse(&plugin.main_category)?,
-        monitor_type: None,
+        monitor_type: validate_plugin_monitor_type(
+            PluginMainCategory::parse(&plugin.main_category)?,
+            manifest_monitor_type.or_else(|| extract_plugin_header_tag(&plugin_code, "monitor_type")),
+        )?,
+        input_mode: plugin.input_mode.clone(),
         description: Some(plugin.description),
         default_severity: severity,
         tags: plugin.tags,
         target_asset_types: Vec::new(),
+        seed_bindings: plugin.seed_bindings,
     };
 
     let db = state.get_db_service();
@@ -407,16 +448,22 @@ pub async fn update_store_plugin(
         .map_err(|e| format!("Failed to update plugin: {}", e))?;
 
     let metadata_json = serde_json::to_value(&PluginMetadata {
-        monitor_type: resolved_store_plugin_monitor_type(
-            existing_plugin.as_ref(),
-            &metadata.id,
-            metadata.main_category,
-            &metadata.category,
-        ),
+        monitor_type: metadata
+            .monitor_type
+            .clone()
+            .or_else(|| resolved_explicit_plugin_monitor_type(existing_plugin.as_ref())),
         target_asset_types: existing_plugin
             .as_ref()
             .map(|record| record.metadata.target_asset_types.clone())
             .unwrap_or_default(),
+        seed_bindings: if metadata.seed_bindings.is_empty() {
+            existing_plugin
+                .as_ref()
+                .map(|record| record.metadata.seed_bindings.clone())
+                .unwrap_or_default()
+        } else {
+            metadata.seed_bindings.clone()
+        },
         ..metadata.clone()
     })
     .map_err(|e| format!("Failed to serialize plugin metadata: {}", e))?;

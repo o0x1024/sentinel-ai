@@ -1,4 +1,8 @@
+import type { MonitorSeedBinding } from './seedBindingsSupport'
+
 // Plugin Management Types
+
+export type PluginInputMode = 'asset' | 'seed' | 'hybrid'
 
 export interface PluginMetadata {
   id: string
@@ -8,9 +12,11 @@ export interface PluginMetadata {
   category: string
   main_category: string
   monitor_type?: string
+  input_mode?: PluginInputMode | string
   description?: string
   default_severity: string
   tags: string[]
+  seed_bindings?: MonitorSeedBinding[]
 }
 
 export interface PluginRecord {
@@ -133,9 +139,11 @@ export interface NewPluginMetadata {
   mainCategory: string
   category: string
   monitorType: string
+  inputMode: PluginInputMode | ''
   default_severity: string
   description: string
   tagsString: string
+  seedBindingsText: string
 }
 
 export interface AdvancedForm {

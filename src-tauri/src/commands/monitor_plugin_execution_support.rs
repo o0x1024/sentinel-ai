@@ -86,6 +86,8 @@ pub(crate) async fn execute_monitor_plugin(
                 },
                 tags: plugin_record.metadata.tags.clone(),
                 target_asset_types: plugin_record.metadata.target_asset_types.clone(),
+                input_mode: plugin_record.metadata.input_mode.clone(),
+                seed_bindings: plugin_record.metadata.seed_bindings.clone(),
             };
 
             plugin_manager

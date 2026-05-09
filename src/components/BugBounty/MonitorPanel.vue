@@ -64,6 +64,10 @@
         <div class="flex justify-between items-center mb-4">
           <h3 class="card-title">{{ t('bugBounty.monitor.tasks') }}</h3>
           <div class="flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline" @click="showSeedsModal = true">
+              <i class="fas fa-seedling mr-2"></i>
+              {{ t('bugBounty.monitor.seeds.title') }}
+            </button>
             <button v-if="selectedProgram" class="btn btn-sm btn-outline" @click="createDefaultTasks">
               <i class="fas fa-magic mr-2"></i>
               {{ t('bugBounty.monitor.createDefault') }}
@@ -98,6 +102,12 @@
     </div>
 
     <MonitorRunHistoryDrawer :open="showRunHistoryDrawer" :programs="props.programs" @close="showRunHistoryDrawer = false" />
+    <MonitorSeedsPanel
+      :open="showSeedsModal"
+      :selected-program="selectedProgram"
+      :programs="programs"
+      @close="showSeedsModal = false"
+    />
 
     <Teleport to="body">
       <Transition name="modal">
@@ -161,6 +171,7 @@
                 :title="t('bugBounty.monitor.dnsMonitoring')"
                 icon-class="fas fa-network-wired"
                 monitor-type="dns"
+                :program-id="taskForm.program_id"
                 :plugins="taskForm.config.dns_plugins"
                 :plugin-options="getPluginsByType('dns')"
                 @add-plugin="addPluginConfig('dns')"
@@ -173,6 +184,7 @@
                 :title="t('bugBounty.monitor.ipMonitoring')"
                 icon-class="fas fa-diagram-project"
                 monitor-type="ip"
+                :program-id="taskForm.program_id"
                 :plugins="taskForm.config.ip_plugins"
                 :plugin-options="getPluginsByType('ip')"
                 intro-text="目标资产应为域名，监控的是域名解析结果中的 IP 变化。"
@@ -186,6 +198,7 @@
                 :title="t('bugBounty.monitor.portMonitoring')"
                 icon-class="fas fa-network-wired"
                 monitor-type="port"
+                :program-id="taskForm.program_id"
                 :plugins="taskForm.config.port_plugins"
                 :plugin-options="getPluginsByType('port')"
                 @add-plugin="addPluginConfig('port')"
@@ -198,6 +211,7 @@
                 :title="t('bugBounty.monitor.serviceMonitoring')"
                 icon-class="fas fa-server"
                 monitor-type="service"
+                :program-id="taskForm.program_id"
                 :plugins="taskForm.config.service_plugins"
                 :plugin-options="getPluginsByType('service')"
                 @add-plugin="addPluginConfig('service')"
@@ -210,6 +224,7 @@
                 :title="t('bugBounty.monitor.certMonitoring')"
                 icon-class="fas fa-certificate"
                 monitor-type="cert"
+                :program-id="taskForm.program_id"
                 :plugins="taskForm.config.cert_plugins"
                 :plugin-options="getPluginsByType('cert')"
                 @add-plugin="addPluginConfig('cert')"
@@ -222,6 +237,7 @@
                 :title="t('bugBounty.monitor.webMonitoring')"
                 icon-class="fas fa-globe"
                 monitor-type="web"
+                :program-id="taskForm.program_id"
                 :plugins="taskForm.config.web_plugins"
                 :plugin-options="getPluginsByType('web')"
                 @add-plugin="addPluginConfig('web')"
@@ -234,6 +250,7 @@
                 :title="t('bugBounty.monitor.apiMonitoring')"
                 icon-class="fas fa-plug"
                 monitor-type="api"
+                :program-id="taskForm.program_id"
                 :plugins="taskForm.config.api_plugins"
                 :plugin-options="getPluginsByType('api')"
                 @add-plugin="addPluginConfig('api')"
@@ -246,6 +263,7 @@
                 :title="t('bugBounty.monitor.contentMonitoring')"
                 icon-class="fas fa-file-alt"
                 monitor-type="content"
+                :program-id="taskForm.program_id"
                 :plugins="taskForm.config.content_plugins"
                 :plugin-options="getPluginsByType('content')"
                 @add-plugin="addPluginConfig('content')"
@@ -258,6 +276,7 @@
                 :title="t('bugBounty.monitor.vulnMonitoring')"
                 icon-class="fas fa-shield-alt"
                 monitor-type="risk"
+                :program-id="taskForm.program_id"
                 :plugins="taskForm.config.risk_plugins"
                 :plugin-options="getPluginsByType('risk')"
                 @add-plugin="addPluginConfig('risk')"
@@ -420,6 +439,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useToast } from '../../composables/useToast'
 import { useMonitorTaskProgress } from '../../composables/useMonitorTaskProgress'
 import MonitorRunHistoryDrawer from './MonitorRunHistoryDrawer.vue'
+import MonitorSeedsPanel from './MonitorSeedsPanel.vue'
 import MonitorTaskCard from './MonitorTaskCard.vue'
 import MonitorTypeConfigSection from './MonitorTypeConfigSection.vue'
 import {
@@ -446,6 +466,7 @@ const submitting = ref(false)
 const stats = ref<any>(null)
 const tasks = ref<any[]>([])
 const showRunHistoryDrawer = ref(false)
+const showSeedsModal = ref(false)
 const showCreateModal = ref(false)
 const editingTask = ref<any>(null)
 const showDiscoverModal = ref(false)
@@ -678,6 +699,52 @@ const collectParamValidationErrors = (config: any) => {
   return errors
 }
 
+const collectSeedValidationErrors = (config: any) => {
+  const sectionMappings: Array<[string, string]> = [
+    ['enable_dns_monitoring', 'dns_plugins'],
+    ['enable_ip_monitoring', 'ip_plugins'],
+    ['enable_cert_monitoring', 'cert_plugins'],
+    ['enable_content_monitoring', 'content_plugins'],
+    ['enable_api_monitoring', 'api_plugins'],
+    ['enable_port_monitoring', 'port_plugins'],
+    ['enable_service_monitoring', 'service_plugins'],
+    ['enable_web_monitoring', 'web_plugins'],
+    ['enable_risk_monitoring', 'risk_plugins'],
+  ]
+
+  const errors: string[] = []
+
+  for (const [enabledKey, pluginsKey] of sectionMappings) {
+    if (!config?.[enabledKey]) {
+      continue
+    }
+
+    mapPluginTree(config?.[pluginsKey] || [], plugin => {
+      const pluginMeta = availablePlugins.value.find(item => item.id === plugin?.plugin_id)
+      const declaredBindings = Array.isArray(pluginMeta?.seed_bindings) ? pluginMeta.seed_bindings : []
+      if (declaredBindings.length === 0) {
+        return
+      }
+
+      const configuredBindings = Array.isArray(plugin?.seed_config?.bindings)
+        ? plugin.seed_config.bindings
+        : []
+
+      const hasAnySeedValue = configuredBindings.some((binding: any) => {
+        const selected = Array.isArray(binding?.selected_project_values) ? binding.selected_project_values : []
+        const manual = Array.isArray(binding?.manual_values) ? binding.manual_values : []
+        return selected.length > 0 || manual.length > 0
+      })
+
+      if (!hasAnySeedValue) {
+        errors.push(`${pluginMeta?.name || plugin?.plugin_id}: 未配置任何发现种子`)
+      }
+    })
+  }
+
+  return errors
+}
+
 const getPluginConfigs = (monitorType: string) => {
   switch (monitorType) {
     case 'dns':
@@ -893,6 +960,11 @@ const saveTask = async () => {
     const paramValidationErrors = collectParamValidationErrors(taskForm.config)
     if (paramValidationErrors.length > 0) {
       toast.error(t('bugBounty.monitor.pluginParamsValidationFailed'))
+      return
+    }
+    const seedValidationErrors = collectSeedValidationErrors(taskForm.config)
+    if (seedValidationErrors.length > 0) {
+      toast.error(seedValidationErrors[0])
       return
     }
     submitting.value = true

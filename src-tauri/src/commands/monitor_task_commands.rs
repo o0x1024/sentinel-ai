@@ -2,7 +2,10 @@ use crate::commands::monitor_commands::MonitorSchedulerState;
 use crate::commands::monitor_config_support::{
     apply_plugins_to_monitor_type, load_tasks_from_db, save_tasks_to_db,
 };
-use sentinel_bounty::services::{ChangeMonitorConfig, MonitorPluginConfig, MonitorTask};
+use sentinel_bounty::services::{
+    ChangeMonitorConfig, MonitorPluginConfig, MonitorPluginSeedBindingConfig,
+    MonitorPluginSeedConfig, MonitorTask,
+};
 use sentinel_db::DatabaseService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -38,6 +41,44 @@ pub struct CreateMonitorTaskRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorPluginSeedBindingConfigDto {
+    pub seed_type: String,
+    pub input_key: String,
+    #[serde(default)]
+    pub use_project_seeds: bool,
+    #[serde(default)]
+    pub selected_project_values: Vec<String>,
+    #[serde(default)]
+    pub manual_values: Vec<String>,
+}
+
+impl From<MonitorPluginSeedBindingConfigDto> for MonitorPluginSeedBindingConfig {
+    fn from(dto: MonitorPluginSeedBindingConfigDto) -> Self {
+        Self {
+            seed_type: dto.seed_type,
+            input_key: dto.input_key,
+            use_project_seeds: dto.use_project_seeds,
+            selected_project_values: dto.selected_project_values,
+            manual_values: dto.manual_values,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MonitorPluginSeedConfigDto {
+    #[serde(default)]
+    pub bindings: Vec<MonitorPluginSeedBindingConfigDto>,
+}
+
+impl From<MonitorPluginSeedConfigDto> for MonitorPluginSeedConfig {
+    fn from(dto: MonitorPluginSeedConfigDto) -> Self {
+        Self {
+            bindings: dto.bindings.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitorPluginConfigDto {
     pub plugin_id: String,
     #[serde(default)]
@@ -46,6 +87,8 @@ pub struct MonitorPluginConfigDto {
     pub plugin_params: serde_json::Value,
     #[serde(default)]
     pub target_asset_types: Vec<String>,
+    #[serde(default)]
+    pub seed_config: MonitorPluginSeedConfigDto,
 }
 
 impl From<MonitorPluginConfigDto> for MonitorPluginConfig {
@@ -55,6 +98,7 @@ impl From<MonitorPluginConfigDto> for MonitorPluginConfig {
             fallback_plugins: dto.fallback_plugins.into_iter().map(Into::into).collect(),
             plugin_params: dto.plugin_params,
             target_asset_types: dto.target_asset_types,
+            seed_config: dto.seed_config.into(),
         }
     }
 }

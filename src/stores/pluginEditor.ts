@@ -5,6 +5,7 @@ import type {
   CodeReference, TestResultReference 
 } from '../components/PluginManagement/types'
 import type { AiValidationReport } from '../components/PluginManagement/aiGeneratedPluginGate'
+import { stringifySeedBindings } from '../components/PluginManagement/seedBindingsSupport'
 
 // 对话历史持久化接口
 interface ChatHistoryEntry {
@@ -41,8 +42,8 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
   // 插件元数据
   const newPluginMetadata = ref<NewPluginMetadata>({
     id: '', name: '', version: '1.0.0', author: '',
-    mainCategory: 'traffic', category: 'vulnerability', monitorType: '',
-    default_severity: 'medium', description: '', tagsString: ''
+    mainCategory: 'traffic', category: 'vulnerability', monitorType: '', inputMode: '',
+    default_severity: 'medium', description: '', tagsString: '', seedBindingsText: '[]'
   })
 
   // AI 助手状态
@@ -202,9 +203,11 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
         mainCategory: plugin.metadata.main_category,
         category: plugin.metadata.category,
         monitorType: plugin.metadata.monitor_type || '',
+        inputMode: plugin.metadata.input_mode || '',
         default_severity: plugin.metadata.default_severity,
         description: plugin.metadata.description || '',
-        tagsString: plugin.metadata.tags.join(', ')
+        tagsString: plugin.metadata.tags.join(', '),
+        seedBindingsText: stringifySeedBindings(plugin.metadata.seed_bindings || []),
       }
       // 加载该插件的对话历史
       loadChatHistory(plugin.metadata.id)
@@ -212,8 +215,8 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
       // 重置为新插件
       newPluginMetadata.value = {
         id: '', name: '', version: '1.0.0', author: '',
-        mainCategory: 'agent', category: 'vulnerability', monitorType: '',
-        default_severity: 'medium', description: '', tagsString: ''
+        mainCategory: 'agent', category: 'vulnerability', monitorType: '', inputMode: '',
+        default_severity: 'medium', description: '', tagsString: '', seedBindingsText: '[]'
       }
       aiChatMessages.value = []
     }

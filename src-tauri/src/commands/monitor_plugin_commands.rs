@@ -1,10 +1,9 @@
-use crate::commands::monitor_config_support::{
-    infer_monitor_type_for_plugin, normalize_monitor_type,
-};
+use crate::commands::monitor_config_support::normalize_monitor_type;
 use crate::commands::monitor_plugin_execution_support::{
     is_monitor_execution_plugin_category, normalize_plugin_registry_id,
 };
 use sentinel_db::{Database, DatabaseService};
+use sentinel_plugins::MonitorSeedBinding;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -15,14 +14,15 @@ pub struct MonitorPluginInfo {
     pub name: String,
     pub category: String,
     pub monitor_type: String,
+    pub input_mode: Option<String>,
     pub description: Option<String>,
+    pub seed_bindings: Vec<MonitorSeedBinding>,
     pub is_available: bool,
 }
 
 async fn resolve_monitor_type_from_metadata(
     db_service: &Arc<DatabaseService>,
     tool_name: &str,
-    category: &str,
 ) -> Result<Option<String>, String> {
     let normalized_name = normalize_plugin_registry_id(tool_name);
     let plugin_record = db_service
@@ -31,47 +31,15 @@ async fn resolve_monitor_type_from_metadata(
         .map_err(|e| e.to_string())?;
 
     let Some(plugin_record) = plugin_record else {
-        if tool_name.starts_with("plugin__") {
-            return Ok(None);
-        }
-        return Ok(infer_monitor_type_for_plugin(&normalized_name, category).map(str::to_string));
+        return Ok(None);
     };
 
-    if let Some(monitor_type) = plugin_record
+    Ok(plugin_record
         .metadata
         .monitor_type
         .as_deref()
         .and_then(normalize_monitor_type)
-    {
-        return Ok(Some(monitor_type.to_string()));
-    }
-
-    let Some(inferred_monitor_type) = infer_monitor_type_for_plugin(&normalized_name, category)
-    else {
-        return Ok(None);
-    };
-
-    let mut metadata_value =
-        serde_json::to_value(&plugin_record.metadata).map_err(|e| e.to_string())?;
-    if let Some(metadata_obj) = metadata_value.as_object_mut() {
-        metadata_obj.insert(
-            "monitor_type".to_string(),
-            serde_json::Value::String(inferred_monitor_type.to_string()),
-        );
-    }
-
-    let plugin_code = db_service
-        .get_plugin_code(&normalized_name)
-        .await
-        .map_err(|e| e.to_string())?
-        .unwrap_or_default();
-
-    db_service
-        .update_plugin(&metadata_value, &plugin_code)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(Some(inferred_monitor_type.to_string()))
+        .map(str::to_string))
 }
 
 #[tauri::command]
@@ -106,7 +74,6 @@ pub async fn monitor_get_available_plugins(
         let Some(monitor_type) = resolve_monitor_type_from_metadata(
             db_service.inner(),
             &plugin.metadata.id,
-            plugin.metadata.category.as_str(),
         )
         .await?
         else {
@@ -118,7 +85,9 @@ pub async fn monitor_get_available_plugins(
             name: plugin.metadata.name.clone(),
             category: plugin.metadata.category.to_string(),
             monitor_type,
+            input_mode: plugin.metadata.input_mode.clone(),
             description: plugin.metadata.description.clone(),
+            seed_bindings: plugin.metadata.seed_bindings.clone(),
             is_available: plugin.status == sentinel_plugins::PluginStatus::Enabled,
         });
     }

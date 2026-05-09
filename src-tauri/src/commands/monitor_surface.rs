@@ -158,7 +158,7 @@ fn favicon_hash_from_evidence(object: &serde_json::Map<String, Value>) -> Option
 
     object
         .get("content_json")
-        .and_then(|value| value.get("sha256"))
+        .and_then(|value| value.get("icon_hash"))
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
 }

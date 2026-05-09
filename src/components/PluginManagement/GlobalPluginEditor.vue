@@ -6,6 +6,7 @@
       ref="dialogRef"
       :editing-plugin="store.editingPlugin"
       :new-plugin-metadata="store.newPluginMetadata"
+      :plugin-code-text="store.pluginCode"
       :is-editing="store.isEditing"
       :saving="store.saving"
       :code-error="store.codeError"
@@ -205,6 +206,7 @@ import { MergeView } from '@codemirror/merge'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { locateValidationIssue } from './validationIssueLocator'
+import { parseSeedBindingsText } from './seedBindingsSupport'
 
 // 扩展 HTMLElement 类型以支持自定义属性
 declare module '@vue/runtime-core' {
@@ -1161,25 +1163,23 @@ const handleCancelEditing = () => {
 
 const handleSavePlugin = async () => {
   if (!store.editingPlugin) return
+  const monitorTypeError = validateRequiredMonitorType()
+  if (monitorTypeError) {
+    store.codeError = monitorTypeError
+    return
+  }
   store.saving = true
   store.codeError = ''
 
   try {
     const tags = store.newPluginMetadata.tagsString.split(',').map(t => t.trim()).filter(t => t.length > 0)
+    const parsedSeedBindings = parseSeedBindingsText(store.newPluginMetadata.seedBindingsText || '[]')
+    if (parsedSeedBindings.error) {
+      store.codeError = `Seed bindings JSON 无效: ${parsedSeedBindings.error}`
+      return
+    }
     const backendCategory = store.newPluginMetadata.category
-
-    const metadataComment = `/**
- * @plugin ${store.newPluginMetadata.id}
- * @name ${store.newPluginMetadata.name}
- * @version ${store.newPluginMetadata.version}
- * @author ${store.newPluginMetadata.author || 'Unknown'}
- * @main_category ${store.newPluginMetadata.mainCategory}
- * @category ${backendCategory}
- * @default_severity ${store.newPluginMetadata.default_severity}
- * @tags ${tags.join(', ')}
- * @description ${store.newPluginMetadata.description || ''}
- */
-`
+    const metadataComment = buildPluginMetadataComment(tags, backendCategory)
 
     const codeWithoutMetadata = store.pluginCode.replace(/\/\*\*\s*[\s\S]*?\*\/\s*/, '')
     const fullCode = metadataComment + '\n' + codeWithoutMetadata
@@ -1194,9 +1194,11 @@ const handleSavePlugin = async () => {
       monitor_type: ['agent', 'bounty'].includes(store.newPluginMetadata.mainCategory)
         ? (store.newPluginMetadata.monitorType || null)
         : null,
+      input_mode: store.newPluginMetadata.inputMode || null,
       description: store.newPluginMetadata.description || '',
       default_severity: store.newPluginMetadata.default_severity,
-      tags: tags
+      tags: tags,
+      seed_bindings: parsedSeedBindings.bindings,
     }
 
     const response = await invoke<CommandResponse<void>>('update_plugin', {
@@ -1221,24 +1223,23 @@ const handleSavePlugin = async () => {
 }
 
 const handleCreateNewPlugin = async () => {
+  const monitorTypeError = validateRequiredMonitorType()
+  if (monitorTypeError) {
+    store.codeError = monitorTypeError
+    return
+  }
   store.saving = true
   store.codeError = ''
 
   try {
     const tags = store.newPluginMetadata.tagsString.split(',').map(t => t.trim()).filter(t => t.length > 0)
+    const parsedSeedBindings = parseSeedBindingsText(store.newPluginMetadata.seedBindingsText || '[]')
+    if (parsedSeedBindings.error) {
+      store.codeError = `Seed bindings JSON 无效: ${parsedSeedBindings.error}`
+      return
+    }
     const backendCategory = store.newPluginMetadata.category
-
-    const metadataComment = `/**
- * @plugin ${store.newPluginMetadata.id}
- * @name ${store.newPluginMetadata.name}
- * @version ${store.newPluginMetadata.version}
- * @author ${store.newPluginMetadata.author || 'Unknown'}
- * @category ${backendCategory}
- * @default_severity ${store.newPluginMetadata.default_severity}
- * @tags ${tags.join(', ')}
- * @description ${store.newPluginMetadata.description || ''}
- */
-`
+    const metadataComment = buildPluginMetadataComment(tags, backendCategory)
 
     const fullCode = metadataComment + '\n' + store.pluginCode
 
@@ -1252,9 +1253,11 @@ const handleCreateNewPlugin = async () => {
       monitor_type: ['agent', 'bounty'].includes(store.newPluginMetadata.mainCategory)
         ? (store.newPluginMetadata.monitorType || null)
         : null,
+      input_mode: store.newPluginMetadata.inputMode || null,
       description: store.newPluginMetadata.description || '',
       default_severity: store.newPluginMetadata.default_severity,
-      tags: tags
+      tags: tags,
+      seed_bindings: parsedSeedBindings.bindings,
     }
 
     const response = await invoke<CommandResponse<string>>('create_plugin_in_db', {
@@ -1274,6 +1277,41 @@ const handleCreateNewPlugin = async () => {
   } finally {
     store.saving = false
   }
+}
+
+const validateRequiredMonitorType = () => {
+  const requiresMonitorType = ['agent', 'bounty'].includes(store.newPluginMetadata.mainCategory)
+  if (requiresMonitorType && store.newPluginMetadata.monitorType.trim() === '') {
+    return t('plugins.monitorTypeRequired', 'Agent/Bounty 插件必须显式声明监控调度分类')
+  }
+
+  return ''
+}
+
+const buildPluginMetadataComment = (tags: string[], backendCategory: string) => {
+  const lines = [
+    '/**',
+    ` * @plugin ${store.newPluginMetadata.id}`,
+    ` * @name ${store.newPluginMetadata.name}`,
+    ` * @version ${store.newPluginMetadata.version}`,
+    ` * @author ${store.newPluginMetadata.author || 'Unknown'}`,
+    ` * @main_category ${store.newPluginMetadata.mainCategory}`,
+    ` * @category ${backendCategory}`,
+  ]
+
+  const monitorType = store.newPluginMetadata.monitorType.trim()
+  if (['agent', 'bounty'].includes(store.newPluginMetadata.mainCategory) && monitorType) {
+    lines.push(` * @monitor_type ${monitorType}`)
+  }
+
+  lines.push(
+    ` * @default_severity ${store.newPluginMetadata.default_severity}`,
+    ` * @tags ${tags.join(', ')}`,
+    ` * @description ${store.newPluginMetadata.description || ''}`,
+    ' */',
+  )
+
+  return `${lines.join('\n')}\n`
 }
 
 const handleSendAiMessage = async (message: string) => {

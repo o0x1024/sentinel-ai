@@ -293,6 +293,8 @@ async fn get_plugin_input_schema_async(
         tags: vec![],
         description: Some(format!("Plugin tool: {}", plugin_name)),
         target_asset_types: Vec::new(),
+        input_mode: None,
+        seed_bindings: Vec::new(),
     };
 
     // 运行时获取 schema

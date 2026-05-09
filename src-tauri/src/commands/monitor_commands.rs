@@ -63,6 +63,10 @@ pub(crate) fn inject_monitor_plugin_targets(
         .cloned()
         .collect();
     input["service_targets"] = serde_json::Value::Array(service_targets);
+
+    for (key, value) in &resolved_targets.extra_input {
+        input[key] = value.clone();
+    }
 }
 
 pub(crate) fn inject_monitor_execution_context(

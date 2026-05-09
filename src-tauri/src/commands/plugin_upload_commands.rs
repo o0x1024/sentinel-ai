@@ -4,9 +4,10 @@ use sentinel_traffic::ScanTask;
 use tauri::{AppHandle, State};
 
 use crate::commands::command_response_support::CommandResponse;
+use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::commands::traffic::{
     is_agent_tool_plugin_main_category, is_traffic_scan_plugin_main_category,
-    refresh_active_agent_plugin_tools, resolved_store_plugin_monitor_type, TrafficAnalysisState,
+    refresh_active_agent_plugin_tools, resolved_explicit_plugin_monitor_type, TrafficAnalysisState,
 };
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::services::ensure_plugin_catalog_write_access;
@@ -26,15 +27,13 @@ pub async fn upload_plugin(
         .get_plugin_from_registry(&parsed.id)
         .await
         .map_err(|e| format!("Failed to load existing plugin metadata: {}", e))?;
-    let monitor_type = match parsed.monitor_type {
-        Some(monitor_type) => Some(monitor_type),
-        None => resolved_store_plugin_monitor_type(
-            existing_plugin.as_ref(),
-            &parsed.id,
-            parsed.main_category,
-            &parsed.category,
-        ),
-    };
+    let monitor_type = validate_plugin_monitor_type(
+        parsed.main_category,
+        parsed
+            .monitor_type
+            .clone()
+            .or_else(|| resolved_explicit_plugin_monitor_type(existing_plugin.as_ref())),
+    )?;
 
     let metadata = PluginMetadata {
         id: parsed.id.clone(),
@@ -55,6 +54,13 @@ pub async fn upload_plugin(
         } else {
             parsed.target_asset_types
         },
+        input_mode: existing_plugin
+            .as_ref()
+            .and_then(|plugin| plugin.metadata.input_mode.clone()),
+        seed_bindings: existing_plugin
+            .as_ref()
+            .map(|plugin| plugin.metadata.seed_bindings.clone())
+            .unwrap_or_default(),
     };
 
     let traffic_metadata = TrafficPluginMetadata {

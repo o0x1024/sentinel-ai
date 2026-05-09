@@ -459,6 +459,8 @@ pub async fn execute_workflow_steps(
                                 tags,
                                 target_asset_types: Vec::new(),
                                 monitor_type: None,
+                                input_mode: None,
+                                seed_bindings: Vec::new(),
                             };
 
                             // 注册到内存并缓存代码

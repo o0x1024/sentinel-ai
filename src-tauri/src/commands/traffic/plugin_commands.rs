@@ -6,13 +6,13 @@ use tauri::{AppHandle, State};
 
 use super::analysis_state_support::{resolve_plugin_registry_id, TrafficAnalysisState};
 use crate::commands::command_response_support::CommandResponse;
-use crate::commands::monitor_config_support::infer_monitor_type_for_plugin;
+use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::services::{
     ensure_plugin_allowed_for_current_tier, ensure_plugin_catalog_write_access,
     ensure_plugin_delete_access, filter_plugins_for_current_tier, load_plugin_default_inputs,
     merge_plugin_input_defaults, save_plugin_default_inputs, IntruderPluginCategory,
-    PluginCategory, PluginMainCategory,
+    PluginMainCategory,
 };
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
@@ -133,27 +133,10 @@ pub(crate) async fn refresh_active_agent_plugin_tools(
     Ok(count)
 }
 
-pub(crate) fn resolved_store_plugin_monitor_type(
-    existing: Option<&PluginRecord>,
-    plugin_id: &str,
-    main_category: PluginMainCategory,
-    category: &PluginCategory,
-) -> Option<String> {
-    if let Some(monitor_type) = existing
+pub(crate) fn resolved_explicit_plugin_monitor_type(existing: Option<&PluginRecord>) -> Option<String> {
+    existing
         .and_then(|record| record.metadata.monitor_type.clone())
         .filter(|value| !value.trim().is_empty())
-    {
-        return Some(monitor_type);
-    }
-
-    if !matches!(
-        main_category,
-        PluginMainCategory::Agent | PluginMainCategory::Bounty
-    ) {
-        return None;
-    }
-
-    infer_monitor_type_for_plugin(plugin_id, category.as_str()).map(str::to_string)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -825,6 +808,13 @@ pub async fn create_plugin_in_db(
 
     let plugin: sentinel_traffic::PluginMetadata =
         serde_json::from_value(metadata).map_err(|e| format!("Invalid plugin metadata: {}", e))?;
+    let plugin = PluginMetadata {
+        monitor_type: validate_plugin_monitor_type(
+            plugin.main_category,
+            plugin.monitor_type.clone(),
+        )?,
+        ..plugin
+    };
 
     let plugin_id = plugin.id.clone();
     let plugin_name = plugin.name.clone();
@@ -870,6 +860,8 @@ pub async fn create_plugin_in_db(
             default_severity: plugin.default_severity,
             tags: plugin.tags.clone(),
             target_asset_types: plugin.target_asset_types.clone(),
+            input_mode: plugin.input_mode.clone(),
+            seed_bindings: plugin.seed_bindings.clone(),
         };
 
         let _ = plugin_manager
@@ -921,6 +913,13 @@ pub async fn update_plugin(
 
     let plugin: sentinel_traffic::PluginMetadata =
         serde_json::from_value(metadata).map_err(|e| format!("Invalid plugin metadata: {}", e))?;
+    let plugin = PluginMetadata {
+        monitor_type: validate_plugin_monitor_type(
+            plugin.main_category,
+            plugin.monitor_type.clone(),
+        )?,
+        ..plugin
+    };
     let plugin_description = plugin.description.clone().unwrap_or_default();
     let main_category = plugin.main_category.clone();
     let plugin_category = plugin.category.clone();
@@ -990,6 +989,8 @@ pub async fn update_plugin(
             tags: vec![],
             description: Some(plugin_description.clone()),
             target_asset_types: Vec::new(),
+            input_mode: None,
+            seed_bindings: Vec::new(),
         };
         let input_schema =
             sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
@@ -1150,6 +1151,8 @@ pub async fn test_plugin(
                     default_severity: severity,
                     tags: metadata.tags.clone(),
                     target_asset_types: metadata.target_asset_types.clone(),
+                    input_mode: metadata.input_mode.clone(),
+                    seed_bindings: metadata.seed_bindings.clone(),
                 };
 
                 let _ = plugin_manager
@@ -1312,6 +1315,8 @@ pub async fn test_plugin_advanced(
                 },
                 tags: plugin_record.metadata.tags,
                 target_asset_types: plugin_record.metadata.target_asset_types,
+                input_mode: plugin_record.metadata.input_mode,
+                seed_bindings: plugin_record.metadata.seed_bindings,
             };
 
             let _ = plugin_manager
@@ -1590,6 +1595,8 @@ pub async fn get_plugin_input_schema(
             tags: vec![],
             description: None,
             target_asset_types: Vec::new(),
+            input_mode: None,
+            seed_bindings: Vec::new(),
         });
 
     let schema = sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
@@ -1646,6 +1653,8 @@ pub async fn get_plugin_output_schema(
             tags: vec![],
             description: None,
             target_asset_types: Vec::new(),
+            input_mode: None,
+            seed_bindings: Vec::new(),
         });
 
     let schema = match sentinel_plugins::get_output_schema_from_code(&code, metadata).await {

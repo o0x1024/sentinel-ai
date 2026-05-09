@@ -1,4 +1,5 @@
 use chrono::Utc;
+use crate::services::PluginMainCategory;
 use sentinel_bounty::services::{
     ChangeMonitorConfig, MonitorPluginConfig, MonitorScheduler, MonitorTask,
 };
@@ -111,64 +112,40 @@ pub fn normalize_monitor_type(value: &str) -> Option<&'static str> {
     }
 }
 
-pub fn infer_monitor_type_for_plugin(
-    normalized_name: &str,
-    category: &str,
-) -> Option<&'static str> {
-    match normalized_name {
-        "subdomain_enumerator" | "subdomain_brute" => Some("dns"),
-        "dns_resolver" => Some("ip"),
-        "cert_monitor" | "ssl_scanner" => Some("cert"),
-        "content_monitor" => Some("content"),
-        "api_monitor" | "js_analyzer" | "js_link_finder" => Some("api"),
-        "cidr_mapper" => Some("ip"),
-        "port_monitor" => Some("port"),
-        "service_monitor" | "service_probe" => Some("service"),
-        "http_prober" | "tech_fingerprinter" | "favicon_fingerprinter" => Some("web"),
-        "sensitive_file_scanner" | "risk_scanner" => Some("risk"),
-        _ => match category.to_lowercase().as_str() {
-            "monitor" | "recon" | "reconnaissance" if normalized_name.contains("subdomain") => {
-                Some("dns")
+pub fn normalize_optional_monitor_type(value: Option<String>) -> Result<Option<String>, String> {
+    match value {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
             }
-            "monitor" | "recon" | "reconnaissance" if normalized_name.contains("resolver") => {
-                Some("ip")
-            }
-            "monitor" if normalized_name.contains("cert") || normalized_name.contains("ssl") => {
-                Some("cert")
-            }
-            "monitor" if normalized_name.contains("content") => Some("content"),
-            "monitor" if normalized_name.contains("api") || normalized_name.contains("js") => {
-                Some("api")
-            }
-            "monitor" | "recon"
-                if normalized_name.contains("port") || normalized_name.contains("cidr") =>
-            {
-                Some("port")
-            }
-            "monitor" | "recon"
-                if normalized_name.contains("service")
-                    || normalized_name.contains("banner")
-                    || normalized_name.contains("fingerprinter") =>
-            {
-                Some("service")
-            }
-            "monitor" | "recon"
-                if normalized_name.contains("web")
-                    || normalized_name.contains("tech")
-                    || normalized_name.contains("http") =>
-            {
-                Some("web")
-            }
-            "monitor" | "scanner" | "scan"
-                if normalized_name.contains("risk")
-                    || normalized_name.contains("vuln")
-                    || normalized_name.contains("sensitive") =>
-            {
-                Some("risk")
-            }
-            _ => None,
-        },
+
+            normalize_monitor_type(trimmed)
+                .map(|normalized| Some(normalized.to_string()))
+                .ok_or_else(|| format!("Unsupported monitor_type: {}", value))
+        }
+        None => Ok(None),
     }
+}
+
+pub fn validate_plugin_monitor_type(
+    main_category: PluginMainCategory,
+    monitor_type: Option<String>,
+) -> Result<Option<String>, String> {
+    let monitor_type = normalize_optional_monitor_type(monitor_type)?;
+
+    if matches!(
+        main_category,
+        PluginMainCategory::Agent | PluginMainCategory::Bounty
+    ) && monitor_type.is_none()
+    {
+        return Err(format!(
+            "monitor_type is required for {} plugins",
+            main_category
+        ));
+    }
+
+    Ok(monitor_type)
 }
 
 pub fn apply_plugins_to_monitor_type(

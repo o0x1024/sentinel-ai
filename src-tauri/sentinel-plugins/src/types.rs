@@ -144,6 +144,13 @@ impl From<&str> for PluginCategory {
 
 /// 插件元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorSeedBinding {
+    pub seed_type: String,
+    pub input_key: String,
+}
+
+/// 插件元数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginMetadata {
     /// 插件 ID（唯一标识）
     pub id: String,
@@ -166,9 +173,15 @@ pub struct PluginMetadata {
     /// Explicit monitor scheduler stage for agent plugins
     #[serde(default)]
     pub monitor_type: Option<String>,
+    /// How monitor tasks provide input to this plugin: asset | seed | hybrid
+    #[serde(default)]
+    pub input_mode: Option<String>,
     /// Preferred asset target types for monitor tasks
     #[serde(default)]
     pub target_asset_types: Vec<String>,
+    /// Discovery seed bindings injected by monitor scheduler
+    #[serde(default)]
+    pub seed_bindings: Vec<MonitorSeedBinding>,
 }
 
 /// 严重等级

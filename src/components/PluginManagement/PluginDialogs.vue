@@ -249,6 +249,15 @@
               <option value="critical">{{ $t('common.critical', '严重') }}</option>
             </select>
           </div>
+          <div v-if="requiresAiMonitorType" class="form-control">
+            <label class="label"><span class="label-text">{{ $t('plugins.monitorType', '监控调度分类') }} <span class="text-error">*</span></span></label>
+            <select :value="aiMonitorType" @change="$emit('update:aiMonitorType', ($event.target as HTMLSelectElement).value)" class="select select-bordered select-sm">
+              <option value="" disabled>{{ $t('plugins.selectMonitorType', '请选择监控调度分类') }}</option>
+              <option v-for="option in monitorTypeOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </div>
         </div>
         <div v-if="aiGenerating" class="alert alert-info">
           <span class="loading loading-spinner"></span>
@@ -260,7 +269,7 @@
       </div>
       <div class="modal-action">
         <button class="btn" @click="closeAIGenerateDialog">{{ $t('common.cancel', '取消') }}</button>
-        <button class="btn btn-primary" :disabled="!aiPrompt.trim() || aiGenerating" @click="$emit('generatePluginWithAi')">
+        <button class="btn btn-primary" :disabled="!canGenerateAiPlugin" @click="$emit('generatePluginWithAi')">
           <i class="fas fa-magic mr-2"></i>{{ $t('plugins.generatePlugin', '生成插件') }}
         </button>
       </div>
@@ -582,6 +591,7 @@ const props = defineProps<{
   aiPrompt: string
   aiPluginType: string
   aiPluginCategory: string
+  aiMonitorType: string
   aiSeverity: string
   aiGenerating: boolean
   aiGenerateError: string
@@ -613,6 +623,7 @@ const emit = defineEmits<{
   'update:aiPrompt': [value: string]
   'update:aiPluginType': [value: string]
   'update:aiPluginCategory': [value: string]
+  'update:aiMonitorType': [value: string]
   'update:aiSeverity': [value: string]
   'generatePluginWithAi': []
   'runAdvancedTest': []
@@ -668,6 +679,34 @@ const aiPluginCategoryOptions = computed(() => {
   }
 
   return []
+})
+
+const monitorTypeOptions = [
+  { value: 'dns', label: 'DNS监控' },
+  { value: 'ip', label: 'IP监控' },
+  { value: 'port', label: '端口监控' },
+  { value: 'service', label: '服务监控' },
+  { value: 'web', label: 'Web监控' },
+  { value: 'cert', label: 'SSL证书监控' },
+  { value: 'api', label: 'API监控' },
+  { value: 'content', label: '内容监控' },
+  { value: 'risk', label: '风险监控' },
+]
+
+const requiresAiMonitorType = computed(() =>
+  props.aiPluginType === 'agent' || props.aiPluginType === 'bounty'
+)
+
+const canGenerateAiPlugin = computed(() => {
+  if (!props.aiPrompt.trim() || props.aiGenerating) {
+    return false
+  }
+
+  if (requiresAiMonitorType.value && !props.aiMonitorType.trim()) {
+    return false
+  }
+
+  return true
 })
 
 // Quality breakdown items

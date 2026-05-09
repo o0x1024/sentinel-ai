@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -328,6 +328,7 @@ pub(crate) async fn collect_monitor_targets(
 pub(crate) struct MonitorResolvedTargets {
     pub targets: Vec<String>,
     pub target_objects: Vec<Value>,
+    pub extra_input: Map<String, Value>,
 }
 
 fn push_unique_resolved_target(
@@ -596,15 +597,32 @@ async fn resolve_plugin_target_asset_types(
 ) -> Vec<String> {
     let normalized_plugin_id = normalized_monitor_plugin_id(&plugin.plugin_id);
 
-    let plugin_metadata_target_asset_types = db_service
+    let plugin_metadata = db_service
         .get_plugin_from_registry(normalized_plugin_id)
         .await
         .ok()
         .flatten()
-        .map(|record| record.metadata.target_asset_types)
-        .unwrap_or_default();
+        .map(|record| record.metadata);
 
-    plugin.resolved_target_asset_types(&plugin_metadata_target_asset_types)
+    let Some(plugin_metadata) = plugin_metadata else {
+        return plugin.resolved_target_asset_types(&[]);
+    };
+
+    let input_mode = plugin_metadata
+        .input_mode
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_ascii_lowercase);
+
+    if matches!(input_mode.as_deref(), Some("seed")) {
+        return Vec::new();
+    }
+
+    plugin.resolved_target_asset_types(&plugin_metadata.target_asset_types)
+}
+
+fn plugin_declares_seed_config(plugin: &MonitorPluginConfig) -> bool {
+    !plugin.normalized_seed_config().bindings.is_empty()
 }
 
 pub(crate) async fn collect_monitor_target_payload_for_plugin(
@@ -624,7 +642,7 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
             .filter_map(|value| normalize_monitor_target_asset_type(&value).map(str::to_string))
             .collect();
 
-    if requested_asset_types.is_empty() {
+    if requested_asset_types.is_empty() && !plugin_declares_seed_config(plugin) {
         let targets = collect_monitor_targets(db_service, &task.program_id).await?;
         let target_objects = targets
             .iter()
@@ -633,6 +651,7 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
         return Ok(MonitorResolvedTargets {
             targets,
             target_objects,
+            extra_input: Map::new(),
         });
     }
 
@@ -740,8 +759,7 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                 );
             }
 
-            if asset.asset_type == "domain" && requested_domain_target_types(&requested_asset_types)
-            {
+            if asset.asset_type == "domain" && requested_domain_target_types(&requested_asset_types) {
                 surface_domain_assets.push(asset.clone());
             }
 
@@ -774,15 +792,24 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
     )
     .await?;
 
-    if requested_domain_target_types(&requested_asset_types) && !surface_domain_assets.is_empty() {
-        let typed_details_by_id = db_service
-            .list_surface_typed_details_map(&surface_domain_assets)
-            .await
-            .map_err(|e| e.to_string())?;
+    let domain_details_by_id = if !surface_domain_assets.is_empty()
+        && requested_domain_target_types(&requested_asset_types)
+    {
+        Some(
+            db_service
+                .list_surface_typed_details_map(&surface_domain_assets)
+                .await
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
 
+    if requested_domain_target_types(&requested_asset_types) && !surface_domain_assets.is_empty() {
         for asset in &surface_domain_assets {
-            let details = typed_details_by_id
-                .get(&asset.id)
+            let details = domain_details_by_id
+                .as_ref()
+                .and_then(|items| items.get(&asset.id))
                 .and_then(Value::as_object);
             let root_domain = details
                 .and_then(|item| item.get("root_domain"))
@@ -813,6 +840,66 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                     "root_domain": root_domain,
                     "subdomain_level": subdomain_level,
                 }),
+            );
+        }
+    }
+
+    let seed_config = plugin.normalized_seed_config();
+    if !seed_config.bindings.is_empty() {
+        db_service
+            .rename_surface_seed_type("fofa_icon_hash", "favicon_hash")
+            .await
+            .map_err(|e| e.to_string())?;
+        let seeds = db_service
+            .list_surface_seeds(Some(&task.program_id), Some("active"))
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut seed_groups: HashMap<String, Vec<String>> = HashMap::new();
+        let mut seen_seed_keys = HashSet::new();
+
+        for binding in seed_config.bindings {
+            if binding.use_project_seeds {
+                let selected_project_values: HashSet<String> = binding
+                    .selected_project_values
+                    .iter()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect();
+
+                for seed in seeds.iter().filter(|seed| seed.seed_type == binding.seed_type) {
+                    if !selected_project_values.is_empty()
+                        && !selected_project_values.contains(&seed.seed_value)
+                    {
+                        continue;
+                    }
+                    let dedupe_key = format!("{}::{}", binding.input_key, seed.seed_value);
+                    if !seen_seed_keys.insert(dedupe_key) {
+                        continue;
+                    }
+                    seed_groups
+                        .entry(binding.input_key.clone())
+                        .or_default()
+                        .push(seed.seed_value.clone());
+                }
+            }
+
+            for manual_value in binding.manual_values {
+                let dedupe_key = format!("{}::{}", binding.input_key, manual_value);
+                if !seen_seed_keys.insert(dedupe_key) {
+                    continue;
+                }
+                seed_groups
+                    .entry(binding.input_key.clone())
+                    .or_default()
+                    .push(manual_value);
+            }
+        }
+
+        for (key, values) in seed_groups {
+            resolved.extra_input.insert(
+                key,
+                Value::Array(values.into_iter().map(Value::String).collect()),
             );
         }
     }

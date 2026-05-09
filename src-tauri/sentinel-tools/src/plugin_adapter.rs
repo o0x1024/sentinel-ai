@@ -178,6 +178,8 @@ async fn execute_plugin_async(
         description: Some(format!("Agent tool plugin: {}", plugin_name)),
         target_asset_types: Vec::new(),
         monitor_type: None,
+        input_mode: None,
+        seed_bindings: Vec::new(),
     };
 
     // Create a PluginExecutor with restart capability (1000 executions before restart warning)

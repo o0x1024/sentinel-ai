@@ -206,6 +206,29 @@
                   <div v-if="plugin.metadata.description" class="text-xs text-gray-400 mt-1">
                     {{ plugin.metadata.description }}
                   </div>
+                  <div
+                    v-if="plugin.metadata.monitor_type || (plugin.metadata.seed_bindings && plugin.metadata.seed_bindings.length > 0)"
+                    class="mt-2 flex flex-wrap gap-1"
+                  >
+                    <span v-if="plugin.metadata.monitor_type" class="badge badge-sm badge-outline">
+                      {{ plugin.metadata.monitor_type }}
+                    </span>
+                    <span
+                      v-for="binding in (plugin.metadata.seed_bindings || []).slice(0, 2)"
+                      :key="`${plugin.metadata.id}-${binding.seed_type}-${binding.input_key}`"
+                      class="badge badge-sm badge-ghost"
+                      :title="formatSeedBindingLabel(binding)"
+                    >
+                      {{ humanizeSeedType(binding.seed_type) }}
+                    </span>
+                    <span
+                      v-if="(plugin.metadata.seed_bindings || []).length > 2"
+                      class="badge badge-sm badge-outline"
+                      :title="(plugin.metadata.seed_bindings || []).slice(2).map(formatSeedBindingLabel).join(', ')"
+                    >
+                      +{{ (plugin.metadata.seed_bindings || []).length - 2 }}
+                    </span>
+                  </div>
                 </div>
                 <!-- Active Indicator -->
                 <div v-if="isToolActive(plugin.metadata.id)" class="tooltip" data-tip="使用中">
@@ -350,6 +373,7 @@
 import { ref, computed, watch } from 'vue'
 import type { PluginRecord } from './types'
 import { useActiveTools } from '@/composables/useActiveTools'
+import { formatSeedBindingLabel, humanizeSeedType } from './seedBindingsSupport'
 
 const props = defineProps<{
   pluginViewMode: 'favorited' | 'all'

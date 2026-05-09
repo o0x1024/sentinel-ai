@@ -53,6 +53,7 @@
           :key="`${monitorType}-${idx}`"
           :plugin="plugin"
           :monitor-type="monitorType"
+          :program-id="programId"
           :plugin-options="pluginOptions"
           :can-remove="true"
           :intro-text="idx === 0 ? introText : ''"
@@ -69,6 +70,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MonitorPluginConfigCard from './MonitorPluginConfigCard.vue'
 import type { MonitorPluginConfigLike } from './monitorPluginConfigSupport'
+import type { MonitorSeedBinding } from '@/components/PluginManagement/seedBindingsSupport'
 
 defineOptions({ name: 'MonitorTypeConfigSection' })
 
@@ -78,8 +80,15 @@ const props = withDefaults(
     title: string
     iconClass: string
     monitorType: string
+    programId: string
     plugins: MonitorPluginConfigLike[]
-    pluginOptions: Array<{ id: string; name: string }>
+    pluginOptions: Array<{
+      id: string
+      name: string
+      description?: string
+      input_mode?: string
+      seed_bindings?: MonitorSeedBinding[]
+    }>
     introText?: string
   }>(),
   {

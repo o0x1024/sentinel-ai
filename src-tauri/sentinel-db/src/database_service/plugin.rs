@@ -116,6 +116,8 @@ fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> Result<Pl
         description: row.description,
         monitor_type: None,
         target_asset_types: Vec::new(),
+        input_mode: None,
+        seed_bindings: Vec::new(),
     };
 
     let status = if row.enabled {

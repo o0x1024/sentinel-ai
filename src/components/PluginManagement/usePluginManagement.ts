@@ -90,8 +90,8 @@ export function usePluginManagement() {
   // New Plugin Metadata
   const newPluginMetadata = ref<NewPluginMetadata>({
     id: '', name: '', version: '1.0.0', author: '',
-    mainCategory: 'traffic', category: 'vulnerability', monitorType: '',
-    default_severity: 'medium', description: '', tagsString: ''
+    mainCategory: 'traffic', category: 'vulnerability', monitorType: '', inputMode: '',
+    default_severity: 'medium', description: '', tagsString: '', seedBindingsText: '[]'
   })
 
   // AI Generation State
@@ -169,7 +169,12 @@ export function usePluginManagement() {
         p.metadata.name.toLowerCase().includes(query) ||
         p.metadata.id.toLowerCase().includes(query) ||
         p.metadata.description?.toLowerCase().includes(query) ||
-        p.metadata.author?.toLowerCase().includes(query)
+        p.metadata.author?.toLowerCase().includes(query) ||
+        p.metadata.monitor_type?.toLowerCase().includes(query) ||
+        (p.metadata.seed_bindings || []).some(binding =>
+          binding.seed_type.toLowerCase().includes(query)
+          || binding.input_key.toLowerCase().includes(query)
+        )
       )
     }
 

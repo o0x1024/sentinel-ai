@@ -40,6 +40,24 @@ where
         .collect())
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MonitorPluginSeedBindingConfig {
+    pub seed_type: String,
+    pub input_key: String,
+    #[serde(default)]
+    pub use_project_seeds: bool,
+    #[serde(default)]
+    pub selected_project_values: Vec<String>,
+    #[serde(default)]
+    pub manual_values: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MonitorPluginSeedConfig {
+    #[serde(default)]
+    pub bindings: Vec<MonitorPluginSeedBindingConfig>,
+}
+
 /// Plugin configuration for a monitor type
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MonitorPluginConfig {
@@ -54,6 +72,9 @@ pub struct MonitorPluginConfig {
     /// Asset types the plugin expects as targets (web/domain/host/ip/service)
     #[serde(default)]
     pub target_asset_types: Vec<String>,
+    /// Explicit discovery seed configuration
+    #[serde(default)]
+    pub seed_config: MonitorPluginSeedConfig,
 }
 
 impl MonitorPluginConfig {
@@ -68,6 +89,7 @@ impl MonitorPluginConfig {
             fallback_plugins: Vec::new(),
             plugin_params: serde_json::Value::Null,
             target_asset_types,
+            seed_config: MonitorPluginSeedConfig::default(),
         }
     }
 
@@ -92,11 +114,50 @@ impl MonitorPluginConfig {
             fallback_plugins: Vec::new(),
             plugin_params: self.plugin_params.clone(),
             target_asset_types: self.target_asset_types.clone(),
+            seed_config: self.seed_config.clone(),
         }];
         for fallback in &self.fallback_plugins {
             chain.extend(fallback.execution_chain());
         }
         chain
+    }
+
+    pub fn normalized_seed_config(&self) -> MonitorPluginSeedConfig {
+        let mut bindings = Vec::new();
+
+        for binding in &self.seed_config.bindings {
+            let seed_type = binding.seed_type.trim().to_ascii_lowercase();
+            let input_key = binding.input_key.trim().to_string();
+            if seed_type.is_empty() || input_key.is_empty() {
+                continue;
+            }
+
+            let mut seen_manual = std::collections::HashSet::new();
+            let manual_values = binding
+                .manual_values
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .filter(|value| seen_manual.insert(value.to_string()))
+                .map(str::to_string)
+                .collect();
+
+            bindings.push(MonitorPluginSeedBindingConfig {
+                seed_type,
+                input_key,
+                use_project_seeds: binding.use_project_seeds,
+                selected_project_values: binding
+                    .selected_project_values
+                    .iter()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+                manual_values,
+            });
+        }
+
+        MonitorPluginSeedConfig { bindings }
     }
 
     pub fn resolved_target_asset_types(

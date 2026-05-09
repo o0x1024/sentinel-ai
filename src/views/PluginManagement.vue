@@ -197,6 +197,7 @@
       :ai-prompt="aiPrompt"
       :ai-plugin-type="aiPluginType"
       :ai-plugin-category="aiPluginCategory"
+      :ai-monitor-type="aiMonitorType"
       :ai-severity="aiSeverity"
       :ai-generating="aiGenerating"
       :ai-generate-error="aiGenerateError"
@@ -223,6 +224,7 @@
       @update:ai-prompt="aiPrompt = $event"
       @update:ai-plugin-type="aiPluginType = $event"
       @update:ai-plugin-category="aiPluginCategory = $event"
+      @update:ai-monitor-type="aiMonitorType = $event"
       @update:ai-severity="aiSeverity = $event"
       @generate-plugin-with-ai="generatePluginWithAI"
       @run-advanced-test="runAdvancedTest"
@@ -378,6 +380,7 @@ const deleting = ref(false)
 const aiPrompt = ref('')
 const aiPluginType = ref('traffic')
 const aiPluginCategory = ref('custom')
+const aiMonitorType = ref('')
 const aiSeverity = ref('medium')
 const aiGenerating = ref(false)
 const aiGenerateError = ref('')
@@ -434,6 +437,10 @@ watch(
 
     if (!validCategories.includes(aiPluginCategory.value)) {
       aiPluginCategory.value = getDefaultAiPluginCategory(nextType)
+    }
+
+    if (nextType !== 'agent' && nextType !== 'bounty') {
+      aiMonitorType.value = ''
     }
   },
   { immediate: true }
@@ -1350,6 +1357,7 @@ const openAIGenerateDialog = () => {
   aiGenerateError.value = ''
   aiPluginType.value = 'traffic'
   aiPluginCategory.value = getDefaultAiPluginCategory('traffic')
+  aiMonitorType.value = ''
   aiSeverity.value = 'medium'
   pluginDialogsRef.value?.showAIGenerateDialog()
 }
@@ -1432,6 +1440,10 @@ const generatePluginWithAI = async () => {
             ? 'bug bounty'
             : 'agent tool'
     const userPrompt = `please generate ${pluginTypeDescription} plugin code for the "${aiPluginCategory.value}" category based on the following requirements:\n\n${aiPrompt.value}`
+    const generationPrompt =
+      aiPluginType.value === 'agent' || aiPluginType.value === 'bounty'
+        ? `${userPrompt}\n\nmonitor_type: ${aiMonitorType.value}`
+        : userPrompt
 
     let generatedCode = ''
     let streamCompleted = false
@@ -1461,7 +1473,7 @@ const generatePluginWithAI = async () => {
       await invoke('generate_plugin_stream', {
         request: {
           stream_id: streamId,
-          message: userPrompt,
+          message: generationPrompt,
           system_prompt: systemPrompt,
           service_name: 'default_llm_provider',
         },
@@ -1498,10 +1510,12 @@ const generatePluginWithAI = async () => {
         author: 'AI Generated',
         mainCategory: aiPluginType.value,
         category: aiPluginCategory.value,
-        monitorType: '',
+        monitorType: aiMonitorType.value,
+        inputMode: '',
         default_severity: aiSeverity.value,
         description: aiPrompt.value,
         tagsString: `ai-generated, ${aiPluginType.value}, ${aiPluginCategory.value}`,
+        seedBindingsText: '[]',
       }
 
       if (metadata.mainCategory === 'agent' || metadata.mainCategory === 'bounty') {
@@ -1517,6 +1531,7 @@ const generatePluginWithAI = async () => {
                 author: metadata.author,
                 mainCategory: metadata.mainCategory,
                 category: metadata.category,
+                monitorType: metadata.monitorType || null,
                 defaultSeverity: metadata.default_severity,
                 description: metadata.description,
                 tagsString: metadata.tagsString,

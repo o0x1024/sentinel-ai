@@ -126,6 +126,12 @@
             <span v-if="plugin.author" class="badge badge-ghost badge-sm">
               <i class="fas fa-user mr-1"></i>{{ plugin.author }}
             </span>
+            <span v-if="plugin.monitor_type" class="badge badge-outline badge-sm">
+              {{ plugin.monitor_type }}
+            </span>
+            <span v-if="plugin.seed_bindings && plugin.seed_bindings.length > 0" class="badge badge-ghost badge-sm">
+              seeds {{ plugin.seed_bindings.length }}
+            </span>
             <span v-if="plugin.default_severity" class="badge badge-sm" :class="getSeverityClass(plugin.default_severity)">
               {{ plugin.default_severity }}
             </span>
@@ -202,6 +208,12 @@
               </span>
               <span v-if="plugin.author" class="badge badge-ghost badge-sm">
                 <i class="fas fa-user mr-1"></i>{{ plugin.author }}
+              </span>
+              <span v-if="plugin.monitor_type" class="badge badge-outline badge-sm">
+                {{ plugin.monitor_type }}
+              </span>
+              <span v-if="plugin.seed_bindings && plugin.seed_bindings.length > 0" class="badge badge-ghost badge-sm">
+                seeds {{ plugin.seed_bindings.length }}
               </span>
               <span v-if="plugin.default_severity" class="badge badge-sm" :class="getSeverityClass(plugin.default_severity)">
                 {{ plugin.default_severity }}
@@ -280,6 +292,26 @@
             <p class="mt-1 text-sm">{{ selectedPlugin.description || $t('plugins.store.noDescription') }}</p>
           </div>
 
+          <div v-if="selectedPlugin.monitor_type || (selectedPlugin.seed_bindings && selectedPlugin.seed_bindings.length > 0)" class="space-y-2">
+            <div v-if="selectedPlugin.monitor_type">
+              <span class="text-sm text-base-content/60">{{ $t('plugins.monitorType', '监控调度分类') }}:</span>
+              <span class="ml-2 badge badge-outline">{{ selectedPlugin.monitor_type }}</span>
+            </div>
+            <div v-if="selectedPlugin.seed_bindings && selectedPlugin.seed_bindings.length > 0">
+              <span class="text-sm text-base-content/60">Seed Bindings:</span>
+              <div class="flex flex-wrap gap-1 mt-1">
+                <span
+                  v-for="binding in selectedPlugin.seed_bindings"
+                  :key="`${binding.seed_type}-${binding.input_key}`"
+                  class="badge badge-sm badge-ghost"
+                  :title="formatSeedBindingLabel(binding)"
+                >
+                  {{ humanizeSeedType(binding.seed_type) }} -> {{ binding.input_key }}
+                </span>
+              </div>
+            </div>
+          </div>
+
           <!-- Tags -->
           <div v-if="selectedPlugin.tags && selectedPlugin.tags.length > 0">
             <span class="text-sm text-base-content/60">{{ $t('plugins.tags') }}:</span>
@@ -331,6 +363,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import type { PluginRecord, CommandResponse } from './types'
 import { agentsCategories, bountyCategories, intruderCategories, trafficCategories } from './types'
+import { formatSeedBindingLabel, humanizeSeedType, type MonitorSeedBinding } from './seedBindingsSupport'
 import { PluginStoreCache, ViewModeStorage } from '@/services/cache'
 
 // Store plugin interface
@@ -344,6 +377,9 @@ interface StorePlugin {
   description?: string
   default_severity?: string
   tags: string[]
+  monitor_type?: string
+  input_mode?: string
+  seed_bindings?: MonitorSeedBinding[]
   download_url: string
   code?: string
 }
@@ -419,7 +455,12 @@ const filteredPlugins = computed(() => {
     plugins = plugins.filter(p =>
       p.name.toLowerCase().includes(query) ||
       p.id.toLowerCase().includes(query) ||
-      p.description?.toLowerCase().includes(query)
+      p.description?.toLowerCase().includes(query) ||
+      p.monitor_type?.toLowerCase().includes(query) ||
+      (p.seed_bindings || []).some(binding =>
+        binding.seed_type.toLowerCase().includes(query)
+        || binding.input_key.toLowerCase().includes(query)
+      )
     )
   }
 
@@ -607,6 +648,9 @@ const installPlugin = async (plugin: StorePlugin) => {
         description: plugin.description || '',
         default_severity: plugin.default_severity || 'medium',
         tags: plugin.tags,
+        monitor_type: plugin.monitor_type || null,
+        input_mode: plugin.input_mode || null,
+        seed_bindings: plugin.seed_bindings || [],
         download_url: plugin.download_url
       }
     })
@@ -646,6 +690,9 @@ const updatePlugin = async (plugin: StorePlugin) => {
         description: plugin.description || '',
         default_severity: plugin.default_severity || 'medium',
         tags: plugin.tags,
+        monitor_type: plugin.monitor_type || null,
+        input_mode: plugin.input_mode || null,
+        seed_bindings: plugin.seed_bindings || [],
         download_url: plugin.download_url
       }
     })
