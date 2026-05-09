@@ -1,9 +1,10 @@
-use chrono::Utc;
 use crate::services::PluginMainCategory;
+use chrono::Utc;
 use sentinel_bounty::services::{
     ChangeMonitorConfig, MonitorPluginConfig, MonitorScheduler, MonitorTask,
 };
 use sentinel_db::{DatabaseService, MonitorTaskPersistRecord};
+use sentinel_plugins::MonitorSeedBinding;
 
 pub fn normalize_loaded_monitor_task(mut task: MonitorTask) -> MonitorTask {
     task.config.migrate_legacy_port_service_plugins();
@@ -146,6 +147,56 @@ pub fn validate_plugin_monitor_type(
     }
 
     Ok(monitor_type)
+}
+
+pub fn normalize_input_mode(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "asset" => Some("asset"),
+        "seed" => Some("seed"),
+        "hybrid" => Some("hybrid"),
+        _ => None,
+    }
+}
+
+pub fn normalize_optional_input_mode(value: Option<String>) -> Result<Option<String>, String> {
+    match value {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+
+            normalize_input_mode(trimmed)
+                .map(|normalized| Some(normalized.to_string()))
+                .ok_or_else(|| format!("Unsupported input_mode: {}", value))
+        }
+        None => Ok(None),
+    }
+}
+
+pub fn validate_plugin_input_mode(
+    main_category: PluginMainCategory,
+    input_mode: Option<String>,
+    seed_bindings: &[MonitorSeedBinding],
+) -> Result<Option<String>, String> {
+    let input_mode = normalize_optional_input_mode(input_mode)?;
+
+    if !seed_bindings.is_empty() {
+        if !matches!(
+            main_category,
+            PluginMainCategory::Agent | PluginMainCategory::Bounty
+        ) {
+            return Err("seed_bindings are only supported for agent/bounty plugins".to_string());
+        }
+
+        if matches!(input_mode.as_deref(), None | Some("asset")) {
+            return Err(
+                "input_mode must be seed or hybrid when seed_bindings are configured".to_string(),
+            );
+        }
+    }
+
+    Ok(input_mode)
 }
 
 pub fn apply_plugins_to_monitor_type(

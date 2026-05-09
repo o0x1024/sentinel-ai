@@ -6,6 +6,7 @@
         v-for="toast in toasts"
         :key="toast.id"
         :class="['alert', getAlertClass(toast.type)]"
+        :title="toast.message"
         @mouseenter="pauseToast(toast.id)"
         @mouseleave="toast.duration && resumeToast(toast.id, toast.duration)"
       >

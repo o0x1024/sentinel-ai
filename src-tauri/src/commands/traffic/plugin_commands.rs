@@ -6,7 +6,9 @@ use tauri::{AppHandle, State};
 
 use super::analysis_state_support::{resolve_plugin_registry_id, TrafficAnalysisState};
 use crate::commands::command_response_support::CommandResponse;
-use crate::commands::monitor_config_support::validate_plugin_monitor_type;
+use crate::commands::monitor_config_support::{
+    validate_plugin_input_mode, validate_plugin_monitor_type,
+};
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::services::{
     ensure_plugin_allowed_for_current_tier, ensure_plugin_catalog_write_access,
@@ -133,7 +135,9 @@ pub(crate) async fn refresh_active_agent_plugin_tools(
     Ok(count)
 }
 
-pub(crate) fn resolved_explicit_plugin_monitor_type(existing: Option<&PluginRecord>) -> Option<String> {
+pub(crate) fn resolved_explicit_plugin_monitor_type(
+    existing: Option<&PluginRecord>,
+) -> Option<String> {
     existing
         .and_then(|record| record.metadata.monitor_type.clone())
         .filter(|value| !value.trim().is_empty())
@@ -813,6 +817,11 @@ pub async fn create_plugin_in_db(
             plugin.main_category,
             plugin.monitor_type.clone(),
         )?,
+        input_mode: validate_plugin_input_mode(
+            plugin.main_category,
+            plugin.input_mode.clone(),
+            &plugin.seed_bindings,
+        )?,
         ..plugin
     };
 
@@ -917,6 +926,11 @@ pub async fn update_plugin(
         monitor_type: validate_plugin_monitor_type(
             plugin.main_category,
             plugin.monitor_type.clone(),
+        )?,
+        input_mode: validate_plugin_input_mode(
+            plugin.main_category,
+            plugin.input_mode.clone(),
+            &plugin.seed_bindings,
         )?,
         ..plugin
     };

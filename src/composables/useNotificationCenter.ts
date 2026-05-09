@@ -599,13 +599,11 @@ function formatMonitorPluginFailureNotification(payload: MonitorPluginFailurePay
   const taskId = String(payload.task_id || '').trim()
   const taskName = String(payload.task_name || '').trim() || t('notifications.center.monitorFallbackTask')
   const pluginLabel = String(payload.plugin_label || payload.plugin_id || '').trim() || 'plugin'
-  const error = truncateText(
-    toPlainText(payload.error || t('notifications.center.monitorFailed', { name: taskName })),
-    200,
-  )
+  const error = toPlainText(payload.error || t('notifications.center.monitorFailed', { name: taskName }))
+  const eventError = truncateText(error, 200)
 
   return {
-    eventKey: `monitor-plugin:${taskId}:${pluginLabel}:${payload.started_at || payload.created_at || error}`,
+    eventKey: `monitor-plugin:${taskId}:${pluginLabel}:${payload.started_at || payload.created_at || eventError}`,
     category: 'notification',
     source: 'monitor',
     level: 'error',
@@ -726,6 +724,15 @@ async function initializeNotificationCenter(router?: Router) {
       const taskId = String(event.payload?.task_id || '').trim()
       const pluginId = String(event.payload?.plugin_id || '').trim()
       if (!taskId || !pluginId) return
+      console.error('[monitor:plugin-failed]', {
+        task_id: taskId,
+        task_name: event.payload?.task_name,
+        plugin_id: pluginId,
+        plugin_label: event.payload?.plugin_label,
+        error: event.payload?.error,
+        execution_mode: event.payload?.execution_mode,
+        created_at: event.payload?.created_at,
+      })
       pushNotification(formatMonitorPluginFailureNotification(event.payload || {}))
     }),
   )

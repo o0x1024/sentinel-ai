@@ -1,6 +1,6 @@
 use crate::commands::monitor_commands::{
     inject_monitor_execution_context, inject_monitor_plugin_targets, monitor_plugin_runtime_label,
-    MonitorSchedulerState,
+    monitor_plugin_has_invocable_input, MonitorSchedulerState,
 };
 use crate::commands::monitor_config_support::save_tasks_to_db;
 use crate::commands::monitor_execution_heartbeat_support::start_monitor_execution_heartbeat;
@@ -336,9 +336,9 @@ pub async fn monitor_trigger_task(
                     break;
                 }
 
-                if plugin_targets.is_empty() {
+                if !monitor_plugin_has_invocable_input(&resolved_targets) {
                     last_failure_reason = format!(
-                        "Plugin {} skipped because no targets matched its declared asset types",
+                        "Plugin {} skipped because no target assets or discovery seed inputs were configured",
                         attempt_label
                     );
                     emit_monitor_task_log(

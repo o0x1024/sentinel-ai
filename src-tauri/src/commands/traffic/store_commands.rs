@@ -1,5 +1,7 @@
 use sentinel_db::Database;
-use sentinel_plugins::{MonitorSeedBinding, PluginCategory, PluginMainCategory, PluginMetadata, Severity};
+use sentinel_plugins::{
+    MonitorSeedBinding, PluginCategory, PluginMainCategory, PluginMetadata, Severity,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
@@ -9,7 +11,9 @@ use super::plugin_commands::{
 };
 use super::TrafficAnalysisState;
 use crate::commands::command_response_support::CommandResponse;
-use crate::commands::monitor_config_support::validate_plugin_monitor_type;
+use crate::commands::monitor_config_support::{
+    validate_plugin_input_mode, validate_plugin_monitor_type,
+};
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::services::ensure_plugin_catalog_write_access;
 
@@ -98,6 +102,11 @@ fn extract_plugin_header_tag(content: &str, tag: &str) -> Option<String> {
 fn validate_store_plugin_manifest_entry(plugin: &StorePluginInfo) -> Result<(), String> {
     let main_category = PluginMainCategory::parse(&plugin.main_category)?;
     validate_plugin_monitor_type(main_category, plugin.monitor_type.clone())?;
+    validate_plugin_input_mode(
+        main_category,
+        plugin.input_mode.clone(),
+        &plugin.seed_bindings,
+    )?;
     Ok(())
 }
 
@@ -154,10 +163,8 @@ pub async fn fetch_store_plugins(repo_url: String) -> Result<StorePluginListResp
                                         if let Err(error) =
                                             validate_store_plugin_manifest_entry(&plugin)
                                         {
-                                            manifest_errors.push(format!(
-                                                "{}: {}",
-                                                plugin.id, error
-                                            ));
+                                            manifest_errors
+                                                .push(format!("{}: {}", plugin.id, error));
                                             continue;
                                         }
                                         if plugin.download_url.is_empty() {
@@ -303,9 +310,14 @@ pub async fn install_store_plugin(
         main_category: PluginMainCategory::parse(&plugin.main_category)?,
         monitor_type: validate_plugin_monitor_type(
             PluginMainCategory::parse(&plugin.main_category)?,
-            manifest_monitor_type.or_else(|| extract_plugin_header_tag(&plugin_code, "monitor_type")),
+            manifest_monitor_type
+                .or_else(|| extract_plugin_header_tag(&plugin_code, "monitor_type")),
         )?,
-        input_mode: plugin.input_mode.clone(),
+        input_mode: validate_plugin_input_mode(
+            PluginMainCategory::parse(&plugin.main_category)?,
+            plugin.input_mode.clone(),
+            &plugin.seed_bindings,
+        )?,
         description: Some(plugin.description),
         default_severity: severity,
         tags: plugin.tags,
@@ -453,7 +465,11 @@ pub async fn update_store_plugin(
                 .or_else(|| extract_plugin_header_tag(&plugin_code, "monitor_type"))
                 .or_else(|| resolved_explicit_plugin_monitor_type(existing_plugin.as_ref())),
         )?,
-        input_mode: plugin.input_mode.clone(),
+        input_mode: validate_plugin_input_mode(
+            PluginMainCategory::parse(&plugin.main_category)?,
+            plugin.input_mode.clone(),
+            &plugin.seed_bindings,
+        )?,
         description: Some(plugin.description),
         default_severity: severity,
         tags: plugin.tags,

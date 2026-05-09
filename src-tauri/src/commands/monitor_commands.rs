@@ -69,6 +69,10 @@ pub(crate) fn inject_monitor_plugin_targets(
     }
 }
 
+pub(crate) fn monitor_plugin_has_invocable_input(resolved_targets: &MonitorResolvedTargets) -> bool {
+    !resolved_targets.targets.is_empty() || !resolved_targets.extra_input.is_empty()
+}
+
 pub(crate) fn inject_monitor_execution_context(
     input: &mut serde_json::Value,
     task: &MonitorTask,
@@ -507,9 +511,9 @@ pub async fn monitor_start_scheduler(
                                 break;
                             }
 
-                            if plugin_targets.is_empty() {
+                            if !monitor_plugin_has_invocable_input(&resolved_targets) {
                                 last_failure_reason = format!(
-                                    "Plugin {} skipped because no targets matched its declared asset types",
+                                    "Plugin {} skipped because no target assets or discovery seed inputs were configured",
                                     attempt_label
                                 );
                                 emit_monitor_task_log(
