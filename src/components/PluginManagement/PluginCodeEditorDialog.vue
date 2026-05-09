@@ -132,6 +132,28 @@
           </label>
         </div>
 
+        <div v-if="newPluginMetadata.mainCategory === 'agent' || newPluginMetadata.mainCategory === 'bounty'" class="form-control">
+          <label class="label">
+            <span class="label-text">{{ $t('plugins.inputMode', '输入模式') }}</span>
+          </label>
+          <select
+            :value="newPluginMetadata.inputMode"
+            @change="updateMetadata('inputMode', ($event.target as HTMLSelectElement).value)"
+            class="select select-bordered select-sm"
+            :disabled="editingPlugin && !isEditing"
+          >
+            <option value="">{{ $t('plugins.inputModeUnset', '未设置') }}</option>
+            <option v-for="option in inputModeOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+          <label class="label">
+            <span class="label-text-alt text-base-content/60">
+              {{ $t('plugins.inputModeHelp', 'asset 使用目标资产，seed 使用发现种子，hybrid 同时使用两者') }}
+            </span>
+          </label>
+        </div>
+
         <div
           v-if="newPluginMetadata.mainCategory === 'agent' || newPluginMetadata.mainCategory === 'bounty'"
           class="form-control col-span-2"
@@ -765,6 +787,12 @@ const monitorTypeOptions = [
   { value: 'api', label: 'API监控' },
   { value: 'content', label: '内容监控' },
   { value: 'risk', label: '风险监控' },
+]
+
+const inputModeOptions = [
+  { value: 'asset', label: 'asset - 资产驱动' },
+  { value: 'seed', label: 'seed - 种子驱动' },
+  { value: 'hybrid', label: 'hybrid - 混合驱动' },
 ]
 
 const updateMetadata = (key: keyof NewPluginMetadata, value: string) => {

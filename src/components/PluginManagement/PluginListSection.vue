@@ -207,11 +207,14 @@
                     {{ plugin.metadata.description }}
                   </div>
                   <div
-                    v-if="plugin.metadata.monitor_type || (plugin.metadata.seed_bindings && plugin.metadata.seed_bindings.length > 0)"
+                    v-if="plugin.metadata.monitor_type || plugin.metadata.input_mode || (plugin.metadata.seed_bindings && plugin.metadata.seed_bindings.length > 0)"
                     class="mt-2 flex flex-wrap gap-1"
                   >
                     <span v-if="plugin.metadata.monitor_type" class="badge badge-sm badge-outline">
                       {{ plugin.metadata.monitor_type }}
+                    </span>
+                    <span v-if="plugin.metadata.input_mode" class="badge badge-sm badge-secondary badge-outline">
+                      {{ formatInputModeLabel(plugin.metadata.input_mode) }}
                     </span>
                     <span
                       v-for="binding in (plugin.metadata.seed_bindings || []).slice(0, 2)"
@@ -447,6 +450,19 @@ const onSearchInput = () => {
 
 const onTagChange = () => {
   emit('update:tag', localTag.value)
+}
+
+const formatInputModeLabel = (value?: string) => {
+  switch ((value || '').trim()) {
+    case 'asset':
+      return 'asset'
+    case 'seed':
+      return 'seed'
+    case 'hybrid':
+      return 'hybrid'
+    default:
+      return value || ''
+  }
 }
 
 const visiblePages = computed(() => {

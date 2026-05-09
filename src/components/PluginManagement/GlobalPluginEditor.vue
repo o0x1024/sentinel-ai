@@ -1304,6 +1304,11 @@ const buildPluginMetadataComment = (tags: string[], backendCategory: string) => 
     lines.push(` * @monitor_type ${monitorType}`)
   }
 
+  const inputMode = store.newPluginMetadata.inputMode.trim()
+  if (['agent', 'bounty'].includes(store.newPluginMetadata.mainCategory) && inputMode) {
+    lines.push(` * @input_mode ${inputMode}`)
+  }
+
   lines.push(
     ` * @default_severity ${store.newPluginMetadata.default_severity}`,
     ` * @tags ${tags.join(', ')}`,

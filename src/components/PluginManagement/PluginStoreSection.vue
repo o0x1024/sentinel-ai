@@ -129,6 +129,9 @@
             <span v-if="plugin.monitor_type" class="badge badge-outline badge-sm">
               {{ plugin.monitor_type }}
             </span>
+            <span v-if="plugin.input_mode" class="badge badge-secondary badge-outline badge-sm">
+              {{ formatInputModeLabel(plugin.input_mode) }}
+            </span>
             <span v-if="plugin.seed_bindings && plugin.seed_bindings.length > 0" class="badge badge-ghost badge-sm">
               seeds {{ plugin.seed_bindings.length }}
             </span>
@@ -212,6 +215,9 @@
               <span v-if="plugin.monitor_type" class="badge badge-outline badge-sm">
                 {{ plugin.monitor_type }}
               </span>
+              <span v-if="plugin.input_mode" class="badge badge-secondary badge-outline badge-sm">
+                {{ formatInputModeLabel(plugin.input_mode) }}
+              </span>
               <span v-if="plugin.seed_bindings && plugin.seed_bindings.length > 0" class="badge badge-ghost badge-sm">
                 seeds {{ plugin.seed_bindings.length }}
               </span>
@@ -292,10 +298,14 @@
             <p class="mt-1 text-sm">{{ selectedPlugin.description || $t('plugins.store.noDescription') }}</p>
           </div>
 
-          <div v-if="selectedPlugin.monitor_type || (selectedPlugin.seed_bindings && selectedPlugin.seed_bindings.length > 0)" class="space-y-2">
+          <div v-if="selectedPlugin.monitor_type || selectedPlugin.input_mode || (selectedPlugin.seed_bindings && selectedPlugin.seed_bindings.length > 0)" class="space-y-2">
             <div v-if="selectedPlugin.monitor_type">
               <span class="text-sm text-base-content/60">{{ $t('plugins.monitorType', '监控调度分类') }}:</span>
               <span class="ml-2 badge badge-outline">{{ selectedPlugin.monitor_type }}</span>
+            </div>
+            <div v-if="selectedPlugin.input_mode">
+              <span class="text-sm text-base-content/60">{{ $t('plugins.inputMode', '输入模式') }}:</span>
+              <span class="ml-2 badge badge-secondary badge-outline">{{ formatInputModeLabel(selectedPlugin.input_mode) }}</span>
             </div>
             <div v-if="selectedPlugin.seed_bindings && selectedPlugin.seed_bindings.length > 0">
               <span class="text-sm text-base-content/60">Seed Bindings:</span>
@@ -551,6 +561,19 @@ const getSeverityClass = (severity: string): string => {
     info: 'badge-ghost'
   }
   return classes[severity] || 'badge-ghost'
+}
+
+const formatInputModeLabel = (value?: string): string => {
+  switch ((value || '').trim()) {
+    case 'asset':
+      return 'asset'
+    case 'seed':
+      return 'seed'
+    case 'hybrid':
+      return 'hybrid'
+    default:
+      return value || ''
+  }
 }
 
 const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
