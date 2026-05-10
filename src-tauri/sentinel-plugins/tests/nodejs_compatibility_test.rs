@@ -3,7 +3,9 @@
 //! Tests to verify that the Node.js compatibility layer works correctly
 
 use sentinel_plugins::plugin_engine::PluginEngine;
-use sentinel_plugins::types::PluginMetadata;
+use sentinel_plugins::types::{PluginCategory, PluginMainCategory, PluginMetadata, Severity};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 #[tokio::test]
 async fn test_nodejs_require_fs() {
@@ -31,10 +33,14 @@ async fn test_nodejs_require_fs() {
         author: Some("Test".to_string()),
         description: Some("Test Node.js fs module".to_string()),
         target_asset_types: vec![],
-        main_category: "agent".to_string(),
-        category: "test".to_string(),
+        main_category: PluginMainCategory::Agent,
+        category: PluginCategory::parse_for_main_category(PluginMainCategory::Agent, "test")
+            .expect("test category should parse"),
         tags: vec![],
-        default_severity: sentinel_plugins::types::Severity::Info,
+        default_severity: Severity::Info,
+        monitor_type: None,
+        input_mode: None,
+        seed_bindings: vec![],
     };
 
     engine
@@ -86,10 +92,14 @@ async fn test_nodejs_require_path() {
         author: Some("Test".to_string()),
         description: Some("Test Node.js path module".to_string()),
         target_asset_types: vec![],
-        main_category: "agent".to_string(),
-        category: "test".to_string(),
+        main_category: PluginMainCategory::Agent,
+        category: PluginCategory::parse_for_main_category(PluginMainCategory::Agent, "test")
+            .expect("test category should parse"),
         tags: vec![],
-        default_severity: sentinel_plugins::types::Severity::Info,
+        default_severity: Severity::Info,
+        monitor_type: None,
+        input_mode: None,
+        seed_bindings: vec![],
     };
 
     engine
@@ -153,10 +163,14 @@ async fn test_nodejs_buffer() {
         author: Some("Test".to_string()),
         description: Some("Test Node.js Buffer".to_string()),
         target_asset_types: vec![],
-        main_category: "agent".to_string(),
-        category: "test".to_string(),
+        main_category: PluginMainCategory::Agent,
+        category: PluginCategory::parse_for_main_category(PluginMainCategory::Agent, "test")
+            .expect("test category should parse"),
         tags: vec![],
-        default_severity: sentinel_plugins::types::Severity::Info,
+        default_severity: Severity::Info,
+        monitor_type: None,
+        input_mode: None,
+        seed_bindings: vec![],
     };
 
     engine
@@ -203,10 +217,14 @@ async fn test_nodejs_process() {
         author: Some("Test".to_string()),
         description: Some("Test Node.js process object".to_string()),
         target_asset_types: vec![],
-        main_category: "agent".to_string(),
-        category: "test".to_string(),
+        main_category: PluginMainCategory::Agent,
+        category: PluginCategory::parse_for_main_category(PluginMainCategory::Agent, "test")
+            .expect("test category should parse"),
         tags: vec![],
-        default_severity: sentinel_plugins::types::Severity::Info,
+        default_severity: Severity::Info,
+        monitor_type: None,
+        input_mode: None,
+        seed_bindings: vec![],
     };
 
     engine
@@ -263,10 +281,14 @@ async fn test_nodejs_crypto() {
         author: Some("Test".to_string()),
         description: Some("Test Node.js crypto module".to_string()),
         target_asset_types: vec![],
-        main_category: "agent".to_string(),
-        category: "test".to_string(),
+        main_category: PluginMainCategory::Agent,
+        category: PluginCategory::parse_for_main_category(PluginMainCategory::Agent, "test")
+            .expect("test category should parse"),
         tags: vec![],
-        default_severity: sentinel_plugins::types::Severity::Info,
+        default_severity: Severity::Info,
+        monitor_type: None,
+        input_mode: None,
+        seed_bindings: vec![],
     };
 
     engine
@@ -288,4 +310,85 @@ async fn test_nodejs_crypto() {
         "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
     );
     assert_eq!(result["uuid_length"], 36);
+}
+
+#[tokio::test]
+async fn test_fetch_array_buffer_preserves_binary_bytes() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let payload = vec![0x00_u8, 0x00, 0x01, 0x00, 0x10, 0xff, 0x80, 0x41, 0x42, 0x43];
+    let expected_hex = "0000010010ff80414243";
+
+    let server = tokio::spawn({
+        let payload = payload.clone();
+        async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut request_buf = [0_u8; 1024];
+            let _ = stream.read(&mut request_buf).await;
+            let response_head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: image/x-icon\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            );
+            stream
+                .write_all(response_head.as_bytes())
+                .await
+                .expect("write response head");
+            stream
+                .write_all(&payload)
+                .await
+                .expect("write response body");
+            stream.shutdown().await.expect("shutdown");
+        }
+    });
+
+    let mut engine = PluginEngine::new().expect("Failed to create engine");
+    let code = r#"
+        export async function analyze(input) {
+            const response = await fetch(input.url);
+            const body = Buffer.from(await response.arrayBuffer());
+            return {
+                success: true,
+                length: body.length,
+                hex: body.toString('hex')
+            };
+        }
+
+        globalThis.analyze = analyze;
+    "#;
+
+    let metadata = PluginMetadata {
+        id: "test_fetch_arraybuffer_binary".to_string(),
+        name: "Test fetch arrayBuffer binary".to_string(),
+        version: "1.0.0".to_string(),
+        author: Some("Test".to_string()),
+        description: Some("Ensure plugin fetch preserves binary bytes".to_string()),
+        target_asset_types: vec![],
+        main_category: PluginMainCategory::Agent,
+        category: PluginCategory::parse_for_main_category(PluginMainCategory::Agent, "test")
+            .expect("test category should parse"),
+        tags: vec![],
+        default_severity: Severity::Info,
+        monitor_type: None,
+        input_mode: None,
+        seed_bindings: vec![],
+    };
+
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .expect("Failed to load plugin");
+
+    let (_findings, result) = engine
+        .execute_agent(&serde_json::json!({
+            "url": format!("http://{addr}/favicon.ico")
+        }))
+        .await
+        .expect("Failed to execute plugin");
+
+    let result = result.expect("plugin result");
+    assert_eq!(result["success"], true);
+    assert_eq!(result["length"], payload.len());
+    assert_eq!(result["hex"], expected_hex);
+
+    server.await.expect("server task");
 }

@@ -45,6 +45,7 @@ impl DatabaseService {
         artifact: &Value,
     ) -> Result<()> {
         match asset_type {
+            "org" => self.upsert_surface_org_extension(asset_id, artifact).await,
             "domain" => {
                 self.upsert_surface_domain_extension(asset_id, artifact)
                     .await
@@ -80,6 +81,74 @@ impl DatabaseService {
             DatabasePool::PostgreSQL(pool) => {
                 let sql = format!("DELETE FROM {table} WHERE asset_id = $1");
                 sqlx::query(&sql).bind(asset_id).execute(pool).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn upsert_surface_org_extension(
+        &self,
+        asset_id: &str,
+        artifact: &Value,
+    ) -> Result<()> {
+        self.delete_surface_extension_row("surface_org_assets", asset_id)
+            .await?;
+
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let org_name = as_string(artifact.get("org_name")).unwrap_or_default();
+        let org_short_name = as_string(artifact.get("org_short_name"));
+        let parent_org_id = as_string(artifact.get("parent_org_id"));
+        let business_line = as_string(artifact.get("business_line"));
+        let importance_level = as_string(artifact.get("importance_level"));
+        let notes = as_string(artifact.get("notes"));
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    "INSERT INTO surface_org_assets (asset_id, org_name, org_short_name, parent_org_id, business_line, importance_level, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(asset_id)
+                .bind(&org_name)
+                .bind(&org_short_name)
+                .bind(&parent_org_id)
+                .bind(&business_line)
+                .bind(&importance_level)
+                .bind(&notes)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    "INSERT INTO surface_org_assets (asset_id, org_name, org_short_name, parent_org_id, business_line, importance_level, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(asset_id)
+                .bind(&org_name)
+                .bind(&org_short_name)
+                .bind(&parent_org_id)
+                .bind(&business_line)
+                .bind(&importance_level)
+                .bind(&notes)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    "INSERT INTO surface_org_assets (asset_id, org_name, org_short_name, parent_org_id, business_line, importance_level, notes) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                )
+                .bind(asset_id)
+                .bind(&org_name)
+                .bind(&org_short_name)
+                .bind(&parent_org_id)
+                .bind(&business_line)
+                .bind(&importance_level)
+                .bind(&notes)
+                .execute(pool)
+                .await?;
             }
         }
 

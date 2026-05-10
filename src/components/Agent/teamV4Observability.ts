@@ -13,6 +13,7 @@ export type TeamRunPhase =
   | 'observing'
   | 'recovering'
   | 'waiting_user'
+  | 'expired'
   | 'completed'
   | 'failed'
   | 'cancelled'
@@ -141,6 +142,18 @@ const buildObservableEvent = (
   if (type === 'team_runtime_failed') {
     return toObservable(event, role, 'failed', 'error', 'Team run failed', payloadText(payload.error || 'Runtime failed.'), 'Run failed.')
   }
+  if (type === 'harness_completed') {
+    return toObservable(event, role, 'completed', 'success', `${actor} harness completed`, 'Harness marked the task as completed.', 'Harness completed.')
+  }
+  if (type === 'harness_failed') {
+    return toObservable(event, role, 'failed', 'error', `${actor} harness failed`, payloadText(payload.error || payload.details || 'Harness marked the task as failed.'), 'Harness failed.')
+  }
+  if (type === 'harness_cancelled') {
+    return toObservable(event, role, 'cancelled', 'error', `${actor} harness cancelled`, payloadText(payload.error || 'Harness was cancelled.'), 'Harness cancelled.')
+  }
+  if (type === 'harness_expired') {
+    return toObservable(event, role, 'expired', 'warning', `${actor} harness expired`, 'Harness lease expired before completion.', 'Harness expired.')
+  }
 
   return toObservable(event, role, 'planning', event.visibility === 'user' ? 'info' : 'info', type, payloadText(payload), 'Event recorded.')
 }
@@ -175,6 +188,19 @@ const deriveAgentStatus = (
   latestEvent?: TeamObservableEvent,
   harnessRun?: TeamV4HarnessRun,
 ) => {
+  const harnessStatus = String(harnessRun?.status || '').toLowerCase()
+  if (harnessStatus === 'completed') {
+    return { status: 'completed', detail: `Harness completed at ${new Date(harnessRun?.updated_at || '').toLocaleString()}` }
+  }
+  if (harnessStatus === 'failed') {
+    return { status: 'failed', detail: 'Harness marked this task as failed.' }
+  }
+  if (harnessStatus === 'cancelled') {
+    return { status: 'cancelled', detail: 'Harness was cancelled.' }
+  }
+  if (harnessStatus === 'expired') {
+    return { status: 'expired', detail: 'Harness lease expired before completion.' }
+  }
   if (!latestEvent) return { status: agent.status, detail: 'No runtime activity yet.' }
   if (latestEvent.phase === 'tool_running') {
     return { status: 'waiting_tool', detail: latestEvent.title }
@@ -232,11 +258,16 @@ export const deriveTeamV4Observability = (input: {
     failed: input.tasks.filter((task) => task.status === 'failed').length,
     running: input.tasks.filter((task) => ['running', 'ready'].includes(task.status)).length,
   }
-  const harnessByAgentId = new Map(
-    input.harnessRuns
-      .filter((harness) => harness.actor_id)
-      .map((harness) => [harness.actor_id as string, harness]),
-  )
+  const harnessByAgentId = new Map<string, TeamV4HarnessRun>()
+  for (const harness of input.harnessRuns.filter((item) => item.actor_id)) {
+    const agentId = harness.actor_id as string
+    const current = harnessByAgentId.get(agentId)
+    const currentTime = new Date(current?.updated_at || current?.created_at || '').getTime()
+    const nextTime = new Date(harness.updated_at || harness.created_at || '').getTime()
+    if (!current || (Number.isFinite(nextTime) && (!Number.isFinite(currentTime) || nextTime >= currentTime))) {
+      harnessByAgentId.set(agentId, harness)
+    }
+  }
   const agentStates = input.agents.map((agent) => {
     const lastEvent = [...observableEvents].reverse().find((event) => event.agentId === agent.id)
     const derived = deriveAgentStatus(agent, lastEvent, harnessByAgentId.get(agent.id))

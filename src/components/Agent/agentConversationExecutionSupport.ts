@@ -289,6 +289,7 @@ export const executeConversationTask = async (params: {
   enableTenthManRule: boolean
   firstMessage: string
   forceTaskPlanContract: boolean
+  harnessMode?: AgentHarnessMode
   harnessMaxContinuations: number
   fullTask: string
   workingDirectory?: string | null
@@ -364,7 +365,7 @@ export const executeConversationTask = async (params: {
     currentBrowserShellSessionId && browserShell.directWriteEnabled.value === true
       ? true
       : undefined
-  const harnessMode = resolveAgentHarnessMode({
+  const harnessMode = params.harnessMode || resolveAgentHarnessMode({
     forceTaskPlanContract: params.forceTaskPlanContract,
     runtimeToolConfig: params.runtimeToolConfig,
   })

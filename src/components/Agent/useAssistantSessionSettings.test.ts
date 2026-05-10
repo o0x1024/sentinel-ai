@@ -26,6 +26,7 @@ describe('buildBaseAssistantConversationBinding', () => {
     expect(binding).toMatchObject({
       schemaVersion: 4,
       profileId: 'assistant.security',
+      teamProfileId: '',
       contextMode: 'sentinel-like',
       runMode: 'assistant',
       workingDirectoryOverride: '/tmp/current-workspace',

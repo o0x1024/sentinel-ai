@@ -6,11 +6,25 @@ use sentinel_db::database_service::{
     DatabasePool, DatabaseType,
 };
 use sentinel_db::Database;
+use sentinel_tools::output_storage::get_host_context_dir;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
+
+const LEGACY_TEAM_V3_TABLES: &[&str] = &[
+    "team_v3_task_events",
+    "team_v3_blackboard_entries",
+    "team_v3_messages",
+    "team_v3_plan_revisions",
+    "team_v3_task_claims",
+    "team_v3_tasks",
+    "team_v3_sessions",
+    "team_v3_templates",
+];
+const LEGACY_TEAM_V3_ARTIFACT_DIR: &str = "team-v3-artifacts";
 
 // 临时定义QueryHistory结构体，等待数据库模型完善
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,6 +54,78 @@ pub struct BackupInfo {
     pub path: String,
     pub size: u64,
     pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LegacyTeamV3CleanupResult {
+    pub dropped_tables: Vec<String>,
+    pub deleted_artifact_dir: Option<String>,
+}
+
+async fn legacy_team_v3_table_exists(
+    runtime: &DatabasePool,
+    table_name: &str,
+) -> Result<bool, String> {
+    match runtime {
+        DatabasePool::SQLite(pool) => {
+            let row = sqlx::query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            )
+            .bind(table_name)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("检查 SQLite 旧 Team 表失败: {}", e))?;
+            Ok(row.is_some())
+        }
+        DatabasePool::MySQL(pool) => {
+            let row = sqlx::query(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1",
+            )
+            .bind(table_name)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("检查 MySQL 旧 Team 表失败: {}", e))?;
+            Ok(row.is_some())
+        }
+        DatabasePool::PostgreSQL(pool) => {
+            let row = sqlx::query(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1 LIMIT 1",
+            )
+            .bind(table_name)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("检查 PostgreSQL 旧 Team 表失败: {}", e))?;
+            Ok(row.is_some())
+        }
+    }
+}
+
+async fn drop_legacy_team_v3_table(runtime: &DatabasePool, table_name: &str) -> Result<(), String> {
+    match runtime {
+        DatabasePool::SQLite(pool) => {
+            sqlx::query(&format!("DROP TABLE IF EXISTS {}", table_name))
+                .execute(pool)
+                .await
+                .map_err(|e| format!("删除 SQLite 旧 Team 表 {} 失败: {}", table_name, e))?;
+        }
+        DatabasePool::MySQL(pool) => {
+            sqlx::query(&format!("DROP TABLE IF EXISTS {}", table_name))
+                .execute(pool)
+                .await
+                .map_err(|e| format!("删除 MySQL 旧 Team 表 {} 失败: {}", table_name, e))?;
+        }
+        DatabasePool::PostgreSQL(pool) => {
+            sqlx::query(&format!("DROP TABLE IF EXISTS {} CASCADE", table_name))
+                .execute(pool)
+                .await
+                .map_err(|e| format!("删除 PostgreSQL 旧 Team 表 {} 失败: {}", table_name, e))?;
+        }
+    }
+    Ok(())
+}
+
+fn legacy_team_v3_artifact_dir() -> PathBuf {
+    get_host_context_dir().join(LEGACY_TEAM_V3_ARTIFACT_DIR)
 }
 
 /// 执行自定义SQL查询
@@ -397,6 +483,42 @@ pub async fn cleanup_database(
     let _ = db_service.execute_query("VACUUM").await;
 
     Ok(format!("清理完成，共清理 {} 条记录", deleted_count))
+}
+
+#[tauri::command]
+pub async fn cleanup_legacy_team_v3_data(
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<LegacyTeamV3CleanupResult, String> {
+    let runtime = db_service
+        .get_runtime_pool()
+        .map_err(|e| format!("获取数据库连接失败: {}", e))?;
+    let mut dropped_tables = Vec::new();
+
+    for table_name in LEGACY_TEAM_V3_TABLES {
+        if !legacy_team_v3_table_exists(&runtime, table_name).await? {
+            continue;
+        }
+        drop_legacy_team_v3_table(&runtime, table_name).await?;
+        dropped_tables.push((*table_name).to_string());
+    }
+
+    if matches!(runtime, DatabasePool::SQLite(_)) {
+        let _ = db_service.execute_query("VACUUM").await;
+    }
+
+    let artifact_dir = legacy_team_v3_artifact_dir();
+    let deleted_artifact_dir = if artifact_dir.exists() {
+        fs::remove_dir_all(&artifact_dir)
+            .map_err(|e| format!("删除旧 Team artifact 目录失败: {}", e))?;
+        Some(artifact_dir.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    Ok(LegacyTeamV3CleanupResult {
+        dropped_tables,
+        deleted_artifact_dir,
+    })
 }
 
 /// 列出所有备份文件

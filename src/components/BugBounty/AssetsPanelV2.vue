@@ -92,6 +92,15 @@
               <option value="viewed">{{ t('bugBounty.surface.inventory.viewStates.viewed') }}</option>
             </select>
             <select
+              v-if="showWebFaviconFilter"
+              v-model="faviconPresenceFilter"
+              class="select select-bordered select-sm"
+            >
+              <option value="">{{ t('bugBounty.surface.inventory.faviconPresence.all') }}</option>
+              <option value="has">{{ t('bugBounty.surface.inventory.faviconPresence.has') }}</option>
+              <option value="missing">{{ t('bugBounty.surface.inventory.faviconPresence.missing') }}</option>
+            </select>
+            <select
               v-if="showServiceFacetFilters"
               v-model="serviceNameFilter"
               class="select select-bordered select-sm"
@@ -208,6 +217,14 @@
                     ></span>
                     <span class="sr-only">{{ formatStatus(item.asset.status) }}</span>
                   </span>
+                  <button
+                    v-else-if="column.key === 'favicon_hash' && hasFaviconHash(item)"
+                    type="button"
+                    class="link link-hover font-mono text-xs"
+                    @click.stop="openFaviconAssetsModal(getFaviconHash(item))"
+                  >
+                    {{ getFaviconHash(item) }}
+                  </button>
                   <span v-else>
                     {{ formatInventoryValue(item, column) }}
                   </span>
@@ -225,7 +242,7 @@
                     <SurfaceIconButton
                       :label="t('bugBounty.surface.inventory.actions.edit')"
                       icon="edit"
-                      @click="openEditModal(item.asset)"
+                      @click="openEditModal(item)"
                     />
                     <SurfaceIconButton
                       :label="t('bugBounty.surface.inventory.actions.sendToAssistant')"
@@ -361,7 +378,7 @@
                 <td>{{ run.plugin_id || '-' }}</td>
                 <td>{{ run.trigger_source }}</td>
                 <td>{{ run.observation_count || 0 }}</td>
-                <td>{{ run.imported_asset_count || 0 }}</td>
+                <td>{{ runImportedOrEnrichedCount(run) }}</td>
                 <td>{{ run.changed_asset_count || 0 }}</td>
                 <td>{{ formatTime(run.started_at) }}</td>
               </tr>
@@ -459,7 +476,7 @@
   />
   <SurfaceAssetEditModal
     :visible="showEditModal"
-    :asset="editingAsset"
+    :target="editingAsset"
     @close="closeEditModal"
     @save="saveAssetEdit"
   />
@@ -481,6 +498,13 @@
     @close="closeExportModal"
     @submit="exportInventoryAssets"
   />
+  <SurfaceFaviconAssetsModal
+    :visible="showFaviconAssetsModal"
+    :program-id="selectedProgramId || null"
+    :favicon-hash="selectedFaviconHash"
+    @close="closeFaviconAssetsModal"
+    @open-asset="openAssetDetail"
+  />
 </template>
 
 <script setup lang="ts">
@@ -496,11 +520,13 @@ import SurfaceAssetDetailModal from './SurfaceAssetDetailModal.vue'
 import SurfaceDiscoveryRunDetailModal from './SurfaceDiscoveryRunDetailModal.vue'
 import SurfaceFingerprintCategoryPanel from './SurfaceFingerprintCategoryPanel.vue'
 import SurfaceTopologyPanel from './SurfaceTopologyPanel.vue'
-import SurfaceAssetEditModal, { type SurfaceAssetEditPayload } from './SurfaceAssetEditModal.vue'
+import SurfaceAssetEditModal from './SurfaceAssetEditModal.vue'
 import SurfaceAssetExportModal, { type SurfaceAssetExportPayload } from './SurfaceAssetExportModal.vue'
+import SurfaceFaviconAssetsModal from './SurfaceFaviconAssetsModal.vue'
 import SurfaceAssetImportModal, { type SurfaceAssetImportPayload } from './SurfaceAssetImportModal.vue'
 import SurfaceAssetTypeIcon from './SurfaceAssetTypeIcon.vue'
 import SurfaceIconButton from './SurfaceIconButton.vue'
+import { type SurfaceAssetEditPayload, type SurfaceAssetEditTarget } from './surfaceAssetEditSupport'
 import { buildReferencedSurfaceAsset } from './surfaceAssetUtils'
 import {
   buildSurfaceAssetExportRows,
@@ -536,6 +562,7 @@ const search = ref('')
 const assetTypeFilter = ref('')
 const statusFilter = ref('')
 const viewStateFilter = ref('')
+const faviconPresenceFilter = ref('')
 const serviceNameFilter = ref('')
 const transportProtocolFilter = ref('')
 const inventoryPage = ref(1)
@@ -573,10 +600,13 @@ const selectedRunId = ref<string | null>(null)
 const showAssetStatsModal = ref(false)
 const assetStatsFilter = ref<'all' | 'new'>('all')
 const selectedAssetIds = ref<string[]>([])
+const selectedAssetTypeById = ref<Record<string, string>>({})
 const showEditModal = ref(false)
-const editingAsset = ref<any | null>(null)
+const editingAsset = ref<SurfaceAssetEditTarget | null>(null)
 const showImportModal = ref(false)
 const showExportModal = ref(false)
+const showFaviconAssetsModal = ref(false)
+const selectedFaviconHash = ref<string | null>(null)
 const serviceNameOptions = ref<Array<{ value: string; count: number }>>([])
 const transportProtocolOptions = ref<Array<{ value: string; count: number }>>([])
 const preferredExportType = ref<SurfaceAssetExportType>('all')
@@ -603,6 +633,7 @@ const exportAssetTypes = computed(() =>
   ),
 )
 const showServiceFacetFilters = computed(() => assetTypeFilter.value === 'service')
+const showWebFaviconFilter = computed(() => assetTypeFilter.value === 'web')
 const selectedProgramName = computed(() => {
   const selected = (props.programs || []).find(program => program.id === selectedProgramId.value)
   return selected?.name || null
@@ -615,14 +646,29 @@ const pagedRuns = computed(() => {
   const offset = (runPage.value - 1) * runPageSize.value
   return runs.value.slice(offset, offset + runPageSize.value)
 })
+const runImportedOrEnrichedCount = (run: any) =>
+  Number(run?.imported_asset_count || 0) + Number(run?.changed_asset_count || 0)
 const currentPageAssetIds = computed(() => inventoryItems.value.map((item) => item.asset.id).filter(Boolean))
 const selectedAssetIdSet = computed(() => new Set(selectedAssetIds.value))
 const allCurrentPageSelected = computed(() =>
   currentPageAssetIds.value.length > 0 &&
   currentPageAssetIds.value.every((id) => selectedAssetIdSet.value.has(id)),
 )
+const hasFaviconHashFilterValue = computed(() => {
+  if (!showWebFaviconFilter.value) return null
+  if (faviconPresenceFilter.value === 'has') return true
+  if (faviconPresenceFilter.value === 'missing') return false
+  return null
+})
 const hasInventoryFilters = computed(() =>
-  Boolean(selectedProgramId.value || assetTypeFilter.value || statusFilter.value || viewStateFilter.value || search.value.trim()),
+  Boolean(
+    selectedProgramId.value ||
+      assetTypeFilter.value ||
+      statusFilter.value ||
+      viewStateFilter.value ||
+      faviconPresenceFilter.value ||
+      search.value.trim(),
+  ),
 )
 
 const inventoryColumns = computed(() => {
@@ -696,12 +742,10 @@ const inventoryColumns = computed(() => {
       { key: 'lastSeen', label: t('bugBounty.surface.columns.lastSeen'), valueKey: 'last_seen_at', formatter: 'time' },
     ],
     web: [
-      { key: 'name', label: t('bugBounty.surface.columns.name'), valueKey: 'asset_name', mono: true },
       { key: 'canonical_url', label: t('bugBounty.surface.inventory.fields.canonicalUrl'), detailKey: 'canonical_url', mono: true },
       { key: 'site_title', label: t('bugBounty.surface.inventory.fields.siteTitle'), detailKey: 'site_title' },
       { key: 'http_status_code', label: t('bugBounty.surface.inventory.fields.httpStatusCode'), detailKey: 'http_status_code' },
-      { key: 'framework', label: t('bugBounty.surface.inventory.fields.framework'), detailKey: 'framework' },
-      { key: 'business_type', label: t('bugBounty.surface.inventory.fields.businessType'), detailKey: 'business_type' },
+      { key: 'favicon_hash', label: t('bugBounty.surface.inventory.fields.favicon'), detailKey: 'favicon_hash', mono: true },
       { key: 'lastSeen', label: t('bugBounty.surface.columns.lastSeen'), valueKey: 'last_seen_at', formatter: 'time' },
     ],
     certificate: [
@@ -727,6 +771,7 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
         status: statusFilter.value || null,
         view_state: viewStateFilter.value || null,
         search: search.value.trim() || null,
+        has_favicon_hash: hasFaviconHashFilterValue.value,
         service_name: serviceNameFilter.value || null,
         transport_protocol: transportProtocolFilter.value || null,
         limit: inventoryPageSize.value + 1,
@@ -739,7 +784,12 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
     inventoryHasNext.value = rows.length > inventoryPageSize.value
     inventoryItems.value = rows.slice(0, inventoryPageSize.value)
     assets.value = inventoryItems.value.map((item) => item.asset)
-    selectedAssetIds.value = selectedAssetIds.value.filter((id) => currentPageAssetIds.value.includes(id))
+    for (const item of inventoryItems.value) {
+      const assetId = String(item?.asset?.id || '').trim()
+      const assetType = String(item?.asset?.asset_type || '').trim()
+      if (!assetId || !assetType) continue
+      selectedAssetTypeById.value[assetId] = assetType
+    }
   } catch (error) {
     console.error('Failed to load surface inventory:', error)
     inventoryTotal.value = 0
@@ -767,6 +817,7 @@ const loadInventoryFacets = async (programId = selectedProgramId.value || null) 
         status: statusFilter.value || null,
         view_state: viewStateFilter.value || null,
         search: search.value.trim() || null,
+        has_favicon_hash: hasFaviconHashFilterValue.value,
         service_name: null,
         transport_protocol: null,
         limit: null,
@@ -792,6 +843,8 @@ const loadNewAssetCount = async (programId = selectedProgramId.value || null) =>
         status: null,
         view_state: 'new',
         search: null,
+        favicon_hash: null,
+        has_favicon_hash: null,
         service_name: null,
         transport_protocol: null,
         limit: null,
@@ -934,6 +987,7 @@ const applyAssetStatsFilter = (assetType?: string | null) => {
   assetTypeFilter.value = assetType
   statusFilter.value = ''
   viewStateFilter.value = assetStatsFilter.value === 'new' ? 'new' : ''
+  faviconPresenceFilter.value = ''
   serviceNameFilter.value = ''
   transportProtocolFilter.value = ''
   search.value = ''
@@ -947,8 +1001,8 @@ const closeDetailModal = () => {
   selectedAssetId.value = null
 }
 
-const openEditModal = (asset: any) => {
-  editingAsset.value = asset
+const openEditModal = (item: any) => {
+  editingAsset.value = item
   showEditModal.value = true
 }
 
@@ -975,6 +1029,22 @@ const openExportModal = (options: { programId?: string | null; exportType?: Surf
 
 const closeExportModal = () => {
   showExportModal.value = false
+}
+
+const getFaviconHash = (item: any) => String(item?.typed_details?.favicon_hash || '').trim()
+
+const hasFaviconHash = (item: any) => getFaviconHash(item).length > 0
+
+const openFaviconAssetsModal = (faviconHash?: string | null) => {
+  const normalized = String(faviconHash || '').trim()
+  if (!normalized) return
+  selectedFaviconHash.value = normalized
+  showFaviconAssetsModal.value = true
+}
+
+const closeFaviconAssetsModal = () => {
+  showFaviconAssetsModal.value = false
+  selectedFaviconHash.value = null
 }
 
 const formatInventoryValue = (item: any, column: any) => {
@@ -1008,10 +1078,22 @@ const reloadInventoryFromFirstPage = () => {
 
 const clearSelection = () => {
   selectedAssetIds.value = []
+  selectedAssetTypeById.value = {}
 }
 
 const toggleAssetSelection = (assetId: string) => {
   if (!assetId) return
+  if (!selectedAssetIds.value.includes(assetId)) {
+    const item = inventoryItems.value.find((row) => row?.asset?.id === assetId)
+    const assetType = String(item?.asset?.asset_type || '').trim()
+    if (assetType) {
+      selectedAssetTypeById.value[assetId] = assetType
+    }
+  } else {
+    const nextTypes = { ...selectedAssetTypeById.value }
+    delete nextTypes[assetId]
+    selectedAssetTypeById.value = nextTypes
+  }
   selectedAssetIds.value = selectedAssetIds.value.includes(assetId)
     ? selectedAssetIds.value.filter((id) => id !== assetId)
     : [...selectedAssetIds.value, assetId]
@@ -1019,7 +1101,30 @@ const toggleAssetSelection = (assetId: string) => {
 
 const toggleSelectCurrentPage = () => {
   if (!currentPageAssetIds.value.length) return
-  selectedAssetIds.value = allCurrentPageSelected.value ? [] : [...currentPageAssetIds.value]
+  if (allCurrentPageSelected.value) {
+    const currentPageIdSet = new Set(currentPageAssetIds.value)
+    selectedAssetIds.value = selectedAssetIds.value.filter((id) => !currentPageIdSet.has(id))
+    const nextTypes = { ...selectedAssetTypeById.value }
+    for (const assetId of currentPageAssetIds.value) {
+      delete nextTypes[assetId]
+    }
+    selectedAssetTypeById.value = nextTypes
+    return
+  }
+
+  const nextSelected = new Set(selectedAssetIds.value)
+  const nextTypes = { ...selectedAssetTypeById.value }
+  for (const item of inventoryItems.value) {
+    const assetId = String(item?.asset?.id || '').trim()
+    if (!assetId) continue
+    nextSelected.add(assetId)
+    const assetType = String(item?.asset?.asset_type || '').trim()
+    if (assetType) {
+      nextTypes[assetId] = assetType
+    }
+  }
+  selectedAssetIds.value = Array.from(nextSelected)
+  selectedAssetTypeById.value = nextTypes
 }
 
 const getInventoryFilterPayload = () => ({
@@ -1028,6 +1133,7 @@ const getInventoryFilterPayload = () => ({
   status: statusFilter.value || null,
   view_state: viewStateFilter.value || null,
   search: search.value.trim() || null,
+  has_favicon_hash: hasFaviconHashFilterValue.value,
   service_name: serviceNameFilter.value || null,
   transport_protocol: transportProtocolFilter.value || null,
   limit: null,
@@ -1149,10 +1255,11 @@ const markFilteredAssetsViewed = async () => {
 }
 
 const saveAssetEdit = async (payload: SurfaceAssetEditPayload) => {
-  if (!editingAsset.value?.id) return
+  const assetId = editingAsset.value?.asset?.id
+  if (!assetId) return
 
   try {
-    await invoke('surface_update_asset', { assetId: editingAsset.value.id, request: payload })
+    await invoke('surface_update_asset', { assetId, request: payload })
     toast.success(t('bugBounty.surface.inventory.actions.updateSuccess'))
     closeEditModal()
     await loadAll()
@@ -1243,6 +1350,8 @@ const buildExportFilterPayload = (exportType: SurfaceAssetExportType) => {
       : exportType
   const useServiceFacetFilters =
     (useCurrentType && assetTypeFilter.value === 'service') || exportType === 'service'
+  const useWebFaviconFilter =
+    (useCurrentType && assetTypeFilter.value === 'web') || exportType === 'web'
 
   return {
     program_id: selectedProgramId.value || null,
@@ -1250,6 +1359,7 @@ const buildExportFilterPayload = (exportType: SurfaceAssetExportType) => {
     status: statusFilter.value || null,
     view_state: viewStateFilter.value || null,
     search: search.value.trim() || null,
+    has_favicon_hash: useWebFaviconFilter ? hasFaviconHashFilterValue.value : null,
     service_name: useServiceFacetFilters ? serviceNameFilter.value || null : null,
     transport_protocol: useServiceFacetFilters ? transportProtocolFilter.value || null : null,
     limit: null,
@@ -1443,17 +1553,22 @@ watch(
 )
 
 watch(selectedProgramId, () => {
+  clearSelection()
   inventoryPage.value = 1
   runPage.value = 1
   runPageInput.value = '1'
   loadAll()
 })
 
-watch([assetTypeFilter, statusFilter, viewStateFilter, serviceNameFilter, transportProtocolFilter], () => {
+watch([assetTypeFilter, statusFilter, viewStateFilter, faviconPresenceFilter, serviceNameFilter, transportProtocolFilter], () => {
+  clearSelection()
   reloadInventoryFromFirstPage()
 })
 
 watch(assetTypeFilter, (value) => {
+  if (value !== 'web') {
+    faviconPresenceFilter.value = ''
+  }
   if (value !== 'service') {
     serviceNameFilter.value = ''
     transportProtocolFilter.value = ''
@@ -1489,6 +1604,7 @@ watch(search, () => {
   }
 
   searchDebounceTimer = setTimeout(() => {
+    clearSelection()
     reloadInventoryFromFirstPage()
     loadInventoryFacets()
   }, 250)

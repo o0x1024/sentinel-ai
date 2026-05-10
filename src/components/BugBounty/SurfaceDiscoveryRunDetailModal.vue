@@ -50,7 +50,7 @@
                 </div>
                 <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
                   <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.columns.imported') }}</div>
-                  <div class="mt-1 font-medium">{{ detail.run.imported_asset_count || 0 }}</div>
+                  <div class="mt-1 font-medium">{{ importedOrEnrichedCount }}</div>
                 </div>
               </section>
 
@@ -106,6 +106,9 @@
                       <div class="mt-1 text-xs text-base-content/60">{{ formatTime(change.detected_at) }}</div>
                     </div>
                   </div>
+                  <div v-else-if="changedAssetCount > 0" class="text-sm text-base-content/60">
+                    {{ t('bugBounty.surface.runs.enrichedWithoutChangeLogs', { count: changedAssetCount }) }}
+                  </div>
                   <div v-else class="text-sm text-base-content/60">{{ t('bugBounty.surface.runs.noChanges') }}</div>
                 </div>
               </section>
@@ -118,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 
@@ -137,6 +140,10 @@ const { t } = useI18n()
 const loading = ref(false)
 const error = ref('')
 const detail = ref<any | null>(null)
+const changedAssetCount = computed(() => Number(detail.value?.run?.changed_asset_count || 0))
+const importedOrEnrichedCount = computed(() =>
+  Number(detail.value?.run?.imported_asset_count || 0) + changedAssetCount.value,
+)
 
 const formatTime = (value?: string | null) => {
   if (!value) return '-'

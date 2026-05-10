@@ -113,4 +113,68 @@ describe('teamV4Observability', () => {
     expect(state.detail).toBe('Connection refused')
     expect(state.agentStates[0].status).toBe('failed')
   })
+
+  it('uses terminal harness status ahead of stale running events for agent state', () => {
+    const state = deriveTeamV4Observability({
+      agents: [agent({})],
+      events: [
+        event({ sequence: 1, event_type: 'specialist_execution_started' }),
+      ],
+      harnessRuns: [
+        harness({
+          status: 'completed',
+          updated_at: '2026-04-28T08:03:00Z',
+        }),
+      ],
+      runState: 'running',
+      tasks: [task({ status: 'completed' })],
+    })
+
+    expect(state.agentStates[0].status).toBe('completed')
+    expect(state.agentStates[0].detail).toContain('Harness completed')
+  })
+
+  it('maps harness terminal events into observable phases', () => {
+    const state = deriveTeamV4Observability({
+      agents: [agent({})],
+      events: [
+        event({
+          sequence: 2,
+          event_type: 'harness_failed',
+          payload: {
+            error: 'task ledger incomplete',
+          },
+        }),
+      ],
+      harnessRuns: [harness({ status: 'failed' })],
+      runState: 'failed',
+      tasks: [task({ status: 'failed' })],
+    })
+
+    expect(state.phase).toBe('failed')
+    expect(state.headline).toBe('Specialist 1 harness failed')
+    expect(state.detail).toBe('task ledger incomplete')
+  })
+
+  it('maps expired harness events to warning activity and expired agent status', () => {
+    const state = deriveTeamV4Observability({
+      agents: [agent({})],
+      events: [
+        event({
+          sequence: 3,
+          event_type: 'harness_expired',
+          payload: {
+            harness_run_id: 'harness-1',
+          },
+        }),
+      ],
+      harnessRuns: [harness({ status: 'expired' })],
+      runState: 'running',
+      tasks: [task({ status: 'running' })],
+    })
+
+    expect(state.phase).toBe('expired')
+    expect(state.agentStates[0].status).toBe('expired')
+    expect(state.activeEvent?.severity).toBe('warning')
+  })
 })

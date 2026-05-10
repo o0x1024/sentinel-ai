@@ -1,5 +1,6 @@
 use crate::commands::monitor_plugin_execution_support::execute_monitor_plugin;
 use crate::commands::monitor_surface::materialize_surface_artifacts;
+use crate::commands::monitor_surface_support::surface_observation_count_from_output;
 use chrono::Utc;
 use sentinel_db::{BountyAssetRow, DatabaseService, SurfaceDiscoveryRunRow, SurfaceObservationRow};
 use serde::{Deserialize, Serialize};
@@ -225,7 +226,7 @@ pub async fn monitor_discover_and_import_assets(
     let mut assets_discovered: usize = 0;
     let mut assets_imported: usize = 0;
     let mut events_created: usize = 0;
-    let mut observation_count: i32 = 0;
+    let observation_count: i32;
     let mut surface_assets_materialized: i32 = 0;
 
     if let Some(surface_artifacts) = plugin_result
@@ -237,12 +238,6 @@ pub async fn monitor_discover_and_import_assets(
             if payload.is_null() {
                 continue;
             }
-
-            let item_count = payload
-                .as_array()
-                .map(|items| items.len() as i32)
-                .unwrap_or(1);
-            observation_count += item_count.max(1);
 
             let observation = SurfaceObservationRow {
                 id: Uuid::new_v4().to_string(),
@@ -284,7 +279,7 @@ pub async fn monitor_discover_and_import_assets(
         .await
         {
             Ok(stats) => {
-                surface_assets_materialized = stats.created_assets as i32;
+                surface_assets_materialized = (stats.created_assets + stats.enriched_assets) as i32;
                 events_created = events_created.max(stats.changed_assets);
             }
             Err(e) => tracing::warn!(
@@ -293,6 +288,8 @@ pub async fn monitor_discover_and_import_assets(
                 e
             ),
         }
+        observation_count =
+            surface_observation_count_from_output(&plugin_result, surface_artifacts);
     } else {
         observation_count = 1;
         let raw_observation = SurfaceObservationRow {

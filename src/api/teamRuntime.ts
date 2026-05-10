@@ -2,11 +2,13 @@ import { invoke } from '@tauri-apps/api/core'
 import type {
   TeamV4Agent,
   TeamV4AppendEventRequest,
+  TeamV4ConversationHarnessSnapshot,
   TeamV4ContextSnapshot,
   TeamV4CreateContextSnapshotRequest,
   TeamV4CreateMemoryRequest,
   TeamV4CreateTaskRequest,
   TeamV4Event,
+  TeamV4FinishHarnessRequest,
   TeamV4HarnessRun,
   TeamV4Memory,
   TeamV4Run,
@@ -105,6 +107,35 @@ export const teamRuntimeApi = {
     return invoke('team_v4_resume_harness_run', {
       harnessRunId,
       leaseSecs,
+    })
+  },
+
+  finishHarnessRun(
+    harnessRunId: string,
+    request: TeamV4FinishHarnessRequest,
+  ): Promise<TeamV4HarnessRun> {
+    return invoke('team_v4_finish_harness_run', {
+      harnessRunId,
+      request,
+    })
+  },
+
+  conversationHarnessSnapshot(conversationId: string): Promise<TeamV4ConversationHarnessSnapshot> {
+    return invoke('team_v4_conversation_harness_snapshot', {
+      conversationId,
+    })
+  },
+
+  markExpiredHarnessRuns(conversationId?: string | null): Promise<number> {
+    return invoke('team_v4_mark_expired_harness_runs', {
+      conversationId: conversationId || null,
+    })
+  },
+
+  pruneRunsAfter(conversationId: string, afterTimestampMs: number): Promise<number> {
+    return invoke('prune_team_v4_runs_after', {
+      conversationId,
+      afterTimestampMs,
     })
   },
 

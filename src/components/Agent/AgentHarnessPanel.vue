@@ -4,7 +4,7 @@
       <div class="min-w-0">
         <div class="text-sm font-semibold text-base-content">Harness</div>
         <div class="mt-0.5 text-xs text-base-content/55">
-          {{ runs.length }} run{{ runs.length === 1 ? '' : 's' }}
+          {{ totalHarnessRunCount }} run{{ totalHarnessRunCount === 1 ? '' : 's' }}
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -26,11 +26,66 @@
         {{ error }}
       </div>
 
-      <div v-if="runs.length === 0 && !loading" class="text-sm text-base-content/55">
+      <div v-if="totalHarnessRunCount === 0 && !loading" class="text-sm text-base-content/55">
         当前会话还没有 Harness run。
       </div>
 
       <div class="space-y-3">
+        <div v-if="teamHarnessRunsForDisplay.length > 0" class="rounded-lg border border-base-300 bg-base-100 p-3">
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <div class="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+              Team Runtime
+            </div>
+            <span class="text-[11px] text-base-content/45">{{ teamHarnessRunsForDisplay.length }} run{{ teamHarnessRunsForDisplay.length === 1 ? '' : 's' }}</span>
+          </div>
+          <div class="space-y-2">
+            <div
+              v-for="teamRun in teamHarnessRunsForDisplay"
+              :key="teamRun.id"
+              class="rounded border border-base-300/70 bg-base-200/35 px-2 py-2 text-xs"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="truncate font-medium text-base-content">
+                    {{ teamTaskTitle(teamRun.task_id) }}
+                  </div>
+                  <div class="mt-0.5 truncate text-[11px] text-base-content/50">
+                    {{ teamAgentName(teamRun.actor_id) }} · checkpoint #{{ teamRun.checkpoint_sequence }}
+                  </div>
+                </div>
+                <span class="badge badge-xs shrink-0" :class="teamHarnessBadgeClass(teamRun.status)">
+                  {{ teamRun.status }}
+                </span>
+              </div>
+              <div class="mt-2 grid grid-cols-2 gap-1 text-[11px] text-base-content/60">
+                <div>task: {{ teamTaskStatus(teamRun.task_id) || '-' }}</div>
+                <div>updated: {{ formatTime(teamRun.updated_at) || '-' }}</div>
+                <div>heartbeat: {{ formatTime(teamRun.last_heartbeat_at) || '-' }}</div>
+                <div>lease: {{ formatTime(teamRun.lease_expires_at) || 'none' }}</div>
+              </div>
+              <div v-if="teamHarnessEventDetail(teamRun.id)" class="mt-2 rounded bg-base-100 px-2 py-1 text-[11px] text-base-content/60">
+                {{ teamHarnessEventDetail(teamRun.id) }}
+              </div>
+              <div class="mt-2 flex flex-wrap gap-2">
+                <button
+                  class="btn btn-xs btn-outline btn-warning"
+                  :disabled="!teamHarnessCanResume(teamRun.status)"
+                  @click.stop="resumeTeamHarness(teamRun.id)"
+                >
+                  Resume
+                </button>
+                <button
+                  class="btn btn-xs btn-outline btn-error"
+                  :disabled="!teamHarnessCanCancel(teamRun.status)"
+                  @click.stop="cancelTeamHarness(teamRun.id)"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <button
           v-for="run in runsForDisplay"
           :key="run.id"
@@ -245,6 +300,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { teamRuntimeApi } from '@/api/teamRuntime'
 import {
   harnessRunsForDisplay,
   hiddenHarnessRunCount,
@@ -252,6 +308,7 @@ import {
   resolveHarnessSelectedRunId,
   timelineItemsForDisplay,
 } from './agentHarnessPanelSupport'
+import type { TeamV4Agent, TeamV4Event, TeamV4HarnessRun, TeamV4Task } from '@/types/teamRuntime'
 
 interface AgentHarnessRun {
   id: string
@@ -293,6 +350,10 @@ interface AgentHarnessCheckpoint {
 const props = defineProps<{
   active: boolean
   conversationId?: string | null
+  teamAgents?: TeamV4Agent[]
+  teamEvents?: TeamV4Event[]
+  teamHarnessRuns?: TeamV4HarnessRun[]
+  teamTasks?: TeamV4Task[]
 }>()
 
 const emit = defineEmits<{
@@ -302,6 +363,10 @@ const emit = defineEmits<{
 const runs = ref<AgentHarnessRun[]>([])
 const events = ref<AgentHarnessEvent[]>([])
 const checkpoints = ref<AgentHarnessCheckpoint[]>([])
+const snapshotTeamAgents = ref<TeamV4Agent[]>([])
+const snapshotTeamEvents = ref<TeamV4Event[]>([])
+const snapshotTeamHarnessRuns = ref<TeamV4HarnessRun[]>([])
+const snapshotTeamTasks = ref<TeamV4Task[]>([])
 const selectedRunId = ref<string | null>(null)
 const manuallySelectedRun = ref(false)
 const loading = ref(false)
@@ -314,6 +379,26 @@ const showAllCheckpoints = ref(false)
 let refreshTimer: number | undefined
 
 const selectedRun = computed(() => runs.value.find((run) => run.id === selectedRunId.value) || null)
+const effectiveTeamAgents = computed(() => snapshotTeamAgents.value.length ? snapshotTeamAgents.value : (props.teamAgents || []))
+const effectiveTeamEvents = computed(() => snapshotTeamEvents.value.length ? snapshotTeamEvents.value : (props.teamEvents || []))
+const effectiveTeamHarnessRuns = computed(() => snapshotTeamHarnessRuns.value.length ? snapshotTeamHarnessRuns.value : (props.teamHarnessRuns || []))
+const effectiveTeamTasks = computed(() => snapshotTeamTasks.value.length ? snapshotTeamTasks.value : (props.teamTasks || []))
+const teamHarnessRunsForDisplay = computed(() => [...effectiveTeamHarnessRuns.value]
+  .sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime())
+)
+const totalHarnessRunCount = computed(() => runs.value.length + teamHarnessRunsForDisplay.value.length)
+const teamAgentsById = computed(() => new Map(effectiveTeamAgents.value.map((agent) => [agent.id, agent])))
+const teamTasksById = computed(() => new Map(effectiveTeamTasks.value.map((task) => [task.id, task])))
+const teamEventsByHarnessId = computed(() => {
+  const map = new Map<string, TeamV4Event>()
+  for (const event of effectiveTeamEvents.value) {
+    const harnessRunId = String(event.payload?.harness_run_id || '').trim()
+    if (!harnessRunId) continue
+    const current = map.get(harnessRunId)
+    if (!current || event.sequence >= current.sequence) map.set(harnessRunId, event)
+  }
+  return map
+})
 const runsForDisplay = computed(() => harnessRunsForDisplay(runs.value, showAllRuns.value))
 const hiddenRunCount = computed(() => hiddenHarnessRunCount(runs.value, showAllRuns.value))
 const contextTimelineEvents = computed(() => events.value
@@ -351,14 +436,25 @@ const loadRuns = async () => {
   const conversationId = String(props.conversationId || '').trim()
   if (!conversationId) {
     runs.value = []
+    snapshotTeamAgents.value = []
+    snapshotTeamEvents.value = []
+    snapshotTeamHarnessRuns.value = []
+    snapshotTeamTasks.value = []
     selectedRunId.value = null
     return
   }
   loading.value = true
   error.value = null
   try {
-    const nextRuns = await invoke<AgentHarnessRun[]>('get_agent_harness_runs', { conversationId })
+    const [nextRuns, teamSnapshot] = await Promise.all([
+      invoke<AgentHarnessRun[]>('get_agent_harness_runs', { conversationId }),
+      teamRuntimeApi.conversationHarnessSnapshot(conversationId),
+    ])
     runs.value = nextRuns
+    snapshotTeamAgents.value = teamSnapshot.agents
+    snapshotTeamEvents.value = teamSnapshot.events
+    snapshotTeamHarnessRuns.value = teamSnapshot.harnessRuns
+    snapshotTeamTasks.value = teamSnapshot.tasks
     selectedRunId.value = resolveHarnessSelectedRunId(
       nextRuns,
       selectedRunId.value,
@@ -481,6 +577,75 @@ const statusBadgeClass = (status: string) => {
 const harnessMode = (run: AgentHarnessRun) => {
   const mode = run.metadata?.harness_mode
   return typeof mode === 'string' && mode.trim() ? mode : 'unknown'
+}
+
+const teamAgentName = (agentId?: string | null) => {
+  if (!agentId) return 'Team'
+  return teamAgentsById.value.get(agentId)?.name || agentId
+}
+
+const teamTaskTitle = (taskId?: string | null) => {
+  if (!taskId) return 'Team run'
+  return teamTasksById.value.get(taskId)?.title || taskId
+}
+
+const teamTaskStatus = (taskId?: string | null) => {
+  if (!taskId) return ''
+  return teamTasksById.value.get(taskId)?.status || ''
+}
+
+const teamHarnessBadgeClass = (status: string) => {
+  const normalized = String(status || '').toLowerCase()
+  if (normalized === 'completed') return 'badge-success'
+  if (normalized === 'failed' || normalized === 'cancelled') return 'badge-error'
+  if (normalized === 'paused' || normalized === 'expired') return 'badge-warning'
+  if (normalized === 'running') return 'badge-info'
+  return 'badge-ghost'
+}
+
+const teamHarnessCanResume = (status: string) =>
+  ['paused', 'expired', 'queued'].includes(String(status || '').toLowerCase())
+
+const teamHarnessCanCancel = (status: string) =>
+  ['queued', 'running', 'paused', 'expired'].includes(String(status || '').toLowerCase())
+
+const reloadTeamHarnessSnapshot = async () => {
+  const conversationId = String(props.conversationId || '').trim()
+  if (!conversationId) return
+  const teamSnapshot = await teamRuntimeApi.conversationHarnessSnapshot(conversationId)
+  snapshotTeamAgents.value = teamSnapshot.agents
+  snapshotTeamEvents.value = teamSnapshot.events
+  snapshotTeamHarnessRuns.value = teamSnapshot.harnessRuns
+  snapshotTeamTasks.value = teamSnapshot.tasks
+}
+
+const resumeTeamHarness = async (harnessRunId: string) => {
+  try {
+    await teamRuntimeApi.resumeHarnessRun(harnessRunId, 600)
+    await reloadTeamHarnessSnapshot()
+  } catch (resumeError: any) {
+    error.value = resumeError?.toString?.() || String(resumeError)
+  }
+}
+
+const cancelTeamHarness = async (harnessRunId: string) => {
+  try {
+    await teamRuntimeApi.finishHarnessRun(harnessRunId, {
+      status: 'cancelled',
+      error: 'Cancelled from Harness panel.',
+    })
+    await reloadTeamHarnessSnapshot()
+  } catch (cancelError: any) {
+    error.value = cancelError?.toString?.() || String(cancelError)
+  }
+}
+
+const teamHarnessEventDetail = (harnessRunId: string) => {
+  const event = teamEventsByHarnessId.value.get(harnessRunId)
+  if (!event) return ''
+  const error = event.payload?.error
+  if (typeof error === 'string' && error.trim()) return error
+  return event.event_type
 }
 
 const contextEventPayload = (event: AgentHarnessEvent): Record<string, unknown> => {

@@ -1,7 +1,6 @@
 import type { AgentMessage } from '@/types/agent'
 import {
   buildConversationTimeline,
-  collectTeamMirroredConversationMessageIds,
   type PersistedConversationMessageRow,
 } from './agentConversationHistorySupport'
 import type { AiConversationDetail } from './conversationTypes'
@@ -22,11 +21,9 @@ export const loadConversationHistory = async (params: {
   onEmptyHistoryLoaded: () => Promise<void>
   onMessagesLoaded: (payload: {
     messageCount: number
-    mirroredConversationMessageIds: Set<string>
     timeline: AgentMessage[]
   }) => Promise<void>
   onLoadFailed: (error: unknown) => void
-  shouldSuppressTeamMirrorNoiseMessage: (message: AgentMessage) => boolean
   unnamedConversationTitle: string
 }): Promise<void> => {
   params.log('[AgentView] Loading conversation history for:', params.conversationId)
@@ -55,10 +52,8 @@ export const loadConversationHistory = async (params: {
     }
 
     if (messages && messages.length > 0) {
-      const mirroredConversationMessageIds = collectTeamMirroredConversationMessageIds(messages)
       const timeline = buildConversationTimeline(messages, {
         toolCallCompletedLabel: params.buildToolCallCompletedLabel(),
-        shouldSuppressTeamMirrorNoiseMessage: params.shouldSuppressTeamMirrorNoiseMessage,
       })
 
       if (params.isStale()) {
@@ -68,7 +63,6 @@ export const loadConversationHistory = async (params: {
 
       await params.onMessagesLoaded({
         messageCount: messages.length,
-        mirroredConversationMessageIds,
         timeline,
       })
       return

@@ -57,6 +57,7 @@ pub struct ContextBuildInput {
     pub working_directory: Option<String>,
     pub base_system_prompt: String,
     pub injected_skill_prompt: Option<String>,
+    pub injected_runtime_context: Option<String>,
     pub task: String,
     pub provider_config_key: String,
     pub rig_provider: String,
@@ -258,13 +259,19 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         if let Some(injected) = input.injected_skill_prompt {
             system_prompt.push_str(&injected);
         }
+        if let Some(injected) = input.injected_runtime_context {
+            push_runtime_context_block(
+                &mut run_state_block,
+                &build_skill_instructions_context(&injected),
+            );
+        }
     }
 
     if policy.include_run_state {
-        system_prompt.push_str(&format!(
-            "\n\n[SystemContext: Current Execution ID is '{}'. Use this for tasks tool calls.]",
-            input.execution_id
-        ));
+        push_runtime_context_block(
+            &mut run_state_block,
+            &build_system_context(&input.execution_id),
+        );
         system_prompt.push_str(
             "\n\n[TaskProgressContract]\n\
             - For simple single-step tasks, complete the work directly without creating a UI plan and without calling `tasks`.\n\
@@ -285,7 +292,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     }
 
     if policy.include_task_mainline {
-        system_prompt = inject_task_mainline_summary(system_prompt, &input.task);
+        let task_mainline = build_task_mainline_context(&input.task);
+        push_runtime_context_block(&mut run_state_block, &task_mainline);
     }
 
     if policy.include_run_state {
@@ -460,19 +468,16 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 .unwrap_or_else(|| execution_context.context_dir.clone()),
         };
 
-        system_prompt.push_str(&format!(
-            "\n\n[Execution Environment]\n\
-            - Environment: {}\n\
-            - OS: {}\n\
-            - Working Directory: {}\n\
-            \n\
-            [Working Directory Note: When performing file operations, executing scripts, or any file system related tasks, use this directory as your base path unless explicitly specified otherwise by the user.]",
-            env_label(execution_context.env),
-            execution_context.os_name,
-            working_dir
-        ));
+        push_runtime_context_block(
+            &mut run_state_block,
+            &build_execution_environment_context(
+                env_label(execution_context.env),
+                &execution_context.os_name,
+                &working_dir,
+            ),
+        );
         tracing::info!(
-            "Injected working directory into system prompt: {}",
+            "Injected working directory into runtime context: {}",
             working_dir
         );
     }
@@ -509,21 +514,14 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 "Do not invent, guess, or rotate browser shell session IDs yourself.".to_string(),
             );
 
-            system_prompt.push_str("\n\n[Browser Shell Session]\n- ");
-            system_prompt.push_str(&browser_shell_note.join("\n- "));
-            system_prompt.push_str(&format!(
-                "\n- Active browser shell session id: {}",
-                browser_shell_session_id
-            ));
-            if input.active_browser_shell_direct_write_enabled {
-                system_prompt.push_str(
-                    "\n- The user has explicitly authorized direct execution on this browser shell session.\n- When you intentionally send input to this selected browser shell session, you may set `browser_shell.requires_approval=false`.\n- Do not use direct execution on a different browser shell session unless the user re-authorizes it.",
-                );
-            } else {
-                system_prompt.push_str(
-                    "\n- Browser shell writes still require approval. Keep `browser_shell.requires_approval=true` unless the user explicitly authorizes direct execution.",
-                );
-            }
+            push_runtime_context_block(
+                &mut run_state_block,
+                &build_browser_shell_session_context(
+                    browser_shell_session_id,
+                    input.active_browser_shell_direct_write_enabled,
+                    &browser_shell_note,
+                ),
+            );
         }
     }
 
@@ -555,37 +553,26 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             get_execution_context_dir(&execution_context.context_dir, Some(&input.execution_id));
         let history_path =
             get_history_path(&execution_context.context_dir, Some(&input.execution_id));
-        system_prompt.push_str(&format!(
-            "\n\n[Context Storage]\n\
-            - Environment: {} ({})\n\
-            - Execution ID: {}\n\
-            - Base context root: '{}'\n\
-            - This execution's session directory: '{}'\n\
-            - Tool outputs exceeding threshold are saved as files (not truncated)\n\
-            - Applies to: shell commands, HTTP responses, and other tools\n\
-            - Your conversation history is at '{}' (isolated per execution)\n\
-            - Treat stored-output previews as hints only, not as complete evidence.\n\
-            - Before making claims about a stored artifact, read it sequentially in bounded chunks until the full file is covered.\n\
-            - Prefer `file_read` with increasing `offset` and bounded `limit` for host files; use shell line-range reads for container files.\n\
-            - If you have only read part of a stored artifact, say the result is partial and cite the ranges inspected.\n\
-            - Use local runtime context (not prompt) for detailed file exploration commands.\n\
-            - Keep model responses focused on task-critical facts and artifact references.",
-            env_label(execution_context.env),
-            execution_context.os_name,
-            input.execution_id,
-            execution_context.context_dir,
-            execution_session_dir,
-            history_path
-        ));
+        push_runtime_context_block(
+            &mut run_state_block,
+            &build_context_storage_context(
+                env_label(execution_context.env),
+                &execution_context.os_name,
+                &input.execution_id,
+                &execution_context.context_dir,
+                &execution_session_dir,
+                &history_path,
+            ),
+        );
     }
 
     if policy.include_document_attachments {
         if let Some(doc_attachments) = input.document_attachments {
             if !doc_attachments.is_empty() {
                 let doc_context = build_document_attachments_context(&doc_attachments);
-                system_prompt.push_str(&doc_context);
+                push_runtime_context_block(&mut run_state_block, &doc_context);
                 tracing::info!(
-                    "Injected {} document attachment(s) into system prompt",
+                    "Injected {} document attachment(s) into runtime context",
                     doc_attachments.len()
                 );
             }
@@ -632,6 +619,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     {
         tracing::warn!("Sliding window compression failed: {}", e);
     }
+    push_runtime_context_block(
+        &mut packet.run_state,
+        &sliding_window.render_summary_context(),
+    );
 
     if policy.scope == ContextScope::Agent {
         if let Ok(history_content) = sliding_window.export_history().await {
@@ -691,13 +682,11 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let safe_limit = budget_analyzer.safe_limit_tokens;
     let mut trim_trace = Vec::new();
 
-    // Single system prompt trim pass (after sliding window summaries are included)
+    // Single system prompt trim pass. Sliding-window summaries are runtime context,
+    // not system instructions.
     let summary_stats = sliding_window.summary_stats();
-    let summary_overhead =
-        summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
-    let effective_system_budget = budget.system_max_tokens + summary_overhead;
     let system_budget_cap = (safe_limit as f64 * 0.55) as usize;
-    let final_system_budget = effective_system_budget.min(system_budget_cap);
+    let final_system_budget = budget.system_max_tokens.min(system_budget_cap);
 
     let mut system_tokens =
         estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
@@ -1186,7 +1175,7 @@ async fn load_fallback_history(
     Some(chat_messages[start..].to_vec())
 }
 
-fn build_document_attachments_context(attachments: &[DocumentAttachmentInfo]) -> String {
+pub(crate) fn build_document_attachments_context(attachments: &[DocumentAttachmentInfo]) -> String {
     let mut context = String::new();
     context.push_str("\n\n[Document Attachments]\n");
 
@@ -1208,22 +1197,130 @@ fn build_document_attachments_context(attachments: &[DocumentAttachmentInfo]) ->
     context
 }
 
-fn inject_task_mainline_summary(mut system_prompt: String, task: &str) -> String {
-    if system_prompt.contains("[TaskMainlineSummary]") || system_prompt.contains("任务主线摘要")
-    {
-        return system_prompt;
-    }
-
+pub(crate) fn build_task_mainline_context(task: &str) -> String {
     let task_trimmed = task.trim();
     if task_trimmed.is_empty() {
-        return system_prompt;
+        return String::new();
     }
 
-    system_prompt.push_str(&format!(
-        "\n\n[TaskMainlineSummary]\n任务主线摘要:\n- 当前任务: {}\n- 约束: 只围绕当前任务推进，避免无关操作。",
+    format!(
+        "[TaskMainlineSummary]\n任务主线摘要:\n- 当前任务: {}\n- 约束: 只围绕当前任务推进，避免无关操作。\n",
         task_trimmed
-    ));
-    system_prompt
+    )
+}
+
+pub(crate) fn build_skill_instructions_context(injected: &str) -> String {
+    let trimmed = injected.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("[Skill Instructions]\n{}", trimmed)
+    }
+}
+
+fn push_runtime_context_block(target: &mut String, block: &str) {
+    let block_trimmed = block.trim();
+    if block_trimmed.is_empty() {
+        return;
+    }
+    if !target.trim().is_empty() {
+        target.push_str("\n\n");
+    }
+    target.push_str(block_trimmed);
+    target.push('\n');
+}
+
+pub(crate) fn build_system_context(execution_id: &str) -> String {
+    let execution_id = execution_id.trim();
+    if execution_id.is_empty() {
+        return String::new();
+    }
+    format!(
+        "[SystemContext]\n- Current Execution ID: {}\n- Use this execution id for tasks tool calls.",
+        execution_id
+    )
+}
+
+pub(crate) fn build_execution_environment_context(
+    environment: &str,
+    os_name: &str,
+    working_dir: &str,
+) -> String {
+    format!(
+        "[Execution Environment]\n\
+        - Environment: {}\n\
+        - OS: {}\n\
+        - Working Directory: {}\n\n\
+        [Working Directory Note]\n\
+        When performing file operations, executing scripts, or any file system related tasks, use this directory as your base path unless explicitly specified otherwise by the user.",
+        environment.trim(),
+        os_name.trim(),
+        working_dir.trim()
+    )
+}
+
+pub(crate) fn build_context_storage_context(
+    environment: &str,
+    os_name: &str,
+    execution_id: &str,
+    context_dir: &str,
+    execution_session_dir: &str,
+    history_path: &str,
+) -> String {
+    format!(
+        "[Context Storage]\n\
+        - Environment: {} ({})\n\
+        - Execution ID: {}\n\
+        - Base context root: '{}'\n\
+        - This execution's session directory: '{}'\n\
+        - Tool outputs exceeding threshold are saved as files (not truncated)\n\
+        - Applies to: shell commands, HTTP responses, and other tools\n\
+        - Your conversation history is at '{}' (isolated per execution)\n\
+        - Treat stored-output previews as hints only, not as complete evidence.\n\
+        - Before making claims about a stored artifact, read it sequentially in bounded chunks until the full file is covered.\n\
+        - Prefer `file_read` with increasing `offset` and bounded `limit` for host files; use shell line-range reads for container files.\n\
+        - If you have only read part of a stored artifact, say the result is partial and cite the ranges inspected.\n\
+        - Use local runtime context for detailed file exploration commands.\n\
+        - Keep model responses focused on task-critical facts and artifact references.",
+        environment.trim(),
+        os_name.trim(),
+        execution_id.trim(),
+        context_dir.trim(),
+        execution_session_dir.trim(),
+        history_path.trim()
+    )
+}
+
+pub(crate) fn build_browser_shell_session_context(
+    session_id: &str,
+    direct_write_enabled: bool,
+    notes: &[String],
+) -> String {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = Vec::new();
+    for note in notes {
+        let note = note.trim();
+        if !note.is_empty() {
+            lines.push(format!("- {}", note));
+        }
+    }
+    lines.push(format!("- Active browser shell session id: {}", session_id));
+    if direct_write_enabled {
+        lines.push(
+            "- The user has explicitly authorized direct execution on this browser shell session."
+                .to_string(),
+        );
+        lines.push("- When you intentionally send input to this selected browser shell session, you may set `browser_shell.requires_approval=false`.".to_string());
+        lines.push("- Do not use direct execution on a different browser shell session unless the user re-authorizes it.".to_string());
+    } else {
+        lines.push("- Browser shell writes still require approval. Keep `browser_shell.requires_approval=true` unless the user explicitly authorizes direct execution.".to_string());
+    }
+
+    format!("[Browser Shell Session]\n{}", lines.join("\n"))
 }
 
 fn run_state_block_target_chars(max_tokens: usize, target_tokens: usize) -> usize {

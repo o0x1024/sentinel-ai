@@ -156,27 +156,25 @@ async fn build_history_context(
                     ))
                 })?;
 
-            // Build context (includes global summary, segment summaries, recent messages)
+            // Build context (summary context plus recent messages)
             let context_messages = sw.build_context("");
+            let summary_context = sw.render_summary_context();
 
             let mut history = String::new();
             let mut remaining = FULL_HISTORY_MAX_CHARS;
             let mut truncated = false;
 
-            // Extract global summary from first system message
-            if let Some(first) = context_messages.first() {
-                if first.role == "system" {
-                    let global = truncate_utf8_at_boundary(
-                        &first.content,
-                        FULL_HISTORY_GLOBAL_SUMMARY_MAX_CHARS,
-                    );
-                    if !append_with_budget(
-                        &mut history,
-                        &format!("=== Global Context Summary ===\n{}\n\n", global),
-                        &mut remaining,
-                    ) {
-                        truncated = true;
-                    }
+            if !summary_context.trim().is_empty() {
+                let global = truncate_utf8_at_boundary(
+                    &summary_context,
+                    FULL_HISTORY_GLOBAL_SUMMARY_MAX_CHARS,
+                );
+                if !append_with_budget(
+                    &mut history,
+                    &format!("=== Global Context Summary ===\n{}\n\n", global),
+                    &mut remaining,
+                ) {
+                    truncated = true;
                 }
             }
 

@@ -28,11 +28,7 @@
             class="select select-bordered w-full"
             @change="handleProfileIdChange"
           >
-            <option
-              v-for="profile in profileOptions"
-              :key="profile.id"
-              :value="profile.id"
-            >
+            <option v-for="profile in profileOptions" :key="profile.id" :value="profile.id">
               {{ profile.label }}
             </option>
           </select>
@@ -43,7 +39,7 @@
           </label>
         </div>
 
-        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div class="grid grid-cols-1 gap-4">
           <div class="form-control">
             <label class="label">
               <span class="label-text font-medium">上下文模式</span>
@@ -56,20 +52,6 @@
               <option value="claude-like">Claude-like</option>
               <option value="codex-like">Codex-like</option>
               <option value="sentinel-like">Sentinel-like</option>
-            </select>
-          </div>
-
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text font-medium">运行模式</span>
-            </label>
-            <select
-              :value="runMode"
-              class="select select-bordered w-full"
-              @change="handleRunModeChange"
-            >
-              <option value="assistant">Assistant</option>
-              <option value="team">Team</option>
             </select>
           </div>
         </div>
@@ -91,7 +73,9 @@
           />
           <label class="label">
             <span class="label-text-alt text-base-content/60">
-              {{ modelLoading ? t('agent.loadingAssistantModels') : t('agent.workConfigVisionHint') }}
+              {{
+                modelLoading ? t('agent.loadingAssistantModels') : t('agent.workConfigVisionHint')
+              }}
             </span>
           </label>
         </div>
@@ -120,10 +104,16 @@
           </div>
         </div>
 
-        <div v-if="executionMode === 'parallel'" class="rounded-lg border border-base-300 bg-base-200/40 p-3 space-y-3">
+        <div
+          v-if="executionMode === 'parallel'"
+          class="rounded-lg border border-base-300 bg-base-200/40 p-3 space-y-3"
+        >
           <div class="flex items-center justify-between gap-2">
             <span class="text-sm font-medium">并行模型</span>
-            <span class="badge badge-sm" :class="parallelSelectedModels.length >= 2 ? 'badge-success' : 'badge-warning'">
+            <span
+              class="badge badge-sm"
+              :class="parallelSelectedModels.length >= 2 ? 'badge-success' : 'badge-warning'"
+            >
               {{ parallelSelectedModels.length }}/{{ availableModels.length }}
             </span>
           </div>
@@ -187,7 +177,6 @@
             />
           </div>
         </div>
-
       </section>
 
       <section class="rounded-xl border border-base-300 bg-base-100 overflow-hidden">
@@ -206,7 +195,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SearchableSelect from '@/components/SearchableSelect.vue'
-import type { AssistantModelOption, AssistantContextMode, AssistantRunMode } from './agentDraftTypes'
+import type { AssistantModelOption, AssistantContextMode } from './agentDraftTypes'
 import type { AssistantExecutionMode } from './useAgentModelAndToolConfig'
 import type { AssistantProfileOption } from './assistantProfiles'
 import ToolConfigPanel from './ToolConfigPanel.vue'
@@ -231,14 +220,14 @@ const props = defineProps<{
   profileId: string
   profileLoading: boolean
   profileOptions: AssistantProfileOption[]
-  runMode: AssistantRunMode
   selectedModel: string | null
   toolConfig: UiToolConfigPayload
 }>()
 
-const selectedProfileDescription = computed(() =>
-  props.profileOptions.find((profile) => profile.id === props.profileId)?.description ||
-  '当前会话会跟随这个 profile 的默认上下文与运行模式。',
+const selectedProfileDescription = computed(
+  () =>
+    props.profileOptions.find(profile => profile.id === props.profileId)?.description ||
+    '当前会话会跟随这个 profile 的默认上下文。'
 )
 
 const getVisionCapabilitySuffix = (visionCapability: AssistantModelOption['visionCapability']) => {
@@ -259,38 +248,36 @@ const displayModels = computed(() =>
       label: t('agent.followDefaultModel'),
       description: '',
     },
-    ...[...props.availableModels]
-      .map((model) => {
-        const providerLabel = model.description?.trim()
-          || model.value.split('/')[0]?.trim()
-          || 'Unknown'
-        return {
-          ...model,
-          label: `${model.label}${getVisionCapabilitySuffix(model.visionCapability)}`,
-          description: providerLabel,
-        }
-      }),
-  ]
-    .sort((a, b) => {
-      if (!a.value) return -1
-      if (!b.value) return 1
-      return `${a.description || ''}/${a.label}`.localeCompare(`${b.description || ''}/${b.label}`)
+    ...[...props.availableModels].map(model => {
+      const providerLabel =
+        model.description?.trim() || model.value.split('/')[0]?.trim() || 'Unknown'
+      return {
+        ...model,
+        label: `${model.label}${getVisionCapabilitySuffix(model.visionCapability)}`,
+        description: providerLabel,
+      }
     }),
+  ].sort((a, b) => {
+    if (!a.value) return -1
+    if (!b.value) return 1
+    return `${a.description || ''}/${a.label}`.localeCompare(`${b.description || ''}/${b.label}`)
+  })
 )
 
 const displayParallelModels = computed(() =>
   [...props.availableModels]
-    .map((model) => {
-      const providerLabel = model.description?.trim()
-        || model.value.split('/')[0]?.trim()
-        || 'Unknown'
+    .map(model => {
+      const providerLabel =
+        model.description?.trim() || model.value.split('/')[0]?.trim() || 'Unknown'
       return {
         ...model,
         label: `${model.label}${getVisionCapabilitySuffix(model.visionCapability)}`,
         description: providerLabel,
       }
     })
-    .sort((a, b) => `${a.description || ''}/${a.label}`.localeCompare(`${b.description || ''}/${b.label}`)),
+    .sort((a, b) =>
+      `${a.description || ''}/${a.label}`.localeCompare(`${b.description || ''}/${b.label}`)
+    )
 )
 
 const displayJudgeModels = computed(() => [
@@ -310,7 +297,6 @@ const emit = defineEmits<{
   (e: 'update:parallel-judge-model', value: string): void
   (e: 'update:parallel-models', value: string[]): void
   (e: 'update:profile-id', value: string): void
-  (e: 'update:run-mode', value: AssistantRunMode): void
   (e: 'update:tool-config', value: UiToolConfigPayload): void
 }>()
 
@@ -322,11 +308,6 @@ const handleProfileIdChange = (event: Event) => {
 const handleContextModeChange = (event: Event) => {
   const target = event.target as HTMLSelectElement
   emit('update:context-mode', target.value as AssistantContextMode)
-}
-
-const handleRunModeChange = (event: Event) => {
-  const target = event.target as HTMLSelectElement
-  emit('update:run-mode', target.value as AssistantRunMode)
 }
 
 const handleModelChange = (value: string) => {
@@ -374,7 +355,7 @@ const saveParallelPreset = () => {
   }
   parallelPresets.value = [
     next,
-    ...parallelPresets.value.filter((preset) => preset.name !== name),
+    ...parallelPresets.value.filter(preset => preset.name !== name),
   ].slice(0, 12)
   persistParallelPresets()
 }

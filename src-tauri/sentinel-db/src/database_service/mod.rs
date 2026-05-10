@@ -50,6 +50,7 @@ pub mod surface_inventory;
 pub mod surface_migrations;
 pub mod surface_overview;
 pub mod surface_runs;
+pub mod surface_seed_candidates;
 pub mod surface_seeds;
 pub mod surface_topology;
 pub mod system_agent;
@@ -159,6 +160,8 @@ pub use surface_migrations::*;
 pub use surface_overview::*;
 #[allow(unused_imports)]
 pub use surface_runs::*;
+#[allow(unused_imports)]
+pub use surface_seed_candidates::*;
 #[allow(unused_imports)]
 pub use surface_seeds::*;
 #[allow(unused_imports)]

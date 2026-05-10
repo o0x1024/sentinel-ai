@@ -1,6 +1,7 @@
 use crate::commands::ai_runtime_harness::{
     DEFAULT_AGENT_HARNESS_MAX_CONTINUATIONS, MAX_AGENT_HARNESS_MAX_CONTINUATIONS,
 };
+use crate::commands::assistant_profile_team_cleanup::prune_team_profiles_for_assistant_profiles;
 use crate::services::ai::AiServiceManager;
 use sentinel_db::Database;
 use sentinel_llm::LlmClient;
@@ -49,6 +50,8 @@ pub struct TeamProfilePayload {
     pub specialist_profile_ids: Vec<String>,
     pub monitor_profile_id: String,
     pub default_model: Option<String>,
+    pub default_team_orchestration_preset_id: Option<String>,
+    pub default_team_recovery_preset_id: Option<String>,
     pub context_mode: String,
     pub memory_policy: serde_json::Value,
     pub tool_policy_matrix: serde_json::Value,
@@ -139,7 +142,7 @@ Return exactly one JSON object matching this camelCase schema:
 {
   "label": "short display name",
   "description": "one concise Chinese description",
-  "teamRole": "assistant|orchestrator|specialist|monitor",
+  "teamRole": "assistant",
   "defaultModel": null,
   "defaultRagEnabled": false,
   "defaultWebSearchEnabled": false,
@@ -151,18 +154,15 @@ Return exactly one JSON object matching this camelCase schema:
   "defaultPreselectedTools": [],
   "defaultDisabledTools": [],
   "defaultManualTools": [],
-  "defaultTeamOrchestrationPresetId": null,
-  "defaultTeamRecoveryPresetId": null,
-  "defaultTeamProfileId": null,
   "contextMode": "claude-like|codex-like|sentinel-like",
-  "runMode": "assistant|team"
+  "runMode": "assistant"
 }
 Rules:
 - Do not include markdown, comments, prose, or extra keys.
 - Do not include an id field; the application assigns ids.
-- Prefer runMode "assistant" unless the user explicitly asks for a Team entry Agent.
+- Assistant Profile generation must use teamRole "assistant" and runMode "assistant"; Team configuration belongs to Team Profile generation.
 - Use only these tool ids when needed: shell, ask_user_question, spawn_agent, wait_agents, list_agents, close_agent, tenth_man_review.
-- Use null for optional preset/model fields unless the user explicitly requires them.
+- Use null for optional model fields unless the user explicitly requires them.
 "#;
 const AI_TEAM_PROFILE_SYSTEM_PROMPT: &str = r#"You create Sentinel AI Team profiles and their required member Agent profiles.
 Return exactly one JSON object matching this camelCase schema:
@@ -183,9 +183,6 @@ Return exactly one JSON object matching this camelCase schema:
       "defaultPreselectedTools": [],
       "defaultDisabledTools": [],
       "defaultManualTools": [],
-      "defaultTeamOrchestrationPresetId": null,
-      "defaultTeamRecoveryPresetId": null,
-      "defaultTeamProfileId": null,
       "contextMode": "claude-like|codex-like|sentinel-like",
       "runMode": "assistant|team"
     }
@@ -197,6 +194,8 @@ Return exactly one JSON object matching this camelCase schema:
     "specialistProfileIds": ["member-ref-2"],
     "monitorProfileId": "member-ref-3",
     "defaultModel": null,
+    "defaultTeamOrchestrationPresetId": null,
+    "defaultTeamRecoveryPresetId": null,
     "contextMode": "claude-like|codex-like|sentinel-like",
     "memoryPolicy": {"monitorGate":"candidate_then_orchestrator_accept","shareScope":"high_value_only","longTermMemory":true},
     "toolPolicyMatrix": {
@@ -358,6 +357,7 @@ fn normalize_profile(mut profile: AssistantProfilePayload) -> AssistantProfilePa
         .map(str::to_string);
     profile.default_tool_selection_strategy =
         profile.default_tool_selection_strategy.trim().to_string();
+    profile.run_mode = profile.run_mode.trim().to_lowercase();
     profile.default_max_tools = profile.default_max_tools.max(1);
     profile.default_harness_max_continuations = profile
         .default_harness_max_continuations
@@ -416,6 +416,21 @@ fn decode_stored_profiles(raw: &str) -> Result<(Vec<AssistantProfilePayload>, bo
                 changed = true;
             }
         }
+        let team_role = profile_object
+            .get("teamRole")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("assistant");
+        let run_mode = profile_object
+            .get("runMode")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("assistant");
+        if run_mode == "team" && team_role != "orchestrator" {
+            profile_object.insert(
+                "runMode".to_string(),
+                serde_json::Value::String("assistant".to_string()),
+            );
+            changed = true;
+        }
         if !profile_object.contains_key("defaultPreselectedTools") {
             if let Some(legacy) = profile_object.remove("defaultFixedTools") {
                 profile_object.insert("defaultPreselectedTools".to_string(), legacy);
@@ -430,20 +445,6 @@ fn decode_stored_profiles(raw: &str) -> Result<(Vec<AssistantProfilePayload>, bo
     let profiles: Vec<AssistantProfilePayload> =
         serde_json::from_value(value).map_err(|e| e.to_string())?;
     Ok((profiles, changed))
-}
-
-fn seed_missing_builtin_profiles(
-    mut profiles: Vec<AssistantProfilePayload>,
-) -> (Vec<AssistantProfilePayload>, bool) {
-    let mut ids: HashSet<String> = profiles.iter().map(|profile| profile.id.clone()).collect();
-    let mut changed = false;
-    for profile in normalize_profiles(default_assistant_profiles()) {
-        if ids.insert(profile.id.clone()) {
-            profiles.push(profile);
-            changed = true;
-        }
-    }
-    (profiles, changed)
 }
 
 fn migrate_builtin_profile_tool_injection(
@@ -488,6 +489,23 @@ fn migrate_builtin_profile_tool_injection(
                     profile.default_tool_selection_strategy = "Hybrid".to_string();
                     changed = true;
                 }
+                if profile.team_role != "orchestrator" {
+                    profile.team_role = "orchestrator".to_string();
+                    changed = true;
+                }
+                if profile.run_mode != "team" {
+                    profile.run_mode = "team".to_string();
+                    changed = true;
+                }
+                let default_team_profile_id = if profile.id == "team.reviewer" {
+                    "team.profile.review"
+                } else {
+                    "team.profile.default"
+                };
+                if profile.default_team_profile_id.as_deref() != Some(default_team_profile_id) {
+                    profile.default_team_profile_id = Some(default_team_profile_id.to_string());
+                    changed = true;
+                }
             }
             _ => {}
         }
@@ -522,6 +540,8 @@ fn default_team_profiles() -> Vec<TeamProfilePayload> {
             specialist_profile_ids: vec!["assistant.default".to_string()],
             monitor_profile_id: "assistant.reviewer".to_string(),
             default_model: None,
+            default_team_orchestration_preset_id: Some("product_delivery_chain".to_string()),
+            default_team_recovery_preset_id: Some("balanced".to_string()),
             context_mode: "claude-like".to_string(),
             memory_policy: serde_json::json!({
                 "monitorGate": "candidate_then_orchestrator_accept",
@@ -557,6 +577,8 @@ fn default_team_profiles() -> Vec<TeamProfilePayload> {
             specialist_profile_ids: vec!["assistant.sentinel".to_string()],
             monitor_profile_id: "assistant.reviewer".to_string(),
             default_model: None,
+            default_team_orchestration_preset_id: Some("incident_response_flow".to_string()),
+            default_team_recovery_preset_id: Some("conservative".to_string()),
             context_mode: "codex-like".to_string(),
             memory_policy: serde_json::json!({
                 "monitorGate": "candidate_then_orchestrator_accept",
@@ -595,6 +617,8 @@ fn default_team_profiles() -> Vec<TeamProfilePayload> {
             ],
             monitor_profile_id: "assistant.reviewer".to_string(),
             default_model: None,
+            default_team_orchestration_preset_id: Some("incident_response_flow".to_string()),
+            default_team_recovery_preset_id: Some("balanced".to_string()),
             context_mode: "sentinel-like".to_string(),
             memory_policy: serde_json::json!({
                 "monitorGate": "candidate_then_orchestrator_accept",
@@ -680,6 +704,23 @@ fn normalize_team_tool_policy_matrix(value: serde_json::Value) -> serde_json::Va
     })
 }
 
+fn migrate_legacy_team_concurrency_policy(
+    policy: &mut serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    let mut changed = false;
+    if let Some(value) = policy.remove("maxSolvers") {
+        policy.entry("maxSpecialists".to_string()).or_insert(value);
+        changed = true;
+    }
+    if let Some(value) = policy.remove("maxTasksPerSolver") {
+        policy
+            .entry("maxTasksPerSpecialist".to_string())
+            .or_insert(value);
+        changed = true;
+    }
+    changed
+}
+
 fn migrate_builtin_team_specialist_tools(
     team_profile_id: &str,
     tools: &[String],
@@ -722,6 +763,18 @@ fn normalize_team_profile(mut profile: TeamProfilePayload) -> TeamProfilePayload
     profile.specialist_profile_ids = normalize_tool_ids(profile.specialist_profile_ids);
     profile.default_model = profile
         .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    profile.default_team_orchestration_preset_id = profile
+        .default_team_orchestration_preset_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    profile.default_team_recovery_preset_id = profile
+        .default_team_recovery_preset_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -843,6 +896,11 @@ fn migrate_legacy_team_profile_registry(value: &mut serde_json::Value) -> Result
                 changed = true;
             }
         }
+        if let Some(concurrency_policy) = profile_object.get_mut("concurrencyPolicy") {
+            if let Some(policy) = concurrency_policy.as_object_mut() {
+                changed = migrate_legacy_team_concurrency_policy(policy) || changed;
+            }
+        }
         if let Some(safety_policy) = profile_object.get_mut("safetyPolicy") {
             let Some(policy) = safety_policy.as_object_mut() else {
                 continue;
@@ -910,6 +968,12 @@ fn validate_profiles(profiles: &[AssistantProfilePayload]) -> Result<(), String>
                 profile.id, profile.team_role
             ));
         }
+        if profile.run_mode == "team" && profile.team_role != "orchestrator" {
+            return Err(format!(
+                "assistant profile {} run mode team requires orchestrator team role",
+                profile.id
+            ));
+        }
         if !TOOL_SELECTION_STRATEGIES.contains(&profile.default_tool_selection_strategy.as_str()) {
             return Err(format!(
                 "assistant profile {} has unsupported tool selection strategy {}",
@@ -954,7 +1018,7 @@ fn validate_team_profiles(
     assistant_profiles: &[AssistantProfilePayload],
 ) -> Result<(), String> {
     if team_profiles.is_empty() {
-        return Err("team profiles cannot be empty".to_string());
+        return Ok(());
     }
 
     let assistant_ids: HashSet<String> = assistant_profiles
@@ -1011,9 +1075,41 @@ fn validate_team_profiles(
                 profile.id, profile.context_mode
             ));
         }
+        validate_team_concurrency_policy(profile)?;
     }
 
     Ok(())
+}
+
+fn validate_team_positive_integer_field(
+    profile_id: &str,
+    policy: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<(), String> {
+    match policy.get(field).and_then(serde_json::Value::as_u64) {
+        Some(value) if value >= 1 => Ok(()),
+        _ => Err(format!(
+            "team profile {} concurrencyPolicy.{} must be a positive integer",
+            profile_id, field
+        )),
+    }
+}
+
+fn validate_team_concurrency_policy(profile: &TeamProfilePayload) -> Result<(), String> {
+    let Some(policy) = profile.concurrency_policy.as_object() else {
+        return Err(format!(
+            "team profile {} concurrencyPolicy must be an object",
+            profile.id
+        ));
+    };
+    if policy.contains_key("maxSolvers") || policy.contains_key("maxTasksPerSolver") {
+        return Err(format!(
+            "team profile {} concurrencyPolicy uses legacy Solver fields",
+            profile.id
+        ));
+    }
+    validate_team_positive_integer_field(&profile.id, policy, "maxSpecialists")?;
+    validate_team_positive_integer_field(&profile.id, policy, "maxTasksPerSpecialist")
 }
 
 pub(crate) async fn load_profiles(
@@ -1030,10 +1126,9 @@ pub(crate) async fn load_profiles(
         Some(raw) => {
             let (profiles, migrated) = decode_stored_profiles(&raw)?;
             let profiles = normalize_profiles(profiles);
-            let (profiles, seeded) = seed_missing_builtin_profiles(profiles);
             let (profiles, fixed_tool_migrated) = migrate_builtin_profile_tool_injection(profiles);
             validate_profiles(&profiles)?;
-            if migrated || seeded || fixed_tool_migrated {
+            if migrated || fixed_tool_migrated {
                 let raw = serde_json::to_string(&profiles).map_err(|e| e.to_string())?;
                 db_service
                     .set_config(
@@ -1113,19 +1208,24 @@ async fn load_team_profiles(
         Some(raw) => {
             let (team_profiles, migrated) = decode_stored_team_profiles(&raw)?;
             let team_profiles = normalize_team_profiles(team_profiles);
+            let (team_profiles, pruned) =
+                prune_team_profiles_for_assistant_profiles(team_profiles, &assistant_profiles);
             if team_profiles.is_empty() {
-                let defaults = normalize_team_profiles(default_team_profiles());
-                validate_team_profiles(&defaults, &assistant_profiles)?;
-                return Ok(defaults);
+                if migrated || pruned {
+                    persist_team_profiles_raw(db_service, &team_profiles).await?;
+                }
+                return Ok(team_profiles);
             }
             validate_team_profiles(&team_profiles, &assistant_profiles)?;
-            if migrated {
+            if migrated || pruned {
                 persist_team_profiles_raw(db_service, &team_profiles).await?;
             }
             Ok(team_profiles)
         }
         None => {
             let team_profiles = normalize_team_profiles(default_team_profiles());
+            let (team_profiles, _) =
+                prune_team_profiles_for_assistant_profiles(team_profiles, &assistant_profiles);
             validate_team_profiles(&team_profiles, &assistant_profiles)?;
             Ok(team_profiles)
         }
@@ -1139,7 +1239,7 @@ async fn load_default_team_profile_id(
     let fallback_id = team_profiles
         .first()
         .map(|profile| profile.id.clone())
-        .ok_or_else(|| "team profiles cannot be empty".to_string())?;
+        .unwrap_or_default();
 
     match db_service
         .get_config(ASSISTANT_PROFILE_CONFIG_NAMESPACE, TEAM_PROFILE_DEFAULT_KEY)
@@ -1335,6 +1435,27 @@ async fn persist_team_profiles_raw(
     .map_err(|e| e.to_string())
 }
 
+async fn prune_team_profiles_after_assistant_profile_save(
+    db: &sentinel_db::DatabaseService,
+    assistant_profiles: &[AssistantProfilePayload],
+) -> Result<(), String> {
+    let Some(raw) = db
+        .get_config(ASSISTANT_PROFILE_CONFIG_NAMESPACE, TEAM_PROFILE_CONFIG_KEY)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(());
+    };
+    let (team_profiles, migrated) = decode_stored_team_profiles(&raw)?;
+    let team_profiles = normalize_team_profiles(team_profiles);
+    let (team_profiles, pruned) =
+        prune_team_profiles_for_assistant_profiles(team_profiles, assistant_profiles);
+    if migrated || pruned {
+        persist_team_profiles_raw(db, &team_profiles).await?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn list_assistant_profiles(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
@@ -1402,6 +1523,7 @@ pub async fn save_assistant_profiles(
     )
     .await
     .map_err(|e| e.to_string())?;
+    prune_team_profiles_after_assistant_profile_save(db, &profiles).await?;
 
     let current_default = db
         .get_config(
@@ -1533,7 +1655,7 @@ pub async fn save_team_profiles(
         _ => profiles
             .first()
             .map(|profile| profile.id.clone())
-            .ok_or_else(|| "team profiles cannot be empty".to_string())?,
+            .unwrap_or_default(),
     };
     db.set_config(
         ASSISTANT_PROFILE_CONFIG_NAMESPACE,
@@ -1623,6 +1745,51 @@ mod tests {
     }
 
     #[test]
+    fn migrates_stored_non_orchestrator_team_run_mode_to_assistant() {
+        let raw = r#"[
+            {
+                "id":"assistant.default",
+                "label":"Assistant",
+                "description":"invalid persisted team entry",
+                "teamRole":"assistant",
+                "defaultModel":null,
+                "defaultRagEnabled":false,
+                "defaultWebSearchEnabled":false,
+                "defaultToolsEnabled":true,
+                "defaultTenthManEnabled":false,
+                "defaultToolSelectionStrategy":"Keyword",
+                "defaultMaxTools":12,
+                "defaultPreselectedTools":[],
+                "defaultDisabledTools":[],
+                "defaultManualTools":[],
+                "defaultTeamOrchestrationPresetId":null,
+                "defaultTeamRecoveryPresetId":null,
+                "defaultTeamProfileId":null,
+                "contextMode":"codex-like",
+                "runMode":"team"
+            }
+        ]"#;
+
+        let (profiles, migrated) = decode_stored_profiles(raw).unwrap();
+        let profiles = normalize_profiles(profiles);
+
+        assert!(migrated);
+        assert_eq!(profiles[0].run_mode, "assistant");
+        validate_profiles(&profiles).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_orchestrator_team_run_mode_from_normal_save_payloads() {
+        let mut profile = normalize_profile(default_assistant_profiles()[0].clone());
+        profile.team_role = "assistant".to_string();
+        profile.run_mode = "team".to_string();
+
+        let err = validate_profiles(&[profile]).unwrap_err();
+
+        assert!(err.contains("requires orchestrator"));
+    }
+
+    #[test]
     fn migrates_stored_legacy_team_profile_fields() {
         let raw = r#"[
             {
@@ -1641,7 +1808,7 @@ mod tests {
                     "observer":{"tools":["tenth_man_review"]}
                 },
                 "harnessPolicy":{},
-                "concurrencyPolicy":{},
+                "concurrencyPolicy":{"maxSolvers":2,"maxTasksPerSolver":1},
                 "safetyPolicy":{"commanderNoDangerousTools":true,"observerReadOnly":true}
             }
         ]"#;
@@ -1662,6 +1829,41 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("candidate_then_orchestrator_accept")
         );
+        assert_eq!(
+            team.concurrency_policy
+                .get("maxSpecialists")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert!(team.concurrency_policy.get("maxSolvers").is_none());
+    }
+
+    #[test]
+    fn rejects_legacy_team_concurrency_fields_from_normal_save_payloads() {
+        let assistant_profiles = normalize_profiles(default_assistant_profiles());
+        let mut team = normalize_team_profile(default_team_profiles()[0].clone());
+        team.concurrency_policy = serde_json::json!({
+            "maxSolvers": 2,
+            "maxTasksPerSolver": 1
+        });
+
+        let err = validate_team_profiles(&[team], &assistant_profiles).unwrap_err();
+
+        assert!(err.contains("legacy Solver fields"));
+    }
+
+    #[test]
+    fn rejects_invalid_team_max_specialists_from_normal_save_payloads() {
+        let assistant_profiles = normalize_profiles(default_assistant_profiles());
+        let mut team = normalize_team_profile(default_team_profiles()[0].clone());
+        team.concurrency_policy = serde_json::json!({
+            "maxSpecialists": 0,
+            "maxTasksPerSpecialist": 1
+        });
+
+        let err = validate_team_profiles(&[team], &assistant_profiles).unwrap_err();
+
+        assert!(err.contains("maxSpecialists"));
     }
 
     #[test]
@@ -1706,23 +1908,6 @@ mod tests {
     }
 
     #[test]
-    fn seeds_missing_builtin_assistant_profiles() {
-        let persisted = normalize_profiles(
-            default_assistant_profiles()
-                .into_iter()
-                .filter(|profile| profile.id != "assistant.sentinel")
-                .collect(),
-        );
-
-        let (profiles, changed) = seed_missing_builtin_profiles(persisted);
-
-        assert!(changed);
-        assert!(profiles
-            .iter()
-            .any(|profile| profile.id == "assistant.sentinel"));
-    }
-
-    #[test]
     fn migrates_builtin_preselected_tools_out_of_persisted_profiles() {
         let mut profiles = normalize_profiles(default_assistant_profiles());
         let assistant = profiles
@@ -1736,6 +1921,9 @@ mod tests {
             .iter_mut()
             .find(|profile| profile.id == "team.lead")
             .unwrap();
+        team.team_role = "assistant".to_string();
+        team.run_mode = "assistant".to_string();
+        team.default_team_profile_id = None;
         team.default_preselected_tools = vec!["spawn_agent".to_string(), "wait_agents".to_string()];
         team.default_manual_tools = vec!["ask_user_question".to_string()];
         team.default_tool_selection_strategy = "Hybrid".to_string();
@@ -1757,23 +1945,12 @@ mod tests {
         assert!(team.default_preselected_tools.is_empty());
         assert_eq!(team.default_tool_selection_strategy, "Hybrid");
         assert!(team.default_manual_tools.is_empty());
-    }
-
-    #[test]
-    fn default_team_profiles_validate_after_builtin_seed() {
-        let persisted = normalize_profiles(
-            default_assistant_profiles()
-                .into_iter()
-                .filter(|profile| profile.id != "assistant.sentinel")
-                .collect(),
+        assert_eq!(team.team_role, "orchestrator");
+        assert_eq!(team.run_mode, "team");
+        assert_eq!(
+            team.default_team_profile_id.as_deref(),
+            Some("team.profile.default")
         );
-        let teams = normalize_team_profiles(default_team_profiles());
-
-        assert!(validate_team_profiles(&teams, &persisted).is_err());
-
-        let (profiles, _) = seed_missing_builtin_profiles(persisted);
-
-        validate_team_profiles(&teams, &profiles).unwrap();
     }
 
     #[test]

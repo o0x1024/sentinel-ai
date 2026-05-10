@@ -5,7 +5,8 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-const extractJsonCandidate = (raw: string): string | null => {
+const extractJsonCandidate = (raw: unknown): string | null => {
+  if (typeof raw !== 'string') return null
   const trimmed = raw.trim()
   if (!trimmed) return null
 
@@ -17,7 +18,7 @@ const extractJsonCandidate = (raw: string): string | null => {
   return trimmed
 }
 
-export const tryParseStructuredJson = (raw: string): unknown | null => {
+export const tryParseStructuredJson = (raw: unknown): unknown | null => {
   const candidate = extractJsonCandidate(raw)
   if (!candidate) return null
   if (!candidate.startsWith('{') && !candidate.startsWith('[')) return null
@@ -78,6 +79,7 @@ export const formatJsonValueIfPossible = (value: unknown): string | null => {
   }
 }
 
-export const formatJsonStringIfPossible = (raw: string): string | null => {
+export const formatJsonStringIfPossible = (raw: unknown): string | null => {
+  if (typeof raw !== 'string') return null
   return formatJsonValueIfPossible(raw)
 }

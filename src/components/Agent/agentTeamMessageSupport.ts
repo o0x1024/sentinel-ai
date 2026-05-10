@@ -1,27 +1,5 @@
 import type { AgentMessage } from '@/types/agent'
 
-const TEAM_MIRROR_PREFIX_RE = /^(?:\[Team\/[^\]]+\]\s*)+/u
-const TEAM_NOISE_MESSAGE_PATTERNS = [
-  /^已触发 Team 执行[：:]/u,
-  /^主 agent 已拆解任务，共 \d+ 项[。.]?/u,
-  /^Team 执行完成[。.]?/u,
-  /^Team 执行失败[。.]?/u,
-  /^已停止当前会话运行[。.]?/u,
-]
-
-export const mapTeamMessageType = (role: string): AgentMessage['type'] => {
-  const normalized = (role || '').toLowerCase()
-  if (normalized === 'user') return 'user'
-  if (normalized === 'system') return 'system'
-  if (normalized === 'assistant') return 'final'
-  return 'system'
-}
-
-export const parseTeamMessageTimestamp = (raw: string): number => {
-  const parsed = Date.parse(raw || '')
-  return Number.isFinite(parsed) ? parsed : Date.now()
-}
-
 export const parseToolCallArguments = (value: unknown): Record<string, any> => {
   if (typeof value === 'string') {
     try {
@@ -122,29 +100,8 @@ export const buildTeamPersistedToolEventKey = (
   return `${String(sessionId || '').trim()}\u0001${String(streamId || '').trim()}\u0001${String(toolCallId || '').trim()}\u0001${messageType}`
 }
 
-export const buildTeamMirroredConversationRole = (role: string): string | null => {
-  const normalized = (role || '').toLowerCase()
-  if (normalized === 'user') return 'user'
-  if (normalized === 'assistant') return 'assistant'
-  if (normalized === 'system') return 'system'
-  if (normalized === 'tool_call' || normalized === 'tool_result') return 'tool'
-  return null
-}
-
-export const normalizeTeamMirrorContent = (content: unknown): string => {
-  if (typeof content !== 'string') return ''
-  return content.replace(TEAM_MIRROR_PREFIX_RE, '').trim()
-}
-
 export const normalizeTeamHumanInputContent = (content: unknown): string => {
-  if (typeof content !== 'string') return ''
-  return normalizeTeamMirrorContent(content)
-}
-
-export const shouldSuppressTeamMirrorNoiseMessage = (content: unknown): boolean => {
-  const normalized = normalizeTeamMirrorContent(content)
-  if (!normalized) return false
-  return TEAM_NOISE_MESSAGE_PATTERNS.some((pattern) => pattern.test(normalized))
+  return typeof content === 'string' ? content : ''
 }
 
 export const parseConversationMessageTimestamp = (raw: unknown): number => {

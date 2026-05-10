@@ -1,8 +1,10 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::services::{load_plugin_default_inputs, merge_plugin_input_defaults};
 use sentinel_db::{Database, DatabaseService};
 use sentinel_plugins::PluginMainCategory;
+use serde_json::Value;
 
 pub(crate) fn is_monitor_execution_plugin_category(main_category: PluginMainCategory) -> bool {
     matches!(
@@ -18,6 +20,86 @@ pub(crate) fn normalize_plugin_registry_id(value: &str) -> String {
         .strip_prefix("plugin__")
         .unwrap_or(without_plugin_source)
         .to_string()
+}
+
+fn is_missing_required_input_value(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => true,
+        Some(Value::String(value)) => value.trim().is_empty(),
+        Some(Value::Array(value)) => value.is_empty(),
+        Some(Value::Object(value)) => value.is_empty(),
+        Some(_) => false,
+    }
+}
+
+fn collect_missing_required_inputs(schema: &Value, input: &Value, path: &[String]) -> Vec<String> {
+    let mut missing = Vec::new();
+    let properties = schema
+        .get("properties")
+        .and_then(|value| value.as_object());
+
+    if let Some(required_fields) = schema.get("required").and_then(|value| value.as_array()) {
+        for required_field in required_fields {
+            let Some(field_name) = required_field.as_str() else {
+                continue;
+            };
+            let mut field_path = path.to_vec();
+            field_path.push(field_name.to_string());
+            if is_missing_required_input_value(input.get(field_name)) {
+                missing.push(field_path.join("."));
+            }
+        }
+    }
+
+    let Some(properties) = properties else {
+        return missing;
+    };
+
+    for (field_name, field_schema) in properties {
+        let Some(child_input) = input.get(field_name) else {
+            continue;
+        };
+        if !child_input.is_object() {
+            continue;
+        }
+
+        let mut field_path = path.to_vec();
+        field_path.push(field_name.clone());
+        missing.extend(collect_missing_required_inputs(
+            field_schema,
+            child_input,
+            &field_path,
+        ));
+    }
+
+    missing
+}
+
+async fn validate_monitor_plugin_required_inputs(
+    plugin_id: &str,
+    plugin_name: &str,
+    metadata: sentinel_plugins::PluginMetadata,
+    code: &str,
+    input: &Value,
+) -> Result<(), String> {
+    let schema = sentinel_plugins::get_input_schema_from_code(code, metadata)
+        .await
+        .map_err(|error| {
+            format!(
+                "Failed to load input schema for plugin '{}': {}",
+                plugin_name, error
+            )
+        })?;
+    let missing_inputs = collect_missing_required_inputs(&schema, input, &[]);
+    if missing_inputs.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Plugin {} missing required input: {}",
+        plugin_id,
+        missing_inputs.join(", ")
+    ))
 }
 
 pub(crate) async fn execute_monitor_plugin(
@@ -52,22 +134,34 @@ pub(crate) async fn execute_monitor_plugin(
             return Err(format!("Plugin '{}' is not enabled", normalized_plugin_id));
         }
 
+        let code = db
+            .get_plugin_code(&normalized_plugin_id)
+            .await
+            .map_err(|error| {
+                format!(
+                    "Failed to load plugin code for '{}': {}",
+                    normalized_plugin_id, error
+                )
+            })?
+            .ok_or_else(|| format!("Plugin '{}' has no code", normalized_plugin_id))?;
+
+        let default_inputs = load_plugin_default_inputs(db.as_ref(), &normalized_plugin_id).await?;
+        let resolved_input = merge_plugin_input_defaults(&default_inputs, &input);
+
+        validate_monitor_plugin_required_inputs(
+            &normalized_plugin_id,
+            &plugin_record.metadata.name,
+            plugin_record.metadata.clone(),
+            &code,
+            &resolved_input,
+        )
+        .await?;
+
         if plugin_manager
             .get_plugin(&normalized_plugin_id)
             .await
             .is_none()
         {
-            let code = db
-                .get_plugin_code(&normalized_plugin_id)
-                .await
-                .map_err(|error| {
-                    format!(
-                        "Failed to load plugin code for '{}': {}",
-                        normalized_plugin_id, error
-                    )
-                })?
-                .ok_or_else(|| format!("Plugin '{}' has no code", normalized_plugin_id))?;
-
             let metadata = sentinel_traffic::PluginMetadata {
                 id: plugin_record.metadata.id.clone(),
                 name: plugin_record.metadata.name.clone(),
@@ -108,12 +202,23 @@ pub(crate) async fn execute_monitor_plugin(
                         normalized_plugin_id, error
                     )
                 })?;
-        } else if let Err(error) = plugin_manager.enable_plugin(&normalized_plugin_id).await {
-            tracing::warn!(
-                "Failed to enable monitor plugin '{}': {}",
-                normalized_plugin_id,
-                error
-            );
+        } else {
+            if let Err(error) = plugin_manager.enable_plugin(&normalized_plugin_id).await {
+                tracing::warn!(
+                    "Failed to enable monitor plugin '{}': {}",
+                    normalized_plugin_id,
+                    error
+                );
+            }
+            plugin_manager
+                .set_plugin_code(normalized_plugin_id.clone(), code)
+                .await
+                .map_err(|error| {
+                    format!(
+                        "Failed to refresh cached plugin '{}': {}",
+                        normalized_plugin_id, error
+                    )
+                })?;
         }
 
         let run_id = input
@@ -130,7 +235,12 @@ pub(crate) async fn execute_monitor_plugin(
             .unwrap_or_else(|| format!("monitor:{}", uuid::Uuid::new_v4()));
 
         let (findings, output) = plugin_manager
-            .execute_execution_plugin(&normalized_plugin_id, &input, "monitor_task", Some(run_id))
+            .execute_execution_plugin(
+                &normalized_plugin_id,
+                &resolved_input,
+                "monitor_task",
+                Some(run_id),
+            )
             .await
             .map_err(|error| {
                 format!(

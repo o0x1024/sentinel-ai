@@ -1,7 +1,6 @@
 import { nextTick, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { agentTeamApi } from '@/api/agentTeam'
 import type { AgentMessage } from '@/types/agent'
 import { maybeAutoRenameConversationByFirstMessage } from './agentConversationTitleSupport'
 import type { PersistedConversationMessageRow } from './agentConversationHistorySupport'
@@ -29,13 +28,16 @@ import type { AiConversationDetail, AiConversationSummary } from './conversation
 import type { AgentExecutionFinishedEvent, PersistedAgentExecutionState } from './executionState'
 import {
   normalizeTeamHumanInputContent,
-  shouldSuppressTeamMirrorNoiseMessage,
 } from './agentTeamMessageSupport'
 import type { AssistantConversationBinding, AssistantModelOption } from './agentDraftTypes'
 import { buildVisionModelUnsupportedError } from './agentVisionErrorSupport'
 import { prepareSubmission } from './agentSubmissionSupport'
 import { runTeamV4AssignmentsWithDependencies } from './teamV4AssignmentScheduler'
 import { planTeamV4SpecialistAssignments } from './teamV4OrchestratorPlanning'
+import {
+  appendTeamV4TimelineMessages,
+  buildTeamV4TimelineMessages,
+} from './teamV4MessageTimelineSupport'
 import { startTeamV4SpecialistActivityProgress } from './teamV4SpecialistActivityProgress'
 import {
   buildRuntimeToolConfigForExecution,
@@ -48,9 +50,11 @@ import type {
   TeamV4Event,
   TeamV4RunBootstrap,
   TeamV4SpecialistAssignment,
+  TeamV4Task,
 } from '@/types/teamRuntime'
 import {
   appendTeamV4LocalMessage,
+  buildTeamV4WaitingHumanError,
   buildMonitorMemoryContent,
   buildTeamV4InheritedProgress,
   buildTeamV4ModelOnlyToolConfig,
@@ -62,25 +66,62 @@ import {
   buildTeamV4SpecialistTaskPrompt,
   extractMonitorSignals,
   isTeamV4CancellationError,
+  isTeamV4WaitingHumanError,
   parseTeamV4MonitorReview,
   parseTeamV4OrchestratorRecoveryDecision,
   readTeamV4MaxSpecialists,
+  readTeamV4MaxTasksPerSpecialist,
   readTeamV4ToolPolicyMatrix,
+  readTeamV4WaitingHumanTimeoutMs,
   resolveTeamV4ContextMode,
   stringifyForTeamMemory,
   type TeamV4MonitorReview,
   type TeamV4OrchestratorRecoveryDecision,
 } from './teamV4FlowSupport'
 
+const EXECUTION_STATE_POLL_INTERVAL_MS = 1_500
+const TEAM_V4_CANCEL_MESSAGE = 'Execution cancelled by user'
+
+const readFinishedExecutionState = async (
+  executionId: string
+): Promise<AgentExecutionFinishedEvent | null> => {
+  try {
+    const conversation = await invoke<AiConversationDetail | null>('get_ai_conversation', {
+      conversationId: executionId,
+    })
+    const state = conversation?.execution_state
+    if (!state || state.execution_id !== executionId) return null
+    return {
+      execution_id: state.execution_id,
+      conversation_id: state.conversation_id,
+      generation: state.generation,
+      outcome: state.outcome,
+      success: state.success,
+      error: state.error,
+      response: state.response,
+      message: state.message,
+    }
+  } catch (error) {
+    console.warn('[useAgentConversationFlow] Failed to load execution state:', error)
+    return null
+  }
+}
+
 const watchAgentExecutionFinished = (executionId: string, timeoutMs: number) => {
   let settled = false
   let unlisten: UnlistenFn | null = null
   let timeoutHandle: number | null = null
+  let pollHandle: number | null = null
+  let pollInFlight = false
 
   const cleanup = () => {
     if (timeoutHandle) {
       window.clearTimeout(timeoutHandle)
       timeoutHandle = null
+    }
+    if (pollHandle) {
+      window.clearInterval(pollHandle)
+      pollHandle = null
     }
     if (unlisten) {
       unlisten()
@@ -96,12 +137,35 @@ const watchAgentExecutionFinished = (executionId: string, timeoutMs: number) => 
       reject(new Error(`Timed out waiting for agent execution: ${executionId}`))
     }, timeoutMs)
 
-    listen<AgentExecutionFinishedEvent>('agent:execution_finished', event => {
-      const payload = event.payload
-      if (!payload || payload.execution_id !== executionId || settled) return
+    const settleFromPayload = (payload: AgentExecutionFinishedEvent) => {
+      if (settled) return
       settled = true
       cleanup()
       resolve(payload)
+    }
+
+    const pollExecutionState = async () => {
+      if (settled || pollInFlight) return
+      pollInFlight = true
+      try {
+        const persistedState = await readFinishedExecutionState(executionId)
+        if (persistedState) {
+          settleFromPayload(persistedState)
+        }
+      } finally {
+        pollInFlight = false
+      }
+    }
+
+    void pollExecutionState()
+    pollHandle = window.setInterval(() => {
+      void pollExecutionState()
+    }, EXECUTION_STATE_POLL_INTERVAL_MS)
+
+    listen<AgentExecutionFinishedEvent>('agent:execution_finished', event => {
+      const payload = event.payload
+      if (!payload || payload.execution_id !== executionId || settled) return
+      settleFromPayload(payload)
     })
       .then(dispose => {
         if (settled) {
@@ -112,9 +176,10 @@ const watchAgentExecutionFinished = (executionId: string, timeoutMs: number) => 
       })
       .catch(error => {
         if (settled) return
-        settled = true
-        cleanup()
-        reject(error)
+        console.warn(
+          '[useAgentConversationFlow] Failed to subscribe execution-finished event, relying on persisted execution state:',
+          error
+        )
       })
   })
 
@@ -124,8 +189,15 @@ const watchAgentExecutionFinished = (executionId: string, timeoutMs: number) => 
   }
 }
 
+const readTeamV4SpecialistExecutionTimeoutMs = (teamRun: TeamV4RunBootstrap) => {
+  const leaseSecs = Math.max(
+    30,
+    Math.floor(Number(teamRun.run.policy_json?.harnessPolicy?.leaseSecs) || 600)
+  )
+  return Math.max(360_000, (leaseSecs + 60) * 1000)
+}
+
 export const useAgentConversationFlow = (params: {
-  activeTeamSessionId: Ref<string | null>
   activeTeamV4RunId: Ref<string | null>
   agentMessages: Ref<AgentMessage[]>
   agentStreamingContent: Ref<string>
@@ -149,7 +221,6 @@ export const useAgentConversationFlow = (params: {
   emitComplete: (payload: any) => void
   emitError: (message: string) => void
   emitSubmit: (task: string) => void
-  ensureConversationForTeamSession: () => Promise<any>
   executionIdProp?: string | null
   forceTaskPlanContract: boolean
   harnessMaxContinuations: Ref<number>
@@ -159,7 +230,6 @@ export const useAgentConversationFlow = (params: {
   getToolCallCompletedLabel: () => string
   getUnnamedConversationTitle: () => string
   getAssistantProfileOption: (profileId: string) => AssistantProfileOption | null
-  handleStopTeamState: (nextState: string) => void
   hydrateTaskHistory: (conversationId: string) => Promise<void>
   historyLoadToken: Ref<number>
   inputValue: Ref<string>
@@ -181,17 +251,12 @@ export const useAgentConversationFlow = (params: {
   refreshTeamV4Workspace?: () => Promise<void>
   resetTerminal: () => void
   restoreArtifactsFromMessage: (message: AgentMessage) => void
-  routeTeamMessage: (content: string) => Promise<any>
   scrollMessageViewportToBottom: () => void
-  setMirroredConversationMessageIds: (ids: Set<string>) => void
   setPendingDocumentAttachments: (documents: any[]) => void
   startTeamV4AssistantRun: (content: string) => Promise<TeamV4RunBootstrap>
-  startTeamExecutionRun: (bridgeMessage?: string) => Promise<void>
   stopAgentExecutionState: () => void
   stopTeamV4Run: () => Promise<void>
   submitInFlight: Ref<boolean>
-  syncActiveTeamSession: () => Promise<void>
-  syncTeamMessagesToMainFlow: (sessionId?: string | null) => Promise<void>
   teamModeEnabled: Ref<boolean>
   tenthManEnabled: Ref<boolean>
   webSearchEnabled: Ref<boolean>
@@ -219,9 +284,34 @@ export const useAgentConversationFlow = (params: {
   }
 
   const activeTeamV4ExecutionIds = new Set<string>()
+  const activeTeamV4ActivityDisposers = new Map<string, () => void>()
   const queuedSubmission = ref<{ content: string; queuedAt: number } | null>(null)
   const interruptNextSubmission = ref(false)
+  let activeTeamV4AbortController: AbortController | null = null
   let drainQueuedSubmission: () => void = () => {}
+
+  const beginTeamV4AbortWindow = () => {
+    activeTeamV4AbortController?.abort()
+    const controller = new AbortController()
+    activeTeamV4AbortController = controller
+    return controller
+  }
+
+  const clearTeamV4AbortWindow = (controller?: AbortController | null) => {
+    if (controller && activeTeamV4AbortController === controller) {
+      activeTeamV4AbortController = null
+    }
+  }
+
+  const abortActiveTeamV4Execution = () => {
+    activeTeamV4AbortController?.abort()
+  }
+
+  const throwIfTeamV4ExecutionCancelled = () => {
+    if (activeTeamV4AbortController?.signal.aborted) {
+      throw new Error(TEAM_V4_CANCEL_MESSAGE)
+    }
+  }
 
   const queueSubmission = (content: string) => {
     if (queuedSubmission.value) {
@@ -263,6 +353,7 @@ export const useAgentConversationFlow = (params: {
     roleLabel: string
     timeoutMs?: number
   }) => {
+    throwIfTeamV4ExecutionCancelled()
     const executionFinished = watchAgentExecutionFinished(
       input.executionId,
       input.timeoutMs ?? 360_000
@@ -314,6 +405,7 @@ export const useAgentConversationFlow = (params: {
       activeTeamV4ExecutionIds.delete(input.executionId)
     }
 
+    throwIfTeamV4ExecutionCancelled()
     if (!finished.success) {
       throw new Error(
         finished.error || finished.message || `${input.roleLabel} model execution failed.`
@@ -334,6 +426,223 @@ export const useAgentConversationFlow = (params: {
         `[useAgentConversationFlow] Failed to hydrate task history for ${conversationId}:`,
         error
       )
+    }
+  }
+
+  const hydrateTeamV4TimelineSafely = async (conversationId: string) => {
+    try {
+      const snapshot = await teamRuntimeApi.conversationHarnessSnapshot(conversationId)
+      params.agentMessages.value = appendTeamV4TimelineMessages(
+        params.agentMessages.value,
+        buildTeamV4TimelineMessages(snapshot),
+      )
+    } catch (error) {
+      console.warn(
+        `[useAgentConversationFlow] Failed to hydrate Team v4 timeline for ${conversationId}:`,
+        error
+      )
+    }
+  }
+
+  const appendTeamV4TimelineEvent = (
+    event: TeamV4Event,
+    agents: TeamV4RunBootstrap['specialists'],
+    tasks: TeamV4RunBootstrap['specialistAssignments'][number]['task'][],
+  ) => {
+    params.agentMessages.value = appendTeamV4TimelineMessages(
+      params.agentMessages.value,
+      buildTeamV4TimelineMessages({
+        agents,
+        events: [event],
+        tasks,
+      }),
+    )
+  }
+
+  const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
+
+  const waitForTeamV4HumanInterventionWindow = async (input: {
+    actorId: string
+    deadlineAt: string
+    detail: string
+    runId: string
+    taskId: string
+    timelineTasks: TeamV4Task[]
+    teamRun: TeamV4RunBootstrap
+    timeoutAction: 'replan_under_current_capacity'
+    timeoutContext: Record<string, unknown>
+  }) => {
+    throwIfTeamV4ExecutionCancelled()
+    appendTeamV4LocalMessage(
+      params.agentMessages,
+      `Waiting for human input until ${new Date(input.deadlineAt).toLocaleString()}. ` +
+        `If there is no intervention, the team will auto-continue with ${input.timeoutAction}.`,
+      {
+        kind: 'team_v4_waiting_human_window',
+        team_session_id: input.runId,
+        team_task_record_id: input.taskId,
+        timeout_action: input.timeoutAction,
+        deadline_at: input.deadlineAt,
+      },
+      'planning' as AgentMessage['type']
+    )
+
+    await teamRuntimeApi.updateRunState(input.runId, 'waiting_human')
+    await params.refreshTeamV4Workspace?.()
+
+    while (Date.now() < new Date(input.deadlineAt).getTime()) {
+      throwIfTeamV4ExecutionCancelled()
+      await sleep(1_000)
+      const run = await teamRuntimeApi.getRun(input.runId)
+      const state = String(run?.state || '').trim().toLowerCase()
+      if (state && state !== 'waiting_human') {
+        return {
+          deadlineAt: input.deadlineAt,
+          status: 'interrupted' as const,
+          state,
+        }
+      }
+    }
+
+    const timedOutEvent = await teamRuntimeApi.appendEvent(input.runId, {
+      actorId: input.actorId,
+      taskId: input.taskId,
+      eventType: 'waiting_human_timed_out',
+      visibility: 'user',
+      payload: {
+        deadlineAt: input.deadlineAt,
+        detail: input.detail,
+        timeoutAction: input.timeoutAction,
+        timeoutContext: input.timeoutContext,
+      },
+    })
+    appendTeamV4TimelineEvent(timedOutEvent, input.teamRun.specialists, input.timelineTasks)
+    await teamRuntimeApi.updateRunState(input.runId, 'running')
+    await params.refreshTeamV4Workspace?.()
+    return {
+      deadlineAt: input.deadlineAt,
+      status: 'timed_out' as const,
+      state: 'running',
+    }
+  }
+
+  const planTeamV4AssignmentsWithPreflight = async (input: {
+    fullTask: string
+    teamRun: TeamV4RunBootstrap
+    teamToolPolicyMatrix: Record<string, any>
+  }) => {
+    throwIfTeamV4ExecutionCancelled()
+    const maxTasksPerSpecialist = readTeamV4MaxTasksPerSpecialist(input.teamRun)
+    const attemptPlan = async (planningFeedback?: string[]) =>
+      planTeamV4SpecialistAssignments({
+        baselineToolConfig: params.buildToolConfig(),
+        getAssistantProfileOption: params.getAssistantProfileOption,
+        goal: input.fullTask,
+        maxTasksPerSpecialist,
+        planningFeedback,
+        runModelExecution: runTeamV4ModelExecution,
+        teamRun: input.teamRun,
+        teamToolPolicyMatrix: input.teamToolPolicyMatrix,
+        webSearchEnabled: params.webSearchEnabled.value,
+      })
+
+    try {
+      return {
+        assignments: await attemptPlan(),
+        maxTasksPerSpecialist,
+      }
+    } catch (firstError: any) {
+      const firstErrorMsg = firstError?.toString?.() || String(firstError)
+      const replanRequestedEvent = await teamRuntimeApi.appendEvent(input.teamRun.run.id, {
+        actorId: input.teamRun.orchestrator.id,
+        taskId: input.teamRun.rootTask.id,
+        eventType: 'orchestrator_preflight_replan_requested',
+        visibility: 'user',
+        payload: {
+          maxTasksPerSpecialist,
+          reason: firstErrorMsg,
+          specialistCount: input.teamRun.specialists.length,
+        },
+      })
+      appendTeamV4TimelineEvent(
+        replanRequestedEvent,
+        input.teamRun.specialists,
+        [input.teamRun.rootTask],
+      )
+      await params.refreshTeamV4Workspace?.()
+      try {
+        throwIfTeamV4ExecutionCancelled()
+        return {
+          assignments: await attemptPlan([
+            'The previous task graph was rejected before execution.',
+            firstErrorMsg,
+            `Available specialist count: ${input.teamRun.specialists.length}.`,
+            `maxTasksPerSpecialist: ${maxTasksPerSpecialist}.`,
+            'Replan with valid distinct specialist lanes and current capacity.',
+          ]),
+          maxTasksPerSpecialist,
+        }
+      } catch (secondError: any) {
+        const secondErrorMsg = secondError?.toString?.() || String(secondError)
+        const deadlineAt = new Date(
+          Date.now() + readTeamV4WaitingHumanTimeoutMs(input.teamRun),
+        ).toISOString()
+        const waitingHumanEvent = await teamRuntimeApi.appendEvent(input.teamRun.run.id, {
+          actorId: input.teamRun.orchestrator.id,
+          taskId: input.teamRun.rootTask.id,
+          eventType: 'orchestrator_preflight_waiting_human',
+          visibility: 'user',
+          payload: {
+            deadlineAt,
+            maxTasksPerSpecialist,
+            reason: secondErrorMsg,
+            specialistCount: input.teamRun.specialists.length,
+            timeoutAction: 'replan_under_current_capacity',
+          },
+        })
+        appendTeamV4TimelineEvent(
+          waitingHumanEvent,
+          input.teamRun.specialists,
+          [input.teamRun.rootTask],
+        )
+        const waitResult = await waitForTeamV4HumanInterventionWindow({
+          actorId: input.teamRun.orchestrator.id,
+          deadlineAt,
+          detail: secondErrorMsg,
+          runId: input.teamRun.run.id,
+          taskId: input.teamRun.rootTask.id,
+          timelineTasks: [input.teamRun.rootTask],
+          teamRun: input.teamRun,
+          timeoutAction: 'replan_under_current_capacity',
+          timeoutContext: {
+            phase: 'preflight',
+            specialistCount: input.teamRun.specialists.length,
+          },
+        })
+        await params.refreshTeamV4Workspace?.()
+        if (waitResult.status === 'interrupted') {
+          if (waitResult.state === 'cancelled') {
+            throw new Error('Execution cancelled by user')
+          }
+          throw buildTeamV4WaitingHumanError(
+            [
+              'Team run is still waiting for human input before specialist execution.',
+              secondErrorMsg,
+            ].join('\n\n'),
+          )
+        }
+        throwIfTeamV4ExecutionCancelled()
+        return {
+          assignments: await attemptPlan([
+            'Human confirmation timed out. Continue automatically.',
+            secondErrorMsg,
+            `Available specialist count: ${input.teamRun.specialists.length}.`,
+            `maxTasksPerSpecialist: ${maxTasksPerSpecialist}.`,
+            'Continue under current capacity and do not require additional user input.',
+          ]),
+          maxTasksPerSpecialist,
+        }
+      }
     }
   }
 
@@ -475,6 +784,8 @@ export const useAgentConversationFlow = (params: {
   const requestTeamV4OrchestratorRecoveryDecision = async (input: {
     assignment: TeamV4SpecialistAssignment
     attemptIndex: number
+    allowAskUser?: boolean
+    continuationHint?: string | null
     error: string
     goal: string
     specialistResults: Array<{
@@ -486,6 +797,7 @@ export const useAgentConversationFlow = (params: {
     }>
     teamRun: TeamV4RunBootstrap
   }) => {
+    throwIfTeamV4ExecutionCancelled()
     const orchestratorContextMode = resolveTeamV4ContextMode(
       input.teamRun.orchestrator.context_mode
     )
@@ -544,9 +856,11 @@ export const useAgentConversationFlow = (params: {
       executionId,
       model: orchestratorModel,
       prompt: buildTeamV4OrchestratorRecoveryPrompt({
+        allowAskUser: input.allowAskUser,
         assignment: input.assignment,
         attemptIndex: input.attemptIndex,
         availableSpecialists,
+        continuationHint: input.continuationHint,
         completedProgress,
         error: input.error,
         goal: input.goal,
@@ -557,6 +871,9 @@ export const useAgentConversationFlow = (params: {
       rawDecision,
       new Set(input.teamRun.specialists.map(specialist => specialist.id))
     )
+    if (input.allowAskUser === false && decision.action === 'ask_user') {
+      throw new Error('Timed-out recovery continuation must not return ask_user.')
+    }
     await teamRuntimeApi.appendEvent(input.teamRun.run.id, {
       actorId: input.teamRun.orchestrator.id,
       taskId: input.assignment.task.id,
@@ -613,6 +930,7 @@ export const useAgentConversationFlow = (params: {
         conversationId,
         afterTimestampMs: messageTimestamp,
       })
+      await teamRuntimeApi.pruneRunsAfter(conversationId, messageTimestamp)
       window.dispatchEvent(
         new CustomEvent('agent-harness-pruned', {
           detail: { conversationId },
@@ -630,6 +948,8 @@ export const useAgentConversationFlow = (params: {
       const cleared = await clearConversationSession({
         clearConversationMessages: async conversationId => {
           await invoke('clear_conversation_messages', { conversationId })
+          await invoke<number>('prune_agent_harness_after', { conversationId, afterTimestampMs: 0 })
+          await teamRuntimeApi.pruneRunsAfter(conversationId, 0)
         },
         conversationId: params.conversationId.value,
         loadConversationList: params.loadConversationList,
@@ -655,6 +975,15 @@ export const useAgentConversationFlow = (params: {
 
     if (params.teamModeEnabled.value && params.activeTeamV4RunId.value) {
       try {
+        abortActiveTeamV4Execution()
+        for (const dispose of activeTeamV4ActivityDisposers.values()) {
+          try {
+            dispose()
+          } catch {
+            // ignore activity disposer failures during stop
+          }
+        }
+        activeTeamV4ActivityDisposers.clear()
         const executionIds = Array.from(activeTeamV4ExecutionIds)
         for (const executionId of executionIds) {
           await invoke('cancel_ai_stream', {
@@ -670,17 +999,6 @@ export const useAgentConversationFlow = (params: {
         params.stopAgentExecutionState()
       } catch (error) {
         console.error('[useAgentConversationFlow] Failed to stop Team v4 execution:', error)
-        params.localError.value = `${params.getFailedToStopExecutionLabel()}: ${error}`
-      }
-      return
-    }
-
-    if (params.teamModeEnabled.value && params.activeTeamSessionId.value) {
-      try {
-        await agentTeamApi.stopRun(params.activeTeamSessionId.value)
-        params.handleStopTeamState('FAILED')
-      } catch (error) {
-        console.error('[useAgentConversationFlow] Failed to stop team execution:', error)
         params.localError.value = `${params.getFailedToStopExecutionLabel()}: ${error}`
       }
       return
@@ -760,50 +1078,22 @@ export const useAgentConversationFlow = (params: {
         },
         onEmptyHistoryLoaded: async () => {
           await hydrateTaskHistorySafely(conversationId)
+          await hydrateTeamV4TimelineSafely(conversationId)
           if (
             currentLoadToken !== params.historyLoadToken.value ||
             params.conversationId.value !== conversationId
           )
             return
-          params.setMirroredConversationMessageIds(new Set())
-          await params.syncActiveTeamSession()
-          if (
-            currentLoadToken !== params.historyLoadToken.value ||
-            params.conversationId.value !== conversationId
-          )
-            return
-          if (params.activeTeamSessionId.value) {
-            await params.syncTeamMessagesToMainFlow(params.activeTeamSessionId.value)
-            if (
-              currentLoadToken !== params.historyLoadToken.value ||
-              params.conversationId.value !== conversationId
-            )
-              return
-          }
         },
-        onMessagesLoaded: async ({ messageCount, mirroredConversationMessageIds, timeline }) => {
+        onMessagesLoaded: async ({ messageCount, timeline }) => {
           params.agentMessages.value = timeline
           await hydrateTaskHistorySafely(conversationId)
+          await hydrateTeamV4TimelineSafely(conversationId)
           if (
             currentLoadToken !== params.historyLoadToken.value ||
             params.conversationId.value !== conversationId
           )
             return
-          params.setMirroredConversationMessageIds(mirroredConversationMessageIds)
-          await params.syncActiveTeamSession()
-          if (
-            currentLoadToken !== params.historyLoadToken.value ||
-            params.conversationId.value !== conversationId
-          )
-            return
-          if (params.activeTeamSessionId.value) {
-            await params.syncTeamMessagesToMainFlow(params.activeTeamSessionId.value)
-            if (
-              currentLoadToken !== params.historyLoadToken.value ||
-              params.conversationId.value !== conversationId
-            )
-              return
-          }
           console.log(
             '[useAgentConversationFlow] Loaded',
             messageCount,
@@ -817,7 +1107,6 @@ export const useAgentConversationFlow = (params: {
         onLoadFailed: error => {
           console.error('[useAgentConversationFlow] Failed to load conversation history:', error)
         },
-        shouldSuppressTeamMirrorNoiseMessage,
         unnamedConversationTitle: params.getUnnamedConversationTitle(),
       })
     } finally {
@@ -890,6 +1179,8 @@ export const useAgentConversationFlow = (params: {
       interruptNextSubmission.value = false
 
       if (params.teamModeEnabled.value) {
+        let activeTeamHarnessRunId: string | null = null
+        const teamV4AbortController = beginTeamV4AbortWindow()
         try {
           if (params.isExecuting.value && params.conversationId.value) {
             await handleStop()
@@ -957,16 +1248,15 @@ export const useAgentConversationFlow = (params: {
           }
 
           const teamRun = await params.startTeamV4AssistantRun(fullTask)
+          throwIfTeamV4ExecutionCancelled()
+          activeTeamHarnessRunId = teamRun.harnessRun.id
           const teamToolPolicyMatrix = readTeamV4ToolPolicyMatrix(teamRun)
-          const assignments = await planTeamV4SpecialistAssignments({
-            baselineToolConfig: params.buildToolConfig(),
-            getAssistantProfileOption: params.getAssistantProfileOption,
-            goal: fullTask,
-            runModelExecution: runTeamV4ModelExecution,
+          const { assignments } = await planTeamV4AssignmentsWithPreflight({
+            fullTask,
             teamRun,
             teamToolPolicyMatrix,
-            webSearchEnabled: params.webSearchEnabled.value,
           })
+          throwIfTeamV4ExecutionCancelled()
           if (!assignments.length) {
             throw new Error('Team v4 requires at least one specialist assignment.')
           }
@@ -982,18 +1272,6 @@ export const useAgentConversationFlow = (params: {
               maxSpecialists,
             },
           })
-          appendTeamV4LocalMessage(
-            params.agentMessages,
-            `Orchestrator planned ${assignments.length} task(s) and started Specialist scheduling, max ${maxSpecialists} concurrent Specialist(s).`,
-            {
-              kind: 'team_v4_scheduler_started',
-              team_member_id: teamRun.orchestrator.id,
-              team_member_name: teamRun.orchestrator.name,
-              team_member_role: 'orchestrator',
-              team_session_id: teamRun.run.id,
-              team_task_record_id: teamRun.rootTask.id,
-            }
-          )
           await params.refreshTeamV4Workspace?.()
           const specialistResults: Array<{
             specialistId: string
@@ -1009,11 +1287,13 @@ export const useAgentConversationFlow = (params: {
             assignment: TeamV4SpecialistAssignment,
             assignmentIndex: number
           ) => {
+            throwIfTeamV4ExecutionCancelled()
             const runSpecialistAttempt = async (
               effectiveAssignment: TeamV4SpecialistAssignment,
               attemptIndex: number,
               recoveryInstruction?: string | null
             ) => {
+              throwIfTeamV4ExecutionCancelled()
               const inheritedProgress = buildTeamV4InheritedProgress(specialistResults)
               const inheritanceSnapshot = await teamRuntimeApi.createContextSnapshot(
                 teamRun.run.id,
@@ -1113,66 +1393,7 @@ export const useAgentConversationFlow = (params: {
                   },
                 },
               })
-              appendTeamV4LocalMessage(
-                params.agentMessages,
-                `Specialist started: ${effectiveAssignment.specialist.name} -> ${effectiveAssignment.task.title}`,
-                {
-                  kind: 'team_v4_specialist_started',
-                  team_member_id: effectiveAssignment.specialist.id,
-                  team_member_name: effectiveAssignment.specialist.name,
-                  team_member_role: 'specialist',
-                  team_session_id: teamRun.run.id,
-                  team_task_record_id: effectiveAssignment.task.id,
-                  team_task_key: effectiveAssignment.task.task_key,
-                  team_sequence: startedEvent.sequence,
-                }
-              )
-              const specialistStartedAt = Date.now()
-              const specialistProgressMessageId = crypto.randomUUID()
-              const specialistProgressPrefix = `${effectiveAssignment.specialist.name} -> ${effectiveAssignment.task.title}`
-              const updateSpecialistProgressMessage = (
-                status: 'running' | 'completed' | 'failed' | 'cancelled'
-              ) => {
-                const elapsedSeconds = Math.max(
-                  0,
-                  Math.round((Date.now() - specialistStartedAt) / 1000)
-                )
-                const statusLabel =
-                  status === 'running'
-                    ? `Specialist running: ${specialistProgressPrefix} (${elapsedSeconds}s)`
-                    : `Specialist ${status}: ${specialistProgressPrefix} (${elapsedSeconds}s)`
-                const existing = params.agentMessages.value.find(
-                  item => item.id === specialistProgressMessageId
-                )
-                if (existing) {
-                  existing.content = statusLabel
-                  existing.timestamp = Date.now()
-                  existing.metadata = {
-                    ...existing.metadata,
-                    status,
-                    duration_ms: elapsedSeconds * 1000,
-                  }
-                  return
-                }
-                params.agentMessages.value.push({
-                  id: specialistProgressMessageId,
-                  type: 'planning',
-                  content: statusLabel,
-                  timestamp: Date.now(),
-                  metadata: {
-                    kind: 'team_v4_specialist_progress',
-                    status,
-                    duration_ms: elapsedSeconds * 1000,
-                    team_member_id: effectiveAssignment.specialist.id,
-                    team_member_name: effectiveAssignment.specialist.name,
-                    team_member_role: 'specialist',
-                    team_session_id: teamRun.run.id,
-                    team_task_record_id: effectiveAssignment.task.id,
-                    team_task_key: effectiveAssignment.task.task_key,
-                  },
-                })
-              }
-              updateSpecialistProgressMessage('running')
+              appendTeamV4TimelineEvent(startedEvent, teamRun.specialists, [teamRun.rootTask, ...assignments.map(item => item.task)])
               const specialistActivityProgress = startTeamV4SpecialistActivityProgress({
                 executionId: specialistExecutionId,
                 messages: params.agentMessages,
@@ -1184,6 +1405,9 @@ export const useAgentConversationFlow = (params: {
                 taskTitle: effectiveAssignment.task.title,
                 scrollToBottom: params.scrollMessageViewportToBottom,
               })
+              activeTeamV4ActivityDisposers.set(specialistExecutionId, () => {
+                specialistActivityProgress.dispose()
+              })
               await teamRuntimeApi.checkpointHarnessRun(
                 effectiveAssignment.harnessRun.id,
                 startedEvent.sequence
@@ -1192,10 +1416,7 @@ export const useAgentConversationFlow = (params: {
               const heartbeatTimer = window.setInterval(() => {
                 void teamRuntimeApi
                   .heartbeatHarnessRun(effectiveAssignment.harnessRun.id, 600)
-                  .then(() => {
-                    updateSpecialistProgressMessage('running')
-                    return params.refreshTeamV4Workspace?.()
-                  })
+                  .then(() => params.refreshTeamV4Workspace?.())
                   .catch(error => {
                     console.warn(
                       '[useAgentConversationFlow] Team v4 harness heartbeat failed:',
@@ -1206,6 +1427,7 @@ export const useAgentConversationFlow = (params: {
 
               let specialistFinishedSuccessfully = false
               try {
+                throwIfTeamV4ExecutionCancelled()
                 const specialistTaskPrompt = buildTeamV4SpecialistTaskPrompt(
                   effectiveAssignment,
                   fullTask,
@@ -1215,7 +1437,7 @@ export const useAgentConversationFlow = (params: {
                 )
                 const executionFinished = watchAgentExecutionFinished(
                   specialistExecutionId,
-                  360_000
+                  readTeamV4SpecialistExecutionTimeoutMs(teamRun)
                 )
                 let messageId: unknown
                 try {
@@ -1230,7 +1452,8 @@ export const useAgentConversationFlow = (params: {
                     enableRag: params.ragEnabled.value,
                     enableTenthManRule: params.tenthManEnabled.value,
                     firstMessage: task,
-                    forceTaskPlanContract: params.forceTaskPlanContract,
+                    forceTaskPlanContract: true,
+                    harnessMode: 'team',
                     harnessMaxContinuations: params.harnessMaxContinuations.value,
                     fullTask: specialistTaskPrompt,
                     workingDirectory: params.effectiveWorkingDirectory.value,
@@ -1257,6 +1480,7 @@ export const useAgentConversationFlow = (params: {
                   throw startError
                 }
                 const finished = await executionFinished.promise
+                throwIfTeamV4ExecutionCancelled()
                 if (!finished.success) {
                   throw new Error(
                     finished.error || finished.message || 'Specialist execution failed.'
@@ -1281,10 +1505,16 @@ export const useAgentConversationFlow = (params: {
                     taskKey: effectiveAssignment.task.task_key,
                   },
                 })
-                await teamRuntimeApi.checkpointHarnessRun(
-                  effectiveAssignment.harnessRun.id,
-                  completedEvent.sequence
-                )
+                appendTeamV4TimelineEvent(completedEvent, teamRun.specialists, [teamRun.rootTask, ...assignments.map(item => item.task)])
+                await teamRuntimeApi.finishHarnessRun(effectiveAssignment.harnessRun.id, {
+                  status: 'completed',
+                  checkpointSequence: completedEvent.sequence,
+                  payload: {
+                    executionId: specialistExecutionId,
+                    attemptIndex,
+                    taskKey: effectiveAssignment.task.task_key,
+                  },
+                })
                 await recordTeamV4MonitorMemory({
                   event: completedEvent,
                   eventType: 'specialist_execution_completed',
@@ -1295,7 +1525,6 @@ export const useAgentConversationFlow = (params: {
                   taskTitle: effectiveAssignment.task.title,
                   teamRun,
                 })
-                updateSpecialistProgressMessage('completed')
                 specialistActivityProgress.complete()
                 await params.refreshTeamV4Workspace?.()
                 return {
@@ -1307,8 +1536,16 @@ export const useAgentConversationFlow = (params: {
                 activeTeamV4ExecutionIds.delete(specialistExecutionId)
                 const specialistErrorMsg = specialistError?.toString?.() || String(specialistError)
                 if (isTeamV4CancellationError(specialistError)) {
+                  await teamRuntimeApi.finishHarnessRun(effectiveAssignment.harnessRun.id, {
+                    status: 'cancelled',
+                    error: 'Execution cancelled by user',
+                    payload: {
+                      executionId: specialistExecutionId,
+                      attemptIndex,
+                      taskKey: effectiveAssignment.task.task_key,
+                    },
+                  })
                   await teamRuntimeApi.updateRunState(teamRun.run.id, 'cancelled')
-                  updateSpecialistProgressMessage('cancelled')
                   specialistActivityProgress.fail('Execution cancelled by user')
                   await params.refreshTeamV4Workspace?.()
                   throw specialistError
@@ -1342,10 +1579,17 @@ export const useAgentConversationFlow = (params: {
                     taskKey: effectiveAssignment.task.task_key,
                   },
                 })
-                await teamRuntimeApi.checkpointHarnessRun(
-                  effectiveAssignment.harnessRun.id,
-                  failedEvent.sequence
-                )
+                appendTeamV4TimelineEvent(failedEvent, teamRun.specialists, [teamRun.rootTask, ...assignments.map(item => item.task)])
+                await teamRuntimeApi.finishHarnessRun(effectiveAssignment.harnessRun.id, {
+                  status: 'failed',
+                  checkpointSequence: failedEvent.sequence,
+                  error: specialistErrorMsg,
+                  payload: {
+                    executionId: specialistExecutionId,
+                    attemptIndex,
+                    taskKey: effectiveAssignment.task.task_key,
+                  },
+                })
                 await recordTeamV4MonitorMemory({
                   error: specialistErrorMsg,
                   event: failedEvent,
@@ -1356,13 +1600,13 @@ export const useAgentConversationFlow = (params: {
                   taskTitle: effectiveAssignment.task.title,
                   teamRun,
                 })
-                updateSpecialistProgressMessage('failed')
                 specialistActivityProgress.fail(specialistErrorMsg)
                 await params.refreshTeamV4Workspace?.()
                 throw specialistError
               } finally {
                 window.clearInterval(heartbeatTimer)
                 specialistActivityProgress.dispose()
+                activeTeamV4ActivityDisposers.delete(specialistExecutionId)
               }
             }
 
@@ -1403,7 +1647,7 @@ export const useAgentConversationFlow = (params: {
                 throw replanError
               }
 
-              await teamRuntimeApi.appendEvent(teamRun.run.id, {
+              const recoveryDecisionEvent = await teamRuntimeApi.appendEvent(teamRun.run.id, {
                 actorId: teamRun.orchestrator.id,
                 taskId: assignment.task.id,
                 eventType: 'orchestrator_recovery_decision',
@@ -1417,11 +1661,64 @@ export const useAgentConversationFlow = (params: {
                   targetSpecialistId: decision.targetSpecialistId || null,
                 },
               })
+              appendTeamV4TimelineEvent(recoveryDecisionEvent, teamRun.specialists, [teamRun.rootTask, ...assignments.map(item => item.task)])
 
               if (decision.action === 'ask_user') {
-                await teamRuntimeApi.updateRunState(teamRun.run.id, 'waiting_human')
-                await params.refreshTeamV4Workspace?.()
-                throw new Error(`Team v4 requires user input: ${decision.reason}`)
+                const deadlineAt = new Date(
+                  Date.now() + readTeamV4WaitingHumanTimeoutMs(teamRun),
+                ).toISOString()
+                const waitingHumanEvent = await teamRuntimeApi.appendEvent(teamRun.run.id, {
+                  actorId: teamRun.orchestrator.id,
+                  taskId: assignment.task.id,
+                  eventType: 'orchestrator_recovery_waiting_human',
+                  visibility: 'user',
+                  payload: {
+                    deadlineAt,
+                    failedSpecialistId: assignment.specialist.id,
+                    failedTaskId: assignment.task.id,
+                    reason: decision.reason,
+                    timeoutAction: 'replan_under_current_capacity',
+                  },
+                })
+                appendTeamV4TimelineEvent(
+                  waitingHumanEvent,
+                  teamRun.specialists,
+                  [teamRun.rootTask, ...assignments.map(item => item.task)],
+                )
+                const waitResult = await waitForTeamV4HumanInterventionWindow({
+                  actorId: teamRun.orchestrator.id,
+                  deadlineAt,
+                  detail: decision.reason,
+                  runId: teamRun.run.id,
+                  taskId: assignment.task.id,
+                  timelineTasks: [teamRun.rootTask, ...assignments.map(item => item.task)],
+                  teamRun,
+                  timeoutAction: 'replan_under_current_capacity',
+                  timeoutContext: {
+                    phase: 'recovery',
+                    failedSpecialistId: assignment.specialist.id,
+                    failedTaskId: assignment.task.id,
+                  },
+                })
+                if (waitResult.status === 'interrupted') {
+                  if (waitResult.state === 'cancelled') {
+                    throw new Error('Execution cancelled by user')
+                  }
+                  throw buildTeamV4WaitingHumanError(
+                    `Team v4 requires user input before recovery.\n\n${decision.reason}`,
+                  )
+                }
+                decision = await requestTeamV4OrchestratorRecoveryDecision({
+                  allowAskUser: false,
+                  assignment,
+                  attemptIndex: 1,
+                  continuationHint:
+                    'Human confirmation timed out. Continue under current capacity and do not ask_user again.',
+                  error: firstErrorMsg,
+                  goal: fullTask,
+                  specialistResults,
+                  teamRun,
+                })
               }
 
               if (decision.action === 'cancel') {
@@ -1438,7 +1735,7 @@ export const useAgentConversationFlow = (params: {
                 )
               }
 
-              const recoveryAssignment =
+              const baseRecoveryAssignment =
                 decision.action === 'reassign'
                   ? {
                       ...assignment,
@@ -1447,6 +1744,27 @@ export const useAgentConversationFlow = (params: {
                       )!,
                     }
                   : assignment
+              const recoveryLeaseSecs = Math.max(
+                30,
+                Math.floor(Number(teamRun.run.policy_json?.harnessPolicy?.leaseSecs) || 600)
+              )
+              const recoveryHarnessRun = await teamRuntimeApi.startHarnessRun(teamRun.run.id, {
+                actorId: baseRecoveryAssignment.specialist.id,
+                taskId: baseRecoveryAssignment.task.id,
+                leaseSecs: recoveryLeaseSecs,
+                metadata: {
+                  managedBy: 'harness',
+                  checkpointPolicy: 'event_sequence',
+                  planningMode: 'orchestrator_recovery',
+                  recoveryAction: decision.action,
+                  attemptIndex: 1,
+                  previousHarnessRunId: assignment.harnessRun.id,
+                },
+              })
+              const recoveryAssignment = {
+                ...baseRecoveryAssignment,
+                harnessRun: recoveryHarnessRun,
+              }
 
               try {
                 return await runSpecialistAttempt(
@@ -1479,10 +1797,14 @@ export const useAgentConversationFlow = (params: {
             ...(await runTeamV4AssignmentsWithDependencies(
               assignments,
               maxSpecialists,
-              runSpecialistAssignment
+              async (assignment, index) => {
+                throwIfTeamV4ExecutionCancelled()
+                return runSpecialistAssignment(assignment, index)
+              }
             ))
           )
-          await teamRuntimeApi.appendEvent(teamRun.run.id, {
+          throwIfTeamV4ExecutionCancelled()
+          const schedulerCompletedEvent = await teamRuntimeApi.appendEvent(teamRun.run.id, {
             actorId: teamRun.orchestrator.id,
             taskId: teamRun.rootTask.id,
             eventType: 'specialist_scheduler_completed',
@@ -1492,7 +1814,16 @@ export const useAgentConversationFlow = (params: {
               maxSpecialists,
             },
           })
+          appendTeamV4TimelineEvent(schedulerCompletedEvent, teamRun.specialists, [teamRun.rootTask, ...assignments.map(item => item.task)])
 
+          await teamRuntimeApi.finishHarnessRun(teamRun.harnessRun.id, {
+            status: 'completed',
+            checkpointSequence: schedulerCompletedEvent.sequence,
+            payload: {
+              completedAssignments: specialistResults.length,
+              maxSpecialists,
+            },
+          })
           await teamRuntimeApi.updateRunState(teamRun.run.id, 'completed')
           await params.refreshTeamV4Workspace?.()
           const orchestratorFinalMessage: AgentMessage = {
@@ -1541,9 +1872,28 @@ export const useAgentConversationFlow = (params: {
         } catch (error: any) {
           const errorMsg = error?.toString?.() || String(error)
           const runId = params.activeTeamV4RunId.value
+          if (isTeamV4WaitingHumanError(error)) {
+            appendTeamV4LocalMessage(
+              params.agentMessages,
+              error.detail,
+              {
+                kind: 'team_v4_waiting_human',
+                team_session_id: runId || null,
+              },
+              'planning' as AgentMessage['type']
+            )
+            params.stopAgentExecutionState()
+            return
+          }
           if (isTeamV4CancellationError(error)) {
             if (runId) {
               try {
+                if (activeTeamHarnessRunId) {
+                  await teamRuntimeApi.finishHarnessRun(activeTeamHarnessRunId, {
+                    status: 'cancelled',
+                    error: 'Team run cancelled by user.',
+                  })
+                }
                 await teamRuntimeApi.updateRunState(runId, 'cancelled')
                 await params.refreshTeamV4Workspace?.()
               } catch (eventError) {
@@ -1567,7 +1917,7 @@ export const useAgentConversationFlow = (params: {
           }
           if (runId) {
             try {
-              await teamRuntimeApi.appendEvent(runId, {
+              const failedEvent = await teamRuntimeApi.appendEvent(runId, {
                 actorId: null,
                 taskId: null,
                 eventType: 'team_runtime_failed',
@@ -1576,6 +1926,13 @@ export const useAgentConversationFlow = (params: {
                   error: errorMsg,
                 },
               })
+              if (activeTeamHarnessRunId) {
+                await teamRuntimeApi.finishHarnessRun(activeTeamHarnessRunId, {
+                  status: 'failed',
+                  checkpointSequence: failedEvent.sequence,
+                  error: errorMsg,
+                })
+              }
               await teamRuntimeApi.updateRunState(runId, 'failed')
               await params.refreshTeamV4Workspace?.()
             } catch (eventError) {
@@ -1596,6 +1953,9 @@ export const useAgentConversationFlow = (params: {
           )
           params.localError.value = errorMsg
           params.emitError(errorMsg)
+        } finally {
+          activeTeamV4ActivityDisposers.clear()
+          clearTeamV4AbortWindow(teamV4AbortController)
         }
         return
       }

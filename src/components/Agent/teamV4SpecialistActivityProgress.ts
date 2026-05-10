@@ -8,8 +8,7 @@ import type {
   AgentToolResultEvent,
   AgentToolResultNewEvent,
 } from '@/composables/useAgentEventTypes'
-
-type SpecialistActivityStatus = 'running' | 'completed' | 'failed'
+import { appendTeamV4TimelineMessages, buildTeamV4TimelineMessages } from './teamV4MessageTimelineSupport'
 
 interface TeamV4SpecialistActivityProgressParams {
   executionId: string
@@ -32,16 +31,56 @@ const summarizeToolResult = (payload: AgentToolResultEvent | AgentToolResultNewE
 }
 
 export const startTeamV4SpecialistActivityProgress = (params: TeamV4SpecialistActivityProgressParams) => {
-  const messageId = crypto.randomUUID()
+  const toolArgumentsByCallId = new Map<string, string>()
   const toolNamesByCallId = new Map<string, string>()
-  const startedAt = Date.now()
   const unlisteners: UnlistenFn[] = []
   let disposed = false
-  let lastActivity = 'Waiting for specialist output.'
-  let textChunkCount = 0
-  let toolCallCount = 0
-  let toolResultCount = 0
   let recordedTextStarted = false
+
+  const appendObservableEventMessage = (event: Awaited<ReturnType<typeof teamRuntimeApi.appendEvent>>) => {
+    params.messages.value = appendTeamV4TimelineMessages(
+      params.messages.value,
+      buildTeamV4TimelineMessages({
+        agents: [
+          {
+            id: params.specialistId,
+            run_id: params.runId,
+            profile_id: null,
+            role_type: 'specialist',
+            name: params.specialistName,
+            status: 'running',
+            model: null,
+            context_mode: null,
+            tool_policy_json: {},
+            metadata: {},
+            created_at: event.created_at,
+            updated_at: event.created_at,
+          },
+        ],
+        tasks: [
+          {
+            id: params.taskId,
+            run_id: params.runId,
+            parent_task_id: null,
+            task_key: params.taskKey,
+            title: params.taskTitle,
+            instruction: '',
+            status: 'running',
+            priority: 0,
+            assigned_agent_id: params.specialistId,
+            depends_on: [],
+            acceptance_criteria: null,
+            context_snapshot_id: null,
+            metadata: {},
+            created_at: event.created_at,
+            updated_at: event.created_at,
+          },
+        ],
+        events: [event],
+      }),
+    )
+    params.scrollToBottom()
+  }
 
   const recordEvent = (eventType: string, payload: Record<string, unknown>) => {
     void teamRuntimeApi.appendEvent(params.runId, {
@@ -50,51 +89,11 @@ export const startTeamV4SpecialistActivityProgress = (params: TeamV4SpecialistAc
       eventType,
       visibility: 'workspace',
       payload,
-    }).catch((error) => {
-      console.warn('[teamV4SpecialistActivityProgress] Failed to record observable event:', error)
     })
-  }
-
-  const writeMessage = (status: SpecialistActivityStatus = 'running') => {
-    if (disposed) return
-    const elapsedSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000))
-    const header = status === 'running'
-      ? `Specialist activity: ${params.specialistName} -> ${params.taskTitle} (${elapsedSeconds}s)`
-      : `Specialist activity ${status}: ${params.specialistName} -> ${params.taskTitle} (${elapsedSeconds}s)`
-    const content = [
-      header,
-      lastActivity,
-      `Text chunks: ${textChunkCount} · Tool calls: ${toolCallCount} · Tool results: ${toolResultCount}`,
-    ].join('\n')
-    const existing = params.messages.value.find((item) => item.id === messageId)
-    if (existing) {
-      existing.content = content
-      existing.timestamp = Date.now()
-      existing.metadata = {
-        ...existing.metadata,
-        status,
-        duration_ms: elapsedSeconds * 1000,
-      }
-    } else {
-      params.messages.value.push({
-        id: messageId,
-        type: 'progress',
-        content,
-        timestamp: Date.now(),
-        metadata: {
-          kind: 'team_v4_specialist_activity',
-          status,
-          duration_ms: elapsedSeconds * 1000,
-          team_member_id: params.specialistId,
-          team_member_name: params.specialistName,
-          team_member_role: 'specialist',
-          team_session_id: params.runId,
-          team_task_record_id: params.taskId,
-          team_task_key: params.taskKey,
-        },
+      .then(appendObservableEventMessage)
+      .catch((error) => {
+        console.warn('[teamV4SpecialistActivityProgress] Failed to record observable event:', error)
       })
-    }
-    params.scrollToBottom()
   }
 
   const register = async <T>(eventName: string, handler: (payload: T) => void) => {
@@ -112,7 +111,6 @@ export const startTeamV4SpecialistActivityProgress = (params: TeamV4SpecialistAc
 
   void register<AgentChunkEvent>('agent:chunk', (payload) => {
     if (payload.chunk_type !== 'text' && payload.chunk_type !== 'reasoning') return
-    textChunkCount += 1
     if (!recordedTextStarted) {
       recordedTextStarted = true
       recordEvent('specialist_text_started', {
@@ -120,54 +118,41 @@ export const startTeamV4SpecialistActivityProgress = (params: TeamV4SpecialistAc
         chunkType: payload.chunk_type,
       })
     }
-    lastActivity = payload.chunk_type === 'reasoning'
-      ? 'Specialist is reasoning.'
-      : 'Specialist is writing an answer.'
-    writeMessage()
   })
 
   void register<AgentToolCallCompleteEvent>('agent:tool_call_complete', (payload) => {
-    toolCallCount += 1
+    toolArgumentsByCallId.set(payload.tool_call_id, payload.arguments)
     toolNamesByCallId.set(payload.tool_call_id, payload.tool_name)
-    lastActivity = `Calling tool: ${payload.tool_name}`
     recordEvent('specialist_tool_started', {
       executionId: params.executionId,
       toolCallId: payload.tool_call_id,
+      arguments: payload.arguments,
       toolName: payload.tool_name,
     })
-    writeMessage()
   })
 
   void register<AgentToolResultEvent | AgentToolResultNewEvent>('agent:tool_result', (payload) => {
-    toolResultCount += 1
+    const toolCallId = 'tool_call_id' in payload ? payload.tool_call_id : null
     const toolName = 'tool_name' in payload
       ? payload.tool_name
       : toolNamesByCallId.get(payload.tool_call_id) || payload.tool_call_id
+    const rawResult = 'result' in payload ? payload.result : payload.tool_result
     const summary = summarizeToolResult(payload)
-    lastActivity = summary
-      ? `Tool result: ${toolName} -> ${summary}`
-      : `Tool result: ${toolName}`
     recordEvent('specialist_tool_result', {
       executionId: params.executionId,
-      toolCallId: 'tool_call_id' in payload ? payload.tool_call_id : null,
+      arguments: toolCallId ? toolArgumentsByCallId.get(toolCallId) || null : null,
+      result: rawResult,
+      toolCallId,
       toolName,
       summary,
       success: 'success' in payload ? payload.success === true : undefined,
+      trackedArtifacts: payload.tracked_artifacts,
     })
-    writeMessage()
   })
 
-  writeMessage()
-
   return {
-    complete() {
-      lastActivity = 'Specialist execution completed.'
-      writeMessage('completed')
-    },
-    fail(error: string) {
-      lastActivity = `Specialist execution failed: ${error}`
-      writeMessage('failed')
-    },
+    complete() {},
+    fail(_error: string) {},
     dispose() {
       disposed = true
       while (unlisteners.length > 0) {

@@ -23,6 +23,9 @@ use crate::commands::ai_runtime_harness::{
     should_continue_agent_harness, snapshot_agent_harness_ledger, start_agent_harness_heartbeat,
     AgentHarnessLedgerWatchdog, AgentHarnessMode, AgentHarnessStreamEmptyDecision,
 };
+use crate::commands::ai_runtime_rag_context::{
+    append_rag_knowledge_rule, prepend_rag_source_evidence,
+};
 use crate::commands::ai_task_support::{
     build_virtual_tool_context, complete_external_profile_run_failure,
     complete_external_profile_run_success, load_external_profile_context,
@@ -1312,20 +1315,9 @@ pub async fn agent_execute(
                 {
                     Ok((context, citations)) => {
                         if !context.trim().is_empty() {
-                            let base = base_system_prompt.unwrap_or_default();
-                            let policy = "you must strictly answer the question based on the evidence. When citing evidence in your response, use the [SOURCE n] format. If the evidence is insufficient, please answer directly and avoid fabricating. ";
-                            let augmented = if base.trim().is_empty() {
-                                format!(
-                                    "[rule of knowledge]\n{}\n\n[Source Evidence Block]\n{}",
-                                    policy, context
-                                )
-                            } else {
-                                format!(
-                                    "{}\n\n[rule of knowledge]\n{}\n\n[Source Evidence Block]\n{}",
-                                    base, policy, context
-                                )
-                            };
-                            base_system_prompt = Some(augmented);
+                            base_system_prompt =
+                                Some(append_rag_knowledge_rule(base_system_prompt.take()));
+                            augmented_task = prepend_rag_source_evidence(&augmented_task, &context);
 
                             let _ = app_handle.emit(
                                 "ai_meta_info",

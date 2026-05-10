@@ -25,6 +25,22 @@ export interface AssistantProfileOption {
   runMode: AssistantRunMode
 }
 
+export const ASSISTANT_TEAM_ROLES = ['assistant', 'orchestrator', 'specialist', 'monitor'] as const
+
+export const normalizeAssistantTeamRole = (value: unknown): AssistantProfileOption['teamRole'] =>
+  typeof value === 'string' && (ASSISTANT_TEAM_ROLES as readonly string[]).includes(value)
+    ? (value as AssistantProfileOption['teamRole'])
+    : 'assistant'
+
+export const canAssistantProfileUseTeamRunMode = (
+  profile: Pick<AssistantProfileOption, 'teamRole'> | null | undefined
+) => profile?.teamRole === 'orchestrator'
+
+export const normalizeAssistantRunModeForProfile = (
+  profile: Pick<AssistantProfileOption, 'teamRole' | 'runMode'>
+): AssistantRunMode =>
+  profile.runMode === 'team' && canAssistantProfileUseTeamRunMode(profile) ? 'team' : 'assistant'
+
 export interface TeamProfileOption {
   id: string
   name: string
@@ -33,6 +49,8 @@ export interface TeamProfileOption {
   specialistProfileIds: string[]
   monitorProfileId: string
   defaultModel?: string | null
+  defaultTeamOrchestrationPresetId?: string | null
+  defaultTeamRecoveryPresetId?: string | null
   contextMode: AssistantContextMode
   memoryPolicy: Record<string, any>
   toolPolicyMatrix: Record<string, any>
@@ -63,7 +81,15 @@ export const DEFAULT_AGENT_HARNESS_MAX_CONTINUATIONS = 6
 export const MAX_AGENT_HARNESS_MAX_CONTINUATIONS = 20
 const DEFAULT_TEAM_ROLE_TOOLS: Record<string, string[]> = {
   orchestrator: ['ask_user_question'],
-  specialist: ['shell', 'file_read', 'file_edit', 'file_write', 'grep', 'http_request', 'web_search'],
+  specialist: [
+    'shell',
+    'file_read',
+    'file_edit',
+    'file_write',
+    'grep',
+    'http_request',
+    'web_search',
+  ],
   monitor: ['tenth_man_review'],
 }
 
@@ -86,36 +112,40 @@ export const normalizeHarnessMaxContinuations = (value: unknown): number => {
   return Math.min(MAX_AGENT_HARNESS_MAX_CONTINUATIONS, Math.max(0, parsed))
 }
 
-const normalizeAssistantProfile = (profile: AssistantProfileOption): AssistantProfileOption => ({
-  ...profile,
-  id: profile.id.trim(),
-  label: profile.label.trim(),
-  description: profile.description.trim(),
-  teamRole: ['assistant', 'orchestrator', 'specialist', 'monitor'].includes(profile.teamRole || '')
-    ? profile.teamRole
-    : 'assistant',
-  defaultModel: profile.defaultModel?.trim() || null,
-  defaultRagEnabled: profile.defaultRagEnabled === true,
-  defaultWebSearchEnabled: profile.defaultWebSearchEnabled === true,
-  defaultToolsEnabled: profile.defaultToolsEnabled === true,
-  defaultTenthManEnabled: profile.defaultTenthManEnabled === true,
-  defaultToolSelectionStrategy: TOOL_SELECTION_STRATEGIES.has(profile.defaultToolSelectionStrategy || '')
-    ? profile.defaultToolSelectionStrategy
-    : 'Keyword',
-  defaultMaxTools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
-  defaultHarnessMaxContinuations: normalizeHarnessMaxContinuations(profile.defaultHarnessMaxContinuations),
-  defaultPreselectedTools: normalizeToolIds(profile.defaultPreselectedTools),
-  defaultDisabledTools: normalizeToolIds(profile.defaultDisabledTools),
-  defaultManualTools: normalizeToolIds(profile.defaultManualTools),
-  defaultTeamOrchestrationPresetId: profile.defaultTeamOrchestrationPresetId?.trim() || null,
-  defaultTeamRecoveryPresetId: profile.defaultTeamRecoveryPresetId?.trim() || null,
-  defaultTeamProfileId: profile.defaultTeamProfileId?.trim() || null,
-})
+const normalizeAssistantProfile = (profile: AssistantProfileOption): AssistantProfileOption => {
+  const teamRole = normalizeAssistantTeamRole(profile.teamRole)
+  return {
+    ...profile,
+    id: profile.id.trim(),
+    label: profile.label.trim(),
+    description: profile.description.trim(),
+    teamRole,
+    runMode: normalizeAssistantRunModeForProfile({ teamRole, runMode: profile.runMode }),
+    defaultModel: profile.defaultModel?.trim() || null,
+    defaultRagEnabled: profile.defaultRagEnabled === true,
+    defaultWebSearchEnabled: profile.defaultWebSearchEnabled === true,
+    defaultToolsEnabled: profile.defaultToolsEnabled === true,
+    defaultTenthManEnabled: profile.defaultTenthManEnabled === true,
+    defaultToolSelectionStrategy: TOOL_SELECTION_STRATEGIES.has(
+      profile.defaultToolSelectionStrategy || ''
+    )
+      ? profile.defaultToolSelectionStrategy
+      : 'Keyword',
+    defaultMaxTools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
+    defaultHarnessMaxContinuations: normalizeHarnessMaxContinuations(
+      profile.defaultHarnessMaxContinuations
+    ),
+    defaultPreselectedTools: normalizeToolIds(profile.defaultPreselectedTools),
+    defaultDisabledTools: normalizeToolIds(profile.defaultDisabledTools),
+    defaultManualTools: normalizeToolIds(profile.defaultManualTools),
+    defaultTeamOrchestrationPresetId: profile.defaultTeamOrchestrationPresetId?.trim() || null,
+    defaultTeamRecoveryPresetId: profile.defaultTeamRecoveryPresetId?.trim() || null,
+    defaultTeamProfileId: profile.defaultTeamProfileId?.trim() || null,
+  }
+}
 
 const normalizeJsonObject = (value: unknown): Record<string, any> =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, any>
-    : {}
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, any>) : {}
 
 const normalizeTeamToolPolicyMatrix = (value: unknown): Record<string, any> => {
   const matrix = normalizeJsonObject(value)
@@ -123,10 +153,13 @@ const normalizeTeamToolPolicyMatrix = (value: unknown): Record<string, any> => {
     Object.entries(DEFAULT_TEAM_ROLE_TOOLS).map(([role, defaultTools]) => {
       const rolePolicy = normalizeJsonObject(matrix[role])
       const tools = normalizeToolIds(
-        rolePolicy.tools || rolePolicy.allowed || rolePolicy.manualTools || rolePolicy.preselectedTools,
+        rolePolicy.tools ||
+          rolePolicy.allowed ||
+          rolePolicy.manualTools ||
+          rolePolicy.preselectedTools
       )
       return [role, { tools: tools.length > 0 ? tools : defaultTools }]
-    }),
+    })
   )
 }
 
@@ -136,9 +169,13 @@ const normalizeTeamProfile = (profile: TeamProfileOption): TeamProfileOption => 
   name: profile.name.trim(),
   description: profile.description.trim(),
   orchestratorProfileId: profile.orchestratorProfileId.trim(),
-  specialistProfileIds: Array.from(new Set((profile.specialistProfileIds || []).map(id => id.trim()).filter(Boolean))),
+  specialistProfileIds: Array.from(
+    new Set((profile.specialistProfileIds || []).map(id => id.trim()).filter(Boolean))
+  ),
   monitorProfileId: profile.monitorProfileId.trim(),
   defaultModel: profile.defaultModel?.trim() || null,
+  defaultTeamOrchestrationPresetId: profile.defaultTeamOrchestrationPresetId?.trim() || null,
+  defaultTeamRecoveryPresetId: profile.defaultTeamRecoveryPresetId?.trim() || null,
   contextMode: profile.contextMode || 'claude-like',
   memoryPolicy: normalizeJsonObject(profile.memoryPolicy),
   toolPolicyMatrix: normalizeTeamToolPolicyMatrix(profile.toolPolicyMatrix),

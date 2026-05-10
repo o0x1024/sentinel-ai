@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use sentinel_db::Database;
 use sentinel_db::DatabaseService;
@@ -91,7 +91,7 @@ pub(super) async fn register_skills_tool_guard(
             let skill_id = tool_args.skill_id.as_deref();
             let requires_skill = matches!(
                 tool_args.action,
-                SkillsAction::Load | SkillsAction::ReadFile
+                SkillsAction::Load | SkillsAction::ReadSkillFile
             );
             if requires_skill {
                 if let Some(id) = skill_id {
@@ -800,69 +800,6 @@ pub(super) fn streaming_content_needs_evidence_review(
 
     let claim_text = focus_hint.unwrap_or(trimmed);
     relevant_evidence_score(claim_text, records) < minimum_evidence_score.max(1)
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct TeamStreamContext {
-    pub session_id: String,
-    pub stream_id: String,
-    pub member_id: Option<String>,
-    pub phase: String,
-}
-
-pub(super) fn parse_team_stream_context(execution_id: &str) -> Option<TeamStreamContext> {
-    if !execution_id.starts_with("team-v3:") {
-        return None;
-    }
-    let parts = execution_id.split(':').collect::<Vec<_>>();
-    if parts.len() < 4 {
-        return None;
-    }
-    let session_id = parts.get(1)?.trim().to_string();
-    if session_id.is_empty() {
-        return None;
-    }
-    let member_id = if parts.len() >= 5 {
-        parts
-            .get(3)
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-    } else {
-        None
-    };
-    Some(TeamStreamContext {
-        session_id,
-        stream_id: execution_id.to_string(),
-        member_id,
-        phase: "task_execution".to_string(),
-    })
-}
-
-pub(super) fn emit_team_stream_done(
-    app: &AppHandle,
-    context: Option<&TeamStreamContext>,
-    content: Option<String>,
-    error: Option<String>,
-    had_delta: bool,
-) {
-    let Some(ctx) = context else {
-        return;
-    };
-    let mut payload = json!({
-        "session_id": ctx.session_id.clone(),
-        "stream_id": ctx.stream_id.clone(),
-        "member_id": ctx.member_id.clone(),
-        "member_name": ctx.member_id.clone(),
-        "phase": ctx.phase.clone(),
-        "had_delta": had_delta,
-    });
-    if let Some(content) = content {
-        payload["content"] = json!(content);
-    }
-    if let Some(error) = error {
-        payload["error"] = json!(error);
-    }
-    let _ = app.emit("agent_team:message_stream_done", &payload);
 }
 
 pub(super) async fn persist_ai_message_with_retry(

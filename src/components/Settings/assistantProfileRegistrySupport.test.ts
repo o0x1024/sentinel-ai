@@ -4,7 +4,11 @@ import {
   normalizeHarnessMaxContinuations,
   type AssistantProfileOption,
 } from '@/components/Agent/assistantProfiles'
-import { applyToolConfigToProfile, profileToToolConfig } from '@/components/Settings/assistantProfileRegistrySupport'
+import {
+  applyToolConfigToProfile,
+  normalizeAssistantProfileDraft,
+  profileToToolConfig,
+} from '@/components/Settings/assistantProfileRegistrySupport'
 
 const createProfile = (): AssistantProfileOption => ({
   id: 'assistant.custom.1',
@@ -83,5 +87,21 @@ describe('assistantProfileRegistrySupport', () => {
     expect(normalizeHarnessMaxContinuations(undefined)).toBe(6)
     expect(normalizeHarnessMaxContinuations(-1)).toBe(0)
     expect(normalizeHarnessMaxContinuations(99)).toBe(20)
+  })
+
+  it('normalizes team run mode back to assistant for non-orchestrator profiles', () => {
+    const profile = createProfile()
+    profile.teamRole = 'assistant'
+    profile.runMode = 'team'
+
+    expect(normalizeAssistantProfileDraft(profile).runMode).toBe('assistant')
+  })
+
+  it('keeps team run mode for orchestrator entry profiles', () => {
+    const profile = createProfile()
+    profile.teamRole = 'orchestrator'
+    profile.runMode = 'team'
+
+    expect(normalizeAssistantProfileDraft(profile).runMode).toBe('team')
   })
 })

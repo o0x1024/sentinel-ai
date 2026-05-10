@@ -1,11 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { onUnmounted, ref, type Ref } from 'vue'
-import type { AssistantProfileOption } from './assistantProfiles'
-import type {
-  AssistantConversationBinding,
-  AssistantContextMode,
-} from './agentDraftTypes'
-import type { TeamOrchestrationPresetId, TeamRecoveryPresetId } from './teamOrchestrationTypes'
+import type { AssistantProfileOption, TeamProfileOption } from './assistantProfiles'
+import type { AssistantConversationBinding, AssistantContextMode } from './agentDraftTypes'
 import {
   normalizeToolIdList,
   normalizeUiToolConfigPayload,
@@ -20,24 +16,26 @@ export const useAgentConversationBinding = (params: {
   conversationId: Ref<string | null>
   currentBrowserShellDirectWriteEnabled: Ref<boolean>
   currentBrowserShellSessionId: Ref<string | null>
-  activeTeamSessionId: Ref<string | null>
   assistantGlobalDefaultModel: Ref<string>
   assistantSelectedModel: Ref<string>
   defaultAssistantProfileId: Ref<string>
+  defaultTeamProfileId: Ref<string>
   defaultToolConfig: Ref<UiToolConfigPayload>
   toolConfig: Ref<UiToolConfigPayload>
   toolsEnabled: Ref<boolean>
-  teamSelectedOrchestrationPresetId: Ref<TeamOrchestrationPresetId | null>
-  teamSelectedRecoveryPresetId: Ref<TeamRecoveryPresetId>
-  applyConversationBinding: (binding: Partial<AssistantConversationBinding> | null | undefined) => void
+  applyConversationBinding: (
+    binding: Partial<AssistantConversationBinding> | null | undefined
+  ) => void
   applyProfilePreset: (profile: AssistantProfileOption) => void
   getAssistantProfileOption: (profileId: string) => AssistantProfileOption | null
+  getTeamProfileOption: (profileId: string) => TeamProfileOption | null
   handleToggleTeamMode: (enabled: boolean) => Promise<void>
   resetSessionSettings: () => void
   setAssistantSelectedModel: (value: string, options?: { persist?: boolean }) => void
   setContextMode: (contextMode: AssistantContextMode) => void
   setProfileId: (profileId: string) => void
   setRunMode: (runMode: 'assistant' | 'team') => void
+  setTeamProfileId: (teamProfileId: string) => void
   toConversationBinding: (extras?: {
     browserShellDirectWriteEnabled?: boolean
     browserShellSessionId?: string | null
@@ -51,14 +49,17 @@ export const useAgentConversationBinding = (params: {
   const conversationBindingReadyId = ref<string | null>(null)
   let conversationBindingSaveTimer: ReturnType<typeof setTimeout> | null = null
 
-  const buildProfileToolConfigDefault = (profile: AssistantProfileOption, enabledOverride?: boolean) => {
-    const enabled = typeof enabledOverride === 'boolean'
-      ? enabledOverride
-      : profile.defaultToolsEnabled === true
+  const buildProfileToolConfigDefault = (
+    profile: AssistantProfileOption,
+    enabledOverride?: boolean
+  ) => {
+    const enabled =
+      typeof enabledOverride === 'boolean' ? enabledOverride : profile.defaultToolsEnabled === true
     return {
       ...params.defaultToolConfig.value,
       enabled,
-      selection_strategy: profile.defaultToolSelectionStrategy || params.defaultToolConfig.value.selection_strategy,
+      selection_strategy:
+        profile.defaultToolSelectionStrategy || params.defaultToolConfig.value.selection_strategy,
       max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
       preselected_tools: normalizeToolIdList(profile.defaultPreselectedTools),
       disabled_tools: normalizeToolIdList(profile.defaultDisabledTools),
@@ -67,7 +68,8 @@ export const useAgentConversationBinding = (params: {
   }
 
   const applyProfileModelDefault = (profile: AssistantProfileOption) => {
-    const defaultModel = profile.defaultModel?.trim() || params.assistantGlobalDefaultModel.value.trim()
+    const defaultModel =
+      profile.defaultModel?.trim() || params.assistantGlobalDefaultModel.value.trim()
     params.setAssistantSelectedModel(defaultModel, { persist: false })
   }
 
@@ -77,50 +79,49 @@ export const useAgentConversationBinding = (params: {
     params.toolConfig.value = nextToolConfig
   }
 
-  const applyProfileTeamPresetDefaults = (profile: AssistantProfileOption) => {
-    if (profile.runMode !== 'team' || params.activeTeamSessionId.value) return
-    const orchestrationPresetId = profile.defaultTeamOrchestrationPresetId?.trim()
-    const recoveryPresetId = profile.defaultTeamRecoveryPresetId?.trim()
-    if (orchestrationPresetId) {
-      params.teamSelectedOrchestrationPresetId.value = orchestrationPresetId as TeamOrchestrationPresetId
-    }
-    if (recoveryPresetId) {
-      params.teamSelectedRecoveryPresetId.value = recoveryPresetId as TeamRecoveryPresetId
-    }
-  }
-
   const handleAssistantProfileChange = (profileId: string) => {
-    const profile = params.getAssistantProfileOption(profileId)
+    const normalizedProfileId = profileId.trim()
+    if (!normalizedProfileId) return
+
+    const profile = params.getAssistantProfileOption(normalizedProfileId)
     if (profile) {
       params.applyProfilePreset(profile)
       applyProfileModelDefault(profile)
       applyProfileToolsDefault(profile)
-      applyProfileTeamPresetDefaults(profile)
-      void params.handleToggleTeamMode(profile.runMode === 'team')
+      params.setTeamProfileId('')
+      void params.handleToggleTeamMode(false)
       return
     }
-    params.setProfileId(profileId)
+
+    const teamProfile = params.getTeamProfileOption(normalizedProfileId)
+    if (teamProfile) {
+      params.setTeamProfileId(teamProfile.id)
+      params.setRunMode('team')
+      void params.handleToggleTeamMode(true)
+      return
+    }
+
+    params.setProfileId(normalizedProfileId)
   }
 
-  const handleAssistantContextModeChange = (mode: 'claude-like' | 'codex-like' | 'sentinel-like') => {
+  const handleAssistantContextModeChange = (
+    mode: 'claude-like' | 'codex-like' | 'sentinel-like'
+  ) => {
     params.setContextMode(mode)
-  }
-
-  const handleAssistantRunModeChange = async (mode: 'assistant' | 'team') => {
-    params.setRunMode(mode)
-    await params.handleToggleTeamMode(mode === 'team')
   }
 
   const applyConversationBindingState = (binding: AssistantConversationBinding | null) => {
     params.applyConversationBinding(binding)
     params.bindBrowserShellSession(binding?.browserShellSessionId?.trim() || null)
     params.setBrowserShellDirectWriteEnabled(binding?.browserShellDirectWriteEnabled === true)
-    const boundProfile = binding?.profileId ? params.getAssistantProfileOption(binding.profileId) : null
+    const boundProfile = binding?.profileId
+      ? params.getAssistantProfileOption(binding.profileId)
+      : null
     const profileToolConfig = boundProfile
       ? buildProfileToolConfigDefault(
-        boundProfile,
-        typeof binding?.toolsEnabled === 'boolean' ? binding.toolsEnabled : undefined,
-      )
+          boundProfile,
+          typeof binding?.toolsEnabled === 'boolean' ? binding.toolsEnabled : undefined
+        )
       : null
 
     if (binding?.selectedModel) {
@@ -132,7 +133,7 @@ export const useAgentConversationBinding = (params: {
     if (binding?.toolConfig) {
       const nextToolConfig = normalizeUiToolConfigPayload(
         binding.toolConfig,
-        profileToolConfig || params.toolConfig.value,
+        profileToolConfig || params.toolConfig.value
       )
       params.toolsEnabled.value = nextToolConfig.enabled
       params.toolConfig.value = nextToolConfig
@@ -157,9 +158,9 @@ export const useAgentConversationBinding = (params: {
     const defaultProfile = params.getAssistantProfileOption(defaultProfileId)
     if (defaultProfile) {
       params.applyProfilePreset(defaultProfile)
+      params.setTeamProfileId(params.defaultTeamProfileId.value.trim())
       applyProfileModelDefault(defaultProfile)
       applyProfileToolsDefault(defaultProfile)
-      applyProfileTeamPresetDefaults(defaultProfile)
       return
     }
     params.setProfileId(defaultProfileId)
@@ -175,9 +176,12 @@ export const useAgentConversationBinding = (params: {
     isHydratingConversationBinding.value = true
     conversationBindingReadyId.value = null
     try {
-      const binding = await invoke<AssistantConversationBinding | null>('get_ai_conversation_binding', {
-        conversationId: targetConversationId,
-      })
+      const binding = await invoke<AssistantConversationBinding | null>(
+        'get_ai_conversation_binding',
+        {
+          conversationId: targetConversationId,
+        }
+      )
       if (params.conversationId.value !== targetConversationId) return
       if (binding) {
         applyConversationBindingState(binding)
@@ -198,7 +202,7 @@ export const useAgentConversationBinding = (params: {
     }
   }
 
-  const buildCurrentConversationBinding = () => (
+  const buildCurrentConversationBinding = () =>
     params.toConversationBinding({
       browserShellDirectWriteEnabled: params.currentBrowserShellDirectWriteEnabled.value,
       browserShellSessionId: params.currentBrowserShellSessionId.value,
@@ -206,7 +210,6 @@ export const useAgentConversationBinding = (params: {
       toolsEnabled: params.toolsEnabled.value,
       toolConfig: params.toolConfig.value,
     })
-  )
 
   const persistConversationBinding = async (targetConversationId: string) => {
     const binding = buildCurrentConversationBinding()
@@ -228,7 +231,8 @@ export const useAgentConversationBinding = (params: {
 
     conversationBindingSaveTimer = setTimeout(async () => {
       try {
-        if (!params.conversationId.value || params.conversationId.value !== targetConversationId) return
+        if (!params.conversationId.value || params.conversationId.value !== targetConversationId)
+          return
         await persistConversationBinding(targetConversationId)
       } catch (error) {
         console.warn('[useAgentConversationBinding] Failed to persist conversation binding:', error)
@@ -249,7 +253,6 @@ export const useAgentConversationBinding = (params: {
     buildCurrentConversationBinding,
     handleAssistantContextModeChange,
     handleAssistantProfileChange,
-    handleAssistantRunModeChange,
     loadConversationBinding,
     schedulePersistConversationBinding,
   }

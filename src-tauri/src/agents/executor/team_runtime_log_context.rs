@@ -60,36 +60,6 @@ fn parse_team_v4_execution_id(execution_id: &str) -> Option<TeamRuntimeLogContex
     })
 }
 
-fn parse_team_v3_execution_id(execution_id: &str) -> Option<TeamRuntimeLogContext> {
-    if !execution_id.starts_with("team-v3:") {
-        return None;
-    }
-    let parts = execution_id.split(':').collect::<Vec<_>>();
-    let run_id = parts.get(1)?.trim();
-    if run_id.is_empty() {
-        return None;
-    }
-    let agent_id = if parts.len() >= 5 {
-        parts
-            .get(3)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    } else {
-        None
-    };
-    Some(TeamRuntimeLogContext {
-        architecture: "team_v3".to_string(),
-        run_id: run_id.to_string(),
-        task_id: None,
-        task_title: None,
-        agent_id,
-        agent_name: None,
-        role_type: None,
-        phase: "task_execution".to_string(),
-        attempt_index: None,
-    })
-}
-
 async fn enrich_team_v4_context(
     mut context: TeamRuntimeLogContext,
     db: &Arc<DatabaseService>,
@@ -169,8 +139,7 @@ pub(crate) async fn resolve_team_runtime_log_context(
     execution_id: &str,
     db: Option<&Arc<DatabaseService>>,
 ) -> Option<TeamRuntimeLogContext> {
-    let context = parse_team_v4_execution_id(execution_id)
-        .or_else(|| parse_team_v3_execution_id(execution_id))?;
+    let context = parse_team_v4_execution_id(execution_id)?;
     if context.architecture == "team_v4" {
         if let Some(db) = db {
             return Some(enrich_team_v4_context(context, db).await);

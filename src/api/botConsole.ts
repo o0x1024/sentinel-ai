@@ -154,8 +154,8 @@ export async function listBotPeers(params: {
 }): Promise<BotPeer[]> {
   return await invoke<BotPeer[]>('list_bot_peers', {
     transport: params.transport ?? null,
-    account_id: params.accountId ?? null,
-    peer_type: params.peerType ?? null,
+    accountId: params.accountId ?? null,
+    peerType: params.peerType ?? null,
     limit: params.limit ?? null,
   })
 }
@@ -169,9 +169,9 @@ export async function listBotMessagesForPeer(params: {
 }): Promise<BotMessage[]> {
   return await invoke<BotMessage[]>('list_bot_messages_for_peer', {
     transport: params.transport,
-    account_id: params.accountId,
-    peer_type: params.peerType,
-    peer_id: params.peerId,
+    accountId: params.accountId,
+    peerType: params.peerType,
+    peerId: params.peerId,
     limit: params.limit ?? null,
   })
 }
@@ -185,9 +185,9 @@ export async function listBotExecutionRunsForPeer(params: {
 }): Promise<BotExecutionRun[]> {
   return await invoke<BotExecutionRun[]>('list_bot_execution_runs_for_peer', {
     transport: params.transport,
-    account_id: params.accountId,
-    peer_type: params.peerType,
-    peer_id: params.peerId,
+    accountId: params.accountId,
+    peerType: params.peerType,
+    peerId: params.peerId,
     limit: params.limit ?? null,
   })
 }
@@ -200,9 +200,9 @@ export async function listBotSchedules(params: {
 }): Promise<BotSchedule[]> {
   return await invoke<BotSchedule[]>('list_bot_schedules', {
     transport: params.transport,
-    account_id: params.accountId,
-    peer_type: params.peerType ?? null,
-    peer_id: params.peerId ?? null,
+    accountId: params.accountId,
+    peerType: params.peerType ?? null,
+    peerId: params.peerId ?? null,
   })
 }
 
@@ -211,7 +211,7 @@ export async function listBotScheduleRuns(
   limit?: number,
 ): Promise<BotScheduleRun[]> {
   return await invoke<BotScheduleRun[]>('list_bot_schedule_runs', {
-    schedule_id: scheduleId,
+    scheduleId: scheduleId,
     limit: limit ?? null,
   })
 }

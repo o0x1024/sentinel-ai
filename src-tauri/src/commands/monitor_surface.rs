@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -112,12 +112,13 @@ async fn upsert_artifact_asset(
     display_name: Option<String>,
     artifact: serde_json::Value,
 ) -> Result<(), String> {
+    let normalized_asset_name = normalize_surface_asset_key(asset_type, asset_name);
     let id = upsert_surface_shell_asset(
         db_service,
         program_id,
         discovery_task_id,
         asset_type,
-        asset_name,
+        &normalized_asset_name,
         display_name,
         plugin_id,
         Some(artifact.clone()),
@@ -129,7 +130,7 @@ async fn upsert_artifact_asset(
         .await
         .map_err(|e| e.to_string())?;
 
-    ids.insert((asset_type.to_string(), asset_name.to_string()), id);
+    ids.insert((asset_type.to_string(), normalized_asset_name), id);
     Ok(())
 }
 
@@ -145,7 +146,38 @@ fn json_to_string(value: Option<&Value>) -> Option<String> {
 }
 
 fn fingerprint_identity(asset_type: &str, asset_key: &str) -> (String, String) {
-    (asset_type.to_string(), asset_key.to_string())
+    (
+        asset_type.to_string(),
+        normalize_surface_asset_key(asset_type, asset_key),
+    )
+}
+
+fn normalize_surface_asset_key(asset_type: &str, asset_key: &str) -> String {
+    if asset_type != "web" {
+        return asset_key.trim().to_string();
+    }
+
+    normalize_web_asset_key(asset_key)
+}
+
+fn normalize_web_asset_key(asset_key: &str) -> String {
+    let trimmed = asset_key.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let Ok(mut url) = url::Url::parse(trimmed) else {
+        return trimmed.trim_end_matches('/').to_string();
+    };
+
+    if url.path() == "/" {
+        url.set_path("");
+    }
+    if url.query().is_none() && url.fragment().is_none() {
+        return url.to_string().trim_end_matches('/').to_string();
+    }
+
+    url.to_string()
 }
 
 fn favicon_hash_from_evidence(object: &serde_json::Map<String, Value>) -> Option<&str> {
@@ -158,9 +190,21 @@ fn favicon_hash_from_evidence(object: &serde_json::Map<String, Value>) -> Option
 
     object
         .get("content_json")
-        .and_then(|value| value.get("icon_hash"))
+        .and_then(|value| value.get("icon_hash").or_else(|| value.get("favicon_hash")))
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
+}
+
+fn collect_materialized_surface_asset_ids(
+    ids: &HashMap<(String, String), String>,
+    enriched_asset_ids: &[String],
+) -> Vec<String> {
+    let mut affected_asset_ids: HashSet<String> = ids.values().cloned().collect();
+    affected_asset_ids.extend(enriched_asset_ids.iter().cloned());
+
+    let mut affected_asset_ids: Vec<String> = affected_asset_ids.into_iter().collect();
+    affected_asset_ids.sort();
+    affected_asset_ids
 }
 
 fn required_string_field(
@@ -279,12 +323,13 @@ async fn resolve_surface_asset_id(
     asset_key: &str,
 ) -> Result<Option<String>, String> {
     if let Some(asset_type) = asset_type {
-        if let Some(id) = ids.get(&(asset_type.to_string(), asset_key.to_string())) {
+        let normalized_asset_key = normalize_surface_asset_key(asset_type, asset_key);
+        if let Some(id) = ids.get(&(asset_type.to_string(), normalized_asset_key.clone())) {
             return Ok(Some(id.clone()));
         }
 
         return db_service
-            .get_surface_asset_by_identity(program_id, asset_type, asset_key)
+            .get_surface_asset_by_identity(program_id, asset_type, &normalized_asset_key)
             .await
             .map(|asset| asset.map(|asset| asset.id))
             .map_err(|e| e.to_string());
@@ -299,12 +344,13 @@ async fn resolve_surface_asset_id(
         "ip",
         "certificate",
     ] {
-        if let Some(id) = ids.get(&(candidate_type.to_string(), asset_key.to_string())) {
+        let normalized_asset_key = normalize_surface_asset_key(candidate_type, asset_key);
+        if let Some(id) = ids.get(&(candidate_type.to_string(), normalized_asset_key.clone())) {
             return Ok(Some(id.clone()));
         }
 
         if let Some(asset) = db_service
-            .get_surface_asset_by_identity(program_id, candidate_type, asset_key)
+            .get_surface_asset_by_identity(program_id, candidate_type, &normalized_asset_key)
             .await
             .map_err(|e| e.to_string())?
         {
@@ -431,14 +477,18 @@ async fn materialize_surface_fingerprints(
             metadata_json: Some(fingerprint.to_string()),
         };
 
-        db_service
-            .create_surface_fingerprint(&fingerprint_row)
-            .await
-            .map_err(|e| e.to_string())?;
-
         if asset_type == "web" && fingerprint_type == "favicon" {
             db_service
+                .replace_surface_favicon_fingerprint(&fingerprint_row)
+                .await
+                .map_err(|e| e.to_string())?;
+            db_service
                 .update_surface_web_favicon_hash(&asset_id, &fingerprint_value, &observed_at)
+                .await
+                .map_err(|e| e.to_string())?;
+        } else {
+            db_service
+                .create_surface_fingerprint(&fingerprint_row)
                 .await
                 .map_err(|e| e.to_string())?;
         }
@@ -472,10 +522,17 @@ async fn materialize_surface_fingerprints(
                 ),
             };
 
-            db_service
-                .create_surface_evidence(&evidence_row)
-                .await
-                .map_err(|e| e.to_string())?;
+            if asset_type == "web" && fingerprint_type == "favicon" {
+                db_service
+                    .replace_surface_favicon_fingerprint_evidence(&evidence_row)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            } else {
+                db_service
+                    .create_surface_evidence(&evidence_row)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
         }
     }
 
@@ -561,24 +618,38 @@ async fn materialize_surface_evidence(
             metadata_json: Some(evidence.to_string()),
         };
 
-        db_service
-            .create_surface_evidence(&row)
-            .await
-            .map_err(|e| e.to_string())?;
-
         if let Some(asset_id) = asset_id {
             if asset_type == "web" {
                 if let Some(favicon_hash) = favicon_hash_from_evidence(object) {
                     db_service
+                        .replace_surface_favicon_metadata_evidence(&row)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    db_service
                         .update_surface_web_favicon_hash(&asset_id, favicon_hash, &collected_at)
                         .await
                         .map_err(|e| e.to_string())?;
+                } else {
+                    db_service
+                        .create_surface_evidence(&row)
+                        .await
+                        .map_err(|e| e.to_string())?;
                 }
+            } else {
+                db_service
+                    .create_surface_evidence(&row)
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
 
             if !created_in_current_run {
                 outcome.record_existing_asset(asset_id);
             }
+        } else {
+            db_service
+                .create_surface_evidence(&row)
+                .await
+                .map_err(|e| e.to_string())?;
         }
     }
 
@@ -960,5 +1031,73 @@ pub(crate) async fn materialize_surface_artifacts(
     stats.enriched_assets = enriched_asset_ids.len();
     stats.changed_assets = enriched_asset_ids.len();
 
+    let affected_asset_ids = collect_materialized_surface_asset_ids(&ids, &enriched_asset_ids);
+    db_service
+        .mark_surface_assets_new(&affected_asset_ids)
+        .await
+        .map_err(|e| e.to_string())?;
+
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        collect_materialized_surface_asset_ids, favicon_hash_from_evidence, fingerprint_identity,
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn web_asset_identity_ignores_root_trailing_slash() {
+        assert_eq!(
+            fingerprint_identity("web", "https://www.example.com/"),
+            ("web".to_string(), "https://www.example.com".to_string())
+        );
+        assert_eq!(
+            fingerprint_identity("web", "https://www.example.com/path/"),
+            (
+                "web".to_string(),
+                "https://www.example.com/path".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn favicon_evidence_requires_icon_hash_semantics() {
+        let evidence = json!({
+            "evidence_type": "favicon_metadata",
+            "content_json": {
+                "icon_hash": "-123456",
+                "sha256": "not-the-persisted-favicon-hash"
+            }
+        });
+        let object = evidence.as_object().unwrap();
+
+        assert_eq!(favicon_hash_from_evidence(object), Some("-123456"));
+    }
+
+    #[test]
+    fn materialized_asset_ids_include_created_and_enriched_once() {
+        let ids = HashMap::from([
+            (
+                ("web".to_string(), "https://a.example".to_string()),
+                "asset-a".to_string(),
+            ),
+            (
+                ("web".to_string(), "https://b.example".to_string()),
+                "asset-b".to_string(),
+            ),
+        ]);
+        let enriched_asset_ids = vec!["asset-b".to_string(), "asset-c".to_string()];
+
+        assert_eq!(
+            collect_materialized_surface_asset_ids(&ids, &enriched_asset_ids),
+            vec![
+                "asset-a".to_string(),
+                "asset-b".to_string(),
+                "asset-c".to_string()
+            ]
+        );
+    }
 }

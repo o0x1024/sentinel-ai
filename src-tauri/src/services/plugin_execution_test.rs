@@ -274,6 +274,8 @@ pub fn build_plugin_metadata(
         tags: vec!["ai-authored".to_string()],
         description,
         target_asset_types: Vec::new(),
+        input_mode: None,
+        seed_bindings: Vec::new(),
     })
 }
 

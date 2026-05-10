@@ -374,6 +374,30 @@ pub(crate) fn push_surface_asset_filters<'args, DB>(
             .push(" AND status = ")
             .push_bind(status.to_string());
     }
+    if let Some(favicon_hash) = filter
+        .favicon_hash
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        query_builder.push(
+            " AND EXISTS (SELECT 1 FROM surface_web_assets WHERE surface_web_assets.asset_id = surface_assets.id AND COALESCE(surface_web_assets.favicon_hash, '') = ",
+        );
+        query_builder
+            .push_bind(favicon_hash.to_string())
+            .push(")");
+    }
+    if let Some(has_favicon_hash) = filter.has_favicon_hash {
+        if has_favicon_hash {
+            query_builder.push(
+                " AND EXISTS (SELECT 1 FROM surface_web_assets WHERE surface_web_assets.asset_id = surface_assets.id AND LENGTH(TRIM(COALESCE(surface_web_assets.favicon_hash, ''))) > 0)",
+            );
+        } else {
+            query_builder.push(
+                " AND EXISTS (SELECT 1 FROM surface_web_assets WHERE surface_web_assets.asset_id = surface_assets.id AND LENGTH(TRIM(COALESCE(surface_web_assets.favicon_hash, ''))) = 0)",
+            );
+        }
+    }
     if let Some(service_name) = filter
         .service_name
         .as_deref()

@@ -53,7 +53,9 @@ pub struct AgentPluginRenderContext {
     pub name: String,
     pub version: String,
     pub author: String,
+    pub main_category: String,
     pub plugin_business_category: String,
+    pub monitor_type: Option<String>,
     pub default_severity: String,
     pub tags: Vec<String>,
     pub description: String,
@@ -121,10 +123,14 @@ pub fn render_agent_plugin_definition(
     rendered.push_str(&format!(" * @name {}\n", context.name));
     rendered.push_str(&format!(" * @version {}\n", context.version));
     rendered.push_str(&format!(" * @author {}\n", context.author));
+    rendered.push_str(&format!(" * @main_category {}\n", context.main_category));
     rendered.push_str(&format!(
         " * @category {}\n",
         context.plugin_business_category
     ));
+    if let Some(monitor_type) = context.monitor_type.as_deref() {
+        rendered.push_str(&format!(" * @monitor_type {}\n", monitor_type));
+    }
     rendered.push_str(&format!(
         " * @default_severity {}\n",
         context.default_severity
@@ -389,7 +395,9 @@ mod tests {
             name: "Test Tool".to_string(),
             version: "1.0.0".to_string(),
             author: "Sentinel AI".to_string(),
+            main_category: "bounty".to_string(),
             plugin_business_category: "recon".to_string(),
+            monitor_type: Some("dns".to_string()),
             default_severity: "medium".to_string(),
             tags: vec!["test".to_string()],
             description: "Test tool".to_string(),
@@ -403,5 +411,7 @@ mod tests {
         assert!(code.contains("globalThis.get_input_schema = get_input_schema"));
         assert!(code.contains("globalThis.get_output_schema = get_output_schema"));
         assert!(code.contains("globalThis.analyze = analyze"));
+        assert!(code.contains("@main_category bounty"));
+        assert!(code.contains("@monitor_type dns"));
     }
 }

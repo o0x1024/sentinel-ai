@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
 
+use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::generators::{
     validate_agent_plugin_source_contract, validate_schema_object,
     validator::{PluginValidator, ValidationResult},
 };
-use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::services::database::DatabaseService;
 use crate::services::{PluginCategory, PluginMainCategory};
 use sentinel_db::Database;

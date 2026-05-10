@@ -13,6 +13,21 @@
       <div v-if="run?.id" class="mt-2 text-[11px] text-base-content/50 break-all">
         run: {{ run.id }}
       </div>
+      <div
+        v-if="waitingHumanSummary"
+        class="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-base-content/75"
+      >
+        <div class="font-semibold text-base-content">
+          Waiting Human
+        </div>
+        <div class="mt-1">
+          {{ waitingHumanSummary.reason }}
+        </div>
+        <div class="mt-1 text-base-content/60">
+          Auto continue: {{ waitingHumanSummary.timeoutAction }} · deadline:
+          {{ waitingHumanSummary.deadlineAt ? formatTimestamp(waitingHumanSummary.deadlineAt) : 'not set' }}
+        </div>
+      </div>
     </div>
 
     <div class="flex border-b border-base-300 overflow-x-auto">
@@ -214,13 +229,14 @@
         <div class="mt-3 flex flex-wrap gap-2">
           <button
             class="btn btn-xs btn-outline btn-warning"
+            :disabled="isTerminalHarnessStatus(harness.status)"
             @click="emit('resumeHarness', harness.id)"
           >
             Resume
           </button>
           <button
             class="btn btn-xs btn-outline btn-error"
-            :disabled="harness.status === 'cancelled'"
+            :disabled="isTerminalHarnessStatus(harness.status)"
             @click="emit('cancelHarness', harness.id)"
           >
             Cancel
@@ -432,6 +448,28 @@ const runStateBadgeClass = computed(() => {
   return 'badge-ghost'
 })
 
+const waitingHumanSummary = computed(() => {
+  if (String(props.run?.state || '').toLowerCase() !== 'waiting_human') return null
+  const event = [...props.events]
+    .reverse()
+    .find((item) =>
+      [
+        'orchestrator_preflight_waiting_human',
+        'orchestrator_recovery_waiting_human',
+      ].includes(String(item.event_type || '')),
+    )
+  if (!event || !event.payload || typeof event.payload !== 'object' || Array.isArray(event.payload)) {
+    return null
+  }
+  const payload = event.payload as Record<string, unknown>
+  return {
+    deadlineAt: typeof payload.deadlineAt === 'string' ? payload.deadlineAt : '',
+    reason: typeof payload.reason === 'string' ? payload.reason : 'Waiting for human input.',
+    timeoutAction:
+      typeof payload.timeoutAction === 'string' ? payload.timeoutAction : 'replan_under_current_capacity',
+  }
+})
+
 const agentName = (agentId?: string | null) =>
   agentId ? agentNamesById.value.get(agentId) || agentId : 'unassigned'
 
@@ -449,7 +487,7 @@ const agentBadgeClass = (status: string) => {
 const phaseBadgeClass = (phase: string) => {
   if (phase === 'completed') return 'badge-success'
   if (phase === 'failed' || phase === 'cancelled') return 'badge-error'
-  if (phase === 'waiting_user' || phase === 'recovering') return 'badge-warning'
+  if (phase === 'waiting_user' || phase === 'recovering' || phase === 'expired') return 'badge-warning'
   if (phase === 'tool_running' || phase === 'specialist_running' || phase === 'scheduling') return 'badge-info'
   return 'badge-ghost'
 }
@@ -500,11 +538,15 @@ const harnessBadgeClass = (harness: TeamV4HarnessRun) => {
   const status = harness.status.toLowerCase()
   if (status === 'completed') return 'badge-success'
   if (status === 'failed' || status === 'cancelled') return 'badge-error'
+  if (status === 'expired') return 'badge-warning'
   const leaseTime = new Date(harness.lease_expires_at || '').getTime()
   if (Number.isFinite(leaseTime) && leaseTime < Date.now()) return 'badge-warning'
   if (status === 'running') return 'badge-info'
   return 'badge-ghost'
 }
+
+const isTerminalHarnessStatus = (status: string) =>
+  ['completed', 'failed', 'cancelled'].includes(status.toLowerCase())
 
 const confidenceLabel = (value: number) => `${Math.round(value * 100)}%`
 

@@ -6,7 +6,7 @@ use sentinel_bounty::services::{
     ChangeMonitorConfig, MonitorPluginConfig, MonitorPluginSeedBindingConfig,
     MonitorPluginSeedConfig, MonitorTask,
 };
-use sentinel_db::DatabaseService;
+use sentinel_db::{BountyProgramRow, DatabaseService, ProgramQueryFilter};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -35,6 +35,15 @@ async fn ensure_monitor_tasks_loaded(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateMonitorTaskRequest {
     pub program_id: String,
+    pub name: String,
+    pub interval_secs: u64,
+    pub config: Option<MonitorConfigDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateMonitorTasksForProgramsRequest {
+    #[serde(default)]
+    pub program_ids: Vec<String>,
     pub name: String,
     pub interval_secs: u64,
     pub config: Option<MonitorConfigDto>,
@@ -209,6 +218,64 @@ impl From<MonitorConfigDto> for ChangeMonitorConfig {
     }
 }
 
+async fn list_all_programs(
+    db_service: &Arc<DatabaseService>,
+) -> Result<Vec<BountyProgramRow>, String> {
+    db_service
+        .list_bounty_programs_filtered(ProgramQueryFilter {
+            platforms: None,
+            statuses: None,
+            program_types: None,
+            tags: None,
+            search: None,
+            min_priority: None,
+            limit: None,
+            offset: None,
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn resolve_monitor_target_programs(
+    db_service: &Arc<DatabaseService>,
+    program_ids: &[String],
+) -> Result<Vec<BountyProgramRow>, String> {
+    let mut programs = list_all_programs(db_service).await?;
+    let requested_ids: Vec<String> = program_ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect();
+    if requested_ids.is_empty() {
+        return Err("请选择至少一个项目".to_string());
+    }
+
+    programs.retain(|program| requested_ids.iter().any(|id| id == &program.id));
+    if programs.len() != requested_ids.len() {
+        return Err("选择的项目不存在或已被删除".to_string());
+    }
+    if programs.is_empty() {
+        return Err("没有可创建监控任务的项目".to_string());
+    }
+
+    programs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(programs)
+}
+
+fn scoped_task_name(
+    base_name: &str,
+    program: &BountyProgramRow,
+    append_program_name: bool,
+) -> String {
+    let trimmed = base_name.trim();
+    if append_program_name {
+        format!("{} - {}", trimmed, program.name)
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[tauri::command]
 pub async fn monitor_create_task(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
@@ -227,6 +294,42 @@ pub async fn monitor_create_task(
     save_tasks_to_db(&state_guard.scheduler, &db_service).await?;
 
     Ok(task_id)
+}
+
+#[tauri::command]
+pub async fn monitor_create_tasks_for_programs(
+    state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
+    request: CreateMonitorTasksForProgramsRequest,
+) -> Result<Vec<String>, String> {
+    ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
+
+    let name = request.name.trim();
+    if name.is_empty() {
+        return Err("任务名称不能为空".to_string());
+    }
+
+    let programs =
+        resolve_monitor_target_programs(db_service.inner(), &request.program_ids).await?;
+    let append_program_name = programs.len() > 1;
+    let state_guard = state.read().await;
+    let mut task_ids = Vec::with_capacity(programs.len());
+
+    for program in programs {
+        let mut task = MonitorTask::new(
+            program.id.clone(),
+            scoped_task_name(name, &program, append_program_name),
+            request.interval_secs,
+        );
+        if let Some(config_dto) = request.config.clone() {
+            task.config = config_dto.into();
+        }
+        task_ids.push(state_guard.scheduler.add_task(task).await?);
+    }
+
+    save_tasks_to_db(&state_guard.scheduler, &db_service).await?;
+
+    Ok(task_ids)
 }
 
 #[tauri::command]

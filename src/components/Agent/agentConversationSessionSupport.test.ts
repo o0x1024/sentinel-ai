@@ -32,6 +32,7 @@ describe('agentConversationSessionSupport', () => {
       conversationBinding: {
         schemaVersion: 4,
         profileId: 'assistant.default',
+        teamProfileId: '',
         contextMode: 'codex-like',
         runMode: 'assistant',
         workingDirectoryOverride: '/tmp/workspace',
@@ -43,7 +44,7 @@ describe('agentConversationSessionSupport', () => {
         toolsEnabled: true,
         toolConfig: null,
       },
-      createConversation: async (request) => {
+      createConversation: async request => {
         capturedRequest = request
         return 'conv-new'
       },

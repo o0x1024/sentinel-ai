@@ -22,10 +22,7 @@
       </template>
 
       <template #body-top>
-        <div
-          v-if="showAiTeamCreator"
-          class="rounded-lg border border-primary/30 bg-primary/5 p-3"
-        >
+        <div v-if="showAiTeamCreator" class="rounded-lg border border-primary/30 bg-primary/5 p-3">
           <label class="form-control">
             <span class="label-text mb-2 text-xs font-semibold">描述你要创建的 Team</span>
             <textarea
@@ -71,9 +68,7 @@
       </template>
 
       <template #empty>
-        <div class="py-12 text-center text-base-content/60">
-          请选择一个 Team Profile。
-        </div>
+        <div class="py-12 text-center text-base-content/60">请选择一个 Team Profile。</div>
       </template>
 
       <template v-if="selectedTeamProfile">
@@ -84,6 +79,30 @@
             :description="selectedTeamProfile.description"
             :meta-items="selectedTeamProfileMetaItems"
           >
+            <template #title>
+              <div class="min-w-0 flex-1">
+                <input
+                  v-if="editingIdentityField === 'title'"
+                  ref="identityTitleInputRef"
+                  v-model.trim="identityTitleDraft"
+                  class="input input-bordered input-sm w-full max-w-xl text-lg font-semibold"
+                  type="text"
+                  aria-label="编辑 Team 名称"
+                  @blur="commitIdentityTitleEdit"
+                  @keydown.enter.prevent="commitIdentityTitleEdit"
+                  @keydown.esc.prevent="cancelIdentityEdit"
+                />
+                <div
+                  v-else
+                  class="cursor-text truncate text-lg font-semibold text-base-content rounded px-1 -mx-1 hover:bg-base-100"
+                  title="点击编辑名称"
+                  @click="startIdentityTitleEdit"
+                >
+                  {{ selectedTeamProfile.name || selectedTeamProfile.id }}
+                </div>
+              </div>
+            </template>
+
             <template #badges>
               <span
                 v-if="draftDefaultTeamProfileId === selectedTeamProfile.id"
@@ -91,6 +110,29 @@
               >
                 默认 Team
               </span>
+            </template>
+
+            <template #description>
+              <div class="min-w-0">
+                <textarea
+                  v-if="editingIdentityField === 'description'"
+                  ref="identityDescriptionInputRef"
+                  v-model.trim="identityDescriptionDraft"
+                  class="textarea textarea-bordered textarea-sm min-h-16 w-full max-w-3xl text-sm leading-6"
+                  aria-label="编辑 Team 描述"
+                  @blur="commitIdentityDescriptionEdit"
+                  @keydown.enter.exact.prevent="commitIdentityDescriptionEdit"
+                  @keydown.esc.prevent="cancelIdentityEdit"
+                />
+                <div
+                  v-else
+                  class="cursor-text rounded px-1 -mx-1 text-sm leading-6 text-base-content/70 hover:bg-base-100"
+                  title="点击编辑描述"
+                  @click="startIdentityDescriptionEdit"
+                >
+                  {{ selectedTeamProfile.description }}
+                </div>
+              </div>
             </template>
 
             <template #actions>
@@ -120,10 +162,6 @@
 
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <label class="form-control">
-              <span class="label-text mb-2">名称</span>
-              <input v-model.trim="selectedTeamProfile.name" class="input input-bordered" type="text" />
-            </label>
-            <label class="form-control">
               <span class="label-text mb-2">上下文模式</span>
               <select v-model="selectedTeamProfile.contextMode" class="select select-bordered">
                 <option value="claude-like">claude-like</option>
@@ -133,21 +171,26 @@
             </label>
           </div>
 
-          <label class="form-control">
-            <span class="label-text mb-2">描述</span>
-            <textarea v-model.trim="selectedTeamProfile.description" class="textarea textarea-bordered min-h-[90px]" />
-          </label>
-
           <div class="rounded-xl border border-base-300 bg-base-100 p-4">
             <div class="mb-3 text-sm font-semibold">角色绑定</div>
-            <div class="mb-3 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-xs leading-5 text-base-content/70">
-              Team 默认成员 Profile 不预选工具。实际运行时优先看下方“工具角色矩阵”；只有当成员 Profile 自己显式限制了工具范围，才会在角色矩阵基础上继续收窄。
+            <div
+              class="mb-3 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-xs leading-5 text-base-content/70"
+            >
+              Team 默认成员 Profile 不预选工具。实际运行时优先看下方“工具角色矩阵”；只有当成员
+              Profile 自己显式限制了工具范围，才会在角色矩阵基础上继续收窄。
             </div>
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <label class="form-control">
                 <span class="label-text mb-2">Orchestrator Profile</span>
-                <select v-model="selectedTeamProfile.orchestratorProfileId" class="select select-bordered">
-                  <option v-for="profile in orchestratorOptions" :key="profile.id" :value="profile.id">
+                <select
+                  v-model="selectedTeamProfile.orchestratorProfileId"
+                  class="select select-bordered"
+                >
+                  <option
+                    v-for="profile in orchestratorOptions"
+                    :key="profile.id"
+                    :value="profile.id"
+                  >
                     {{ profile.label }}
                   </option>
                 </select>
@@ -155,7 +198,10 @@
 
               <label class="form-control">
                 <span class="label-text mb-2">Monitor Profile</span>
-                <select v-model="selectedTeamProfile.monitorProfileId" class="select select-bordered">
+                <select
+                  v-model="selectedTeamProfile.monitorProfileId"
+                  class="select select-bordered"
+                >
                   <option v-for="profile in monitorOptions" :key="profile.id" :value="profile.id">
                     {{ profile.label }}
                   </option>
@@ -170,6 +216,42 @@
                   type="text"
                   placeholder="跟随角色 Profile"
                 />
+              </label>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <label class="form-control">
+                <span class="label-text mb-2">Team 编排模板（可选）</span>
+                <select
+                  v-model="selectedTeamProfile.defaultTeamOrchestrationPresetId"
+                  class="select select-bordered"
+                >
+                  <option :value="null">不设置</option>
+                  <option
+                    v-for="preset in teamOrchestrationPresetOptions"
+                    :key="preset.id"
+                    :value="preset.id"
+                  >
+                    {{ preset.label }}
+                  </option>
+                </select>
+              </label>
+
+              <label class="form-control">
+                <span class="label-text mb-2">Team 恢复策略（可选）</span>
+                <select
+                  v-model="selectedTeamProfile.defaultTeamRecoveryPresetId"
+                  class="select select-bordered"
+                >
+                  <option :value="null">不设置</option>
+                  <option
+                    v-for="preset in teamRecoveryPresetOptions"
+                    :key="preset.id"
+                    :value="preset.id"
+                  >
+                    {{ preset.label }}
+                  </option>
+                </select>
               </label>
             </div>
 
@@ -210,8 +292,11 @@
 
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { AssistantProfileOption, TeamProfileOption } from '@/components/Agent/assistantProfiles'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import type {
+  AssistantProfileOption,
+  TeamProfileOption,
+} from '@/components/Agent/assistantProfiles'
 import { useAssistantProfiles } from '@/components/Agent/assistantProfiles'
 import AgentIdentityPanel from '@/components/Settings/AgentIdentityPanel.vue'
 import AgentListPanel from '@/components/Settings/AgentListPanel.vue'
@@ -219,6 +304,10 @@ import type { AgentListItemViewModel } from '@/components/Settings/agentListItem
 import SystemAgentAutoSaveStatusBar from '@/components/Settings/system-agent/SystemAgentAutoSaveStatusBar.vue'
 import SystemAgentDetailLayout from '@/components/Settings/system-agent/SystemAgentDetailLayout.vue'
 import TeamProfilePolicyEditors from '@/components/Settings/TeamProfilePolicyEditors.vue'
+import {
+  TEAM_ORCHESTRATION_PRESET_METAS,
+  TEAM_RECOVERY_PRESETS,
+} from '@/components/Settings/teamProfilePresetOptions'
 import { dialog } from '@/composables/useDialog'
 
 const {
@@ -245,10 +334,16 @@ interface AiCreatedTeamProfileResponse {
 }
 
 type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
+type IdentityEditField = 'title' | 'description' | null
 
 const draftTeamProfiles = ref<TeamProfileOption[]>([])
 const draftDefaultTeamProfileId = ref('')
 const selectedTeamProfileId = ref('')
+const editingIdentityField = ref<IdentityEditField>(null)
+const identityTitleDraft = ref('')
+const identityDescriptionDraft = ref('')
+const identityTitleInputRef = ref<HTMLInputElement | null>(null)
+const identityDescriptionInputRef = ref<HTMLTextAreaElement | null>(null)
 const showAiTeamCreator = ref(false)
 const aiTeamDescription = ref('')
 const isAiCreatingTeam = ref(false)
@@ -256,9 +351,14 @@ const autoSaveState = ref<AutoSaveState>('idle')
 const suspendAutoSave = ref(false)
 const lastSavedTeamProfilesSnapshot = ref('')
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+const teamOrchestrationPresetOptions = TEAM_ORCHESTRATION_PRESET_METAS
+const teamRecoveryPresetOptions = TEAM_RECOVERY_PRESETS
 
-const loading = computed(() =>
-  isLoadingAssistantProfiles.value || isLoadingTeamProfiles.value || isLoadingDefaultTeamProfile.value
+const loading = computed(
+  () =>
+    isLoadingAssistantProfiles.value ||
+    isLoadingTeamProfiles.value ||
+    isLoadingDefaultTeamProfile.value
 )
 
 const assistantProfileById = computed(() => {
@@ -268,7 +368,9 @@ const assistantProfileById = computed(() => {
 })
 
 const roleOptions = (role: AssistantProfileOption['teamRole']) =>
-  profileOptions.value.filter(profile => profile.teamRole === role || profile.teamRole === 'assistant')
+  profileOptions.value.filter(
+    profile => profile.teamRole === role || profile.teamRole === 'assistant'
+  )
 
 const orchestratorOptions = computed(() => roleOptions('orchestrator'))
 const specialistOptions = computed(() => roleOptions('specialist'))
@@ -284,17 +386,59 @@ const selectedTeamProfileMetaItems = computed(() => {
     { label: 'Team ID', value: selectedTeamProfile.value.id },
     {
       label: 'Orchestrator',
-      value: assistantProfileById.value.get(selectedTeamProfile.value.orchestratorProfileId)?.label
-        || selectedTeamProfile.value.orchestratorProfileId,
+      value:
+        assistantProfileById.value.get(selectedTeamProfile.value.orchestratorProfileId)?.label ||
+        selectedTeamProfile.value.orchestratorProfileId,
     },
     { label: 'Specialists', value: String(selectedTeamProfile.value.specialistProfileIds.length) },
     {
       label: 'Monitor',
-      value: assistantProfileById.value.get(selectedTeamProfile.value.monitorProfileId)?.label
-        || selectedTeamProfile.value.monitorProfileId,
+      value:
+        assistantProfileById.value.get(selectedTeamProfile.value.monitorProfileId)?.label ||
+        selectedTeamProfile.value.monitorProfileId,
     },
   ]
 })
+
+const startIdentityTitleEdit = async () => {
+  if (!selectedTeamProfile.value || editingIdentityField.value === 'title') return
+  editingIdentityField.value = 'title'
+  identityTitleDraft.value = selectedTeamProfile.value.name || selectedTeamProfile.value.id
+  await nextTick()
+  identityTitleInputRef.value?.focus()
+  identityTitleInputRef.value?.select()
+}
+
+const startIdentityDescriptionEdit = async () => {
+  if (!selectedTeamProfile.value || editingIdentityField.value === 'description') return
+  editingIdentityField.value = 'description'
+  identityDescriptionDraft.value = selectedTeamProfile.value.description || ''
+  await nextTick()
+  identityDescriptionInputRef.value?.focus()
+  identityDescriptionInputRef.value?.select()
+}
+
+const commitIdentityTitleEdit = () => {
+  if (!selectedTeamProfile.value || editingIdentityField.value !== 'title') return
+  const nextTitle = identityTitleDraft.value.trim()
+  if (nextTitle) {
+    selectedTeamProfile.value.name = nextTitle
+  }
+  editingIdentityField.value = null
+}
+
+const commitIdentityDescriptionEdit = () => {
+  if (!selectedTeamProfile.value || editingIdentityField.value !== 'description') return
+  const nextDescription = identityDescriptionDraft.value.trim()
+  if (nextDescription) {
+    selectedTeamProfile.value.description = nextDescription
+  }
+  editingIdentityField.value = null
+}
+
+const cancelIdentityEdit = () => {
+  editingIdentityField.value = null
+}
 
 const teamListItems = computed<AgentListItemViewModel[]>(() =>
   draftTeamProfiles.value.map(profile => ({
@@ -303,7 +447,9 @@ const teamListItems = computed<AgentListItemViewModel[]>(() =>
     description: profile.description,
     metaLine: `${profile.contextMode} · ${profile.specialistProfileIds.length} specialist`,
     badges: [
-      ...(draftDefaultTeamProfileId.value === profile.id ? [{ label: '默认', className: 'badge-primary' }] : []),
+      ...(draftDefaultTeamProfileId.value === profile.id
+        ? [{ label: '默认', className: 'badge-primary' }]
+        : []),
       { label: profile.contextMode, className: 'badge-outline' },
     ],
     searchText: [
@@ -317,21 +463,22 @@ const teamListItems = computed<AgentListItemViewModel[]>(() =>
   }))
 )
 
-const canSaveTeamProfiles = computed(() =>
-  !isSavingTeamProfiles.value
-  && !isSavingDefaultTeamProfile.value
-  && draftTeamProfiles.value.length > 0
-  && draftTeamProfiles.value.every(profile =>
-    profile.id.trim()
-    && profile.name.trim()
-    && profile.orchestratorProfileId.trim()
-    && profile.monitorProfileId.trim()
-    && profile.specialistProfileIds.length > 0
-  )
+const canSaveTeamProfiles = computed(
+  () =>
+    !isSavingTeamProfiles.value &&
+    !isSavingDefaultTeamProfile.value &&
+    draftTeamProfiles.value.length > 0 &&
+    draftTeamProfiles.value.every(
+      profile =>
+        profile.id.trim() &&
+        profile.name.trim() &&
+        profile.orchestratorProfileId.trim() &&
+        profile.monitorProfileId.trim() &&
+        profile.specialistProfileIds.length > 0
+    )
 )
 
-const buildTeamProfilesSnapshot = (profiles: TeamProfileOption[]) =>
-  JSON.stringify(profiles)
+const buildTeamProfilesSnapshot = (profiles: TeamProfileOption[]) => JSON.stringify(profiles)
 
 const currentDraftStateSnapshot = computed(() =>
   JSON.stringify({
@@ -340,16 +487,16 @@ const currentDraftStateSnapshot = computed(() =>
   })
 )
 
-const hasTeamProfilesUnsavedChanges = computed(() =>
-  buildTeamProfilesSnapshot(draftTeamProfiles.value) !== lastSavedTeamProfilesSnapshot.value
+const hasTeamProfilesUnsavedChanges = computed(
+  () => buildTeamProfilesSnapshot(draftTeamProfiles.value) !== lastSavedTeamProfilesSnapshot.value
 )
 
-const hasDefaultTeamUnsavedChanges = computed(() =>
-  draftDefaultTeamProfileId.value.trim() !== defaultTeamProfileId.value.trim()
+const hasDefaultTeamUnsavedChanges = computed(
+  () => draftDefaultTeamProfileId.value.trim() !== defaultTeamProfileId.value.trim()
 )
 
-const hasUnsavedChanges = computed(() =>
-  hasTeamProfilesUnsavedChanges.value || hasDefaultTeamUnsavedChanges.value
+const hasUnsavedChanges = computed(
+  () => hasTeamProfilesUnsavedChanges.value || hasDefaultTeamUnsavedChanges.value
 )
 
 const autoSaveStatusText = computed(() => {
@@ -415,7 +562,8 @@ const reload = async () => {
 
 const saveTeamProfilesInternal = async (options?: { silent?: boolean }) => {
   const shouldSaveProfiles = hasTeamProfilesUnsavedChanges.value
-  const shouldSaveDefault = hasDefaultTeamUnsavedChanges.value && !!draftDefaultTeamProfileId.value.trim()
+  const shouldSaveDefault =
+    hasDefaultTeamUnsavedChanges.value && !!draftDefaultTeamProfileId.value.trim()
 
   if (!shouldSaveProfiles && !shouldSaveDefault) return
   if (shouldSaveProfiles && !canSaveTeamProfiles.value) return
@@ -438,20 +586,12 @@ const saveTeamProfilesInternal = async (options?: { silent?: boolean }) => {
     const savedAllChanges = !hasUnsavedChanges.value
     autoSaveState.value = savedAllChanges ? 'saved' : 'idle'
     if (savedAllChanges) {
-      dialog.toast.success(
-        options?.silent
-          ? 'Team Profile 已自动保存'
-          : 'Team Profile 已保存'
-      )
+      dialog.toast.success(options?.silent ? 'Team Profile 已自动保存' : 'Team Profile 已保存')
     }
   } catch (error) {
     console.error('Failed to save Team profiles:', error)
     autoSaveState.value = 'error'
-    dialog.toast.error(
-      options?.silent
-        ? 'Team Profile 自动保存失败'
-        : 'Team Profile 保存失败'
-    )
+    dialog.toast.error(options?.silent ? 'Team Profile 自动保存失败' : 'Team Profile 保存失败')
   } finally {
     suspendAutoSave.value = false
     if (hasUnsavedChanges.value) {
@@ -462,11 +602,12 @@ const saveTeamProfilesInternal = async (options?: { silent?: boolean }) => {
 
 const queueAutoSave = () => {
   if (
-    suspendAutoSave.value
-    || loading.value
-    || isSavingTeamProfiles.value
-    || isSavingDefaultTeamProfile.value
-  ) return
+    suspendAutoSave.value ||
+    loading.value ||
+    isSavingTeamProfiles.value ||
+    isSavingDefaultTeamProfile.value
+  )
+    return
   if (!hasUnsavedChanges.value) return
   if (hasTeamProfilesUnsavedChanges.value && !canSaveTeamProfiles.value) return
 
@@ -474,11 +615,12 @@ const queueAutoSave = () => {
   autoSaveTimer = setTimeout(() => {
     autoSaveTimer = null
     if (
-      suspendAutoSave.value
-      || loading.value
-      || isSavingTeamProfiles.value
-      || isSavingDefaultTeamProfile.value
-    ) return
+      suspendAutoSave.value ||
+      loading.value ||
+      isSavingTeamProfiles.value ||
+      isSavingDefaultTeamProfile.value
+    )
+      return
     if (!hasUnsavedChanges.value) return
     if (hasTeamProfilesUnsavedChanges.value && !canSaveTeamProfiles.value) return
     void saveTeamProfilesInternal({ silent: true })
@@ -494,9 +636,13 @@ const createTeamProfile = () => {
     name: `Custom Team ${index}`,
     description: '自定义 Team Profile',
     orchestratorProfileId: orchestratorOptions.value[0]?.id || profileOptions.value[0]?.id || '',
-    specialistProfileIds: [specialistOptions.value[0]?.id || profileOptions.value[0]?.id || ''].filter(Boolean),
+    specialistProfileIds: [
+      specialistOptions.value[0]?.id || profileOptions.value[0]?.id || '',
+    ].filter(Boolean),
     monitorProfileId: monitorOptions.value[0]?.id || profileOptions.value[0]?.id || '',
     defaultModel: null,
+    defaultTeamOrchestrationPresetId: null,
+    defaultTeamRecoveryPresetId: null,
     contextMode: 'claude-like',
     memoryPolicy: {
       monitorGate: 'candidate_then_orchestrator_accept',
@@ -505,12 +651,31 @@ const createTeamProfile = () => {
     },
     toolPolicyMatrix: {
       orchestrator: { tools: ['ask_user_question'] },
-      specialist: { tools: ['shell', 'file_read', 'file_edit', 'file_write', 'grep', 'http_request', 'web_search'] },
+      specialist: {
+        tools: [
+          'shell',
+          'file_read',
+          'file_edit',
+          'file_write',
+          'grep',
+          'http_request',
+          'web_search',
+        ],
+      },
       monitor: { tools: ['tenth_man_review'] },
     },
-    harnessPolicy: { heartbeatSecs: 30, leaseSecs: 600, checkpoint: 'event_sequence', allowResume: true },
+    harnessPolicy: {
+      heartbeatSecs: 30,
+      leaseSecs: 600,
+      checkpoint: 'event_sequence',
+      allowResume: true,
+    },
     concurrencyPolicy: { maxSpecialists: 2, maxTasksPerSpecialist: 1 },
-    safetyPolicy: { orchestratorNoDangerousTools: true, monitorReadOnly: true, requireApprovalForHighRiskTools: true },
+    safetyPolicy: {
+      orchestratorNoDangerousTools: true,
+      monitorReadOnly: true,
+      requireApprovalForHighRiskTools: true,
+    },
   }
   draftTeamProfiles.value.push(profile)
   selectedTeamProfileId.value = profile.id
@@ -541,7 +706,9 @@ const createTeamWithAi = async () => {
 
 const removeSelectedTeamProfile = () => {
   if (!selectedTeamProfile.value || draftTeamProfiles.value.length <= 1) return
-  draftTeamProfiles.value = draftTeamProfiles.value.filter(profile => profile !== selectedTeamProfile.value)
+  draftTeamProfiles.value = draftTeamProfiles.value.filter(
+    profile => profile !== selectedTeamProfile.value
+  )
   if (draftDefaultTeamProfileId.value === selectedTeamProfile.value.id) {
     draftDefaultTeamProfileId.value = draftTeamProfiles.value[0]?.id || ''
   }
@@ -584,6 +751,10 @@ watch(
 watch(defaultTeamProfileId, () => {
   if (suspendAutoSave.value) return
   draftDefaultTeamProfileId.value = defaultTeamProfileId.value
+})
+
+watch(selectedTeamProfileId, () => {
+  cancelIdentityEdit()
 })
 
 watch(currentDraftStateSnapshot, snapshot => {

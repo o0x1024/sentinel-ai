@@ -133,6 +133,46 @@ pub(crate) fn extract_surface_artifacts(output: &Value) -> Option<Map<String, Va
         })
 }
 
+pub(crate) fn surface_artifact_item_count(surface_artifacts: &Map<String, Value>) -> i32 {
+    surface_artifacts
+        .values()
+        .filter(|payload| !payload.is_null())
+        .map(|payload| {
+            payload
+                .as_array()
+                .map(|items| items.len() as i32)
+                .unwrap_or(1)
+        })
+        .sum()
+}
+
+pub(crate) fn surface_observation_count_from_output(
+    output: &Value,
+    surface_artifacts: &Map<String, Value>,
+) -> i32 {
+    output
+        .get("data")
+        .and_then(|data| data.get("summary"))
+        .and_then(|summary| {
+            summary
+                .get("totalTargets")
+                .or_else(|| summary.get("scannedTargets"))
+                .or_else(|| summary.get("targets_scanned"))
+        })
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            output
+                .get("data")
+                .and_then(|data| data.get("results"))
+                .and_then(Value::as_array)
+                .map(|items| items.len() as i32)
+                .filter(|value| *value > 0)
+        })
+        .unwrap_or_else(|| surface_artifact_item_count(surface_artifacts))
+}
+
 pub(crate) async fn ingest_surface_plugin_output(
     db_service: &Arc<DatabaseService>,
     program_id: &str,
@@ -172,18 +212,11 @@ pub(crate) async fn ingest_surface_plugin_output(
         .await
         .map_err(|e| e.to_string())?;
 
-    let mut observation_count = 0i32;
     let mut observations = Vec::with_capacity(surface_artifacts.len());
     for (artifact_type, payload) in &surface_artifacts {
         if payload.is_null() {
             continue;
         }
-
-        let item_count = payload
-            .as_array()
-            .map(|items| items.len() as i32)
-            .unwrap_or(1);
-        observation_count += item_count.max(1);
 
         observations.push(SurfaceObservationRow {
             id: Uuid::new_v4().to_string(),
@@ -220,13 +253,15 @@ pub(crate) async fn ingest_surface_plugin_output(
         &surface_artifacts,
     )
     .await?;
+    let observation_count = surface_observation_count_from_output(output, &surface_artifacts);
+    let affected_asset_count = stats.created_assets + stats.enriched_assets;
 
     db_service
         .update_surface_discovery_run(
             &run_id,
             "completed",
             Some(observation_count),
-            Some(stats.created_assets as i32),
+            Some(affected_asset_count as i32),
             Some(stats.changed_assets as i32),
             None,
             Some(&Utc::now().to_rfc3339()),
@@ -297,6 +332,8 @@ pub(crate) async fn collect_monitor_targets(
             asset_type: None,
             status: None,
             search: None,
+            favicon_hash: None,
+            has_favicon_hash: None,
             service_name: None,
             transport_protocol: None,
             view_state: None,
@@ -563,6 +600,8 @@ where
                 asset_type: base_filter.asset_type.clone(),
                 status: base_filter.status.clone(),
                 search: base_filter.search.clone(),
+                favicon_hash: base_filter.favicon_hash.clone(),
+                has_favicon_hash: base_filter.has_favicon_hash,
                 service_name: base_filter.service_name.clone(),
                 transport_protocol: base_filter.transport_protocol.clone(),
                 view_state: base_filter.view_state.clone(),
@@ -712,6 +751,8 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
             asset_type: None,
             status: None,
             search: None,
+            favicon_hash: None,
+            has_favicon_hash: None,
             service_name: None,
             transport_protocol: None,
             view_state: None,
@@ -759,7 +800,8 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                 );
             }
 
-            if asset.asset_type == "domain" && requested_domain_target_types(&requested_asset_types) {
+            if asset.asset_type == "domain" && requested_domain_target_types(&requested_asset_types)
+            {
                 surface_domain_assets.push(asset.clone());
             }
 
@@ -867,7 +909,10 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                     .map(str::to_string)
                     .collect();
 
-                for seed in seeds.iter().filter(|seed| seed.seed_type == binding.seed_type) {
+                for seed in seeds
+                    .iter()
+                    .filter(|seed| seed.seed_type == binding.seed_type)
+                {
                     if !selected_project_values.is_empty()
                         && !selected_project_values.contains(&seed.seed_value)
                     {
@@ -1056,4 +1101,49 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
     }
 
     Ok(resolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::surface_observation_count_from_output;
+    use serde_json::{json, Map, Value};
+
+    #[test]
+    fn observation_count_prefers_plugin_total_targets() {
+        let output = json!({
+            "data": {
+                "summary": {
+                    "totalTargets": 1835,
+                    "successfulFingerprints": 6
+                },
+                "surface_artifacts": {
+                    "fingerprints": [],
+                    "evidences": [{}, {}, {}, {}, {}, {}]
+                }
+            }
+        });
+        let surface_artifacts = output
+            .get("data")
+            .and_then(|data| data.get("surface_artifacts"))
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_else(Map::new);
+
+        assert_eq!(
+            surface_observation_count_from_output(&output, &surface_artifacts),
+            1835
+        );
+    }
+
+    #[test]
+    fn observation_count_falls_back_to_artifact_items() {
+        let mut surface_artifacts = Map::new();
+        surface_artifacts.insert("fingerprints".to_string(), json!([]));
+        surface_artifacts.insert("evidences".to_string(), json!([{}, {}]));
+
+        assert_eq!(
+            surface_observation_count_from_output(&json!({}), &surface_artifacts),
+            2
+        );
+    }
 }

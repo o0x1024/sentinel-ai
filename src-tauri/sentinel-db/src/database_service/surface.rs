@@ -329,12 +329,34 @@ pub struct SurfaceSeedRow {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SurfaceSeedCandidateRow {
+    pub id: String,
+    pub program_id: String,
+    pub seed_type: String,
+    pub seed_value: String,
+    pub status: String,
+    pub source_asset_id: String,
+    pub source_asset_type: String,
+    pub source_detail_key: String,
+    pub source_display_value: String,
+    pub source_canonical_url: Option<String>,
+    pub confidence_score: Option<f64>,
+    pub observed_at: String,
+    pub reviewed_at: Option<String>,
+    pub metadata_json: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SurfaceAssetFilter {
     pub program_id: Option<String>,
     pub asset_type: Option<String>,
     pub status: Option<String>,
     pub search: Option<String>,
+    pub favicon_hash: Option<String>,
+    pub has_favicon_hash: Option<bool>,
     pub service_name: Option<String>,
     pub transport_protocol: Option<String>,
     pub view_state: Option<String>,
@@ -690,7 +712,7 @@ impl DatabaseService {
             DatabasePool::SQLite(pool) => sqlx::query(
                 r#"
                 UPDATE surface_assets
-                SET display_name = ?, description = ?, org_id = ?, business_unit = ?, project = ?,
+                SET asset_name = ?, display_name = ?, description = ?, org_id = ?, business_unit = ?, project = ?,
                     owner = ?, maintainer = ?, contact = ?, env = ?, internet_exposure = ?,
                     criticality = ?, data_level = ?, source = ?, first_seen_at = ?, last_seen_at = ?,
                     last_verified_at = ?, discovery_task_id = ?, status = ?, alive_status = ?,
@@ -701,6 +723,7 @@ impl DatabaseService {
                 WHERE id = ?
                 "#,
             )
+                .bind(&asset.asset_name)
                 .bind(&asset.display_name)
                 .bind(&asset.description)
                 .bind(&asset.org_id)
@@ -741,7 +764,7 @@ impl DatabaseService {
             DatabasePool::MySQL(pool) => sqlx::query(
                 r#"
                 UPDATE surface_assets
-                SET display_name = ?, description = ?, org_id = ?, business_unit = ?, project = ?,
+                SET asset_name = ?, display_name = ?, description = ?, org_id = ?, business_unit = ?, project = ?,
                     owner = ?, maintainer = ?, contact = ?, env = ?, internet_exposure = ?,
                     criticality = ?, data_level = ?, source = ?, first_seen_at = ?, last_seen_at = ?,
                     last_verified_at = ?, discovery_task_id = ?, status = ?, alive_status = ?,
@@ -752,6 +775,7 @@ impl DatabaseService {
                 WHERE id = ?
                 "#,
             )
+                .bind(&asset.asset_name)
                 .bind(&asset.display_name)
                 .bind(&asset.description)
                 .bind(&asset.org_id)
@@ -792,17 +816,18 @@ impl DatabaseService {
             DatabasePool::PostgreSQL(pool) => sqlx::query(
                 r#"
                 UPDATE surface_assets
-                SET display_name = $1, description = $2, org_id = $3, business_unit = $4, project = $5,
-                    owner = $6, maintainer = $7, contact = $8, env = $9, internet_exposure = $10,
-                    criticality = $11, data_level = $12, source = $13, first_seen_at = $14, last_seen_at = $15,
-                    last_verified_at = $16, discovery_task_id = $17, status = $18, alive_status = $19,
-                    confidence_score = $20, fingerprint_confidence = $21, risk_score = $22, risk_level = $23,
-                    vulnerabilities_count = $24, weak_password_flag = $25, expired_cert_flag = $26,
-                    exposed_to_internet_flag = $27, viewed_at = $28, viewed_by = $29,
-                    metadata_json = $30, updated_at = $31, created_by = $32, updated_by = $33
-                WHERE id = $34
+                SET asset_name = $1, display_name = $2, description = $3, org_id = $4, business_unit = $5, project = $6,
+                    owner = $7, maintainer = $8, contact = $9, env = $10, internet_exposure = $11,
+                    criticality = $12, data_level = $13, source = $14, first_seen_at = $15, last_seen_at = $16,
+                    last_verified_at = $17, discovery_task_id = $18, status = $19, alive_status = $20,
+                    confidence_score = $21, fingerprint_confidence = $22, risk_score = $23, risk_level = $24,
+                    vulnerabilities_count = $25, weak_password_flag = $26, expired_cert_flag = $27,
+                    exposed_to_internet_flag = $28, viewed_at = $29, viewed_by = $30,
+                    metadata_json = $31, updated_at = $32, created_by = $33, updated_by = $34
+                WHERE id = $35
                 "#,
             )
+                .bind(&asset.asset_name)
                 .bind(&asset.display_name)
                 .bind(&asset.description)
                 .bind(&asset.org_id)
@@ -947,6 +972,91 @@ impl DatabaseService {
         Ok(rows as usize)
     }
 
+    pub async fn mark_surface_assets_new(&self, asset_ids: &[String]) -> Result<usize> {
+        if asset_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let rows = match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut updated = 0u64;
+                for batch in asset_ids.chunks(SURFACE_MARK_VIEWED_BATCH_SIZE) {
+                    let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(
+                        "UPDATE surface_assets SET viewed_at = NULL, viewed_by = NULL WHERE id IN (",
+                    );
+                    {
+                        let mut separated = query_builder.separated(", ");
+                        for asset_id in batch {
+                            separated.push_bind(asset_id.clone());
+                        }
+                    }
+                    query_builder.push(")");
+                    updated += query_builder
+                        .build()
+                        .execute(&mut *tx)
+                        .await?
+                        .rows_affected();
+                }
+                tx.commit().await?;
+                updated
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut updated = 0u64;
+                for batch in asset_ids.chunks(SURFACE_MARK_VIEWED_BATCH_SIZE) {
+                    let mut query_builder = QueryBuilder::<MySql>::new(
+                        "UPDATE surface_assets SET viewed_at = NULL, viewed_by = NULL WHERE id IN (",
+                    );
+                    {
+                        let mut separated = query_builder.separated(", ");
+                        for asset_id in batch {
+                            separated.push_bind(asset_id.clone());
+                        }
+                    }
+                    query_builder.push(")");
+                    updated += query_builder
+                        .build()
+                        .execute(&mut *tx)
+                        .await?
+                        .rows_affected();
+                }
+                tx.commit().await?;
+                updated
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let mut updated = 0u64;
+                for batch in asset_ids.chunks(SURFACE_MARK_VIEWED_BATCH_SIZE) {
+                    let mut query_builder = QueryBuilder::<Postgres>::new(
+                        "UPDATE surface_assets SET viewed_at = NULL, viewed_by = NULL WHERE id IN (",
+                    );
+                    {
+                        let mut separated = query_builder.separated(", ");
+                        for asset_id in batch {
+                            separated.push_bind(asset_id.clone());
+                        }
+                    }
+                    query_builder.push(")");
+                    updated += query_builder
+                        .build()
+                        .execute(&mut *tx)
+                        .await?
+                        .rows_affected();
+                }
+                tx.commit().await?;
+                updated
+            }
+        };
+
+        Ok(rows as usize)
+    }
+
     pub async fn mark_surface_inventory_viewed(
         &self,
         filter: &SurfaceAssetFilter,
@@ -963,6 +1073,8 @@ impl DatabaseService {
             asset_type: filter.asset_type.clone(),
             status: filter.status.clone(),
             search: filter.search.clone(),
+            favicon_hash: filter.favicon_hash.clone(),
+            has_favicon_hash: filter.has_favicon_hash,
             service_name: filter.service_name.clone(),
             transport_protocol: filter.transport_protocol.clone(),
             view_state: filter.view_state.clone(),

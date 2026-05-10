@@ -4,6 +4,7 @@ use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::error::Error as StdError;
 use std::time::Instant;
 
 use crate::output_storage::StoredOutputArtifact;
@@ -114,6 +115,55 @@ impl HttpRequestTool {
         "redirect behavior, custom headers, or a request body. Supports GET/POST/PUT/DELETE/HEAD/PATCH. ",
         "Prefer web_search for discovering sources, and prefer shell only when you specifically need CLI composition."
     );
+
+    fn format_reqwest_error(stage: &str, error: &reqwest::Error) -> String {
+        let mut details = vec![format!("{stage} failed: {error}")];
+
+        let mut kinds: Vec<String> = Vec::new();
+        if error.is_timeout() {
+            kinds.push("timeout".to_string());
+        }
+        if error.is_connect() {
+            kinds.push("connect".to_string());
+        }
+        if error.is_request() {
+            kinds.push("request".to_string());
+        }
+        if error.is_body() {
+            kinds.push("body".to_string());
+        }
+        if error.is_decode() {
+            kinds.push("decode".to_string());
+        }
+        if error.is_redirect() {
+            kinds.push("redirect".to_string());
+        }
+        if let Some(status) = error.status() {
+            kinds.push(format!("status={status}"));
+        }
+        if !kinds.is_empty() {
+            details.push(format!("kind: {}", kinds.join(", ")));
+        }
+
+        if let Some(url) = error.url() {
+            details.push(format!("url: {url}"));
+        }
+
+        let mut causes = Vec::new();
+        let mut current = error.source();
+        while let Some(source) = current {
+            let text = source.to_string();
+            if !text.trim().is_empty() && !causes.iter().any(|existing| existing == &text) {
+                causes.push(text);
+            }
+            current = source.source();
+        }
+        if !causes.is_empty() {
+            details.push(format!("caused by: {}", causes.join(" -> ")));
+        }
+
+        details.join("\n")
+    }
 }
 
 impl Tool for HttpRequestTool {
@@ -184,7 +234,9 @@ impl Tool for HttpRequestTool {
         let response = request
             .send()
             .await
-            .map_err(|e| HttpRequestError::RequestFailed(e.to_string()))?;
+            .map_err(|error| {
+                HttpRequestError::RequestFailed(Self::format_reqwest_error("request send", &error))
+            })?;
 
         let status_code = response.status().as_u16();
         let status_text = response.status().to_string();
@@ -201,7 +253,12 @@ impl Tool for HttpRequestTool {
         let body = response
             .text()
             .await
-            .map_err(|e| HttpRequestError::RequestFailed(e.to_string()))?;
+            .map_err(|error| {
+                HttpRequestError::RequestFailed(Self::format_reqwest_error(
+                    "response body read",
+                    &error,
+                ))
+            })?;
         let original_size = body.len();
         let mut stored_artifacts = Vec::new();
 
@@ -252,5 +309,34 @@ impl Tool for HttpRequestTool {
             original_size,
             stored_artifacts,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HttpRequestTool;
+
+    #[tokio::test]
+    async fn formats_connect_refused_reqwest_chain() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let addr = listener.local_addr().expect("listener addr");
+        drop(listener);
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(300))
+            .build()
+            .expect("build reqwest client");
+
+        let error = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect_err("closed localhost port should refuse connection");
+
+        let formatted = HttpRequestTool::format_reqwest_error("request send", &error);
+        assert!(formatted.contains("request send failed:"), "{formatted}");
+        assert!(formatted.contains("kind:"), "{formatted}");
+        assert!(formatted.contains("url: http://"), "{formatted}");
+        assert!(formatted.contains("caused by:"), "{formatted}");
     }
 }

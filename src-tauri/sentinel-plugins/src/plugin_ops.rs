@@ -6,6 +6,7 @@
 //! - HTTP 请求 (fetch)
 
 use deno_core::{extension, op2, OpState};
+use encoding_rs::Encoding;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;
@@ -531,7 +532,13 @@ fn build_active_probe_cooldown_key(url: &str) -> String {
 async fn read_response_body(
     mut response: reqwest::Response,
     max_body_bytes: Option<usize>,
-) -> Result<String, reqwest::Error> {
+) -> Result<(String, Vec<u8>), reqwest::Error> {
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+
     if let Some(limit) = max_body_bytes.filter(|value| *value > 0) {
         let mut body = Vec::with_capacity(limit.min(8192));
         while let Some(chunk) = response.chunk().await? {
@@ -546,10 +553,38 @@ async fn read_response_body(
             body.extend_from_slice(&chunk[..remaining]);
             break;
         }
-        return Ok(String::from_utf8_lossy(&body).into_owned());
+        return Ok((decode_response_text(&body, content_type.as_deref()), body));
     }
 
-    response.text().await
+    let body = response.bytes().await?.to_vec();
+    Ok((decode_response_text(&body, content_type.as_deref()), body))
+}
+
+fn decode_response_text(body: &[u8], content_type: Option<&str>) -> String {
+    let charset = content_type
+        .and_then(parse_charset_from_content_type)
+        .and_then(|label| Encoding::for_label(label.as_bytes()));
+
+    if let Some(encoding) = charset {
+        let (decoded, _, _) = encoding.decode(body);
+        return decoded.into_owned();
+    }
+
+    String::from_utf8_lossy(body).into_owned()
+}
+
+fn parse_charset_from_content_type(content_type: &str) -> Option<&str> {
+    content_type.split(';').skip(1).find_map(|part| {
+        let (name, value) = part.split_once('=')?;
+        if !name.trim().eq_ignore_ascii_case("charset") {
+            return None;
+        }
+        let normalized = value.trim().trim_matches('"').trim_matches('\'');
+        if normalized.is_empty() {
+            return None;
+        }
+        Some(normalized)
+    })
 }
 
 async fn get_fetch_client(
@@ -706,6 +741,7 @@ async fn op_fetch(
                             status: 0,
                             headers: std::collections::HashMap::new(),
                             body: String::new(),
+                            body_bytes: Vec::new(),
                             ok: false,
                             redirected: false,
                             final_url: url.clone(),
@@ -721,6 +757,7 @@ async fn op_fetch(
                     status: 0,
                     headers: std::collections::HashMap::new(),
                     body: String::new(),
+                    body_bytes: Vec::new(),
                     ok: false,
                     redirected: false,
                     final_url: url.clone(),
@@ -739,6 +776,7 @@ async fn op_fetch(
                 status: 0,
                 headers: std::collections::HashMap::new(),
                 body: String::new(),
+                body_bytes: Vec::new(),
                 ok: false,
                 redirected: false,
                 final_url: url.clone(),
@@ -765,6 +803,7 @@ async fn op_fetch(
                     status: 0,
                     headers: std::collections::HashMap::new(),
                     body: String::new(),
+                    body_bytes: Vec::new(),
                     ok: false,
                     redirected: false,
                     final_url: url.clone(),
@@ -809,6 +848,7 @@ async fn op_fetch(
                         status: 0,
                         headers: std::collections::HashMap::new(),
                         body: String::new(),
+                        body_bytes: Vec::new(),
                         ok: false,
                         redirected: false,
                         final_url: url.clone(),
@@ -825,6 +865,7 @@ async fn op_fetch(
                             status: 0,
                             headers: std::collections::HashMap::new(),
                             body: String::new(),
+                            body_bytes: Vec::new(),
                             ok: false,
                             redirected: false,
                             final_url: url.clone(),
@@ -837,6 +878,7 @@ async fn op_fetch(
                             status: 0,
                             headers: std::collections::HashMap::new(),
                             body: String::new(),
+                            body_bytes: Vec::new(),
                             ok: false,
                             redirected: false,
                             final_url: url.clone(),
@@ -851,6 +893,7 @@ async fn op_fetch(
                         status: 0,
                         headers: std::collections::HashMap::new(),
                         body: String::new(),
+                        body_bytes: Vec::new(),
                         ok: false,
                         redirected: false,
                         final_url: url.clone(),
@@ -872,6 +915,7 @@ async fn op_fetch(
                             status: 0,
                             headers: std::collections::HashMap::new(),
                             body: String::new(),
+                            body_bytes: Vec::new(),
                             ok: false,
                             redirected: false,
                             final_url: url.clone(),
@@ -894,6 +938,7 @@ async fn op_fetch(
                         status: 0,
                         headers: std::collections::HashMap::new(),
                         body: String::new(),
+                        body_bytes: Vec::new(),
                         ok: false,
                         redirected: false,
                         final_url: url.clone(),
@@ -910,6 +955,7 @@ async fn op_fetch(
                             status: 0,
                             headers: std::collections::HashMap::new(),
                             body: String::new(),
+                            body_bytes: Vec::new(),
                             ok: false,
                             redirected: false,
                             final_url: url.clone(),
@@ -922,6 +968,7 @@ async fn op_fetch(
                             status: 0,
                             headers: std::collections::HashMap::new(),
                             body: String::new(),
+                            body_bytes: Vec::new(),
                             ok: false,
                             redirected: false,
                             final_url: url.clone(),
@@ -936,6 +983,7 @@ async fn op_fetch(
                         status: 0,
                         headers: std::collections::HashMap::new(),
                         body: String::new(),
+                        body_bytes: Vec::new(),
                         ok: false,
                         redirected: false,
                         final_url: url.clone(),
@@ -957,6 +1005,7 @@ async fn op_fetch(
                             status: 0,
                             headers: std::collections::HashMap::new(),
                             body: String::new(),
+                            body_bytes: Vec::new(),
                             ok: false,
                             redirected: false,
                             final_url: url.clone(),
@@ -1002,6 +1051,7 @@ async fn op_fetch(
                         status: 0,
                         headers: std::collections::HashMap::new(),
                         body: String::new(),
+                        body_bytes: Vec::new(),
                         ok: false,
                         redirected: false,
                         final_url: url.clone(),
@@ -1022,14 +1072,15 @@ async fn op_fetch(
                 }
             }
 
-            let body = match read_response_body(response, max_body_bytes).await {
-                Ok(b) => b,
+            let (body, body_bytes) = match read_response_body(response, max_body_bytes).await {
+                Ok(payload) => payload,
                 Err(e) => {
                     return FetchResponse {
                         success: false,
                         status,
                         headers,
                         body: String::new(),
+                        body_bytes: Vec::new(),
                         ok: false,
                         redirected,
                         final_url,
@@ -1045,6 +1096,7 @@ async fn op_fetch(
                 status,
                 headers,
                 body,
+                body_bytes,
                 ok,
                 redirected,
                 final_url,
@@ -1059,6 +1111,7 @@ async fn op_fetch(
                 status: 0,
                 headers: std::collections::HashMap::new(),
                 body: String::new(),
+                body_bytes: Vec::new(),
                 ok: false,
                 redirected: false,
                 final_url: url.clone(),

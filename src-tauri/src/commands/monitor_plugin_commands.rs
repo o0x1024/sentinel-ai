@@ -71,11 +71,8 @@ pub async fn monitor_get_available_plugins(
             plugin.status
         );
 
-        let Some(monitor_type) = resolve_monitor_type_from_metadata(
-            db_service.inner(),
-            &plugin.metadata.id,
-        )
-        .await?
+        let Some(monitor_type) =
+            resolve_monitor_type_from_metadata(db_service.inner(), &plugin.metadata.id).await?
         else {
             continue;
         };

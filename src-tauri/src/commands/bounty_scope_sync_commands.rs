@@ -32,6 +32,8 @@ pub async fn bounty_backfill_domain_scopes_from_assets(
             asset_type: Some("domain".to_string()),
             status: None,
             search: None,
+            favicon_hash: None,
+            has_favicon_hash: None,
             service_name: None,
             transport_protocol: None,
             view_state: None,

@@ -503,6 +503,8 @@ mod tests {
             description: None,
             monitor_type: None,
             target_asset_types: vec![],
+            input_mode: None,
+            seed_bindings: vec![],
         }
     }
 

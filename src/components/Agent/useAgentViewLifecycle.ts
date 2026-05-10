@@ -1,13 +1,5 @@
 import { nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type {
-  AgentTeamMessageStreamDeltaEvent,
-  AgentTeamMessageStreamDoneEvent,
-  AgentTeamMessageStreamStartEvent,
-  AgentTeamStateChangedEvent,
-  AgentTeamToolCallEvent,
-  AgentTeamToolResultEvent,
-} from '@/types/agentTeam'
 import type { AgentExecutionFinishedEvent, PersistedAgentExecutionState } from './executionState'
 
 interface AgentStartEvent {
@@ -17,45 +9,25 @@ interface AgentStartEvent {
   task: string
 }
 
-interface AgentAssistantMessageSavedEvent {
-  execution_id: string
-  generation?: number | null
-  message_id: string
-  content: string
-  metadata?: Record<string, unknown> | null
-  reasoning_content?: string | null
-  timestamp: number
-}
-
 export const useAgentViewLifecycle = (params: {
-  activeTeamSessionId: Ref<string | null>
   assistantProfileRegistryReady: Ref<boolean>
   conversationExecutionState: Ref<PersistedAgentExecutionState | null>
   conversationId: Ref<string | null>
   executionId?: string
-  isTeamWorkspaceActive: Ref<boolean>
   loadAssistantModelOptions: () => Promise<void>
   loadAssistantProfiles: () => Promise<void>
   loadDefaultAssistantProfile: () => Promise<void>
+  loadDefaultTeamProfile: () => Promise<void>
+  loadTeamProfiles: () => Promise<void>
   loadConversationHistory: (conversationId: string) => Promise<void>
   loadLatestConversation: () => Promise<void>
   loadSidebarWidth: () => void
   loadToolConfigDrawerWidth: () => void
-  loadTeamWorkspaceData: () => Promise<void>
   loadToolConfig: () => Promise<void>
   focusInput: () => void
   handleConversationExecutionStateUpdate: (payload: AgentExecutionFinishedEvent) => void
-  handleTeamAssistantMessageSaved: (payload: AgentAssistantMessageSavedEvent) => Promise<void>
-  handleTeamExecutionFinished: (payload: AgentExecutionFinishedEvent) => Promise<void>
-  handleTeamMessageStreamDelta: (payload: AgentTeamMessageStreamDeltaEvent) => void
-  handleTeamMessageStreamDone: (payload: AgentTeamMessageStreamDoneEvent) => void
-  handleTeamMessageStreamStart: (payload: AgentTeamMessageStreamStartEvent) => void
-  handleTeamToolCall: (payload: AgentTeamToolCallEvent) => void
-  handleTeamToolResult: (payload: AgentTeamToolResultEvent) => void
   preconnectTerminal: () => void
   scrollMessageViewportToBottom: () => void
-  syncTeamMessagesToMainFlow: (sessionId?: string | null) => Promise<void>
-  applyTeamState: (state: string) => void
 }) => {
   const unlistenFns: UnlistenFn[] = []
 
@@ -69,6 +41,8 @@ export const useAgentViewLifecycle = (params: {
       params.loadAssistantModelOptions(),
       params.loadAssistantProfiles(),
       params.loadDefaultAssistantProfile(),
+      params.loadTeamProfiles(),
+      params.loadDefaultTeamProfile(),
     ])
 
     await pushListener(() =>
@@ -77,47 +51,6 @@ export const useAgentViewLifecycle = (params: {
       })
     )
 
-    await pushListener(() =>
-      listen<AgentTeamStateChangedEvent>('agent_team:state_changed', event => {
-        if (
-          !params.activeTeamSessionId.value ||
-          event.payload.session_id !== params.activeTeamSessionId.value
-        ) {
-          return
-        }
-        params.applyTeamState(event.payload.state)
-        void params.syncTeamMessagesToMainFlow(event.payload.session_id)
-        if (params.isTeamWorkspaceActive.value) {
-          void params.loadTeamWorkspaceData()
-        }
-      })
-    )
-
-    await pushListener(() =>
-      listen<AgentTeamMessageStreamStartEvent>('agent_team:message_stream_start', event => {
-        params.handleTeamMessageStreamStart(event.payload)
-      })
-    )
-    await pushListener(() =>
-      listen<AgentTeamMessageStreamDeltaEvent>('agent_team:message_stream_delta', event => {
-        params.handleTeamMessageStreamDelta(event.payload)
-      })
-    )
-    await pushListener(() =>
-      listen<AgentTeamMessageStreamDoneEvent>('agent_team:message_stream_done', event => {
-        params.handleTeamMessageStreamDone(event.payload)
-      })
-    )
-    await pushListener(() =>
-      listen<AgentTeamToolCallEvent>('agent_team:tool_call', event => {
-        params.handleTeamToolCall(event.payload)
-      })
-    )
-    await pushListener(() =>
-      listen<AgentTeamToolResultEvent>('agent_team:tool_result', event => {
-        params.handleTeamToolResult(event.payload)
-      })
-    )
     await pushListener(() =>
       listen<AgentStartEvent>('agent:start', event => {
         const payloadConversationId = event.payload.conversation_id || event.payload.execution_id
@@ -128,12 +61,6 @@ export const useAgentViewLifecycle = (params: {
     await pushListener(() =>
       listen<AgentExecutionFinishedEvent>('agent:execution_finished', event => {
         params.handleConversationExecutionStateUpdate(event.payload)
-        void params.handleTeamExecutionFinished(event.payload)
-      })
-    )
-    await pushListener(() =>
-      listen<AgentAssistantMessageSavedEvent>('agent:assistant_message_saved', event => {
-        void params.handleTeamAssistantMessageSaved(event.payload)
       })
     )
 

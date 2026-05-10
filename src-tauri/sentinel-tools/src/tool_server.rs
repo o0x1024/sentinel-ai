@@ -804,11 +804,34 @@ impl ToolServer {
                         || has_non_empty_string(args, "process_id")
                 }
 
+                fn has_true_bool(args: &Value, key: &str) -> bool {
+                    args.get(key).and_then(|value| value.as_bool()) == Some(true)
+                }
+
                 fn should_start_prompt_capable_shell(args: &Value) -> bool {
+                    const START_ACTION: &str = "start";
+
+                    if !(has_non_empty_string(args, "command") || has_non_empty_string(args, "cmd"))
+                    {
+                        return false;
+                    }
+
                     if has_non_empty_string(args, "cmd") {
                         return true;
                     }
-                    has_non_empty_string(args, "command")
+
+                    if args.get("yield_time_ms").is_some() {
+                        return true;
+                    }
+
+                    if has_true_bool(args, "tty") || has_true_bool(args, "run_in_background") {
+                        return true;
+                    }
+
+                    args.get("action")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.trim().eq_ignore_ascii_case(START_ACTION))
+                        .unwrap_or(false)
                 }
 
                 fn normalize_prompt_shell_args(args: &mut Value) {

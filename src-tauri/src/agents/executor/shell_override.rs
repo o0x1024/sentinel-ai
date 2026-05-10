@@ -146,11 +146,33 @@ fn should_continue_shell_session(args: &serde_json::Value) -> bool {
     has_non_empty_string(args, "session_id") || has_non_empty_string(args, "process_id")
 }
 
+fn has_true_bool(args: &serde_json::Value, key: &str) -> bool {
+    args.get(key).and_then(|value| value.as_bool()) == Some(true)
+}
+
 fn should_start_prompt_capable_shell(args: &serde_json::Value) -> bool {
+    const START_ACTION: &str = "start";
+
+    if !(has_non_empty_string(args, "command") || has_non_empty_string(args, "cmd")) {
+        return false;
+    }
+
     if has_non_empty_string(args, "cmd") {
         return true;
     }
-    has_non_empty_string(args, "command")
+
+    if args.get("yield_time_ms").is_some() {
+        return true;
+    }
+
+    if has_true_bool(args, "tty") || has_true_bool(args, "run_in_background") {
+        return true;
+    }
+
+    args.get("action")
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().eq_ignore_ascii_case(START_ACTION))
+        .unwrap_or(false)
 }
 
 fn normalize_prompt_shell_args(args: &mut serde_json::Value) {
@@ -387,7 +409,10 @@ pub(super) async fn build_shell_override_def(
 
 #[cfg(test)]
 mod tests {
-    use super::{patch_active_shell_session_input_args, sync_active_shell_session_from_result};
+    use super::{
+        patch_active_shell_session_input_args, should_start_prompt_capable_shell,
+        sync_active_shell_session_from_result,
+    };
     use crate::agents::executor::terminal_session_store::{
         get_active_terminal_session, set_active_terminal_session,
     };
@@ -474,5 +499,31 @@ mod tests {
             &json!({ "completed": true, "status": "completed" }),
         );
         assert!(get_active_terminal_session("shell-exec-sync").is_none());
+    }
+
+    #[test]
+    fn command_only_shell_calls_use_one_shot_path() {
+        assert!(!should_start_prompt_capable_shell(&json!({
+            "command": "printf short-ok"
+        })));
+    }
+
+    #[test]
+    fn explicit_interactive_shell_markers_use_prompt_capable_path() {
+        assert!(should_start_prompt_capable_shell(&json!({
+            "command": "cat",
+            "yield_time_ms": 100
+        })));
+        assert!(should_start_prompt_capable_shell(&json!({
+            "command": "cat",
+            "tty": true
+        })));
+        assert!(should_start_prompt_capable_shell(&json!({
+            "command": "sleep 10",
+            "run_in_background": true
+        })));
+        assert!(should_start_prompt_capable_shell(&json!({
+            "cmd": "cat"
+        })));
     }
 }

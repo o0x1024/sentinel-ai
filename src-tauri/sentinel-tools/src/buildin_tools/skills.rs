@@ -17,16 +17,16 @@ pub enum SkillsAction {
     /// Load SKILL.md content for a skill
     Load,
     /// Read a referenced file inside the skill directory
-    ReadFile,
+    ReadSkillFile,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SkillsToolArgs {
-    /// Action to perform: list, load, or read_file
+    /// Action to perform: list, load, or read_skill_file
     pub action: SkillsAction,
     /// Skill identifier (directory name under skills root)
     pub skill_id: Option<String>,
-    /// Relative path inside the skill directory (for read_file)
+    /// Relative path inside the skill directory (for read_skill_file)
     pub path: Option<String>,
 }
 
@@ -94,7 +94,7 @@ pub struct SkillsTool;
 impl SkillsTool {
     pub const NAME: &'static str = "skills";
     pub const DESCRIPTION: &'static str =
-        "Discover and progressively load reusable local skills. Use action='list' to find candidate skills, action='load' to read a skill's SKILL.md instructions, and action='read_file' to inspect referenced files inside that skill. Prefer this when a specialized workflow may already exist instead of guessing the process from scratch.";
+        "Discover and progressively load reusable local skills. Use action='list' to find candidate skills, action='load' to read a skill's SKILL.md instructions, and action='read_skill_file' to read referenced files inside that skill. This action is scoped to the skills tool and is not a workspace file reader. Prefer this when a specialized workflow may already exist instead of guessing the process from scratch.";
 
     fn skills_root() -> PathBuf {
         dirs::data_dir()
@@ -296,7 +296,7 @@ impl Tool for SkillsTool {
                     runtime_hint,
                 })
             }
-            SkillsAction::ReadFile => {
+            SkillsAction::ReadSkillFile => {
                 let skill_id = args.skill_id.ok_or_else(|| {
                     SkillsToolError::InvalidArgs("skill_id is required".to_string())
                 })?;
@@ -333,7 +333,7 @@ impl Tool for SkillsTool {
                     .or_else(|| Some(format!("Host mode fallback path -> {}", host_path)));
 
                 Ok(SkillsToolOutput {
-                    action: "read_file".to_string(),
+                    action: "read_skill_file".to_string(),
                     skills: None,
                     skill: Some(SkillSummary {
                         id: skill_id,

@@ -7,7 +7,7 @@
           :class="activeRegistryTab === 'agents' ? 'tab-active' : ''"
           @click="activeRegistryTab = 'agents'"
         >
-          Agent Profiles
+          Assistant Profiles
         </button>
         <button
           class="tab"
@@ -26,8 +26,8 @@
 
       <div v-else class="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4">
         <AgentListPanel
-          title="交互型 Agent 列表"
-          empty-text="当前还没有可用交互型 Agent。"
+          title="Assistant Profile 列表"
+          empty-text="当前还没有可用 Assistant Profile。"
           :loading="loading"
           :items="assistantListItems"
           :filter-options="ASSISTANT_AGENT_LIST_FILTER_OPTIONS"
@@ -36,10 +36,13 @@
         >
           <template #actions>
             <div class="flex items-center gap-2">
-              <button class="btn btn-xs btn-outline" @click="showAiAgentCreator = !showAiAgentCreator">
+              <button
+                class="btn btn-xs btn-outline"
+                @click="showAiAgentCreator = !showAiAgentCreator"
+              >
                 AI 创建
               </button>
-              <button class="btn btn-xs btn-outline" @click="createProfile">新增 Agent</button>
+              <button class="btn btn-xs btn-outline" @click="createProfile">新增 Assistant</button>
             </div>
           </template>
 
@@ -49,7 +52,7 @@
               class="rounded-lg border border-primary/30 bg-primary/5 p-3"
             >
               <label class="form-control">
-                <span class="label-text mb-2 text-xs font-semibold">描述你要创建的 Agent</span>
+                <span class="label-text mb-2 text-xs font-semibold">描述你要创建的 Assistant</span>
                 <textarea
                   v-model.trim="aiAgentDescription"
                   class="textarea textarea-bordered min-h-[92px] text-sm"
@@ -93,15 +96,13 @@
           </template>
 
           <template #empty>
-            <div class="py-12 text-center text-base-content/60">
-              请选择一个交互型 Agent。
-            </div>
+            <div class="py-12 text-center text-base-content/60">请选择一个 Assistant Profile。</div>
           </template>
 
           <template v-if="selectedProfile">
             <div class="space-y-4">
               <AgentIdentityPanel
-                eyebrow="交互型 Agent"
+                eyebrow="Assistant Profile"
                 :title="selectedProfile.label || selectedProfile.id"
                 :description="selectedProfile.description"
                 :meta-items="selectedProfileMetaItems"
@@ -174,12 +175,16 @@
                         @change="markSelectedAsDefault"
                       />
                       <span class="label-text">
-                        {{ draftDefaultAssistantProfileId === selectedProfile.id ? '默认' : '设为默认' }}
+                        {{
+                          draftDefaultAssistantProfileId === selectedProfile.id
+                            ? '默认'
+                            : '设为默认'
+                        }}
                       </span>
                     </label>
                     <button
                       class="btn btn-sm btn-error btn-outline"
-                      :disabled="draftProfiles.length <= 1"
+                      :disabled="visibleAssistantProfiles.length <= 1"
                       @click="removeSelectedProfile"
                     >
                       删除
@@ -188,189 +193,135 @@
                 </template>
               </AgentIdentityPanel>
 
-            <AgentWorkspaceTabs v-model="activeWorkspaceTab" :items="workspaceTabs" />
+              <AgentWorkspaceTabs v-model="activeWorkspaceTab" :items="workspaceTabs" />
 
-            <AssistantAgentOverviewPanel
-              v-if="activeWorkspaceTab === 'overview'"
-              :profile="selectedProfile"
-              :default-model-label="selectedProfileResolvedModelLabel"
-              :tool-config="selectedProfileToolConfig"
-            />
-
-            <div v-else class="space-y-4">
-              <AgentModelPanel
-                title="默认模型"
-                description="配置交互型 Agent 默认使用的 provider/model；不设置时跟随 AI 全局默认。"
-                provider-label="默认提供商"
-                model-label="默认模型"
-                :provider-value="selectedProfileDefaultProviderDraft"
-                :model-value="selectedProfileDefaultModelDraft"
-                :provider-options="aiProviderOptions"
-                :model-options="selectedProfileModelOptions"
-                :global-default-label="aiDefaultModelLabel"
-                :datalist-id="selectedProfileModelDatalistId"
-                follow-default-option-label="跟随 AI 默认配置"
-                follow-badge-label="跟随默认"
-                custom-badge-label="已覆盖"
-                suggested-hint="已加载该提供商的建议模型，也可手动输入模型 ID。"
-                @update:provider-value="updateSelectedProfileDefaultProvider"
-                @update:model-value="updateSelectedProfileDefaultModel"
+              <AssistantAgentOverviewPanel
+                v-if="activeWorkspaceTab === 'overview'"
+                :profile="selectedProfile"
+                :default-model-label="selectedProfileResolvedModelLabel"
+                :tool-config="selectedProfileToolConfig"
               />
 
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-base-300 bg-base-200/30 p-4">
-                <label class="flex items-center justify-between gap-3">
-                  <span class="text-sm font-medium">默认启用 RAG</span>
-                  <input v-model="selectedProfile.defaultRagEnabled" type="checkbox" class="toggle toggle-sm" />
-                </label>
-                <label class="flex items-center justify-between gap-3">
-                  <span class="text-sm font-medium">默认启用 Web 搜索</span>
-                  <input v-model="selectedProfile.defaultWebSearchEnabled" type="checkbox" class="toggle toggle-sm" />
-                </label>
-                <label class="flex items-center justify-between gap-3">
-                  <span class="text-sm font-medium">默认启用 Tools</span>
-                  <input v-model="selectedProfile.defaultToolsEnabled" type="checkbox" class="toggle toggle-sm" />
-                </label>
-                <label class="flex items-center justify-between gap-3">
-                  <span class="text-sm font-medium">默认启用 10th Man</span>
-                  <input v-model="selectedProfile.defaultTenthManEnabled" type="checkbox" class="toggle toggle-sm" />
-                </label>
-                <label class="form-control md:col-span-2">
-                  <span class="label-text mb-2">Harness 最大续跑次数</span>
-                  <input
-                    v-model.number="selectedProfile.defaultHarnessMaxContinuations"
-                    type="number"
-                    min="0"
-                    max="20"
-                    step="1"
-                    class="input input-bordered input-sm"
-                  />
-                </label>
-              </div>
+              <div v-else class="space-y-4">
+                <AgentModelPanel
+                  title="默认模型"
+                  description="配置 Assistant 默认使用的 provider/model；不设置时跟随 AI 全局默认。"
+                  provider-label="默认提供商"
+                  model-label="默认模型"
+                  :provider-value="selectedProfileDefaultProviderDraft"
+                  :model-value="selectedProfileDefaultModelDraft"
+                  :provider-options="aiProviderOptions"
+                  :model-options="selectedProfileModelOptions"
+                  :global-default-label="aiDefaultModelLabel"
+                  :datalist-id="selectedProfileModelDatalistId"
+                  follow-default-option-label="跟随 AI 默认配置"
+                  follow-badge-label="跟随默认"
+                  custom-badge-label="已覆盖"
+                  suggested-hint="已加载该提供商的建议模型，也可手动输入模型 ID。"
+                  @update:provider-value="updateSelectedProfileDefaultProvider"
+                  @update:model-value="updateSelectedProfileDefaultModel"
+                />
 
-              <AgentToolPolicyPanel
-                title="默认工具策略"
-                description="配置交互型 Agent 默认是否启用工具、如何选工具，以及可显式预选或禁用的工具范围。"
-              >
-                <template #summary>
-                  <span class="badge badge-sm" :class="selectedProfileToolConfig.enabled ? 'badge-primary' : 'badge-ghost'">
-                    {{ selectedProfileToolConfig.enabled ? '工具已启用' : '工具已关闭' }}
-                  </span>
-                  <span class="badge badge-outline badge-sm">
-                    {{ `策略 ${selectedProfileToolConfig.selection_strategy}` }}
-                  </span>
-                  <span class="badge badge-outline badge-sm">
-                    {{ `上限 ${selectedProfileToolConfig.max_tools}` }}
-                  </span>
-                  <span class="badge badge-outline badge-sm">
-                    {{ `预选 ${selectedProfileToolConfig.preselected_tools.length}` }}
-                  </span>
-                  <span class="badge badge-outline badge-sm">
-                    {{ `禁用 ${selectedProfileToolConfig.disabled_tools.length}` }}
-                  </span>
-                </template>
-
-                <div class="collapse collapse-arrow rounded-xl border border-base-300 bg-base-100">
-                  <input type="checkbox" />
-                  <div class="collapse-title font-semibold">展开默认工具配置</div>
-                  <div class="collapse-content">
-                    <div
-                      v-if="selectedProfile.runMode === 'team'"
-                      class="mb-3 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-xs leading-5 text-base-content/70"
-                    >
-                      Team 成员 Profile 默认不需要预选工具。这里留空时，运行时会直接回落到 Team Profile 的“工具角色矩阵”；只有在这里显式选择或禁用工具，才会进一步收窄该角色的实际工具范围。
-                    </div>
-                    <ToolConfigPanel
-                      :config="selectedProfileToolConfig"
-                      :show-header="false"
-                      :show-footer="false"
-                      @update:config="updateSelectedProfileToolConfig"
+                <div
+                  class="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-base-300 bg-base-200/30 p-4"
+                >
+                  <label class="flex items-center justify-between gap-3">
+                    <span class="text-sm font-medium">默认启用 RAG</span>
+                    <input
+                      v-model="selectedProfile.defaultRagEnabled"
+                      type="checkbox"
+                      class="toggle toggle-sm"
                     />
-                  </div>
+                  </label>
+                  <label class="flex items-center justify-between gap-3">
+                    <span class="text-sm font-medium">默认启用 Web 搜索</span>
+                    <input
+                      v-model="selectedProfile.defaultWebSearchEnabled"
+                      type="checkbox"
+                      class="toggle toggle-sm"
+                    />
+                  </label>
+                  <label class="flex items-center justify-between gap-3">
+                    <span class="text-sm font-medium">默认启用 Tools</span>
+                    <input
+                      v-model="selectedProfile.defaultToolsEnabled"
+                      type="checkbox"
+                      class="toggle toggle-sm"
+                    />
+                  </label>
+                  <label class="flex items-center justify-between gap-3">
+                    <span class="text-sm font-medium">默认启用 10th Man</span>
+                    <input
+                      v-model="selectedProfile.defaultTenthManEnabled"
+                      type="checkbox"
+                      class="toggle toggle-sm"
+                    />
+                  </label>
+                  <label class="form-control md:col-span-2">
+                    <span class="label-text mb-2">Harness 最大续跑次数</span>
+                    <input
+                      v-model.number="selectedProfile.defaultHarnessMaxContinuations"
+                      type="number"
+                      min="0"
+                      max="20"
+                      step="1"
+                      class="input input-bordered input-sm"
+                    />
+                  </label>
                 </div>
-              </AgentToolPolicyPanel>
 
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label class="form-control">
-                  <span class="label-text mb-2">Team 角色</span>
-                  <select v-model="selectedProfile.teamRole" class="select select-bordered">
-                    <option value="assistant">Assistant</option>
-                    <option value="orchestrator">Orchestrator</option>
-                    <option value="specialist">Specialist</option>
-                    <option value="monitor">Monitor</option>
-                  </select>
-                </label>
+                <AgentToolPolicyPanel
+                  title="默认工具策略"
+                  description="配置 Assistant 默认是否启用工具、如何选工具，以及可显式预选或禁用的工具范围。"
+                >
+                  <template #summary>
+                    <span
+                      class="badge badge-sm"
+                      :class="selectedProfileToolConfig.enabled ? 'badge-primary' : 'badge-ghost'"
+                    >
+                      {{ selectedProfileToolConfig.enabled ? '工具已启用' : '工具已关闭' }}
+                    </span>
+                    <span class="badge badge-outline badge-sm">
+                      {{ `策略 ${selectedProfileToolConfig.selection_strategy}` }}
+                    </span>
+                    <span class="badge badge-outline badge-sm">
+                      {{ `上限 ${selectedProfileToolConfig.max_tools}` }}
+                    </span>
+                    <span class="badge badge-outline badge-sm">
+                      {{ `预选 ${selectedProfileToolConfig.preselected_tools.length}` }}
+                    </span>
+                    <span class="badge badge-outline badge-sm">
+                      {{ `禁用 ${selectedProfileToolConfig.disabled_tools.length}` }}
+                    </span>
+                  </template>
 
-                <label class="form-control">
-                  <span class="label-text mb-2">上下文模式</span>
-                  <select v-model="selectedProfile.contextMode" class="select select-bordered">
-                    <option value="claude-like">claude-like</option>
-                    <option value="codex-like">codex-like</option>
-                    <option value="sentinel-like">sentinel-like</option>
-                  </select>
-                </label>
+                  <div
+                    class="collapse collapse-arrow rounded-xl border border-base-300 bg-base-100"
+                  >
+                    <input type="checkbox" />
+                    <div class="collapse-title font-semibold">展开默认工具配置</div>
+                    <div class="collapse-content">
+                      <ToolConfigPanel
+                        :config="selectedProfileToolConfig"
+                        :show-header="false"
+                        :show-footer="false"
+                        @update:config="updateSelectedProfileToolConfig"
+                      />
+                    </div>
+                  </div>
+                </AgentToolPolicyPanel>
 
-                <label class="form-control">
-                  <span class="label-text mb-2">运行模式</span>
-                  <select v-model="selectedProfile.runMode" class="select select-bordered">
-                    <option value="assistant">assistant</option>
-                    <option value="team">team</option>
-                  </select>
-                </label>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label class="form-control">
+                    <span class="label-text mb-2">上下文模式</span>
+                    <select v-model="selectedProfile.contextMode" class="select select-bordered">
+                      <option value="claude-like">claude-like</option>
+                      <option value="codex-like">codex-like</option>
+                      <option value="sentinel-like">sentinel-like</option>
+                    </select>
+                  </label>
+                </div>
               </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label class="form-control">
-                  <span class="label-text mb-2">默认 Team Profile（Team 模式）</span>
-                  <select
-                    v-model="selectedProfile.defaultTeamProfileId"
-                    class="select select-bordered"
-                  >
-                    <option :value="null">使用默认 Team Profile</option>
-                    <option
-                      v-for="teamProfile in teamProfileOptions"
-                      :key="teamProfile.id"
-                      :value="teamProfile.id"
-                    >
-                      {{ teamProfile.name }}
-                    </option>
-                  </select>
-                </label>
-
-                <label class="form-control">
-                  <span class="label-text mb-2">Team 编排模板（可选）</span>
-                  <select
-                    v-model="selectedProfile.defaultTeamOrchestrationPresetId"
-                    class="select select-bordered"
-                  >
-                    <option :value="null">不设置</option>
-                    <option
-                      v-for="preset in teamOrchestrationPresetOptions"
-                      :key="preset.id"
-                      :value="preset.id"
-                    >
-                      {{ preset.label }}
-                    </option>
-                  </select>
-                </label>
-
-                <label class="form-control">
-                  <span class="label-text mb-2">Team 恢复策略（可选）</span>
-                  <select
-                    v-model="selectedProfile.defaultTeamRecoveryPresetId"
-                    class="select select-bordered"
-                  >
-                    <option :value="null">不设置</option>
-                    <option
-                      v-for="preset in teamRecoveryPresetOptions"
-                      :key="preset.id"
-                      :value="preset.id"
-                    >
-                      {{ preset.label }}
-                    </option>
-                  </select>
-                </label>
-              </div>
-            </div>
             </div>
           </template>
         </SystemAgentDetailLayout>
@@ -399,7 +350,6 @@ import TeamProfileRegistryPanel from '@/components/Settings/TeamProfileRegistryP
 import {
   ASSISTANT_AGENT_LIST_FILTER_OPTIONS,
   getAssistantAgentModelBadge,
-  getAssistantAgentRunModeBadge,
   getAssistantAgentSecondarySummary,
   getAssistantAgentToolsBadge,
 } from '@/components/Settings/assistant-agent/assistantAgentListSupport'
@@ -408,8 +358,6 @@ import {
   createNextProfileIdentity,
   normalizeAssistantProfileDraft,
   profileToToolConfig,
-  teamOrchestrationPresetOptions,
-  teamRecoveryPresetOptions,
 } from '@/components/Settings/assistantProfileRegistrySupport'
 import { dialog } from '@/composables/useDialog'
 import { AI_CONFIG_UPDATED_EVENT, getAiConfigFromUpdateEvent } from '@/services/aiConfigEvents'
@@ -420,13 +368,11 @@ const {
   isLoadingAssistantProfiles,
   isSavingDefaultAssistantProfile,
   isSavingAssistantProfiles,
-  loadTeamProfiles,
   loadDefaultAssistantProfile,
   loadAssistantProfiles,
   profileOptions,
   saveAssistantProfiles,
   saveDefaultAssistantProfile,
-  teamProfileOptions,
 } = useAssistantProfiles()
 
 type WorkspaceTabKey = 'overview' | 'config'
@@ -483,17 +429,21 @@ const extractModelId = (item: any) => {
 }
 
 const getProviderConfigByKey = (providerKey: string) => {
-  const providers = aiConfig.value?.providers && typeof aiConfig.value.providers === 'object'
-    ? aiConfig.value.providers
-    : {}
-  const matchedKey = Object.keys(providers).find(key => key.toLowerCase() === providerKey.toLowerCase())
+  const providers =
+    aiConfig.value?.providers && typeof aiConfig.value.providers === 'object'
+      ? aiConfig.value.providers
+      : {}
+  const matchedKey = Object.keys(providers).find(
+    key => key.toLowerCase() === providerKey.toLowerCase()
+  )
   return matchedKey ? providers[matchedKey] : null
 }
 
 const aiProviderOptions = computed(() => {
-  const providers = aiConfig.value?.providers && typeof aiConfig.value.providers === 'object'
-    ? aiConfig.value.providers
-    : {}
+  const providers =
+    aiConfig.value?.providers && typeof aiConfig.value.providers === 'object'
+      ? aiConfig.value.providers
+      : {}
   return Object.entries(providers)
     .filter(([, providerValue]) => (providerValue as any)?.enabled !== false)
     .map(([providerKey, providerValue]) => {
@@ -535,7 +485,9 @@ const splitDefaultModel = (defaultModel: string | null | undefined) => {
   }
 }
 
-const syncSelectedProfileModelDraft = (profile: AssistantProfileOption | null = selectedProfile.value) => {
+const syncSelectedProfileModelDraft = (
+  profile: AssistantProfileOption | null = selectedProfile.value
+) => {
   const { provider, model } = splitDefaultModel(profile?.defaultModel)
   selectedProfileDefaultProviderDraft.value = provider
   selectedProfileDefaultModelDraft.value = model
@@ -544,15 +496,20 @@ const syncSelectedProfileModelDraft = (profile: AssistantProfileOption | null = 
 const selectedProfileModelOptions = computed(() => {
   const providerConfig = getProviderConfigByKey(selectedProfileDefaultProviderDraft.value)
   const models = Array.isArray(providerConfig?.models) ? providerConfig.models : []
-  const out = models.map((model: any) => {
-    const value = extractModelId(model)
-    return {
-      value,
-      label: typeof model?.name === 'string' ? model.name : value,
-    }
-  }).filter((model: { value: string }) => model.value)
+  const out = models
+    .map((model: any) => {
+      const value = extractModelId(model)
+      return {
+        value,
+        label: typeof model?.name === 'string' ? model.name : value,
+      }
+    })
+    .filter((model: { value: string }) => model.value)
   const providerDefaultModel = String(providerConfig?.default_model || '').trim()
-  if (providerDefaultModel && !out.some((model: { value: string }) => model.value === providerDefaultModel)) {
+  if (
+    providerDefaultModel &&
+    !out.some((model: { value: string }) => model.value === providerDefaultModel)
+  ) {
     out.unshift({
       value: providerDefaultModel,
       label: providerDefaultModel,
@@ -635,17 +592,19 @@ const cancelIdentityEdit = () => {
 }
 
 const selectedProfileToolConfig = computed(() =>
-  selectedProfile.value ? profileToToolConfig(selectedProfile.value) : {
-    enabled: false,
-    selection_strategy: 'Keyword',
-    max_tools: 5,
-    preselected_tools: [],
-    disabled_tools: [],
-    manual_tools: [],
-  }
+  selectedProfile.value
+    ? profileToToolConfig(selectedProfile.value)
+    : {
+        enabled: false,
+        selection_strategy: 'Keyword',
+        max_tools: 5,
+        preselected_tools: [],
+        disabled_tools: [],
+        manual_tools: [],
+      }
 )
-const selectedProfileResolvedModelLabel = computed(() =>
-  selectedProfile.value?.defaultModel?.trim() || aiDefaultModelLabel.value
+const selectedProfileResolvedModelLabel = computed(
+  () => selectedProfile.value?.defaultModel?.trim() || aiDefaultModelLabel.value
 )
 const workspaceTabs: Array<{
   key: WorkspaceTabKey
@@ -666,7 +625,9 @@ const updateSelectedProfileToolConfig = (config: UiToolConfigPayload) => {
   applyToolConfigToProfile(selectedProfile.value, config)
 }
 
-const loading = computed(() => isLoadingAssistantProfiles.value || isLoadingDefaultAssistantProfile.value)
+const loading = computed(
+  () => isLoadingAssistantProfiles.value || isLoadingDefaultAssistantProfile.value
+)
 const selectedProfile = computed(
   () => draftProfiles.value.find(profile => profile.id === selectedProfileId.value) || null
 )
@@ -675,16 +636,8 @@ const selectedProfileMetaItems = computed(() => {
 
   return [
     {
-      label: 'Agent ID',
+      label: 'Assistant ID',
       value: selectedProfile.value.id,
-    },
-    {
-      label: 'Team 角色',
-      value: selectedProfile.value.teamRole || 'assistant',
-    },
-    {
-      label: '运行模式',
-      value: selectedProfile.value.runMode,
     },
     {
       label: '上下文模式',
@@ -696,8 +649,13 @@ const selectedProfileMetaItems = computed(() => {
     },
   ]
 })
+
+const visibleAssistantProfiles = computed(() =>
+  draftProfiles.value.filter(profile => profile.runMode !== 'team')
+)
+
 const assistantListItems = computed<AgentListItemViewModel[]>(() =>
-  draftProfiles.value.map(profile => {
+  visibleAssistantProfiles.value.map(profile => {
     const badges = []
 
     if (draftDefaultAssistantProfileId.value === profile.id) {
@@ -707,7 +665,6 @@ const assistantListItems = computed<AgentListItemViewModel[]>(() =>
       })
     }
 
-    badges.push(getAssistantAgentRunModeBadge(profile))
     badges.push(getAssistantAgentModelBadge(profile))
     badges.push(getAssistantAgentToolsBadge(profile))
 
@@ -717,19 +674,9 @@ const assistantListItems = computed<AgentListItemViewModel[]>(() =>
       description: profile.description,
       metaLine: getAssistantAgentSecondarySummary(profile),
       badges,
-      searchText: [
-        profile.runMode,
-        profile.teamRole || 'assistant',
-        profile.contextMode,
-        profile.defaultModel || '',
-        profile.defaultTeamProfileId || '',
-        profile.defaultTeamOrchestrationPresetId || '',
-        profile.defaultTeamRecoveryPresetId || '',
-      ].join(' '),
+      searchText: [profile.contextMode, profile.defaultModel || ''].join(' '),
       filterKeys: [
         ...(draftDefaultAssistantProfileId.value === profile.id ? ['default'] : []),
-        profile.runMode === 'team' ? 'team' : 'assistant',
-        profile.teamRole || 'assistant',
         profile.defaultModel?.trim() ? 'model-override' : 'model-global',
         profile.defaultToolsEnabled ? 'tools-on' : 'tools-off',
       ],
@@ -738,10 +685,10 @@ const assistantListItems = computed<AgentListItemViewModel[]>(() =>
 )
 const canSaveProfiles = computed(
   () =>
-    !loading.value
-    && !isSavingAssistantProfiles.value
-    && draftProfiles.value.length > 0
-    && draftProfiles.value.every(
+    !loading.value &&
+    !isSavingAssistantProfiles.value &&
+    draftProfiles.value.length > 0 &&
+    draftProfiles.value.every(
       profile => profile.id.trim() && profile.label.trim() && profile.description.trim()
     )
 )
@@ -756,16 +703,16 @@ const currentDraftStateSnapshot = computed(() =>
   })
 )
 
-const hasProfileUnsavedChanges = computed(() =>
-  buildProfilesSnapshot(draftProfiles.value) !== lastSavedProfilesSnapshot.value
+const hasProfileUnsavedChanges = computed(
+  () => buildProfilesSnapshot(draftProfiles.value) !== lastSavedProfilesSnapshot.value
 )
 
-const hasDefaultProfileUnsavedChanges = computed(() =>
-  draftDefaultAssistantProfileId.value.trim() !== defaultAssistantProfileId.value.trim()
+const hasDefaultProfileUnsavedChanges = computed(
+  () => draftDefaultAssistantProfileId.value.trim() !== defaultAssistantProfileId.value.trim()
 )
 
-const hasUnsavedChanges = computed(() =>
-  hasProfileUnsavedChanges.value || hasDefaultProfileUnsavedChanges.value
+const hasUnsavedChanges = computed(
+  () => hasProfileUnsavedChanges.value || hasDefaultProfileUnsavedChanges.value
 )
 
 const autoSaveStatusText = computed(() => {
@@ -792,14 +739,19 @@ const clearAutoSaveTimer = () => {
 
 const resetDraftState = (
   profiles: AssistantProfileOption[],
-  options?: { preserveStatus?: boolean },
+  options?: { preserveStatus?: boolean }
 ) => {
   clearAutoSaveTimer()
   draftProfiles.value = profiles.map(profile => ({ ...profile }))
-  if (!draftProfiles.value.some(profile => profile.id === selectedProfileId.value)) {
-    selectedProfileId.value = draftProfiles.value[0]?.id || ''
+  const visibleProfiles = draftProfiles.value.filter(profile => profile.runMode !== 'team')
+  if (!visibleProfiles.some(profile => profile.id === selectedProfileId.value)) {
+    selectedProfileId.value = visibleProfiles[0]?.id || ''
   }
-  draftDefaultAssistantProfileId.value = defaultAssistantProfileId.value
+  draftDefaultAssistantProfileId.value = visibleProfiles.some(
+    profile => profile.id === defaultAssistantProfileId.value
+  )
+    ? defaultAssistantProfileId.value
+    : visibleProfiles[0]?.id || ''
   lastSavedProfilesSnapshot.value = buildProfilesSnapshot(draftProfiles.value)
   syncSelectedProfileModelDraft(
     draftProfiles.value.find(profile => profile.id === selectedProfileId.value) || null
@@ -818,23 +770,17 @@ const reloadProfiles = async () => {
       loadDefaultAssistantProfile(true),
       loadAiConfig(),
     ])
-    try {
-      await loadTeamProfiles(true)
-    } catch (error) {
-      console.error('Failed to load team profiles:', error)
-      dialog.toast.error('Team Profile 加载失败')
-    }
     resetDraftState(profileOptions.value)
   } catch (error) {
     console.error('Failed to load assistant profiles:', error)
-    dialog.toast.error('交互型 Agent 配置加载失败')
+    dialog.toast.error('Assistant Profile 配置加载失败')
   } finally {
     suspendAutoSave.value = false
   }
 }
 
 const loadAiConfig = async (nextConfig?: any) => {
-  aiConfig.value = nextConfig || await invoke('get_ai_config')
+  aiConfig.value = nextConfig || (await invoke('get_ai_config'))
 }
 
 const handleAiConfigUpdated = (event: Event) => {
@@ -848,7 +794,8 @@ const handleAiConfigUpdated = (event: Event) => {
 
 const saveProfilesInternal = async (options?: { silent?: boolean }) => {
   const shouldSaveProfiles = hasProfileUnsavedChanges.value
-  const shouldSaveDefault = hasDefaultProfileUnsavedChanges.value && !!draftDefaultAssistantProfileId.value.trim()
+  const shouldSaveDefault =
+    hasDefaultProfileUnsavedChanges.value && !!draftDefaultAssistantProfileId.value.trim()
 
   if (!shouldSaveProfiles && !shouldSaveDefault) return
   if (shouldSaveProfiles && !canSaveProfiles.value && !shouldSaveDefault) return
@@ -874,18 +821,14 @@ const saveProfilesInternal = async (options?: { silent?: boolean }) => {
     autoSaveState.value = savedAllChanges ? 'saved' : 'idle'
     if (savedAllChanges) {
       dialog.toast.success(
-        options?.silent
-          ? '交互型 Agent 配置已自动保存'
-          : '交互型 Agent 配置已保存'
+        options?.silent ? 'Assistant Profile 配置已自动保存' : 'Assistant Profile 配置已保存'
       )
     }
   } catch (error) {
     console.error('Failed to save assistant profiles:', error)
     autoSaveState.value = 'error'
     dialog.toast.error(
-      options?.silent
-        ? '交互型 Agent 配置自动保存失败'
-        : '交互型 Agent 配置保存失败'
+      options?.silent ? 'Assistant Profile 配置自动保存失败' : 'Assistant Profile 配置保存失败'
     )
   } finally {
     suspendAutoSave.value = false
@@ -897,25 +840,37 @@ const saveProfilesInternal = async (options?: { silent?: boolean }) => {
 
 const queueAutoSave = () => {
   if (
-    suspendAutoSave.value
-    || loading.value
-    || isSavingAssistantProfiles.value
-    || isSavingDefaultAssistantProfile.value
-  ) return
+    suspendAutoSave.value ||
+    loading.value ||
+    isSavingAssistantProfiles.value ||
+    isSavingDefaultAssistantProfile.value
+  )
+    return
   if (!hasUnsavedChanges.value) return
-  if (hasProfileUnsavedChanges.value && !canSaveProfiles.value && !hasDefaultProfileUnsavedChanges.value) return
+  if (
+    hasProfileUnsavedChanges.value &&
+    !canSaveProfiles.value &&
+    !hasDefaultProfileUnsavedChanges.value
+  )
+    return
 
   clearAutoSaveTimer()
   autoSaveTimer = setTimeout(() => {
     autoSaveTimer = null
     if (
-      suspendAutoSave.value
-      || loading.value
-      || isSavingAssistantProfiles.value
-      || isSavingDefaultAssistantProfile.value
-    ) return
+      suspendAutoSave.value ||
+      loading.value ||
+      isSavingAssistantProfiles.value ||
+      isSavingDefaultAssistantProfile.value
+    )
+      return
     if (!hasUnsavedChanges.value) return
-    if (hasProfileUnsavedChanges.value && !canSaveProfiles.value && !hasDefaultProfileUnsavedChanges.value) return
+    if (
+      hasProfileUnsavedChanges.value &&
+      !canSaveProfiles.value &&
+      !hasDefaultProfileUnsavedChanges.value
+    )
+      return
     void saveProfilesInternal({ silent: true })
   }, 600)
 }
@@ -925,7 +880,7 @@ const createProfile = () => {
   const profile: AssistantProfileOption = {
     id,
     label: `Custom ${nextIndex}`,
-    description: '自定义交互型 Agent',
+    description: '自定义 Assistant Profile',
     teamRole: 'assistant',
     defaultModel: null,
     defaultRagEnabled: false,
@@ -961,22 +916,18 @@ const createProfileWithAi = async () => {
       'ai_create_assistant_profile_from_description',
       { request: { description } }
     )
-    await Promise.all([
-      loadAssistantProfiles(true),
-      loadDefaultAssistantProfile(true),
-      loadTeamProfiles(true),
-    ])
+    await Promise.all([loadAssistantProfiles(true), loadDefaultAssistantProfile(true)])
     resetDraftState(profileOptions.value, { preserveStatus: true })
     selectedProfileId.value = result.profile.id
     syncSelectedProfileModelDraft(result.profile)
     aiAgentDescription.value = ''
     showAiAgentCreator.value = false
     autoSaveState.value = 'saved'
-    dialog.toast.success(`AI 已创建 Agent：${result.profile.label}`)
+    dialog.toast.success(`AI 已创建 Assistant：${result.profile.label}`)
   } catch (error) {
     console.error('Failed to create assistant profile with AI:', error)
     autoSaveState.value = 'error'
-    dialog.toast.error('AI 创建 Agent 失败')
+    dialog.toast.error('AI 创建 Assistant 失败')
   } finally {
     isAiCreatingAgent.value = false
     suspendAutoSave.value = false
@@ -984,12 +935,20 @@ const createProfileWithAi = async () => {
 }
 
 const removeSelectedProfile = () => {
-  if (!selectedProfile.value || draftProfiles.value.length <= 1) return
-  draftProfiles.value = draftProfiles.value.filter(profile => profile !== selectedProfile.value)
-  if (draftDefaultAssistantProfileId.value === selectedProfile.value.id) {
-    draftDefaultAssistantProfileId.value = draftProfiles.value[0]?.id || ''
+  const targetProfileId = selectedProfile.value?.id?.trim() || ''
+  if (!targetProfileId || visibleAssistantProfiles.value.length <= 1) return
+  const targetIndex = visibleAssistantProfiles.value.findIndex(
+    profile => profile.id === targetProfileId
+  )
+  if (targetIndex < 0) return
+
+  draftProfiles.value = draftProfiles.value.filter(profile => profile.id !== targetProfileId)
+  if (draftDefaultAssistantProfileId.value === targetProfileId) {
+    draftDefaultAssistantProfileId.value = visibleAssistantProfiles.value[0]?.id || ''
   }
-  selectedProfileId.value = draftProfiles.value[0]?.id || ''
+  selectedProfileId.value =
+    visibleAssistantProfiles.value[Math.min(targetIndex, visibleAssistantProfiles.value.length - 1)]
+      ?.id || ''
 }
 
 const markSelectedAsDefault = () => {

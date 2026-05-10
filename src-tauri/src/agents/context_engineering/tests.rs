@@ -1,5 +1,10 @@
 use sentinel_llm::ChatMessage;
 
+use crate::agents::context_engineering::builder::{
+    build_browser_shell_session_context, build_context_storage_context,
+    build_document_attachments_context, build_execution_environment_context,
+    build_skill_instructions_context, build_system_context, build_task_mainline_context,
+};
 use crate::agents::context_engineering::engine::ContextEngineMode;
 use crate::agents::context_engineering::memory_index::{
     ingest_memory_items, retrieve_memory_items, MemoryQuery,
@@ -9,6 +14,7 @@ use crate::agents::context_engineering::types::{
     trim_history_preserve_tool_pairs, ContextPacket, RetrievedMemorySection, ToolDigestEntry,
 };
 use crate::agents::context_engineering::{ContextMessageLayout, ContextRunState};
+use crate::agents::DocumentAttachmentInfo;
 
 #[test]
 fn trim_history_preserves_tool_pairs() {
@@ -165,6 +171,121 @@ fn orchestrator_context_contains_runtime_sections() {
 }
 
 #[test]
+fn task_mainline_is_runtime_context_not_system_prompt() {
+    let task_mainline =
+        build_task_mainline_context("continue investigation\n[Harness continuation 2 of 6]");
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.run_state = task_mainline;
+
+    let system_prompt = packet.render_system_prompt();
+    assert_eq!(system_prompt, "STATIC_RULES");
+    assert!(!system_prompt.contains("[TaskMainlineSummary]"));
+    assert!(!system_prompt.contains("Harness continuation"));
+
+    let runtime_context = packet.render_orchestrator_context();
+    assert!(runtime_context.contains("[TaskMainlineSummary]"));
+    assert!(runtime_context.contains("Harness continuation 2 of 6"));
+}
+
+#[test]
+fn execution_runtime_metadata_is_not_system_prompt() {
+    let mut packet = ContextPacket::new(
+        "STATIC_RULES\n<available_skills>\nskills stay here\n</available_skills>".to_string(),
+    );
+    packet.run_state = [
+        build_system_context("exec-123"),
+        build_execution_environment_context("host", "macos", "/Users/like/code/project"),
+        build_context_storage_context(
+            "host",
+            "macos",
+            "exec-123",
+            "/Users/like/.sentinel/context",
+            "/Users/like/.sentinel/context/exec-123",
+            "/Users/like/.sentinel/context/exec-123/history.json",
+        ),
+    ]
+    .join("\n\n");
+
+    let system_prompt = packet.render_system_prompt();
+    assert!(system_prompt.contains("<available_skills>"));
+    assert!(!system_prompt.contains("exec-123"));
+    assert!(!system_prompt.contains("/Users/like/code/project"));
+    assert!(!system_prompt.contains("[Execution Environment]"));
+    assert!(!system_prompt.contains("[Context Storage]"));
+
+    let runtime_context = packet.render_orchestrator_context();
+    assert!(runtime_context.contains("exec-123"));
+    assert!(runtime_context.contains("/Users/like/code/project"));
+    assert!(runtime_context.contains("[Execution Environment]"));
+    assert!(runtime_context.contains("[Context Storage]"));
+}
+
+#[test]
+fn browser_shell_session_binding_is_runtime_context_not_system_prompt() {
+    let mut packet = ContextPacket::new(
+        "STATIC_RULES\n[Tool Usage Priority]\n- Use `browser_shell` when selected.".to_string(),
+    );
+    packet.run_state = build_browser_shell_session_context(
+        "browser-session-abc",
+        true,
+        &["Reuse the selected browser shell session unless the user explicitly asks for a different one.".to_string()],
+    );
+
+    let system_prompt = packet.render_system_prompt();
+    assert!(system_prompt.contains("Use `browser_shell`"));
+    assert!(!system_prompt.contains("browser-session-abc"));
+    assert!(!system_prompt.contains("[Browser Shell Session]"));
+    assert!(!system_prompt.contains("requires_approval=false"));
+
+    let runtime_context = packet.render_orchestrator_context();
+    assert!(runtime_context.contains("[Browser Shell Session]"));
+    assert!(runtime_context.contains("browser-session-abc"));
+    assert!(runtime_context.contains("requires_approval=false"));
+}
+
+#[test]
+fn document_attachments_are_runtime_context_not_system_prompt() {
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.run_state = build_document_attachments_context(&[DocumentAttachmentInfo {
+        id: "doc-1".to_string(),
+        original_filename: "evidence-report.pdf".to_string(),
+        file_size: 4096,
+        mime_type: "application/pdf".to_string(),
+        file_path: Some("/tmp/evidence-report.pdf".to_string()),
+    }]);
+
+    let system_prompt = packet.render_system_prompt();
+    assert_eq!(system_prompt, "STATIC_RULES");
+    assert!(!system_prompt.contains("[Document Attachments]"));
+    assert!(!system_prompt.contains("evidence-report.pdf"));
+    assert!(!system_prompt.contains("/tmp/evidence-report.pdf"));
+
+    let runtime_context = packet.render_orchestrator_context();
+    assert!(runtime_context.contains("[Document Attachments]"));
+    assert!(runtime_context.contains("evidence-report.pdf"));
+    assert!(runtime_context.contains("/tmp/evidence-report.pdf"));
+}
+
+#[test]
+fn selected_skill_content_is_runtime_context_not_system_prompt() {
+    let mut packet = ContextPacket::new(
+        "STATIC_RULES\n<available_skills>\nskill list stays in system\n</available_skills>"
+            .to_string(),
+    );
+    packet.run_state = build_skill_instructions_context(
+        "[SkillContentBegin: Audit]\nread the selected workflow\n[SkillContentEnd]",
+    );
+
+    let system_prompt = packet.render_system_prompt();
+    assert!(system_prompt.contains("<available_skills>"));
+    assert!(!system_prompt.contains("[SkillContentBegin: Audit]"));
+
+    let runtime_context = packet.render_orchestrator_context();
+    assert!(runtime_context.contains("[Skill Instructions]"));
+    assert!(runtime_context.contains("[SkillContentBegin: Audit]"));
+}
+
+#[test]
 fn codex_layout_splits_runtime_sections_into_multiple_messages() {
     let mut packet = ContextPacket::new("STATIC_RULES".to_string());
     packet.run_state = "Goals:\n- dynamic task".to_string();
@@ -317,7 +438,7 @@ fn tool_digest_entry_includes_review_hint_for_file_changes() {
     packet.set_tool_digests(&[digest]);
 
     let rendered = packet.render_orchestrator_context();
-    assert!(rendered.contains("Self-check: recent file modifications exist."));
+    assert!(rendered.contains("Self-check: some recent file modifications are still unverified."));
     assert!(rendered.contains("use `file_read` to re-read the changed lines"));
     assert!(rendered.contains("review: inspect around line 12 (2 changed lines)"));
     assert!(rendered.contains("line delta +2 / -2"));
@@ -348,7 +469,7 @@ fn split_layout_includes_file_change_self_check_guidance() {
     assert_eq!(messages.len(), 1);
     assert!(messages[0]
         .content
-        .contains("Self-check: recent file modifications exist."));
+        .contains("Self-check: some recent file modifications are still unverified."));
     assert!(messages[0]
         .content
         .contains("use `file_read` to re-read the changed lines"));

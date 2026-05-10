@@ -2,6 +2,7 @@
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::{mpsc, RwLock};
@@ -105,6 +106,10 @@ pub struct TerminalSession {
 }
 
 impl TerminalSession {
+    async fn set_runtime_state(state: &Arc<RwLock<SessionState>>, next: SessionState) {
+        *state.write().await = next;
+    }
+
     /// Create a new terminal session
     pub async fn new(id: String, config: TerminalSessionConfig) -> Result<Self, String> {
         Ok(Self {
@@ -292,15 +297,22 @@ impl TerminalSession {
         self.stdin_tx = Some(stdin_tx.clone());
 
         // Stdin writer task (write to PTY master)
+        let state_clone = self.state.clone();
         tokio::task::spawn_blocking(move || {
             use std::io::Write;
             while let Some(data) = stdin_rx.blocking_recv() {
                 if let Err(e) = pty_writer.write_all(&data) {
                     error!("Failed to write to PTY: {}", e);
+                    tokio::runtime::Handle::current().block_on(async {
+                        TerminalSession::set_runtime_state(&state_clone, SessionState::Error).await;
+                    });
                     break;
                 }
                 if let Err(e) = pty_writer.flush() {
                     error!("Failed to flush PTY: {}", e);
+                    tokio::runtime::Handle::current().block_on(async {
+                        TerminalSession::set_runtime_state(&state_clone, SessionState::Error).await;
+                    });
                     break;
                 }
             }
@@ -310,6 +322,7 @@ impl TerminalSession {
         let output_txs_clone = self.output_txs.clone();
         let output_history_clone = self.output_history.clone();
         let last_activity = self.last_activity.clone();
+        let state_clone = self.state.clone();
 
         tokio::task::spawn_blocking(move || {
             use std::io::Read;
@@ -318,6 +331,10 @@ impl TerminalSession {
                 match pty_reader.read(&mut buffer) {
                     Ok(0) => {
                         info!("PTY reader reached EOF");
+                        tokio::runtime::Handle::current().block_on(async {
+                            TerminalSession::set_runtime_state(&state_clone, SessionState::Stopped)
+                                .await;
+                        });
                         break;
                     }
                     Ok(n) => {
@@ -335,6 +352,9 @@ impl TerminalSession {
                     }
                     Err(e) => {
                         error!("Failed to read from PTY: {}", e);
+                        tokio::runtime::Handle::current().block_on(async {
+                            TerminalSession::set_runtime_state(&state_clone, SessionState::Error).await;
+                        });
                         break;
                     }
                 }
@@ -424,6 +444,22 @@ impl TerminalSession {
         for (key, value) in &self.config.env_vars {
             cmd_builder.env(key, value);
         }
+        if let Some(ref wd) = self.config.working_dir {
+            let path = Path::new(wd);
+            if !path.exists() {
+                return Err(format!(
+                    "Failed to start host shell: working directory does not exist: {}",
+                    wd
+                ));
+            }
+            if !path.is_dir() {
+                return Err(format!(
+                    "Failed to start host shell: working directory is not a directory: {}",
+                    wd
+                ));
+            }
+            cmd_builder.cwd(path);
+        }
 
         let child = pty_pair
             .slave
@@ -444,15 +480,22 @@ impl TerminalSession {
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         self.stdin_tx = Some(stdin_tx.clone());
 
+        let state_clone = self.state.clone();
         tokio::task::spawn_blocking(move || {
             use std::io::Write;
             while let Some(data) = stdin_rx.blocking_recv() {
                 if let Err(e) = pty_writer.write_all(&data) {
                     error!("Failed to write to host PTY: {}", e);
+                    tokio::runtime::Handle::current().block_on(async {
+                        TerminalSession::set_runtime_state(&state_clone, SessionState::Error).await;
+                    });
                     break;
                 }
                 if let Err(e) = pty_writer.flush() {
                     error!("Failed to flush host PTY: {}", e);
+                    tokio::runtime::Handle::current().block_on(async {
+                        TerminalSession::set_runtime_state(&state_clone, SessionState::Error).await;
+                    });
                     break;
                 }
             }
@@ -461,6 +504,7 @@ impl TerminalSession {
         let output_txs_clone = self.output_txs.clone();
         let output_history_clone = self.output_history.clone();
         let last_activity = self.last_activity.clone();
+        let state_clone = self.state.clone();
         tokio::task::spawn_blocking(move || {
             use std::io::Read;
             let mut buffer = [0u8; 8192];
@@ -468,6 +512,10 @@ impl TerminalSession {
                 match pty_reader.read(&mut buffer) {
                     Ok(0) => {
                         info!("Host PTY reader reached EOF");
+                        tokio::runtime::Handle::current().block_on(async {
+                            TerminalSession::set_runtime_state(&state_clone, SessionState::Stopped)
+                                .await;
+                        });
                         break;
                     }
                     Ok(n) => {
@@ -484,6 +532,9 @@ impl TerminalSession {
                     }
                     Err(e) => {
                         error!("Failed to read from host PTY: {}", e);
+                        tokio::runtime::Handle::current().block_on(async {
+                            TerminalSession::set_runtime_state(&state_clone, SessionState::Error).await;
+                        });
                         break;
                     }
                 }
@@ -491,11 +542,6 @@ impl TerminalSession {
         });
 
         *self.state.write().await = SessionState::Running;
-
-        if let Some(ref wd) = self.config.working_dir {
-            let cd_command = format!("cd {}\n", wd);
-            let _ = stdin_tx.send(cd_command.into_bytes());
-        }
 
         if let Some(ref initial_cmd) = self.config.initial_command {
             if !initial_cmd.is_empty() {
@@ -747,6 +793,9 @@ impl TerminalSession {
     /// Write data to terminal
     pub async fn write(&self, data: Vec<u8>) -> Result<(), String> {
         *self.last_activity.write().await = std::time::Instant::now();
+        if self.state().await != SessionState::Running {
+            return Err("Terminal session is not running".to_string());
+        }
 
         if let Some(ref tx) = self.stdin_tx {
             tx.send(data)
@@ -778,11 +827,8 @@ impl TerminalSession {
 
     /// Check if the session is healthy (stdin is open)
     pub fn is_healthy(&self) -> bool {
-        if let Some(ref tx) = self.stdin_tx {
-            !tx.is_closed()
-        } else {
-            false
-        }
+        matches!(self.state.try_read(), Ok(state) if *state == SessionState::Running)
+            && self.stdin_tx.as_ref().is_some_and(|tx| !tx.is_closed())
     }
 
     /// Get session state

@@ -48,21 +48,10 @@ const collectExistingToolCallIds = (messages: PersistedConversationMessageRow[])
   return ids
 }
 
-export const collectTeamMirroredConversationMessageIds = (
-  messages: PersistedConversationMessageRow[]
-): Set<string> => {
-  return new Set(
-    messages
-      .map((row) => String(row?.id || ''))
-      .filter((id) => id.startsWith('teamv3:'))
-  )
-}
-
 export const buildConversationTimeline = (
   messages: PersistedConversationMessageRow[],
   options: {
     toolCallCompletedLabel: string
-    shouldSuppressTeamMirrorNoiseMessage: (content: unknown) => boolean
   }
 ): AgentMessage[] => {
   const timeline: AgentMessage[] = []
@@ -73,13 +62,6 @@ export const buildConversationTimeline = (
     const parsedStructured = parseMaybeJson(row.structured_data)
     const ts = toMillis(row.timestamp)
     const reasoningContent = normalizeText(row.reasoning_content)
-    const isTeamMirrorNoise =
-      parsedMetadata?.kind === 'team_v3_mirror' &&
-      options.shouldSuppressTeamMirrorNoiseMessage(row.content)
-
-    if (isTeamMirrorNoise) {
-      return
-    }
 
     if (row.role === 'tool') {
       const kind = parsedMetadata?.kind

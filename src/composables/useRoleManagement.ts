@@ -14,6 +14,18 @@ const normalizeRole = (role: Role): Role => ({
   capabilities: Array.isArray(role.capabilities) ? role.capabilities : [],
 })
 
+const persistSelectedRoleId = (roleId: string | null) => {
+  try {
+    if (roleId) {
+      localStorage.setItem(SELECTED_ROLE_KEY, roleId)
+    } else {
+      localStorage.removeItem(SELECTED_ROLE_KEY)
+    }
+  } catch {
+    // The backend current-role setting is the source of truth.
+  }
+}
+
 export function useRoleManagement() {
   // 加载所有角色
   const loadRoles = async () => {
@@ -68,7 +80,7 @@ export function useRoleManagement() {
       // 如果删除的是当前选中的角色，清除选择
       if (selectedRole.value?.id === id) {
         selectedRole.value = null
-        localStorage.removeItem(SELECTED_ROLE_KEY)
+        persistSelectedRoleId(null)
       }
     } catch (error) {
       console.error('Failed to delete role:', error)
@@ -86,11 +98,7 @@ export function useRoleManagement() {
       selectedRole.value = role ? normalizeRole(role) : null
       
       // 同步到localStorage（用于UI状态恢复）
-      if (selectedRole.value) {
-        localStorage.setItem(SELECTED_ROLE_KEY, selectedRole.value.id)
-      } else {
-        localStorage.removeItem(SELECTED_ROLE_KEY)
-      }
+      persistSelectedRoleId(selectedRole.value?.id || null)
     } catch (error) {
       console.error('Failed to set current role:', error)
       throw error
@@ -104,25 +112,10 @@ export function useRoleManagement() {
       selectedRole.value = currentRole ? normalizeRole(currentRole) : null
       
       // 同步到localStorage
-      if (currentRole) {
-        localStorage.setItem(SELECTED_ROLE_KEY, currentRole.id)
-      } else {
-        localStorage.removeItem(SELECTED_ROLE_KEY)
-      }
+      persistSelectedRoleId(currentRole?.id || null)
     } catch (error) {
       console.error('Failed to restore selected role:', error)
-      // 降级到localStorage恢复
-      try {
-        const savedId = localStorage.getItem(SELECTED_ROLE_KEY)
-        if (savedId && roles.value.length > 0) {
-          const found = roles.value.find(r => r.id === savedId)
-          if (found) {
-            selectedRole.value = normalizeRole(found)
-          }
-        }
-      } catch (fallbackError) {
-        console.error('Failed to fallback restore selected role:', fallbackError)
-      }
+      selectedRole.value = null
     }
   }
 

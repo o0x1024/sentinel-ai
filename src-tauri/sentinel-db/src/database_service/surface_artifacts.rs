@@ -7,6 +7,11 @@ use crate::database_service::surface::{
 use anyhow::Result;
 use sqlx::QueryBuilder;
 
+const FAVICON_FINGERPRINT_TYPE: &str = "favicon";
+const FAVICON_METADATA_EVIDENCE_TYPE: &str = "favicon_metadata";
+const FINGERPRINT_EVIDENCE_TYPE: &str = "fingerprint_evidence";
+const FAVICON_EVIDENCE_PATTERN: &str = "%\"fingerprint_type\":\"favicon\"%";
+
 fn push_limit_sqlite(query_builder: &mut QueryBuilder<sqlx::Sqlite>, limit: Option<i64>) {
     if let Some(limit) = limit {
         query_builder.push(" LIMIT ");
@@ -260,6 +265,509 @@ impl DatabaseService {
                 .bind(&evidence.metadata_json)
                 .execute(pool)
                 .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn replace_surface_favicon_fingerprint(
+        &self,
+        fingerprint: &SurfaceFingerprintRow,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                match fingerprint.source.as_deref() {
+                    Some(source) => {
+                        sqlx::query(
+                            "DELETE FROM surface_fingerprints WHERE program_id = ? AND asset_id = ? AND fingerprint_type = ? AND source = ?",
+                        )
+                        .bind(&fingerprint.program_id)
+                        .bind(&fingerprint.asset_id)
+                        .bind(FAVICON_FINGERPRINT_TYPE)
+                        .bind(source)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "DELETE FROM surface_fingerprints WHERE program_id = ? AND asset_id = ? AND fingerprint_type = ? AND source IS NULL",
+                        )
+                        .bind(&fingerprint.program_id)
+                        .bind(&fingerprint.asset_id)
+                        .bind(FAVICON_FINGERPRINT_TYPE)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                sqlx::query(
+                    "INSERT INTO surface_fingerprints (id, program_id, asset_id, fingerprint_type, fingerprint_key, fingerprint_value, rule_id, rule_word, rule_name, normalized_product, normalized_vendor, normalized_category, normalized_family, version, is_primary, match_source_part, confidence_score, source, observed_at, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&fingerprint.id)
+                .bind(&fingerprint.program_id)
+                .bind(&fingerprint.asset_id)
+                .bind(&fingerprint.fingerprint_type)
+                .bind(&fingerprint.fingerprint_key)
+                .bind(&fingerprint.fingerprint_value)
+                .bind(&fingerprint.rule_id)
+                .bind(&fingerprint.rule_word)
+                .bind(&fingerprint.rule_name)
+                .bind(&fingerprint.normalized_product)
+                .bind(&fingerprint.normalized_vendor)
+                .bind(&fingerprint.normalized_category)
+                .bind(&fingerprint.normalized_family)
+                .bind(&fingerprint.version)
+                .bind(fingerprint.is_primary)
+                .bind(&fingerprint.match_source_part)
+                .bind(fingerprint.confidence_score)
+                .bind(&fingerprint.source)
+                .bind(&fingerprint.observed_at)
+                .bind(&fingerprint.metadata_json)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                match fingerprint.source.as_deref() {
+                    Some(source) => {
+                        sqlx::query(
+                            "DELETE FROM surface_fingerprints WHERE program_id = ? AND asset_id = ? AND fingerprint_type = ? AND source = ?",
+                        )
+                        .bind(&fingerprint.program_id)
+                        .bind(&fingerprint.asset_id)
+                        .bind(FAVICON_FINGERPRINT_TYPE)
+                        .bind(source)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "DELETE FROM surface_fingerprints WHERE program_id = ? AND asset_id = ? AND fingerprint_type = ? AND source IS NULL",
+                        )
+                        .bind(&fingerprint.program_id)
+                        .bind(&fingerprint.asset_id)
+                        .bind(FAVICON_FINGERPRINT_TYPE)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                sqlx::query(
+                    "INSERT INTO surface_fingerprints (id, program_id, asset_id, fingerprint_type, fingerprint_key, fingerprint_value, rule_id, rule_word, rule_name, normalized_product, normalized_vendor, normalized_category, normalized_family, version, is_primary, match_source_part, confidence_score, source, observed_at, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&fingerprint.id)
+                .bind(&fingerprint.program_id)
+                .bind(&fingerprint.asset_id)
+                .bind(&fingerprint.fingerprint_type)
+                .bind(&fingerprint.fingerprint_key)
+                .bind(&fingerprint.fingerprint_value)
+                .bind(&fingerprint.rule_id)
+                .bind(&fingerprint.rule_word)
+                .bind(&fingerprint.rule_name)
+                .bind(&fingerprint.normalized_product)
+                .bind(&fingerprint.normalized_vendor)
+                .bind(&fingerprint.normalized_category)
+                .bind(&fingerprint.normalized_family)
+                .bind(&fingerprint.version)
+                .bind(fingerprint.is_primary)
+                .bind(&fingerprint.match_source_part)
+                .bind(fingerprint.confidence_score)
+                .bind(&fingerprint.source)
+                .bind(&fingerprint.observed_at)
+                .bind(&fingerprint.metadata_json)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                match fingerprint.source.as_deref() {
+                    Some(source) => {
+                        sqlx::query(
+                            "DELETE FROM surface_fingerprints WHERE program_id = $1 AND asset_id = $2 AND fingerprint_type = $3 AND source = $4",
+                        )
+                        .bind(&fingerprint.program_id)
+                        .bind(&fingerprint.asset_id)
+                        .bind(FAVICON_FINGERPRINT_TYPE)
+                        .bind(source)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "DELETE FROM surface_fingerprints WHERE program_id = $1 AND asset_id = $2 AND fingerprint_type = $3 AND source IS NULL",
+                        )
+                        .bind(&fingerprint.program_id)
+                        .bind(&fingerprint.asset_id)
+                        .bind(FAVICON_FINGERPRINT_TYPE)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                sqlx::query(
+                    "INSERT INTO surface_fingerprints (id, program_id, asset_id, fingerprint_type, fingerprint_key, fingerprint_value, rule_id, rule_word, rule_name, normalized_product, normalized_vendor, normalized_category, normalized_family, version, is_primary, match_source_part, confidence_score, source, observed_at, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
+                )
+                .bind(&fingerprint.id)
+                .bind(&fingerprint.program_id)
+                .bind(&fingerprint.asset_id)
+                .bind(&fingerprint.fingerprint_type)
+                .bind(&fingerprint.fingerprint_key)
+                .bind(&fingerprint.fingerprint_value)
+                .bind(&fingerprint.rule_id)
+                .bind(&fingerprint.rule_word)
+                .bind(&fingerprint.rule_name)
+                .bind(&fingerprint.normalized_product)
+                .bind(&fingerprint.normalized_vendor)
+                .bind(&fingerprint.normalized_category)
+                .bind(&fingerprint.normalized_family)
+                .bind(&fingerprint.version)
+                .bind(fingerprint.is_primary)
+                .bind(&fingerprint.match_source_part)
+                .bind(fingerprint.confidence_score)
+                .bind(&fingerprint.source)
+                .bind(&fingerprint.observed_at)
+                .bind(&fingerprint.metadata_json)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn replace_surface_favicon_metadata_evidence(
+        &self,
+        evidence: &SurfaceEvidenceRow,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let asset_id = evidence
+            .asset_id
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("favicon metadata evidence requires asset_id"))?;
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                match evidence.collected_by.as_deref() {
+                    Some(collected_by) => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = ? AND asset_id = ? AND evidence_type = ? AND collected_by = ?",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FAVICON_METADATA_EVIDENCE_TYPE)
+                        .bind(collected_by)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = ? AND asset_id = ? AND evidence_type = ? AND collected_by IS NULL",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FAVICON_METADATA_EVIDENCE_TYPE)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                sqlx::query(
+                    "INSERT INTO surface_evidence (id, program_id, asset_id, evidence_type, title, content_text, content_path, content_json, collected_at, collected_by, probe_node, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&evidence.id)
+                .bind(&evidence.program_id)
+                .bind(&evidence.asset_id)
+                .bind(&evidence.evidence_type)
+                .bind(&evidence.title)
+                .bind(&evidence.content_text)
+                .bind(&evidence.content_path)
+                .bind(&evidence.content_json)
+                .bind(&evidence.collected_at)
+                .bind(&evidence.collected_by)
+                .bind(&evidence.probe_node)
+                .bind(&evidence.metadata_json)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                match evidence.collected_by.as_deref() {
+                    Some(collected_by) => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = ? AND asset_id = ? AND evidence_type = ? AND collected_by = ?",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FAVICON_METADATA_EVIDENCE_TYPE)
+                        .bind(collected_by)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = ? AND asset_id = ? AND evidence_type = ? AND collected_by IS NULL",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FAVICON_METADATA_EVIDENCE_TYPE)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                sqlx::query(
+                    "INSERT INTO surface_evidence (id, program_id, asset_id, evidence_type, title, content_text, content_path, content_json, collected_at, collected_by, probe_node, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&evidence.id)
+                .bind(&evidence.program_id)
+                .bind(&evidence.asset_id)
+                .bind(&evidence.evidence_type)
+                .bind(&evidence.title)
+                .bind(&evidence.content_text)
+                .bind(&evidence.content_path)
+                .bind(&evidence.content_json)
+                .bind(&evidence.collected_at)
+                .bind(&evidence.collected_by)
+                .bind(&evidence.probe_node)
+                .bind(&evidence.metadata_json)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                match evidence.collected_by.as_deref() {
+                    Some(collected_by) => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = $1 AND asset_id = $2 AND evidence_type = $3 AND collected_by = $4",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FAVICON_METADATA_EVIDENCE_TYPE)
+                        .bind(collected_by)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = $1 AND asset_id = $2 AND evidence_type = $3 AND collected_by IS NULL",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FAVICON_METADATA_EVIDENCE_TYPE)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                sqlx::query(
+                    "INSERT INTO surface_evidence (id, program_id, asset_id, evidence_type, title, content_text, content_path, content_json, collected_at, collected_by, probe_node, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                )
+                .bind(&evidence.id)
+                .bind(&evidence.program_id)
+                .bind(&evidence.asset_id)
+                .bind(&evidence.evidence_type)
+                .bind(&evidence.title)
+                .bind(&evidence.content_text)
+                .bind(&evidence.content_path)
+                .bind(&evidence.content_json)
+                .bind(&evidence.collected_at)
+                .bind(&evidence.collected_by)
+                .bind(&evidence.probe_node)
+                .bind(&evidence.metadata_json)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn replace_surface_favicon_fingerprint_evidence(
+        &self,
+        evidence: &SurfaceEvidenceRow,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let asset_id = evidence
+            .asset_id
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("favicon fingerprint evidence requires asset_id"))?;
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                match evidence.collected_by.as_deref() {
+                    Some(collected_by) => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = ? AND asset_id = ? AND evidence_type = ? AND collected_by = ? AND (COALESCE(metadata_json, '') LIKE ? OR COALESCE(content_json, '') LIKE ?)",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FINGERPRINT_EVIDENCE_TYPE)
+                        .bind(collected_by)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = ? AND asset_id = ? AND evidence_type = ? AND collected_by IS NULL AND (COALESCE(metadata_json, '') LIKE ? OR COALESCE(content_json, '') LIKE ?)",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FINGERPRINT_EVIDENCE_TYPE)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                sqlx::query(
+                    "INSERT INTO surface_evidence (id, program_id, asset_id, evidence_type, title, content_text, content_path, content_json, collected_at, collected_by, probe_node, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&evidence.id)
+                .bind(&evidence.program_id)
+                .bind(&evidence.asset_id)
+                .bind(&evidence.evidence_type)
+                .bind(&evidence.title)
+                .bind(&evidence.content_text)
+                .bind(&evidence.content_path)
+                .bind(&evidence.content_json)
+                .bind(&evidence.collected_at)
+                .bind(&evidence.collected_by)
+                .bind(&evidence.probe_node)
+                .bind(&evidence.metadata_json)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                match evidence.collected_by.as_deref() {
+                    Some(collected_by) => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = ? AND asset_id = ? AND evidence_type = ? AND collected_by = ? AND (COALESCE(metadata_json, '') LIKE ? OR COALESCE(content_json, '') LIKE ?)",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FINGERPRINT_EVIDENCE_TYPE)
+                        .bind(collected_by)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = ? AND asset_id = ? AND evidence_type = ? AND collected_by IS NULL AND (COALESCE(metadata_json, '') LIKE ? OR COALESCE(content_json, '') LIKE ?)",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FINGERPRINT_EVIDENCE_TYPE)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                sqlx::query(
+                    "INSERT INTO surface_evidence (id, program_id, asset_id, evidence_type, title, content_text, content_path, content_json, collected_at, collected_by, probe_node, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&evidence.id)
+                .bind(&evidence.program_id)
+                .bind(&evidence.asset_id)
+                .bind(&evidence.evidence_type)
+                .bind(&evidence.title)
+                .bind(&evidence.content_text)
+                .bind(&evidence.content_path)
+                .bind(&evidence.content_json)
+                .bind(&evidence.collected_at)
+                .bind(&evidence.collected_by)
+                .bind(&evidence.probe_node)
+                .bind(&evidence.metadata_json)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                match evidence.collected_by.as_deref() {
+                    Some(collected_by) => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = $1 AND asset_id = $2 AND evidence_type = $3 AND collected_by = $4 AND (COALESCE(metadata_json, '') LIKE $5 OR COALESCE(content_json, '') LIKE $6)",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FINGERPRINT_EVIDENCE_TYPE)
+                        .bind(collected_by)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "DELETE FROM surface_evidence WHERE program_id = $1 AND asset_id = $2 AND evidence_type = $3 AND collected_by IS NULL AND (COALESCE(metadata_json, '') LIKE $4 OR COALESCE(content_json, '') LIKE $5)",
+                        )
+                        .bind(&evidence.program_id)
+                        .bind(asset_id)
+                        .bind(FINGERPRINT_EVIDENCE_TYPE)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .bind(FAVICON_EVIDENCE_PATTERN)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                sqlx::query(
+                    "INSERT INTO surface_evidence (id, program_id, asset_id, evidence_type, title, content_text, content_path, content_json, collected_at, collected_by, probe_node, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                )
+                .bind(&evidence.id)
+                .bind(&evidence.program_id)
+                .bind(&evidence.asset_id)
+                .bind(&evidence.evidence_type)
+                .bind(&evidence.title)
+                .bind(&evidence.content_text)
+                .bind(&evidence.content_path)
+                .bind(&evidence.content_json)
+                .bind(&evidence.collected_at)
+                .bind(&evidence.collected_by)
+                .bind(&evidence.probe_node)
+                .bind(&evidence.metadata_json)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
             }
         }
 

@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use anyhow::Result;
 use chrono::Utc;
 use sentinel_db::{DatabaseService, SurfaceAssetFilter, SurfaceAssetRow};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tauri::State;
 use uuid::Uuid;
 
@@ -19,6 +18,7 @@ pub struct SurfaceAssetUpdateRequest {
     pub internet_exposure: Option<String>,
     pub criticality: Option<String>,
     pub risk_level: Option<String>,
+    pub typed_details: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,12 +117,103 @@ fn build_manual_import_artifact(asset_type: &str, asset_name: &str) -> Option<Va
     }
 }
 
+fn normalize_json_value(value: Value) -> Option<Value> {
+    match value {
+        Value::Null => None,
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(Value::String(trimmed.to_string()))
+            }
+        }
+        Value::Array(values) => Some(Value::Array(
+            values.into_iter().filter_map(normalize_json_value).collect(),
+        )),
+        Value::Object(values) => {
+            let normalized: Map<String, Value> = values
+                .into_iter()
+                .filter_map(|(key, value)| normalize_json_value(value).map(|item| (key, item)))
+                .collect();
+            if normalized.is_empty() {
+                None
+            } else {
+                Some(Value::Object(normalized))
+            }
+        }
+        other => Some(other),
+    }
+}
+
+fn normalize_typed_details(value: Option<Value>) -> Result<Option<Value>, String> {
+    match value {
+        None => Ok(None),
+        Some(Value::Object(map)) => Ok(normalize_json_value(Value::Object(map))),
+        Some(_) => Err("typed_details must be an object".to_string()),
+    }
+}
+
+fn value_to_trimmed_string(value: Option<&Value>) -> Option<String> {
+    value.and_then(|item| match item {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    })
+}
+
+fn derive_asset_name_from_typed_details(asset_type: &str, typed_details: &Value) -> Result<String, String> {
+    let name = match asset_type {
+        "org" => value_to_trimmed_string(typed_details.get("org_name")),
+        "domain" => value_to_trimmed_string(typed_details.get("fqdn"))
+            .and_then(|value| normalize_asset_name("domain", &value)),
+        "ip" => value_to_trimmed_string(typed_details.get("ip_address"))
+            .and_then(|value| normalize_asset_name("ip", &value)),
+        "host" => value_to_trimmed_string(typed_details.get("hostname"))
+            .or_else(|| value_to_trimmed_string(typed_details.get("fqdn")))
+            .and_then(|value| normalize_asset_name("host", &value)),
+        "port" | "service" => {
+            let host = value_to_trimmed_string(typed_details.get("ip_address"))
+                .ok_or_else(|| "IP address is required".to_string())?;
+            let port = value_to_trimmed_string(typed_details.get("port"))
+                .ok_or_else(|| "Port is required".to_string())?;
+            let protocol = value_to_trimmed_string(typed_details.get("transport_protocol"))
+                .ok_or_else(|| "Transport protocol is required".to_string())?;
+            Some(format!("{host}:{port}/{}", protocol.to_ascii_lowercase()))
+        }
+        "web" => value_to_trimmed_string(typed_details.get("canonical_url")),
+        "certificate" => value_to_trimmed_string(typed_details.get("sha256")),
+        _ => None,
+    };
+
+    name.ok_or_else(|| "Missing primary typed field for asset identity".to_string())
+}
+
 #[tauri::command]
 pub async fn surface_update_asset(
     db_service: State<'_, Arc<DatabaseService>>,
     asset_id: String,
     request: SurfaceAssetUpdateRequest,
 ) -> Result<bool, String> {
+    let SurfaceAssetUpdateRequest {
+        display_name,
+        description,
+        owner,
+        status,
+        internet_exposure,
+        criticality,
+        risk_level,
+        typed_details,
+    } = request;
+
     let Some(mut asset) = db_service
         .get_surface_asset_by_id(&asset_id)
         .await
@@ -131,22 +222,57 @@ pub async fn surface_update_asset(
         return Err("Asset not found".to_string());
     };
 
-    asset.display_name = normalize_optional_string(request.display_name);
-    asset.description = normalize_optional_string(request.description);
-    asset.owner = normalize_optional_string(request.owner);
-    asset.internet_exposure = normalize_optional_string(request.internet_exposure);
-    asset.criticality = normalize_optional_string(request.criticality);
-    asset.risk_level = normalize_optional_string(request.risk_level);
-    if let Some(status) = normalize_optional_string(request.status) {
+    let typed_details = normalize_typed_details(typed_details)?;
+    if let Some(ref typed_details_value) = typed_details {
+        let next_asset_name =
+            derive_asset_name_from_typed_details(&asset.asset_type, typed_details_value)?;
+        if next_asset_name != asset.asset_name {
+            if let Some(existing) = db_service
+                .get_surface_asset_by_identity(
+                    &asset.program_id,
+                    &asset.asset_type,
+                    &next_asset_name,
+                )
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                if existing.id != asset.id {
+                    return Err("Asset identity already exists".to_string());
+                }
+            }
+            asset.asset_name = next_asset_name;
+        }
+    }
+
+    asset.display_name = normalize_optional_string(display_name);
+    asset.description = normalize_optional_string(description);
+    asset.owner = normalize_optional_string(owner);
+    asset.internet_exposure = normalize_optional_string(internet_exposure);
+    asset.criticality = normalize_optional_string(criticality);
+    asset.risk_level = normalize_optional_string(risk_level);
+    if let Some(status) = normalize_optional_string(status) {
         asset.status = status;
     }
     asset.updated_at = Utc::now().to_rfc3339();
     asset.updated_by = Some("surface_inventory".to_string());
 
-    db_service
+    let updated = db_service
         .update_surface_asset(&asset)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    if let Some(ref typed_details_value) = typed_details {
+        db_service
+            .upsert_surface_extension_from_artifact(
+                &asset.asset_type,
+                &asset.id,
+                typed_details_value,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(updated)
 }
 
 #[tauri::command]

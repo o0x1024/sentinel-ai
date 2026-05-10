@@ -368,6 +368,7 @@ let localWriteGuardUntil = 0
 let previewResizeStartY = 0
 let previewResizeStartHeight = 0
 let previousBodyUserSelect = ''
+let isPreviewResizing = false
 
 const PREVIEW_HEIGHT_STORAGE_KEY = 'sentinel:agent-workspace-preview-height'
 const PREVIEW_MIN_HEIGHT = 180
@@ -441,14 +442,22 @@ const clampPreviewHeight = (height: number) => {
 
 const loadPreviewHeight = () => {
   if (typeof localStorage === 'undefined') return
-  const raw = localStorage.getItem(PREVIEW_HEIGHT_STORAGE_KEY)
-  const parsed = raw ? Number.parseInt(raw, 10) : PREVIEW_DEFAULT_HEIGHT
-  previewHeight.value = clampPreviewHeight(Number.isFinite(parsed) ? parsed : PREVIEW_DEFAULT_HEIGHT)
+  try {
+    const raw = localStorage.getItem(PREVIEW_HEIGHT_STORAGE_KEY)
+    const parsed = raw ? Number.parseInt(raw, 10) : PREVIEW_DEFAULT_HEIGHT
+    previewHeight.value = clampPreviewHeight(Number.isFinite(parsed) ? parsed : PREVIEW_DEFAULT_HEIGHT)
+  } catch (error) {
+    console.warn('[WorkspaceFilesPanel] Failed to load preview height:', error)
+  }
 }
 
 const savePreviewHeight = () => {
   if (typeof localStorage === 'undefined') return
-  localStorage.setItem(PREVIEW_HEIGHT_STORAGE_KEY, String(previewHeight.value))
+  try {
+    localStorage.setItem(PREVIEW_HEIGHT_STORAGE_KEY, String(previewHeight.value))
+  } catch (error) {
+    console.warn('[WorkspaceFilesPanel] Failed to save preview height:', error)
+  }
 }
 
 const handlePreviewResizeMove = (event: MouseEvent) => {
@@ -457,23 +466,32 @@ const handlePreviewResizeMove = (event: MouseEvent) => {
   previewHeight.value = clampPreviewHeight(previewResizeStartHeight + delta)
 }
 
-const stopPreviewResize = () => {
+const stopPreviewResize = (persistHeight = true) => {
+  const wasPreviewResizing = isPreviewResizing
+  isPreviewResizing = false
   document.removeEventListener('mousemove', handlePreviewResizeMove)
-  document.removeEventListener('mouseup', stopPreviewResize)
+  document.removeEventListener('mouseup', handlePreviewResizeEnd)
   document.body.style.cursor = ''
   document.body.style.userSelect = previousBodyUserSelect
-  savePreviewHeight()
+  if (persistHeight && wasPreviewResizing) {
+    savePreviewHeight()
+  }
+}
+
+const handlePreviewResizeEnd = () => {
+  stopPreviewResize(true)
 }
 
 const startPreviewResize = (event: MouseEvent) => {
   event.preventDefault()
+  isPreviewResizing = true
   previewResizeStartY = event.clientY
   previewResizeStartHeight = previewHeight.value
   previousBodyUserSelect = document.body.style.userSelect
   document.body.style.cursor = 'row-resize'
   document.body.style.userSelect = 'none'
   document.addEventListener('mousemove', handlePreviewResizeMove)
-  document.addEventListener('mouseup', stopPreviewResize)
+  document.addEventListener('mouseup', handlePreviewResizeEnd)
 }
 
 const formatBytes = (size?: number | null) => {
@@ -1025,7 +1043,7 @@ onUnmounted(() => {
     unlistenWorkspaceChange()
     unlistenWorkspaceChange = null
   }
-  stopPreviewResize()
+  stopPreviewResize(false)
   void stopDirectoryWatcher()
   void stopFileWatcher()
 })

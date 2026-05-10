@@ -35,6 +35,8 @@ pub struct FetchResponse {
     pub status: u16,
     pub headers: std::collections::HashMap<String, String>,
     pub body: String,
+    #[serde(default)]
+    pub body_bytes: Vec<u8>,
     pub ok: bool,
     pub redirected: bool,
     pub final_url: String,

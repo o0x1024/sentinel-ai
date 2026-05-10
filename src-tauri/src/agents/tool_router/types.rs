@@ -121,6 +121,8 @@ pub struct SelectedSkill {
 pub struct ToolSelectionPlan {
     pub tool_ids: Vec<String>,
     pub injected_system_prompt: Option<String>,
+    #[serde(default)]
+    pub injected_runtime_context: Option<String>,
     pub selected_skill: Option<SelectedSkill>,
 }
 

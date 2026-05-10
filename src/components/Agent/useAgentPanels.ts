@@ -24,13 +24,6 @@ interface ScopedTaskEntry {
   updatedAt: number
 }
 
-interface TeamTaskBucket {
-  key: string
-  label: string
-  tasks: AgentTask[]
-  updatedAt: number
-}
-
 interface ParallelTaskBucket {
   key: string
   label: string
@@ -49,7 +42,6 @@ const TOOL_CONFIG_DRAWER_DEFAULT_WIDTH = 420
 const TOOL_CONFIG_DRAWER_WIDTH_STORAGE_KEY = 'sentinel:tool-config-drawer:width'
 
 export const useAgentPanels = (params: {
-  activeTeamSessionId: Ref<string | null>
   agentError: ComputedRef<string | null | undefined>
   clearTasksForExecution: (executionId: string) => void
   conversationId: Ref<string | null>
@@ -58,19 +50,11 @@ export const useAgentPanels = (params: {
   isTeamWorkspaceActive: Ref<boolean>
   isTaskPanelActive: ComputedRef<boolean>
   localError: Ref<string | null>
-  parseTeamTaskExecutionId: (executionId: string) => {
-    sessionId: string
-    taskId: string
-    memberId?: string
-  } | null
   propsShowTasks: boolean
   parallelTaskSources?: ComputedRef<ParallelTaskSource[]>
   pruneTasksForExecutionAfter: (executionId: string, timestampMs: number) => Promise<AgentTask[]>
   resetAgentError: () => void
-  resolveAgentName: (agentId?: string | null) => string
-  selectedTeamTaskAssigneeId: ComputedRef<string | null>
   setTasksForExecution: (executionId: string, tasks: AgentTask[]) => void
-  teamWorkspaceAvailable: ComputedRef<boolean>
   terminalClose: () => void
   terminalHasHistory: ComputedRef<boolean>
   terminalIsActive: ComputedRef<boolean>
@@ -129,9 +113,7 @@ export const useAgentPanels = (params: {
     if (convId && (params.parallelTaskSources?.value || []).some((source) =>
       source.parentConversationId === convId && source.executionId === executionId,
     )) return true
-    const parsed = params.parseTeamTaskExecutionId(executionId)
-    if (!parsed) return false
-    return !!params.activeTeamSessionId.value && parsed.sessionId === params.activeTeamSessionId.value
+    return false
   }
 
   const scopedTaskEntries = computed<ScopedTaskEntry[]>(() => {
@@ -145,34 +127,6 @@ export const useAgentPanels = (params: {
     return entries.sort((a, b) => b.updatedAt - a.updatedAt)
   })
 
-  const teamTaskBuckets = computed<TeamTaskBucket[]>(() => {
-    if (!params.teamWorkspaceAvailable.value || !params.activeTeamSessionId.value) return []
-    const bucketMap = new Map<string, TeamTaskBucket>()
-
-    for (const entry of scopedTaskEntries.value) {
-      const parsed = params.parseTeamTaskExecutionId(entry.executionId)
-      if (!parsed || parsed.sessionId !== params.activeTeamSessionId.value) continue
-      const sourceKey = parsed.memberId ? `member:${parsed.memberId}` : `execution:${entry.executionId}`
-      const label = parsed.memberId
-        ? params.resolveAgentName(parsed.memberId)
-        : `task ${parsed.taskId}`
-      const existing = bucketMap.get(sourceKey)
-      if (existing) {
-        existing.tasks = [...existing.tasks, ...entry.tasks]
-        existing.updatedAt = Math.max(existing.updatedAt, entry.updatedAt)
-      } else {
-        bucketMap.set(sourceKey, {
-          key: sourceKey,
-          label,
-          tasks: [...entry.tasks],
-          updatedAt: entry.updatedAt,
-        })
-      }
-    }
-
-    return [...bucketMap.values()].sort((a, b) => b.updatedAt - a.updatedAt)
-  })
-
   const buildLabeledTasks = (tasks: AgentTask[], label: string): AgentTask[] => {
     return tasks.map((task) => ({
       ...task,
@@ -184,20 +138,6 @@ export const useAgentPanels = (params: {
       },
     }))
   }
-
-  const teamTasks = computed<AgentTask[]>(() => {
-    if (teamTaskBuckets.value.length === 0) return []
-    const selected = selectedTaskSourceKey.value || TASK_SOURCE_ALL_KEY
-    if (selected !== TASK_SOURCE_ALL_KEY) {
-      return teamTaskBuckets.value.find((bucket) => bucket.key === selected)?.tasks || []
-    }
-    if (teamTaskBuckets.value.length === 1) {
-      return [...teamTaskBuckets.value[0].tasks]
-    }
-    return teamTaskBuckets.value
-      .flatMap((bucket) => buildLabeledTasks(bucket.tasks, bucket.label))
-      .sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))
-  })
 
   const parallelTaskBuckets = computed<ParallelTaskBucket[]>(() => {
     const convId = params.conversationId.value
@@ -240,19 +180,14 @@ export const useAgentPanels = (params: {
   })
 
   const taskSourceOptions = computed<TaskSourceOption[]>(() => {
-    const isTeamTaskSource = params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value
-    const isParallelTaskSource = !isTeamTaskSource && parallelTaskBuckets.value.length > 0
-    const buckets = isTeamTaskSource
-      ? teamTaskBuckets.value
-      : isParallelTaskSource
-        ? parallelTaskBuckets.value
-        : conversationTaskBuckets.value
+    const isParallelTaskSource = parallelTaskBuckets.value.length > 0
+    const buckets = isParallelTaskSource ? parallelTaskBuckets.value : conversationTaskBuckets.value
     if (buckets.length === 0) return []
     const allCount = buckets.reduce((acc, bucket) => acc + bucket.tasks.length, 0)
     return [
       {
         key: TASK_SOURCE_ALL_KEY,
-        label: isTeamTaskSource ? '全局' : isParallelTaskSource ? '全部模型' : '全部执行',
+        label: isParallelTaskSource ? '全部模型' : '全部执行',
         count: allCount,
       },
       ...buckets.map((bucket) => ({
@@ -292,9 +227,6 @@ export const useAgentPanels = (params: {
   })
 
   const tasks = computed<AgentTask[]>(() => {
-    if (params.teamWorkspaceAvailable.value && params.activeTeamSessionId.value) {
-      if (teamTaskBuckets.value.length > 0) return teamTasks.value
-    }
     if (parallelTaskBuckets.value.length > 0) return parallelTasks.value
     return conversationTasks.value
   })
@@ -570,12 +502,6 @@ export const useAgentPanels = (params: {
     selectedTaskSourceKey.value = sourceKey || TASK_SOURCE_ALL_KEY
   }
 
-  const selectedTeamTaskSourceKey = computed(() => {
-    const assigneeId = params.selectedTeamTaskAssigneeId.value
-    if (!assigneeId) return TASK_SOURCE_ALL_KEY
-    return `member:${assigneeId}`
-  })
-
   watch(taskSourceOptions, (options) => {
     if (options.length === 0) {
       selectedTaskSourceKey.value = TASK_SOURCE_ALL_KEY
@@ -583,27 +509,6 @@ export const useAgentPanels = (params: {
     }
     if (options.some((option) => option.key === selectedTaskSourceKey.value)) return
     selectedTaskSourceKey.value = TASK_SOURCE_ALL_KEY
-  }, { immediate: true })
-
-  watch(selectedTeamTaskSourceKey, (nextKey) => {
-    if (!params.teamWorkspaceAvailable.value || !params.activeTeamSessionId.value) return
-    if (nextKey === TASK_SOURCE_ALL_KEY) {
-      selectedTaskSourceKey.value = TASK_SOURCE_ALL_KEY
-      return
-    }
-    if (taskSourceOptions.value.some((option) => option.key === nextKey)) {
-      selectedTaskSourceKey.value = nextKey
-      return
-    }
-    selectedTaskSourceKey.value = TASK_SOURCE_ALL_KEY
-  }, { immediate: true })
-
-  watch(params.teamWorkspaceAvailable, (available) => {
-    if (available) return
-    if (activeRightPanel.value === 'team') {
-      activeRightPanel.value = null
-    }
-    params.isTeamWorkspaceActive.value = false
   }, { immediate: true })
 
   const currentContextTaskExecutionIds = () => {
@@ -620,14 +525,6 @@ export const useAgentPanels = (params: {
         if (source.parentConversationId === convId) {
           ids.add(source.executionId)
         }
-      }
-    }
-    const sessionId = params.activeTeamSessionId.value
-    if (sessionId) {
-      for (const executionId of params.taskExecutionIds.value) {
-        const parsed = params.parseTeamTaskExecutionId(executionId)
-        if (!parsed || parsed.sessionId !== sessionId) continue
-        ids.add(executionId)
       }
     }
     return Array.from(ids)

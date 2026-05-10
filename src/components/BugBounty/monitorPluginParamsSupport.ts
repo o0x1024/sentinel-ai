@@ -293,6 +293,61 @@ export const hasCustomizedField = (root: Record<string, any>, field: EditableFie
   return field.objectFields.some(child => hasCustomizedField(root, child))
 }
 
+export const getEffectiveFieldValue = (
+  root: Record<string, any>,
+  defaultRoot: Record<string, any>,
+  field: EditableField,
+) => {
+  const explicitValue = getValueAtPath(root, field.path)
+  if (explicitValue !== undefined) {
+    return explicitValue
+  }
+
+  const configuredDefaultValue = getValueAtPath(defaultRoot, field.path)
+  return configuredDefaultValue === undefined ? field.defaultValue : configuredDefaultValue
+}
+
+export const isMissingRequiredFieldValue = (value: unknown) => {
+  if (value === undefined || value === null) {
+    return true
+  }
+  if (typeof value === 'string') {
+    return value.trim().length === 0
+  }
+  if (Array.isArray(value)) {
+    return value.length === 0
+  }
+  if (typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>).length === 0
+  }
+  return false
+}
+
+export const collectRequiredFieldErrors = (
+  fields: EditableField[],
+  root: Record<string, any>,
+  defaultRoot: Record<string, any>,
+  buildMessage: (field: EditableField) => string,
+) => {
+  const errors: string[] = []
+
+  const visitField = (field: EditableField) => {
+    if (field.required && isMissingRequiredFieldValue(getEffectiveFieldValue(root, defaultRoot, field))) {
+      errors.push(buildMessage(field))
+    }
+
+    for (const childField of field.objectFields) {
+      visitField(childField)
+    }
+  }
+
+  for (const field of fields) {
+    visitField(field)
+  }
+
+  return errors
+}
+
 export const setPluginParamEditorState = (plugin: Record<string, any>, errors: string[]) => {
   plugin[PARAM_EDITOR_INVALID_KEY] = errors.length > 0
   plugin[PARAM_EDITOR_ERROR_KEY] = errors

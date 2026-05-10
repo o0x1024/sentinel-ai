@@ -20,6 +20,7 @@ export const ASSISTANT_CONVERSATION_BINDING_VERSION = 4
 
 export const createDefaultAssistantSessionSettings = (): AssistantSessionSettings => ({
   profileId: DEFAULT_ASSISTANT_PROFILE_ID,
+  teamProfileId: '',
   contextMode: DEFAULT_ASSISTANT_CONTEXT_MODE,
   runMode: DEFAULT_ASSISTANT_RUN_MODE,
   workingDirectoryOverride: '',
@@ -41,13 +42,16 @@ export const buildBaseAssistantConversationBinding = (params: {
   return {
     schemaVersion: ASSISTANT_CONVERSATION_BINDING_VERSION,
     profileId,
+    teamProfileId: '',
     contextMode: params.profile.contextMode,
     runMode: params.profile.runMode,
     workingDirectoryOverride: params.workingDirectoryOverride.trim(),
     ragEnabled: params.profile.defaultRagEnabled === true,
     webSearchEnabled: params.profile.defaultWebSearchEnabled === true,
     tenthManEnabled: params.profile.defaultTenthManEnabled === true,
-    harnessMaxContinuations: normalizeHarnessMaxContinuations(params.profile.defaultHarnessMaxContinuations),
+    harnessMaxContinuations: normalizeHarnessMaxContinuations(
+      params.profile.defaultHarnessMaxContinuations
+    ),
     browserShellDirectWriteEnabled: false,
     browserShellSessionId: null,
     selectedModel: null,
@@ -113,6 +117,12 @@ export const useAssistantSessionSettings = () => {
     })
   }
 
+  const setTeamProfileId = (teamProfileId: string) => {
+    applySessionSettings({
+      teamProfileId: teamProfileId.trim(),
+    })
+  }
+
   const applyProfilePreset = (profile: {
     id: string
     contextMode: AssistantContextMode
@@ -126,12 +136,15 @@ export const useAssistantSessionSettings = () => {
     if (!normalized) return
     applySessionSettings({
       profileId: normalized,
+      teamProfileId: '',
       contextMode: profile.contextMode,
       runMode: profile.runMode,
       ragEnabled: profile.defaultRagEnabled === true,
       webSearchEnabled: profile.defaultWebSearchEnabled === true,
       tenthManEnabled: profile.defaultTenthManEnabled === true,
-      harnessMaxContinuations: normalizeHarnessMaxContinuations(profile.defaultHarnessMaxContinuations),
+      harnessMaxContinuations: normalizeHarnessMaxContinuations(
+        profile.defaultHarnessMaxContinuations
+      ),
     })
   }
 
@@ -173,7 +186,9 @@ export const useAssistantSessionSettings = () => {
     }
   }
 
-  const applyConversationBinding = (binding: Partial<AssistantConversationBinding> | null | undefined) => {
+  const applyConversationBinding = (
+    binding: Partial<AssistantConversationBinding> | null | undefined
+  ) => {
     if (!binding) {
       resetSessionSettings()
       return
@@ -181,6 +196,7 @@ export const useAssistantSessionSettings = () => {
 
     applySessionSettings({
       profileId: binding.profileId || DEFAULT_ASSISTANT_PROFILE_ID,
+      teamProfileId: String(binding.teamProfileId || '').trim(),
       contextMode: binding.contextMode || DEFAULT_ASSISTANT_CONTEXT_MODE,
       runMode: binding.runMode || DEFAULT_ASSISTANT_RUN_MODE,
       workingDirectoryOverride: String(binding.workingDirectoryOverride || '').trim(),
@@ -202,6 +218,7 @@ export const useAssistantSessionSettings = () => {
     setContextMode,
     setProfileId,
     setRunMode,
+    setTeamProfileId,
     setWorkingDirectoryOverride,
     teamModeEnabled,
     tenthManEnabled,

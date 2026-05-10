@@ -165,6 +165,12 @@ const isConnected = ref(false)
 const isConnecting = ref(false)
 const error = ref<string>('')
 const resizeObserver = ref<ResizeObserver | null>(null)
+let isComponentUnmounted = false
+let connectionGeneration = 0
+
+const isConnectionCurrent = (generation: number) => (
+  !isComponentUnmounted && generation === connectionGeneration
+)
 
 watch(() => props.workingDirectory, (value) => {
   actualWorkingDirectory.value = String(value || '').trim()
@@ -267,9 +273,11 @@ const initTerminal = () => {
 }
 
 const handleResize = () => {
+  if (isComponentUnmounted) return
   if (fitAddon.value && terminal.value) {
     // Use requestAnimationFrame to avoid excessive calls
     requestAnimationFrame(() => {
+      if (isComponentUnmounted || !fitAddon.value || !terminal.value) return
       try {
         fitAddon.value?.fit()
         sendResize()
@@ -282,23 +290,31 @@ const handleResize = () => {
 }
 
 const sendResize = () => {
+  if (isComponentUnmounted) return
   if (!terminal.value || !ws.value || ws.value.readyState !== WebSocket.OPEN) return
 
-  ws.value.send(JSON.stringify({
-    type: 'resize',
-    rows: terminal.value.rows,
-    cols: terminal.value.cols,
-  }))
+  try {
+    ws.value.send(JSON.stringify({
+      type: 'resize',
+      rows: terminal.value.rows,
+      cols: terminal.value.cols,
+    }))
+  } catch (error) {
+    console.debug('Terminal resize send failed:', error)
+  }
 }
 
 const connect = async () => {
+  const generation = ++connectionGeneration
   try {
+    if (isComponentUnmounted) return
     isConnecting.value = true
     error.value = ''
 
     // Load terminal config from settings
     try {
       const agentConfig = await invoke<AgentConfig>('get_agent_config')
+      if (!isConnectionCurrent(generation)) return
       if (!agentConfig?.terminal) {
         throw new Error('Agent terminal config is missing')
       }
@@ -326,23 +342,33 @@ const connect = async () => {
     } else {
       // Start terminal server if not running
       const status = await TerminalAPI.getStatus()
+      if (!isConnectionCurrent(generation)) return
       if (!status.running) {
         await TerminalAPI.startServer()
+        if (!isConnectionCurrent(generation)) return
         // Wait a bit for server to start
         await new Promise(resolve => setTimeout(resolve, 1000))
+        if (!isConnectionCurrent(generation)) return
       }
 
       // Get WebSocket URL
       wsUrl = await TerminalAPI.getWebSocketUrl()
+      if (!isConnectionCurrent(generation)) return
     }
 
     // Create WebSocket connection
     terminalDecoder = new TextDecoder()
-    ws.value = new WebSocket(wsUrl)
+    if (!isConnectionCurrent(generation)) return
+    const socket = new WebSocket(wsUrl)
+    ws.value = socket
 
     let pendingExistingSessionId: string | null = null
 
-    ws.value.onopen = () => {
+    socket.onopen = () => {
+      if (!isConnectionCurrent(generation) || ws.value !== socket) {
+        socket.close()
+        return
+      }
       console.log('WebSocket connected')
       startKeepAlive()
       const currentFingerprint = buildTerminalSessionFingerprint(
@@ -358,7 +384,7 @@ const connect = async () => {
       if (existingSessionId && existingFingerprint === currentFingerprint) {
         console.log('Connecting to existing session:', existingSessionId)
         pendingExistingSessionId = existingSessionId
-        ws.value?.send(`session:${existingSessionId}`)
+        socket.send(`session:${existingSessionId}`)
         return
       }
       if (existingSessionId && existingFingerprint !== currentFingerprint) {
@@ -379,10 +405,11 @@ const connect = async () => {
         env_vars: {},
         shell: resolvedShell.value,
       }
-      ws.value?.send(JSON.stringify(config))
+      socket.send(JSON.stringify(config))
     }
 
-    ws.value.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (!isConnectionCurrent(generation) || ws.value !== socket) return
       if (typeof event.data === 'string') {
         // Check if it's session ID
         if (event.data.startsWith('session:')) {
@@ -412,6 +439,7 @@ const connect = async () => {
       } else if (event.data instanceof Blob) {
         // Binary data
         event.data.arrayBuffer().then((buffer) => {
+          if (!isConnectionCurrent(generation) || ws.value !== socket) return
           const text = terminalDecoder.decode(buffer, { stream: true })
           terminal.value?.write(text)
         })
@@ -421,7 +449,8 @@ const connect = async () => {
       }
     }
 
-    ws.value.onerror = (err) => {
+    socket.onerror = (err) => {
+      if (!isConnectionCurrent(generation) || ws.value !== socket) return
       console.error('WebSocket error:', err)
       error.value = 'Connection error'
       isConnecting.value = false
@@ -431,7 +460,8 @@ const connect = async () => {
       }
     }
 
-    ws.value.onclose = () => {
+    socket.onclose = () => {
+      if (!isConnectionCurrent(generation) || ws.value !== socket) return
       console.log('WebSocket closed')
       if (!isConnected.value && pendingExistingSessionId) {
         terminalComposable.syncActiveSession(null, null)
@@ -447,16 +477,26 @@ const connect = async () => {
 
     // Handle terminal input - dispose old listener first to avoid duplicates
     if (terminalDataDisposable) {
-      terminalDataDisposable.dispose()
+      try {
+        terminalDataDisposable.dispose()
+      } catch (error) {
+        console.debug('Terminal data listener dispose failed:', error)
+      }
       terminalDataDisposable = null
     }
     terminalDataDisposable = terminal.value?.onData((data) => {
+      if (!isConnectionCurrent(generation)) return
       if (ws.value?.readyState === WebSocket.OPEN) {
-        ws.value.send(data)
+        try {
+          ws.value.send(data)
+        } catch (error) {
+          console.debug('Terminal input send failed:', error)
+        }
       }
     }) || null
 
   } catch (err: any) {
+    if (!isConnectionCurrent(generation)) return
     console.error('Failed to connect:', err)
     error.value = err.message || 'Connection failed'
     isConnecting.value = false
@@ -464,9 +504,19 @@ const connect = async () => {
   }
 }
 
-const disconnect = async () => {
+const disconnect = () => {
+  connectionGeneration += 1
   if (ws.value) {
-    ws.value.close()
+    const socket = ws.value
+    socket.onopen = null
+    socket.onmessage = null
+    socket.onerror = null
+    socket.onclose = null
+    try {
+      socket.close()
+    } catch (error) {
+      console.debug('Terminal WebSocket close failed:', error)
+    }
     ws.value = null
   }
   if (keepAliveInterval) {
@@ -475,7 +525,11 @@ const disconnect = async () => {
   }
   // Dispose terminal data listener to avoid duplicates on reconnect
   if (terminalDataDisposable) {
-    terminalDataDisposable.dispose()
+    try {
+      terminalDataDisposable.dispose()
+    } catch (error) {
+      console.debug('Terminal data listener dispose failed:', error)
+    }
     terminalDataDisposable = null
   }
   isConnected.value = false
@@ -531,14 +585,19 @@ const startKeepAlive = () => {
     clearInterval(keepAliveInterval)
   }
   keepAliveInterval = setInterval(() => {
-    if (ws.value?.readyState === WebSocket.OPEN) {
-      ws.value.send('__keepalive__')
+    if (!isComponentUnmounted && ws.value?.readyState === WebSocket.OPEN) {
+      try {
+        ws.value.send('__keepalive__')
+      } catch (error) {
+        console.debug('Terminal keepalive send failed:', error)
+      }
     }
   }, 30000)
 }
 
 // Lifecycle
 onMounted(() => {
+  isComponentUnmounted = false
   // 1. Initialize terminal UI immediately
   initTerminal()
   
@@ -605,7 +664,9 @@ onMounted(() => {
 
 })
 
-onBeforeUnmount(async () => {
+onBeforeUnmount(() => {
+  isComponentUnmounted = true
+  connectionGeneration += 1
   window.removeEventListener('resize', handleResize)
   if (fontSizeInterval) {
     clearInterval(fontSizeInterval)
@@ -622,8 +683,21 @@ onBeforeUnmount(async () => {
     resizeObserver.value = null
   }
   
-  await disconnect()
-  terminal.value?.dispose()
+  try {
+    disconnect()
+  } catch (error) {
+    console.warn('[Terminal] Failed to disconnect during cleanup:', error)
+  }
+  if (terminal.value) {
+    try {
+      terminal.value.dispose()
+    } catch (error) {
+      console.warn('[Terminal] Failed to dispose terminal during cleanup:', error)
+    } finally {
+      terminal.value = null
+      fitAddon.value = null
+    }
+  }
   
   // Unregister write callback
   if (unregisterWriteCallback) {

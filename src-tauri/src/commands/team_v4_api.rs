@@ -739,6 +739,15 @@ pub(crate) async fn start_team_v4_harness_internal(
             .bind(&now_text)
             .execute(pool)
             .await?;
+            if let Some(task_id) = request.task_id.as_deref() {
+                sqlx::query(
+                    "UPDATE team_v4_tasks SET status = 'running', updated_at = ? WHERE id = ?",
+                )
+                .bind(&now_text)
+                .bind(task_id)
+                .execute(pool)
+                .await?;
+            }
         }
         DatabasePool::PostgreSQL(pool) => {
             sqlx::query(
@@ -760,6 +769,15 @@ pub(crate) async fn start_team_v4_harness_internal(
             .bind(&now_text)
             .execute(pool)
             .await?;
+            if let Some(task_id) = request.task_id.as_deref() {
+                sqlx::query(
+                    "UPDATE team_v4_tasks SET status = 'running', updated_at = $1 WHERE id = $2",
+                )
+                .bind(&now_text)
+                .bind(task_id)
+                .execute(pool)
+                .await?;
+            }
         }
         DatabasePool::MySQL(_) => return Err(anyhow!("Team V4 does not support MySQL")),
     }
@@ -1084,7 +1102,7 @@ async fn create_team_v4_memory_internal(
     })
 }
 
-async fn load_harness_run_internal(
+pub(crate) async fn load_harness_run_internal(
     runtime_pool: &DatabasePool,
     harness_run_id: &str,
 ) -> Result<TeamV4HarnessRun> {

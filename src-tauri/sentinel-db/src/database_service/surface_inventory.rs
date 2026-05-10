@@ -49,6 +49,8 @@ impl DatabaseService {
             asset_type: filter.asset_type.clone(),
             status: filter.status.clone(),
             search: filter.search.clone(),
+            favicon_hash: filter.favicon_hash.clone(),
+            has_favicon_hash: filter.has_favicon_hash,
             service_name: filter.service_name.clone(),
             transport_protocol: filter.transport_protocol.clone(),
             view_state: filter.view_state.clone(),

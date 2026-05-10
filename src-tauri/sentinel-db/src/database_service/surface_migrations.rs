@@ -315,6 +315,24 @@ impl SurfaceGraphMigration {
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS surface_seed_candidates (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                seed_type TEXT NOT NULL,
+                seed_value TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source_asset_id TEXT NOT NULL,
+                source_asset_type TEXT NOT NULL,
+                source_detail_key TEXT NOT NULL,
+                source_display_value TEXT NOT NULL,
+                source_canonical_url TEXT,
+                confidence_score DOUBLE PRECISION,
+                observed_at TIMESTAMPTZ NOT NULL,
+                reviewed_at TIMESTAMPTZ,
+                metadata_json TEXT,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            )"#,
         ];
 
         let index_sql = [
@@ -359,6 +377,8 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_observations_type ON surface_observations(artifact_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_observations_plugin_artifact_target ON surface_observations(source_plugin, artifact_type, program_id, object_key, observed_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_seeds_program ON surface_seeds(program_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_surface_seed_candidates_identity ON surface_seed_candidates(program_id, seed_type, seed_value, source_asset_id, source_detail_key)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_seed_candidates_program_status ON surface_seed_candidates(program_id, status, observed_at DESC)",
         ];
 
         for sql in table_sql {
@@ -727,6 +747,24 @@ impl SurfaceGraphMigration {
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS surface_seed_candidates (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                seed_type TEXT NOT NULL,
+                seed_value TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source_asset_id TEXT NOT NULL,
+                source_asset_type TEXT NOT NULL,
+                source_detail_key TEXT NOT NULL,
+                source_display_value TEXT NOT NULL,
+                source_canonical_url TEXT,
+                confidence_score DOUBLE PRECISION,
+                observed_at TIMESTAMPTZ NOT NULL,
+                reviewed_at TIMESTAMPTZ,
+                metadata_json TEXT,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            )"#,
         ];
 
         for sql in table_sql {
@@ -775,6 +813,8 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_observations_type ON surface_observations(artifact_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_observations_plugin_artifact_target ON surface_observations(source_plugin, artifact_type, program_id, object_key, observed_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_seeds_program ON surface_seeds(program_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_surface_seed_candidates_identity ON surface_seed_candidates(program_id, seed_type, seed_value, source_asset_id, source_detail_key)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_seed_candidates_program_status ON surface_seed_candidates(program_id, status, observed_at DESC)",
         ];
 
         let surface_asset_alter_columns = [("viewed_at", "TIMESTAMPTZ"), ("viewed_by", "TEXT")];

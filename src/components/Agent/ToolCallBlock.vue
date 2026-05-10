@@ -92,7 +92,7 @@ const skillsAction = computed(() => {
 })
 
 const isSkillsCardAction = computed(() => {
-  return ['read_file', 'readfile', 'read-file'].includes(skillsAction.value)
+  return skillsAction.value === 'read_skill_file'
 })
 
 const isSkillsToolCard = computed(() => isSkillsTool.value && isSkillsCardAction.value)

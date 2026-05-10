@@ -70,10 +70,8 @@ pub async fn render_agent_plugin_definition_command(
     }
 
     let main_category = PluginMainCategory::parse(&request.metadata.main_category)?;
-    let monitor_type = validate_plugin_monitor_type(
-        main_category,
-        request.metadata.monitor_type.clone(),
-    )?;
+    let monitor_type =
+        validate_plugin_monitor_type(main_category, request.metadata.monitor_type.clone())?;
     let definition =
         parse_agent_plugin_definition(&request.definition).map_err(|error| error.to_string())?;
     let context = AgentPluginRenderContext {

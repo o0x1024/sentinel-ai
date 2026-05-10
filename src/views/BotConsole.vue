@@ -760,7 +760,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppDialog from '@/components/AppDialog.vue'
@@ -841,6 +841,10 @@ const turnLogLimit = ref(50)
 const accountsDialogRef = ref<{ showModal: () => void; close: () => void } | null>(null)
 
 let refreshTimer: number | null = null
+
+function isBotConsoleRouteActive(): boolean {
+  return route.name === 'BotConsole' || route.path === '/bot-console'
+}
 
 function peerKey(peer: Pick<BotPeer, 'transport' | 'account_id' | 'peer_type' | 'peer_id'>): string {
   return [peer.transport, peer.account_id, peer.peer_type, peer.peer_id].join('::')
@@ -1087,6 +1091,8 @@ const orderedExecutionTasks = computed(() =>
 )
 
 async function syncRoute() {
+  if (!isBotConsoleRouteActive()) return
+
   const query: Record<string, string> = {}
   if (selectedTransport.value) query.transport = selectedTransport.value
   if (selectedAccountId.value) query.accountId = selectedAccountId.value
@@ -1460,16 +1466,28 @@ function startRefreshTimer() {
   }, 15000)
 }
 
+function stopRefreshTimer() {
+  if (refreshTimer !== null) {
+    window.clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
+
 onMounted(async () => {
   await loadPeerList()
   await syncRoute()
   startRefreshTimer()
 })
 
+onActivated(() => {
+  startRefreshTimer()
+})
+
+onDeactivated(() => {
+  stopRefreshTimer()
+})
+
 onUnmounted(() => {
-  if (refreshTimer !== null) {
-    window.clearInterval(refreshTimer)
-    refreshTimer = null
-  }
+  stopRefreshTimer()
 })
 </script>

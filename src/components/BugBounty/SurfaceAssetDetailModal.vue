@@ -200,7 +200,19 @@
                     <div v-for="[key, value] in typedEntries" :key="key" class="rounded-lg border border-base-300 px-3 py-2">
                       <div class="text-xs text-base-content/60">{{ key }}</div>
                       <div class="mt-1 flex items-start justify-between gap-2">
-                        <div class="min-w-0 flex-1 break-all whitespace-pre-wrap text-sm">{{ formatValue(value) }}</div>
+                        <div class="min-w-0 flex-1 break-all whitespace-pre-wrap text-sm">
+                          <a
+                            v-if="isExternallyOpenableField(key, value)"
+                            :href="normalizedExternalUrl(value)"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="link link-primary inline-flex items-center gap-1 break-all"
+                          >
+                            <span>{{ formatValue(value) }}</span>
+                            <i class="fas fa-external-link-alt text-[10px]"></i>
+                          </a>
+                          <span v-else>{{ formatValue(value) }}</span>
+                        </div>
                         <button
                           v-if="canCopyValue(value)"
                           class="btn btn-ghost btn-xs shrink-0"
@@ -409,6 +421,15 @@ const formatJsonSnippet = (value?: string | null) => {
   if (!value) return '-'
   return value.length > 180 ? `${value.slice(0, 180)}...` : value
 }
+
+const normalizedExternalUrl = (value: unknown) => {
+  const normalized = normalizeCopyValue(value)
+  if (!normalized) return ''
+  return /^https?:\/\//i.test(normalized) ? normalized : ''
+}
+
+const isExternallyOpenableField = (key: string, value: unknown) =>
+  key === 'canonical_url' && normalizedExternalUrl(value).length > 0
 
 const normalizeCopyValue = (value: unknown) => {
   if (value === null || value === undefined) return null

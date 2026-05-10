@@ -71,6 +71,18 @@ async fn test_tool_server_init() {
     assert_eq!(tasks.category, ToolCategory::Collaboration);
     assert_eq!(skills.category, ToolCategory::KnowledgeExtension);
     assert_eq!(search_exploit.category, ToolCategory::VulnerabilityResearch);
+
+    let skills_schema = skills.input_schema.to_string();
+    assert!(
+        skills_schema.contains("\"read_skill_file\""),
+        "skills schema should expose read_skill_file action: {}",
+        skills_schema
+    );
+    assert!(
+        !skills_schema.contains("\"read_file\""),
+        "skills schema must not expose ambiguous read_file action: {}",
+        skills_schema
+    );
 }
 
 #[tokio::test]
@@ -91,8 +103,8 @@ async fn shell_short_command_completes_without_session_id() {
     assert!(result.success, "short shell command should succeed");
     let output = result.output.expect("shell command should return output");
     assert_eq!(
-        output.get("status").and_then(|value| value.as_str()),
-        Some("completed"),
+        output.get("completed").and_then(|value| value.as_bool()),
+        Some(true),
         "unexpected short command output: {}",
         output
     );
@@ -160,6 +172,43 @@ async fn shell_waiting_command_returns_session_and_can_cancel() {
         "unexpected cancel output: {}",
         second_output
     );
+}
+
+#[tokio::test]
+async fn shell_interactive_command_without_yield_time_stays_one_shot() {
+    let server = ToolServer::new();
+    server.init_builtin_tools().await;
+
+    let result = server
+        .execute(
+            "shell",
+            json!({
+                "command": "cat",
+                "execution_mode": "host"
+            }),
+        )
+        .await;
+
+    assert!(
+        result.success,
+        "interactive one-shot shell call should return a structured shell result"
+    );
+    let output = result
+        .output
+        .expect("interactive one-shot shell call should return output");
+    assert_eq!(
+        output.get("success").and_then(|value| value.as_bool()),
+        Some(false),
+        "unexpected interactive one-shot output: {}",
+        output
+    );
+    assert_eq!(
+        output.get("interaction_required").and_then(|value| value.as_bool()),
+        Some(true),
+        "unexpected interactive one-shot output: {}",
+        output
+    );
+    assert!(output.get("session_id").is_none(), "unexpected session output: {}", output);
 }
 
 #[tokio::test]

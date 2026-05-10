@@ -460,9 +460,9 @@
               <SearchableSelect
                 :model-value="effectiveSelectedAgent"
                 :options="availableAgentOptions"
-                :placeholder="agentLoading ? '加载 Agent 中...' : '选择 Agent'"
-                search-placeholder="搜索 Agent..."
-                no-results-text="无匹配 Agent"
+                :placeholder="agentLoading ? '加载 Profile 中...' : '选择 Profile'"
+                search-placeholder="搜索 Profile..."
+                no-results-text="无匹配 Profile"
                 :disabled="agentLoading || availableAgentOptions.length === 0"
                 size="sm"
                 direction="up"

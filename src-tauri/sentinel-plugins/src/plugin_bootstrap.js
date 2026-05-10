@@ -724,6 +724,10 @@ globalThis.fetch = async function (input, init = {}) {
     throw new Error(result.error || 'Fetch failed')
   }
 
+  const rawBodyBytes = Array.isArray(result.body_bytes) && result.body_bytes.length > 0
+    ? new Uint8Array(result.body_bytes)
+    : new TextEncoder().encode(result.body)
+
   return {
     ok: result.ok,
     status: result.status,
@@ -733,8 +737,8 @@ globalThis.fetch = async function (input, init = {}) {
     redirected: Boolean(result.redirected),
     text: async () => result.body,
     json: async () => JSON.parse(result.body),
-    arrayBuffer: async () => new TextEncoder().encode(result.body).buffer,
-    blob: async () => new Blob([result.body]),
+    arrayBuffer: async () => rawBodyBytes.slice().buffer,
+    blob: async () => new Blob([rawBodyBytes]),
     formData: async () => {
       throw new Error('FormData parsing not implemented')
     },

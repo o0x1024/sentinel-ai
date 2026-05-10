@@ -87,6 +87,7 @@ export interface MessageMetadata {
   runtime_hint?: string
   kind?: string  // 消息类型标识（如 'segment_summary', 'global_summary', 'tenth_man_critique'）
   task_event_type?: string
+  team_event_type?: string
   task_count?: number
   task_preview?: string
   team_member_id?: string

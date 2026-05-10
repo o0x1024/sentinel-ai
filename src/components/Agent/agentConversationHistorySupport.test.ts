@@ -21,7 +21,6 @@ describe('agentConversationHistorySupport', () => {
       ],
       {
         toolCallCompletedLabel: 'Tool call completed',
-        shouldSuppressTeamMirrorNoiseMessage: () => false,
       },
     )
 
@@ -47,7 +46,6 @@ describe('agentConversationHistorySupport', () => {
       ],
       {
         toolCallCompletedLabel: 'Tool call completed',
-        shouldSuppressTeamMirrorNoiseMessage: () => false,
       },
     )
 
@@ -80,7 +78,6 @@ describe('agentConversationHistorySupport', () => {
       ],
       {
         toolCallCompletedLabel: 'Tool call completed',
-        shouldSuppressTeamMirrorNoiseMessage: () => false,
       },
     )
 

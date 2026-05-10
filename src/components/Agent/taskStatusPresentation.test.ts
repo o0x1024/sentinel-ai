@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import { getAgentTaskIndicatorClass } from './taskPresentation'
-import { teamTaskStatusBadgeClass } from './teamWorkspacePresentation'
 import {
   getAgentTaskStatusTone,
   getTaskToneBadgeClass,
@@ -22,9 +21,10 @@ describe('taskStatusPresentation', () => {
   it('maps team task statuses through shared tones', () => {
     expect(getTeamTaskStatusTone('running')).toBe('active')
     expect(getTaskToneBadgeClass(getTeamTaskStatusTone('running'))).toBe('badge-info')
-    expect(teamTaskStatusBadgeClass('running')).toBe('badge-info')
 
     expect(getTeamTaskStatusTone('ready_for_claim')).toBe('accent')
-    expect(teamTaskStatusBadgeClass('ready_for_claim')).toBe('badge-secondary')
+    expect(getTaskToneBadgeClass(getTeamTaskStatusTone('ready_for_claim'))).toBe(
+      'badge-secondary'
+    )
   })
 })

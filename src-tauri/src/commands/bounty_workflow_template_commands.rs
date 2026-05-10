@@ -1116,6 +1116,8 @@ async fn execute_single_step(
                 default_severity: sentinel_traffic::types::Severity::Medium,
                 tags: plugin_data.metadata.tags.clone(),
                 target_asset_types: plugin_data.metadata.target_asset_types.clone(),
+                input_mode: None,
+                seed_bindings: plugin_data.metadata.seed_bindings.clone(),
             };
 
             let code = db

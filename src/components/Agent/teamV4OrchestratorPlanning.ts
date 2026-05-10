@@ -2,21 +2,15 @@ import { teamRuntimeApi } from '@/api/teamRuntime'
 import type { TeamV4Agent, TeamV4RunBootstrap, TeamV4SpecialistAssignment } from '@/types/teamRuntime'
 import type { AssistantProfileOption } from './assistantProfiles'
 import {
+  formatTeamV4PlanningConstraintIssues,
+  validateTeamV4PlannedTasks,
+  type TeamV4PlannedTask,
+} from './teamV4PlanningConstraints'
+import {
   buildRuntimeToolConfigForTeamRole,
   normalizeToolIdList,
   type UiToolConfigPayload,
 } from './toolConfigRuntime'
-
-interface PlannedTask {
-  key: string
-  title: string
-  instruction: string
-  acceptanceCriteria: string
-  specialistId: string
-  requiredTools: string[]
-  dependsOnTaskKeys: string[]
-  priority: number
-}
 
 interface SpecialistCapability {
   specialist: TeamV4Agent
@@ -28,6 +22,8 @@ interface PlanTeamV4SpecialistAssignmentsParams {
   baselineToolConfig: UiToolConfigPayload
   getAssistantProfileOption: (profileId: string) => AssistantProfileOption | null
   goal: string
+  maxTasksPerSpecialist: number
+  planningFeedback?: string[]
   runModelExecution: (input: {
     contextMode: 'claude-like' | 'codex-like' | 'sentinel-like'
     executionId: string
@@ -96,7 +92,12 @@ const collectSpecialistCapabilities = (params: PlanTeamV4SpecialistAssignmentsPa
     }
   })
 
-const buildPlanPrompt = (goal: string, capabilities: SpecialistCapability[]) => [
+const buildPlanPrompt = (
+  goal: string,
+  capabilities: SpecialistCapability[],
+  maxTasksPerSpecialist: number,
+  planningFeedback: string[] = [],
+) => [
   'You are the Team Orchestrator. Create a concrete multi-task execution graph for the specialists.',
   'Return strict JSON only. Do not include markdown or prose outside JSON.',
   '',
@@ -106,7 +107,9 @@ const buildPlanPrompt = (goal: string, capabilities: SpecialistCapability[]) => 
   '- Each task must choose exactly one specialistId from the available specialists.',
   '- requiredTools must be a subset of the chosen specialist availableTools.',
   '- dependsOnTaskKeys may reference only earlier task keys.',
+  '- distinctFromTaskKeys must reference tasks that require a different specialist lane.',
   '- Use parallel independent tasks when possible.',
+  '- When tasks represent independent analysis perspectives or the user explicitly asks for separate specialist lanes, populate distinctFromTaskKeys and assign different specialistId values.',
   '',
   'Schema:',
   '{',
@@ -119,12 +122,21 @@ const buildPlanPrompt = (goal: string, capabilities: SpecialistCapability[]) => 
   '      "specialistId": "specialist id",',
   '      "requiredTools": ["tool_id"],',
   '      "dependsOnTaskKeys": ["earlier_key"],',
+  '      "distinctFromTaskKeys": ["task_key_that_must_use_another_specialist"],',
   '      "priority": 0',
   '    }',
   '  ]',
   '}',
   '',
+  ...(planningFeedback.length > 0
+    ? [
+        'Previous plan feedback:',
+        ...planningFeedback.map((item) => `- ${item}`),
+        '',
+      ]
+    : []),
   `User goal: ${goal}`,
+  `Planner note: each specialist may be assigned at most ${maxTasksPerSpecialist} task(s).`,
   `Available specialists: ${JSON.stringify(capabilities.map((item) => ({
     specialistId: item.specialist.id,
     name: item.specialist.name,
@@ -161,7 +173,7 @@ const readStringArray = (value: unknown, field: string) => {
   return value.map((item) => item.trim()).filter(Boolean)
 }
 
-const parsePlan = (raw: string, capabilities: SpecialistCapability[]): PlannedTask[] => {
+const parsePlan = (raw: string, capabilities: SpecialistCapability[]): TeamV4PlannedTask[] => {
   const parsed = parseJsonObject(raw)
   if (!Array.isArray(parsed.tasks) || parsed.tasks.length < 1 || parsed.tasks.length > 6) {
     throw new Error('Orchestrator task plan must contain 1 to 6 tasks.')
@@ -184,6 +196,10 @@ const parsePlan = (raw: string, capabilities: SpecialistCapability[]): PlannedTa
       throw new Error(`Orchestrator task ${key} requires unavailable tools for ${specialistId}: ${missingTools.join(', ')}.`)
     }
     const dependsOnTaskKeys = readStringArray(task.dependsOnTaskKeys, 'dependsOnTaskKeys')
+    const distinctFromTaskKeys = readStringArray(
+      task.distinctFromTaskKeys ?? [],
+      'distinctFromTaskKeys',
+    )
     const invalidDependency = dependsOnTaskKeys.find((dependency) => !seenKeys.has(dependency))
     if (invalidDependency) {
       throw new Error(`Orchestrator task ${key} has invalid dependency: ${invalidDependency}.`)
@@ -197,6 +213,7 @@ const parsePlan = (raw: string, capabilities: SpecialistCapability[]): PlannedTa
       specialistId,
       requiredTools,
       dependsOnTaskKeys,
+      distinctFromTaskKeys,
       priority: Math.max(0, Math.floor(Number(task.priority) || index)),
     }
   })
@@ -242,10 +259,28 @@ export const planTeamV4SpecialistAssignments = async (
     contextMode: orchestratorContextMode,
     executionId,
     model: params.teamRun.orchestrator.model?.trim() || null,
-    prompt: buildPlanPrompt(params.goal, capabilities),
+    prompt: buildPlanPrompt(
+      params.goal,
+      capabilities,
+      params.maxTasksPerSpecialist,
+      params.planningFeedback,
+    ),
     roleLabel: 'Orchestrator task planning',
   })
   const plannedTasks = parsePlan(rawPlan, capabilities)
+  const preflightIssues = validateTeamV4PlannedTasks({
+    plannedTasks,
+    availableSpecialistIds: new Set(params.teamRun.specialists.map((specialist) => specialist.id)),
+    maxTasksPerSpecialist: params.maxTasksPerSpecialist,
+  })
+  if (preflightIssues.length > 0) {
+    throw new Error(
+      [
+        'Orchestrator task plan failed preflight validation.',
+        ...formatTeamV4PlanningConstraintIssues(preflightIssues),
+      ].join('\n'),
+    )
+  }
   const planEvent = await teamRuntimeApi.appendEvent(params.teamRun.run.id, {
     actorId: params.teamRun.orchestrator.id,
     taskId: params.teamRun.rootTask.id,
@@ -279,6 +314,8 @@ export const planTeamV4SpecialistAssignments = async (
         createdBy: params.teamRun.orchestrator.id,
         dispatchMode: 'orchestrator_task_graph',
         requiredTools: plannedTask.requiredTools,
+        distinctFromTaskKeys: plannedTask.distinctFromTaskKeys,
+        assignmentMode: plannedTask.distinctFromTaskKeys.length > 0 ? 'exclusive' : 'shared',
         specialistProfileId: specialist.profile_id,
       },
     })
@@ -315,6 +352,7 @@ export const planTeamV4SpecialistAssignments = async (
         managedBy: 'harness',
         checkpointPolicy: 'event_sequence',
         planningMode: 'orchestrator_task_graph',
+        attemptIndex: 0,
       },
     })
     assignments.push({

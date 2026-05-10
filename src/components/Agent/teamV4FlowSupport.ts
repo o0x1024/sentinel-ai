@@ -25,6 +25,16 @@ export type TeamV4OrchestratorRecoveryDecision = {
   targetSpecialistId?: string | null
 }
 
+export class TeamV4WaitingHumanError extends Error {
+  detail: string
+
+  constructor(detail: string) {
+    super(detail)
+    this.name = 'TeamV4WaitingHumanError'
+    this.detail = detail
+  }
+}
+
 const TEAM_V4_MEMORY_KINDS = new Set<TeamV4Memory['kind']>([
   'evidence',
   'decision',
@@ -66,6 +76,12 @@ export const isTeamV4CancellationError = (error: unknown): boolean => {
     normalized.includes('shell execution cancelled')
   )
 }
+
+export const isTeamV4WaitingHumanError = (error: unknown): error is TeamV4WaitingHumanError =>
+  error instanceof TeamV4WaitingHumanError
+
+export const buildTeamV4WaitingHumanError = (detail: string) =>
+  new TeamV4WaitingHumanError(detail)
 
 export const buildTeamV4ModelOnlyToolConfig = () => ({
   enabled: false,
@@ -305,6 +321,7 @@ export const buildTeamV4OrchestratorRecoveryPrompt = (params: {
   assignment: TeamV4SpecialistAssignment
   attemptIndex: number
   error: string
+  allowAskUser?: boolean
   availableSpecialists: Array<{
     id: string
     name: string
@@ -312,6 +329,7 @@ export const buildTeamV4OrchestratorRecoveryPrompt = (params: {
     contextMode?: string | null
   }>
   completedProgress: Array<{ taskId: string; specialistId: string; summary: string }>
+  continuationHint?: string | null
 }) =>
   [
     'You are the Team Orchestrator. A specialist attempt failed. Decide the next recovery action.',
@@ -320,12 +338,14 @@ export const buildTeamV4OrchestratorRecoveryPrompt = (params: {
     'Allowed actions:',
     '- retry: run the same specialist once more with a revised instruction.',
     '- reassign: run another available specialist with a revised instruction.',
-    '- ask_user: stop and request user input because the missing information cannot be inferred.',
+    ...(params.allowAskUser === false
+      ? []
+      : ['- ask_user: stop and request user input because the missing information cannot be inferred.']),
     '- cancel: stop the team run because continuing is unsafe or invalid.',
     '',
     'Schema:',
     '{',
-    '  "action": "retry | reassign | ask_user | cancel",',
+    `  "action": "${params.allowAskUser === false ? 'retry | reassign | cancel' : 'retry | reassign | ask_user | cancel'}",`,
     '  "reason": "why this action is correct",',
     '  "revisedInstruction": "instruction for retry/reassign, or null",',
     '  "targetSpecialistId": "required only for reassign, otherwise null"',
@@ -339,6 +359,7 @@ export const buildTeamV4OrchestratorRecoveryPrompt = (params: {
     `Error: ${params.error}`,
     `Available specialists: ${stringifyForTeamMemory(params.availableSpecialists, 3000)}`,
     `Completed progress: ${stringifyForTeamMemory(params.completedProgress, 3000)}`,
+    ...(params.continuationHint ? [`Continuation hint: ${params.continuationHint}`] : []),
   ].join('\n')
 
 export const resolveTeamV4ContextMode = (value: string | null | undefined) => {
@@ -366,6 +387,24 @@ export const readTeamV4MaxSpecialists = (teamRun: TeamV4RunBootstrap, assignment
     throw new Error('Team v4 concurrencyPolicy.maxSpecialists must be at least 1.')
   }
   return Math.min(Math.floor(raw), assignmentCount)
+}
+
+export const readTeamV4MaxTasksPerSpecialist = (teamRun: TeamV4RunBootstrap) => {
+  const policy = teamRun.run.policy_json?.concurrencyPolicy
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
+    throw new Error('Team v4 run is missing concurrencyPolicy.')
+  }
+  const raw = Number(policy.maxTasksPerSpecialist ?? policy.max_tasks_per_specialist)
+  if (!Number.isFinite(raw) || raw < 1) {
+    throw new Error('Team v4 concurrencyPolicy.maxTasksPerSpecialist must be at least 1.')
+  }
+  return Math.floor(raw)
+}
+
+export const readTeamV4WaitingHumanTimeoutMs = (teamRun: TeamV4RunBootstrap) => {
+  const raw = Number(teamRun.run.policy_json?.harnessPolicy?.waitingHumanTimeoutSecs)
+  const seconds = Number.isFinite(raw) && raw >= 5 ? Math.floor(raw) : 60
+  return seconds * 1000
 }
 
 export const buildTeamV4SpecialistExecutionId = (

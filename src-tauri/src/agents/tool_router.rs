@@ -187,6 +187,7 @@ impl ToolRouter {
             return Ok(ToolSelectionPlan {
                 tool_ids: vec![],
                 injected_system_prompt: None,
+                injected_runtime_context: None,
                 selected_skill: None,
             });
         }
@@ -202,6 +203,7 @@ impl ToolRouter {
                         None
                     },
                     tool_ids,
+                    injected_runtime_context: None,
                     selected_skill: None,
                 })
             }
@@ -218,6 +220,7 @@ impl ToolRouter {
                 Ok(ToolSelectionPlan {
                     tool_ids,
                     injected_system_prompt,
+                    injected_runtime_context: None,
                     selected_skill: None,
                 })
             }
@@ -315,11 +318,11 @@ impl ToolRouter {
                 rendered.join("\n")
             };
             Some(format!(
-                "\n<available_skills>\n{}\n</available_skills>\n\nWhen a task requires specialized workflows, use the `skills` tool. If <available_skills> already lists relevant skills, you can call action=load directly without calling action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.",
+                "\n<available_skills>\n{}\n</available_skills>\n\nWhen a task requires specialized workflows, use the top-level `skills` tool. If <available_skills> already lists relevant skills, call `skills` with action=\"load\" directly instead of listing first. To read files inside a skill, call `skills` with action=\"read_skill_file\", skill_id, and path. For workspace source files, use the top-level `file_read` tool. There is no top-level `read_file` tool. Do not assume skill details without loading.",
                 skills_block
             ))
         } else {
-            Some("When a task requires specialized workflows, use the `skills` tool. If <available_skills> is provided, you can call action=load directly; otherwise call action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.".to_string())
+            Some("When a task requires specialized workflows, use the top-level `skills` tool. If <available_skills> is provided, call `skills` with action=\"load\" directly; otherwise call `skills` with action=\"list\". To read files inside a skill, call `skills` with action=\"read_skill_file\", skill_id, and path. For workspace source files, use the top-level `file_read` tool. There is no top-level `read_file` tool. Do not assume skill details without loading.".to_string())
         }
     }
 
@@ -1079,6 +1082,7 @@ Return ONLY the tool names, one per line."#,
                 return Ok(ToolSelectionPlan {
                     tool_ids,
                     injected_system_prompt: None,
+                    injected_runtime_context: None,
                     selected_skill: None,
                 });
             }
@@ -1099,6 +1103,7 @@ Return ONLY the tool names, one per line."#,
             return Ok(ToolSelectionPlan {
                 tool_ids,
                 injected_system_prompt: None,
+                injected_runtime_context: None,
                 selected_skill: None,
             });
         }
@@ -1145,6 +1150,7 @@ Return ONLY:
                 return Ok(ToolSelectionPlan {
                     tool_ids,
                     injected_system_prompt: None,
+                    injected_runtime_context: None,
                     selected_skill: None,
                 });
             }
@@ -1159,6 +1165,7 @@ Return ONLY:
             return Ok(ToolSelectionPlan {
                 tool_ids: vec![],
                 injected_system_prompt: None,
+                injected_runtime_context: None,
                 selected_skill: None,
             });
         }
@@ -1179,6 +1186,7 @@ Return ONLY:
             return Ok(ToolSelectionPlan {
                 tool_ids,
                 injected_system_prompt: None,
+                injected_runtime_context: None,
                 selected_skill: None,
             });
         }
@@ -1219,6 +1227,7 @@ Return ONLY:
             return Ok(ToolSelectionPlan {
                 tool_ids,
                 injected_system_prompt: None,
+                injected_runtime_context: None,
                 selected_skill: None,
             });
         }
@@ -1243,6 +1252,7 @@ Return ONLY:
             return Ok(ToolSelectionPlan {
                 tool_ids,
                 injected_system_prompt: None,
+                injected_runtime_context: None,
                 selected_skill: None,
             });
         }
@@ -1287,7 +1297,7 @@ Return ONLY:
             tracing::info!("Selected skills have no tools configured, proceeding without tools");
         }
 
-        // Build injected system prompt (load SKILL.md body only, one block per skill)
+        // Build selected skill runtime context (load SKILL.md body only, one block per skill)
         let mut injected_blocks: Vec<String> = Vec::new();
         if let Some(db_service) = &self.db_service {
             let root = db_service.get_skills_root_dir();
@@ -1331,7 +1341,8 @@ Return ONLY:
 
         Ok(ToolSelectionPlan {
             tool_ids: final_tools,
-            injected_system_prompt: injected,
+            injected_system_prompt: None,
+            injected_runtime_context: injected,
             selected_skill: Some(SelectedSkill {
                 id: full_skills[0].id.clone(),
                 name: full_skills[0].name.clone(),
@@ -1606,5 +1617,20 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("recommended_tool_ids"));
+    }
+
+    #[tokio::test]
+    async fn skills_prompt_uses_skill_scoped_file_action() {
+        let router = ToolRouter::new_with_all_tools(None).await;
+        let prompt = router
+            .build_skills_prompt_injection(None)
+            .await
+            .expect("skills prompt should be generated");
+
+        assert!(prompt.contains("action=\"read_skill_file\""));
+        assert!(prompt.contains("top-level `file_read` tool"));
+        assert!(prompt.contains("There is no top-level `read_file` tool"));
+        assert!(!prompt.contains("action=read_file"));
+        assert!(!prompt.contains("action=\"read_file\""));
     }
 }

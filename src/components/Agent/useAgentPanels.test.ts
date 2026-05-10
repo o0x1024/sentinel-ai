@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import { useAgentPanels } from './useAgentPanels'
 
 const createPanelController = () => {
-  const activeTeamSessionId = ref<string | null>(null)
   const isTaskPanelActive = ref(false)
   const isTeamWorkspaceActive = ref(false)
   const terminalIsActive = ref(false)
@@ -12,7 +11,6 @@ const createPanelController = () => {
   let terminalCloseCount = 0
 
   const controller = useAgentPanels({
-    activeTeamSessionId,
     agentError: computed(() => null),
     clearTasksForExecution: () => {},
     conversationId: ref('conversation-1'),
@@ -21,15 +19,11 @@ const createPanelController = () => {
     isTeamWorkspaceActive,
     isTaskPanelActive: computed(() => isTaskPanelActive.value),
     localError: ref(null),
-    parseTeamTaskExecutionId: () => null,
     propsShowTasks: true,
     parallelTaskSources: computed(() => []),
     pruneTasksForExecutionAfter: async () => [],
     resetAgentError: () => {},
-    resolveAgentName: () => 'Agent',
-    selectedTeamTaskAssigneeId: computed(() => null),
     setTasksForExecution: () => {},
-    teamWorkspaceAvailable: computed(() => false),
     terminalClose: () => {
       terminalCloseCount += 1
       terminalIsActive.value = false
@@ -97,7 +91,6 @@ describe('useAgentPanels', () => {
     const cleared: string[] = []
 
     const controller = useAgentPanels({
-      activeTeamSessionId: ref(null),
       agentError: computed(() => null),
       clearTasksForExecution: (executionId) => {
         cleared.push(executionId)
@@ -108,7 +101,6 @@ describe('useAgentPanels', () => {
       isTeamWorkspaceActive: ref(false),
       isTaskPanelActive: computed(() => false),
       localError: ref(null),
-      parseTeamTaskExecutionId: () => null,
       parallelTaskSources: computed(() => [
         { executionId: 'parallel-1', parentConversationId: 'conversation-1', label: 'parallel', task: 'task', status: 'running' },
       ]),
@@ -118,12 +110,9 @@ describe('useAgentPanels', () => {
         return remainingByExecution[executionId] || []
       },
       resetAgentError: () => {},
-      resolveAgentName: () => 'Agent',
-      selectedTeamTaskAssigneeId: computed(() => null),
       setTasksForExecution: (executionId, tasks) => {
         applied[executionId] = tasks
       },
-      teamWorkspaceAvailable: computed(() => false),
       terminalClose: () => {},
       terminalHasHistory: computed(() => false),
       terminalIsActive: computed(() => false),
@@ -146,7 +135,6 @@ describe('useAgentPanels', () => {
 
   it('shows execution task buckets that belong to the current conversation', () => {
     const controller = useAgentPanels({
-      activeTeamSessionId: ref(null),
       agentError: computed(() => null),
       clearTasksForExecution: () => {},
       conversationId: ref('conversation-1'),
@@ -157,15 +145,11 @@ describe('useAgentPanels', () => {
       isTeamWorkspaceActive: ref(false),
       isTaskPanelActive: computed(() => false),
       localError: ref(null),
-      parseTeamTaskExecutionId: () => null,
       parallelTaskSources: computed(() => []),
       propsShowTasks: true,
       pruneTasksForExecutionAfter: async () => [],
       resetAgentError: () => {},
-      resolveAgentName: () => 'Agent',
-      selectedTeamTaskAssigneeId: computed(() => null),
       setTasksForExecution: () => {},
-      teamWorkspaceAvailable: computed(() => false),
       terminalClose: () => {},
       terminalHasHistory: computed(() => false),
       terminalIsActive: computed(() => false),

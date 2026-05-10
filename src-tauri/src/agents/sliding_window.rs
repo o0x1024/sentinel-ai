@@ -161,37 +161,11 @@ impl SlidingWindowManager {
 
     /// Build the context for LLM execution
     pub fn build_context(&self, system_prompt: &str) -> Vec<ChatMessage> {
-        let mut context = Vec::new();
+        build_context_messages(system_prompt, &self.recent_messages)
+    }
 
-        // 1. System Prompt with Global Context
-        let mut full_system_prompt = system_prompt.to_string();
-
-        if let Some(global) = &self.global_summary {
-            full_system_prompt.push_str("\n\n=== LONG-TERM MEMORY ===\n");
-            full_system_prompt.push_str(&global.summary);
-        }
-
-        if !self.segments.is_empty() {
-            full_system_prompt.push_str("\n\n=== RECENT ACTIVITY SUMMARY ===\n");
-            for segment in &self.segments {
-                full_system_prompt.push_str(&format!("- {}\n", segment.summary));
-            }
-        }
-
-        context.push(ChatMessage {
-            role: "system".to_string(),
-            content: full_system_prompt,
-            tool_calls: None,
-            tool_call_id: None,
-            reasoning_content: None,
-        });
-
-        // 2. Recent Messages
-        for msg in &self.recent_messages {
-            context.push(msg.clone());
-        }
-
-        context
+    pub fn render_summary_context(&self) -> String {
+        render_summary_context(self.global_summary.as_ref(), &self.segments)
     }
 
     pub fn summary_stats(&self) -> SlidingWindowSummaryStats {
@@ -695,6 +669,61 @@ fn condense_tool_output(raw: &str) -> Option<String> {
     None
 }
 
+fn render_summary_context(
+    global_summary: Option<&GlobalSummary>,
+    segments: &VecDeque<ConversationSegment>,
+) -> String {
+    let mut context = String::new();
+
+    if let Some(global) = global_summary {
+        let summary = global.summary.trim();
+        if !summary.is_empty() {
+            context.push_str("[LongTermMemory]\n");
+            context.push_str(summary);
+        }
+    }
+
+    let segment_summaries = segments
+        .iter()
+        .map(|segment| segment.summary.trim())
+        .filter(|summary| !summary.is_empty())
+        .collect::<Vec<_>>();
+    if !segment_summaries.is_empty() {
+        if !context.is_empty() {
+            context.push_str("\n\n");
+        }
+        context.push_str("[RecentActivitySummary]\n");
+        for summary in segment_summaries {
+            context.push_str("- ");
+            context.push_str(summary);
+            context.push('\n');
+        }
+    }
+
+    context.trim().to_string()
+}
+
+fn build_context_messages(
+    system_prompt: &str,
+    recent_messages: &VecDeque<ChatMessage>,
+) -> Vec<ChatMessage> {
+    let mut context = Vec::new();
+
+    context.push(ChatMessage {
+        role: "system".to_string(),
+        content: system_prompt.to_string(),
+        tool_calls: None,
+        tool_call_id: None,
+        reasoning_content: None,
+    });
+
+    for msg in recent_messages {
+        context.push(msg.clone());
+    }
+
+    context
+}
+
 fn trim_text(text: &str, max_lines: usize, max_chars: usize) -> String {
     if text.is_empty() {
         return String::new();
@@ -714,4 +743,55 @@ fn trim_text(text: &str, max_lines: usize, max_chars: usize) -> String {
     }
 
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn segment(summary: &str, index: i32) -> ConversationSegment {
+        ConversationSegment {
+            id: format!("segment-{}", index),
+            conversation_id: "conversation-1".to_string(),
+            segment_index: index,
+            start_message_index: index * 10,
+            end_message_index: index * 10 + 9,
+            summary: summary.to_string(),
+            summary_tokens: 0,
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn sliding_window_summaries_render_as_runtime_context() {
+        let global = GlobalSummary {
+            id: "global-1".to_string(),
+            conversation_id: "conversation-1".to_string(),
+            summary: "global facts".to_string(),
+            summary_tokens: 0,
+            covers_up_to_index: 9,
+            updated_at: 0,
+        };
+        let segments = VecDeque::from(vec![segment("recent activity", 1)]);
+
+        let rendered = render_summary_context(Some(&global), &segments);
+        assert!(rendered.contains("[LongTermMemory]"));
+        assert!(rendered.contains("global facts"));
+        assert!(rendered.contains("[RecentActivitySummary]"));
+        assert!(rendered.contains("recent activity"));
+    }
+
+    #[test]
+    fn build_context_does_not_append_summaries_to_system_prompt() {
+        let messages = build_context_messages(
+            "STATIC_RULES",
+            &VecDeque::from(vec![ChatMessage::user("recent user message")]),
+        );
+
+        assert_eq!(messages[0].role, "system");
+        assert_eq!(messages[0].content, "STATIC_RULES");
+        assert!(!messages[0].content.contains("LONG-TERM MEMORY"));
+        assert!(!messages[0].content.contains("RECENT ACTIVITY SUMMARY"));
+        assert_eq!(messages[1].role, "user");
+    }
 }

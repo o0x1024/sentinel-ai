@@ -227,86 +227,129 @@
   </div>
 
   <!-- Shell Tool - Render as independent message block -->
-  <div
-    v-else-if="isSkillsToolCard"
-    :class="['rounded-lg overflow-hidden border-l-4 mb-2', skillsCardContainerClass]"
-  >
-    <div :class="['flex items-center gap-3 px-4 py-3 border-b', skillsCardHeaderClass]">
-      <div
-        :class="[
-          'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm',
-          skillsCardIconClass,
-        ]"
-      >
-        <i class="fas fa-book-open text-white text-sm"></i>
-      </div>
-      <div class="flex-1">
-        <div :class="['font-semibold text-sm', skillsCardTitleClass]">
-          {{ skillsCardTitle }}
+  <div v-else-if="isSkillsToolCard" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <div
+      :class="['rounded-lg overflow-hidden border-l-4 mb-2', skillsCardContainerClass]"
+    >
+      <div :class="['flex items-center gap-3 px-4 py-3 border-b', skillsCardHeaderClass]">
+        <div
+          :class="[
+            'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm',
+            skillsCardIconClass,
+          ]"
+        >
+          <i class="fas fa-book-open text-white text-sm"></i>
         </div>
-        <div v-if="skillsCardTarget" class="text-xs text-base-content/70 mt-0.5">
-          {{ skillsCardTarget }}
+        <div class="flex-1">
+          <div :class="['font-semibold text-sm', skillsCardTitleClass]">
+            {{ skillsCardTitle }}
+          </div>
+          <div v-if="skillsCardTarget" class="text-xs text-base-content/70 mt-0.5">
+            {{ skillsCardTarget }}
+          </div>
         </div>
+        <span
+          v-if="toolStatus"
+          :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium', toolStatusClass]"
+        >
+          {{ toolStatusText }}
+        </span>
       </div>
-      <span
-        v-if="toolStatus"
-        :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium', toolStatusClass]"
-      >
-        {{ toolStatusText }}
-      </span>
     </div>
   </div>
 
   <!-- Shell Tool - Render as independent message block -->
-  <ShellToolResult
+  <div
     v-else-if="shouldShowSpecializedShellTool && message.type === 'tool_call'"
-    :args="message.metadata?.tool_args"
-    :result="message.metadata?.tool_result"
-    :error="message.metadata?.error"
-    :status="message.metadata?.status"
-    :execution-id="message.metadata?.execution_id"
-    :tracked-artifacts="message.metadata?.tracked_artifacts"
-  />
+    class="space-y-1"
+  >
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <ShellToolResult
+      :args="message.metadata?.tool_args"
+      :result="message.metadata?.tool_result"
+      :error="message.metadata?.error"
+      :status="message.metadata?.status"
+      :execution-id="message.metadata?.execution_id"
+      :tracked-artifacts="message.metadata?.tracked_artifacts"
+    />
+  </div>
 
-  <AskUserQuestionToolResult
+  <div
     v-else-if="isAskUserQuestionTool && message.type === 'tool_call'"
-    :args="message.metadata?.tool_args"
-    :result="message.metadata?.tool_result"
-    :error="message.metadata?.error"
-    :status="message.metadata?.status"
-  />
+    class="space-y-1"
+  >
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <AskUserQuestionToolResult
+      :args="message.metadata?.tool_args"
+      :result="message.metadata?.tool_result"
+      :error="message.metadata?.error"
+      :status="message.metadata?.status"
+    />
+  </div>
 
-  <FileToolResult
-    v-else-if="isFileTool"
-    :message="message"
-  />
+  <div v-else-if="isFileTool" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <FileToolResult :message="message" />
+  </div>
 
-  <SearchToolResult
-    v-else-if="isSearchTool"
-    :message="message"
-  />
+  <div v-else-if="isSearchTool" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <SearchToolResult :message="message" />
+  </div>
 
-  <WebSearchToolResult
-    v-else-if="isWebSearchTool"
-    :args="message.metadata?.tool_args"
-    :result="message.metadata?.tool_result"
-    :error="message.metadata?.error"
-    :status="message.metadata?.status"
-  />
+  <div v-else-if="isWebSearchTool" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <WebSearchToolResult
+      :args="message.metadata?.tool_args"
+      :result="message.metadata?.tool_result"
+      :error="message.metadata?.error"
+      :status="message.metadata?.status"
+    />
+  </div>
 
-  <MemoryToolResult
-    v-else-if="isMemoryTool"
-    :args="message.metadata?.tool_args"
-    :result="message.metadata?.tool_result"
-    :error="message.metadata?.error"
-    :status="message.metadata?.status"
-  />
+  <div v-else-if="isMemoryTool" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <MemoryToolResult
+      :args="message.metadata?.tool_args"
+      :result="message.metadata?.tool_result"
+      :error="message.metadata?.error"
+      :status="message.metadata?.status"
+    />
+  </div>
 
   <!-- Tool Call Message - Collapsible Panel (only render if has content) -->
-  <ToolCallMessagePanel
+  <div
     v-else-if="message.type === 'tool_call' && hasToolCallContent"
-    :message="message"
-  />
+    class="space-y-1"
+  >
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <ToolCallMessagePanel :message="message" />
+  </div>
 
   <!-- Regular message block for non-tool-call messages (only render if has content) -->
   <div v-else-if="hasRegularMessageContent" class="message-container group relative max-w-full">
@@ -705,6 +748,7 @@ import ParallelModelResultPanel from './ParallelModelResultPanel.vue'
 import SearchToolResult from './SearchToolResult.vue'
 import ShellToolResult from './ShellToolResult.vue'
 import StoredArtifactPanel from './StoredArtifactPanel.vue'
+import TeamMessageAttribution from './TeamMessageAttribution.vue'
 import ToolCallMessagePanel from './ToolCallMessagePanel.vue'
 import ToolRuntimeMeta from './ToolRuntimeMeta.vue'
 import WebSearchToolResult from './WebSearchToolResult.vue'
@@ -870,7 +914,7 @@ const skillsAction = computed(() => {
 })
 
 const isSkillsCardAction = computed(() => {
-  return ['read_file', 'readfile', 'read-file'].includes(skillsAction.value)
+  return skillsAction.value === 'read_skill_file'
 })
 
 const isSkillsToolCard = computed(() => {
@@ -1126,30 +1170,14 @@ const isTenthManCritique = computed(() => {
   )
 })
 
-const isTeamMessage = computed(() => {
-  const kind = props.message.metadata?.kind
-  return kind === 'team_member_output' || kind === 'team_bridge' || kind === 'team_v3_mirror'
-})
-
 const readTeamMetaString = (key: string): string => {
   const metadata = props.message.metadata as Record<string, unknown> | undefined
   const value = metadata?.[key]
   return typeof value === 'string' ? value.trim() : ''
 }
 
-const TEAM_PREFIX_RE = /^\[Team\/([^\]]+)\]\s*/u
-
-const teamPrefixLabel = computed(() => {
-  if (props.message.metadata?.kind !== 'team_v3_mirror') return ''
-  const content = props.message.content || ''
-  const match = content.match(TEAM_PREFIX_RE)
-  return match?.[1]?.trim() || ''
-})
-
 const normalizedMessageContent = computed(() => {
-  const content = props.message.content || ''
-  if (props.message.metadata?.kind !== 'team_v3_mirror') return content
-  return content.replace(TEAM_PREFIX_RE, '').trimStart()
+  return props.message.content || ''
 })
 
 const isLightweightStreamingRender = computed(() => {
@@ -1184,7 +1212,26 @@ const teamSpeakerRole = computed(() => {
 })
 
 const teamSpeakerLabel = computed(() => {
-  return teamSpeakerName.value || teamSpeakerRole.value || teamPrefixLabel.value || 'Team'
+  return teamSpeakerName.value || teamSpeakerRole.value || 'Team'
+})
+
+const isTeamMessage = computed(() => {
+  const kind = props.message.metadata?.kind
+  if (kind === 'team_bridge' || kind === 'team_member_output') {
+    return true
+  }
+  return (
+    readTeamMetaString('team_session_id').length > 0 &&
+    (
+      readTeamMetaString('team_member_name').length > 0 ||
+      readTeamMetaString('team_member_id').length > 0 ||
+      readTeamMetaString('assignee_agent_name').length > 0
+    )
+  )
+})
+
+const showTeamAttribution = computed(() => {
+  return isTeamMessage.value && teamSpeakerLabel.value.trim().length > 0
 })
 
 // Format number with commas

@@ -11,6 +11,7 @@ use crate::commands::ai_task_support::{
     complete_external_profile_run_success, load_external_profile_context,
     merge_external_profile_prompt, start_external_profile_run, ExternalProfileRun,
 };
+use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::commands::plugin_generation_commands::get_combined_plugin_prompt_api;
 use crate::commands::plugin_review_commands::{
     RuntimeSchemaValidationMetadata, RuntimeSchemaValidationResult,
@@ -19,7 +20,6 @@ use crate::commands::traffic::plugin_commands::{
     refresh_active_agent_plugin_tools, resolved_explicit_plugin_monitor_type,
 };
 use crate::commands::traffic::TrafficAnalysisState;
-use crate::commands::monitor_config_support::validate_plugin_monitor_type;
 use crate::events::{emit_plugin_changed, PluginChangedEvent};
 use crate::generators::{
     parse_agent_plugin_definition, render_agent_plugin_definition, AgentPluginRenderContext,

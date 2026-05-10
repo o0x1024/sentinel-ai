@@ -844,7 +844,7 @@ pub async fn monitor_start_scheduler(
                             .await
                             {
                                 Ok(Some(stats)) => {
-                                    total_imported += stats.created_assets;
+                                    total_imported += stats.created_assets + stats.enriched_assets;
                                     tracing::info!(
                                         "Scheduler task '{}' materialized {} surface assets and enriched {} existing assets for plugin '{}'",
                                         task.name,

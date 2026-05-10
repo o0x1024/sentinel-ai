@@ -17,11 +17,10 @@ use sentinel_tools::ToolServer;
 use super::context_compaction::{ContextCompactionOrchestrator, ContextCompactionRequest};
 use super::run_with_tools_support::{
     accumulate_retry_progress, apply_tool_config_scope_policy, build_retry_history,
-    clear_retry_turn_state, collect_all_tool_calls, emit_team_stream_done,
-    ensure_ai_conversation_exists_for_persistence, finalize_response_state,
-    infer_tool_result_success, is_context_length_error, is_empty_response_error,
-    is_high_risk_tool_call, is_retryable_error, is_side_effectful_tool_call,
-    looks_like_verification_tool_call, parse_team_stream_context, patch_builtin_dynamic_tools,
+    clear_retry_turn_state, collect_all_tool_calls, ensure_ai_conversation_exists_for_persistence,
+    finalize_response_state, infer_tool_result_success, is_context_length_error,
+    is_empty_response_error, is_high_risk_tool_call, is_retryable_error,
+    is_side_effectful_tool_call, looks_like_verification_tool_call, patch_builtin_dynamic_tools,
     persist_ai_message_with_retry, record_failed_agent_execution, register_skills_tool_guard,
     settle_running_tool_messages_for_interrupted_turn, streaming_content_needs_evidence_review,
     tool_loop_fingerprint, trailing_failed_tool_calls,
@@ -161,6 +160,7 @@ pub async fn execute_agent_with_tools(
         working_directory: params.working_directory.clone(),
         base_system_prompt: params.system_prompt.clone(),
         injected_skill_prompt: selection_plan.injected_system_prompt.clone(),
+        injected_runtime_context: selection_plan.injected_runtime_context.clone(),
         task: params.task.clone(),
         provider_config_key: params.provider_config_key.clone(),
         rig_provider: rig_provider.clone(),
@@ -187,7 +187,6 @@ pub async fn execute_agent_with_tools(
     let client = StreamingLlmClient::new(llm_config.clone());
     let execution_id = params.execution_id.clone();
     let cancellation_generation = params.cancellation_generation;
-    let team_stream_context = parse_team_stream_context(&execution_id);
     let team_log_context =
         resolve_team_runtime_log_context(&execution_id, Some(db_service.inner())).await;
     let app = app_handle.clone();
@@ -290,8 +289,6 @@ pub async fn execute_agent_with_tools(
     let activated_tool_ids: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let activated_tool_query: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let activated_tool_runtime_hint: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let team_stream_started = Arc::new(AtomicBool::new(false));
-    let team_stream_had_delta = Arc::new(AtomicBool::new(false));
 
     let mut force_history_with_tools = false;
     let mut pressure_rebuild_attempted = false;
@@ -435,6 +432,7 @@ pub async fn execute_agent_with_tools(
                 accumulated_assistant_output: &accumulated_assistant_output,
                 retries: retries as u32,
                 include_accumulated,
+                injected_runtime_context: &selection_plan.injected_runtime_context,
             })
             .await?;
         if compaction_outcome.compacted {
@@ -467,32 +465,6 @@ pub async fn execute_agent_with_tools(
                                 .lock()
                                 .map(|mut tracker| tracker.observe_text(&text));
                             mark_first_response_ms(first_response_ms_for_stream.as_ref(), execution_started_at_ms);
-                            if let Some(ctx) = team_stream_context.as_ref() {
-                                if !team_stream_started.swap(true, Ordering::SeqCst) {
-                                    let _ = app.emit(
-                                        "agent_team:message_stream_start",
-                                        &json!({
-                                            "session_id": ctx.session_id.clone(),
-                                            "stream_id": ctx.stream_id.clone(),
-                                            "member_id": ctx.member_id.clone(),
-                                            "member_name": ctx.member_id.clone(),
-                                            "phase": ctx.phase.clone(),
-                                        }),
-                                    );
-                                }
-                                team_stream_had_delta.store(true, Ordering::SeqCst);
-                                let _ = app.emit(
-                                    "agent_team:message_stream_delta",
-                                    &json!({
-                                        "session_id": ctx.session_id.clone(),
-                                        "stream_id": ctx.stream_id.clone(),
-                                        "member_id": ctx.member_id.clone(),
-                                        "member_name": ctx.member_id.clone(),
-                                        "phase": ctx.phase.clone(),
-                                        "delta": text.clone(),
-                                    }),
-                                );
-                            }
                             // Accumulate assistant text into a segment buffer.
                             let _ = segment_buf.lock().map(|mut buf| buf.push_str(&text));
 
@@ -875,9 +847,6 @@ pub async fn execute_agent_with_tools(
                                 });
                             }
 
-                            let team_tool_call_id = id.clone();
-                            let team_tool_name = name.clone();
-                            let team_tool_arguments = arguments.clone();
                             let _ = app.emit(
                                 "agent:tool_call_complete",
                                 &json!({
@@ -888,22 +857,6 @@ pub async fn execute_agent_with_tools(
                                     "arguments": arguments,
                                 }),
                             );
-                            if let Some(ctx) = team_stream_context.as_ref() {
-                                let _ = app.emit(
-                                    "agent_team:tool_call",
-                                    &json!({
-                                        "session_id": ctx.session_id.clone(),
-                                        "stream_id": ctx.stream_id.clone(),
-                                        "member_id": ctx.member_id.clone(),
-                                        "member_name": ctx.member_id.clone(),
-                                        "phase": ctx.phase.clone(),
-                                        "tool_call_id": team_tool_call_id,
-                                        "name": team_tool_name,
-                                        "arguments": team_tool_arguments,
-                                        "timestamp": chrono::Utc::now().to_rfc3339(),
-                                    }),
-                                );
-                            }
                         }
                         StreamContent::ToolResult { id, result } => {
                             let _ = tool_protocol_for_stream
@@ -1289,8 +1242,6 @@ pub async fn execute_agent_with_tools(
                                     .lock()
                                     .ok()
                                     .map(|tracked| tracked.clone());
-                            let team_tool_call_id = id.clone();
-                            let team_result = result.clone();
                             let team_success = infer_tool_result_success(&result);
                             let _ = app.emit(
                                 "agent:tool_result",
@@ -1303,22 +1254,6 @@ pub async fn execute_agent_with_tools(
                                     "tracked_artifacts": tracked_artifacts_snapshot,
                                 }),
                             );
-                            if let Some(ctx) = team_stream_context.as_ref() {
-                                let _ = app.emit(
-                                    "agent_team:tool_result",
-                                    &json!({
-                                        "session_id": ctx.session_id.clone(),
-                                        "stream_id": ctx.stream_id.clone(),
-                                        "member_id": ctx.member_id.clone(),
-                                        "member_name": ctx.member_id.clone(),
-                                        "phase": ctx.phase.clone(),
-                                        "tool_call_id": team_tool_call_id,
-                                        "result": team_result,
-                                        "success": team_success,
-                                        "timestamp": chrono::Utc::now().to_rfc3339(),
-                                    }),
-                                );
-                            }
                         }
                 StreamContent::Usage {
                     input_tokens,
@@ -1772,14 +1707,6 @@ pub async fn execute_agent_with_tools(
 
                 cleanup_container_context_async(&app, &params.execution_id).await;
 
-                emit_team_stream_done(
-                    &app,
-                    team_stream_context.as_ref(),
-                    Some(final_response.clone()),
-                    None,
-                    team_stream_had_delta.load(Ordering::SeqCst),
-                );
-
                 return Ok(AgentTurnOutcome::tool_run(
                     final_response,
                     &all_tool_calls,
@@ -1967,14 +1894,6 @@ pub async fn execute_agent_with_tools(
                     )
                     .await;
 
-                    emit_team_stream_done(
-                        &app,
-                        team_stream_context.as_ref(),
-                        None,
-                        Some(friendly_err.to_string()),
-                        team_stream_had_delta.load(Ordering::SeqCst),
-                    );
-
                     return Err(friendly_err);
                 }
             }
@@ -1982,12 +1901,5 @@ pub async fn execute_agent_with_tools(
     }
 
     let final_error = last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries reached"));
-    emit_team_stream_done(
-        &app,
-        team_stream_context.as_ref(),
-        None,
-        Some(final_error.to_string()),
-        team_stream_had_delta.load(Ordering::SeqCst),
-    );
     Err(final_error)
 }

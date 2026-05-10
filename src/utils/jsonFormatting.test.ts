@@ -22,9 +22,14 @@ describe('jsonFormatting', () => {
     expect(formatJsonStringIfPossible('command finished successfully')).toBeNull()
   })
 
+  it('ignores undefined string input instead of throwing', () => {
+    expect(formatJsonStringIfPossible(undefined)).toBeNull()
+  })
+
   it('parses json arrays but not plain scalar text', () => {
     expect(tryParseStructuredJson('[1,2,3]')).toEqual([1, 2, 3])
     expect(tryParseStructuredJson('true')).toBeNull()
+    expect(tryParseStructuredJson(undefined)).toBeNull()
   })
 
   it('unwraps tool-style text envelopes with nested json strings', () => {

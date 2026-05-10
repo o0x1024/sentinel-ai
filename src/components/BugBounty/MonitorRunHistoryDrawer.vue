@@ -91,7 +91,7 @@
                   </div>
                   <div class="rounded-xl bg-base-200/70 px-3 py-3">
                     <div class="text-xs text-base-content/60">{{ t('bugBounty.monitor.runHistoryImportedAssets') }}</div>
-                    <div class="mt-1 text-lg font-semibold">{{ run.imported_asset_count }}</div>
+                    <div class="mt-1 text-lg font-semibold">{{ runImportedOrEnrichedCount(run) }}</div>
                   </div>
                   <div class="rounded-xl bg-base-200/70 px-3 py-3">
                     <div class="text-xs text-base-content/60">{{ t('bugBounty.monitor.runHistoryChangedAssets') }}</div>
@@ -172,6 +172,9 @@ const filteredRuns = computed(() => {
     ].some(value => value.toLowerCase().includes(needle))
   })
 })
+
+const runImportedOrEnrichedCount = (run: MonitorRunHistoryItem) =>
+  Number(run.imported_asset_count || 0) + Number(run.changed_asset_count || 0)
 
 const loadHistory = async () => {
   if (!props.open) {

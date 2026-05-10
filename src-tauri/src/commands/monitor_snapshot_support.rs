@@ -6,8 +6,6 @@ use sentinel_db::{DatabaseService, SurfaceDiscoveryRunRow, SurfaceObservationRow
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::commands::monitor_config_support::infer_monitor_type_for_plugin;
-
 fn normalized_plugin_id(plugin_id: &str) -> &str {
     plugin_id.strip_prefix("plugin__").unwrap_or(plugin_id)
 }
@@ -78,13 +76,6 @@ pub(crate) fn persist_monitor_plugin_snapshots_to_task(
     };
 
     let normalized_id = normalized_plugin_id(&plugin.plugin_id).to_string();
-    if let Some(monitor_type) = infer_monitor_type_for_plugin(&normalized_id, "") {
-        if let Some(plugins) = plugin_configs_mut(&mut task.config, monitor_type) {
-            if persist_snapshots_for_plugin(plugins, &normalized_id, &snapshots) {
-                return true;
-            }
-        }
-    }
 
     for monitor_type in [
         "dns", "ip", "cert", "content", "api", "port", "service", "web", "risk",

@@ -19,6 +19,24 @@ use super::team_v4_schema::ensure_team_v4_schema;
 
 type DbState<'r> = State<'r, Arc<DatabaseService>>;
 
+fn read_target_specialist_count(
+    concurrency_policy: &Value,
+    configured_specialist_count: usize,
+) -> Result<usize, String> {
+    let requested = concurrency_policy
+        .get("maxSpecialists")
+        .or_else(|| concurrency_policy.get("max_specialists"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "Team v4 requires concurrencyPolicy.maxSpecialists".to_string())?
+        as usize;
+    if requested == 0 {
+        return Err(
+            "Team v4 requires concurrencyPolicy.maxSpecialists to be at least 1".to_string(),
+        );
+    }
+    Ok(requested.max(configured_specialist_count))
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TeamV4StartAssistantRunRequest {
@@ -107,6 +125,11 @@ pub async fn team_v4_start_assistant_run(
         .concurrency_policy
         .unwrap_or_else(|| json!({ "maxSpecialists": 1, "maxTasksPerSpecialist": 1 }));
     let safety_policy = request.safety_policy.unwrap_or_else(|| json!({}));
+    let specialist_instance_count =
+        read_target_specialist_count(&concurrency_policy, specialist_profile_ids.len())?;
+    let specialist_instance_profile_ids = (0..specialist_instance_count)
+        .map(|index| specialist_profile_ids[index % specialist_profile_ids.len()].clone())
+        .collect::<Vec<_>>();
     let lease_secs = harness_policy
         .get("leaseSecs")
         .and_then(Value::as_i64)
@@ -117,7 +140,9 @@ pub async fn team_v4_start_assistant_run(
         "layers": ["orchestration_layer", "specialist_pool", "monitoring_quality_gate", "runtime_harness"],
         "teamProfileId": request.team_profile_id.clone(),
         "orchestratorProfileId": orchestrator_profile_id,
-        "specialistProfileIds": specialist_profile_ids,
+        "specialistProfileIds": specialist_profile_ids.clone(),
+        "specialistInstanceProfileIds": specialist_instance_profile_ids.clone(),
+        "specialistInstanceCount": specialist_instance_count,
         "monitorProfileId": monitor_profile_id,
         "toolPolicyMatrix": tool_policy_matrix,
         "memoryPolicy": memory_policy,
@@ -190,13 +215,13 @@ pub async fn team_v4_start_assistant_run(
                 visibility: Some("user".to_string()),
                 payload: Some(json!({
                     "plan": [
-                        "establish_shared_context",
-                        "spawn_specialist_pool",
-                        "attach_monitor_quality_gate",
-                        "protect_long_task_with_harness"
-                    ],
-                    "dispatchPolicy": "dynamic_dependency_graph_with_monitor_feedback",
-                    "specialistCount": specialist_profile_ids.len(),
+                    "establish_shared_context",
+                    "spawn_specialist_pool",
+                    "attach_monitor_quality_gate",
+                    "protect_long_task_with_harness"
+                ],
+                "dispatchPolicy": "dynamic_dependency_graph_with_monitor_feedback",
+                    "specialistCount": specialist_instance_count,
                 })),
             },
         )
@@ -242,7 +267,7 @@ pub async fn team_v4_start_assistant_run(
     );
 
     let mut specialists = Vec::new();
-    for (index, specialist_profile_id) in specialist_profile_ids.iter().enumerate() {
+    for (index, specialist_profile_id) in specialist_instance_profile_ids.iter().enumerate() {
         let specialist = register_team_v4_agent_internal(
             &runtime_pool,
             &run.id,
@@ -277,6 +302,7 @@ pub async fn team_v4_start_assistant_run(
                         "specialist_id": specialist.id,
                         "profile_id": specialist_profile_id,
                         "specialist_index": index,
+                        "specialist_instance_count": specialist_instance_count,
                         "inherits_history": true,
                         "context_mode": specialist.context_mode,
                     })),

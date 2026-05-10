@@ -133,9 +133,15 @@
             <span>{{ t('agent.terminal') }}</span>
           </button>
           <button
-            @click="activeRightPanel === 'workspace-files' ? deactivateRightPanel('workspace-files') : activateRightPanel('workspace-files')"
+            @click="
+              activeRightPanel === 'workspace-files'
+                ? deactivateRightPanel('workspace-files')
+                : activateRightPanel('workspace-files')
+            "
             class="btn btn-sm gap-1"
-            :class="activeRightPanel === 'workspace-files' ? 'btn-primary' : 'btn-ghost text-primary'"
+            :class="
+              activeRightPanel === 'workspace-files' ? 'btn-primary' : 'btn-ghost text-primary'
+            "
             title="工作目录面板"
           >
             <i class="fas fa-folder-tree"></i>
@@ -320,8 +326,8 @@
             :context-usage="contextUsage"
             :default-max-context-tokens="assistantDefaultMaxContextTokens"
             :available-agents="assistantAgentOptions"
-            :selected-agent="assistantSessionSettings.profileId"
-            :agent-loading="isLoadingAssistantProfiles"
+            :selected-agent="selectedAssistantAgentOptionId"
+            :agent-loading="isLoadingAssistantAgentOptions"
             @send-message="handleSubmit"
             @interrupt-message="handleInterruptSubmit"
             @stop-execution="handleStop"
@@ -387,7 +393,6 @@
             :profile-id="assistantSessionSettings.profileId"
             :profile-loading="isLoadingAssistantProfiles"
             :profile-options="assistantProfileOptions"
-            :run-mode="assistantSessionSettings.runMode"
             :selected-model="assistantSelectedModel"
             :tool-config="toolConfig"
             @update:context-mode="handleAssistantContextModeChange"
@@ -396,33 +401,8 @@
             @update:parallel-judge-model="setAssistantParallelJudgeModel"
             @update:parallel-models="setAssistantParallelSelectedModels"
             @update:profile-id="handleAssistantProfileChange"
-            @update:run-mode="handleAssistantRunModeChange"
             @update:tool-config="handleToolConfigUpdate"
             @close="closeToolConfigDrawer()"
-          />
-
-          <TeamWorkspacePanel
-            v-else-if="activeRightPanel === 'team' && !activeTeamV4RunId"
-            v-model:tab="teamWorkspaceTab"
-            :loading="teamWorkspaceLoading"
-            :pending-create-task="pendingTeamCreateTask"
-            :tasks="teamTasks"
-            :selected-task-id="selectedTeamTaskId"
-            :selected-task-title="selectedTeamTaskTitle"
-            :pending-task-action-kind="pendingTeamTaskActionKind"
-            :pending-task-action-task-id="pendingTeamTaskActionTaskId"
-            :session-messages="teamSessionMessages"
-            :blackboard-entries="teamBlackboardEntries"
-            :session-detail="teamSessionDetail"
-            :resolve-agent-name="resolveAgentName"
-            @block-task="handleBlockTeamTask"
-            @clear-selected-task="clearSelectedTeamTask"
-            @claim-task="handleClaimTeamTask"
-            @complete-task="handleCompleteTeamTask"
-            @create-task="handleCreateTeamTask"
-            @fail-task="handleFailTeamTask"
-            @release-task="handleReleaseTeamTask"
-            @toggle-selected-task="toggleSelectedTeamTask"
           />
 
           <TeamV4WorkspacePanel
@@ -452,6 +432,10 @@
             v-else-if="activeRightPanel === 'harness'"
             :active="activeRightPanel === 'harness'"
             :conversation-id="conversationId"
+            :team-agents="teamV4Agents"
+            :team-events="teamV4Events"
+            :team-harness-runs="teamV4HarnessRuns"
+            :team-tasks="teamV4Tasks"
             @close="handleCloseHarness"
           />
           <HtmlPanel
@@ -461,7 +445,12 @@
             class="h-full p-4 overflow-y-auto border-0 bg-transparent"
             @close="handleCloseHtmlPanel"
           />
-          <WorkspaceFilesPanel v-else-if="activeRightPanel === 'workspace-files'" :conversation-id="conversationId" :working-directory="effectiveConversationWorkingDirectory" @close="deactivateRightPanel('workspace-files')" />
+          <WorkspaceFilesPanel
+            v-else-if="activeRightPanel === 'workspace-files'"
+            :conversation-id="conversationId"
+            :working-directory="effectiveConversationWorkingDirectory"
+            @close="deactivateRightPanel('workspace-files')"
+          />
           <InteractiveTerminal
             v-else-if="isViewActive && activeRightPanel === 'terminal'"
             class="h-full border-0 rounded-none bg-transparent"
@@ -519,12 +508,6 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
 import type {
-  AgentTeamMessage,
-  AgentTeamSession,
-  TeamBlackboardEntry,
-  TeamTask,
-} from '@/types/agentTeam'
-import type {
   TeamV4Agent,
   TeamV4Event,
   TeamV4HarnessRun,
@@ -532,7 +515,6 @@ import type {
   TeamV4Run,
   TeamV4Task,
 } from '@/types/teamRuntime'
-import { agentTeamApi } from '@/api/agentTeam'
 import { teamRuntimeApi } from '@/api/teamRuntime'
 import { useAgentEvents } from '@/composables/useAgentEvents'
 import { useAgentTasks } from '@/composables/useAgentTasks'
@@ -551,7 +533,6 @@ import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
 import AssistantWorkConfigPanel from './AssistantWorkConfigPanel.vue'
-import TeamWorkspacePanel from './TeamWorkspacePanel.vue'
 import TeamV4WorkspacePanel from './TeamV4WorkspacePanel.vue'
 import WorkspaceFilesPanel from './WorkspaceFilesPanel.vue'
 import {
@@ -560,47 +541,25 @@ import {
   getExecutionStateLabelKey,
   type PersistedAgentExecutionState,
 } from './executionState'
-import {} from './teamOrchestrationSupport'
 import { useAgentConversationFlow } from './useAgentConversationFlow'
 import { useAgentModelAndToolConfig } from './useAgentModelAndToolConfig'
 import { useAgentPanels } from './useAgentPanels'
 import { normalizeHarnessMaxContinuations, useAssistantProfiles } from './assistantProfiles'
-import {
-  buildBaseAssistantConversationBinding,
-  useAssistantSessionSettings,
-} from './useAssistantSessionSettings'
-import { useAgentTeamRuntime } from './useAgentTeamRuntime'
-import { useAgentTeamViewState } from './useAgentTeamViewState'
+import { useAssistantSessionSettings } from './useAssistantSessionSettings'
+import { buildNewAssistantConversationBinding } from './agentConversationBindingBuilder'
+import { useAssistantAgentSwitchOptions } from './agentProfileSwitchSupport'
 import type { ReferencedAsset, ReferencedTraffic, TrafficSendType } from './agentDraftTypes'
 import { useAgentDraftArtifacts } from './useAgentDraftArtifacts'
-import type {
-  TeamOrchestrationPresetId,
-  TeamOrchestrationPlan,
-  TeamOrchestrationPresetMeta,
-  TeamRecoveryPreset,
-  TeamRecoveryPresetId,
-  TeamRuntimeFailureMode,
-  TeamRuntimeStepStat,
-} from './teamOrchestrationTypes'
 import { type UiToolConfigPayload } from './toolConfigRuntime'
 import { mapPersistedAgentTasks } from './agentTaskHistorySupport'
 import { useAgentMessageFocus } from './useAgentMessageFocus'
-import { useAgentTeamOrchestration } from './useAgentTeamOrchestration'
-import { useAgentTeamTaskActions } from './useAgentTeamTaskActions'
 import { useAgentConversationBinding } from './useAgentConversationBinding'
 import { useAgentBrowserShellAvailability } from './useAgentBrowserShellAvailability'
 import { useAgentViewLifecycle } from './useAgentViewLifecycle'
 import { useAgentSubagents } from './useAgentSubagents'
 import { useAgentViewEffects } from './useAgentViewEffects'
 import { isVisionModelUnsupportedError } from './agentVisionErrorSupport'
-
-interface TeamSplitMemberOption {
-  key: string
-  label: string
-  memberId?: string
-  memberName?: string
-  status?: string
-}
+import { persistTeamV4Message } from './teamV4MessagePersistence'
 
 interface AgentRuntimeSettings {
   working_directory?: string | null
@@ -686,18 +645,12 @@ const {
   loadDefaultAssistantProfile,
   loadDefaultTeamProfile,
   isLoadingAssistantProfiles,
+  isLoadingTeamProfiles,
   loadAssistantProfiles,
   loadTeamProfiles,
   profileOptions: assistantProfileOptions,
   teamProfileOptions,
 } = useAssistantProfiles()
-const assistantAgentOptions = computed(() =>
-  assistantProfileOptions.value.map(profile => ({
-    value: profile.id,
-    label: profile.label,
-    description: profile.runMode === 'team' ? 'Team' : 'Assistant',
-  }))
-)
 
 // Feature toggles
 const {
@@ -709,12 +662,22 @@ const {
   setContextMode,
   setProfileId,
   setRunMode,
+  setTeamProfileId,
   setWorkingDirectoryOverride,
   teamModeEnabled,
   tenthManEnabled,
   toConversationBinding,
   webSearchEnabled,
 } = useAssistantSessionSettings()
+const { assistantAgentOptions, isLoadingAssistantAgentOptions, selectedAssistantAgentOptionId } =
+  useAssistantAgentSwitchOptions({
+    assistantProfileOptions,
+    assistantSessionSettings,
+    defaultTeamProfileId,
+    isLoadingAssistantProfiles,
+    isLoadingTeamProfiles,
+    teamProfileOptions,
+  })
 const assistantHarnessMaxContinuations = computed(() =>
   normalizeHarnessMaxContinuations(assistantSessionSettings.value.harnessMaxContinuations)
 )
@@ -806,20 +769,8 @@ const {
   syncReferencedMessages,
   syncReferencedTraffic,
 } = useAgentDraftArtifacts()
-const activeTeamSessionId = ref<string | null>(null)
 const activeTeamV4RunId = ref<string | null>(null)
-const teamSessionState = ref<string>('PENDING')
 const isTeamWorkspaceActive = ref(false)
-const teamWorkspaceTab = ref<'tasks' | 'inbox' | 'blackboard' | 'agents'>('tasks')
-const teamWorkspaceLoading = ref(false)
-const teamSessionMessages = ref<AgentTeamMessage[]>([])
-const teamSessionDetail = ref<AgentTeamSession | null>(null)
-const teamTasks = ref<TeamTask[]>([])
-const selectedTeamTaskId = ref<string | null>(null)
-const teamBlackboardEntries = ref<TeamBlackboardEntry[]>([])
-const teamOrchestrationDraft = ref<TeamOrchestrationPlan>({ version: 1, steps: [] })
-const teamSelectedOrchestrationPresetId = ref<TeamOrchestrationPresetId | null>(null)
-const teamSelectedRecoveryPresetId = ref<TeamRecoveryPresetId>('balanced')
 const teamV4Agents = ref<TeamV4Agent[]>([])
 const teamV4Events = ref<TeamV4Event[]>([])
 const teamV4HarnessRuns = ref<TeamV4HarnessRun[]>([])
@@ -837,7 +788,6 @@ const {
   assistantParallelJudgeModel,
   assistantParallelSelectedModels,
   assistantSelectedModel,
-  buildTeamToolPolicyFromUiConfig,
   defaultToolConfig,
   flushPendingToolConfigSave,
   handleAssistantModelChange,
@@ -857,91 +807,17 @@ const {
 })
 
 const assistantContextMode = computed(() => assistantSessionSettings.value.contextMode)
-
 // Agent events
-const matchesCurrentTeamSubagentParent = (parentExecutionId: string) => {
-  const sessionId = String(activeTeamSessionId.value || '').trim()
-  const parentId = String(parentExecutionId || '').trim()
-  if (!sessionId || !parentId) return false
-  return (
-    parentId.startsWith(`team-v3:${sessionId}:`) ||
-    parentId.startsWith(`team-v3-planner:${sessionId}:`)
-  )
-}
-
 const agentEvents = useAgentEvents(
   computed(() => conversationId.value || ''),
   {
     suppressUserMessages: computed(() => teamModeEnabled.value),
     defaultMaxContextTokens: assistantDefaultMaxContextTokens,
-    subagentParentExecutionMatcher: matchesCurrentTeamSubagentParent,
+    subagentParentExecutionMatcher: () => false,
   }
 )
 const messages = computed(() => agentEvents.messages.value)
-const isTeamScopedMainFlowMessage = (message: AgentMessage) => {
-  const metadata = message.metadata || {}
-  const kind = String(metadata.kind || '').toLowerCase()
-  const hasTeamMemberMeta =
-    String(metadata.team_member_id || '').trim().length > 0 ||
-    String(metadata.team_member_name || '').trim().length > 0
-  if (kind.startsWith('team_') || kind === 'team_bridge') return true
-  if (kind === 'tool_call' || kind === 'tool_result') {
-    return hasTeamMemberMeta || String(metadata.team_session_id || '').trim().length > 0
-  }
-  return (
-    message.id.startsWith('team:') ||
-    message.id.startsWith('team-stream:') ||
-    message.id.startsWith('team-toolcall:')
-  )
-}
-const normalizeOptionalText = (value: unknown): string | undefined => {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : undefined
-}
-const {
-  clearSelectedTeamTask,
-  formatTimestamp,
-  resolveAgentName,
-  selectedTeamTask,
-  selectedTeamTaskTitle,
-  teamBlackboardEntryBadgeClass,
-  teamCurrentHumanInterventionTimeoutSecs,
-  teamCurrentMaxHumanInterventions,
-  teamCurrentNoHumanInputPolicy,
-  teamFlattenedStepOptions,
-  teamLastRuntimeStepPath,
-  teamMemberNameOptions,
-  teamOrchestrationPresets,
-  teamOrchestrationRuntime,
-  teamRecoveryPresets,
-  teamRuntimeBackendRecoverySuggestions,
-  teamRuntimeFailureModes,
-  teamRuntimeHotspots,
-  teamRuntimeRecoverySuggestions,
-  teamRuntimeStepStats,
-  teamRuntimeSuggestedResumeStepId,
-  teamRuntimeSummary,
-  teamSelectedOrchestrationPresetDescription,
-  teamSelectedRecoveryPresetDescription,
-  teamSplitMembers,
-  teamWorkspaceBadgeCount,
-  toggleSelectedTeamTask,
-  visibleMessages,
-} = useAgentTeamViewState({
-  activeTeamSessionId,
-  agentIsExecuting: computed(() => agentEvents.isExecuting.value),
-  isTeamScopedMainFlowMessage,
-  messages,
-  selectedTeamTaskId,
-  teamModeEnabled,
-  teamOrchestrationDraft,
-  teamSelectedOrchestrationPresetId,
-  teamSelectedRecoveryPresetId,
-  teamSessionDetail,
-  teamSessionState,
-  teamTasks,
-})
+const visibleMessages = messages
 const isTeamRunActive = computed(() => {
   if (activeTeamV4RunId.value) {
     return ['draft', 'planning', 'running', 'waiting_human'].includes(
@@ -950,31 +826,13 @@ const isTeamRunActive = computed(() => {
         .toLowerCase()
     )
   }
-  if (!teamModeEnabled.value || !activeTeamSessionId.value) return false
-  const normalized = String(teamSessionState.value || '')
-    .trim()
-    .toUpperCase()
-  return [
-    'EXECUTING',
-    'INITIALIZING',
-    'PROPOSING',
-    'CHALLENGING',
-    'CONVERGENCE_CHECK',
-    'REVISING',
-    'DECIDING',
-    'ARTIFACT_GENERATION',
-  ].includes(normalized)
+  return false
 })
 
 const teamWorkspaceAvailable = computed(() =>
   Boolean(
     teamModeEnabled.value ||
-      activeTeamSessionId.value ||
       activeTeamV4RunId.value ||
-      teamSessionDetail.value ||
-      teamSessionMessages.value.length ||
-      teamTasks.value.length ||
-      teamBlackboardEntries.value.length ||
       teamV4Agents.value.length ||
       teamV4Events.value.length ||
       teamV4HarnessRuns.value.length ||
@@ -982,6 +840,11 @@ const teamWorkspaceAvailable = computed(() =>
       teamV4Run.value ||
       teamV4Tasks.value.length
   )
+)
+const teamWorkspaceBadgeCount = computed(
+  () =>
+    teamV4Tasks.value.filter((task) => ['failed', 'cancelled'].includes(String(task.status || '').trim().toLowerCase()))
+      .length
 )
 const isExecuting = computed(() => agentEvents.isExecuting.value || isTeamRunActive.value)
 const isStreaming = computed(
@@ -995,8 +858,6 @@ const focusTeamTaskInWorkspace = (taskId: string) => {
   if (!normalizedTaskId) return
   activateRightPanel('team')
   isTeamWorkspaceActive.value = true
-  teamWorkspaceTab.value = 'tasks'
-  selectedTeamTaskId.value = normalizedTaskId
 }
 const {
   clearFocusedLocation,
@@ -1017,13 +878,21 @@ const {
 const scrollMessageViewportToBottom = () => {
   messageFlowRef.value?.scrollToBottom()
 }
-const taskStatusBadgeClass = (status: string) => {
-  const normalized = (status || '').toLowerCase()
-  if (normalized === 'completed') return 'badge-success'
-  if (normalized === 'running') return 'badge-info'
-  if (normalized === 'failed') return 'badge-error'
-  if (normalized === 'blocked') return 'badge-warning'
-  return 'badge-ghost'
+
+const handleToggleTeamMode = async (enabled: boolean) => {
+  teamModeEnabled.value = enabled
+  if (enabled) return
+  isTeamWorkspaceActive.value = false
+}
+
+const handleToggleTeamWorkspace = () => {
+  if (!teamWorkspaceAvailable.value) return
+  if (activeRightPanel.value === 'team') {
+    deactivateRightPanel('team')
+    return
+  }
+  activateRightPanel('team')
+  isTeamWorkspaceActive.value = true
 }
 const { handleViewSubagentDetails, loadSubagentRuns, selectedSubagent, showSubagentDetailModal } =
   useAgentSubagents({
@@ -1033,20 +902,6 @@ const { handleViewSubagentDetails, loadSubagentRuns, selectedSubagent, showSubag
   })
 
 const taskComposable = useAgentTasks()
-const parseTeamTaskExecutionId = (executionId: string) => {
-  if (!executionId.startsWith('team-v3:')) return null
-  const parts = executionId.split(':')
-  if (parts.length < 4) return null
-  const sessionId = parts[1]?.trim()
-  const taskId = parts[2]?.trim()
-  if (!sessionId || !taskId) return null
-  const memberId = parts.length >= 5 ? parts[3]?.trim() : undefined
-  return {
-    sessionId,
-    taskId,
-    memberId: memberId || undefined,
-  }
-}
 const terminalComposable = useTerminal()
 const browserShellComposable = useBrowserShell()
 const currentBrowserShellSessionId = computed(() => browserShellComposable.currentSessionId.value)
@@ -1062,13 +917,13 @@ const buildCurrentConversationBinding = () =>
     toolConfig: toolConfig.value,
   })
 const buildNewConversationBinding = () => {
-  const profileId = assistantSessionSettings.value.profileId.trim()
-  const profile = getAssistantProfileOption(profileId)
-  if (!profile) {
-    throw new Error(`Assistant profile is unavailable: ${profileId}`)
-  }
-  return buildBaseAssistantConversationBinding({
-    profile,
+  return buildNewAssistantConversationBinding({
+    defaultTeamProfileId: defaultTeamProfileId.value,
+    getAssistantProfileOption,
+    profileId: assistantSessionSettings.value.profileId,
+    runMode: assistantSessionSettings.value.runMode,
+    teamProfileId: assistantSessionSettings.value.teamProfileId,
+    teamProfileOptions: teamProfileOptions.value,
     workingDirectoryOverride: conversationWorkingDirectoryOverride.value,
   })
 }
@@ -1103,7 +958,6 @@ const {
   tasks,
   toolConfigDrawerWidth,
 } = useAgentPanels({
-  activeTeamSessionId,
   agentError: computed(() => agentEvents.error.value),
   clearTasksForExecution: taskComposable.clearTasksForExecution,
   conversationId,
@@ -1112,7 +966,6 @@ const {
   isTeamWorkspaceActive,
   isTaskPanelActive: computed(() => taskComposable.isTaskPanelActive.value),
   localError,
-  parseTeamTaskExecutionId,
   parallelTaskSources: computed(() => agentEvents.parallelTaskSources.value),
   pruneTasksForExecutionAfter: async (executionId, timestampMs) => {
     const remaining = await invoke<any[]>('prune_agent_tasks_after', {
@@ -1125,12 +978,7 @@ const {
   resetAgentError: () => {
     agentEvents.resetError()
   },
-  resolveAgentName,
-  selectedTeamTaskAssigneeId: computed(
-    () => normalizeOptionalText(selectedTeamTask.value?.assignee_agent_id) || null
-  ),
   setTasksForExecution: taskComposable.setTasksForExecution,
-  teamWorkspaceAvailable,
   terminalClose: () => {
     if (!isViewActive.value) return
     terminalComposable.closeTerminal()
@@ -1342,7 +1190,7 @@ const hydrateTaskHistory = async (targetConversationId: string) => {
     taskComposable.setTasksForExecution(
       executionId,
       mapPersistedAgentTasks(rows),
-      targetConversationId,
+      targetConversationId
     )
   }
 }
@@ -1351,134 +1199,9 @@ const handleAssistantModelSelection = (value: string | null) => {
   handleAssistantModelChange(value || '')
 }
 const {
-  appendTeamBridgeMessage,
-  applyTeamState,
-  ensureConversationForTeamSession,
-  ensureTeamRunStatusPolling,
-  handleTeamAssistantMessageSaved,
-  handleTeamExecutionFinished,
-  handleTeamMessageStreamDelta,
-  handleTeamMessageStreamDone,
-  handleTeamMessageStreamStart,
-  handleTeamToolCall,
-  handleTeamToolResult,
-  handleToggleTeamMode,
-  handleToggleTeamWorkspace,
-  loadTeamWorkspaceData,
-  routeTeamMessage,
-  runTeamExecutionFromWorkspace,
-  setMirroredConversationMessageIds,
-  startTeamExecutionRun,
-  stopTeamRunStatusPolling,
-  syncActiveTeamSession,
-  syncTeamMessagesToMainFlow,
-} = useAgentTeamRuntime({
-  activeTeamSessionId,
-  activateRightPanel,
-  activeRightPanel,
-  agentMessages: agentEvents.messages,
-  buildNewConversationBinding,
-  buildToolPolicyFromUiConfig: buildTeamToolPolicyFromUiConfig,
-  clearLocalError: () => {
-    localError.value = null
-  },
-  conversationId,
-  currentConversationTitle,
-  deactivateRightPanel,
-  flushPendingToolConfigSave: async () => {
-    await flushPendingToolConfigSave()
-  },
-  getDisplayConversationTitle: () => t('agent.newConversationTitle'),
-  getNewConversationTitle: () =>
-    `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
-  handleStopExecution: async () => {
-    await handleStop()
-  },
-  isExecuting,
-  isTeamScopedMainFlowMessage,
-  isTeamWorkspaceActive,
-  loadConversationList: () => {
-    conversationListRef.value?.loadConversations()
-  },
-  markConversationExecutionPending: () => {
-    conversationExecutionState.value = null
-  },
-  onTeamWorkspaceSnapshotLoaded: () => {
-    syncTeamOrchestrationEditorFromSession()
-  },
-  ragEnabled,
-  selectedTeamTaskId,
-  setLocalError: message => {
-    localError.value = message
-  },
-  teamBlackboardEntries,
-  teamModeEnabled,
-  teamWorkspaceAvailable,
-  teamSelectedOrchestrationPresetId,
-  teamSelectedRecoveryPresetId,
-  teamSessionDetail,
-  teamSessionMessages,
-  teamSessionState,
-  teamTasks,
-  teamWorkspaceLoading,
-  teamWorkspaceTab,
-  toolConfig: toolConfig as Ref<UiToolConfigPayload>,
-  webSearchEnabled,
-})
-const {
-  handleBlockTeamTask,
-  handleClaimTeamTask,
-  handleCompleteTeamTask,
-  handleCreateTeamTask,
-  handleFailTeamTask,
-  handleReleaseTeamTask,
-  pendingTeamCreateTask,
-  pendingTeamTaskActionKind,
-  pendingTeamTaskActionTaskId,
-} = useAgentTeamTaskActions({
-  activeTeamSessionId,
-  loadTeamWorkspaceData,
-})
-const {
-  handleTeamApplyOrchestrationPreset,
-  handleTeamApplyRecoveryPreset,
-  handleTeamFillResumeStep,
-  handleTeamMoveStepByPath,
-  handleTeamNestStep,
-  handleTeamOrchestrationInput,
-  handleTeamPromoteStep,
-  handleTeamReloadOrchestrationPlan,
-  handleTeamResumeFromStep,
-  handleTeamRetryRun,
-  handleTeamSaveOrchestrationPlan,
-  handleTeamStartRunWithPlan,
-  handleTeamVisualStepsUpdated,
-  parseTeamOrchestrationPlanInput,
-  syncTeamOrchestrationEditorFromSession,
-  teamOrchestrationPlanText,
-  teamPlanDirty,
-  teamPlanError,
-  teamPlanSaving,
-  teamPlanSuccess,
-  teamRecoveryPresetApplying,
-  teamResumeStepId,
-} = useAgentTeamOrchestration({
-  activeTeamSessionId,
-  isTeamRunActive,
-  loadTeamWorkspaceData,
-  runTeamExecutionFromWorkspace,
-  teamOrchestrationDraft,
-  teamCurrentNoHumanInputPolicy,
-  teamMemberNameOptions,
-  teamSelectedOrchestrationPresetId,
-  teamSelectedRecoveryPresetId,
-  teamSessionDetail,
-})
-const {
   assistantProfileRegistryReady,
   handleAssistantContextModeChange,
   handleAssistantProfileChange,
-  handleAssistantRunModeChange,
   loadConversationBinding,
   schedulePersistConversationBinding,
 } = useAgentConversationBinding({
@@ -1491,24 +1214,24 @@ const {
   conversationId,
   currentBrowserShellDirectWriteEnabled,
   currentBrowserShellSessionId,
-  activeTeamSessionId,
   assistantGlobalDefaultModel,
   assistantSelectedModel,
   defaultAssistantProfileId,
+  defaultTeamProfileId,
   defaultToolConfig,
   toolConfig,
   toolsEnabled,
-  teamSelectedOrchestrationPresetId,
-  teamSelectedRecoveryPresetId,
   applyConversationBinding,
   applyProfilePreset,
   getAssistantProfileOption,
+  getTeamProfileOption,
   handleToggleTeamMode,
   resetSessionSettings,
   setAssistantSelectedModel,
   setContextMode,
   setProfileId,
   setRunMode,
+  setTeamProfileId,
   toConversationBinding,
 })
 
@@ -1537,7 +1260,10 @@ const loadTeamV4WorkspaceData = async (runId = activeTeamV4RunId.value) => {
 }
 
 const cancelTeamV4HarnessRun = async (harnessRunId: string) => {
-  await teamRuntimeApi.cancelHarnessRun(harnessRunId)
+  await teamRuntimeApi.finishHarnessRun(harnessRunId, {
+    status: 'cancelled',
+    error: 'Cancelled from Team workspace.',
+  })
   await loadTeamV4WorkspaceData()
 }
 
@@ -1546,34 +1272,11 @@ const resumeTeamV4HarnessRun = async (harnessRunId: string) => {
   await loadTeamV4WorkspaceData()
 }
 
-const persistTeamV4Message = async (message: AgentMessage, role: 'user' | 'assistant') => {
-  const targetConversationId = conversationId.value
-  if (!targetConversationId) return
-  await invoke('save_ai_message', {
-    request: {
-      id: message.id,
-      conversation_id: targetConversationId,
-      role,
-      content: message.content,
-      metadata: message.metadata ?? null,
-      architecture_type: 'team_v4',
-      architecture_meta: JSON.stringify({
-        team_run_id: message.metadata?.team_session_id ?? null,
-        role,
-      }),
-      structured_data: null,
-    },
-  })
-}
-
 const startTeamV4AssistantRun = async (goal: string) => {
   await flushPendingToolConfigSave()
   await Promise.all([loadTeamProfiles(), loadDefaultTeamProfile()])
-  const selectedAssistantProfile = getAssistantProfileOption(
-    assistantSessionSettings.value.profileId
-  )
   const selectedTeamProfileId =
-    selectedAssistantProfile?.defaultTeamProfileId?.trim() ||
+    assistantSessionSettings.value.teamProfileId.trim() ||
     defaultTeamProfileId.value.trim() ||
     teamProfileOptions.value[0]?.id ||
     null
@@ -1615,7 +1318,6 @@ const startTeamV4AssistantRun = async (goal: string) => {
   teamV4Events.value = bootstrap.events
   teamV4Memories.value = []
   teamV4HarnessRuns.value = bootstrap.specialistAssignments.map(assignment => assignment.harnessRun)
-  teamSessionState.value = 'EXECUTING'
   isTeamWorkspaceActive.value = true
   activateRightPanel('team')
 
@@ -1659,8 +1361,16 @@ const startTeamV4AssistantRun = async (goal: string) => {
     scrollMessageViewportToBottom()
   })
   void Promise.all([
-    persistTeamV4Message(userMessage, 'user'),
-    persistTeamV4Message(assistantMessage, 'assistant'),
+    persistTeamV4Message({
+      conversationId: conversationId.value,
+      message: userMessage,
+      role: 'user',
+    }),
+    persistTeamV4Message({
+      conversationId: conversationId.value,
+      message: assistantMessage,
+      role: 'assistant',
+    }),
     loadTeamV4WorkspaceData(bootstrap.run.id),
   ]).catch(error => {
     console.warn('[AgentView] Team v4 bootstrap side effects failed:', error)
@@ -1680,8 +1390,17 @@ const stopTeamV4Run = async () => {
       reason: 'user_stop',
     },
   })
+  await Promise.all(
+    teamV4HarnessRuns.value
+      .filter(harness => ['queued', 'running', 'paused', 'expired'].includes(harness.status))
+      .map(harness =>
+        teamRuntimeApi.finishHarnessRun(harness.id, {
+          status: 'cancelled',
+          error: 'Team run stopped by user.',
+        })
+      )
+  )
   await teamRuntimeApi.updateRunState(runId, 'cancelled')
-  teamSessionState.value = 'FAILED'
   await loadTeamV4WorkspaceData(runId)
 }
 
@@ -1698,7 +1417,6 @@ const {
   loadConversationHistory,
   loadLatestConversation,
 } = useAgentConversationFlow({
-  activeTeamSessionId,
   activeTeamV4RunId,
   agentMessages: agentEvents.messages,
   agentStreamingContent: agentEvents.streamingContent,
@@ -1732,7 +1450,6 @@ const {
   emitSubmit: task => {
     emit('submit', task)
   },
-  ensureConversationForTeamSession,
   executionIdProp: props.executionId,
   forceTaskPlanContract: false,
   harnessMaxContinuations: assistantHarnessMaxContinuations,
@@ -1743,7 +1460,6 @@ const {
   getToolCallCompletedLabel: () => t('agent.toolCallCompleted'),
   getUnnamedConversationTitle: () => t('agent.newConversationTitle'),
   getAssistantProfileOption,
-  handleStopTeamState: applyTeamState,
   hydrateTaskHistory,
   historyLoadToken,
   inputValue,
@@ -1769,21 +1485,16 @@ const {
     terminalComposable.resetTerminal()
   },
   restoreArtifactsFromMessage,
-  routeTeamMessage,
   scrollMessageViewportToBottom,
-  setMirroredConversationMessageIds,
   setPendingDocumentAttachments: documents => {
     agentEvents.setPendingDocumentAttachments(documents)
   },
   startTeamV4AssistantRun,
-  startTeamExecutionRun,
   stopAgentExecutionState: () => {
     agentEvents.stopExecution()
   },
   stopTeamV4Run,
   submitInFlight,
-  syncActiveTeamSession,
-  syncTeamMessagesToMainFlow,
   teamModeEnabled,
   tenthManEnabled,
   webSearchEnabled,
@@ -1818,34 +1529,24 @@ const handleCreateConversation = async (newConvId?: string) => {
   })
 }
 useAgentViewLifecycle({
-  activeTeamSessionId,
   assistantProfileRegistryReady,
   conversationExecutionState,
   conversationId,
   executionId: props.executionId,
-  isTeamWorkspaceActive,
   loadAssistantModelOptions,
   loadAssistantProfiles,
   loadDefaultAssistantProfile,
+  loadDefaultTeamProfile,
   loadConversationHistory,
   loadLatestConversation,
   loadSidebarWidth,
   loadToolConfigDrawerWidth,
-  loadTeamWorkspaceData,
+  loadTeamProfiles,
   loadToolConfig,
   focusInput: () => inputAreaRef.value?.focusInput(),
   handleConversationExecutionStateUpdate,
-  handleTeamAssistantMessageSaved,
-  handleTeamExecutionFinished,
-  handleTeamMessageStreamDelta,
-  handleTeamMessageStreamDone,
-  handleTeamMessageStreamStart,
-  handleTeamToolCall,
-  handleTeamToolResult,
   preconnectTerminal: () => terminalComposable.preconnect(),
   scrollMessageViewportToBottom,
-  syncTeamMessagesToMainFlow,
-  applyTeamState,
 })
 
 watch(
@@ -1864,6 +1565,7 @@ watch(
     webSearchEnabled,
     tenthManEnabled,
     teamModeEnabled,
+    () => assistantSessionSettings.value.teamProfileId,
     assistantSelectedModel,
     currentBrowserShellDirectWriteEnabled,
     currentBrowserShellSessionId,
@@ -1894,10 +1596,6 @@ useAgentViewEffects({
   conversationExecutionState,
   currentConversationTitle,
   getNewConversationTitle: () => t('agent.newConversationTitle'),
-  selectedTeamTaskId,
-  setMirroredConversationMessageIds,
-  syncActiveTeamSession,
-  teamTasks,
   updateSessionTitle,
 })
 

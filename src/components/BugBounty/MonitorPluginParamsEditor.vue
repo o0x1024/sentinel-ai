@@ -95,6 +95,7 @@ import { buildResolvedPluginDefaultConfig } from '@/services/pluginDefaultConfig
 import MonitorPluginParamsField from './MonitorPluginParamsField.vue'
 import {
   buildEditableFields,
+  collectRequiredFieldErrors,
   clearPluginParamEditorState,
   getFieldPathKey,
   getValueAtPath,
@@ -139,9 +140,19 @@ const pluginParams = computed(() => {
 const editableFields = computed<EditableField[]>(() => buildEditableFields(schema.value))
 
 const validationErrors = computed(() =>
-  Object.entries(fieldErrors)
+  [
+    ...Object.entries(fieldErrors)
     .filter(([, message]) => Boolean(message))
-    .map(([path, message]) => `${path}: ${message}`)
+      .map(([path, message]) => `${path}: ${message}`),
+    ...collectRequiredFieldErrors(
+      editableFields.value,
+      pluginParams.value as Record<string, any>,
+      pluginDefaultParams.value as Record<string, any>,
+      field => t('bugBounty.monitor.pluginParamRequiredMissing', {
+        field: getFieldPathKey(field.path),
+      }),
+    ),
+  ]
 )
 
 const hasCustomizedParams = computed(() =>

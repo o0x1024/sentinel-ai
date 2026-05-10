@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::AsyncReadExt;
 use walkdir::{DirEntry, WalkDir};
@@ -653,7 +653,8 @@ pub async fn write_working_directory_file(
     if current_bytes.iter().take(8192).any(|byte| *byte == 0) {
         return Err("当前只支持编辑文本文件".to_string());
     }
-    String::from_utf8(current_bytes.clone()).map_err(|_| "当前只支持 UTF-8 文本文件".to_string())?;
+    String::from_utf8(current_bytes.clone())
+        .map_err(|_| "当前只支持 UTF-8 文本文件".to_string())?;
 
     let current_sha256 = sha256_hex(&current_bytes);
     if current_sha256 != expected_sha256.trim() {

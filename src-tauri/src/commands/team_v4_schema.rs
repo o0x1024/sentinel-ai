@@ -104,7 +104,7 @@ async fn ensure_schema_sqlite(pool: &sqlx::SqlitePool) -> Result<()> {
             run_id TEXT NOT NULL REFERENCES team_v4_runs(id) ON DELETE CASCADE,
             actor_id TEXT REFERENCES team_v4_agents(id) ON DELETE SET NULL,
             task_id TEXT REFERENCES team_v4_tasks(id) ON DELETE SET NULL,
-            status TEXT NOT NULL CHECK (status IN ('queued','running','paused','completed','failed','cancelled')),
+            status TEXT NOT NULL CHECK (status IN ('queued','running','paused','expired','completed','failed','cancelled')),
             lease_expires_at DATETIME,
             last_heartbeat_at DATETIME,
             checkpoint_sequence INTEGER NOT NULL DEFAULT 0,
@@ -217,6 +217,7 @@ async fn migrate_schema_sqlite(pool: &sqlx::SqlitePool) -> Result<()> {
         .await?;
     }
     repair_sqlite_legacy_agent_foreign_keys(pool).await?;
+    ensure_sqlite_harness_status_support(pool).await?;
     Ok(())
 }
 
@@ -373,7 +374,7 @@ async fn repair_sqlite_legacy_agent_foreign_keys(pool: &sqlx::SqlitePool) -> Res
             run_id TEXT NOT NULL REFERENCES team_v4_runs(id) ON DELETE CASCADE,
             actor_id TEXT REFERENCES team_v4_agents(id) ON DELETE SET NULL,
             task_id TEXT REFERENCES team_v4_tasks(id) ON DELETE SET NULL,
-            status TEXT NOT NULL CHECK (status IN ('queued','running','paused','completed','failed','cancelled')),
+            status TEXT NOT NULL CHECK (status IN ('queued','running','paused','expired','completed','failed','cancelled')),
             lease_expires_at DATETIME,
             last_heartbeat_at DATETIME,
             checkpoint_sequence INTEGER NOT NULL DEFAULT 0,
@@ -386,6 +387,36 @@ async fn repair_sqlite_legacy_agent_foreign_keys(pool: &sqlx::SqlitePool) -> Res
     .await?;
 
     Ok(())
+}
+
+async fn ensure_sqlite_harness_status_support(pool: &sqlx::SqlitePool) -> Result<()> {
+    let ddl = sqlite_table_ddl(pool, "team_v4_harness_runs").await?;
+    let Some(ddl) = ddl else {
+        return Ok(());
+    };
+    if ddl.contains("'expired'") {
+        return Ok(());
+    }
+    rebuild_sqlite_table(
+        pool,
+        "team_v4_harness_runs",
+        "team_v4_harness_runs_legacy_status",
+        r#"CREATE TABLE team_v4_harness_runs (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES team_v4_runs(id) ON DELETE CASCADE,
+            actor_id TEXT REFERENCES team_v4_agents(id) ON DELETE SET NULL,
+            task_id TEXT REFERENCES team_v4_tasks(id) ON DELETE SET NULL,
+            status TEXT NOT NULL CHECK (status IN ('queued','running','paused','expired','completed','failed','cancelled')),
+            lease_expires_at DATETIME,
+            last_heartbeat_at DATETIME,
+            checkpoint_sequence INTEGER NOT NULL DEFAULT 0,
+            metadata TEXT NOT NULL DEFAULT '{}',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "id, run_id, actor_id, task_id, status, lease_expires_at, last_heartbeat_at, checkpoint_sequence, metadata, created_at, updated_at",
+    )
+    .await
 }
 
 async fn ensure_schema_pg(pool: &sentinel_db::sqlx_compat::PgPool) -> Result<()> {
@@ -479,7 +510,7 @@ async fn ensure_schema_pg(pool: &sentinel_db::sqlx_compat::PgPool) -> Result<()>
             run_id TEXT NOT NULL REFERENCES team_v4_runs(id) ON DELETE CASCADE,
             actor_id TEXT REFERENCES team_v4_agents(id) ON DELETE SET NULL,
             task_id TEXT REFERENCES team_v4_tasks(id) ON DELETE SET NULL,
-            status TEXT NOT NULL CHECK (status IN ('queued','running','paused','completed','failed','cancelled')),
+            status TEXT NOT NULL CHECK (status IN ('queued','running','paused','expired','completed','failed','cancelled')),
             lease_expires_at TIMESTAMPTZ,
             last_heartbeat_at TIMESTAMPTZ,
             checkpoint_sequence BIGINT NOT NULL DEFAULT 0,
@@ -558,6 +589,19 @@ async fn migrate_schema_pg(pool: &sentinel_db::sqlx_compat::PgPool) -> Result<()
         r#"ALTER TABLE team_v4_agents
            ADD CONSTRAINT team_v4_agents_role_type_check
            CHECK (role_type IN ('orchestrator','specialist','monitor','harness'))"#,
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r#"ALTER TABLE team_v4_harness_runs
+           DROP CONSTRAINT IF EXISTS team_v4_harness_runs_status_check"#,
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r#"ALTER TABLE team_v4_harness_runs
+           ADD CONSTRAINT team_v4_harness_runs_status_check
+           CHECK (status IN ('queued','running','paused','expired','completed','failed','cancelled'))"#,
     )
     .execute(pool)
     .await?;
@@ -654,6 +698,11 @@ mod tests {
             .unwrap();
         assert!(!task_ddl.contains("team_v4_agents_legacy_roles"));
         assert!(task_ddl.contains("REFERENCES team_v4_agents(id)"));
+        let harness_ddl = sqlite_table_ddl(&pool, "team_v4_harness_runs")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(harness_ddl.contains("'expired'"));
 
         sqlx::query(
             "INSERT INTO team_v4_runs (id, goal, state) VALUES ('run-1', 'goal', 'running')",

@@ -178,3 +178,17 @@ export interface TeamV4StartHarnessRequest {
   leaseSecs?: number | null
   metadata?: Record<string, any> | null
 }
+
+export interface TeamV4FinishHarnessRequest {
+  status: 'completed' | 'failed' | 'cancelled'
+  checkpointSequence?: number | null
+  error?: string | null
+  payload?: Record<string, any> | null
+}
+
+export interface TeamV4ConversationHarnessSnapshot {
+  agents: TeamV4Agent[]
+  events: TeamV4Event[]
+  harnessRuns: TeamV4HarnessRun[]
+  tasks: TeamV4Task[]
+}

@@ -1,15 +1,11 @@
 import {
+  normalizeAssistantRunModeForProfile,
+  normalizeAssistantTeamRole,
   normalizeHarnessMaxContinuations,
   type AssistantProfileOption,
 } from '@/components/Agent/assistantProfiles'
 import type { UiToolConfigPayload } from '@/components/Agent/toolConfigRuntime'
-import {
-  TEAM_ORCHESTRATION_PRESET_METAS,
-  TEAM_RECOVERY_PRESETS,
-} from '@/components/Agent/teamOrchestrationSupport'
 
-export const teamOrchestrationPresetOptions = TEAM_ORCHESTRATION_PRESET_METAS
-export const teamRecoveryPresetOptions = TEAM_RECOVERY_PRESETS
 export const toolSelectionStrategyOptions = ['Keyword', 'LLM', 'Hybrid', 'Manual', 'All']
 
 export const parseToolIds = (raw: string) => {
@@ -27,16 +23,17 @@ export const parseToolIds = (raw: string) => {
 export const formatToolIds = (items: string[] | null | undefined) =>
   (Array.isArray(items) ? items : []).join('\n')
 
-const normalizeToolIds = (items: string[] | null | undefined) => parseToolIds((items || []).join('\n'))
+const normalizeToolIds = (items: string[] | null | undefined) =>
+  parseToolIds((items || []).join('\n'))
 
-const parseToolSelectionStrategy = (
-  strategy: unknown,
-  fallbackManualTools: string[] = [],
-) => {
+const parseToolSelectionStrategy = (strategy: unknown, fallbackManualTools: string[] = []) => {
   if (typeof strategy === 'string') {
-    const normalizedStrategy = toolSelectionStrategyOptions.includes(strategy) ? strategy : 'Keyword'
+    const normalizedStrategy = toolSelectionStrategyOptions.includes(strategy)
+      ? strategy
+      : 'Keyword'
     return {
-      manualTools: normalizedStrategy === 'Manual' ? normalizeToolIds(fallbackManualTools) : [] as string[],
+      manualTools:
+        normalizedStrategy === 'Manual' ? normalizeToolIds(fallbackManualTools) : ([] as string[]),
       strategy: normalizedStrategy,
     }
   }
@@ -54,7 +51,9 @@ const parseToolSelectionStrategy = (
 
 export const profileToToolConfig = (profile: AssistantProfileOption): UiToolConfigPayload => ({
   enabled: profile.defaultToolsEnabled === true,
-  selection_strategy: toolSelectionStrategyOptions.includes(profile.defaultToolSelectionStrategy || '')
+  selection_strategy: toolSelectionStrategyOptions.includes(
+    profile.defaultToolSelectionStrategy || ''
+  )
     ? profile.defaultToolSelectionStrategy
     : 'Keyword',
   max_tools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
@@ -65,20 +64,19 @@ export const profileToToolConfig = (profile: AssistantProfileOption): UiToolConf
 
 export const applyToolConfigToProfile = (
   profile: AssistantProfileOption,
-  config: UiToolConfigPayload,
+  config: UiToolConfigPayload
 ) => {
   const parsedStrategy = parseToolSelectionStrategy(
     config.selection_strategy,
-    normalizeToolIds(config.manual_tools),
+    normalizeToolIds(config.manual_tools)
   )
   profile.defaultToolsEnabled = config.enabled === true
   profile.defaultToolSelectionStrategy = parsedStrategy.strategy
   profile.defaultMaxTools = Math.max(1, Math.floor(Number(config.max_tools) || 1))
   profile.defaultPreselectedTools = normalizeToolIds(config.preselected_tools)
   profile.defaultDisabledTools = normalizeToolIds(config.disabled_tools)
-  profile.defaultManualTools = parsedStrategy.strategy === 'Manual'
-    ? parsedStrategy.manualTools
-    : []
+  profile.defaultManualTools =
+    parsedStrategy.strategy === 'Manual' ? parsedStrategy.manualTools : []
 }
 
 export const createNextProfileIdentity = (profiles: AssistantProfileOption[]) => {
@@ -93,28 +91,36 @@ export const createNextProfileIdentity = (profiles: AssistantProfileOption[]) =>
   }
 }
 
-export const normalizeAssistantProfileDraft = (profile: AssistantProfileOption): AssistantProfileOption => ({
-  ...profile,
-  id: profile.id.trim(),
-  label: profile.label.trim(),
-  description: profile.description.trim(),
-  defaultModel: profile.defaultModel?.trim() || null,
-  defaultRagEnabled: profile.defaultRagEnabled === true,
-  defaultWebSearchEnabled: profile.defaultWebSearchEnabled === true,
-  defaultToolsEnabled: profile.defaultToolsEnabled === true,
-  defaultTenthManEnabled: profile.defaultTenthManEnabled === true,
-  defaultToolSelectionStrategy: toolSelectionStrategyOptions.includes(profile.defaultToolSelectionStrategy || '')
-    ? profile.defaultToolSelectionStrategy
-    : 'Keyword',
-  defaultMaxTools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
-  defaultHarnessMaxContinuations: normalizeHarnessMaxContinuations(profile.defaultHarnessMaxContinuations),
-  defaultPreselectedTools: normalizeToolIds(profile.defaultPreselectedTools),
-  defaultDisabledTools: normalizeToolIds(profile.defaultDisabledTools),
-  defaultManualTools: normalizeToolIds(profile.defaultManualTools),
-  defaultTeamOrchestrationPresetId: profile.defaultTeamOrchestrationPresetId?.trim() || null,
-  defaultTeamRecoveryPresetId: profile.defaultTeamRecoveryPresetId?.trim() || null,
-  defaultTeamProfileId: profile.defaultTeamProfileId?.trim() || null,
-  teamRole: ['assistant', 'orchestrator', 'specialist', 'monitor'].includes(profile.teamRole || '')
-    ? profile.teamRole
-    : 'assistant',
-})
+export const normalizeAssistantProfileDraft = (
+  profile: AssistantProfileOption
+): AssistantProfileOption => {
+  const teamRole = normalizeAssistantTeamRole(profile.teamRole)
+  return {
+    ...profile,
+    id: profile.id.trim(),
+    label: profile.label.trim(),
+    description: profile.description.trim(),
+    defaultModel: profile.defaultModel?.trim() || null,
+    defaultRagEnabled: profile.defaultRagEnabled === true,
+    defaultWebSearchEnabled: profile.defaultWebSearchEnabled === true,
+    defaultToolsEnabled: profile.defaultToolsEnabled === true,
+    defaultTenthManEnabled: profile.defaultTenthManEnabled === true,
+    defaultToolSelectionStrategy: toolSelectionStrategyOptions.includes(
+      profile.defaultToolSelectionStrategy || ''
+    )
+      ? profile.defaultToolSelectionStrategy
+      : 'Keyword',
+    defaultMaxTools: Math.max(1, Math.floor(Number(profile.defaultMaxTools) || 1)),
+    defaultHarnessMaxContinuations: normalizeHarnessMaxContinuations(
+      profile.defaultHarnessMaxContinuations
+    ),
+    defaultPreselectedTools: normalizeToolIds(profile.defaultPreselectedTools),
+    defaultDisabledTools: normalizeToolIds(profile.defaultDisabledTools),
+    defaultManualTools: normalizeToolIds(profile.defaultManualTools),
+    defaultTeamOrchestrationPresetId: profile.defaultTeamOrchestrationPresetId?.trim() || null,
+    defaultTeamRecoveryPresetId: profile.defaultTeamRecoveryPresetId?.trim() || null,
+    defaultTeamProfileId: profile.defaultTeamProfileId?.trim() || null,
+    teamRole,
+    runMode: normalizeAssistantRunModeForProfile({ teamRole, runMode: profile.runMode }),
+  }
+}

@@ -40,6 +40,7 @@ export type AssistantRunMode = 'assistant' | 'team'
 
 export interface AssistantSessionSettings {
   profileId: string
+  teamProfileId: string
   contextMode: AssistantContextMode
   runMode: AssistantRunMode
   workingDirectoryOverride: string

@@ -120,12 +120,64 @@
             <div class="space-y-4">
               <div class="form-control">
                 <label class="label"
-                  ><span class="label-text">{{ t('bugBounty.program.selectedProgram') }} *</span></label
+                  ><span class="label-text">{{ t('bugBounty.monitor.targetPrograms') }} *</span></label
                 >
-                <select v-model="taskForm.program_id" class="select select-bordered" :disabled="!!editingTask">
-                  <option value="">{{ t('bugBounty.program.selectProgramPlaceholder') }}</option>
+                <div v-if="!editingTask" class="dropdown dropdown-bottom w-full">
+                  <button
+                    type="button"
+                    tabindex="0"
+                    class="btn btn-outline w-full justify-between font-normal"
+                  >
+                    <span class="truncate text-left">{{ selectedProgramSummary }}</span>
+                    <i class="fas fa-chevron-down text-xs opacity-60"></i>
+                  </button>
+                  <div
+                    tabindex="0"
+                    class="dropdown-content z-[60] mt-1 w-full rounded-lg border border-base-300 bg-base-100 p-2 shadow-xl"
+                  >
+                    <div v-if="programOptions.length === 0" class="px-3 py-4 text-sm text-base-content/60">
+                      {{ t('bugBounty.monitor.noProgramsAvailable') }}
+                    </div>
+                    <div v-else class="max-h-64 overflow-y-auto">
+                      <label
+                        v-for="p in programOptions"
+                        :key="p.id"
+                        class="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 hover:bg-base-200"
+                      >
+                        <input
+                          type="checkbox"
+                          class="checkbox checkbox-primary checkbox-sm"
+                          :checked="taskForm.program_ids.includes(p.id)"
+                          @change="toggleProgramSelection(p.id)"
+                        />
+                        <span class="min-w-0 flex-1 truncate text-sm font-medium">
+                          {{ formatProgramOption(p) }}
+                        </span>
+                      </label>
+                    </div>
+                    <div class="mt-2 flex items-center justify-between border-t border-base-200 pt-2">
+                      <span class="text-xs text-base-content/60">
+                        {{ t('bugBounty.monitor.selectedProgramCount', { count: taskForm.program_ids.length }) }}
+                      </span>
+                      <div class="flex items-center gap-1">
+                        <button type="button" class="btn btn-ghost btn-xs" @click="selectAllPrograms">
+                          {{ t('bugBounty.monitor.selectAllPrograms') }}
+                        </button>
+                        <button type="button" class="btn btn-ghost btn-xs" @click="clearProgramSelection">
+                          {{ t('bugBounty.monitor.clearSelectedPrograms') }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <select v-else v-model="taskForm.program_id" class="select select-bordered" disabled>
                   <option v-for="p in programs" :key="p.id" :value="p.id">{{ p.name }} {{ p.organization ? `(${p.organization})` : '' }}</option>
                 </select>
+                <label v-if="!editingTask" class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('bugBounty.monitor.selectedProgramCount', { count: taskForm.program_ids.length }) }}
+                  </span>
+                </label>
               </div>
 
               <div class="form-control">
@@ -171,7 +223,7 @@
                 :title="t('bugBounty.monitor.dnsMonitoring')"
                 icon-class="fas fa-network-wired"
                 monitor-type="dns"
-                :program-id="taskForm.program_id"
+                :program-id="configProgramId"
                 :plugins="taskForm.config.dns_plugins"
                 :plugin-options="getPluginsByType('dns')"
                 @add-plugin="addPluginConfig('dns')"
@@ -184,7 +236,7 @@
                 :title="t('bugBounty.monitor.ipMonitoring')"
                 icon-class="fas fa-diagram-project"
                 monitor-type="ip"
-                :program-id="taskForm.program_id"
+                :program-id="configProgramId"
                 :plugins="taskForm.config.ip_plugins"
                 :plugin-options="getPluginsByType('ip')"
                 intro-text="目标资产应为域名，监控的是域名解析结果中的 IP 变化。"
@@ -198,7 +250,7 @@
                 :title="t('bugBounty.monitor.portMonitoring')"
                 icon-class="fas fa-network-wired"
                 monitor-type="port"
-                :program-id="taskForm.program_id"
+                :program-id="configProgramId"
                 :plugins="taskForm.config.port_plugins"
                 :plugin-options="getPluginsByType('port')"
                 @add-plugin="addPluginConfig('port')"
@@ -211,7 +263,7 @@
                 :title="t('bugBounty.monitor.serviceMonitoring')"
                 icon-class="fas fa-server"
                 monitor-type="service"
-                :program-id="taskForm.program_id"
+                :program-id="configProgramId"
                 :plugins="taskForm.config.service_plugins"
                 :plugin-options="getPluginsByType('service')"
                 @add-plugin="addPluginConfig('service')"
@@ -224,7 +276,7 @@
                 :title="t('bugBounty.monitor.certMonitoring')"
                 icon-class="fas fa-certificate"
                 monitor-type="cert"
-                :program-id="taskForm.program_id"
+                :program-id="configProgramId"
                 :plugins="taskForm.config.cert_plugins"
                 :plugin-options="getPluginsByType('cert')"
                 @add-plugin="addPluginConfig('cert')"
@@ -237,7 +289,7 @@
                 :title="t('bugBounty.monitor.webMonitoring')"
                 icon-class="fas fa-globe"
                 monitor-type="web"
-                :program-id="taskForm.program_id"
+                :program-id="configProgramId"
                 :plugins="taskForm.config.web_plugins"
                 :plugin-options="getPluginsByType('web')"
                 @add-plugin="addPluginConfig('web')"
@@ -250,7 +302,7 @@
                 :title="t('bugBounty.monitor.apiMonitoring')"
                 icon-class="fas fa-plug"
                 monitor-type="api"
-                :program-id="taskForm.program_id"
+                :program-id="configProgramId"
                 :plugins="taskForm.config.api_plugins"
                 :plugin-options="getPluginsByType('api')"
                 @add-plugin="addPluginConfig('api')"
@@ -263,7 +315,7 @@
                 :title="t('bugBounty.monitor.contentMonitoring')"
                 icon-class="fas fa-file-alt"
                 monitor-type="content"
-                :program-id="taskForm.program_id"
+                :program-id="configProgramId"
                 :plugins="taskForm.config.content_plugins"
                 :plugin-options="getPluginsByType('content')"
                 @add-plugin="addPluginConfig('content')"
@@ -276,7 +328,7 @@
                 :title="t('bugBounty.monitor.vulnMonitoring')"
                 icon-class="fas fa-shield-alt"
                 monitor-type="risk"
-                :program-id="taskForm.program_id"
+                :program-id="configProgramId"
                 :plugins="taskForm.config.risk_plugins"
                 :plugin-options="getPluginsByType('risk')"
                 @add-plugin="addPluginConfig('risk')"
@@ -773,8 +825,37 @@ const getPluginConfigs = (monitorType: string) => {
 const taskForm = reactive({
   name: '',
   program_id: '',
+  program_ids: [] as string[],
   interval_secs: 6 * 3600, // 6 hours default
   config: createEmptyTaskConfig(),
+})
+
+const programOptions = computed(() => props.programs || [])
+
+const formatProgramOption = (program: any) =>
+  `${program.name}${program.organization ? ` (${program.organization})` : ''}`
+
+const selectedProgramNames = computed(() =>
+  programOptions.value
+    .filter(program => taskForm.program_ids.includes(program.id))
+    .map(formatProgramOption),
+)
+
+const selectedProgramSummary = computed(() => {
+  if (selectedProgramNames.value.length === 0) {
+    return t('bugBounty.monitor.selectProgramsPlaceholder')
+  }
+  if (selectedProgramNames.value.length === 1) {
+    return selectedProgramNames.value[0]
+  }
+  return t('bugBounty.monitor.selectedProgramCount', { count: selectedProgramNames.value.length })
+})
+
+const configProgramId = computed(() => {
+  if (editingTask.value) {
+    return taskForm.program_id
+  }
+  return taskForm.program_ids.length === 1 ? taskForm.program_ids[0] : ''
 })
 
 const discoverForm = reactive({
@@ -949,17 +1030,38 @@ const createDefaultTasks = async () => {
   }
 }
 
+const toggleProgramSelection = (programId: string) => {
+  if (taskForm.program_ids.includes(programId)) {
+    taskForm.program_ids = taskForm.program_ids.filter(id => id !== programId)
+    return
+  }
+  taskForm.program_ids = [...taskForm.program_ids, programId]
+}
+
+const clearProgramSelection = () => {
+  taskForm.program_ids = []
+}
+
+const selectAllPrograms = () => {
+  taskForm.program_ids = programOptions.value.map(program => program.id)
+}
+
 const saveTask = async () => {
   if (!taskForm.name.trim()) return
-  if (!taskForm.program_id) {
+  const selectedProgramIds = Array.from(new Set(taskForm.program_ids.filter(Boolean)))
+  if (editingTask.value && !taskForm.program_id) {
     toast.error(t('bugBounty.monitor.selectProgramFirst'))
+    return
+  }
+  if (!editingTask.value && selectedProgramIds.length === 0) {
+    toast.error(t('bugBounty.monitor.selectProgramsFirst'))
     return
   }
 
   try {
     const paramValidationErrors = collectParamValidationErrors(taskForm.config)
     if (paramValidationErrors.length > 0) {
-      toast.error(t('bugBounty.monitor.pluginParamsValidationFailed'))
+      toast.error(paramValidationErrors[0])
       return
     }
     const seedValidationErrors = collectSeedValidationErrors(taskForm.config)
@@ -982,16 +1084,15 @@ const saveTask = async () => {
       })
       toast.success(t('bugBounty.monitor.taskUpdated'))
     } else {
-      // Create new task
-      await invoke('monitor_create_task', {
+      const createdTaskIds = await invoke('monitor_create_tasks_for_programs', {
         request: {
-          program_id: taskForm.program_id,
+          program_ids: selectedProgramIds,
           name: taskForm.name,
           interval_secs: taskForm.interval_secs,
           config: normalizedConfig,
         },
       })
-      toast.success(t('bugBounty.monitor.taskCreated'))
+      toast.success(t('bugBounty.monitor.tasksCreated', { count: (createdTaskIds as any[]).length }))
     }
 
     closeModal()
@@ -1063,6 +1164,7 @@ const editTask = (task: any) => {
   editingTask.value = task
   taskForm.name = task.name
   taskForm.program_id = task.program_id
+  taskForm.program_ids = [task.program_id]
   taskForm.interval_secs = task.interval_secs
   taskForm.config = normalizeTaskConfig(task.config)
 }
@@ -1165,6 +1267,10 @@ const closeDiscoverModal = () => {
 const openCreateModal = () => {
   if (props.selectedProgram) {
     taskForm.program_id = props.selectedProgram.id
+    taskForm.program_ids = [props.selectedProgram.id]
+  } else {
+    taskForm.program_id = ''
+    taskForm.program_ids = []
   }
   showCreateModal.value = true
 }
@@ -1174,6 +1280,7 @@ const closeModal = () => {
   editingTask.value = null
   taskForm.name = ''
   taskForm.program_id = ''
+  taskForm.program_ids = []
   taskForm.interval_secs = 6 * 3600
   taskForm.config = createEmptyTaskConfig()
 }

@@ -13,7 +13,7 @@ use crate::dynamic_tool::{
 };
 use crate::terminal::{
     decode_transport_html_entities, detect_shell_prompt, normalize_command, ExecutionMode,
-    TerminalServer, TerminalSessionConfig, WaitStrategy, TERMINAL_MANAGER,
+    SessionState, TerminalServer, TerminalSessionConfig, WaitStrategy, TERMINAL_MANAGER,
 };
 use crate::terminal_output::{
     build_terminal_session_fingerprint, detect_prompt_state, sanitize_interactive_output,
@@ -57,6 +57,16 @@ struct CollectedOutput {
     next_cursor: usize,
     completed: bool,
     timed_out: bool,
+    stop_reason: CollectStopReason,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CollectStopReason {
+    PromptDetected,
+    ExpectedLines,
+    SessionClosed,
+    IdleQuiet,
+    Timeout,
 }
 
 fn cursor_key(execution_id: Option<&str>, session_id: &str) -> String {
@@ -185,6 +195,36 @@ fn classify_session_status(output: &str, completed: bool, known_interactive: boo
     "running"
 }
 
+fn session_state_label(state: SessionState) -> &'static str {
+    match state {
+        SessionState::Starting => "starting",
+        SessionState::Running => "running",
+        SessionState::Stopped => "stopped",
+        SessionState::Error => "error",
+    }
+}
+
+fn collect_stop_reason_label(reason: CollectStopReason) -> &'static str {
+    match reason {
+        CollectStopReason::PromptDetected => "prompt_detected",
+        CollectStopReason::ExpectedLines => "expected_lines",
+        CollectStopReason::SessionClosed => "session_closed",
+        CollectStopReason::IdleQuiet => "idle_quiet",
+        CollectStopReason::Timeout => "timeout",
+    }
+}
+
+async fn read_session_runtime_fields(session_id: &str) -> (SessionState, bool) {
+    match TERMINAL_MANAGER.session_runtime_status(session_id).await {
+        Ok(status) => (status.state, status.healthy),
+        Err(_) => (SessionState::Stopped, false),
+    }
+}
+
+fn prompt_screen_keeps_session_open(output: &str) -> bool {
+    detect_shell_prompt(output) || detect_prompt_state(output).is_some()
+}
+
 fn remove_session_fields_for_completed_shell_result(result: &mut Value) {
     let Some(obj) = result.as_object_mut() else {
         return;
@@ -289,29 +329,37 @@ async fn collect_output_since(
     let mut idle_count = 0usize;
     let mut completed = false;
     let mut timed_out = false;
-
-    loop {
+    let stop_reason = loop {
         let (chunks, cursor_after_read) = TERMINAL_MANAGER
             .read_session_output_since(session_id, next_cursor)
             .await?;
 
         if chunks.is_empty() {
+            let (session_state, session_alive) = read_session_runtime_fields(session_id).await;
+            if !session_alive && !matches!(session_state, SessionState::Starting) {
+                completed = true;
+                break CollectStopReason::SessionClosed;
+            }
             if Instant::now() >= deadline {
                 timed_out = true;
-                break;
+                break CollectStopReason::Timeout;
             }
             idle_count += 1;
             if matches!(options.wait_strategy, WaitStrategy::Auto) && !output.is_empty() {
                 if idle_count >= 5 {
                     let current_output = String::from_utf8_lossy(&output);
                     completed = detect_shell_prompt(&current_output);
-                    break;
+                    break if completed {
+                        CollectStopReason::PromptDetected
+                    } else {
+                        CollectStopReason::IdleQuiet
+                    };
                 }
             } else if !matches!(options.wait_strategy, WaitStrategy::Timeout)
                 && !output.is_empty()
                 && idle_count >= 3
             {
-                break;
+                break CollectStopReason::IdleQuiet;
             }
             tokio::time::sleep(Duration::from_millis(300)).await;
             continue;
@@ -329,7 +377,7 @@ async fn collect_output_since(
             WaitStrategy::Prompt | WaitStrategy::Auto => {
                 if detect_shell_prompt(&current_output) {
                     completed = true;
-                    break;
+                    break CollectStopReason::PromptDetected;
                 }
             }
             WaitStrategy::Lines => {
@@ -338,7 +386,7 @@ async fn collect_output_since(
                     .is_some_and(|expected| line_count >= expected)
                 {
                     completed = true;
-                    break;
+                    break CollectStopReason::ExpectedLines;
                 }
             }
             WaitStrategy::Timeout => {}
@@ -346,15 +394,16 @@ async fn collect_output_since(
 
         if Instant::now() >= deadline {
             timed_out = true;
-            break;
+            break CollectStopReason::Timeout;
         }
-    }
+    };
 
     Ok(CollectedOutput {
         output,
         next_cursor,
         completed,
         timed_out,
+        stop_reason,
     })
 }
 
@@ -556,6 +605,7 @@ async fn run_terminal_command(
         was_normalized,
     )) = prepared_command
     else {
+        let (session_state, session_alive) = read_session_runtime_fields(&session.session_id).await;
         return Ok(json!({
             "session_id": session.session_id,
             "process_id": session.session_id,
@@ -565,6 +615,11 @@ async fn run_terminal_command(
             "shell": session.shell,
             "working_dir": session.working_dir,
             "completed": false,
+            "command_completed": false,
+            "awaiting_input": false,
+            "session_alive": session_alive,
+            "session_state": session_state_label(session_state),
+            "completion_reason": Value::Null,
             "status": "running",
             "success": false,
             "message": "Connected to terminal session",
@@ -595,6 +650,9 @@ async fn run_terminal_command(
         options.max_output_tokens,
     );
     set_rendered_screen(execution_id, &session.session_id, &clean_output).await;
+    let (session_state, session_alive) = read_session_runtime_fields(&session.session_id).await;
+    let awaiting_input =
+        session_alive && ShellTool::output_looks_like_interactive_prompt(&clean_output, "");
     let status = classify_session_status(&clean_output, collected.completed, known_interactive);
     let mut result = json!({
         "session_id": session.session_id,
@@ -609,6 +667,11 @@ async fn run_terminal_command(
         "stdout": clean_output,
         "stderr": "",
         "completed": collected.completed,
+        "command_completed": collected.completed,
+        "awaiting_input": awaiting_input,
+        "session_alive": session_alive,
+        "session_state": session_state_label(session_state),
+        "completion_reason": collect_stop_reason_label(collected.stop_reason),
         "status": status,
         "success": collected.completed,
         "execution_time_ms": started_at.elapsed().as_millis() as u64,
@@ -641,6 +704,8 @@ async fn run_terminal_command(
         if let Some(session_id) = session_id {
             let _ = TERMINAL_MANAGER.stop_session(&session_id).await;
         }
+        result["session_alive"] = json!(false);
+        result["session_state"] = json!("stopped");
         remove_session_fields_for_completed_shell_result(&mut result);
     }
 
@@ -698,6 +763,11 @@ pub async fn execute_shell_session_input(
             "stdout": "",
             "stderr": "",
             "completed": true,
+            "command_completed": true,
+            "awaiting_input": false,
+            "session_alive": false,
+            "session_state": "stopped",
+            "completion_reason": "cancelled",
             "status": "cancelled",
             "success": true,
             "truncated": false,
@@ -786,7 +856,11 @@ pub async fn execute_shell_session_input(
     } else {
         clean_output.clone()
     };
-    let status = classify_session_status(&prompt_screen, collected.completed, false);
+    let (session_state, session_alive) = read_session_runtime_fields(session_id).await;
+    let command_completed = collected.completed;
+    let awaiting_input = session_alive && prompt_screen_keeps_session_open(&prompt_screen);
+    let completed = collected.completed && !prompt_screen_keeps_session_open(&prompt_screen);
+    let status = classify_session_status(&prompt_screen, completed, false);
     let mut result = json!({
         "session_id": session_id,
         "process_id": session_id,
@@ -794,16 +868,23 @@ pub async fn execute_shell_session_input(
         "output": clean_output.clone(),
         "stdout": clean_output,
         "stderr": "",
-        "completed": collected.completed,
+        "completed": completed,
+        "command_completed": command_completed,
+        "awaiting_input": awaiting_input,
+        "session_alive": session_alive,
+        "session_state": session_state_label(session_state),
+        "completion_reason": collect_stop_reason_label(collected.stop_reason),
         "status": status,
-        "success": collected.completed,
+        "success": completed,
         "truncated": collected.timed_out && !collected.completed,
         "exit_code": Value::Null,
         "output_cursor": collected.next_cursor,
     });
     attach_prompt_state(&mut result, &prompt_screen);
-    if collected.completed {
+    if completed {
         let _ = TERMINAL_MANAGER.stop_session(session_id).await;
+        result["session_alive"] = json!(false);
+        result["session_state"] = json!("stopped");
         remove_session_fields_for_completed_shell_result(&mut result);
     }
     Ok(result)
@@ -821,7 +902,7 @@ fn terminal_execution_policy() -> ToolExecutionPolicy {
 
 #[cfg(test)]
 mod tests {
-    use super::key_input_from_args;
+    use super::{key_input_from_args, prompt_screen_keeps_session_open};
     use serde_json::json;
 
     #[test]
@@ -846,6 +927,18 @@ mod tests {
             key_input_from_args(&json!({ "key": "ArrowDown", "repeat": 2 })).as_deref(),
             Ok("\x1b[B\x1b[B")
         )
+    }
+
+    #[test]
+    fn login_prompt_keeps_session_open() {
+        assert!(prompt_screen_keeps_session_open(
+            "Last login: Sat May  9 06:33:21 2026 from 10.244.244.180\n$"
+        ));
+    }
+
+    #[test]
+    fn plain_output_without_prompt_does_not_keep_session_open() {
+        assert!(!prompt_screen_keeps_session_open("command finished successfully"));
     }
 }
 

@@ -61,6 +61,31 @@ const assignment = (id: string, dependsOn: string[] = []): TeamV4SpecialistAssig
   },
 })
 
+const assignmentForSpecialist = (
+  id: string,
+  specialistId: string,
+  dependsOn: string[] = [],
+): TeamV4SpecialistAssignment => ({
+  ...assignment(id, dependsOn),
+  specialist: {
+    ...assignment(id, dependsOn).specialist,
+    id: specialistId,
+    name: specialistId,
+  },
+  task: {
+    ...assignment(id, dependsOn).task,
+    assigned_agent_id: specialistId,
+  },
+  contextSnapshot: {
+    ...assignment(id, dependsOn).contextSnapshot,
+    actor_id: specialistId,
+  },
+  harnessRun: {
+    ...assignment(id, dependsOn).harnessRun,
+    actor_id: specialistId,
+  },
+})
+
 describe('teamV4AssignmentScheduler', () => {
   it('waits for dependency completion before launching dependent tasks', async () => {
     const order: string[] = []
@@ -82,5 +107,35 @@ describe('teamV4AssignmentScheduler', () => {
       1,
       async (item) => item.task.id,
     )).rejects.toThrow('unknown dependency')
+  })
+
+  it('never runs two assignments concurrently on the same specialist', async () => {
+    const timeline: string[] = []
+    let active = 0
+    let peak = 0
+    await runTeamV4AssignmentsWithDependencies(
+      [
+        assignmentForSpecialist('collect', 'specialist-shared'),
+        assignmentForSpecialist('analyze', 'specialist-shared'),
+      ],
+      2,
+      async (item) => {
+        timeline.push(`start:${item.task.id}`)
+        active += 1
+        peak = Math.max(peak, active)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        active -= 1
+        timeline.push(`finish:${item.task.id}`)
+        return item.task.id
+      },
+    )
+
+    expect(peak).toBe(1)
+    expect(timeline).toEqual([
+      'start:collect',
+      'finish:collect',
+      'start:analyze',
+      'finish:analyze',
+    ])
   })
 })

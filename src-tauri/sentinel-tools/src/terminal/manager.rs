@@ -90,6 +90,23 @@ impl TerminalSessionManager {
         Ok(session.output_since(cursor).await)
     }
 
+    /// Read runtime state for a session without consuming or mutating it.
+    pub async fn session_runtime_status(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionRuntimeStatus, String> {
+        let session = self
+            .get_session(session_id)
+            .await
+            .ok_or_else(|| "Session not found".to_string())?;
+
+        let session = session.read().await;
+        Ok(SessionRuntimeStatus {
+            state: session.state().await,
+            healthy: session.is_healthy(),
+        })
+    }
+
     /// Touch session to keep it active
     pub async fn touch_session(&self, session_id: &str) -> Result<(), String> {
         let session = self
@@ -293,6 +310,12 @@ pub struct ContainerInfo {
     pub session_id: String,
     pub container_id: String,
     pub is_healthy: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SessionRuntimeStatus {
+    pub state: SessionState,
+    pub healthy: bool,
 }
 
 impl Default for TerminalSessionManager {
