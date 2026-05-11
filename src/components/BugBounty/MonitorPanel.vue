@@ -499,6 +499,8 @@ import {
   mapPluginTree,
   normalizePluginConfig,
   normalizePluginConfigList,
+  normalizeMonitorPluginId,
+  sanitizeMonitorPluginParamsBySchema,
 } from './monitorPluginConfigSupport'
 import { PARAM_EDITOR_ERROR_KEY, PARAM_EDITOR_INVALID_KEY } from './monitorPluginParamsSupport'
 import { formatInvokeError, formatUptime } from './monitorPanelUtils'
@@ -528,6 +530,7 @@ const currentDiscoverTask = ref<any>(null)
 const availablePlugins = ref<any[]>([])
 const loadingPlugins = ref(false)
 const stoppingTaskIds = ref<Set<string>>(new Set())
+const pluginInputSchemaCache = new Map<string, any>()
 const { isTaskRunning, getTaskProgress, markTaskQueued, pruneTaskProgress, loadRunningTasks, setupTaskProgressListener } = useMonitorTaskProgress()
 
 const createEmptyTaskConfig = () => ({
@@ -688,8 +691,70 @@ const normalizeTaskConfig = (config: any) => {
   }
 }
 
-const buildTaskConfigForSave = (config: any) => {
+const loadPluginInputSchema = async (pluginId: string) => {
+  const normalizedPluginId = normalizeMonitorPluginId(pluginId)
+  if (!normalizedPluginId) {
+    return { type: 'object', properties: {} }
+  }
+
+  if (pluginInputSchemaCache.has(normalizedPluginId)) {
+    return pluginInputSchemaCache.get(normalizedPluginId)
+  }
+
+  const response = await invoke<any>('get_plugin_input_schema', { pluginId: normalizedPluginId })
+  const resolvedSchema =
+    response?.success && response?.data && typeof response.data === 'object'
+      ? response.data
+      : response && typeof response === 'object'
+        ? response
+        : { type: 'object', properties: {} }
+
+  pluginInputSchemaCache.set(normalizedPluginId, resolvedSchema)
+  return resolvedSchema
+}
+
+const sanitizePluginTreesBySchema = async (config: any) => {
+  const pluginIds = new Set<string>()
+  const pluginCollections = [
+    config?.dns_plugins,
+    config?.ip_plugins,
+    config?.cert_plugins,
+    config?.content_plugins,
+    config?.api_plugins,
+    config?.port_plugins,
+    config?.service_plugins,
+    config?.web_plugins,
+    config?.risk_plugins,
+  ]
+
+  for (const plugins of pluginCollections) {
+    mapPluginTree(Array.isArray(plugins) ? plugins : [], plugin => {
+      const normalizedPluginId = normalizeMonitorPluginId(plugin?.plugin_id || '')
+      if (normalizedPluginId) {
+        pluginIds.add(normalizedPluginId)
+      }
+    })
+  }
+
+  const schemaEntries = await Promise.all(
+    Array.from(pluginIds).map(async pluginId => [pluginId, await loadPluginInputSchema(pluginId)] as const)
+  )
+  const schemaMap = new Map<string, any>(schemaEntries)
+
+  for (const plugins of pluginCollections) {
+    mapPluginTree(Array.isArray(plugins) ? plugins : [], plugin => {
+      const normalizedPluginId = normalizeMonitorPluginId(plugin?.plugin_id || '')
+      plugin.plugin_params = sanitizeMonitorPluginParamsBySchema(
+        plugin?.plugin_params,
+        schemaMap.get(normalizedPluginId),
+      )
+    })
+  }
+}
+
+const buildTaskConfigForSave = async (config: any) => {
   const normalized = normalizeTaskConfig(config)
+  await sanitizePluginTreesBySchema(normalized)
   const sectionMappings: Array<[string, string]> = [
     ['enable_dns_monitoring', 'dns_plugins'],
     ['enable_ip_monitoring', 'ip_plugins'],
@@ -1070,7 +1135,7 @@ const saveTask = async () => {
       return
     }
     submitting.value = true
-    const normalizedConfig = buildTaskConfigForSave(taskForm.config)
+    const normalizedConfig = await buildTaskConfigForSave(taskForm.config)
 
     if (editingTask.value) {
       // Update existing task
@@ -1099,7 +1164,7 @@ const saveTask = async () => {
     await loadTasks({ showLoading: false })
   } catch (error) {
     console.error('Failed to save task:', error)
-    toast.error(t('bugBounty.errors.saveFailed'))
+    toast.error(formatInvokeError(error, t('bugBounty.errors.saveFailed')))
   } finally {
     submitting.value = false
   }

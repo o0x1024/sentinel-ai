@@ -347,6 +347,7 @@ async fn list_program_surface_assets(
             search: None,
             favicon_hash: None,
             has_favicon_hash: None,
+            http_status_code: None,
             service_name: None,
             transport_protocol: None,
             view_state: None,
@@ -695,7 +696,15 @@ pub async fn surface_review_seed_candidates(
             continue;
         };
 
-        if candidate.status != "pending" {
+        let previous_candidate_status = candidate.status.clone();
+        let can_review = match decision.as_str() {
+            "approved" => {
+                previous_candidate_status == "pending" || previous_candidate_status == "rejected"
+            }
+            "rejected" => previous_candidate_status == "pending",
+            _ => false,
+        };
+        if !can_review {
             continue;
         }
 
@@ -703,6 +712,8 @@ pub async fn surface_review_seed_candidates(
             let seed_metadata = Some(
                 json!({
                     "review_source": "surface_seed_candidate",
+                    "review_action": if previous_candidate_status == "rejected" { "recovered_from_rejected" } else { "approved" },
+                    "previous_candidate_status": previous_candidate_status,
                     "candidate_id": candidate.id,
                     "source_asset_id": candidate.source_asset_id,
                     "source_asset_type": candidate.source_asset_type,

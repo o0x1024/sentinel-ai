@@ -391,6 +391,7 @@ impl DatabaseService {
             search: filter.search.clone(),
             favicon_hash: filter.favicon_hash.clone(),
             has_favicon_hash: filter.has_favicon_hash,
+            http_status_code: filter.http_status_code,
             service_name: filter.service_name.clone(),
             transport_protocol: filter.transport_protocol.clone(),
             view_state: filter.view_state.clone(),

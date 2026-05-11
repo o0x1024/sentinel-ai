@@ -244,6 +244,7 @@
       ref="codeEditorDialogRef"
       :editing-plugin="editingPlugin"
       :new-plugin-metadata="editPluginMetadata"
+      :plugin-code-text="pluginCode"
       :is-editing="isEditing"
       :saving="isSavingWait"
       :code-error="codeError"

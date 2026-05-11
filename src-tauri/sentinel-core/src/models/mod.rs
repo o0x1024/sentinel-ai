@@ -4,6 +4,7 @@ pub mod asset;
 pub mod database;
 pub mod dictionary;
 pub mod mcp;
+pub mod mission;
 pub mod rag;
 pub mod rag_config;
 pub mod scan;

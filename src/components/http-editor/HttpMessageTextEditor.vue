@@ -127,7 +127,7 @@ import {
 } from 'vue'
 import { EditorState, Compartment } from '@codemirror/state'
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view'
-import { defaultKeymap, indentWithTab, history, undo, redo } from '@codemirror/commands'
+import { defaultKeymap, indentWithTab, history, historyKeymap, undo, redo } from '@codemirror/commands'
 import { SearchQuery, findNext, findPrevious, getSearchQuery, search, setSearchQuery } from '@codemirror/search'
 import { useI18n } from 'vue-i18n'
 import { getHttpCodeThemeExtensions, isDarkHttpEditorTheme } from './httpEditorTheme'
@@ -434,7 +434,7 @@ function getBaseExtensions() {
     sharedKeymap,
     ...baseEditorExtensions,
     history(),
-    keymap.of([...defaultKeymap, indentWithTab]),
+    keymap.of([...historyKeymap, ...defaultKeymap, indentWithTab]),
   ]
 }
 

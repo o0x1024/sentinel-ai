@@ -31,6 +31,7 @@ pub struct SurfaceFacetBucket {
 pub struct SurfaceInventoryFacetsResponse {
     pub service_names: Vec<SurfaceFacetBucket>,
     pub transport_protocols: Vec<SurfaceFacetBucket>,
+    pub http_status_codes: Vec<SurfaceFacetBucket>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -51,6 +52,7 @@ impl DatabaseService {
             search: filter.search.clone(),
             favicon_hash: filter.favicon_hash.clone(),
             has_favicon_hash: filter.has_favicon_hash,
+            http_status_code: filter.http_status_code,
             service_name: filter.service_name.clone(),
             transport_protocol: filter.transport_protocol.clone(),
             view_state: filter.view_state.clone(),
@@ -86,8 +88,12 @@ impl DatabaseService {
         if base_filter.asset_type.as_deref() == Some("service") {
             base_filter.asset_type = Some("service".to_string());
         }
+        if base_filter.asset_type.as_deref() == Some("web") {
+            base_filter.asset_type = Some("web".to_string());
+        }
         base_filter.service_name = None;
         base_filter.transport_protocol = None;
+        base_filter.http_status_code = None;
         base_filter.limit = None;
         base_filter.offset = None;
 
@@ -96,27 +102,36 @@ impl DatabaseService {
                 let service_names = fetch_service_name_facets_sqlite(pool, &base_filter).await?;
                 let transport_protocols =
                     fetch_service_transport_facets_sqlite(pool, &base_filter).await?;
+                let http_status_codes =
+                    fetch_web_http_status_facets_sqlite(pool, &base_filter).await?;
                 Ok(SurfaceInventoryFacetsResponse {
                     service_names,
                     transport_protocols,
+                    http_status_codes,
                 })
             }
             DatabasePool::MySQL(pool) => {
                 let service_names = fetch_service_name_facets_mysql(pool, &base_filter).await?;
                 let transport_protocols =
                     fetch_service_transport_facets_mysql(pool, &base_filter).await?;
+                let http_status_codes =
+                    fetch_web_http_status_facets_mysql(pool, &base_filter).await?;
                 Ok(SurfaceInventoryFacetsResponse {
                     service_names,
                     transport_protocols,
+                    http_status_codes,
                 })
             }
             DatabasePool::PostgreSQL(pool) => {
                 let service_names = fetch_service_name_facets_postgres(pool, &base_filter).await?;
                 let transport_protocols =
                     fetch_service_transport_facets_postgres(pool, &base_filter).await?;
+                let http_status_codes =
+                    fetch_web_http_status_facets_postgres(pool, &base_filter).await?;
                 Ok(SurfaceInventoryFacetsResponse {
                     service_names,
                     transport_protocols,
+                    http_status_codes,
                 })
             }
         }
@@ -155,6 +170,28 @@ async fn fetch_service_transport_facets_sqlite(
     push_surface_asset_filters(&mut query_builder, filter);
     query_builder.push(
         " AND TRIM(COALESCE(surface_service_assets.transport_protocol, '')) != '' GROUP BY LOWER(COALESCE(surface_service_assets.transport_protocol, '')) ORDER BY count DESC, value ASC",
+    );
+
+    let rows: Vec<FacetBucketRow> = query_builder.build_query_as().fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| SurfaceFacetBucket {
+            value: row.value,
+            count: row.count,
+        })
+        .collect())
+}
+
+async fn fetch_web_http_status_facets_sqlite(
+    pool: &sqlx::SqlitePool,
+    filter: &SurfaceAssetFilter,
+) -> Result<Vec<SurfaceFacetBucket>> {
+    let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(
+        "SELECT CAST(surface_web_assets.http_status_code AS TEXT) AS value, COUNT(*) AS count FROM surface_assets JOIN surface_web_assets ON surface_web_assets.asset_id = surface_assets.id WHERE 1=1",
+    );
+    push_surface_asset_filters(&mut query_builder, filter);
+    query_builder.push(
+        " AND surface_web_assets.http_status_code IS NOT NULL GROUP BY surface_web_assets.http_status_code ORDER BY surface_web_assets.http_status_code ASC",
     );
 
     let rows: Vec<FacetBucketRow> = query_builder.build_query_as().fetch_all(pool).await?;
@@ -211,6 +248,28 @@ async fn fetch_service_transport_facets_mysql(
         .collect())
 }
 
+async fn fetch_web_http_status_facets_mysql(
+    pool: &MySqlPool,
+    filter: &SurfaceAssetFilter,
+) -> Result<Vec<SurfaceFacetBucket>> {
+    let mut query_builder = QueryBuilder::<MySql>::new(
+        "SELECT CAST(surface_web_assets.http_status_code AS CHAR) AS value, COUNT(*) AS count FROM surface_assets JOIN surface_web_assets ON surface_web_assets.asset_id = surface_assets.id WHERE 1=1",
+    );
+    push_surface_asset_filters(&mut query_builder, filter);
+    query_builder.push(
+        " AND surface_web_assets.http_status_code IS NOT NULL GROUP BY surface_web_assets.http_status_code ORDER BY surface_web_assets.http_status_code ASC",
+    );
+
+    let rows: Vec<FacetBucketRow> = query_builder.build_query_as().fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| SurfaceFacetBucket {
+            value: row.value,
+            count: row.count,
+        })
+        .collect())
+}
+
 async fn fetch_service_name_facets_postgres(
     pool: &PgPool,
     filter: &SurfaceAssetFilter,
@@ -243,6 +302,28 @@ async fn fetch_service_transport_facets_postgres(
     push_surface_asset_filters(&mut query_builder, filter);
     query_builder.push(
         " AND TRIM(COALESCE(surface_service_assets.transport_protocol, '')) != '' GROUP BY LOWER(COALESCE(surface_service_assets.transport_protocol, '')) ORDER BY count DESC, value ASC",
+    );
+
+    let rows: Vec<FacetBucketRow> = query_builder.build_query_as().fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| SurfaceFacetBucket {
+            value: row.value,
+            count: row.count,
+        })
+        .collect())
+}
+
+async fn fetch_web_http_status_facets_postgres(
+    pool: &PgPool,
+    filter: &SurfaceAssetFilter,
+) -> Result<Vec<SurfaceFacetBucket>> {
+    let mut query_builder = QueryBuilder::<Postgres>::new(
+        "SELECT CAST(surface_web_assets.http_status_code AS TEXT) AS value, COUNT(*) AS count FROM surface_assets JOIN surface_web_assets ON surface_web_assets.asset_id = surface_assets.id WHERE 1=1",
+    );
+    push_surface_asset_filters(&mut query_builder, filter);
+    query_builder.push(
+        " AND surface_web_assets.http_status_code IS NOT NULL GROUP BY surface_web_assets.http_status_code ORDER BY surface_web_assets.http_status_code ASC",
     );
 
     let rows: Vec<FacetBucketRow> = query_builder.build_query_as().fetch_all(pool).await?;

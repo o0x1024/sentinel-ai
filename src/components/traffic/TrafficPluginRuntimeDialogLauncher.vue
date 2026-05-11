@@ -135,8 +135,7 @@
             <PluginRuntimeSchedulerPanel
               :traffic-plugin-runtime-settings="trafficPluginRuntimeSettings"
               :is-saving-traffic-plugin-runtime-settings="isSavingTrafficPluginRuntimeSettings"
-              :save-traffic-plugin-runtime-settings="saveTrafficPluginRuntimeSettings"
-              :reset-traffic-plugin-runtime-policies="resetTrafficPluginRuntimePolicies"
+              :reset-traffic-plugin-runtime-policies="resetTrafficPluginRuntimePoliciesDraft"
               :apply-traffic-plugin-runtime-preset="applyTrafficPluginRuntimePreset"
               :policy-ids="policyIds"
               :collapsible="collapsible"
@@ -156,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppDialog from '@/components/AppDialog.vue'
 import PluginRuntimeSchedulerPanel from '@/components/PluginManagement/PluginRuntimeSchedulerPanel.vue'
@@ -203,7 +202,7 @@ const props = withDefaults(
       'agentFetch',
       'pluginTestFetch',
     ],
-    defaultExpandedPolicyIds: () => ['activeProbe'],
+    defaultExpandedPolicyIds: () => [],
     collapsible: true,
     title: '',
     description: '',
@@ -229,10 +228,16 @@ const {
   applyLoadedTrafficPluginRuntimeSettings,
   loadTrafficPluginRuntimeSettings,
   saveTrafficPluginRuntimeSettings,
-  resetTrafficPluginRuntimePolicies,
+  resetTrafficPluginRuntimePoliciesDraft: resetTrafficPluginRuntimePoliciesDraftSettings,
   applyTrafficPluginRuntimePreset,
 } = useTrafficPluginRuntimeSettings()
 const { snapshot, history, refresh: refreshQueueState } = useTrafficPluginRuntimeQueue()
+const AUTO_SAVE_DELAY_MS = 700
+const autoSaveEnabled = ref(false)
+const autoSaveTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+const autoSaveInFlight = ref(false)
+const autoSaveRequestedDuringSave = ref(false)
+const lastSavedRuntimeSignature = ref('')
 
 const resolvedTitle = computed(
   () => props.title || t('trafficAnalysis.proxyConfiguration.pluginRuntimeTitle', '插件运行时')
@@ -280,6 +285,73 @@ const getLauncherPendingLevel = (summary: TrafficPluginRuntimeLauncherSummary) =
 const summaryChipClass = (level: 'neutral' | 'warning' | 'error') =>
   getRuntimeSummaryChipClass(level)
 
+const buildRuntimeSettingsSignature = (settings: TrafficPluginRuntimeSettings) =>
+  JSON.stringify(normalizeTrafficPluginRuntimeSettings(settings))
+
+const updateLastSavedRuntimeSignature = (settings: TrafficPluginRuntimeSettings) => {
+  lastSavedRuntimeSignature.value = buildRuntimeSettingsSignature(settings)
+}
+
+const clearAutoSaveTimer = () => {
+  if (!autoSaveTimer.value) {
+    return
+  }
+  clearTimeout(autoSaveTimer.value)
+  autoSaveTimer.value = null
+}
+
+const persistTrafficPluginRuntimeSettings = async (): Promise<boolean> => {
+  if (!dialogOpen.value || loading.value || !autoSaveEnabled.value) {
+    return true
+  }
+
+  const currentSignature = buildRuntimeSettingsSignature(trafficPluginRuntimeSettings.value)
+  if (currentSignature === lastSavedRuntimeSignature.value) {
+    return true
+  }
+
+  if (autoSaveInFlight.value) {
+    autoSaveRequestedDuringSave.value = true
+    return true
+  }
+
+  autoSaveInFlight.value = true
+  autoSaveRequestedDuringSave.value = false
+  let saved = false
+  try {
+    const savedSettings = await saveTrafficPluginRuntimeSettings()
+    updateLastSavedRuntimeSignature(savedSettings)
+    await refreshQueueState()
+    saved = true
+    return true
+  } catch {
+    return false
+  } finally {
+    autoSaveInFlight.value = false
+    const latestSignature = buildRuntimeSettingsSignature(trafficPluginRuntimeSettings.value)
+    if (
+      saved &&
+      (autoSaveRequestedDuringSave.value || latestSignature !== lastSavedRuntimeSignature.value)
+    ) {
+      autoSaveRequestedDuringSave.value = false
+      scheduleAutoSave()
+    } else if (!saved) {
+      autoSaveRequestedDuringSave.value = false
+    }
+  }
+}
+
+function scheduleAutoSave() {
+  if (!dialogOpen.value || loading.value || !autoSaveEnabled.value) {
+    return
+  }
+  clearAutoSaveTimer()
+  autoSaveTimer.value = setTimeout(() => {
+    autoSaveTimer.value = null
+    void persistTrafficPluginRuntimeSettings()
+  }, AUTO_SAVE_DELAY_MS)
+}
+
 const getPresetLabel = (preset: TrafficPluginRuntimePreset) => {
   if (preset === 'local_fast') {
     return t('trafficAnalysis.proxyConfiguration.activeProbePresetLocalFast')
@@ -293,20 +365,39 @@ const getPresetLabel = (preset: TrafficPluginRuntimePreset) => {
 const openDialog = async () => {
   dialogOpen.value = true
   loading.value = true
+  autoSaveEnabled.value = false
+  clearAutoSaveTimer()
   loadError.value = ''
+  let loaded = false
   try {
     await loadTrafficPluginRuntimeSettings()
+    updateLastSavedRuntimeSignature(trafficPluginRuntimeSettings.value)
+    loaded = true
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '加载插件运行时设置失败'
   } finally {
     loading.value = false
   }
+  await nextTick()
+  if (dialogOpen.value && loaded) {
+    autoSaveEnabled.value = true
+  }
   undoRecommendationState.value = null
 }
 
-const closeDialog = () => {
+const closeDialog = async () => {
+  clearAutoSaveTimer()
+  const saved = await persistTrafficPluginRuntimeSettings()
+  if (!saved) {
+    return
+  }
+  autoSaveEnabled.value = false
   dialogOpen.value = false
   undoRecommendationState.value = null
+}
+
+const resetTrafficPluginRuntimePoliciesDraft = (policyIds: TrafficPluginRuntimePolicyId[]) => {
+  resetTrafficPluginRuntimePoliciesDraftSettings(policyIds)
 }
 
 const applyRecommendedPreset = async () => {
@@ -314,17 +405,25 @@ const applyRecommendedPreset = async () => {
     return
   }
 
+  const shouldResumeAutoSave = autoSaveEnabled.value
+  autoSaveEnabled.value = false
+  clearAutoSaveTimer()
   try {
     undoRecommendationState.value = {
       previousSettings: normalizeTrafficPluginRuntimeSettings(trafficPluginRuntimeSettings.value),
       appliedPreset: activeRecommendation.value.preset,
     }
     applyTrafficPluginRuntimePreset(activeRecommendation.value.preset, props.policyIds)
-    await saveTrafficPluginRuntimeSettings()
+    const savedSettings = await saveTrafficPluginRuntimeSettings()
+    updateLastSavedRuntimeSignature(savedSettings)
     await refreshQueueState()
   } catch {
     undoRecommendationState.value = null
     // saveTrafficPluginRuntimeSettings already reports the failure to the user
+  } finally {
+    if (dialogOpen.value && shouldResumeAutoSave) {
+      autoSaveEnabled.value = true
+    }
   }
 }
 
@@ -334,13 +433,43 @@ const undoRecommendedPreset = async () => {
   }
 
   const rollbackSettings = undoRecommendationState.value.previousSettings
+  const shouldResumeAutoSave = autoSaveEnabled.value
+  autoSaveEnabled.value = false
+  clearAutoSaveTimer()
   try {
     applyLoadedTrafficPluginRuntimeSettings(rollbackSettings)
-    await saveTrafficPluginRuntimeSettings()
+    const savedSettings = await saveTrafficPluginRuntimeSettings()
+    updateLastSavedRuntimeSignature(savedSettings)
     await refreshQueueState()
     undoRecommendationState.value = null
   } catch {
     // saveTrafficPluginRuntimeSettings already reports the failure to the user
+  } finally {
+    if (dialogOpen.value && shouldResumeAutoSave) {
+      autoSaveEnabled.value = true
+    }
   }
 }
+
+watch(
+  () => buildRuntimeSettingsSignature(trafficPluginRuntimeSettings.value),
+  signature => {
+    if (!dialogOpen.value || loading.value || !autoSaveEnabled.value) {
+      return
+    }
+    if (signature === lastSavedRuntimeSignature.value) {
+      clearAutoSaveTimer()
+      return
+    }
+    if (autoSaveInFlight.value) {
+      autoSaveRequestedDuringSave.value = true
+      return
+    }
+    scheduleAutoSave()
+  }
+)
+
+onBeforeUnmount(() => {
+  clearAutoSaveTimer()
+})
 </script>

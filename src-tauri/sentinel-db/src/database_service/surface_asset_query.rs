@@ -55,6 +55,7 @@ pub(crate) fn push_surface_asset_search_filters<'args, DB>(
 ) where
     DB: Database,
     String: for<'q> Encode<'q, DB> + Type<DB>,
+    i32: for<'q> Encode<'q, DB> + Type<DB>,
 {
     let Some(search) = filter
         .search
@@ -358,6 +359,7 @@ pub(crate) fn push_surface_asset_filters<'args, DB>(
 ) where
     DB: Database,
     String: for<'q> Encode<'q, DB> + Type<DB>,
+    i32: for<'q> Encode<'q, DB> + Type<DB>,
 {
     if let Some(program_id) = filter.program_id.as_deref() {
         query_builder
@@ -397,6 +399,12 @@ pub(crate) fn push_surface_asset_filters<'args, DB>(
                 " AND EXISTS (SELECT 1 FROM surface_web_assets WHERE surface_web_assets.asset_id = surface_assets.id AND LENGTH(TRIM(COALESCE(surface_web_assets.favicon_hash, ''))) = 0)",
             );
         }
+    }
+    if let Some(http_status_code) = filter.http_status_code {
+        query_builder.push(
+            " AND EXISTS (SELECT 1 FROM surface_web_assets WHERE surface_web_assets.asset_id = surface_assets.id AND surface_web_assets.http_status_code = ",
+        );
+        query_builder.push_bind(http_status_code).push(")");
     }
     if let Some(service_name) = filter
         .service_name

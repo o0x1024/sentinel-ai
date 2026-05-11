@@ -25,6 +25,7 @@ pub mod execution_tasks;
 pub mod init;
 pub mod memory;
 pub mod migration;
+pub mod mission;
 pub mod migrations;
 pub mod monitor_tasks;
 pub mod plugin;
@@ -113,6 +114,8 @@ pub use init::*;
 pub use memory::*;
 #[allow(unused_imports)]
 pub use migration::*;
+#[allow(unused_imports)]
+pub use mission::*;
 #[allow(unused_imports)]
 pub use monitor_tasks::*;
 #[allow(unused_imports)]

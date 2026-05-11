@@ -69,12 +69,20 @@ export function useTrafficPluginRuntimeSettings() {
     }
   }
 
-  const resetTrafficPluginRuntimePolicies = async (policyIds: TrafficPluginRuntimePolicyId[]) => {
-    trafficPluginRuntimeSettings.value = resetTrafficPluginRuntimePoliciesToDefaults(
+  const resetTrafficPluginRuntimePoliciesDraft = (
+    policyIds: TrafficPluginRuntimePolicyId[]
+  ): TrafficPluginRuntimeSettings => {
+    const nextSettings = resetTrafficPluginRuntimePoliciesToDefaults(
       trafficPluginRuntimeSettings.value,
       policyIds
     )
-    await saveTrafficPluginRuntimeSettings()
+    trafficPluginRuntimeSettings.value = nextSettings
+    return nextSettings
+  }
+
+  const resetTrafficPluginRuntimePolicies = (policyIds: TrafficPluginRuntimePolicyId[]) => {
+    resetTrafficPluginRuntimePoliciesDraft(policyIds)
+    return saveTrafficPluginRuntimeSettings()
   }
 
   const applyTrafficPluginRuntimePreset = (
@@ -94,6 +102,7 @@ export function useTrafficPluginRuntimeSettings() {
     applyLoadedTrafficPluginRuntimeSettings,
     loadTrafficPluginRuntimeSettings,
     saveTrafficPluginRuntimeSettings,
+    resetTrafficPluginRuntimePoliciesDraft,
     resetTrafficPluginRuntimePolicies,
     applyTrafficPluginRuntimePreset,
   }

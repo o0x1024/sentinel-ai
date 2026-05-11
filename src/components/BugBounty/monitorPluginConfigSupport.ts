@@ -54,6 +54,13 @@ export const createEmptyPluginConfig = (): MonitorPluginConfigLike => ({
   seed_config: { bindings: [] },
 })
 
+const cloneValue = <T>(value: T): T => {
+  if (value === undefined) {
+    return value
+  }
+  return JSON.parse(JSON.stringify(value))
+}
+
 const normalizeStringList = (value: unknown) =>
   Array.from(
     new Set(
@@ -208,6 +215,79 @@ export const sanitizeMonitorPluginParams = (value: unknown) => {
   return Object.fromEntries(
     Object.entries(params).filter(([key]) => !key.startsWith('__monitor'))
   )
+}
+
+const sanitizeValueBySchema = (value: unknown, schema: any): unknown => {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (!schema || typeof schema !== 'object') {
+    return cloneValue(value)
+  }
+
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return cloneValue(value)
+  }
+
+  switch (schema.type) {
+    case 'object': {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return cloneValue(value)
+      }
+
+      const properties =
+        schema.properties && typeof schema.properties === 'object'
+          ? schema.properties
+          : null
+      if (!properties) {
+        return cloneValue(value)
+      }
+
+      const result: Record<string, unknown> = {}
+      for (const [key, propertySchema] of Object.entries(properties)) {
+        if (!(key in (value as Record<string, unknown>))) {
+          continue
+        }
+
+        const sanitized = sanitizeValueBySchema(
+          (value as Record<string, unknown>)[key],
+          propertySchema,
+        )
+        if (sanitized !== undefined) {
+          result[key] = sanitized
+        }
+      }
+
+      return result
+    }
+
+    case 'array': {
+      if (!Array.isArray(value)) {
+        return cloneValue(value)
+      }
+
+      if (!schema.items || typeof schema.items !== 'object') {
+        return cloneValue(value)
+      }
+
+      return value
+        .map(item => sanitizeValueBySchema(item, schema.items))
+        .filter(item => item !== undefined)
+    }
+
+    default:
+      return cloneValue(value)
+  }
+}
+
+export const sanitizeMonitorPluginParamsBySchema = (value: unknown, schema: any) => {
+  const sanitizedParams = sanitizeMonitorPluginParams(value)
+  const sanitizedBySchema = sanitizeValueBySchema(sanitizedParams, schema)
+
+  return sanitizedBySchema && typeof sanitizedBySchema === 'object' && !Array.isArray(sanitizedBySchema)
+    ? (sanitizedBySchema as Record<string, unknown>)
+    : {}
 }
 
 export const supportsServiceProbeEngine = (plugin: Partial<MonitorPluginConfigLike> | null | undefined) => {

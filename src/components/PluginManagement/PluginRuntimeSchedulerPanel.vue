@@ -40,18 +40,7 @@
       </button>
     </div>
 
-    <div class="flex flex-wrap gap-2">
-      <button
-        class="btn btn-sm btn-primary"
-        type="button"
-        :disabled="isSavingTrafficPluginRuntimeSettings"
-        @click="saveTrafficPluginRuntimeSettings"
-      >
-        <i
-          :class="isSavingTrafficPluginRuntimeSettings ? 'fas fa-spinner fa-spin' : 'fas fa-save'"
-        ></i>
-        <span>{{ $t('trafficAnalysis.proxyConfiguration.save') }}</span>
-      </button>
+    <div class="flex flex-wrap items-center gap-2">
       <button
         class="btn btn-sm btn-outline"
         type="button"
@@ -156,7 +145,6 @@ const props = withDefaults(
   defineProps<{
     trafficPluginRuntimeSettings: TrafficPluginRuntimeSettings
     isSavingTrafficPluginRuntimeSettings: boolean
-    saveTrafficPluginRuntimeSettings: () => void | Promise<unknown>
     resetTrafficPluginRuntimePolicies: (
       policyIds: TrafficPluginRuntimePolicyId[]
     ) => void | Promise<unknown>
@@ -190,8 +178,8 @@ const { snapshot, history } = useTrafficPluginRuntimeQueue()
 const expandedPolicyIds = ref<TrafficPluginRuntimePolicyId[]>(
   props.defaultExpandedPolicyIds.length > 0
     ? [...props.defaultExpandedPolicyIds]
-    : props.collapsible && props.policyIds.length > 0
-      ? [props.policyIds[0]]
+    : props.collapsible
+      ? []
       : [...props.policyIds]
 )
 

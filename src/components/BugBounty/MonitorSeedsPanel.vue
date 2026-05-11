@@ -41,7 +41,7 @@
             type="button"
             class="btn btn-sm btn-outline"
             :disabled="!resolvedProgramId"
-            @click="showCandidatesModal = true"
+            @click="openCandidatesModal"
           >
             <i class="fas fa-inbox"></i>
             {{ t('bugBounty.monitor.seeds.openCandidates') }}
@@ -325,14 +325,24 @@
               {{ t('bugBounty.monitor.seeds.candidatesDescription') }}
             </p>
           </div>
-          <button type="button" class="btn btn-ghost btn-sm btn-circle" @click="showCandidatesModal = false">
+          <button type="button" class="btn btn-ghost btn-sm btn-circle" @click="closeCandidatesModal">
             <i class="fas fa-times"></i>
           </button>
         </div>
 
-        <div class="mt-4 flex items-center justify-between gap-3">
-          <div class="badge badge-outline badge-sm">
-            {{ t('bugBounty.monitor.seeds.pendingCount', { count: candidateGroups.length }) }}
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <select
+              v-model="candidateStatusFilter"
+              class="select select-bordered select-sm w-40"
+              :disabled="candidateLoading || candidateRefreshing || candidateReviewing"
+            >
+              <option value="pending">{{ t('bugBounty.monitor.seeds.candidateStatusPending') }}</option>
+              <option value="rejected">{{ t('bugBounty.monitor.seeds.candidateStatusRejected') }}</option>
+            </select>
+            <div class="badge badge-outline badge-sm">
+              {{ candidateStatusCountLabel }}
+            </div>
           </div>
           <span v-if="candidateRefreshing" class="inline-flex items-center gap-2 text-xs text-base-content/50">
             <span class="loading loading-spinner loading-xs"></span>
@@ -363,6 +373,7 @@
                 {{ t('bugBounty.monitor.seeds.approveSelected') }}
               </button>
               <button
+                v-if="canRejectVisibleCandidates"
                 type="button"
                 class="btn btn-sm btn-error"
                 :disabled="candidateReviewing"
@@ -447,6 +458,7 @@
                           <i class="fas fa-check"></i>
                         </button>
                         <button
+                          v-if="canRejectVisibleCandidates"
                           type="button"
                           class="btn btn-ghost btn-xs text-error"
                           :disabled="candidateReviewing"
@@ -501,6 +513,7 @@
                               <i class="fas fa-check"></i>
                             </button>
                             <button
+                              v-if="canRejectVisibleCandidates"
                               type="button"
                               class="btn btn-ghost btn-xs text-error"
                               :disabled="candidateReviewing"
@@ -723,6 +736,7 @@ const searchQuery = ref('')
 const typeFilter = ref('all')
 const statusFilter = ref('all')
 const sourceFilter = ref('all')
+const candidateStatusFilter = ref<'pending' | 'rejected'>('pending')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const pageInput = ref('')
@@ -831,6 +845,13 @@ const allPendingCandidatesSelected = computed(() =>
   pendingCandidateIds.value.length > 0
   && pendingCandidateIds.value.every((candidateId) => selectedCandidateIdSet.value.has(candidateId))
 )
+const canRejectVisibleCandidates = computed(() => candidateStatusFilter.value === 'pending')
+const candidateStatusCountLabel = computed(() => {
+  if (candidateStatusFilter.value === 'rejected') {
+    return t('bugBounty.monitor.seeds.rejectedCount', { count: candidateGroups.value.length })
+  }
+  return t('bugBounty.monitor.seeds.pendingCount', { count: candidateGroups.value.length })
+})
 
 const buildSeedQueryRequest = () => ({
   program_id: resolvedProgramId.value || null,
@@ -905,7 +926,7 @@ const loadPendingCandidates = async (options?: { silent?: boolean }) => {
     }
     pendingCandidates.value = await invoke<SurfaceSeedCandidateRow[]>('surface_list_seed_candidates', {
       programId: resolvedProgramId.value,
-      status: 'pending',
+      status: candidateStatusFilter.value,
     })
     selectedCandidateIds.value = selectedCandidateIds.value.filter((id) => pendingCandidateIds.value.includes(id))
     expandedCandidateGroupKeys.value = expandedCandidateGroupKeys.value.filter((key) =>
@@ -981,6 +1002,22 @@ const openCreateModal = () => {
   editingSeed.value = null
   resetSeedForm()
   showEditorModal.value = true
+}
+
+const openCandidatesModal = async () => {
+  showCandidatesModal.value = true
+  if (candidateStatusFilter.value !== 'pending') {
+    candidateStatusFilter.value = 'pending'
+    return
+  }
+  await loadPendingCandidates({ silent: true })
+}
+
+const closeCandidatesModal = () => {
+  showCandidatesModal.value = false
+  if (candidateStatusFilter.value !== 'pending') {
+    candidateStatusFilter.value = 'pending'
+  }
 }
 
 const openEditModal = (seed: SurfaceSeedRow) => {
@@ -1143,6 +1180,7 @@ const deleteAllSeeds = async () => {
 
 const reviewSeedCandidates = async (candidateIds: string[], decision: 'approved' | 'rejected') => {
   if (!candidateIds.length) return
+  if (decision === 'rejected' && !canRejectVisibleCandidates.value) return
 
   try {
     candidateReviewing.value = true
@@ -1293,6 +1331,12 @@ watch(resolvedProgramId, () => {
   loadPendingCandidates()
   loadLegacySyncedSeedCount()
 }, { immediate: true })
+
+watch(candidateStatusFilter, () => {
+  selectedCandidateIds.value = []
+  expandedCandidateGroupKeys.value = []
+  loadPendingCandidates()
+})
 
 watch([searchQuery, typeFilter, statusFilter, sourceFilter], () => {
   currentPage.value = 1

@@ -7,6 +7,14 @@ import type {
 import type { AiValidationReport } from '../components/PluginManagement/aiGeneratedPluginGate'
 import { stringifySeedBindings } from '../components/PluginManagement/seedBindingsSupport'
 
+const normalizePluginInputMode = (value: unknown): NewPluginMetadata['inputMode'] => {
+  const normalized = String(value || '').trim()
+  if (normalized === 'asset' || normalized === 'seed' || normalized === 'hybrid') {
+    return normalized
+  }
+  return ''
+}
+
 // 对话历史持久化接口
 interface ChatHistoryEntry {
   pluginId: string
@@ -203,7 +211,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
         mainCategory: plugin.metadata.main_category,
         category: plugin.metadata.category,
         monitorType: plugin.metadata.monitor_type || '',
-        inputMode: plugin.metadata.input_mode || '',
+        inputMode: normalizePluginInputMode(plugin.metadata.input_mode),
         default_severity: plugin.metadata.default_severity,
         description: plugin.metadata.description || '',
         tagsString: plugin.metadata.tags.join(', '),

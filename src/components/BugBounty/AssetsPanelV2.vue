@@ -64,16 +64,13 @@
       <div class="card-body">
         <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <h3 class="card-title text-base">{{ t('bugBounty.surface.inventory.title') }}</h3>
-          <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-            <button class="btn btn-outline btn-sm" @click="openImportModal">
-              <i class="fas fa-file-import mr-2"></i>
-              {{ t('bugBounty.surface.inventory.actions.manualImport') }}
-            </button>
-            <button class="btn btn-outline btn-sm" :disabled="exportingAssets" @click="openExportModal()">
-              <span v-if="exportingAssets" class="loading loading-spinner loading-xs mr-2"></span>
-              <i v-else class="fas fa-download mr-2"></i>
-              {{ t('bugBounty.surface.inventory.actions.exportAssets') }}
-            </button>
+          <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+            <input
+              v-model="search"
+              type="text"
+              class="input input-bordered input-sm w-full sm:w-72"
+              :placeholder="t('bugBounty.surface.inventory.searchPlaceholder')"
+            />
             <select v-model="assetTypeFilter" class="select select-bordered select-sm">
               <option value="">{{ t('bugBounty.surface.inventory.allTypes') }}</option>
               <option v-for="option in assetTypeOptions" :key="option.type" :value="option.type">
@@ -85,20 +82,6 @@
               <option value="active">{{ formatStatus('active') }}</option>
               <option value="inactive">{{ formatStatus('inactive') }}</option>
               <option value="unknown">{{ formatStatus('unknown') }}</option>
-            </select>
-            <select v-model="viewStateFilter" class="select select-bordered select-sm">
-              <option value="">{{ t('bugBounty.surface.inventory.viewStates.all') }}</option>
-              <option value="new">{{ t('bugBounty.surface.inventory.viewStates.new') }}</option>
-              <option value="viewed">{{ t('bugBounty.surface.inventory.viewStates.viewed') }}</option>
-            </select>
-            <select
-              v-if="showWebFaviconFilter"
-              v-model="faviconPresenceFilter"
-              class="select select-bordered select-sm"
-            >
-              <option value="">{{ t('bugBounty.surface.inventory.faviconPresence.all') }}</option>
-              <option value="has">{{ t('bugBounty.surface.inventory.faviconPresence.has') }}</option>
-              <option value="missing">{{ t('bugBounty.surface.inventory.faviconPresence.missing') }}</option>
             </select>
             <select
               v-if="showServiceFacetFilters"
@@ -128,12 +111,30 @@
                 {{ option.value }} ({{ option.count }})
               </option>
             </select>
-            <input
-              v-model="search"
-              type="text"
-              class="input input-bordered input-sm w-full sm:w-72"
-              :placeholder="t('bugBounty.surface.inventory.searchPlaceholder')"
-            />
+            <button
+              class="btn btn-outline btn-sm"
+              :class="showMoreInventoryActions ? 'btn-active' : ''"
+              @click="showMoreInventoryActions = !showMoreInventoryActions"
+            >
+              <i class="fas fa-ellipsis-h mr-2"></i>
+              {{ t('bugBounty.surface.inventory.actions.moreActions') }}
+            </button>
+          </div>
+        </div>
+        <div
+          v-if="showMoreInventoryActions"
+          class="rounded-lg border border-base-300 bg-base-200/40 p-3"
+        >
+          <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <button class="btn btn-outline btn-sm" @click="openImportModal">
+              <i class="fas fa-file-import mr-2"></i>
+              {{ t('bugBounty.surface.inventory.actions.manualImport') }}
+            </button>
+            <button class="btn btn-outline btn-sm" :disabled="exportingAssets" @click="openExportModal()">
+              <span v-if="exportingAssets" class="loading loading-spinner loading-xs mr-2"></span>
+              <i v-else class="fas fa-download mr-2"></i>
+              {{ t('bugBounty.surface.inventory.actions.exportAssets') }}
+            </button>
           </div>
         </div>
         <div
@@ -173,9 +174,28 @@
                   />
                 </th>
                 <th v-for="column in inventoryColumns" :key="column.key">
-                  {{ column.label }}
+                  <SurfaceTableColumnFilter
+                    v-if="column.key === 'favicon_hash'"
+                    v-model="faviconPresenceFilter"
+                    :label="column.label"
+                    :options="faviconColumnFilterOptions"
+                  />
+                  <SurfaceTableColumnFilter
+                    v-else-if="column.key === 'http_status_code'"
+                    v-model="httpStatusFilter"
+                    :label="column.label"
+                    :options="httpStatusColumnFilterOptions"
+                    :groups="httpStatusColumnFilterGroups"
+                  />
+                  <span v-else>{{ column.label }}</span>
                 </th>
-                <th>{{ t('bugBounty.surface.inventory.viewStates.column') }}</th>
+                <th>
+                  <SurfaceTableColumnFilter
+                    v-model="viewStateFilter"
+                    :label="t('bugBounty.surface.inventory.viewStates.column')"
+                    :options="viewStateColumnFilterOptions"
+                  />
+                </th>
                 <th class="w-48">{{ t('bugBounty.surface.inventory.actions.column') }}</th>
               </tr>
             </thead>
@@ -526,6 +546,7 @@ import SurfaceFaviconAssetsModal from './SurfaceFaviconAssetsModal.vue'
 import SurfaceAssetImportModal, { type SurfaceAssetImportPayload } from './SurfaceAssetImportModal.vue'
 import SurfaceAssetTypeIcon from './SurfaceAssetTypeIcon.vue'
 import SurfaceIconButton from './SurfaceIconButton.vue'
+import SurfaceTableColumnFilter from './SurfaceTableColumnFilter.vue'
 import { type SurfaceAssetEditPayload, type SurfaceAssetEditTarget } from './surfaceAssetEditSupport'
 import { buildReferencedSurfaceAsset } from './surfaceAssetUtils'
 import {
@@ -559,7 +580,7 @@ const exportingAssets = ref(false)
 const activeTab = ref<'inventory' | 'types' | 'topology' | 'runs'>('inventory')
 const selectedProgramId = ref(props.programId || '')
 const search = ref('')
-const assetTypeFilter = ref('')
+const assetTypeFilter = ref('web')
 const statusFilter = ref('')
 const viewStateFilter = ref('')
 const faviconPresenceFilter = ref('')
@@ -609,7 +630,18 @@ const showFaviconAssetsModal = ref(false)
 const selectedFaviconHash = ref<string | null>(null)
 const serviceNameOptions = ref<Array<{ value: string; count: number }>>([])
 const transportProtocolOptions = ref<Array<{ value: string; count: number }>>([])
+const httpStatusOptions = ref<Array<{ value: string; count: number }>>([])
 const preferredExportType = ref<SurfaceAssetExportType>('all')
+const httpStatusFilter = ref('')
+const showMoreInventoryActions = ref(false)
+const commonHttpStatusCodes = ['200', '201', '204', '301', '302', '304', '400', '401', '403', '404', '405', '429', '500', '502', '503', '504']
+const httpStatusGroupLabels: Record<string, string> = {
+  '1': '1xx',
+  '2': '2xx',
+  '3': '3xx',
+  '4': '4xx',
+  '5': '5xx',
+}
 
 const assetTypeOptions = computed(() => {
   return Object.entries(overview.value.by_type || {})
@@ -634,6 +666,7 @@ const exportAssetTypes = computed(() =>
 )
 const showServiceFacetFilters = computed(() => assetTypeFilter.value === 'service')
 const showWebFaviconFilter = computed(() => assetTypeFilter.value === 'web')
+const showWebHttpStatusFilter = computed(() => assetTypeFilter.value === 'web')
 const selectedProgramName = computed(() => {
   const selected = (props.programs || []).find(program => program.id === selectedProgramId.value)
   return selected?.name || null
@@ -660,6 +693,11 @@ const hasFaviconHashFilterValue = computed(() => {
   if (faviconPresenceFilter.value === 'missing') return false
   return null
 })
+const httpStatusFilterValue = computed(() => {
+  if (!showWebHttpStatusFilter.value) return null
+  const parsed = Number.parseInt(httpStatusFilter.value, 10)
+  return Number.isFinite(parsed) ? parsed : null
+})
 const hasInventoryFilters = computed(() =>
   Boolean(
     selectedProgramId.value ||
@@ -667,9 +705,55 @@ const hasInventoryFilters = computed(() =>
       statusFilter.value ||
       viewStateFilter.value ||
       faviconPresenceFilter.value ||
+      serviceNameFilter.value ||
+      transportProtocolFilter.value ||
+      httpStatusFilter.value ||
       search.value.trim(),
   ),
 )
+const viewStateColumnFilterOptions = computed(() => [
+  { value: '', label: t('bugBounty.surface.inventory.viewStates.all') },
+  { value: 'new', label: t('bugBounty.surface.inventory.viewStates.new') },
+  { value: 'viewed', label: t('bugBounty.surface.inventory.viewStates.viewed') },
+])
+const faviconColumnFilterOptions = computed(() => [
+  { value: '', label: t('bugBounty.surface.inventory.faviconPresence.all') },
+  { value: 'has', label: t('bugBounty.surface.inventory.faviconPresence.has') },
+  { value: 'missing', label: t('bugBounty.surface.inventory.faviconPresence.missing') },
+])
+const httpStatusColumnFilterOptions = computed(() => [
+  { value: '', label: t('bugBounty.surface.inventory.httpStatus.all') },
+  ...Array.from(
+    new Set([
+      ...commonHttpStatusCodes,
+      ...httpStatusOptions.value.map(option => option.value),
+    ]),
+  )
+    .sort((a, b) => Number(a) - Number(b))
+    .map((value) => {
+      const matched = httpStatusOptions.value.find(option => option.value === value)
+      return {
+        value,
+        label: matched ? `${value} (${matched.count})` : value,
+      }
+    }),
+])
+const httpStatusColumnFilterGroups = computed(() => {
+  const grouped = new Map<string, Array<{ value: string; label: string }>>()
+  for (const option of httpStatusColumnFilterOptions.value.slice(1)) {
+    const groupKey = option.value.charAt(0)
+    const targetKey = httpStatusGroupLabels[groupKey] ? groupKey : 'other'
+    if (!grouped.has(targetKey)) {
+      grouped.set(targetKey, [])
+    }
+    grouped.get(targetKey)?.push(option)
+  }
+
+  return Array.from(grouped.entries()).map(([key, options]) => ({
+    label: httpStatusGroupLabels[key] || t('bugBounty.surface.inventory.httpStatus.other'),
+    options,
+  }))
+})
 
 const inventoryColumns = computed(() => {
   const generic = [
@@ -772,6 +856,7 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
         view_state: viewStateFilter.value || null,
         search: search.value.trim() || null,
         has_favicon_hash: hasFaviconHashFilterValue.value,
+        http_status_code: httpStatusFilterValue.value,
         service_name: serviceNameFilter.value || null,
         transport_protocol: transportProtocolFilter.value || null,
         limit: inventoryPageSize.value + 1,
@@ -803,9 +888,10 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
 }
 
 const loadInventoryFacets = async (programId = selectedProgramId.value || null) => {
-  if (!showServiceFacetFilters.value) {
+  if (!showServiceFacetFilters.value && !showWebHttpStatusFilter.value) {
     serviceNameOptions.value = []
     transportProtocolOptions.value = []
+    httpStatusOptions.value = []
     return
   }
 
@@ -818,6 +904,7 @@ const loadInventoryFacets = async (programId = selectedProgramId.value || null) 
         view_state: viewStateFilter.value || null,
         search: search.value.trim() || null,
         has_favicon_hash: hasFaviconHashFilterValue.value,
+        http_status_code: null,
         service_name: null,
         transport_protocol: null,
         limit: null,
@@ -827,10 +914,12 @@ const loadInventoryFacets = async (programId = selectedProgramId.value || null) 
 
     serviceNameOptions.value = Array.isArray(response?.service_names) ? response.service_names : []
     transportProtocolOptions.value = Array.isArray(response?.transport_protocols) ? response.transport_protocols : []
+    httpStatusOptions.value = Array.isArray(response?.http_status_codes) ? response.http_status_codes : []
   } catch (error) {
     console.error('Failed to load surface inventory facets:', error)
     serviceNameOptions.value = []
     transportProtocolOptions.value = []
+    httpStatusOptions.value = []
   }
 }
 
@@ -845,6 +934,7 @@ const loadNewAssetCount = async (programId = selectedProgramId.value || null) =>
         search: null,
         favicon_hash: null,
         has_favicon_hash: null,
+        http_status_code: null,
         service_name: null,
         transport_protocol: null,
         limit: null,
@@ -988,6 +1078,7 @@ const applyAssetStatsFilter = (assetType?: string | null) => {
   statusFilter.value = ''
   viewStateFilter.value = assetStatsFilter.value === 'new' ? 'new' : ''
   faviconPresenceFilter.value = ''
+  httpStatusFilter.value = ''
   serviceNameFilter.value = ''
   transportProtocolFilter.value = ''
   search.value = ''
@@ -1134,6 +1225,7 @@ const getInventoryFilterPayload = () => ({
   view_state: viewStateFilter.value || null,
   search: search.value.trim() || null,
   has_favicon_hash: hasFaviconHashFilterValue.value,
+  http_status_code: httpStatusFilterValue.value,
   service_name: serviceNameFilter.value || null,
   transport_protocol: transportProtocolFilter.value || null,
   limit: null,
@@ -1360,6 +1452,10 @@ const buildExportFilterPayload = (exportType: SurfaceAssetExportType) => {
     view_state: viewStateFilter.value || null,
     search: search.value.trim() || null,
     has_favicon_hash: useWebFaviconFilter ? hasFaviconHashFilterValue.value : null,
+    http_status_code:
+      ((useCurrentType && assetTypeFilter.value === 'web') || exportType === 'web')
+        ? httpStatusFilterValue.value
+        : null,
     service_name: useServiceFacetFilters ? serviceNameFilter.value || null : null,
     transport_protocol: useServiceFacetFilters ? transportProtocolFilter.value || null : null,
     limit: null,
@@ -1560,7 +1656,7 @@ watch(selectedProgramId, () => {
   loadAll()
 })
 
-watch([assetTypeFilter, statusFilter, viewStateFilter, faviconPresenceFilter, serviceNameFilter, transportProtocolFilter], () => {
+watch([assetTypeFilter, statusFilter, viewStateFilter, faviconPresenceFilter, httpStatusFilter, serviceNameFilter, transportProtocolFilter], () => {
   clearSelection()
   reloadInventoryFromFirstPage()
 })
@@ -1568,15 +1664,18 @@ watch([assetTypeFilter, statusFilter, viewStateFilter, faviconPresenceFilter, se
 watch(assetTypeFilter, (value) => {
   if (value !== 'web') {
     faviconPresenceFilter.value = ''
+    httpStatusFilter.value = ''
+    httpStatusOptions.value = []
   }
   if (value !== 'service') {
     serviceNameFilter.value = ''
     transportProtocolFilter.value = ''
     serviceNameOptions.value = []
     transportProtocolOptions.value = []
-    return
   }
-  loadInventoryFacets()
+  if (value === 'service' || value === 'web') {
+    loadInventoryFacets()
+  }
 })
 
 watch(inventoryPage, () => {
