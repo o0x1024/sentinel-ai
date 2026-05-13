@@ -141,6 +141,26 @@ pub async fn get_proxy_request_preview(
     Ok(CommandResponse::ok(request))
 }
 
+/// 根据流量运行请求 ID 获取代理请求预览详情
+#[tauri::command]
+pub async fn get_proxy_request_by_traffic_request_id(
+    state: State<'_, TrafficAnalysisState>,
+    traffic_request_id: String,
+) -> Result<CommandResponse<Option<ProxyRequestDetailPreview>>, String> {
+    let request_id = traffic_request_id.trim();
+    if request_id.is_empty() {
+        return Ok(CommandResponse::ok(None));
+    }
+
+    let cache = state.get_history_cache();
+    let request = cache
+        .get_http_request_by_traffic_request_id(request_id)
+        .await
+        .map(build_proxy_request_preview);
+
+    Ok(CommandResponse::ok(request))
+}
+
 /// 根据数据库请求 ID 解析当前历史缓存里的请求 ID，不存在则从数据库加载到缓存
 #[tauri::command]
 pub async fn resolve_proxy_history_request_id_by_db_request_id(

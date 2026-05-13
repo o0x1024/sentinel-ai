@@ -1,8 +1,12 @@
 <template>
   <!-- Code Editor Dialog -->
   <AppDialog ref="codeEditorDialogRef" class="modal" :class="{ 'fullscreen-mode-active': isFullscreenEditor }" @cancel="handleDialogCancel">
-    <div class="modal-box w-11/12 max-w-5xl max-h-[90vh] overflow-y-auto" :class="{ 'invisible': isFullscreenEditor }">
-      <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
+    <div
+      class="modal-box plugin-code-editor-modal-box w-11/12 max-w-5xl max-h-[90vh] overflow-hidden flex flex-col"
+      :class="{ 'invisible': isFullscreenEditor }"
+    >
+      <div class="plugin-code-editor-scroll min-h-0 flex-1 overflow-y-auto pr-1 pb-4">
+        <div class="flex justify-between items-start mb-4 pb-2">
         <div class="flex items-center gap-2">
           <h3 class="font-bold text-lg">
             {{ editingPlugin ? $t('plugins.codeEditor', '插件代码编辑器') : $t('plugins.newPlugin', '新增插件') }}
@@ -229,11 +233,12 @@
         @focus-issue="(sectionKey, issueCode, message) => emit('focusValidationIssue', sectionKey, issueCode, message)"
       />
 
-      <div v-if="codeError" class="alert alert-error mt-4">
+      <div v-if="codeError && !isFullscreenEditor" class="alert alert-error mt-4">
         <i class="fas fa-exclamation-circle"></i><span>{{ codeError }}</span>
       </div>
+      </div>
 
-      <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
+      <div class="modal-action plugin-code-editor-actions shrink-0 bg-base-100 border-t border-base-300 pt-3 mt-3">
         <button class="btn btn-sm" @click="closeDialog">{{ $t('common.close', '关闭') }}</button>
         <template v-if="editingPlugin">
           <button v-if="!isEditing" class="btn btn-primary btn-sm" @click="$emit('enableEditing')">
@@ -256,6 +261,14 @@
       </div>
     </div>
     <form method="dialog" class="modal-backdrop" :class="{ 'invisible pointer-events-none': isFullscreenEditor }"><button @click="closeDialog">close</button></form>
+    <div
+      v-if="editorToast.visible && !isFullscreenEditor"
+      class="plugin-editor-window-toast toast toast-bottom toast-end"
+    >
+      <div class="alert shadow-lg" :class="editorToastClass">
+        <i :class="`fas ${editorToast.iconClass}`"></i><span>{{ editorToast.message }}</span>
+      </div>
+    </div>
   </AppDialog>
 
   <!-- Fullscreen Editor Overlay -->
@@ -428,9 +441,19 @@
         </div>
       </div>
 
-      <div v-if="codeError" class="fullscreen-editor-error toast toast-bottom toast-center">
-        <div class="alert alert-error shadow-lg">
-          <i class="fas fa-exclamation-circle"></i><span>{{ codeError }}</span>
+      <div
+        v-if="editorToast.visible"
+        class="toast toast-bottom toast-end"
+        :style="{
+          position: 'fixed',
+          right: '1rem',
+          bottom: '1rem',
+          zIndex: '2147483647',
+          pointerEvents: 'none'
+        }"
+      >
+        <div class="alert shadow-lg" :class="editorToastClass">
+          <i :class="`fas ${editorToast.iconClass}`"></i><span>{{ editorToast.message }}</span>
         </div>
       </div>
       <div
@@ -446,7 +469,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { PluginRecord, NewPluginMetadata, SubCategory, CodeReference, TestResultReference, AiChatMessage } from './types'
@@ -592,9 +615,52 @@ const dragOffset = ref({ x: 0, y: 0 })
 
 // Shortcuts menu state
 const showShortcutsMenu = ref(false)
+type EditorToastType = 'success' | 'error' | 'info' | 'warning'
+const editorToast = ref<{
+  visible: boolean
+  message: string
+  type: EditorToastType
+  iconClass: string
+}>({
+  visible: false,
+  message: '',
+  type: 'error' as EditorToastType,
+  iconClass: 'fa-times-circle',
+})
+const editorToastIconClass = {
+  success: 'fa-check-circle',
+  error: 'fa-times-circle',
+  info: 'fa-info-circle',
+  warning: 'fa-exclamation-triangle',
+}
+const editorToastClass = computed(() => ({
+  'alert-success': editorToast.value.type === 'success',
+  'alert-error': editorToast.value.type === 'error',
+  'alert-info': editorToast.value.type === 'info',
+  'alert-warning': editorToast.value.type === 'warning',
+}))
+let editorToastTimer: ReturnType<typeof setTimeout> | null = null
 
 const toggleShortcutsMenu = () => {
   showShortcutsMenu.value = !showShortcutsMenu.value
+}
+
+const showToast = (message: string, type: EditorToastType = 'success') => {
+  const toastType = type || 'success'
+  if (editorToastTimer) {
+    clearTimeout(editorToastTimer)
+  }
+
+  editorToast.value = {
+    visible: true,
+    message,
+    type: toastType,
+    iconClass: editorToastIconClass[toastType],
+  }
+
+  editorToastTimer = setTimeout(() => {
+    editorToast.value.visible = false
+  }, 3000)
 }
 
 const closeShortcutsMenu = () => {
@@ -752,6 +818,10 @@ onBeforeUnmount(() => {
   if (seedBindingSchemaTimer) {
     clearTimeout(seedBindingSchemaTimer)
   }
+  if (editorToastTimer) {
+    clearTimeout(editorToastTimer)
+    editorToastTimer = null
+  }
 })
 
 const seedBindingsError = computed(() => {
@@ -824,7 +894,8 @@ const restoreModal = () => {
 defineExpose({
   showDialog, closeDialog,
   hideModalTemporary, restoreModal,
-  codeEditorContainerRef, fullscreenCodeEditorContainerRef, fullscreenDiffEditorContainerRef
+  codeEditorContainerRef, fullscreenCodeEditorContainerRef, fullscreenDiffEditorContainerRef,
+  showToast,
 })
 </script>
 
@@ -854,6 +925,18 @@ defineExpose({
 
 /* 确保全屏编辑器覆盖层内所有元素能正确接收事件 */
 .fullscreen-editor-overlay * {
+  pointer-events: auto;
+}
+
+.plugin-editor-window-toast {
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+.plugin-editor-window-toast .alert {
   pointer-events: auto;
 }
 

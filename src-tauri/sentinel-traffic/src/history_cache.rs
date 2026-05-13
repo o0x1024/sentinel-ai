@@ -448,6 +448,18 @@ impl ProxyHistoryCache {
             .cloned()
     }
 
+    /// 根据流量运行请求 ID 获取 HTTP 请求
+    pub async fn get_http_request_by_traffic_request_id(
+        &self,
+        traffic_request_id: &str,
+    ) -> Option<HttpRequestRecord> {
+        let requests = self.http_requests.read().await;
+        requests
+            .iter()
+            .find(|request| request.traffic_request_id.as_deref() == Some(traffic_request_id))
+            .cloned()
+    }
+
     /// 统计 HTTP 请求数量
     pub async fn count_http_requests(&self) -> usize {
         self.http_requests.read().await.len()

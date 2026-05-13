@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -338,6 +338,8 @@ pub(crate) async fn collect_monitor_targets(
             service_name: None,
             transport_protocol: None,
             view_state: None,
+            is_favorite: None,
+            column_filters: None,
             limit: None,
             offset: None,
         },
@@ -369,6 +371,13 @@ pub(crate) struct MonitorResolvedTargets {
     pub extra_input: Map<String, Value>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum MonitorInputMode {
+    Asset,
+    Seed,
+    Hybrid,
+}
+
 fn push_unique_resolved_target(
     resolved: &mut MonitorResolvedTargets,
     seen: &mut HashSet<String>,
@@ -380,6 +389,111 @@ fn push_unique_resolved_target(
         resolved.targets.push(normalized);
         resolved.target_objects.push(target_object);
     }
+}
+
+fn high_cost_monitor_target_limit(plugin_id: &str) -> Option<usize> {
+    match plugin_id {
+        "api_monitor" => Some(500),
+        "content_monitor" | "risk_scanner" | "sensitive_file_scanner" => Some(1_000),
+        "directory_bruteforcer" | "subdomain_takeover" => Some(800),
+        _ => None,
+    }
+}
+
+fn finalize_monitor_resolved_targets(
+    plugin_id: &str,
+    mut resolved: MonitorResolvedTargets,
+) -> MonitorResolvedTargets {
+    if let Some(limit) = high_cost_monitor_target_limit(plugin_id) {
+        let original = resolved.targets.len();
+        if original > limit {
+            resolved.targets.truncate(limit);
+            resolved.target_objects.truncate(limit);
+            resolved.extra_input.insert(
+                "__monitorTargetLimit".to_string(),
+                json!({
+                    "original": original,
+                    "limit": limit,
+                    "reason": "high_cost_plugin"
+                }),
+            );
+        }
+    }
+    resolved
+}
+
+fn monitor_target_source_label(value: &str) -> &str {
+    match value {
+        "scope" => "项目范围",
+        "surface_asset" => "资产库",
+        "bounty_asset" => "漏洞赏金资产",
+        "seed" => "项目种子",
+        "fallback" => "兜底目标",
+        _ => value,
+    }
+}
+
+fn monitor_target_type_label(value: &str) -> &str {
+    match value {
+        "domain" => "域名",
+        "web" => "Web",
+        "service" => "服务",
+        "ip" => "IP",
+        "host" => "主机",
+        "generic" => "通用",
+        _ => value,
+    }
+}
+
+pub(crate) fn format_monitor_target_breakdown(resolved: &MonitorResolvedTargets) -> Option<String> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for target_object in &resolved.target_objects {
+        let Some(object) = target_object.as_object() else {
+            continue;
+        };
+        let source = object
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let target_type = object
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let label = format!(
+            "{}/{}",
+            monitor_target_source_label(source),
+            monitor_target_type_label(target_type)
+        );
+        *counts.entry(label).or_default() += 1;
+    }
+
+    if counts.is_empty() {
+        return None;
+    }
+
+    let parts = counts
+        .into_iter()
+        .map(|(label, count)| format!("{label} {count}"))
+        .collect::<Vec<_>>();
+    let mut label = format!("目标来源：{}", parts.join(", "));
+    if let Some(limit) = resolved
+        .extra_input
+        .get("__monitorTargetLimit")
+        .and_then(Value::as_object)
+    {
+        let original = limit
+            .get("original")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let limit_value = limit
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        if original > 0 && limit_value > 0 {
+            label.push_str(&format!("；高成本插件已截断：{original} -> {limit_value}"));
+        }
+    }
+    Some(label)
 }
 
 fn normalize_monitor_target_asset_type(value: &str) -> Option<&'static str> {
@@ -448,6 +562,117 @@ fn normalized_monitor_plugin_id(plugin_id: &str) -> &str {
 
 fn plugin_uses_in_scope_domain_targets_only(plugin_id: &str) -> bool {
     matches!(plugin_id, "subdomain_enumerator" | "subdomain_brute")
+}
+
+fn normalize_plugin_input_mode(value: Option<&str>) -> Option<MonitorInputMode> {
+    match value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "asset" => Some(MonitorInputMode::Asset),
+        "seed" => Some(MonitorInputMode::Seed),
+        "hybrid" => Some(MonitorInputMode::Hybrid),
+        _ => None,
+    }
+}
+
+async fn inject_monitor_seed_inputs(
+    db_service: &Arc<DatabaseService>,
+    task: &MonitorTask,
+    plugin: &MonitorPluginConfig,
+    resolved: &mut MonitorResolvedTargets,
+) -> Result<(), String> {
+    let seed_config = plugin.normalized_seed_config();
+    if seed_config.bindings.is_empty() {
+        return Ok(());
+    }
+
+    db_service
+        .rename_surface_seed_type("fofa_icon_hash", "favicon_hash")
+        .await
+        .map_err(|e| e.to_string())?;
+    let seeds = db_service
+        .list_surface_seeds(Some(&task.program_id), Some("active"))
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut seed_groups: HashMap<String, Vec<String>> = HashMap::new();
+    let mut seen_seed_keys = HashSet::new();
+
+    for binding in seed_config.bindings {
+        if binding.use_project_seeds {
+            let selected_project_values: HashSet<String> = binding
+                .selected_project_values
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect();
+
+            for seed in seeds
+                .iter()
+                .filter(|seed| seed.seed_type == binding.seed_type)
+            {
+                if !selected_project_values.is_empty()
+                    && !selected_project_values.contains(&seed.seed_value)
+                {
+                    continue;
+                }
+
+                let dedupe_key = format!("{}::{}", binding.input_key, seed.seed_value);
+                if !seen_seed_keys.insert(dedupe_key) {
+                    continue;
+                }
+                seed_groups
+                    .entry(binding.input_key.clone())
+                    .or_default()
+                    .push(seed.seed_value.clone());
+            }
+        }
+
+        for manual_value in binding.manual_values {
+            let dedupe_key = format!("{}::{}", binding.input_key, manual_value);
+            if !seen_seed_keys.insert(dedupe_key) {
+                continue;
+            }
+            seed_groups
+                .entry(binding.input_key.clone())
+                .or_default()
+                .push(manual_value);
+        }
+    }
+
+    for (key, values) in seed_groups {
+        resolved.extra_input.insert(
+            key,
+            Value::Array(values.into_iter().map(Value::String).collect()),
+        );
+    }
+
+    Ok(())
+}
+
+async fn resolve_plugin_input_mode(
+    db_service: &Arc<DatabaseService>,
+    plugin: &MonitorPluginConfig,
+) -> MonitorInputMode {
+    let normalized_plugin_id = normalized_monitor_plugin_id(&plugin.plugin_id);
+
+    let plugin_metadata = db_service
+        .get_plugin_from_registry(normalized_plugin_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|record| record.metadata);
+
+    normalize_plugin_input_mode(
+        plugin_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.input_mode.as_deref()),
+    )
+    .unwrap_or(MonitorInputMode::Asset)
 }
 
 fn service_port_from_details(details: &Map<String, Value>) -> Option<i32> {
@@ -607,6 +832,8 @@ where
                 service_name: base_filter.service_name.clone(),
                 transport_protocol: base_filter.transport_protocol.clone(),
                 view_state: base_filter.view_state.clone(),
+                is_favorite: base_filter.is_favorite,
+                column_filters: base_filter.column_filters.clone(),
                 limit: Some(MONITOR_TARGET_PAGE_SIZE),
                 offset: Some(offset),
             })
@@ -635,8 +862,13 @@ where
 async fn resolve_plugin_target_asset_types(
     db_service: &Arc<DatabaseService>,
     plugin: &MonitorPluginConfig,
+    input_mode: MonitorInputMode,
 ) -> Vec<String> {
     let normalized_plugin_id = normalized_monitor_plugin_id(&plugin.plugin_id);
+
+    if matches!(input_mode, MonitorInputMode::Seed) {
+        return Vec::new();
+    }
 
     let plugin_metadata = db_service
         .get_plugin_from_registry(normalized_plugin_id)
@@ -648,16 +880,6 @@ async fn resolve_plugin_target_asset_types(
     let Some(plugin_metadata) = plugin_metadata else {
         return plugin.resolved_target_asset_types(&[]);
     };
-
-    let input_mode = plugin_metadata
-        .input_mode
-        .as_deref()
-        .map(str::trim)
-        .map(str::to_ascii_lowercase);
-
-    if matches!(input_mode.as_deref(), Some("seed")) {
-        return Vec::new();
-    }
 
     plugin.resolved_target_asset_types(&plugin_metadata.target_asset_types)
 }
@@ -674,14 +896,28 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
     let normalized_plugin_id = normalized_monitor_plugin_id(&plugin.plugin_id);
     let http_prober_mode = normalized_plugin_id == "http_prober";
     let https_service_targets_only = matches!(normalized_plugin_id, "cert_monitor" | "ssl_scanner");
+    let input_mode = resolve_plugin_input_mode(db_service, plugin).await;
     let in_scope_domain_targets_only =
         plugin_uses_in_scope_domain_targets_only(normalized_plugin_id);
-    let requested_asset_types: HashSet<String> =
-        resolve_plugin_target_asset_types(db_service, plugin)
+    let mut requested_asset_types: HashSet<String> =
+        resolve_plugin_target_asset_types(db_service, plugin, input_mode)
             .await
             .into_iter()
             .filter_map(|value| normalize_monitor_target_asset_type(&value).map(str::to_string))
             .collect();
+    if normalized_plugin_id == "cert_monitor" {
+        requested_asset_types.clear();
+        requested_asset_types.insert("domain".to_string());
+    }
+
+    if matches!(input_mode, MonitorInputMode::Seed) {
+        let mut resolved = MonitorResolvedTargets::default();
+        inject_monitor_seed_inputs(db_service, task, plugin, &mut resolved).await?;
+        return Ok(finalize_monitor_resolved_targets(
+            normalized_plugin_id,
+            resolved,
+        ));
+    }
 
     if requested_asset_types.is_empty() && !plugin_declares_seed_config(plugin) {
         let targets = collect_monitor_targets(db_service, &task.program_id).await?;
@@ -689,11 +925,14 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
             .iter()
             .map(|target| json!({ "type": "generic", "value": target, "source": "fallback" }))
             .collect();
-        return Ok(MonitorResolvedTargets {
-            targets,
-            target_objects,
-            extra_input: Map::new(),
-        });
+        return Ok(finalize_monitor_resolved_targets(
+            normalized_plugin_id,
+            MonitorResolvedTargets {
+                targets,
+                target_objects,
+                extra_input: Map::new(),
+            },
+        ));
     }
 
     let scopes = db_service
@@ -743,7 +982,13 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
     }
 
     if in_scope_domain_targets_only {
-        return Ok(resolved);
+        if matches!(input_mode, MonitorInputMode::Hybrid) {
+            inject_monitor_seed_inputs(db_service, task, plugin, &mut resolved).await?;
+        }
+        return Ok(finalize_monitor_resolved_targets(
+            normalized_plugin_id,
+            resolved,
+        ));
     }
 
     visit_surface_assets(
@@ -759,6 +1004,8 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
             service_name: None,
             transport_protocol: None,
             view_state: None,
+            is_favorite: None,
+            column_filters: None,
             limit: None,
             offset: None,
         },
@@ -889,67 +1136,8 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
         }
     }
 
-    let seed_config = plugin.normalized_seed_config();
-    if !seed_config.bindings.is_empty() {
-        db_service
-            .rename_surface_seed_type("fofa_icon_hash", "favicon_hash")
-            .await
-            .map_err(|e| e.to_string())?;
-        let seeds = db_service
-            .list_surface_seeds(Some(&task.program_id), Some("active"))
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut seed_groups: HashMap<String, Vec<String>> = HashMap::new();
-        let mut seen_seed_keys = HashSet::new();
-
-        for binding in seed_config.bindings {
-            if binding.use_project_seeds {
-                let selected_project_values: HashSet<String> = binding
-                    .selected_project_values
-                    .iter()
-                    .map(|value| value.trim())
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
-                    .collect();
-
-                for seed in seeds
-                    .iter()
-                    .filter(|seed| seed.seed_type == binding.seed_type)
-                {
-                    if !selected_project_values.is_empty()
-                        && !selected_project_values.contains(&seed.seed_value)
-                    {
-                        continue;
-                    }
-                    let dedupe_key = format!("{}::{}", binding.input_key, seed.seed_value);
-                    if !seen_seed_keys.insert(dedupe_key) {
-                        continue;
-                    }
-                    seed_groups
-                        .entry(binding.input_key.clone())
-                        .or_default()
-                        .push(seed.seed_value.clone());
-                }
-            }
-
-            for manual_value in binding.manual_values {
-                let dedupe_key = format!("{}::{}", binding.input_key, manual_value);
-                if !seen_seed_keys.insert(dedupe_key) {
-                    continue;
-                }
-                seed_groups
-                    .entry(binding.input_key.clone())
-                    .or_default()
-                    .push(manual_value);
-            }
-        }
-
-        for (key, values) in seed_groups {
-            resolved.extra_input.insert(
-                key,
-                Value::Array(values.into_iter().map(Value::String).collect()),
-            );
-        }
+    if matches!(input_mode, MonitorInputMode::Hybrid) {
+        inject_monitor_seed_inputs(db_service, task, plugin, &mut resolved).await?;
     }
 
     if requested_asset_types.contains("service")
@@ -1103,7 +1291,10 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
         }
     }
 
-    Ok(resolved)
+    Ok(finalize_monitor_resolved_targets(
+        normalized_plugin_id,
+        resolved,
+    ))
 }
 
 #[cfg(test)]

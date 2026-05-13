@@ -237,10 +237,10 @@ fn generate_markdown_report(findings: &[FindingExportData], language: &str) -> S
                     "Reproduction Steps"
                 }
             ));
-            for (j, step) in steps.iter().enumerate() {
-                md.push_str(&format!("{}. {}\n", j + 1, step));
+            for step in steps {
+                md.push_str(step);
+                md.push_str("\n\n");
             }
-            md.push_str("\n");
         }
 
         if !finding.evidence.is_empty() {

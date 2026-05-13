@@ -17,7 +17,7 @@ use crate::service_probe_native::{collect_probe_evidence, match_evidence, servic
 
 const DEFAULT_CONCURRENCY: usize = 16;
 const MAX_CONCURRENCY: usize = 64;
-const DEFAULT_TIMEOUT_MS: u64 = 5000;
+const DEFAULT_TIMEOUT_MS: u64 = 3000;
 
 #[derive(Debug, Clone, Serialize)]
 struct MonitorTaskServiceProbeProgressEvent {
@@ -250,7 +250,7 @@ pub async fn probe_services(request: ServiceProbeRequest) -> ServiceProbeRespons
         };
     }
 
-    let timeout_ms = request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).max(250);
+    let timeout_ms = DEFAULT_TIMEOUT_MS;
     let concurrency = request
         .concurrency
         .unwrap_or(DEFAULT_CONCURRENCY)
@@ -458,7 +458,7 @@ mod tests {
                 metadata: Value::Null,
             }],
             dictionary_id: None,
-            timeout_ms: Some(500),
+            timeout_ms: Some(3000),
             concurrency: Some(1),
             follow_http_redirects: Some(false),
             read_banner: Some(true),

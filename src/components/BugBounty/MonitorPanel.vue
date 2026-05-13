@@ -191,19 +191,20 @@
                 <label class="label"
                   ><span class="label-text">{{ t('bugBounty.monitor.checkInterval') }} *</span></label
                 >
-                <select v-model="taskForm.interval_secs" class="select select-bordered">
-                  <option :value="3600">{{ t('bugBounty.monitor.intervals.hourly') }}</option>
-                  <option :value="6 * 3600">
-                    {{ t('bugBounty.monitor.intervals.every6Hours') }}
-                  </option>
-                  <option :value="12 * 3600">
-                    {{ t('bugBounty.monitor.intervals.every12Hours') }}
-                  </option>
-                  <option :value="24 * 3600">{{ t('bugBounty.monitor.intervals.daily') }}</option>
-                  <option :value="7 * 24 * 3600">
-                    {{ t('bugBounty.monitor.intervals.weekly') }}
-                  </option>
-                </select>
+                <div class="join w-full">
+                  <input
+                    v-model.number="taskForm.interval_value"
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="input input-bordered join-item w-full"
+                    :placeholder="t('bugBounty.monitor.intervalValuePlaceholder')"
+                  />
+                  <select v-model="taskForm.interval_unit" class="select select-bordered join-item w-32">
+                    <option value="minutes">{{ t('bugBounty.monitor.minutes') }}</option>
+                    <option value="hours">{{ t('bugBounty.monitor.hours') }}</option>
+                  </select>
+                </div>
               </div>
 
               <div class="divider">{{ t('bugBounty.monitor.monitorTypes') }}</div>
@@ -531,7 +532,7 @@ const availablePlugins = ref<any[]>([])
 const loadingPlugins = ref(false)
 const stoppingTaskIds = ref<Set<string>>(new Set())
 const pluginInputSchemaCache = new Map<string, any>()
-const { isTaskRunning, getTaskProgress, markTaskQueued, pruneTaskProgress, loadRunningTasks, setupTaskProgressListener } = useMonitorTaskProgress()
+const { isTaskRunning, getTaskProgress, markTaskQueued, markTaskStopped, pruneTaskProgress, loadRunningTasks, setupTaskProgressListener } = useMonitorTaskProgress()
 
 const createEmptyTaskConfig = () => ({
   enable_dns_monitoring: false,
@@ -702,6 +703,9 @@ const loadPluginInputSchema = async (pluginId: string) => {
   }
 
   const response = await invoke<any>('get_plugin_input_schema', { pluginId: normalizedPluginId })
+  if (response?.success === false) {
+    throw new Error(response?.error || `Failed to load input schema for ${normalizedPluginId}`)
+  }
   const resolvedSchema =
     response?.success && response?.data && typeof response.data === 'object'
       ? response.data
@@ -887,13 +891,40 @@ const getPluginConfigs = (monitorType: string) => {
   }
 }
 
+type IntervalUnit = 'minutes' | 'hours'
+
+const INTERVAL_UNIT_SECONDS: Record<IntervalUnit, number> = {
+  minutes: 60,
+  hours: 3600,
+}
+
 const taskForm = reactive({
   name: '',
   program_id: '',
   program_ids: [] as string[],
-  interval_secs: 6 * 3600, // 6 hours default
+  interval_value: 6,
+  interval_unit: 'hours' as IntervalUnit,
   config: createEmptyTaskConfig(),
 })
+
+const resolveTaskIntervalSecs = () => {
+  const intervalValue = Number(taskForm.interval_value)
+  if (!Number.isInteger(intervalValue) || intervalValue < 1) {
+    return null
+  }
+  return intervalValue * INTERVAL_UNIT_SECONDS[taskForm.interval_unit]
+}
+
+const setTaskIntervalFields = (intervalSecs: number) => {
+  if (intervalSecs % INTERVAL_UNIT_SECONDS.hours === 0) {
+    taskForm.interval_value = intervalSecs / INTERVAL_UNIT_SECONDS.hours
+    taskForm.interval_unit = 'hours'
+    return
+  }
+
+  taskForm.interval_value = intervalSecs / INTERVAL_UNIT_SECONDS.minutes
+  taskForm.interval_unit = 'minutes'
+}
 
 const programOptions = computed(() => props.programs || [])
 
@@ -1072,6 +1103,7 @@ const stopScheduler = async () => {
     await invoke('monitor_stop_scheduler')
     schedulerRunning.value = false
     toast.success(t('bugBounty.monitor.schedulerStopped'))
+    await loadRunningTasks(tasks.value)
     await refreshStats()
   } catch (error) {
     console.error('Failed to stop scheduler:', error)
@@ -1122,6 +1154,11 @@ const saveTask = async () => {
     toast.error(t('bugBounty.monitor.selectProgramsFirst'))
     return
   }
+  const intervalSecs = resolveTaskIntervalSecs()
+  if (!intervalSecs) {
+    toast.error(t('bugBounty.monitor.invalidInterval'))
+    return
+  }
 
   try {
     const paramValidationErrors = collectParamValidationErrors(taskForm.config)
@@ -1143,7 +1180,7 @@ const saveTask = async () => {
         taskId: editingTask.value.id,
         request: {
           name: taskForm.name,
-          interval_secs: taskForm.interval_secs,
+          interval_secs: intervalSecs,
           config: normalizedConfig,
         },
       })
@@ -1153,7 +1190,7 @@ const saveTask = async () => {
         request: {
           program_ids: selectedProgramIds,
           name: taskForm.name,
-          interval_secs: taskForm.interval_secs,
+          interval_secs: intervalSecs,
           config: normalizedConfig,
         },
       })
@@ -1212,12 +1249,14 @@ const triggerTask = async (task: any) => {
 const stopTask = async (task: any) => {
   try {
     stoppingTaskIds.value = new Set(stoppingTaskIds.value).add(task.id)
+    markTaskStopped(task.id)
     await invoke('monitor_stop_task', { taskId: task.id })
     toast.success(t('bugBounty.monitor.taskStopRequested'))
     await loadRunningTasks(tasks.value)
   } catch (error) {
     console.error('Failed to stop task:', error)
     toast.error(formatInvokeError(error, t('bugBounty.errors.operationFailed')))
+    await loadRunningTasks(tasks.value)
   } finally {
     const next = new Set(stoppingTaskIds.value)
     next.delete(task.id)
@@ -1230,7 +1269,7 @@ const editTask = (task: any) => {
   taskForm.name = task.name
   taskForm.program_id = task.program_id
   taskForm.program_ids = [task.program_id]
-  taskForm.interval_secs = task.interval_secs
+  setTaskIntervalFields(task.interval_secs)
   taskForm.config = normalizeTaskConfig(task.config)
 }
 
@@ -1346,7 +1385,8 @@ const closeModal = () => {
   taskForm.name = ''
   taskForm.program_id = ''
   taskForm.program_ids = []
-  taskForm.interval_secs = 6 * 3600
+  taskForm.interval_value = 6
+  taskForm.interval_unit = 'hours'
   taskForm.config = createEmptyTaskConfig()
 }
 

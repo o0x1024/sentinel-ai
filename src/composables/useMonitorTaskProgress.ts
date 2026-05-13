@@ -33,12 +33,20 @@ export const useMonitorTaskProgress = () => {
         current_plugin: null,
         target_count: 0,
         imported_assets: 0,
+        target_breakdown_label: null,
         message: preparingMessage,
         indeterminate: true,
         started_at: now,
         updated_at: now,
       },
     }
+  }
+
+  const markTaskStopped = (taskId: string) => {
+    const nextRunning = new Set(runningTaskIds.value)
+    nextRunning.delete(taskId)
+    runningTaskIds.value = nextRunning
+    clearTaskRuntimeState(taskId)
   }
 
   const pruneTaskProgress = (tasks: any[]) => {
@@ -69,6 +77,7 @@ export const useMonitorTaskProgress = () => {
             current_plugin: null,
             target_count: 0,
             imported_assets: 0,
+            target_breakdown_label: null,
             message: null,
             indeterminate: true,
             started_at: now,
@@ -121,6 +130,7 @@ export const useMonitorTaskProgress = () => {
     isTaskRunning,
     getTaskProgress,
     markTaskQueued,
+    markTaskStopped,
     pruneTaskProgress,
     loadRunningTasks,
     setupTaskProgressListener,

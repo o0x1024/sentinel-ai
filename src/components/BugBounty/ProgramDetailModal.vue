@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="modal">
-      <div v-if="visible" class="modal modal-open">
+      <div v-if="visible" class="modal modal-open" @click.self="$emit('close')">
         <div class="modal-box max-w-4xl h-[80vh] flex flex-col">
       <!-- Header -->
       <div class="flex justify-between items-start mb-4">
@@ -284,12 +284,23 @@
           
           <div class="form-control">
             <label class="label"><span class="label-text">{{ t('bugBounty.scope.target') }} *</span></label>
-            <input 
-              v-model="newScope.target" 
-              type="text" 
-              class="input input-bordered"
-              placeholder="*.example.com"
-            />
+            <textarea
+              v-model="newScope.target"
+              class="textarea textarea-bordered font-mono text-sm"
+              :class="{ 'textarea-error': duplicateScopeTargets.length > 0 }"
+              rows="5"
+              :placeholder="t('bugBounty.scope.targetMultilinePlaceholder')"
+            ></textarea>
+            <label class="label">
+              <span class="label-text-alt">
+                {{ t('bugBounty.scope.targetMultilineHint', { count: newScopeTargets.length }) }}
+              </span>
+            </label>
+            <label v-if="duplicateScopeTarget" class="label">
+              <span class="label-text-alt text-error">
+                {{ t('bugBounty.errors.duplicateScopeTargets', { targets: duplicateScopeTargets.join(', ') }) }}
+              </span>
+            </label>
           </div>
           
           <div class="form-control">
@@ -307,7 +318,7 @@
           <button 
             @click="createScope" 
             class="btn btn-primary"
-            :disabled="!newScope.target || creatingSope"
+            :disabled="newScopeTargets.length === 0 || duplicateScopeTarget || creatingSope"
           >
             <span v-if="creatingSope" class="loading loading-spinner loading-sm mr-2"></span>
             {{ t('common.create') }}
@@ -325,6 +336,10 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '../../composables/useToast'
+import {
+  findDuplicateProgramScopeTargets,
+  parseProgramScopeTargetLines,
+} from './programScopeDedupSupport'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -360,6 +375,11 @@ const newScope = reactive({
 // Computed
 const inScopeItems = computed(() => scopes.value.filter(s => s.scope_type === 'in_scope'))
 const outOfScopeItems = computed(() => scopes.value.filter(s => s.scope_type === 'out_of_scope'))
+const newScopeTargets = computed(() => parseProgramScopeTargetLines(newScope.target))
+const duplicateScopeTargets = computed(() =>
+  findDuplicateProgramScopeTargets(scopes.value, newScope, newScopeTargets.value),
+)
+const duplicateScopeTarget = computed(() => duplicateScopeTargets.value.length > 0)
 
 // Methods
 const loadScopes = async () => {
@@ -392,28 +412,45 @@ const loadProgramFindings = async () => {
 }
 
 const createScope = async () => {
+  const targets = newScopeTargets.value
+
+  if (targets.length === 0) return
+  if (duplicateScopeTarget.value) {
+    toast.error(t('bugBounty.errors.duplicateScope'))
+    return
+  }
+
   try {
     creatingSope.value = true
     const request = {
-      program_id: props.program.id,
-      scope_type: newScope.scope_type,
-      target_type: newScope.target_type,
-      target: newScope.target,
-      description: newScope.description || null,
-      allowed_tests: null,
-      instructions: null,
-      requires_auth: null,
-      priority: null,
+      scopes: targets.map(target => ({
+        program_id: props.program.id,
+        scope_type: newScope.scope_type,
+        target_type: newScope.target_type,
+        target,
+        description: newScope.description || null,
+        allowed_tests: null,
+        instructions: null,
+        requires_auth: null,
+        priority: null,
+      })),
     }
-    await invoke('bounty_create_scope', { request })
-    toast.success(t('bugBounty.success.scopeCreated'))
+    await invoke('bounty_create_scopes', { request })
+    toast.success(
+      t('bugBounty.success.scopeCreatedBatch', { count: targets.length }),
+    )
     showCreateScopeModal.value = false
     resetScopeForm()
     await loadScopes()
     emit('updated')
   } catch (error) {
     console.error('Failed to create scope:', error)
-    toast.error(t('bugBounty.errors.createFailed'))
+    const message = String(error)
+    toast.error(
+      message.includes('same scope target')
+        ? t('bugBounty.errors.duplicateScope')
+        : t('bugBounty.errors.createFailed'),
+    )
   } finally {
     creatingSope.value = false
   }

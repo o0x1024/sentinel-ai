@@ -1,11 +1,11 @@
 use crate::core::models::mission::{
-    CreateMissionRequest, ListMissionsFilter, Mission, MissionArtifact, MissionDelivery, MissionLock,
-    MissionObservation, MissionRun, MissionStatus, MissionStep, UpdateMissionFieldsRequest,
+    CreateMissionRequest, ListMissionsFilter, Mission, MissionArtifact, MissionDelivery,
+    MissionObservation, MissionRun, MissionStatus, UpdateMissionFieldsRequest,
 };
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
 use anyhow::{bail, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -256,16 +256,10 @@ impl DatabaseService {
             .status
             .parse()
             .map_err(|e: String| anyhow::anyhow!(e))?;
-        let to: MissionStatus = new_status
-            .parse()
-            .map_err(|e: String| anyhow::anyhow!(e))?;
+        let to: MissionStatus = new_status.parse().map_err(|e: String| anyhow::anyhow!(e))?;
 
         if !from.can_transition_to(&to) {
-            bail!(
-                "illegal mission status transition: {} -> {}",
-                from,
-                to
-            );
+            bail!("illegal mission status transition: {} -> {}", from, to);
         }
 
         let now = Utc::now();
@@ -391,6 +385,17 @@ impl DatabaseService {
         mission_id: &str,
         trigger_kind: &str,
     ) -> Result<MissionRun> {
+        self.create_mission_run_with_snapshot(mission_id, trigger_kind, None, None)
+            .await
+    }
+
+    pub async fn create_mission_run_with_snapshot(
+        &self,
+        mission_id: &str,
+        trigger_kind: &str,
+        profile_snapshot: Option<&str>,
+        tool_config_snapshot: Option<&str>,
+    ) -> Result<MissionRun> {
         let pool = self.require_sqlite_pool()?;
         let now = Utc::now();
         let id = Uuid::new_v4().to_string();
@@ -415,7 +420,7 @@ impl DatabaseService {
                 ?, ?, ?, 'queued', ?,
                 NULL, NULL,
                 NULL, NULL,
-                NULL, NULL,
+                ?, ?,
                 NULL, NULL,
                 NULL, NULL,
                 ?, ?
@@ -425,6 +430,8 @@ impl DatabaseService {
         .bind(mission_id)
         .bind(run_index)
         .bind(trigger_kind)
+        .bind(profile_snapshot)
+        .bind(tool_config_snapshot)
         .bind(now)
         .bind(now)
         .execute(pool)
@@ -517,6 +524,56 @@ impl DatabaseService {
                 .execute(pool)
                 .await?;
         }
+        Ok(())
+    }
+
+    pub async fn update_mission_run_agent_execution_id(
+        &self,
+        run_id: &str,
+        agent_execution_id: &str,
+    ) -> Result<()> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        sqlx::query("UPDATE mission_runs SET agent_execution_id = ?, updated_at = ? WHERE id = ?")
+            .bind(agent_execution_id)
+            .bind(now)
+            .bind(run_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_mission_run_checkpoint(
+        &self,
+        run_id: &str,
+        checkpoint_json: &str,
+    ) -> Result<()> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        sqlx::query("UPDATE mission_runs SET checkpoint_json = ?, updated_at = ? WHERE id = ?")
+            .bind(checkpoint_json)
+            .bind(now)
+            .bind(run_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_mission_run_bot_execution_id(
+        &self,
+        run_id: &str,
+        bot_execution_run_id: &str,
+    ) -> Result<()> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        sqlx::query(
+            "UPDATE mission_runs SET bot_execution_run_id = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(bot_execution_run_id)
+        .bind(now)
+        .bind(run_id)
+        .execute(pool)
+        .await?;
         Ok(())
     }
 
@@ -625,14 +682,283 @@ impl DatabaseService {
     ) -> Result<()> {
         let pool = self.require_sqlite_pool()?;
         let now = Utc::now();
-        sqlx::query("UPDATE missions SET next_run_at = ?, last_run_at = ?, updated_at = ? WHERE id = ?")
-            .bind(next_run_at)
-            .bind(now)
-            .bind(now)
+        sqlx::query(
+            "UPDATE missions SET next_run_at = ?, last_run_at = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(next_run_at)
+        .bind(now)
+        .bind(now)
+        .bind(mission_id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Artifacts
+    // -----------------------------------------------------------------------
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_mission_artifact_record(
+        &self,
+        id: &str,
+        mission_id: &str,
+        run_id: &str,
+        step_id: Option<&str>,
+        artifact_type: &str,
+        storage_kind: &str,
+        uri: &str,
+        size_bytes: i64,
+        content_hash: &str,
+        metadata_json: Option<&str>,
+    ) -> Result<MissionArtifact> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+
+        sqlx::query(
+            r#"INSERT INTO mission_artifacts (
+                id, mission_id, run_id, step_id, artifact_type,
+                storage_kind, uri, size_bytes, content_hash, metadata_json,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(id)
+        .bind(mission_id)
+        .bind(run_id)
+        .bind(step_id)
+        .bind(artifact_type)
+        .bind(storage_kind)
+        .bind(uri)
+        .bind(size_bytes)
+        .bind(content_hash)
+        .bind(metadata_json)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        sqlx::query_as::<_, MissionArtifact>("SELECT * FROM mission_artifacts WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn get_latest_artifact_hash(
+        &self,
+        mission_id: &str,
+        artifact_type: &str,
+    ) -> Result<Option<String>> {
+        let pool = self.require_sqlite_pool()?;
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT content_hash FROM mission_artifacts WHERE mission_id = ? AND artifact_type = ? ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(mission_id)
+        .bind(artifact_type)
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.map(|(h,)| h))
+    }
+
+    pub async fn list_mission_artifacts(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+    ) -> Result<Vec<MissionArtifact>> {
+        let pool = self.require_sqlite_pool()?;
+        if let Some(rid) = run_id {
+            let rows = sqlx::query_as::<_, MissionArtifact>(
+                "SELECT * FROM mission_artifacts WHERE mission_id = ? AND run_id = ? ORDER BY created_at ASC",
+            )
             .bind(mission_id)
+            .bind(rid)
+            .fetch_all(pool)
+            .await?;
+            Ok(rows)
+        } else {
+            let rows = sqlx::query_as::<_, MissionArtifact>(
+                "SELECT * FROM mission_artifacts WHERE mission_id = ? ORDER BY created_at ASC",
+            )
+            .bind(mission_id)
+            .fetch_all(pool)
+            .await?;
+            Ok(rows)
+        }
+    }
+
+    pub async fn delete_mission_artifact(&self, id: &str) -> Result<()> {
+        let pool = self.require_sqlite_pool()?;
+        sqlx::query("DELETE FROM mission_artifacts WHERE id = ?")
+            .bind(id)
             .execute(pool)
             .await?;
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Observations
+    // -----------------------------------------------------------------------
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_mission_observation_record(
+        &self,
+        id: &str,
+        mission_id: &str,
+        run_id: &str,
+        step_id: Option<&str>,
+        observation_type: &str,
+        severity: &str,
+        title: &str,
+        summary: Option<&str>,
+        data_json: Option<&str>,
+        artifact_ids_json: Option<&str>,
+    ) -> Result<MissionObservation> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+
+        sqlx::query(
+            r#"INSERT INTO mission_observations (
+                id, mission_id, run_id, step_id, observation_type,
+                severity, title, summary, data_json, artifact_ids_json,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(id)
+        .bind(mission_id)
+        .bind(run_id)
+        .bind(step_id)
+        .bind(observation_type)
+        .bind(severity)
+        .bind(title)
+        .bind(summary)
+        .bind(data_json)
+        .bind(artifact_ids_json)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        sqlx::query_as::<_, MissionObservation>("SELECT * FROM mission_observations WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn list_mission_observations(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+        observation_type: Option<&str>,
+    ) -> Result<Vec<MissionObservation>> {
+        let pool = self.require_sqlite_pool()?;
+
+        let mut sql = String::from("SELECT * FROM mission_observations WHERE mission_id = ?");
+        let mut binds: Vec<String> = vec![mission_id.to_string()];
+
+        if let Some(rid) = run_id {
+            sql.push_str(" AND run_id = ?");
+            binds.push(rid.to_string());
+        }
+        if let Some(otype) = observation_type {
+            sql.push_str(" AND observation_type = ?");
+            binds.push(otype.to_string());
+        }
+        sql.push_str(" ORDER BY created_at ASC");
+
+        let mut query = sqlx::query_as::<_, MissionObservation>(&sql);
+        for b in &binds {
+            query = query.bind(b);
+        }
+        let rows = query.fetch_all(pool).await?;
+        Ok(rows)
+    }
+
+    // -----------------------------------------------------------------------
+    // Deliveries
+    // -----------------------------------------------------------------------
+
+    pub async fn save_mission_delivery(
+        &self,
+        id: &str,
+        mission_id: &str,
+        run_id: &str,
+        target_json: &str,
+        status: &str,
+        payload_json: Option<&str>,
+    ) -> Result<MissionDelivery> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+
+        sqlx::query(
+            r#"INSERT INTO mission_deliveries (
+                id, mission_id, run_id, target_json, status,
+                message_id, payload_json, error_message,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)"#,
+        )
+        .bind(id)
+        .bind(mission_id)
+        .bind(run_id)
+        .bind(target_json)
+        .bind(status)
+        .bind(payload_json)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        sqlx::query_as::<_, MissionDelivery>("SELECT * FROM mission_deliveries WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn update_mission_delivery_status(
+        &self,
+        id: &str,
+        status: &str,
+        error_message: Option<&str>,
+        message_id: Option<&str>,
+    ) -> Result<()> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        sqlx::query(
+            "UPDATE mission_deliveries SET status = ?, error_message = ?, message_id = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(status)
+        .bind(error_message)
+        .bind(message_id)
+        .bind(now)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_mission_deliveries(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+    ) -> Result<Vec<MissionDelivery>> {
+        let pool = self.require_sqlite_pool()?;
+        if let Some(rid) = run_id {
+            let rows = sqlx::query_as::<_, MissionDelivery>(
+                "SELECT * FROM mission_deliveries WHERE mission_id = ? AND run_id = ? ORDER BY created_at DESC",
+            )
+            .bind(mission_id)
+            .bind(rid)
+            .fetch_all(pool)
+            .await?;
+            Ok(rows)
+        } else {
+            let rows = sqlx::query_as::<_, MissionDelivery>(
+                "SELECT * FROM mission_deliveries WHERE mission_id = ? ORDER BY created_at DESC",
+            )
+            .bind(mission_id)
+            .fetch_all(pool)
+            .await?;
+            Ok(rows)
+        }
     }
 
     // -----------------------------------------------------------------------

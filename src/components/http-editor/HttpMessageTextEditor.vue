@@ -125,7 +125,7 @@ import {
   ref,
   watch,
 } from 'vue'
-import { EditorState, Compartment } from '@codemirror/state'
+import { EditorState, Compartment, Transaction } from '@codemirror/state'
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, indentWithTab, history, historyKeymap, undo, redo } from '@codemirror/commands'
 import { SearchQuery, findNext, findPrevious, getSearchQuery, search, setSearchQuery } from '@codemirror/search'
@@ -813,7 +813,10 @@ function syncContentAndLanguage(content: string) {
   const minimalChange = computeMinimalTextChange(currentContent, content)
   if (!minimalChange) {
     if (effects.length) {
-      editorView.dispatch({ effects })
+      editorView.dispatch({
+        effects,
+        annotations: Transaction.addToHistory.of(false),
+      })
       forceVisibleSyntaxHighlight()
     }
     return
@@ -822,6 +825,10 @@ function syncContentAndLanguage(content: string) {
   editorView.dispatch({
     changes: minimalChange,
     effects,
+    annotations: [
+      Transaction.addToHistory.of(false),
+      Transaction.remote.of(true),
+    ],
   })
   forceVisibleSyntaxHighlight()
 }

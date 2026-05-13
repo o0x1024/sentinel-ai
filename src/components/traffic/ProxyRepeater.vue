@@ -8,7 +8,17 @@
       @click.stop
     >
       <TrafficContextMenuSections
-        :sections="repeaterContextMenuSections"
+        :sections="repeaterContextMenuBeforeCodecSections"
+        label-prefix="trafficAnalysis.repeater.contextMenu"
+      />
+      <TrafficContextSubmenu
+        v-if="repeaterTextCodecSubmenu"
+        :submenu="repeaterTextCodecSubmenu"
+        label-prefix="trafficAnalysis.repeater.contextMenu"
+      />
+      <div v-if="repeaterTextCodecSubmenu && repeaterContextMenuAfterCodecSections.length" class="divider my-1 h-0"></div>
+      <TrafficContextMenuSections
+        :sections="repeaterContextMenuAfterCodecSections"
         label-prefix="trafficAnalysis.repeater.contextMenu"
       />
     </div>
@@ -513,6 +523,7 @@ import TrafficResponseRenderPane from './TrafficResponseRenderPane.vue'
 import TrafficVariantSwitch from './TrafficVariantSwitch.vue'
 import { IMMERSIVE_TRAFFIC_COMPACT_BADGE_CLASS, IMMERSIVE_TRAFFIC_TOP_BAR_CLASS } from './immersiveTrafficUi'
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
+import TrafficContextSubmenu from './TrafficContextSubmenu.vue'
 import { buildSourceRequestFromRawRequest } from '@/components/traffic/intruder/http'
 import type { HttpExchangeRequest, HttpReplayResponse } from './http/model'
 import { findHeaderValue } from './http/headers'
@@ -531,7 +542,10 @@ import { buildRepeaterRequestVersionComparePayload, buildRepeaterResponseVersion
 import { convertRepeaterPrettyRequestToRaw, formatRepeaterPrettyRequest } from './trafficRepeaterPrettyRequestSupport'
 import { buildTrafficDisplayedRawResponse, resolveTrafficResponseBodyText } from './trafficResponseDecodingSupport'
 import { formatRepeaterPrettyResponse } from './proxyRepeaterResponsePresentationSupport'
+import { buildTrafficTextCodecSubmenu, hasNonEmptyTextSelection, replaceTrafficTextSelection, splitTrafficMenuItemsAfterKey, type TrafficTextCodecAction } from './trafficTextCodecSupport'
 import { useTrafficPaneCompactMode } from './useTrafficPaneCompactMode'
+import { runRepeaterRequestTextCodecAction } from './proxyRepeaterTextCodecSupport'
+import { buildRepeaterContextMenuState, buildRepeaterTabContextMenuState } from './proxyRepeaterContextMenuSupport'
 import { buildRepeaterCurlCommand, buildRepeaterFullUrl, parseRepeaterErrorMessage, repeaterTextToHex, syncRepeaterTabTargetFromRequest } from './proxyRepeaterRequestSupport'
 import { clearRepeaterTabsStorage, REPEATER_STORAGE_KEY_LAYOUT, REPEATER_STORAGE_KEY_LEFT_WIDTH, REPEATER_STORAGE_KEY_TOP_HEIGHT } from './proxyRepeaterStorageSupport'
 import { restoreRepeaterTabResponseFromReplayRuns } from './proxyRepeaterReplayResponseRestoreSupport'
@@ -598,6 +612,7 @@ const contextMenu = ref({
   width: 0,
   height: 0,
   pane: 'request' as 'request' | 'response',
+  selection: null as { from: number; to: number } | null,
 });
 const tabContextMenu = ref({
   visible: false,
@@ -735,6 +750,9 @@ const repeaterSendMenuItems = computed(() =>
     },
   }),
 )
+const repeaterSendMenuItemGroups = computed(() =>
+  splitTrafficMenuItemsAfterKey(repeaterSendMenuItems.value, 'compare'),
+)
 const repeaterRequestActionMenuItems = computed(() =>
   buildTrafficRequestActionMenuItems({
     supportedActions: ['copyUrl', 'copyRequest', 'copyAsCurl'],
@@ -769,7 +787,13 @@ const repeaterCompareMenuItems = computed(() =>
     } : null,
   ],
 )
-const repeaterContextMenuSections = computed(() =>
+const canApplyRequestTextCodec = computed(() => (
+  Boolean(currentTab.value)
+  && contextMenu.value.pane === 'request'
+  && currentTab.value?.requestTab !== 'hex'
+  && hasNonEmptyTextSelection(contextMenu.value.selection)
+))
+const repeaterContextMenuBeforeCodecSections = computed(() =>
   buildTrafficRequestContextMenuSections({
     sendItems: contextMenu.value.pane === 'request'
       ? [
@@ -785,9 +809,16 @@ const repeaterContextMenuSections = computed(() =>
             labelKey: 'sendToNewTab',
             onClick: contextMenuSendToNewTab,
           },
-          ...repeaterSendMenuItems.value,
+          ...repeaterSendMenuItemGroups.value.before,
         ]
-      : repeaterSendMenuItems.value.filter((item) => item.key === 'compare'),
+      : repeaterSendMenuItemGroups.value.before.filter((item) => item.key === 'compare'),
+  }),
+)
+const repeaterContextMenuAfterCodecSections = computed(() =>
+  buildTrafficRequestContextMenuSections({
+    sendItems: contextMenu.value.pane === 'request'
+      ? repeaterSendMenuItemGroups.value.after
+      : [],
     compareItems: repeaterCompareMenuItems.value,
     requestItems: contextMenu.value.pane === 'request' ? repeaterRequestActionMenuItems.value : [],
     assistantItems: contextMenu.value.pane === 'request'
@@ -812,6 +843,14 @@ const repeaterContextMenuSections = computed(() =>
       : [],
   }),
 )
+const repeaterTextCodecSubmenu = computed(() => (
+  contextMenu.value.pane === 'request'
+    ? buildTrafficTextCodecSubmenu({
+        disabled: !canApplyRequestTextCodec.value,
+        onClick: applyTextCodecToCurrentRequestSelection,
+      })
+    : null
+))
 const repeaterTabContextMenuSections = computed(() =>
   buildTrafficContextMenuSections([
     {
@@ -1399,37 +1438,15 @@ function getCurrentResponseContentType(): string {
   return findHeaderValue(currentTab.value.response.headers, 'content-type') || '';
 }
 
-// 右键菜单
 function showContextMenu(event: MouseEvent, pane: 'request' | 'response' = 'request') {
   hideTabContextMenu()
-  // 估算菜单尺寸（基于菜单项数量）
-  const MENU_WIDTH = 220;
-  const MENU_HEIGHT = 400;
-  
-  // 计算菜单位置，确保不超出视口
-  let x = event.clientX;
-  let y = event.clientY;
-  
-  // 考虑滚动位置
-  const scrollX = window.scrollX || window.pageXOffset;
-  const scrollY = window.scrollY || window.pageYOffset;
-  
-  // 调整位置避免超出视口
-  if (x + MENU_WIDTH > window.innerWidth) {
-    x = window.innerWidth - MENU_WIDTH - 10;
-  }
-  if (y + MENU_HEIGHT > window.innerHeight) {
-    y = window.innerHeight - MENU_HEIGHT - 10;
-  }
-  
-  contextMenu.value = {
-    visible: true,
-    x: Math.max(0, x),
-    y: Math.max(0, y),
-    width: MENU_WIDTH,
-    height: MENU_HEIGHT,
+  contextMenu.value = buildRepeaterContextMenuState(
+    event,
     pane,
-  };
+    pane === 'request'
+      ? requestEditor.value?.getSelectionRange?.() ?? null
+      : responseEditor.value?.getSelectionRange?.() ?? null,
+  )
   
   setTimeout(() => {
     document.addEventListener('click', hideContextMenu);
@@ -1438,24 +1455,7 @@ function showContextMenu(event: MouseEvent, pane: 'request' | 'response' = 'requ
 
 function showTabContextMenu(event: MouseEvent, index: number) {
   hideContextMenu()
-  const MENU_WIDTH = 180
-  const MENU_HEIGHT = 136
-  let x = event.clientX
-  let y = event.clientY
-
-  if (x + MENU_WIDTH > window.innerWidth) {
-    x = window.innerWidth - MENU_WIDTH - 10
-  }
-  if (y + MENU_HEIGHT > window.innerHeight) {
-    y = window.innerHeight - MENU_HEIGHT - 10
-  }
-
-  tabContextMenu.value = {
-    visible: true,
-    x: Math.max(0, x),
-    y: Math.max(0, y),
-    tabIndex: index,
-  }
+  tabContextMenu.value = buildRepeaterTabContextMenuState(event, index)
 
   window.setTimeout(() => {
     document.addEventListener('click', hideTabContextMenu)
@@ -1514,20 +1514,6 @@ function buildCurrentRequestTransfer(): HttpExchangeRequest | null {
   }, currentTab.value.sourceRequestId)
 }
 
-function insertTextAtSelection(
-  content: string,
-  selection: { from: number; to: number } | undefined,
-  insert: string,
-) {
-  const from = Math.max(0, Math.min(selection?.from ?? content.length, content.length))
-  const to = Math.max(from, Math.min(selection?.to ?? from, content.length))
-  return {
-    content: `${content.slice(0, from)}${insert}${content.slice(to)}`,
-    selectionStart: from,
-    selectionEnd: from + insert.length,
-  }
-}
-
 async function insertOastPayloadIntoCurrentRequest() {
   hideContextMenu()
 
@@ -1551,7 +1537,7 @@ async function insertOastPayloadIntoCurrentRequest() {
     const currentText = currentTab.value.requestTab === 'pretty'
       ? currentTab.value.prettyRequest
       : currentTab.value.rawRequest
-    const next = insertTextAtSelection(
+    const next = replaceTrafficTextSelection(
       currentText,
       requestEditor.value?.getSelectionRange?.(),
       payloadText,
@@ -1577,6 +1563,22 @@ async function insertOastPayloadIntoCurrentRequest() {
   } finally {
     creatingOastPayload.value = false
   }
+}
+
+async function applyTextCodecToCurrentRequestSelection(action: TrafficTextCodecAction) {
+  hideContextMenu()
+  await runRepeaterRequestTextCodecAction({
+    tab: currentTab.value,
+    selection: contextMenu.value.selection,
+    action,
+    editor: requestEditor.value,
+    onReadonly: () => dialog.toast.warning(t('trafficAnalysis.oast.readOnlyMode')),
+    onNoSelection: () => dialog.toast.warning(t('trafficAnalysis.textCodec.noSelection')),
+    onSuccess: () => dialog.toast.success(t('trafficAnalysis.textCodec.applied', {
+      action: t(`trafficAnalysis.repeater.contextMenu.${action.labelKey}`),
+    })),
+    onFailure: error => dialog.toast.error(t('trafficAnalysis.textCodec.failed', { error })),
+  })
 }
 
 function contextMenuSendToComparer() {

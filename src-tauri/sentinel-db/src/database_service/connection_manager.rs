@@ -4,6 +4,7 @@ use std::time::Duration;
 use tracing::info;
 
 use super::db_config::{DatabaseConfig, DatabaseType};
+use super::sqlite_performance::configure_sqlite_connection;
 #[cfg(feature = "db-mysql")]
 use super::sqlx_compat::MySqlPoolOptions;
 #[cfg(feature = "db-postgres")]
@@ -63,21 +64,7 @@ impl DatabasePool {
                     .acquire_timeout(Duration::from_secs(config.query_timeout))
                     .after_connect(move |conn, _meta| {
                         Box::pin(async move {
-                            sqlx::query("PRAGMA foreign_keys = ON")
-                                .execute(&mut *conn)
-                                .await?;
-                            // Wait before returning SQLITE_BUSY to reduce transient write contention.
-                            sqlx::query("PRAGMA busy_timeout = 10000")
-                                .execute(&mut *conn)
-                                .await?;
-                            if enable_wal {
-                                sqlx::query("PRAGMA journal_mode = WAL")
-                                    .execute(&mut *conn)
-                                    .await?;
-                                sqlx::query("PRAGMA synchronous = NORMAL")
-                                    .execute(&mut *conn)
-                                    .await?;
-                            }
+                            configure_sqlite_connection(conn, enable_wal).await?;
                             Ok(())
                         })
                     })

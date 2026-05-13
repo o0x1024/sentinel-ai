@@ -47,6 +47,8 @@ pub mod llm_test_commands;
 pub mod mcp_commands;
 pub mod memory_commands;
 pub mod mention_commands;
+pub mod mission_commands;
+pub mod mission_scenario_commands;
 pub mod monitor_commands;
 pub(crate) mod monitor_config_support;
 pub mod monitor_discovery_commands;

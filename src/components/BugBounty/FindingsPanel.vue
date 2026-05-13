@@ -49,7 +49,7 @@
             </button>
             <button class="btn btn-sm btn-primary" :disabled="batchActionLoading" @click="$emit('create')">
               <i class="fas fa-plus mr-2"></i>
-              {{ t('bugBounty.createFinding') }}
+              {{ t('bugBounty.createFinding.title') }}
             </button>
           </div>
         </div>

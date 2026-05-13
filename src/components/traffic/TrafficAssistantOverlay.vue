@@ -257,7 +257,7 @@ function handleWindowKeydown(event: KeyboardEvent) {
   }
 
   if (immersiveDrillModeEnabled.value) {
-    if (!closeTopmostImmersiveTool()) {
+    if (!closeTopmostImmersiveTool('transient')) {
       return
     }
 

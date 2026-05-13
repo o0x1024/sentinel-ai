@@ -95,7 +95,17 @@
       @click.stop
     >
       <TrafficContextMenuSections
-        :sections="contextMenuSections"
+        :sections="contextMenuBeforeCodecSections"
+        label-prefix="trafficAnalysis.intruder.contextMenu"
+      />
+      <TrafficContextSubmenu
+        v-if="textCodecSubmenu"
+        :submenu="textCodecSubmenu"
+        label-prefix="trafficAnalysis.intruder.contextMenu"
+      />
+      <div v-if="textCodecSubmenu && contextMenuAfterCodecSections.length" class="divider my-1 h-0"></div>
+      <TrafficContextMenuSections
+        :sections="contextMenuAfterCodecSections"
         label-prefix="trafficAnalysis.intruder.contextMenu"
       />
     </div>
@@ -114,10 +124,12 @@ import { dialog } from '@/composables/useDialog'
 import { createTrafficOastToken } from '@/api/trafficOast'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import TrafficContextMenuSections from '@/components/traffic/TrafficContextMenuSections.vue'
+import TrafficContextSubmenu from '@/components/traffic/TrafficContextSubmenu.vue'
 import { buildTrafficRequestActionMenuItems } from '@/components/traffic/trafficRequestActionMenuSupport'
 import { buildTrafficRequestContextMenuSections } from '@/components/traffic/trafficRequestContextMenuSupport'
 import { buildTrafficRequestSendMenuItems } from '@/components/traffic/trafficSendMenuSupport'
 import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
+import { buildTrafficTextCodecSubmenu, getTrafficTextCodecErrorMessage, hasNonEmptyTextSelection, replaceTrafficTextSelection, transformTrafficTextCodec, type TrafficTextCodecAction } from '@/components/traffic/trafficTextCodecSupport'
 import { convertRepeaterPrettyRequestToRaw, formatRepeaterPrettyRequest } from '@/components/traffic/trafficRepeaterPrettyRequestSupport'
 import type { IntruderPosition, IntruderRequestViewTab } from './types'
 import { buildFullUrl, buildSourceRequestFromRawRequest, extractTargetFromRequest } from './http'
@@ -152,6 +164,7 @@ const contextMenu = ref({
   visible: false,
   x: 0,
   y: 0,
+  selection: null as { from: number; to: number } | null,
 })
 
 const requestLengthLabel = computed(() => {
@@ -189,16 +202,26 @@ const requestActionMenuItems = computed(() =>
     },
   }),
 )
-const contextMenuSections = computed(() =>
+const contextMenuBeforeCodecSections = computed(() =>
   buildTrafficRequestContextMenuSections({
     sendItems: sendMenuItems.value.map((item) => ({
       ...item,
       onClick: () => handleContextMenuAction(item.onClick),
     })),
+  }),
+)
+const contextMenuAfterCodecSections = computed(() =>
+  buildTrafficRequestContextMenuSections({
     requestItems: requestActionMenuItems.value.map((item) => ({
       ...item,
       onClick: () => handleContextMenuAction(item.onClick),
     })),
+  }),
+)
+const textCodecSubmenu = computed(() =>
+  buildTrafficTextCodecSubmenu({
+    disabled: !hasNonEmptyTextSelection(contextMenu.value.selection),
+    onClick: action => handleContextMenuAction(() => applyTextCodecToRequestSelection(action)),
   }),
 )
 
@@ -343,20 +366,6 @@ async function markSelection() {
   })
 }
 
-function insertTextAtSelection(
-  content: string,
-  selection: { from: number; to: number } | undefined,
-  insert: string,
-) {
-  const from = Math.max(0, Math.min(selection?.from ?? content.length, content.length))
-  const to = Math.max(from, Math.min(selection?.to ?? from, content.length))
-  return {
-    content: `${content.slice(0, from)}${insert}${content.slice(to)}`,
-    selectionStart: from,
-    selectionEnd: from + insert.length,
-  }
-}
-
 async function insertOastPayload() {
   const selection = requestEditor.value?.getSelectionRange()
   const resolvedSelection = selection ? resolveSelectionForRawOperation(selection) : undefined
@@ -372,7 +381,7 @@ async function insertOastPayload() {
       sourceTool: 'intruder',
       sourceRequestId: props.sourceRequestId,
     })
-    const next = insertTextAtSelection(
+    const next = replaceTrafficTextSelection(
       props.requestText,
       resolvedSelection,
       record.httpsUrl || record.httpUrl || record.fqdn,
@@ -390,6 +399,43 @@ async function insertOastPayload() {
   }
 }
 
+async function applyTextCodecToRequestSelection(action: TrafficTextCodecAction) {
+  const selection = contextMenu.value.selection
+  if (!hasNonEmptyTextSelection(selection)) {
+    dialog.toast.warning(t('trafficAnalysis.textCodec.noSelection'))
+    return
+  }
+
+  const resolvedSelection = resolveSelectionForRawOperation(selection)
+  if (!hasNonEmptyTextSelection(resolvedSelection)) {
+    dialog.toast.warning(t('trafficAnalysis.textCodec.noSelection'))
+    return
+  }
+
+  if (props.requestViewTab === 'pretty') {
+    emit('update:requestViewTab', 'raw')
+  }
+
+  try {
+    const replacement = transformTrafficTextCodec(
+      props.requestText.slice(resolvedSelection.from, resolvedSelection.to),
+      action,
+    )
+    const next = replaceTrafficTextSelection(props.requestText, resolvedSelection, replacement)
+    emit('update:requestText', next.content)
+    await nextTick()
+    requestEditor.value?.setSelection?.(next.selectionStart, next.selectionEnd)
+    requestEditor.value?.focus?.()
+    dialog.toast.success(t('trafficAnalysis.textCodec.applied', {
+      action: t(`trafficAnalysis.intruder.contextMenu.${action.labelKey}`),
+    }))
+  } catch (error) {
+    dialog.toast.error(t('trafficAnalysis.textCodec.failed', {
+      error: getTrafficTextCodecErrorMessage(error),
+    }))
+  }
+}
+
 function hideContextMenu() {
   contextMenu.value.visible = false
   document.removeEventListener('click', hideContextMenu)
@@ -403,6 +449,7 @@ function showContextMenu(event: MouseEvent) {
     visible: true,
     x: Math.min(event.clientX, window.innerWidth - 220),
     y: Math.min(event.clientY, window.innerHeight - 240),
+    selection: requestEditor.value?.getSelectionRange?.() ?? null,
   }
   setTimeout(() => {
     document.addEventListener('click', hideContextMenu)

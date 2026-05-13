@@ -2,15 +2,24 @@ use crate::commands::monitor_commands::MonitorSchedulerState;
 use crate::commands::monitor_config_support::{
     apply_plugins_to_monitor_type, load_tasks_from_db, save_tasks_to_db,
 };
+use crate::commands::monitor_progress_support::{
+    build_monitor_task_progress_event, emit_monitor_task_progress,
+};
+use crate::commands::traffic::analysis_state_support::resolve_plugin_registry_id;
+use chrono::Utc;
 use sentinel_bounty::services::{
     ChangeMonitorConfig, MonitorPluginConfig, MonitorPluginSeedBindingConfig,
     MonitorPluginSeedConfig, MonitorTask,
 };
-use sentinel_db::{BountyProgramRow, DatabaseService, ProgramQueryFilter};
+use sentinel_db::{BountyProgramRow, Database, DatabaseService, ProgramQueryFilter};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State};
 use tokio::sync::RwLock;
+
+const MIN_MONITOR_INTERVAL_SECS: u64 = 60;
 
 async fn ensure_monitor_tasks_loaded(
     state: &Arc<RwLock<MonitorSchedulerState>>,
@@ -30,6 +39,197 @@ async fn ensure_monitor_tasks_loaded(
     }
 
     Ok(())
+}
+
+fn validate_monitor_interval_secs(interval_secs: u64) -> Result<u64, String> {
+    if interval_secs < MIN_MONITOR_INTERVAL_SECS {
+        return Err("检查间隔不能小于 1 分钟".to_string());
+    }
+
+    Ok(interval_secs)
+}
+
+fn monitor_run_started_at(task_id: &str, run_id: Option<&str>) -> String {
+    run_id
+        .and_then(|value| value.strip_prefix(&format!("monitor:{task_id}:")))
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Utc::now().to_rfc3339())
+}
+
+fn sanitize_monitor_plugin_params_value(value: &Value) -> Value {
+    let Some(object) = value.as_object() else {
+        return Value::Object(Map::new());
+    };
+
+    let injected_keys = [
+        "targets",
+        "target_objects",
+        "service_targets",
+        "urls",
+        "url",
+        "domains",
+        "domain",
+        "__monitorExecution",
+    ];
+
+    let mut sanitized = Map::new();
+    for (key, item) in object {
+        if key.starts_with("__monitor") || injected_keys.contains(&key.as_str()) {
+            continue;
+        }
+        sanitized.insert(key.clone(), item.clone());
+    }
+
+    Value::Object(sanitized)
+}
+
+fn sanitize_value_by_schema(value: &Value, schema: &Value) -> Option<Value> {
+    if schema
+        .get("enum")
+        .and_then(Value::as_array)
+        .map(|items| !items.is_empty())
+        .unwrap_or(false)
+    {
+        return Some(value.clone());
+    }
+
+    match schema.get("type").and_then(Value::as_str) {
+        Some("object") => {
+            let Some(value_object) = value.as_object() else {
+                return Some(value.clone());
+            };
+
+            let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+                return Some(value.clone());
+            };
+
+            let mut sanitized = Map::new();
+            for (key, property_schema) in properties {
+                let Some(child_value) = value_object.get(key) else {
+                    continue;
+                };
+
+                if let Some(child_sanitized) =
+                    sanitize_value_by_schema(child_value, property_schema)
+                {
+                    sanitized.insert(key.clone(), child_sanitized);
+                }
+            }
+
+            Some(Value::Object(sanitized))
+        }
+        Some("array") => {
+            let Some(items_schema) = schema.get("items") else {
+                return Some(value.clone());
+            };
+            let Some(array) = value.as_array() else {
+                return Some(value.clone());
+            };
+
+            Some(Value::Array(
+                array
+                    .iter()
+                    .filter_map(|item| sanitize_value_by_schema(item, items_schema))
+                    .collect(),
+            ))
+        }
+        _ => Some(value.clone()),
+    }
+}
+
+async fn load_monitor_plugin_input_schema(
+    db: &DatabaseService,
+    requested_plugin_id: &str,
+) -> Result<Value, String> {
+    let resolved_plugin_id = resolve_plugin_registry_id(db, requested_plugin_id)
+        .await?
+        .ok_or_else(|| format!("Plugin not found: {}", requested_plugin_id))?;
+
+    let plugin_record = db
+        .get_plugin_from_registry(&resolved_plugin_id)
+        .await
+        .map_err(|e| format!("Failed to query plugin '{}': {}", resolved_plugin_id, e))?
+        .ok_or_else(|| format!("Plugin not found: {}", resolved_plugin_id))?;
+
+    let code = db
+        .get_plugin_code(&resolved_plugin_id)
+        .await
+        .map_err(|e| {
+            format!(
+                "Failed to load plugin code for {}: {}",
+                resolved_plugin_id, e
+            )
+        })?
+        .ok_or_else(|| format!("Plugin code not found: {}", resolved_plugin_id))?;
+
+    Ok(
+        sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
+            &code,
+            plugin_record.metadata,
+        )
+        .await,
+    )
+}
+
+fn collect_monitor_plugin_ids(plugins: &[MonitorPluginConfigDto], ids: &mut HashSet<String>) {
+    for plugin in plugins {
+        let plugin_id = plugin.plugin_id.trim();
+        if !plugin_id.is_empty() {
+            ids.insert(plugin_id.to_string());
+        }
+        collect_monitor_plugin_ids(&plugin.fallback_plugins, ids);
+    }
+}
+
+fn sanitize_monitor_plugin_configs_by_schema(
+    plugins: &mut [MonitorPluginConfigDto],
+    schema_map: &HashMap<String, Value>,
+) {
+    for plugin in plugins {
+        let schema = schema_map
+            .get(plugin.plugin_id.trim())
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Map::new()));
+        let sanitized_params = sanitize_monitor_plugin_params_value(&plugin.plugin_params);
+        plugin.plugin_params = sanitize_value_by_schema(&sanitized_params, &schema)
+            .unwrap_or(Value::Object(Map::new()));
+        sanitize_monitor_plugin_configs_by_schema(&mut plugin.fallback_plugins, schema_map);
+    }
+}
+
+async fn sanitize_monitor_config_dto(
+    db: &DatabaseService,
+    mut config: MonitorConfigDto,
+) -> Result<MonitorConfigDto, String> {
+    let mut plugin_ids = HashSet::new();
+    collect_monitor_plugin_ids(&config.dns_plugins, &mut plugin_ids);
+    collect_monitor_plugin_ids(&config.ip_plugins, &mut plugin_ids);
+    collect_monitor_plugin_ids(&config.cert_plugins, &mut plugin_ids);
+    collect_monitor_plugin_ids(&config.content_plugins, &mut plugin_ids);
+    collect_monitor_plugin_ids(&config.api_plugins, &mut plugin_ids);
+    collect_monitor_plugin_ids(&config.port_plugins, &mut plugin_ids);
+    collect_monitor_plugin_ids(&config.service_plugins, &mut plugin_ids);
+    collect_monitor_plugin_ids(&config.web_plugins, &mut plugin_ids);
+    collect_monitor_plugin_ids(&config.risk_plugins, &mut plugin_ids);
+
+    let mut schema_map = HashMap::new();
+    for plugin_id in plugin_ids {
+        let schema = load_monitor_plugin_input_schema(db, &plugin_id).await?;
+        schema_map.insert(plugin_id, schema);
+    }
+
+    sanitize_monitor_plugin_configs_by_schema(&mut config.dns_plugins, &schema_map);
+    sanitize_monitor_plugin_configs_by_schema(&mut config.ip_plugins, &schema_map);
+    sanitize_monitor_plugin_configs_by_schema(&mut config.cert_plugins, &schema_map);
+    sanitize_monitor_plugin_configs_by_schema(&mut config.content_plugins, &schema_map);
+    sanitize_monitor_plugin_configs_by_schema(&mut config.api_plugins, &schema_map);
+    sanitize_monitor_plugin_configs_by_schema(&mut config.port_plugins, &schema_map);
+    sanitize_monitor_plugin_configs_by_schema(&mut config.service_plugins, &schema_map);
+    sanitize_monitor_plugin_configs_by_schema(&mut config.web_plugins, &schema_map);
+    sanitize_monitor_plugin_configs_by_schema(&mut config.risk_plugins, &schema_map);
+
+    Ok(config)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,10 +483,23 @@ pub async fn monitor_create_task(
     request: CreateMonitorTaskRequest,
 ) -> Result<String, String> {
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
+    let CreateMonitorTaskRequest {
+        program_id,
+        name,
+        interval_secs,
+        config,
+    } = request;
+    let interval_secs = validate_monitor_interval_secs(interval_secs)?;
+    let sanitized_config = match config {
+        Some(config_dto) => {
+            Some(sanitize_monitor_config_dto(db_service.inner().as_ref(), config_dto).await?)
+        }
+        None => None,
+    };
     let state_guard = state.read().await;
 
-    let mut task = MonitorTask::new(request.program_id, request.name, request.interval_secs);
-    if let Some(config_dto) = request.config {
+    let mut task = MonitorTask::new(program_id, name, interval_secs);
+    if let Some(config_dto) = sanitized_config {
         task.config = config_dto.into();
     }
 
@@ -303,14 +516,27 @@ pub async fn monitor_create_tasks_for_programs(
     request: CreateMonitorTasksForProgramsRequest,
 ) -> Result<Vec<String>, String> {
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
+    let CreateMonitorTasksForProgramsRequest {
+        program_ids,
+        name,
+        interval_secs,
+        config,
+    } = request;
+    let interval_secs = validate_monitor_interval_secs(interval_secs)?;
 
-    let name = request.name.trim();
+    let name = name.trim();
     if name.is_empty() {
         return Err("任务名称不能为空".to_string());
     }
 
-    let programs =
-        resolve_monitor_target_programs(db_service.inner(), &request.program_ids).await?;
+    let sanitized_config = match config {
+        Some(config_dto) => {
+            Some(sanitize_monitor_config_dto(db_service.inner().as_ref(), config_dto).await?)
+        }
+        None => None,
+    };
+
+    let programs = resolve_monitor_target_programs(db_service.inner(), &program_ids).await?;
     let append_program_name = programs.len() > 1;
     let state_guard = state.read().await;
     let mut task_ids = Vec::with_capacity(programs.len());
@@ -319,9 +545,9 @@ pub async fn monitor_create_tasks_for_programs(
         let mut task = MonitorTask::new(
             program.id.clone(),
             scoped_task_name(name, &program, append_program_name),
-            request.interval_secs,
+            interval_secs,
         );
-        if let Some(config_dto) = request.config.clone() {
+        if let Some(config_dto) = sanitized_config.clone() {
             task.config = config_dto.into();
         }
         task_ids.push(state_guard.scheduler.add_task(task).await?);
@@ -366,12 +592,18 @@ pub async fn monitor_get_running_tasks(
 ) -> Result<Vec<String>, String> {
     let state_guard = state.read().await;
     let running = state_guard.running_task_ids.read().await;
-    Ok(running.iter().cloned().collect())
+    let cancel_requested = state_guard.cancel_requested_task_ids.read().await;
+    Ok(running
+        .iter()
+        .filter(|task_id| !cancel_requested.contains(*task_id))
+        .cloned()
+        .collect())
 }
 
 #[tauri::command]
 pub async fn monitor_stop_task(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    app: AppHandle,
     task_id: String,
 ) -> Result<bool, String> {
     let state_guard = state.read().await;
@@ -390,9 +622,10 @@ pub async fn monitor_stop_task(
         .await
         .get(&task_id)
         .cloned();
-    if let Some(run_id) = active_run_id {
+    let task = state_guard.scheduler.get_task(&task_id).await;
+    if let Some(run_id) = active_run_id.as_deref() {
         let cancelled = sentinel_plugins::cancel_plugin_fetch_requests_by_run(
-            &run_id,
+            run_id,
             "monitor task stopped by user",
         );
         tracing::info!(
@@ -400,6 +633,25 @@ pub async fn monitor_stop_task(
             cancelled,
             task_id,
             run_id
+        );
+    }
+    if let Some(task) = task {
+        let started_at = monitor_run_started_at(&task_id, active_run_id.as_deref());
+        emit_monitor_task_progress(
+            &app,
+            &build_monitor_task_progress_event(
+                &task,
+                "stop_request",
+                "stopped",
+                0,
+                0,
+                None,
+                None,
+                0,
+                0,
+                Some("Monitor task stop requested".to_string()),
+                &started_at,
+            ),
         );
     }
 
@@ -461,19 +713,34 @@ pub async fn monitor_update_task(
     request: UpdateMonitorTaskRequest,
 ) -> Result<bool, String> {
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
+    let UpdateMonitorTaskRequest {
+        name,
+        interval_secs,
+        config,
+    } = request;
+    let interval_secs = match interval_secs {
+        Some(interval_secs) => Some(validate_monitor_interval_secs(interval_secs)?),
+        None => None,
+    };
+    let sanitized_config = match config {
+        Some(config_dto) => {
+            Some(sanitize_monitor_config_dto(db_service.inner().as_ref(), config_dto).await?)
+        }
+        None => None,
+    };
     let state_guard = state.read().await;
 
     state_guard
         .scheduler
         .update_task(&task_id, |task| {
-            if let Some(name) = request.name {
+            if let Some(name) = name {
                 task.name = name;
             }
-            if let Some(interval) = request.interval_secs {
+            if let Some(interval) = interval_secs {
                 task.interval_secs = interval;
                 task.calculate_next_run();
             }
-            if let Some(config_dto) = request.config {
+            if let Some(config_dto) = sanitized_config {
                 task.config = config_dto.into();
             }
         })
@@ -587,14 +854,65 @@ pub async fn monitor_update_task_plugins(
     request: UpdatePluginConfigRequest,
 ) -> Result<bool, String> {
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
+    let UpdatePluginConfigRequest {
+        monitor_type,
+        mut plugins,
+    } = request;
+    let mut config = MonitorConfigDto {
+        enable_dns_monitoring: None,
+        dns_plugins: Vec::new(),
+        enable_ip_monitoring: None,
+        ip_plugins: Vec::new(),
+        enable_cert_monitoring: None,
+        cert_plugins: Vec::new(),
+        enable_content_monitoring: None,
+        content_plugins: Vec::new(),
+        enable_api_monitoring: None,
+        api_plugins: Vec::new(),
+        enable_port_monitoring: None,
+        port_plugins: Vec::new(),
+        enable_service_monitoring: None,
+        service_plugins: Vec::new(),
+        enable_web_monitoring: None,
+        web_plugins: Vec::new(),
+        enable_risk_monitoring: None,
+        risk_plugins: Vec::new(),
+        auto_trigger_enabled: None,
+        auto_trigger_min_severity: None,
+        check_interval_secs: None,
+    };
+    match monitor_type.as_str() {
+        "dns" => config.dns_plugins = std::mem::take(&mut plugins),
+        "ip" => config.ip_plugins = std::mem::take(&mut plugins),
+        "cert" => config.cert_plugins = std::mem::take(&mut plugins),
+        "content" => config.content_plugins = std::mem::take(&mut plugins),
+        "api" => config.api_plugins = std::mem::take(&mut plugins),
+        "port" => config.port_plugins = std::mem::take(&mut plugins),
+        "service" => config.service_plugins = std::mem::take(&mut plugins),
+        "web" => config.web_plugins = std::mem::take(&mut plugins),
+        "risk" => config.risk_plugins = std::mem::take(&mut plugins),
+        _ => return Err(format!("Unsupported monitor type: {}", monitor_type)),
+    }
+    let sanitized_config = sanitize_monitor_config_dto(db_service.inner().as_ref(), config).await?;
+    let plugins = match monitor_type.as_str() {
+        "dns" => sanitized_config.dns_plugins,
+        "ip" => sanitized_config.ip_plugins,
+        "cert" => sanitized_config.cert_plugins,
+        "content" => sanitized_config.content_plugins,
+        "api" => sanitized_config.api_plugins,
+        "port" => sanitized_config.port_plugins,
+        "service" => sanitized_config.service_plugins,
+        "web" => sanitized_config.web_plugins,
+        "risk" => sanitized_config.risk_plugins,
+        _ => Vec::new(),
+    };
     let state_guard = state.read().await;
 
     state_guard
         .scheduler
         .update_task(&task_id, |task| {
-            let plugins: Vec<MonitorPluginConfig> =
-                request.plugins.into_iter().map(Into::into).collect();
-            apply_plugins_to_monitor_type(&mut task.config, &request.monitor_type, plugins);
+            let plugins: Vec<MonitorPluginConfig> = plugins.into_iter().map(Into::into).collect();
+            apply_plugins_to_monitor_type(&mut task.config, &monitor_type, plugins);
         })
         .await?;
 

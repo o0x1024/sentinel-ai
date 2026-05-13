@@ -61,25 +61,23 @@
           <!-- Description -->
           <div class="form-control">
             <label class="label"><span class="label-text font-medium">{{ t('bugBounty.form.description') }}</span></label>
-            <div class="bg-base-200 rounded-lg p-4 whitespace-pre-wrap min-h-[80px]">
-              {{ finding?.description || t('bugBounty.findingDetail.noDescription') }}
-            </div>
+            <BountyMarkdownContent
+              class="min-h-[80px]"
+              :content="finding?.description"
+              :empty-text="t('bugBounty.findingDetail.noDescription')"
+            />
           </div>
 
           <!-- Impact -->
           <div class="form-control">
             <label class="label"><span class="label-text font-medium">{{ t('bugBounty.findingDetail.impact') }}</span></label>
-            <div class="bg-base-200 rounded-lg p-4 whitespace-pre-wrap min-h-[60px]">
-              {{ finding?.impact || '-' }}
-            </div>
+            <BountyMarkdownContent class="min-h-[60px]" :content="finding?.impact" />
           </div>
 
           <!-- Remediation -->
           <div class="form-control">
             <label class="label"><span class="label-text font-medium">{{ t('bugBounty.findingDetail.remediation') }}</span></label>
-            <div class="bg-base-200 rounded-lg p-4 whitespace-pre-wrap min-h-[60px]">
-              {{ finding?.remediation || '-' }}
-            </div>
+            <BountyMarkdownContent class="min-h-[60px]" :content="finding?.remediation" />
           </div>
 
           <!-- Affected URL & Endpoint -->
@@ -109,13 +107,9 @@
           </div>
 
           <!-- Reproduction Steps -->
-          <div v-if="reproductionSteps.length > 0" class="form-control">
+          <div v-if="reproductionStepsMarkdown" class="form-control">
             <label class="label"><span class="label-text font-medium">{{ t('bugBounty.findingDetail.reproductionSteps') }}</span></label>
-            <div class="bg-base-200 rounded-lg p-4">
-              <ol class="list-decimal list-inside space-y-2">
-                <li v-for="(step, index) in reproductionSteps" :key="index" class="text-sm">{{ step }}</li>
-              </ol>
-            </div>
+            <BountyMarkdownContent :content="reproductionStepsMarkdown" />
           </div>
 
           <!-- Tags -->
@@ -323,6 +317,8 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '../../composables/useToast'
 import { dialog } from '../../composables/useDialog'
+import BountyMarkdownContent from './BountyMarkdownContent.vue'
+import { formatBountyFindingMarkdownList } from './bountyFindingMarkdown'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -362,12 +358,12 @@ const programName = computed(() => {
   return program?.name || '-'
 })
 
-const reproductionSteps = computed(() => {
-  if (!props.finding?.reproduction_steps_json) return []
+const reproductionStepsMarkdown = computed(() => {
+  if (!props.finding?.reproduction_steps_json) return ''
   try {
-    return JSON.parse(props.finding.reproduction_steps_json)
+    return formatBountyFindingMarkdownList(props.finding.reproduction_steps_json)
   } catch {
-    return []
+    return ''
   }
 })
 

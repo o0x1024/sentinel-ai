@@ -46,8 +46,9 @@
         </p>
       </div>
 
-      <template v-else-if="workbenchToolsMounted">
+      <template v-else>
         <ProxyRepeater
+          v-if="mountedTools.includes('repeater')"
           v-show="activeWorkbenchTool === 'repeater'"
           ref="repeaterRef"
           :initial-request="pendingRepeaterRequest"
@@ -62,6 +63,7 @@
           @switch-preview-variant="$emit('switchRequestVariant', $event)"
         />
         <ProxyIntruder
+          v-if="mountedTools.includes('intruder')"
           v-show="activeWorkbenchTool === 'intruder'"
           ref="intruderRef"
           :initial-request="pendingIntruderRequest"
@@ -73,18 +75,21 @@
           @workspaceStatsChanged="$emit('intruderWorkspaceStatsChanged', $event)"
         />
         <ProxyComparer
+          v-if="mountedTools.includes('comparer')"
           v-show="activeWorkbenchTool === 'comparer'"
           ref="comparerRef"
           class="absolute inset-0 h-full overflow-auto"
           @createDraft="$emit('createDraftFromComparer', $event)"
         />
         <TrafficOastPanel
+          v-if="mountedTools.includes('oast')"
           v-show="activeWorkbenchTool === 'oast'"
           class="absolute inset-0 h-full overflow-auto"
           @openConfig="$emit('openProxySettings')"
           @openSourceRequest="$emit('openHistoryRequestFromOast', $event)"
         />
         <PacketCapture
+          v-if="mountedTools.includes('capture')"
           v-show="activeWorkbenchTool === 'capture'"
           class="absolute inset-0 h-full overflow-auto"
         />
@@ -117,7 +122,7 @@ const { t } = useI18n()
 defineProps<{
   workbenchOpen: boolean
   activeWorkbenchTool: WorkbenchTool
-  workbenchToolsMounted: boolean
+  mountedTools: WorkbenchTool[]
   activeWorkbenchMeta: {
     title: string
     shortTitle: string

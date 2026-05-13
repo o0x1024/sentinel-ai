@@ -83,6 +83,16 @@
               <option value="inactive">{{ formatStatus('inactive') }}</option>
               <option value="unknown">{{ formatStatus('unknown') }}</option>
             </select>
+            <button
+              type="button"
+              class="btn btn-outline btn-sm"
+              :class="favoriteFilter ? 'btn-warning' : ''"
+              :title="t('bugBounty.surface.inventory.favorite.only')"
+              @click="toggleFavoriteFilter"
+            >
+              <i class="fas fa-star mr-2"></i>
+              {{ t('bugBounty.surface.inventory.favorite.only') }}
+            </button>
             <select
               v-if="showServiceFacetFilters"
               v-model="serviceNameFilter"
@@ -187,8 +197,15 @@
                     :options="httpStatusColumnFilterOptions"
                     :groups="httpStatusColumnFilterGroups"
                   />
+                  <SurfaceTableTextFilter
+                    v-else-if="isColumnTextFilterable(column)"
+                    :model-value="columnFilterValues[column.key] || ''"
+                    :label="column.label"
+                    :placeholder="t('bugBounty.surface.inventory.columnSearchPlaceholder', { column: column.label })"
+                    @update:model-value="setColumnFilterValue(column.key, $event)"
+                  />
                   <span v-else>{{ column.label }}</span>
-                </th>
+	                </th>
                 <th>
                   <SurfaceTableColumnFilter
                     v-model="viewStateFilter"
@@ -196,7 +213,7 @@
                     :options="viewStateColumnFilterOptions"
                   />
                 </th>
-                <th class="w-48">{{ t('bugBounty.surface.inventory.actions.column') }}</th>
+                <th class="w-56">{{ t('bugBounty.surface.inventory.actions.column') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -259,6 +276,21 @@
                 </td>
                 <td @click.stop>
                   <div class="flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-xs h-7 min-h-0 px-1.5"
+                      :class="item.asset.is_favorite ? 'text-warning' : 'text-base-content/35'"
+                      :disabled="isFavoriteUpdating(item.asset.id)"
+                      :title="formatFavoriteAction(item.asset)"
+                      :aria-label="formatFavoriteAction(item.asset)"
+                      @click="toggleAssetFavorite(item)"
+                    >
+                      <span
+                        v-if="isFavoriteUpdating(item.asset.id)"
+                        class="loading loading-spinner loading-xs"
+                      ></span>
+                      <i v-else class="fas fa-star"></i>
+                    </button>
                     <SurfaceIconButton
                       :label="t('bugBounty.surface.inventory.actions.edit')"
                       icon="edit"
@@ -547,6 +579,7 @@ import SurfaceAssetImportModal, { type SurfaceAssetImportPayload } from './Surfa
 import SurfaceAssetTypeIcon from './SurfaceAssetTypeIcon.vue'
 import SurfaceIconButton from './SurfaceIconButton.vue'
 import SurfaceTableColumnFilter from './SurfaceTableColumnFilter.vue'
+import SurfaceTableTextFilter from './SurfaceTableTextFilter.vue'
 import { type SurfaceAssetEditPayload, type SurfaceAssetEditTarget } from './surfaceAssetEditSupport'
 import { buildReferencedSurfaceAsset } from './surfaceAssetUtils'
 import {
@@ -583,9 +616,11 @@ const search = ref('')
 const assetTypeFilter = ref('web')
 const statusFilter = ref('')
 const viewStateFilter = ref('')
+const favoriteFilter = ref(false)
 const faviconPresenceFilter = ref('')
 const serviceNameFilter = ref('')
 const transportProtocolFilter = ref('')
+const columnFilterValues = ref<Record<string, string>>({})
 const inventoryPage = ref(1)
 const inventoryHasNext = ref(false)
 const inventoryTotal = ref(0)
@@ -622,6 +657,7 @@ const showAssetStatsModal = ref(false)
 const assetStatsFilter = ref<'all' | 'new'>('all')
 const selectedAssetIds = ref<string[]>([])
 const selectedAssetTypeById = ref<Record<string, string>>({})
+const favoriteUpdatingIds = ref<Set<string>>(new Set())
 const showEditModal = ref(false)
 const editingAsset = ref<SurfaceAssetEditTarget | null>(null)
 const showImportModal = ref(false)
@@ -642,6 +678,18 @@ const httpStatusGroupLabels: Record<string, string> = {
   '4': '4xx',
   '5': '5xx',
 }
+const assetColumnFilterKeys = new Set(['type', 'name', 'display', 'status', 'exposure', 'source'])
+const typedColumnFilterKeysByType: Record<string, Set<string>> = {
+  org: new Set(['org_name', 'business_line', 'importance_level']),
+  domain: new Set(['root_domain', 'subdomain_level', 'record_type', 'record_value', 'registrar']),
+  ip: new Set(['cidr', 'asn', 'cloud_provider', 'network_boundary_type']),
+  host: new Set(['fqdn', 'operating_system', 'device_type', 'region_or_datacenter']),
+  port: new Set(['ip_address', 'port_number', 'transport_protocol', 'port_state']),
+  service: new Set(['application_service_name', 'transport_protocol', 'port_number', 'product_name', 'version', 'auth_type']),
+  web: new Set(['canonical_url', 'site_title', 'http_status_code', 'favicon_hash']),
+  certificate: new Set(['subject', 'issuer', 'risk_status', 'sha256']),
+}
+const numericColumnFilterKeys = new Set(['asn', 'http_status_code', 'port_number', 'subdomain_level'])
 
 const assetTypeOptions = computed(() => {
   return Object.entries(overview.value.by_type || {})
@@ -698,19 +746,66 @@ const httpStatusFilterValue = computed(() => {
   const parsed = Number.parseInt(httpStatusFilter.value, 10)
   return Number.isFinite(parsed) ? parsed : null
 })
+
+const columnFilterKeyMatchesAssetType = (key: string, assetType?: string | null) => {
+  if (assetColumnFilterKeys.has(key)) return true
+  if (!assetType) return false
+  return Boolean(typedColumnFilterKeysByType[assetType]?.has(key))
+}
+
+const buildColumnFilterPayload = (assetType?: string | null) =>
+  Object.entries(columnFilterValues.value)
+    .map(([key, value]) => ({ key, value: value.trim() }))
+    .filter(({ key, value }) => value && columnFilterKeyMatchesAssetType(key, assetType))
+    .map(({ key, value }) => ({
+      key,
+      operator: numericColumnFilterKeys.has(key) ? 'equals' : 'contains',
+      value,
+    }))
+
+const clearInvalidColumnFilters = (assetType?: string | null) => {
+  const nextFilters: Record<string, string> = {}
+  for (const [key, value] of Object.entries(columnFilterValues.value)) {
+    if (columnFilterKeyMatchesAssetType(key, assetType)) {
+      nextFilters[key] = value
+    }
+  }
+  columnFilterValues.value = nextFilters
+}
+
+const setColumnFilterValue = (key: string, value: string) => {
+  const nextFilters = { ...columnFilterValues.value }
+  const trimmed = value.trim()
+  if (trimmed) {
+    nextFilters[key] = trimmed
+  } else {
+    delete nextFilters[key]
+  }
+  columnFilterValues.value = nextFilters
+}
+
+const isColumnTextFilterable = (column: any) => {
+  if (!column?.key || column.badge || column.formatter === 'time') return false
+  if (column.key === 'favicon_hash' || column.key === 'http_status_code') return false
+  return columnFilterKeyMatchesAssetType(column.key, assetTypeFilter.value || null)
+}
+
 const hasInventoryFilters = computed(() =>
   Boolean(
     selectedProgramId.value ||
       assetTypeFilter.value ||
       statusFilter.value ||
       viewStateFilter.value ||
+      favoriteFilter.value ||
       faviconPresenceFilter.value ||
       serviceNameFilter.value ||
       transportProtocolFilter.value ||
       httpStatusFilter.value ||
+      columnFilterPayload.value.length ||
       search.value.trim(),
   ),
 )
+const columnFilterPayload = computed(() => buildColumnFilterPayload(assetTypeFilter.value || null))
 const viewStateColumnFilterOptions = computed(() => [
   { value: '', label: t('bugBounty.surface.inventory.viewStates.all') },
   { value: 'new', label: t('bugBounty.surface.inventory.viewStates.new') },
@@ -854,11 +949,13 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
         asset_type: assetTypeFilter.value || null,
         status: statusFilter.value || null,
         view_state: viewStateFilter.value || null,
+        is_favorite: favoriteFilter.value ? true : null,
         search: search.value.trim() || null,
         has_favicon_hash: hasFaviconHashFilterValue.value,
         http_status_code: httpStatusFilterValue.value,
         service_name: serviceNameFilter.value || null,
         transport_protocol: transportProtocolFilter.value || null,
+        column_filters: columnFilterPayload.value.length ? columnFilterPayload.value : null,
         limit: inventoryPageSize.value + 1,
         offset: (inventoryPage.value - 1) * inventoryPageSize.value,
       },
@@ -902,11 +999,13 @@ const loadInventoryFacets = async (programId = selectedProgramId.value || null) 
         asset_type: assetTypeFilter.value || null,
         status: statusFilter.value || null,
         view_state: viewStateFilter.value || null,
+        is_favorite: favoriteFilter.value ? true : null,
         search: search.value.trim() || null,
         has_favicon_hash: hasFaviconHashFilterValue.value,
         http_status_code: null,
         service_name: null,
         transport_protocol: null,
+        column_filters: columnFilterPayload.value.length ? columnFilterPayload.value : null,
         limit: null,
         offset: null,
       },
@@ -931,12 +1030,14 @@ const loadNewAssetCount = async (programId = selectedProgramId.value || null) =>
         asset_type: null,
         status: null,
         view_state: 'new',
+        is_favorite: null,
         search: null,
         favicon_hash: null,
         has_favicon_hash: null,
         http_status_code: null,
         service_name: null,
         transport_protocol: null,
+        column_filters: null,
         limit: null,
         offset: null,
       },
@@ -1010,6 +1111,67 @@ const formatViewState = (asset?: any) =>
     ? t('bugBounty.surface.inventory.viewStates.new')
     : t('bugBounty.surface.inventory.viewStates.viewed')
 
+const isFavoriteUpdating = (assetId?: string | null) =>
+  Boolean(assetId && favoriteUpdatingIds.value.has(assetId))
+
+const setFavoriteUpdating = (assetId: string, updating: boolean) => {
+  const next = new Set(favoriteUpdatingIds.value)
+  if (updating) {
+    next.add(assetId)
+  } else {
+    next.delete(assetId)
+  }
+  favoriteUpdatingIds.value = next
+}
+
+const formatFavoriteAction = (asset?: any) =>
+  asset?.is_favorite
+    ? t('bugBounty.surface.inventory.favorite.remove')
+    : t('bugBounty.surface.inventory.favorite.add')
+
+const toggleFavoriteFilter = () => {
+  favoriteFilter.value = !favoriteFilter.value
+}
+
+const toggleAssetFavorite = async (item: any) => {
+  const asset = item?.asset
+  const assetId = String(asset?.id || '').trim()
+  if (!assetId) return
+
+  const previousFavorite = Boolean(asset.is_favorite)
+  const nextFavorite = !previousFavorite
+  setFavoriteUpdating(assetId, true)
+  asset.is_favorite = nextFavorite
+
+  try {
+    const updated = await invoke<boolean>('surface_set_asset_favorite', {
+      assetId,
+      isFavorite: nextFavorite,
+    })
+    if (!updated) {
+      asset.is_favorite = previousFavorite
+      toast.error(t('bugBounty.surface.inventory.favorite.updateFailed'))
+      return
+    }
+
+    toast.success(
+      nextFavorite
+        ? t('bugBounty.surface.inventory.favorite.added')
+        : t('bugBounty.surface.inventory.favorite.removed'),
+    )
+    if (favoriteFilter.value && !nextFavorite) {
+      await loadInventory(selectedProgramId.value || null, false)
+      await loadInventoryFacets(selectedProgramId.value || null)
+    }
+  } catch (error) {
+    asset.is_favorite = previousFavorite
+    console.error('Failed to update surface asset favorite:', error)
+    toast.error(t('bugBounty.surface.inventory.favorite.updateFailed'))
+  } finally {
+    setFavoriteUpdating(assetId, false)
+  }
+}
+
 const markAssetsViewedLocally = (assetIds: string[]) => {
   if (!assetIds.length) return
   const viewedAt = new Date().toISOString()
@@ -1077,10 +1239,12 @@ const applyAssetStatsFilter = (assetType?: string | null) => {
   assetTypeFilter.value = assetType
   statusFilter.value = ''
   viewStateFilter.value = assetStatsFilter.value === 'new' ? 'new' : ''
+  favoriteFilter.value = false
   faviconPresenceFilter.value = ''
   httpStatusFilter.value = ''
   serviceNameFilter.value = ''
   transportProtocolFilter.value = ''
+  columnFilterValues.value = {}
   search.value = ''
   clearSelection()
   reloadInventoryFromFirstPage()
@@ -1223,11 +1387,13 @@ const getInventoryFilterPayload = () => ({
   asset_type: assetTypeFilter.value || null,
   status: statusFilter.value || null,
   view_state: viewStateFilter.value || null,
+  is_favorite: favoriteFilter.value ? true : null,
   search: search.value.trim() || null,
   has_favicon_hash: hasFaviconHashFilterValue.value,
   http_status_code: httpStatusFilterValue.value,
   service_name: serviceNameFilter.value || null,
   transport_protocol: transportProtocolFilter.value || null,
+  column_filters: columnFilterPayload.value.length ? columnFilterPayload.value : null,
   limit: null,
   offset: null,
 })
@@ -1444,12 +1610,17 @@ const buildExportFilterPayload = (exportType: SurfaceAssetExportType) => {
     (useCurrentType && assetTypeFilter.value === 'service') || exportType === 'service'
   const useWebFaviconFilter =
     (useCurrentType && assetTypeFilter.value === 'web') || exportType === 'web'
+  const columnFilterAssetType = useCurrentType
+    ? assetTypeFilter.value || null
+    : resolvedAssetType || assetTypeFilter.value || null
+  const exportColumnFilters = buildColumnFilterPayload(columnFilterAssetType)
 
   return {
     program_id: selectedProgramId.value || null,
     asset_type: resolvedAssetType,
     status: statusFilter.value || null,
     view_state: viewStateFilter.value || null,
+    is_favorite: favoriteFilter.value ? true : null,
     search: search.value.trim() || null,
     has_favicon_hash: useWebFaviconFilter ? hasFaviconHashFilterValue.value : null,
     http_status_code:
@@ -1458,6 +1629,7 @@ const buildExportFilterPayload = (exportType: SurfaceAssetExportType) => {
         : null,
     service_name: useServiceFacetFilters ? serviceNameFilter.value || null : null,
     transport_protocol: useServiceFacetFilters ? transportProtocolFilter.value || null : null,
+    column_filters: exportColumnFilters.length ? exportColumnFilters : null,
     limit: null,
     offset: null,
   }
@@ -1656,12 +1828,14 @@ watch(selectedProgramId, () => {
   loadAll()
 })
 
-watch([assetTypeFilter, statusFilter, viewStateFilter, faviconPresenceFilter, httpStatusFilter, serviceNameFilter, transportProtocolFilter], () => {
+watch([assetTypeFilter, statusFilter, viewStateFilter, favoriteFilter, faviconPresenceFilter, httpStatusFilter, serviceNameFilter, transportProtocolFilter, columnFilterValues], () => {
   clearSelection()
   reloadInventoryFromFirstPage()
+  loadInventoryFacets()
 })
 
 watch(assetTypeFilter, (value) => {
+  clearInvalidColumnFilters(value || null)
   if (value !== 'web') {
     faviconPresenceFilter.value = ''
     httpStatusFilter.value = ''

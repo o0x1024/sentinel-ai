@@ -20,6 +20,8 @@ pub struct MonitorTaskProgressEvent {
     pub current_plugin_index: Option<u32>,
     pub target_count: u32,
     pub imported_assets: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_breakdown_label: Option<String>,
     pub indeterminate: bool,
     pub message: Option<String>,
     pub started_at: String,
@@ -113,11 +115,20 @@ pub fn build_monitor_task_progress_event(
         current_plugin_index: current_plugin_index.map(|value| value as u32),
         target_count: target_count as u32,
         imported_assets: imported_assets as u32,
+        target_breakdown_label: None,
         indeterminate: false,
         message,
         started_at: started_at.to_string(),
         updated_at: Utc::now().to_rfc3339(),
     }
+}
+
+pub fn with_monitor_target_breakdown(
+    mut payload: MonitorTaskProgressEvent,
+    target_breakdown_label: Option<String>,
+) -> MonitorTaskProgressEvent {
+    payload.target_breakdown_label = target_breakdown_label;
+    payload
 }
 
 pub fn emit_monitor_task_progress(app: &AppHandle, payload: &MonitorTaskProgressEvent) {

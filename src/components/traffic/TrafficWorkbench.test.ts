@@ -91,7 +91,7 @@ describe('TrafficWorkbench', () => {
     setImmersiveDrillModeEnabled(false)
   })
 
-  it('defaults back to history when mounted in immersive drill mode', async () => {
+  it('preserves workbench state when mounted in immersive drill mode', async () => {
     setImmersiveDrillModeEnabled(true)
     openImmersiveTrafficWorkbenchTool('intruder')
     toggleImmersiveTrafficProxySettings()
@@ -116,10 +116,10 @@ describe('TrafficWorkbench', () => {
 
     await nextTick()
 
-    expect(dockState.workbenchOpen.value).toBe(false)
-    expect(dockState.interceptDrawerOpen.value).toBe(false)
-    expect(dockState.proxySettingsOpen.value).toBe(false)
-    expect(dockState.trafficPluginsOpen.value).toBe(false)
+    expect(dockState.workbenchOpen.value).toBe(true)
+    expect(dockState.activeWorkbenchTool.value).toBe('intruder')
+    expect(dockState.proxySettingsOpen.value).toBe(true)
+    expect(dockState.trafficPluginsOpen.value).toBe(true)
     expect(dockState.basketOpen.value).toBe(false)
 
     wrapper.unmount()
@@ -172,7 +172,7 @@ describe('TrafficWorkbench', () => {
     expect(dockState.workbenchOpen.value).toBe(true)
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    expect(dockState.workbenchOpen.value).toBe(false)
+    expect(dockState.workbenchOpen.value).toBe(true)
 
     wrapper.unmount()
   })

@@ -13,13 +13,14 @@ use crate::commands::monitor_plugin_output_support::{
 };
 use crate::commands::monitor_progress_support::{
     build_monitor_task_log_event, build_monitor_task_progress_event, collect_monitor_plugins,
-    emit_monitor_task_log, emit_monitor_task_progress,
+    emit_monitor_task_log, emit_monitor_task_progress, with_monitor_target_breakdown,
 };
 use crate::commands::monitor_snapshot_support::{
     persist_api_monitor_inventory_output, persist_monitor_plugin_snapshots_to_task,
 };
 use crate::commands::monitor_surface_support::{
-    collect_monitor_target_payload_for_plugin, ingest_surface_plugin_output, MonitorResolvedTargets,
+    collect_monitor_target_payload_for_plugin, format_monitor_target_breakdown,
+    ingest_surface_plugin_output, MonitorResolvedTargets,
 };
 use chrono::Utc;
 use sentinel_bounty::services::{MonitorPluginConfig, MonitorScheduler, MonitorStats, MonitorTask};
@@ -69,7 +70,9 @@ pub(crate) fn inject_monitor_plugin_targets(
     }
 }
 
-pub(crate) fn monitor_plugin_has_invocable_input(resolved_targets: &MonitorResolvedTargets) -> bool {
+pub(crate) fn monitor_plugin_has_invocable_input(
+    resolved_targets: &MonitorResolvedTargets,
+) -> bool {
     !resolved_targets.targets.is_empty() || !resolved_targets.extra_input.is_empty()
 }
 
@@ -149,6 +152,14 @@ impl MonitorSchedulerState {
             active_task_run_ids: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+}
+
+fn monitor_run_started_at(task_id: &str, run_id: Option<&str>) -> String {
+    run_id
+        .and_then(|value| value.strip_prefix(&format!("monitor:{task_id}:")))
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Utc::now().to_rfc3339())
 }
 
 async fn ensure_monitor_scheduler_initialized(
@@ -469,6 +480,8 @@ pub async fn monitor_start_scheduler(
                                 }
                             };
                             let plugin_targets = &resolved_targets.targets;
+                            let target_breakdown_label =
+                                format_monitor_target_breakdown(&resolved_targets);
 
                             if cancel_requested_task_ids.read().await.contains(&task_id) {
                                 tracing::info!(
@@ -534,6 +547,26 @@ pub async fn monitor_start_scheduler(
                                 continue;
                             }
 
+                            emit_monitor_task_progress(
+                                &app_handle,
+                                &with_monitor_target_breakdown(
+                                    build_monitor_task_progress_event(
+                                        &task,
+                                        "scheduler",
+                                        "running",
+                                        completed_steps,
+                                        total_steps,
+                                        Some(attempt_label.as_str()),
+                                        Some(index + 1),
+                                        plugin_targets.len(),
+                                        total_imported,
+                                        Some(format!("Running plugin {}", attempt_label)),
+                                        &execution_started_at,
+                                    ),
+                                    target_breakdown_label.clone(),
+                                ),
+                            );
+
                             let plugin_started_at = Instant::now();
                             let mut input = candidate.plugin_params.clone();
                             if !input.is_object() {
@@ -573,6 +606,47 @@ pub async fn monitor_start_scheduler(
                             )
                             .await;
                             heartbeat.stop().await;
+
+                            if cancel_requested_task_ids.read().await.contains(&task_id) {
+                                tracing::info!(
+                                    "Task '{}' stopped by user request during plugin '{}'",
+                                    task.name,
+                                    attempt_label
+                                );
+                                stopped = true;
+                                emit_monitor_task_progress(
+                                    &app_handle,
+                                    &build_monitor_task_progress_event(
+                                        &task,
+                                        "scheduler",
+                                        "stopped",
+                                        completed_steps,
+                                        total_steps,
+                                        Some(attempt_label.as_str()),
+                                        Some(index + 1),
+                                        plugin_targets.len(),
+                                        total_imported,
+                                        Some(format!("Stopped during plugin {}", attempt_label)),
+                                        &execution_started_at,
+                                    ),
+                                );
+                                emit_monitor_task_log(
+                                    &app_handle,
+                                    &build_monitor_task_log_event(
+                                        &task,
+                                        attempt_label.as_str(),
+                                        "scheduler",
+                                        "stopped",
+                                        index + 1,
+                                        total_steps,
+                                        Some(plugin_started_at.elapsed().as_millis() as u64),
+                                        0,
+                                        total_imported,
+                                        format!("Stopped during plugin {}", attempt_label),
+                                    ),
+                                );
+                                break;
+                            }
 
                             if !result.success {
                                 last_failure_reason = normalize_monitor_error_message(
@@ -1552,16 +1626,25 @@ pub async fn monitor_stop_scheduler(
 ) -> Result<bool, String> {
     let state_guard = state.read().await;
     state_guard.scheduler.stop().await?;
-    let active_runs = state_guard
-        .active_task_run_ids
+    let active_task_ids = state_guard
+        .running_task_ids
         .read()
         .await
-        .values()
+        .iter()
         .cloned()
         .collect::<Vec<_>>();
-    for run_id in active_runs {
+    let active_runs = state_guard.active_task_run_ids.read().await.clone();
+
+    {
+        let mut cancel_requested = state_guard.cancel_requested_task_ids.write().await;
+        for task_id in &active_task_ids {
+            cancel_requested.insert(task_id.clone());
+        }
+    }
+
+    for run_id in active_runs.values() {
         let cancelled = sentinel_plugins::cancel_plugin_fetch_requests_by_run(
-            &run_id,
+            run_id,
             "monitor scheduler stopped by user",
         );
         tracing::info!(
@@ -1569,6 +1652,31 @@ pub async fn monitor_stop_scheduler(
             cancelled,
             run_id
         );
+    }
+
+    for task_id in active_task_ids {
+        let task = state_guard.scheduler.get_task(&task_id).await;
+        if let Some(task) = task {
+            emit_monitor_task_progress(
+                &app,
+                &build_monitor_task_progress_event(
+                    &task,
+                    "stop_scheduler",
+                    "stopped",
+                    0,
+                    0,
+                    None,
+                    None,
+                    0,
+                    0,
+                    Some("Monitor scheduler stopped task".to_string()),
+                    &monitor_run_started_at(
+                        &task_id,
+                        active_runs.get(&task_id).map(String::as_str),
+                    ),
+                ),
+            );
+        }
     }
 
     // Emit scheduler stopped event

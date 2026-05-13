@@ -242,7 +242,8 @@ fn default_target_asset_types_for_plugin(plugin_id: &str) -> Vec<&'static str> {
         | "risk_scanner" => vec!["web"],
         "fofa_asset_monitor" => vec!["web", "domain"],
         "subdomain_enumerator" | "dns_resolver" | "subdomain_brute" => vec!["domain"],
-        "cert_monitor" | "ssl_scanner" => vec!["domain", "service"],
+        "cert_monitor" => vec!["domain"],
+        "ssl_scanner" => vec!["domain", "service"],
         "port_monitor" => vec!["ip"],
         "service_monitor" | "service_probe" => vec!["service"],
         "cidr_mapper" => vec!["ip"],
@@ -695,6 +696,10 @@ impl ChangeMonitorConfig {
                 .plugin_id
                 .strip_prefix("plugin__")
                 .unwrap_or(&plugin.plugin_id);
+            if normalized_plugin_id == "cert_monitor" {
+                plugin.target_asset_types = vec!["domain".to_string()];
+                continue;
+            }
             if !matches!(normalized_plugin_id, "cert_monitor" | "ssl_scanner") {
                 continue;
             }

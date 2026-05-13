@@ -192,7 +192,17 @@
           <div class="divider my-1 h-px"></div>
           
           <TrafficContextMenuSections
-            :sections="interceptSendContextMenuSections"
+            :sections="interceptSendBeforeCodecContextMenuSections"
+            label-prefix="trafficAnalysis.intercept.contextMenu"
+          />
+          <TrafficContextSubmenu
+            v-if="interceptTextCodecSubmenu"
+            :submenu="interceptTextCodecSubmenu"
+            label-prefix="trafficAnalysis.intercept.contextMenu"
+          />
+          <div v-if="interceptTextCodecSubmenu && interceptSendAfterCodecContextMenuSections.length" class="divider my-1 h-px"></div>
+          <TrafficContextMenuSections
+            :sections="interceptSendAfterCodecContextMenuSections"
             label-prefix="trafficAnalysis.intercept.contextMenu"
           />
           
@@ -334,6 +344,7 @@
               >
                 <HttpMessageSurface
                   v-if="isEditable"
+                  ref="currentMessageEditor"
                   v-model="requestContent"
                   custom-context-menu
                   :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
@@ -365,6 +376,7 @@
               >
                 <HttpMessageSurface
                   v-if="isEditable"
+                  ref="currentMessageEditor"
                   v-model="prettyContent"
                   custom-context-menu
                   :message-type="currentItemType === 'response' ? 'response' : currentItemType === 'request' ? 'request' : 'generic'"
@@ -503,7 +515,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, inject, watch } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted, inject, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
@@ -519,6 +531,7 @@ import { getDefaultTrafficMessageViewTab } from './trafficDisplaySettings'
 import { buildTrafficRequestActionMenuItems } from './trafficRequestActionMenuSupport'
 import { buildTrafficContextMenuSections } from './trafficContextMenuSectionSupport'
 import { buildTrafficContextSubmenu } from './trafficContextSubmenuSupport'
+import { buildTrafficTextCodecSubmenu, getTrafficTextCodecErrorMessage, hasNonEmptyTextSelection, replaceTrafficTextSelection, splitTrafficMenuItemsAfterKey, transformTrafficTextCodec, type TrafficTextCodecAction } from './trafficTextCodecSupport'
 import { useTrafficSendTargets, type TrafficSendTarget } from './trafficSendTargets'
 import { buildTrafficRequestSendMenuItems } from './trafficSendMenuSupport'
 import { useTrafficPaneCompactMode } from './useTrafficPaneCompactMode'
@@ -608,6 +621,7 @@ const activeTab = ref<'raw' | 'pretty' | 'hex'>(getDefaultTrafficMessageViewTab(
 const isEditable = ref(true); // 默认可编辑
 const isProcessing = ref(false);
 const requestContent = ref('');
+const currentMessageEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null)
 const originalInterceptContentByItemId = new Map<string, string>();
 
 const contextMenu = ref<ContextMenuState>({
@@ -615,7 +629,9 @@ const contextMenu = ref<ContextMenuState>({
   x: 0,
   y: 0,
   item: null,
-  index: -1
+  index: -1,
+  editorContext: false,
+  selection: null,
 });
 
 const filterDialogRef = ref<HTMLDialogElement | null>(null);
@@ -674,6 +690,9 @@ const interceptContextSendMenuItems = computed(() =>
     },
   }),
 )
+const interceptContextSendMenuItemGroups = computed(() =>
+  splitTrafficMenuItemsAfterKey(interceptContextSendMenuItems.value, 'compare'),
+)
 const interceptToolbarSendMenuItems = computed(() =>
   buildTrafficRequestSendMenuItems({
     enabledTargets: enabledTargets.value,
@@ -696,12 +715,20 @@ const interceptContextRequestActionMenuItems = computed(() =>
     },
   }),
 )
-const interceptSendContextMenuSections = computed(() =>
+const interceptSendBeforeCodecContextMenuSections = computed(() =>
   buildTrafficContextMenuSections([
     {
       key: 'send',
+      items: interceptContextSendMenuItemGroups.value.before,
+    },
+  ]),
+)
+const interceptSendAfterCodecContextMenuSections = computed(() =>
+  buildTrafficContextMenuSections([
+    {
+      key: 'send-after-codec',
       items: [
-        ...interceptContextSendMenuItems.value,
+        ...interceptContextSendMenuItemGroups.value.after,
         contextMenu.value.item?.type === 'request'
           ? {
               key: 'sendToAI',
@@ -738,6 +765,14 @@ const interceptRequestContextMenuSections = computed(() =>
     },
   ]),
 )
+const interceptTextCodecSubmenu = computed(() => (
+  contextMenu.value.editorContext && isEditable.value && activeTab.value !== 'hex'
+    ? buildTrafficTextCodecSubmenu({
+        disabled: !hasNonEmptyTextSelection(contextMenu.value.selection),
+        onClick: applyTextCodecToInterceptSelection,
+      })
+    : null
+))
 const interceptFilterSubmenu = computed(() =>
   buildTrafficContextSubmenu({
     key: 'intercept-filter',
@@ -869,7 +904,7 @@ function stopResize() {
 }
 
 // Context Menu Methods
-function showContextMenu(event: MouseEvent, item: InterceptedItem, index: number) {
+function showContextMenu(event: MouseEvent, item: InterceptedItem, index: number, editorContext = false) {
   event.preventDefault();
   event.stopPropagation();
   selectItem(index);
@@ -878,7 +913,9 @@ function showContextMenu(event: MouseEvent, item: InterceptedItem, index: number
     x: event.clientX,
     y: event.clientY,
     item,
-    index
+    index,
+    editorContext,
+    selection: editorContext ? currentMessageEditor.value?.getSelectionRange?.() ?? null : null,
   };
   // Close menu on click outside
   document.addEventListener('click', closeContextMenu);
@@ -886,7 +923,7 @@ function showContextMenu(event: MouseEvent, item: InterceptedItem, index: number
 
 function showCurrentItemContextMenu(event: MouseEvent) {
   if (!currentItem.value) return;
-  showContextMenu(event, currentItem.value, currentItemIndex.value);
+  showContextMenu(event, currentItem.value, currentItemIndex.value, true);
 }
 
 function closeContextMenu() {
@@ -908,6 +945,42 @@ function getItemStatus(): number {
 
 function getItemDirection(): string {
   return getInterceptItemDirection(contextMenu.value.item);
+}
+
+async function applyTextCodecToInterceptSelection(action: TrafficTextCodecAction) {
+  closeContextMenu()
+
+  const selection = contextMenu.value.selection
+  if (!contextMenu.value.editorContext || !isEditable.value || activeTab.value === 'hex') {
+    dialog.toast.warning(t('trafficAnalysis.oast.readOnlyMode'))
+    return
+  }
+  if (!hasNonEmptyTextSelection(selection)) {
+    dialog.toast.warning(t('trafficAnalysis.textCodec.noSelection'))
+    return
+  }
+
+  const currentText = activeTab.value === 'pretty' ? prettyContent.value : requestContent.value
+  try {
+    const replacement = transformTrafficTextCodec(currentText.slice(selection.from, selection.to), action)
+    const next = replaceTrafficTextSelection(currentText, selection, replacement)
+    if (activeTab.value === 'pretty') {
+      prettyContent.value = next.content
+    } else {
+      requestContent.value = next.content
+    }
+
+    await nextTick()
+    currentMessageEditor.value?.setSelection?.(next.selectionStart, next.selectionEnd)
+    currentMessageEditor.value?.focus?.()
+    dialog.toast.success(t('trafficAnalysis.textCodec.applied', {
+      action: t(`trafficAnalysis.intercept.contextMenu.${action.labelKey}`),
+    }))
+  } catch (error) {
+    dialog.toast.error(t('trafficAnalysis.textCodec.failed', {
+      error: getTrafficTextCodecErrorMessage(error),
+    }))
+  }
 }
 
 async function contextMenuForward() {

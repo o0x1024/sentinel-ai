@@ -84,6 +84,11 @@ pub struct CreateScopeRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateScopesRequest {
+    pub scopes: Vec<CreateScopeRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateScopeRequest {
     pub scope_type: Option<String>,
     pub target_type: Option<String>,
@@ -261,17 +266,8 @@ pub async fn bounty_get_program_stats(
 // Scope Commands
 // ============================================================================
 
-/// Create a new scope for a program
-#[tauri::command]
-pub async fn bounty_create_scope(
-    db_service: State<'_, Arc<DatabaseService>>,
-    request: CreateScopeRequest,
-) -> Result<ProgramScopeRow, String> {
-    ensure_bounty_feature()?;
-
-    let now = Utc::now().to_rfc3339();
-
-    let scope = ProgramScopeRow {
+fn build_scope_row(request: CreateScopeRequest, now: &str) -> ProgramScopeRow {
+    ProgramScopeRow {
         id: Uuid::new_v4().to_string(),
         program_id: request.program_id,
         scope_type: request.scope_type,
@@ -290,15 +286,54 @@ pub async fn bounty_create_scope(
         finding_count: 0,
         priority: request.priority.unwrap_or(0.0),
         metadata_json: None,
-        created_at: now.clone(),
-        updated_at: now,
-    };
+        created_at: now.to_string(),
+        updated_at: now.to_string(),
+    }
+}
+
+/// Create a new scope for a program
+#[tauri::command]
+pub async fn bounty_create_scope(
+    db_service: State<'_, Arc<DatabaseService>>,
+    request: CreateScopeRequest,
+) -> Result<ProgramScopeRow, String> {
+    ensure_bounty_feature()?;
+
+    let now = Utc::now().to_rfc3339();
+    let scope = build_scope_row(request, &now);
 
     db_service
         .create_program_scope(&scope)
         .await
         .map_err(|e| e.to_string())?;
     Ok(scope)
+}
+
+/// Create multiple scopes for a program atomically
+#[tauri::command]
+pub async fn bounty_create_scopes(
+    db_service: State<'_, Arc<DatabaseService>>,
+    request: CreateScopesRequest,
+) -> Result<Vec<ProgramScopeRow>, String> {
+    ensure_bounty_feature()?;
+
+    if request.scopes.is_empty() {
+        return Err("At least one scope is required".to_string());
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let scopes: Vec<ProgramScopeRow> = request
+        .scopes
+        .into_iter()
+        .map(|scope| build_scope_row(scope, &now))
+        .collect();
+
+    db_service
+        .create_program_scopes(&scopes)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(scopes)
 }
 
 /// Get a scope by ID

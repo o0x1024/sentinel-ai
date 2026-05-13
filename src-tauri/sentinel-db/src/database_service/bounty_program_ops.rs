@@ -1,6 +1,7 @@
 //! Bug bounty program and scope database operations.
 
 use anyhow::Result;
+use std::collections::HashSet;
 use tracing::info;
 
 use super::bounty::{
@@ -10,6 +11,92 @@ use super::bounty::{
 };
 use super::service::DatabaseService;
 use crate::database_service::connection_manager::DatabasePool;
+use crate::database_service::sqlx_compat::{MySql, Postgres};
+
+fn normalize_scope_identity_value(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+async fn program_scope_identity_exists_sqlite(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    program_id: &str,
+    scope_type: &str,
+    target_type: &str,
+    target: &str,
+) -> Result<bool> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+            SELECT COUNT(1)
+            FROM bounty_scopes
+            WHERE program_id = ?
+              AND LOWER(TRIM(scope_type)) = ?
+              AND LOWER(TRIM(target_type)) = ?
+              AND LOWER(TRIM(target)) = ?
+        "#,
+    )
+    .bind(program_id)
+    .bind(scope_type)
+    .bind(target_type)
+    .bind(target)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    Ok(count > 0)
+}
+
+async fn program_scope_identity_exists_mysql(
+    tx: &mut sqlx::Transaction<'_, MySql>,
+    program_id: &str,
+    scope_type: &str,
+    target_type: &str,
+    target: &str,
+) -> Result<bool> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+            SELECT COUNT(1)
+            FROM bounty_scopes
+            WHERE program_id = ?
+              AND LOWER(TRIM(scope_type)) = ?
+              AND LOWER(TRIM(target_type)) = ?
+              AND LOWER(TRIM(target)) = ?
+        "#,
+    )
+    .bind(program_id)
+    .bind(scope_type)
+    .bind(target_type)
+    .bind(target)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    Ok(count > 0)
+}
+
+async fn program_scope_identity_exists_postgres(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    program_id: &str,
+    scope_type: &str,
+    target_type: &str,
+    target: &str,
+) -> Result<bool> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+            SELECT COUNT(1)
+            FROM bounty_scopes
+            WHERE program_id = $1
+              AND LOWER(TRIM(scope_type)) = $2
+              AND LOWER(TRIM(target_type)) = $3
+              AND LOWER(TRIM(target)) = $4
+        "#,
+    )
+    .bind(program_id)
+    .bind(scope_type)
+    .bind(target_type)
+    .bind(target)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    Ok(count > 0)
+}
 
 // ============================================================================
 // Database Operations
@@ -529,10 +616,45 @@ impl DatabaseService {
 
     /// Create a new program scope
     pub async fn create_program_scope(&self, scope: &ProgramScopeRow) -> Result<()> {
+        self.create_program_scopes(std::slice::from_ref(scope)).await
+    }
+
+    /// Create multiple program scopes in a single transaction
+    pub async fn create_program_scopes(&self, scopes: &[ProgramScopeRow]) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if scopes.is_empty() {
+            return Err(anyhow::anyhow!("At least one scope is required"));
+        }
+
+        let mut identities = HashSet::new();
+        for scope in scopes {
+            let normalized_scope_type = normalize_scope_identity_value(&scope.scope_type);
+            let normalized_target_type = normalize_scope_identity_value(&scope.target_type);
+            let normalized_target = normalize_scope_identity_value(&scope.target);
+            if normalized_scope_type.is_empty()
+                || normalized_target_type.is_empty()
+                || normalized_target.is_empty()
+            {
+                return Err(anyhow::anyhow!(
+                    "Scope type, target type, and target are required"
+                ));
+            }
+
+            if !identities.insert((
+                scope.program_id.trim().to_string(),
+                normalized_scope_type,
+                normalized_target_type,
+                normalized_target,
+            )) {
+                return Err(anyhow::anyhow!(
+                    "This program already has the same scope target"
+                ));
+            }
+        }
 
         if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
             let query = r#"INSERT INTO bounty_scopes (
@@ -542,80 +664,131 @@ impl DatabaseService {
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
             match runtime {
                 DatabasePool::SQLite(pool) => {
-                    sqlx::query(query)
-                        .bind(&scope.id)
-                        .bind(&scope.program_id)
-                        .bind(&scope.scope_type)
-                        .bind(&scope.target_type)
-                        .bind(&scope.target)
-                        .bind(&scope.description)
-                        .bind(&scope.allowed_tests_json)
-                        .bind(&scope.instructions_json)
-                        .bind(scope.requires_auth)
-                        .bind(&scope.test_accounts_json)
-                        .bind(scope.asset_count)
-                        .bind(scope.finding_count)
-                        .bind(scope.priority)
-                        .bind(&scope.metadata_json)
-                        .bind(&scope.created_at)
-                        .bind(&scope.updated_at)
-                        .execute(pool)
-                        .await?;
+                    let mut tx = pool.begin().await?;
+                    for scope in scopes {
+                        if program_scope_identity_exists_sqlite(
+                            &mut tx,
+                            &scope.program_id,
+                            &normalize_scope_identity_value(&scope.scope_type),
+                            &normalize_scope_identity_value(&scope.target_type),
+                            &normalize_scope_identity_value(&scope.target),
+                        )
+                        .await?
+                        {
+                            return Err(anyhow::anyhow!(
+                                "This program already has the same scope target"
+                            ));
+                        }
+                        sqlx::query(query)
+                            .bind(&scope.id)
+                            .bind(&scope.program_id)
+                            .bind(&scope.scope_type)
+                            .bind(&scope.target_type)
+                            .bind(&scope.target)
+                            .bind(&scope.description)
+                            .bind(&scope.allowed_tests_json)
+                            .bind(&scope.instructions_json)
+                            .bind(scope.requires_auth)
+                            .bind(&scope.test_accounts_json)
+                            .bind(scope.asset_count)
+                            .bind(scope.finding_count)
+                            .bind(scope.priority)
+                            .bind(&scope.metadata_json)
+                            .bind(&scope.created_at)
+                            .bind(&scope.updated_at)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                    tx.commit().await?;
                 }
                 DatabasePool::MySQL(pool) => {
-                    sqlx::query(query)
-                        .bind(&scope.id)
-                        .bind(&scope.program_id)
-                        .bind(&scope.scope_type)
-                        .bind(&scope.target_type)
-                        .bind(&scope.target)
-                        .bind(&scope.description)
-                        .bind(&scope.allowed_tests_json)
-                        .bind(&scope.instructions_json)
-                        .bind(scope.requires_auth)
-                        .bind(&scope.test_accounts_json)
-                        .bind(scope.asset_count)
-                        .bind(scope.finding_count)
-                        .bind(scope.priority)
-                        .bind(&scope.metadata_json)
-                        .bind(&scope.created_at)
-                        .bind(&scope.updated_at)
-                        .execute(pool)
-                        .await?;
+                    let mut tx = pool.begin().await?;
+                    for scope in scopes {
+                        if program_scope_identity_exists_mysql(
+                            &mut tx,
+                            &scope.program_id,
+                            &normalize_scope_identity_value(&scope.scope_type),
+                            &normalize_scope_identity_value(&scope.target_type),
+                            &normalize_scope_identity_value(&scope.target),
+                        )
+                        .await?
+                        {
+                            return Err(anyhow::anyhow!(
+                                "This program already has the same scope target"
+                            ));
+                        }
+                        sqlx::query(query)
+                            .bind(&scope.id)
+                            .bind(&scope.program_id)
+                            .bind(&scope.scope_type)
+                            .bind(&scope.target_type)
+                            .bind(&scope.target)
+                            .bind(&scope.description)
+                            .bind(&scope.allowed_tests_json)
+                            .bind(&scope.instructions_json)
+                            .bind(scope.requires_auth)
+                            .bind(&scope.test_accounts_json)
+                            .bind(scope.asset_count)
+                            .bind(scope.finding_count)
+                            .bind(scope.priority)
+                            .bind(&scope.metadata_json)
+                            .bind(&scope.created_at)
+                            .bind(&scope.updated_at)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                    tx.commit().await?;
                 }
                 DatabasePool::PostgreSQL(_) => unreachable!(),
             }
-            info!("Created program scope: {}", scope.id);
+            info!("Created {} program scopes", scopes.len());
             return Ok(());
         }
 
-        sqlx::query(
-            r#"INSERT INTO bounty_scopes (
+        let mut tx = self.get_pool()?.begin().await?;
+        for scope in scopes {
+            if program_scope_identity_exists_postgres(
+                &mut tx,
+                &scope.program_id,
+                &normalize_scope_identity_value(&scope.scope_type),
+                &normalize_scope_identity_value(&scope.target_type),
+                &normalize_scope_identity_value(&scope.target),
+            )
+            .await?
+            {
+                return Err(anyhow::anyhow!(
+                    "This program already has the same scope target"
+                ));
+            }
+            sqlx::query(
+                r#"INSERT INTO bounty_scopes (
                 id, program_id, scope_type, target_type, target, description,
                 allowed_tests_json, instructions_json, requires_auth, test_accounts_json,
                 asset_count, finding_count, priority, metadata_json, created_at, updated_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"#,
-        )
-        .bind(&scope.id)
-        .bind(&scope.program_id)
-        .bind(&scope.scope_type)
-        .bind(&scope.target_type)
-        .bind(&scope.target)
-        .bind(&scope.description)
-        .bind(&scope.allowed_tests_json)
-        .bind(&scope.instructions_json)
-        .bind(scope.requires_auth)
-        .bind(&scope.test_accounts_json)
-        .bind(scope.asset_count)
-        .bind(scope.finding_count)
-        .bind(scope.priority)
-        .bind(&scope.metadata_json)
-        .bind(timestamp_string_to_datetime(&scope.created_at))
-        .bind(timestamp_string_to_datetime(&scope.updated_at))
-        .execute(self.get_pool()?)
-        .await?;
+            )
+            .bind(&scope.id)
+            .bind(&scope.program_id)
+            .bind(&scope.scope_type)
+            .bind(&scope.target_type)
+            .bind(&scope.target)
+            .bind(&scope.description)
+            .bind(&scope.allowed_tests_json)
+            .bind(&scope.instructions_json)
+            .bind(scope.requires_auth)
+            .bind(&scope.test_accounts_json)
+            .bind(scope.asset_count)
+            .bind(scope.finding_count)
+            .bind(scope.priority)
+            .bind(&scope.metadata_json)
+            .bind(timestamp_string_to_datetime(&scope.created_at))
+            .bind(timestamp_string_to_datetime(&scope.updated_at))
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
 
-        info!("Created program scope: {}", scope.id);
+        info!("Created {} program scopes", scopes.len());
         Ok(())
     }
 

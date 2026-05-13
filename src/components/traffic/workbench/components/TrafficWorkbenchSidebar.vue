@@ -42,7 +42,9 @@
             <button
               type="button"
               class="btn btn-xs btn-outline rounded-2xl"
-              @click="compactActionMenuOpen = !compactActionMenuOpen"
+              :aria-expanded="compactActionMenuOpen"
+              aria-haspopup="menu"
+              @click="toggleActionMenu"
             >
               <i class="fas fa-ellipsis mr-1"></i>
               {{ t('trafficAnalysis.workbench.actions.more', '操作') }}
@@ -53,9 +55,15 @@
                 {{ compactActionBadgeCount }}
               </span>
             </button>
+          </div>
+          <Teleport to="body">
             <ul
               v-if="compactActionMenuOpen"
-              class="menu absolute right-0 top-full z-50 mt-2 w-56 rounded-box border border-base-300 bg-base-100 p-2 text-sm shadow-xl"
+              ref="compactActionMenuListRef"
+              class="workbench-action-floating-menu menu w-56 rounded-box border border-base-300 bg-base-100 p-2 text-sm shadow-xl"
+              :style="compactActionMenuStyle"
+              role="menu"
+              @keydown.esc.stop.prevent="closeActionMenu"
             >
               <li>
                 <button type="button" @click="emitSidebarAction('openCapture')">
@@ -96,7 +104,7 @@
                 </button>
               </li>
             </ul>
-          </div>
+          </Teleport>
         </div>
       </div>
 
@@ -149,7 +157,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 type SidebarAction =
@@ -176,11 +184,16 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const COMPACT_HEADER_ACTIONS_WIDTH = 560
+const COMPACT_ACTION_MENU_WIDTH = 224
+const VIEWPORT_MENU_PADDING = 8
 const sidebarRoot = ref<HTMLElement | null>(null)
 const actionMenuRef = ref<HTMLElement | null>(null)
+const compactActionMenuListRef = ref<HTMLElement | null>(null)
 const compactHeaderActions = ref(false)
 const compactActionMenuOpen = ref(false)
+const compactActionMenuPosition = ref({ left: 0, top: 0 })
 let sidebarResizeObserver: ResizeObserver | null = null
+let compactActionMenuFrameId: number | null = null
 
 const props = defineProps<{
   basketCount: number
@@ -195,13 +208,76 @@ const props = defineProps<{
 
 const compactActionBadgeCount = computed(() => props.basketCount + props.controlInterceptCount)
 const toolHistoryCount = computed(() => props.repeaterHistoryCount + props.intruderHistoryCount)
+const compactActionMenuStyle = computed(() => ({
+  left: `${compactActionMenuPosition.value.left}px`,
+  top: `${compactActionMenuPosition.value.top}px`,
+}))
 
 function updateCompactHeaderActions(width: number) {
   compactHeaderActions.value = width < COMPACT_HEADER_ACTIONS_WIDTH
 }
 
+function updateActionMenuPosition() {
+  if (compactActionMenuFrameId !== null) {
+    cancelAnimationFrame(compactActionMenuFrameId)
+  }
+
+  compactActionMenuFrameId = requestAnimationFrame(() => {
+    const trigger = actionMenuRef.value
+    if (!trigger) {
+      return
+    }
+
+    const rect = trigger.getBoundingClientRect()
+    const maxLeft = window.innerWidth - COMPACT_ACTION_MENU_WIDTH - VIEWPORT_MENU_PADDING
+    const left = Math.max(
+      VIEWPORT_MENU_PADDING,
+      Math.min(rect.right - COMPACT_ACTION_MENU_WIDTH, maxLeft),
+    )
+    const top = Math.max(VIEWPORT_MENU_PADDING, rect.bottom + VIEWPORT_MENU_PADDING)
+
+    compactActionMenuPosition.value = { left, top }
+    compactActionMenuFrameId = null
+  })
+}
+
+function addActionMenuFloatingListeners() {
+  window.addEventListener('resize', updateActionMenuPosition)
+  window.addEventListener('scroll', updateActionMenuPosition, true)
+}
+
+function removeActionMenuFloatingListeners() {
+  window.removeEventListener('resize', updateActionMenuPosition)
+  window.removeEventListener('scroll', updateActionMenuPosition, true)
+}
+
+function openActionMenu() {
+  if (compactActionMenuOpen.value) {
+    updateActionMenuPosition()
+    return
+  }
+
+  compactActionMenuOpen.value = true
+  void nextTick(() => {
+    if (!compactActionMenuOpen.value) {
+      return
+    }
+    updateActionMenuPosition()
+    addActionMenuFloatingListeners()
+  })
+}
+
 function closeActionMenu() {
+  removeActionMenuFloatingListeners()
   compactActionMenuOpen.value = false
+}
+
+function toggleActionMenu() {
+  if (compactActionMenuOpen.value) {
+    closeActionMenu()
+    return
+  }
+  openActionMenu()
 }
 
 function handleDocumentPointerDown(event: PointerEvent) {
@@ -210,7 +286,10 @@ function handleDocumentPointerDown(event: PointerEvent) {
   }
 
   const target = event.target instanceof Node ? event.target : null
-  if (target && actionMenuRef.value?.contains(target)) {
+  if (
+    target
+    && (actionMenuRef.value?.contains(target) || compactActionMenuListRef.value?.contains(target))
+  ) {
     return
   }
 
@@ -268,6 +347,11 @@ onMounted(() => {
 onUnmounted(() => {
   sidebarResizeObserver?.disconnect()
   sidebarResizeObserver = null
+  if (compactActionMenuFrameId !== null) {
+    cancelAnimationFrame(compactActionMenuFrameId)
+    compactActionMenuFrameId = null
+  }
+  removeActionMenuFloatingListeners()
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
 })
 </script>
@@ -340,6 +424,11 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 0.65rem;
   padding: 0.6rem 0.7rem;
+}
+
+.workbench-action-floating-menu {
+  position: fixed;
+  z-index: 1200;
 }
 
 </style>

@@ -12,6 +12,8 @@ export interface ContextMenuState {
   y: number
   item: InterceptedItem | null
   index: number
+  editorContext: boolean
+  selection: { from: number; to: number } | null
 }
 
 export interface FilterRule {

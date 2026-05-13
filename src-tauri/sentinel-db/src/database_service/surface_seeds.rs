@@ -635,20 +635,16 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         let rows_affected = match runtime {
-            DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM surface_seeds WHERE id = ?")
-                    .bind(seed_id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM surface_seeds WHERE id = ?")
-                    .bind(seed_id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
+            DatabasePool::SQLite(pool) => sqlx::query("DELETE FROM surface_seeds WHERE id = ?")
+                .bind(seed_id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query("DELETE FROM surface_seeds WHERE id = ?")
+                .bind(seed_id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("DELETE FROM surface_seeds WHERE id = $1")
                     .bind(seed_id)

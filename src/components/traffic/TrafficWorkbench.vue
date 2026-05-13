@@ -60,7 +60,7 @@
               ref="mainStageRef"
               :workbench-open="workbenchOpen"
               :active-workbench-tool="activeWorkbenchTool"
-              :workbench-tools-mounted="workbenchToolsMounted"
+              :mounted-tools="mountedWorkbenchTools"
               :active-workbench-meta="activeWorkbenchMeta"
               :tool-chips="toolChips"
               :pending-repeater-request="pendingRepeaterRequest"
@@ -185,7 +185,6 @@ import {
   openImmersiveTrafficBasket,
   openImmersiveTrafficProxySettings,
   resetImmersiveTrafficDockState,
-  showImmersiveTrafficHistory,
   syncImmersiveTrafficDockState,
   toggleImmersiveTrafficBasket,
   toggleImmersiveTrafficInterceptDrawer,
@@ -235,7 +234,7 @@ const selectedHistoryRequest = ref<ProxyRequest | null>(null)
 const activeRequestContext = ref<TrafficWorkbenchRequestContext | null>(null)
 const repeaterEditedTabCount = ref(0)
 const intruderOpenWorkspaceCount = ref(0)
-const workbenchToolsMounted = ref(false)
+const mountedWorkbenchToolSet = ref<Set<WorkbenchTool>>(new Set())
 const {
   workbenchOpen,
   activeWorkbenchTool,
@@ -382,6 +381,7 @@ const toolChips = computed(() => [
     count: oastRecordCount.value,
   },
 ])
+const mountedWorkbenchTools = computed(() => [...mountedWorkbenchToolSet.value])
 const workbenchMetaTitleMap = {
   capture: workbenchMetaMap.capture.title,
   repeater: workbenchMetaMap.repeater.title,
@@ -500,8 +500,10 @@ function emitImmersiveFindingToast(finding: ScanFindingEventPayload) {
 }
 
 function openWorkbenchTool(tool: WorkbenchTool) {
+  if (!mountedWorkbenchToolSet.value.has(tool)) {
+    mountedWorkbenchToolSet.value = new Set([...mountedWorkbenchToolSet.value, tool])
+  }
   openImmersiveTrafficWorkbenchTool(tool)
-  workbenchToolsMounted.value = true
 }
 
 function flushPendingComparerTransfers() {
@@ -799,7 +801,7 @@ function handleWindowKeydown(event: KeyboardEvent) {
     return
   }
 
-  if (!closeTopmostImmersiveTool()) {
+  if (!closeTopmostImmersiveTool('transient')) {
     return
   }
 
@@ -843,10 +845,6 @@ onMounted(() => {
   void refreshTrafficOastRecordCount().catch(error => {
     console.error('[TrafficWorkbench] Failed to load OAST record count:', error)
   })
-  if (immersiveDrillModeEnabled.value) {
-    showImmersiveTrafficHistory()
-  }
-
   void nextTick(() => {
     normalizeWorkbenchLayout()
   })
@@ -890,7 +888,12 @@ watch(
 
 watchEffect(() => {
   if (workbenchOpen.value) {
-    workbenchToolsMounted.value = true
+    if (!mountedWorkbenchToolSet.value.has(activeWorkbenchTool.value)) {
+      mountedWorkbenchToolSet.value = new Set([
+        ...mountedWorkbenchToolSet.value,
+        activeWorkbenchTool.value,
+      ])
+    }
   }
 
   syncImmersiveTrafficDockState({

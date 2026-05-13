@@ -1669,19 +1669,32 @@ impl DatabaseService {
 
     pub async fn initialize_default_llm_suites(&self, pool: &PgPool) -> Result<()> {
         let suites_json = Self::default_llm_suites_json();
-        let suites: Vec<serde_json::Value> = serde_json::from_str(&suites_json).unwrap_or_default();
+        let suites: Vec<serde_json::Value> = serde_json::from_str(&suites_json)?;
 
         for suite in &suites {
-            let id = suite["id"].as_str().unwrap_or_default();
-            let name = suite["name"].as_str().unwrap_or_default();
-            let version = suite["version"].as_str().unwrap_or("1.0.0");
-            let description = suite["description"].as_str().unwrap_or("");
-            let cases = serde_json::to_string(&suite["cases"]).unwrap_or_else(|_| "[]".to_string());
+            let id = suite["id"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("default LLM suite id missing"))?;
+            let name = suite["name"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("default LLM suite name missing"))?;
+            let version = suite["version"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("default LLM suite version missing"))?;
+            let description = suite["description"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("default LLM suite description missing"))?;
+            let cases = serde_json::to_string(
+                suite["cases"]
+                    .as_array()
+                    .ok_or_else(|| anyhow::anyhow!("default LLM suite cases missing"))?,
+            )?;
 
             sqlx::query(
-                "INSERT INTO llm_test_suites (id, name, version, description, cases) \
-                 VALUES ($1, $2, $3, $4, $5) \
-                 ON CONFLICT(id) DO NOTHING",
+                "INSERT INTO llm_test_suites (id, name, version, description, cases, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP) \
+                 ON CONFLICT(id) DO UPDATE SET name = EXCLUDED.name, version = EXCLUDED.version, \
+                 description = EXCLUDED.description, cases = EXCLUDED.cases, updated_at = CURRENT_TIMESTAMP",
             )
             .bind(id)
             .bind(name)

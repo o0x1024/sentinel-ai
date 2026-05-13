@@ -68,6 +68,7 @@
           </div>
           <div class="min-h-0 flex-1" @contextmenu.capture.prevent="showDraftContextMenu($event, 'left')">
             <HttpMessageSurface
+              ref="leftDraftEditor"
               v-model="draft.leftText"
               custom-context-menu
               show-search-bar
@@ -95,6 +96,7 @@
           </div>
           <div class="min-h-0 flex-1" @contextmenu.capture.prevent="showDraftContextMenu($event, 'right')">
             <HttpMessageSurface
+              ref="rightDraftEditor"
               v-model="draft.rightText"
               custom-context-menu
               show-search-bar
@@ -274,6 +276,12 @@
           :sections="contextMenuSections"
           label-prefix="trafficAnalysis.comparer.actions"
         />
+        <div v-if="comparerTextCodecSubmenu" class="divider my-1 h-0"></div>
+        <TrafficContextSubmenu
+          v-if="comparerTextCodecSubmenu"
+          :submenu="comparerTextCodecSubmenu"
+          label-prefix="trafficAnalysis.comparer.actions"
+        />
       </div>
     </div>
 
@@ -284,9 +292,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import HttpMessageSurface from '@/components/http-editor/HttpMessageSurface.vue'
 import CodeDiffViewer from '@/components/traffic/CodeDiffViewer.vue'
+import {
+  loadComparerStore,
+  saveComparerStore,
+  type PersistedTrafficComparerStore,
+} from '@/api/trafficWorkbench'
 import { buildComparerDraftStateKey, buildComparerPlainStateKey } from './trafficMessagePresentationSupport'
 import TrafficMessageDisplayControls from '@/components/traffic/TrafficMessageDisplayControls.vue'
 import { useI18n } from 'vue-i18n'
@@ -298,8 +311,10 @@ import {
 } from './immersiveTrafficUi'
 import { createRawRequestFromSource } from '@/components/traffic/intruder/http'
 import TrafficContextMenuSections from './TrafficContextMenuSections.vue'
+import TrafficContextSubmenu from './TrafficContextSubmenu.vue'
 import { buildComparerActionMenuItems } from './trafficComparerActionMenuSupport'
 import { buildTrafficContextMenuSections } from './trafficContextMenuSectionSupport'
+import { buildTrafficTextCodecSubmenu, getTrafficTextCodecErrorMessage, hasNonEmptyTextSelection, replaceTrafficTextSelection, transformTrafficTextCodec, type TrafficTextCodecAction } from './trafficTextCodecSupport'
 import { useTrafficSendTargets } from './trafficSendTargets'
 import {
   type TrafficComparerDraftRequestInput,
@@ -333,6 +348,9 @@ interface PinnedBaseline {
   meta: NonNullable<TrafficComparePayload['leftMeta']>
 }
 
+const COMPARER_PERSIST_DEBOUNCE_MS = 250
+const MAX_PERSISTED_COMPARE_ITEMS = 30
+
 const emit = defineEmits<{
   (e: 'createDraft', request: HttpExchangeRequest): void
 }>()
@@ -351,12 +369,20 @@ const pinnedBaseline = ref<PinnedBaseline | null>(null)
 const showDraftComposer = ref(true)
 const draftSequence = ref(1)
 const draft = ref<ComparerDraft>(createDraftState())
+const leftDraftEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null)
+const rightDraftEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null)
 const contextMenu = ref({
   visible: false,
   x: 0,
   y: 0,
   mode: 'compare' as 'compare' | 'draft-left' | 'draft-right',
+  selection: null as { from: number; to: number } | null,
 })
+const pendingComparisonInputs: TrafficComparePayload[] = []
+const pendingDraftRequestInputs: TrafficComparerDraftRequestInput[] = []
+let comparerHydrated = false
+let comparerHydrationPromise: Promise<void> | null = null
+let comparerPersistTimer: ReturnType<typeof setTimeout> | null = null
 
 const currentItem = computed(() => items.value.find((item) => item.id === activeItemId.value) ?? null)
 const compareMeta = computed(() => resolveComparerMeta(currentItem.value))
@@ -467,12 +493,168 @@ const draftContextMenuSections = computed(() => {
 const contextMenuSections = computed(() =>
   contextMenu.value.mode === 'compare' ? compareContextMenuSections.value : draftContextMenuSections.value,
 )
+const comparerTextCodecSubmenu = computed(() => (
+  contextMenu.value.mode === 'compare'
+    ? null
+    : buildTrafficTextCodecSubmenu({
+        disabled: !hasNonEmptyTextSelection(contextMenu.value.selection),
+        onClick: action => handleContextMenuAction(() => applyTextCodecToDraftSide(action)),
+      })
+))
 const diffSummary = computed(() => {
   if (!currentItem.value) {
     return { changedLines: 0, similarity: 100 }
   }
   return buildComparerDiffSummary(displayedLeftText.value, displayedRightText.value)
 })
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function normalizeViewMode(value: unknown): TrafficMessageViewTab {
+  return value === 'raw' ? 'raw' : 'pretty'
+}
+
+function normalizeCompareRenderMode(value: unknown): 'diff' | 'plain' {
+  return value === 'plain' ? 'plain' : 'diff'
+}
+
+function normalizeCompareItem(value: unknown): CompareItem | null {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const id = typeof value.id === 'string' ? value.id : ''
+  const name = typeof value.name === 'string' ? value.name : ''
+  const leftLabel = typeof value.leftLabel === 'string' ? value.leftLabel : ''
+  const rightLabel = typeof value.rightLabel === 'string' ? value.rightLabel : ''
+  const leftText = typeof value.leftText === 'string' ? value.leftText : ''
+  const rightText = typeof value.rightText === 'string' ? value.rightText : ''
+  if (!id || !leftLabel || !rightLabel) {
+    return null
+  }
+
+  return {
+    ...(value as unknown as TrafficComparePayload),
+    id,
+    name,
+    leftLabel,
+    rightLabel,
+    leftText,
+    rightText,
+  }
+}
+
+function normalizePinnedBaseline(value: unknown): PinnedBaseline | null {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  if (
+    typeof value.label !== 'string'
+    || typeof value.text !== 'string'
+    || !isRecord(value.meta)
+  ) {
+    return null
+  }
+
+  return {
+    label: value.label,
+    text: value.text,
+    meta: value.meta as unknown as NonNullable<TrafficComparePayload['leftMeta']>,
+  }
+}
+
+function normalizeDraft(value: unknown): ComparerDraft {
+  if (!isRecord(value)) {
+    return createDraftState()
+  }
+
+  return {
+    name: typeof value.name === 'string' ? value.name : createDraftState().name,
+    leftLabel: typeof value.leftLabel === 'string' ? value.leftLabel : t('trafficAnalysis.comparer.draft.leftLabel'),
+    rightLabel: typeof value.rightLabel === 'string' ? value.rightLabel : t('trafficAnalysis.comparer.draft.rightLabel'),
+    leftText: typeof value.leftText === 'string' ? value.leftText : '',
+    rightText: typeof value.rightText === 'string' ? value.rightText : '',
+  }
+}
+
+function buildPersistedComparerStore(): PersistedTrafficComparerStore {
+  return {
+    activeItemId: activeItemId.value,
+    items: items.value.slice(-MAX_PERSISTED_COMPARE_ITEMS).map(item => ({ ...item })),
+    viewMode: viewMode.value,
+    compareRenderMode: compareRenderMode.value,
+    pinnedBaseline: pinnedBaseline.value ? { ...pinnedBaseline.value } : null,
+    showDraftComposer: showDraftComposer.value,
+    draftSequence: draftSequence.value,
+    draft: { ...draft.value },
+  }
+}
+
+function scheduleComparerPersist() {
+  if (!comparerHydrated) {
+    return
+  }
+
+  if (comparerPersistTimer) {
+    clearTimeout(comparerPersistTimer)
+  }
+
+  comparerPersistTimer = setTimeout(() => {
+    comparerPersistTimer = null
+    void saveComparerStore(buildPersistedComparerStore()).catch(error => {
+      console.error('[ProxyComparer] Failed to persist comparer store:', error)
+    })
+  }, COMPARER_PERSIST_DEBOUNCE_MS)
+}
+
+function flushPendingComparerInputs() {
+  const comparisons = pendingComparisonInputs.splice(0)
+  const drafts = pendingDraftRequestInputs.splice(0)
+  comparisons.forEach(applyComparison)
+  drafts.forEach(applyDraftRequest)
+}
+
+async function ensureComparerHydrated() {
+  if (comparerHydrated) {
+    return
+  }
+
+  if (!comparerHydrationPromise) {
+    comparerHydrationPromise = loadPersistedComparerStore()
+  }
+  await comparerHydrationPromise
+}
+
+async function loadPersistedComparerStore() {
+  try {
+    const store = await loadComparerStore()
+    const restoredItems = Array.isArray(store.items)
+      ? store.items.map(normalizeCompareItem).filter((item): item is CompareItem => Boolean(item))
+      : []
+    items.value = restoredItems
+    activeItemId.value = restoredItems.some(item => item.id === store.activeItemId)
+      ? store.activeItemId
+      : restoredItems[0]?.id ?? null
+    viewMode.value = normalizeViewMode(store.viewMode)
+    compareRenderMode.value = normalizeCompareRenderMode(store.compareRenderMode)
+    pinnedBaseline.value = normalizePinnedBaseline(store.pinnedBaseline)
+    showDraftComposer.value = typeof store.showDraftComposer === 'boolean'
+      ? store.showDraftComposer
+      : restoredItems.length === 0
+    draftSequence.value = typeof store.draftSequence === 'number' && Number.isFinite(store.draftSequence)
+      ? Math.max(1, Math.round(store.draftSequence))
+      : 1
+    draft.value = normalizeDraft(store.draft)
+  } catch (error) {
+    console.error('[ProxyComparer] Failed to hydrate comparer store:', error)
+  } finally {
+    comparerHydrated = true
+    flushPendingComparerInputs()
+  }
+}
 
 function createDraftState() {
   const index = draftSequence.value
@@ -483,15 +665,29 @@ function createDraftState() {
   })
 }
 
-function addComparison(payload: TrafficComparePayload) {
+function createCompareItem(payload: TrafficComparePayload): CompareItem {
   const itemPayload = buildComparisonPayloadWithPinnedBaseline(payload)
-  const item: CompareItem = {
+  return {
     id: `compare-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     ...itemPayload,
   }
+}
+
+function applyComparison(payload: TrafficComparePayload) {
+  const item = createCompareItem(payload)
   items.value.push(item)
   activeItemId.value = item.id
   showDraftComposer.value = false
+}
+
+function addComparison(payload: TrafficComparePayload) {
+  if (!comparerHydrated) {
+    pendingComparisonInputs.push(payload)
+    void ensureComparerHydrated()
+    return
+  }
+
+  applyComparison(payload)
 }
 
 function closeItem(itemId: string) {
@@ -558,6 +754,7 @@ function showContextMenu(event: MouseEvent) {
     x: Math.min(event.clientX, window.innerWidth - 240),
     y: Math.min(event.clientY, window.innerHeight - 260),
     mode: 'compare',
+    selection: null,
   }
   setTimeout(() => {
     document.addEventListener('click', hideContextMenu)
@@ -573,6 +770,7 @@ function showDraftContextMenu(event: MouseEvent, side: 'left' | 'right') {
     x: Math.min(event.clientX, window.innerWidth - 240),
     y: Math.min(event.clientY, window.innerHeight - 260),
     mode: side === 'left' ? 'draft-left' : 'draft-right',
+    selection: (side === 'left' ? leftDraftEditor.value : rightDraftEditor.value)?.getSelectionRange?.() ?? null,
   }
   setTimeout(() => {
     document.addEventListener('click', hideContextMenu)
@@ -583,6 +781,38 @@ function showDraftContextMenu(event: MouseEvent, side: 'left' | 'right') {
 function handleContextMenuAction(action: () => void | Promise<void>) {
   hideContextMenu()
   void action()
+}
+
+async function applyTextCodecToDraftSide(action: TrafficTextCodecAction) {
+  const selection = contextMenu.value.selection
+  if (!hasNonEmptyTextSelection(selection)) {
+    dialog.toast.warning(t('trafficAnalysis.textCodec.noSelection'))
+    return
+  }
+
+  const side = contextMenu.value.mode === 'draft-right' ? 'right' : 'left'
+  const currentText = side === 'left' ? draft.value.leftText : draft.value.rightText
+  try {
+    const replacement = transformTrafficTextCodec(currentText.slice(selection.from, selection.to), action)
+    const next = replaceTrafficTextSelection(currentText, selection, replacement)
+    if (side === 'left') {
+      draft.value.leftText = next.content
+    } else {
+      draft.value.rightText = next.content
+    }
+
+    await nextTick()
+    const editor = side === 'left' ? leftDraftEditor.value : rightDraftEditor.value
+    editor?.setSelection?.(next.selectionStart, next.selectionEnd)
+    editor?.focus?.()
+    dialog.toast.success(t('trafficAnalysis.textCodec.applied', {
+      action: t(`trafficAnalysis.comparer.actions.${action.labelKey}`),
+    }))
+  } catch (error) {
+    dialog.toast.error(t('trafficAnalysis.textCodec.failed', {
+      error: getTrafficTextCodecErrorMessage(error),
+    }))
+  }
 }
 
 function clearDraft() {
@@ -633,7 +863,7 @@ function setDraftSideText(side: 'left' | 'right', text: string, label?: string) 
   }
 }
 
-function addDraftRequest(input: TrafficComparerDraftRequestInput) {
+function applyDraftRequest(input: TrafficComparerDraftRequestInput) {
   showDraftComposer.value = true
 
   const baseRequestText = input.text ?? (input.request ? createRawRequestFromSource(input.request) : '')
@@ -663,6 +893,16 @@ function addDraftRequest(input: TrafficComparerDraftRequestInput) {
   }
 
   setDraftSideText(targetSide, requestText, input.label)
+}
+
+function addDraftRequest(input: TrafficComparerDraftRequestInput) {
+  if (!comparerHydrated) {
+    pendingDraftRequestInputs.push(input)
+    void ensureComparerHydrated()
+    return
+  }
+
+  applyDraftRequest(input)
 }
 
 function swapCurrentItem() {
@@ -771,6 +1011,39 @@ function sendSideToRepeater(side: 'left' | 'right') {
     }),
   )
 }
+
+watch(
+  [
+    items,
+    activeItemId,
+    viewMode,
+    compareRenderMode,
+    pinnedBaseline,
+    showDraftComposer,
+    draftSequence,
+    draft,
+  ],
+  scheduleComparerPersist,
+  { deep: true },
+)
+
+onMounted(() => {
+  void ensureComparerHydrated()
+})
+
+onUnmounted(() => {
+  if (comparerPersistTimer) {
+    clearTimeout(comparerPersistTimer)
+    comparerPersistTimer = null
+    if (comparerHydrated) {
+      void saveComparerStore(buildPersistedComparerStore()).catch(error => {
+        console.error('[ProxyComparer] Failed to persist comparer store on unmount:', error)
+      })
+    }
+  }
+  document.removeEventListener('click', hideContextMenu)
+  document.removeEventListener('contextmenu', hideContextMenu)
+})
 
 defineExpose({
   addComparison,

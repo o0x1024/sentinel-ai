@@ -482,7 +482,7 @@ const itemClasses = (item: TrafficWorkbenchToolbarItem) => {
 }
 
 const exitImmersiveMode = () => {
-  closeAllImmersiveTools()
+  closeAllImmersiveTools('transient')
   clearImmersiveSecurityCenterReturnPath()
   setImmersiveDrillModeEnabled(false)
 }
@@ -853,7 +853,7 @@ const handleWindowKeydown = (event: KeyboardEvent) => {
     return
   }
 
-  if (closeTopmostImmersiveTool()) {
+  if (closeTopmostImmersiveTool('transient')) {
     event.preventDefault()
     event.stopPropagation()
     return

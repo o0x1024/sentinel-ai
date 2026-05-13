@@ -49,6 +49,7 @@ impl SurfaceGraphMigration {
                 exposed_to_internet_flag BOOLEAN DEFAULT FALSE,
                 viewed_at TIMESTAMPTZ,
                 viewed_by TEXT,
+                is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
                 metadata_json TEXT,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL,
@@ -343,7 +344,9 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_discovery_task ON surface_assets(discovery_task_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_risk ON surface_assets(risk_score DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_viewed ON surface_assets(viewed_at)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_favorite ON surface_assets(is_favorite)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_viewed_type ON surface_assets(program_id, viewed_at, asset_type)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_favorite_type ON surface_assets(program_id, is_favorite, asset_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_type_status_seen ON surface_assets(program_id, asset_type, status, last_seen_at DESC, id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_fqdn ON surface_domain_assets(fqdn)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_root ON surface_domain_assets(root_domain)",
@@ -395,7 +398,11 @@ impl SurfaceGraphMigration {
             }
         }
 
-        let surface_asset_alter_columns = [("viewed_at", "TIMESTAMPTZ"), ("viewed_by", "TEXT")];
+        let surface_asset_alter_columns = [
+            ("viewed_at", "TIMESTAMPTZ"),
+            ("viewed_by", "TEXT"),
+            ("is_favorite", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ];
 
         for (column, column_type) in surface_asset_alter_columns {
             Self::add_column_if_not_exists_runtime(pool, "surface_assets", column, column_type)
@@ -481,6 +488,7 @@ impl SurfaceGraphMigration {
                 exposed_to_internet_flag BOOLEAN DEFAULT FALSE,
                 viewed_at TIMESTAMPTZ,
                 viewed_by TEXT,
+                is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
                 metadata_json TEXT,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL,
@@ -779,7 +787,9 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_discovery_task ON surface_assets(discovery_task_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_risk ON surface_assets(risk_score DESC)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_viewed ON surface_assets(viewed_at)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_favorite ON surface_assets(is_favorite)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_viewed_type ON surface_assets(program_id, viewed_at, asset_type)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_favorite_type ON surface_assets(program_id, is_favorite, asset_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_assets_program_type_status_seen ON surface_assets(program_id, asset_type, status, last_seen_at DESC, id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_fqdn ON surface_domain_assets(fqdn)",
             "CREATE INDEX IF NOT EXISTS idx_surface_domain_assets_root ON surface_domain_assets(root_domain)",
@@ -817,7 +827,11 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_seed_candidates_program_status ON surface_seed_candidates(program_id, status, observed_at DESC)",
         ];
 
-        let surface_asset_alter_columns = [("viewed_at", "TIMESTAMPTZ"), ("viewed_by", "TEXT")];
+        let surface_asset_alter_columns = [
+            ("viewed_at", "TIMESTAMPTZ"),
+            ("viewed_by", "TEXT"),
+            ("is_favorite", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ];
 
         for (column, column_type) in surface_asset_alter_columns {
             Self::add_column_if_not_exists_postgres(pool, "surface_assets", column, column_type)

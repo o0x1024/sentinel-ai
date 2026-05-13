@@ -65,6 +65,27 @@ static IDENTIFIER_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     ]
 });
 
+async fn configure_memory_lexical_connection(conn: &Connection) -> Result<()> {
+    conn.call(|conn| {
+        conn.execute_batch(
+            r#"
+            PRAGMA busy_timeout = 10000;
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA wal_autocheckpoint = 1000;
+            PRAGMA journal_size_limit = 67108864;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA cache_size = -20000;
+            PRAGMA mmap_size = 268435456;
+            PRAGMA analysis_limit = 1000;
+            "#,
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow!("Failed to configure memory lexical DB: {}", e))
+}
+
 impl MemoryLexicalIndex {
     pub fn new(database_path: String) -> Self {
         Self { database_path }
@@ -79,12 +100,11 @@ impl MemoryLexicalIndex {
         let conn = Connection::open(&self.database_path)
             .await
             .map_err(|e| anyhow!("Failed to open memory lexical DB: {}", e))?;
+        configure_memory_lexical_connection(&conn).await?;
 
         conn.call(|conn| {
             conn.execute_batch(
                 r#"
-                PRAGMA journal_mode = WAL;
-
                 CREATE TABLE IF NOT EXISTS memory_documents (
                   id TEXT PRIMARY KEY,
                   collection_name TEXT NOT NULL,
@@ -162,6 +182,14 @@ impl MemoryLexicalIndex {
 
                 CREATE INDEX IF NOT EXISTS idx_memory_documents_stability
                 ON memory_documents(stability);
+
+                CREATE INDEX IF NOT EXISTS idx_memory_documents_collection_kind_updated
+                ON memory_documents(collection_name, kind, updated_at_ms DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_memory_documents_collection_scope_stability_updated
+                ON memory_documents(collection_name, scope, stability, updated_at_ms DESC);
+
+                PRAGMA optimize;
                 "#,
             )?;
             Ok(())
@@ -247,6 +275,7 @@ impl MemoryLexicalIndex {
         let conn = Connection::open(&self.database_path)
             .await
             .map_err(|e| anyhow!("Failed to open memory lexical DB: {}", e))?;
+        configure_memory_lexical_connection(&conn).await?;
         let collection_name = collection_name.to_string();
         let match_query = build_match_query(query);
         let limit = top_k.max(1) as i64;

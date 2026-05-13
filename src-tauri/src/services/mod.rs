@@ -18,6 +18,12 @@ pub mod database {
 }
 pub mod http_gateway;
 pub mod mcp;
+pub mod mission_artifacts;
+pub mod mission_delivery;
+pub mod mission_planner;
+pub mod mission_runner;
+pub mod mission_scheduler;
+pub mod mission_success_criteria;
 pub mod model_capabilities;
 pub mod system_agents;
 pub mod traffic_oast;

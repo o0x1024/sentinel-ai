@@ -71,6 +71,8 @@ impl DatabaseService {
                 service_name: None,
                 transport_protocol: None,
                 view_state: None,
+                is_favorite: None,
+                column_filters: None,
                 limit: None,
                 offset: None,
             })

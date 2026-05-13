@@ -19,15 +19,15 @@ const FETCH_JITTER_MIN_MS: u64 = 0;
 const FETCH_JITTER_MAX_MS: u64 = 30_000;
 const FETCH_DELAY_MIN_MS: u64 = 0;
 const FETCH_DELAY_MAX_MS: u64 = 60_000;
-const FETCH_TIMEOUT_MIN_MS: u64 = 1_000;
-const FETCH_TIMEOUT_MAX_MS: u64 = 120_000;
+const FETCH_TIMEOUT_MIN_MS: u64 = 3_000;
+const FETCH_TIMEOUT_MAX_MS: u64 = 3_000;
 
 const ACTIVE_PROBE_JITTER_MIN_MS: u64 = 0;
 const ACTIVE_PROBE_JITTER_MAX_MS: u64 = 30_000;
 const ACTIVE_PROBE_COOLDOWN_MIN_MS: u64 = 0;
 const ACTIVE_PROBE_COOLDOWN_MAX_MS: u64 = 60_000;
-const ACTIVE_PROBE_TIMEOUT_MIN_MS: u64 = 1_000;
-const ACTIVE_PROBE_TIMEOUT_MAX_MS: u64 = 120_000;
+const ACTIVE_PROBE_TIMEOUT_MIN_MS: u64 = 3_000;
+const ACTIVE_PROBE_TIMEOUT_MAX_MS: u64 = 3_000;
 const ACTIVE_PROBE_MAX_CONCURRENT_PER_HOST_MIN: u64 = 1;
 const ACTIVE_PROBE_MAX_CONCURRENT_PER_HOST_MAX: u64 = 32;
 
@@ -52,12 +52,12 @@ impl Default for ActiveProbeRuntimeSettings {
             max_queue_depth: 1000,
             max_pending_per_run: 250,
             max_pending_per_plugin: 500,
-            max_global_concurrent: 20,
+            max_global_concurrent: 16,
             jitter_range: [300, 1000],
             min_host_cooldown_ms: 1000,
             max_concurrent_per_host: 2,
-            max_concurrent_per_run: 6,
-            max_concurrent_per_plugin: 10,
+            max_concurrent_per_run: 16,
+            max_concurrent_per_plugin: 16,
             timeout_ms: 8000,
         }
     }
@@ -110,7 +110,7 @@ impl ActiveProbeRuntimeSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginFetchRuntimeSettings {
     pub max_queue_depth: u64,
@@ -175,13 +175,13 @@ impl Default for PluginFetchRuntimeSettings {
             max_queue_depth: 1000,
             max_pending_per_run: 250,
             max_pending_per_plugin: 500,
-            max_global_concurrent: 20,
+            max_global_concurrent: 16,
             max_concurrent_per_host: 2,
-            max_concurrent_per_run: 6,
-            max_concurrent_per_plugin: 10,
+            max_concurrent_per_run: 16,
+            max_concurrent_per_plugin: 16,
             min_host_delay_ms: 1000,
             jitter_range: [300, 1000],
-            timeout_ms: 8000,
+            timeout_ms: 3_000,
         }
     }
 }
@@ -231,16 +231,16 @@ fn default_bounty_fetch_runtime_settings() -> PluginFetchRuntimeSettings {
 
 fn default_monitor_fetch_runtime_settings() -> PluginFetchRuntimeSettings {
     PluginFetchRuntimeSettings {
-        max_queue_depth: 500,
-        max_pending_per_run: 100,
-        max_pending_per_plugin: 250,
-        max_global_concurrent: 8,
-        max_concurrent_per_host: 1,
-        max_concurrent_per_run: 3,
-        max_concurrent_per_plugin: 4,
-        min_host_delay_ms: 2000,
-        jitter_range: [500, 2000],
-        timeout_ms: 15000,
+        max_queue_depth: 1_000,
+        max_pending_per_run: 250,
+        max_pending_per_plugin: 500,
+        max_global_concurrent: 16,
+        max_concurrent_per_host: 2,
+        max_concurrent_per_run: 16,
+        max_concurrent_per_plugin: 16,
+        min_host_delay_ms: 500,
+        jitter_range: [50, 250],
+        timeout_ms: 3_000,
     }
 }
 
@@ -249,13 +249,13 @@ fn default_agent_fetch_runtime_settings() -> PluginFetchRuntimeSettings {
         max_queue_depth: 300,
         max_pending_per_run: 75,
         max_pending_per_plugin: 150,
-        max_global_concurrent: 10,
+        max_global_concurrent: 16,
         max_concurrent_per_host: 2,
-        max_concurrent_per_run: 4,
-        max_concurrent_per_plugin: 6,
+        max_concurrent_per_run: 16,
+        max_concurrent_per_plugin: 16,
         min_host_delay_ms: 500,
         jitter_range: [100, 500],
-        timeout_ms: 15000,
+        timeout_ms: 3_000,
     }
 }
 
@@ -264,13 +264,13 @@ fn default_plugin_test_fetch_runtime_settings() -> PluginFetchRuntimeSettings {
         max_queue_depth: 50,
         max_pending_per_run: 20,
         max_pending_per_plugin: 30,
-        max_global_concurrent: 2,
+        max_global_concurrent: 16,
         max_concurrent_per_host: 1,
-        max_concurrent_per_run: 2,
-        max_concurrent_per_plugin: 2,
+        max_concurrent_per_run: 16,
+        max_concurrent_per_plugin: 16,
         min_host_delay_ms: 100,
         jitter_range: [0, 100],
-        timeout_ms: 5000,
+        timeout_ms: 3_000,
     }
 }
 

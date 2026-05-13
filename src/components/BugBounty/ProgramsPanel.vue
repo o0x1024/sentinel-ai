@@ -171,7 +171,7 @@ defineEmits<{
 }>()
 
 const searchQuery = ref('')
-const viewMode = ref<'card' | 'list'>('card')
+const viewMode = ref<'card' | 'list'>('list')
 
 const filteredPrograms = computed(() => {
   if (!searchQuery.value) return props.programs

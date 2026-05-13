@@ -38,7 +38,7 @@ describe('pluginRuntimeSettingsSupport', () => {
     expect(normalized.activeProbe.maxGlobalConcurrent).toBe(128)
     expect(normalized.activeProbe.minHostCooldownMs).toBe(0)
     expect(normalized.activeProbe.jitterRange).toEqual([100, 9000])
-    expect(normalized.activeProbe.timeoutMs).toBe(120000)
+    expect(normalized.activeProbe.timeoutMs).toBe(3000)
   })
 
   it('balanced preset matches the shipped defaults', () => {

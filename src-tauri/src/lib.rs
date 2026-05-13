@@ -905,6 +905,21 @@ pub fn run() {
                     }
                 });
 
+                // Auto-start mission scheduler with startup recovery
+                let db_for_mission_scheduler = db_service.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+                    services::mission_scheduler::run_startup_recovery(&db_for_mission_scheduler).await;
+
+                    let cancel = tokio_util::sync::CancellationToken::new();
+                    services::mission_scheduler::spawn_mission_scheduler(
+                        db_for_mission_scheduler,
+                        cancel,
+                    );
+                    tracing::info!("Mission scheduler auto-started");
+                });
+
                 // Delay MCP server auto-connect to avoid blocking main process startup
                 let handle_for_mcp = handle.clone();
                 tokio::spawn(async move {
@@ -1037,6 +1052,23 @@ pub fn run() {
             commands::list_bot_execution_runs_for_peer,
             commands::list_bot_schedules,
             commands::list_bot_schedule_runs,
+            commands::mission_commands::mission_create,
+            commands::mission_commands::mission_list,
+            commands::mission_commands::mission_get,
+            commands::mission_commands::mission_update_fields,
+            commands::mission_commands::mission_pause,
+            commands::mission_commands::mission_resume,
+            commands::mission_commands::mission_archive,
+            commands::mission_commands::mission_activate,
+            commands::mission_commands::mission_delete,
+            commands::mission_commands::mission_run_now,
+            commands::mission_commands::mission_list_runs,
+            commands::mission_commands::mission_get_run,
+            commands::mission_commands::mission_plan_from_text,
+            commands::mission_commands::mission_validate_draft,
+            commands::mission_scenario_commands::mission_scenario_daily_news,
+            commands::mission_scenario_commands::mission_scenario_website_monitor,
+            commands::mission_scenario_commands::mission_scenario_daily_test,
             commands::assistant_profile_commands::list_assistant_profiles,
             commands::assistant_profile_commands::get_assistant_profile,
             commands::assistant_profile_commands::ai_create_assistant_profile_from_description,
@@ -1194,6 +1226,7 @@ pub fn run() {
             commands::bounty_list_programs,
             commands::bounty_get_program_stats,
             commands::bounty_create_scope,
+            commands::bounty_create_scopes,
             commands::bounty_get_scope,
             commands::bounty_update_scope,
             commands::bounty_delete_scope,
@@ -1339,6 +1372,7 @@ pub fn run() {
             commands::surface_mark_asset_viewed,
             commands::surface_batch_mark_assets_viewed,
             commands::surface_mark_inventory_viewed,
+            commands::surface_set_asset_favorite,
             commands::surface_list_relations,
             commands::surface_list_discovery_runs,
             commands::surface_get_topology,
@@ -1529,6 +1563,7 @@ pub fn run() {
             traffic::list_proxy_requests,
             traffic::get_proxy_request,
             traffic::get_proxy_request_preview,
+            traffic::get_proxy_request_by_traffic_request_id,
             traffic::resolve_proxy_history_request_id_by_db_request_id,
             traffic::load_traffic_draft_store,
             traffic::save_traffic_draft_store,
@@ -1536,6 +1571,8 @@ pub fn run() {
             traffic::save_attack_workspace_store,
             traffic::load_replay_run_store,
             traffic::save_replay_run_store,
+            traffic::load_comparer_store,
+            traffic::save_comparer_store,
             traffic::load_intruder_workspace_session_store,
             traffic::save_intruder_workspace_session_store,
             traffic::recommend_traffic_context_dictionary_candidates_command,

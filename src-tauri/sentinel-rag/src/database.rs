@@ -34,6 +34,60 @@ type GeminiEmbedding = rig::providers::gemini::EmbeddingModel<HttpClient>;
 const EMBEDDING_REQUEST_TIMEOUT_SECS: u64 = 2;
 const VECTOR_SEARCH_TIMEOUT_SECS: u64 = 2;
 
+async fn configure_rag_sqlite_connection(conn: &Connection) -> Result<()> {
+    conn.call(|conn| {
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = ON;
+            PRAGMA busy_timeout = 10000;
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA wal_autocheckpoint = 1000;
+            PRAGMA journal_size_limit = 67108864;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA cache_size = -20000;
+            PRAGMA mmap_size = 268435456;
+            PRAGMA analysis_limit = 1000;
+            "#,
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow!("Failed to configure sqlite vector DB: {}", e))
+}
+
+async fn ensure_vector_crud_indexes(conn: &Connection) -> Result<()> {
+    conn.call(|conn| {
+        let table_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vectors'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if table_exists > 0 {
+            conn.execute_batch(
+                r#"
+                CREATE INDEX IF NOT EXISTS idx_rag_vectors_collection_source
+                    ON rag_vectors(collection_name, source_id);
+                CREATE INDEX IF NOT EXISTS idx_rag_vectors_collection_chunk
+                    ON rag_vectors(collection_name, chunk_index);
+                "#,
+            )?;
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow!("Failed to ensure sqlite vector indexes: {}", e))?;
+
+    conn.call(|conn| {
+        conn.execute_batch("PRAGMA optimize;")?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow!("Failed to optimize sqlite vector DB: {}", e))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct RagVectorRow {
     id: String,
@@ -112,6 +166,7 @@ impl SqliteVectorManager {
         let conn = Connection::open(&self.database_path)
             .await
             .map_err(|e| anyhow!("Failed to open sqlite vector DB: {}", e))?;
+        configure_rag_sqlite_connection(&conn).await?;
 
         let mut guard = self.conn.write().await;
         *guard = Some(conn);
@@ -822,6 +877,7 @@ impl SqliteVectorManager {
         let conn = Connection::open(&self.database_path)
             .await
             .map_err(|e| anyhow!("Failed to reopen sqlite vector DB: {}", e))?;
+        configure_rag_sqlite_connection(&conn).await?;
 
         let mut guard = self.conn.write().await;
         *guard = Some(conn.clone());
@@ -854,21 +910,26 @@ impl SqliteVectorManager {
         self.rollback_stale_transaction(conn).await?;
 
         match SqliteVectorStore::new(conn.clone(), embedding_model).await {
-            Ok(store) => Ok(store),
+            Ok(store) => {
+                ensure_vector_crud_indexes(conn).await?;
+                Ok(store)
+            }
             Err(e) => {
                 let message = e.to_string();
                 if Self::is_nested_transaction_error(&message) {
                     warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
                     let reopened = self.reopen_connection().await?;
                     self.rollback_stale_transaction(&reopened).await?;
-                    SqliteVectorStore::new(reopened, embedding_model)
+                    let store = SqliteVectorStore::new(reopened.clone(), embedding_model)
                         .await
                         .map_err(|retry_err| {
                             anyhow!(
                                 "Failed to initialize sqlite vector store after retry: {}",
                                 retry_err
                             )
-                        })
+                        })?;
+                    ensure_vector_crud_indexes(&reopened).await?;
+                    Ok(store)
                 } else {
                     Err(anyhow!(
                         "Failed to initialize sqlite vector store: {}",

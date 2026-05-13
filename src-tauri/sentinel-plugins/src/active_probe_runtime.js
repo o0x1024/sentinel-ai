@@ -2,7 +2,7 @@ const ACTIVE_PROBE_DEFAULTS = {
   jitterRange: [300, 1000],
   minHostCooldownMs: 1000,
   maxConcurrentPerHost: 2,
-  timeoutMs: 8000,
+  timeoutMs: 3000,
 }
 
 function clampPositiveInteger(value, fallback) {

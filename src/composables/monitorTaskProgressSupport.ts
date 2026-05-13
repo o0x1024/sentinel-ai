@@ -7,6 +7,7 @@ export interface MonitorTaskProgressState {
   current_plugin_index?: number | null
   target_count?: number | null
   imported_assets?: number | null
+  target_breakdown_label?: string | null
   message?: string | null
   execution_mode?: string | null
   started_at?: string | null
@@ -142,6 +143,10 @@ export const mergeMonitorTaskProgress = (
     if (payload.current_target == null) {
       mergedState.current_target = previousState.current_target
     }
+  }
+
+  if (sameRunningPlugin && payload.target_breakdown_label == null) {
+    mergedState.target_breakdown_label = previousState.target_breakdown_label
   }
 
   if (mergedState.status === 'running' && resolveDetailedFraction(mergedState) != null) {

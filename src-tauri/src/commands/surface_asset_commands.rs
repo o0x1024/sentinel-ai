@@ -129,7 +129,10 @@ fn normalize_json_value(value: Value) -> Option<Value> {
             }
         }
         Value::Array(values) => Some(Value::Array(
-            values.into_iter().filter_map(normalize_json_value).collect(),
+            values
+                .into_iter()
+                .filter_map(normalize_json_value)
+                .collect(),
         )),
         Value::Object(values) => {
             let normalized: Map<String, Value> = values
@@ -170,7 +173,10 @@ fn value_to_trimmed_string(value: Option<&Value>) -> Option<String> {
     })
 }
 
-fn derive_asset_name_from_typed_details(asset_type: &str, typed_details: &Value) -> Result<String, String> {
+fn derive_asset_name_from_typed_details(
+    asset_type: &str,
+    typed_details: &Value,
+) -> Result<String, String> {
     let name = match asset_type {
         "org" => value_to_trimmed_string(typed_details.get("org_name")),
         "domain" => value_to_trimmed_string(typed_details.get("fqdn"))
@@ -365,6 +371,7 @@ pub async fn surface_manual_import_assets(
                 .map(|value| matches!(value.as_str(), "internet" | "public")),
             viewed_at: None,
             viewed_by: None,
+            is_favorite: false,
             metadata_json: Some(json!({ "import_mode": "manual" }).to_string()),
             created_at: now.clone(),
             updated_at: now.clone(),
@@ -471,6 +478,23 @@ pub async fn surface_mark_inventory_viewed(
 ) -> Result<usize, String> {
     db_service
         .mark_surface_inventory_viewed(&filter, &Utc::now().to_rfc3339(), "surface_inventory")
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn surface_set_asset_favorite(
+    db_service: State<'_, Arc<DatabaseService>>,
+    asset_id: String,
+    is_favorite: bool,
+) -> Result<bool, String> {
+    db_service
+        .set_surface_asset_favorite(
+            &asset_id,
+            is_favorite,
+            &Utc::now().to_rfc3339(),
+            "surface_inventory",
+        )
         .await
         .map_err(|e| e.to_string())
 }

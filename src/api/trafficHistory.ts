@@ -41,3 +41,18 @@ export async function getProxyRequestPreview(requestId: number): Promise<ProxyRe
 
   return response.data || null
 }
+
+export async function getProxyRequestByTrafficRequestId(
+  trafficRequestId: string,
+): Promise<ProxyRequest | null> {
+  const response = await invoke<{ success: boolean; data?: ProxyRequest | null; error?: string }>(
+    'get_proxy_request_by_traffic_request_id',
+    { trafficRequestId },
+  )
+
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to load proxy request by traffic request id')
+  }
+
+  return response.data || null
+}

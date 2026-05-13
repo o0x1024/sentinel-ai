@@ -220,7 +220,7 @@ function handleWindowKeydown(event: KeyboardEvent) {
     return
   }
 
-  if (!closeTopmostImmersiveTool()) {
+  if (!closeTopmostImmersiveTool('transient')) {
     return
   }
 

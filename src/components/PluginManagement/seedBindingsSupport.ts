@@ -30,8 +30,6 @@ const SEED_BINDING_EXCLUDED_INPUT_KEYS = new Set([
   'previousSnapshots',
   '__monitorExecution',
   'monitorProgress',
-  'domain',
-  'domains',
   'url',
   'urls',
   'dictionary',

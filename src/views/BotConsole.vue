@@ -253,6 +253,13 @@
                 >
                   {{ t('botConsole.tabs.turnLogs') }}
                 </button>
+                <button
+                  class="tab"
+                  :class="{ 'tab-active': activeTab === 'missions' }"
+                  @click="setActiveTab('missions')"
+                >
+                  {{ t('botConsole.tabs.missions') }}
+                </button>
               </div>
             </div>
 
@@ -578,7 +585,7 @@
               </div>
             </div>
 
-            <div v-else class="p-4 space-y-4">
+            <div v-else-if="activeTab === 'turnLogs'" class="p-4 space-y-4">
               <div class="flex flex-col gap-3 rounded-lg border border-base-300 p-4 lg:flex-row lg:items-end">
                 <label class="form-control w-full lg:max-w-48">
                   <span class="label-text text-xs">{{ t('botConsole.turnLogs.date') }}</span>
@@ -722,6 +729,13 @@
                 </details>
               </div>
             </div>
+
+            <div v-else-if="activeTab === 'missions'" class="flex-1 overflow-hidden">
+              <MissionsPanel
+                :owner-kind="selectedPeer ? 'bot_peer' : undefined"
+                :owner-ref="selectedPeer ? `${selectedPeer.transport}:${selectedPeer.account_id}:${selectedPeer.peer_type}:${selectedPeer.peer_id}` : undefined"
+              />
+            </div>
           </template>
         </section>
       </div>
@@ -765,6 +779,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppDialog from '@/components/AppDialog.vue'
 import BotAccountsPanel from '@/components/Bot/BotAccountsPanel.vue'
+import MissionsPanel from '@/components/Bot/MissionsPanel.vue'
 import { SUPPORTED_BOT_TRANSPORTS } from '@/components/Bot/botTransportCatalog'
 import {
   getAiTurnLogDetail,
@@ -809,8 +824,8 @@ const executionFilter = ref(typeof route.query.executionFilter === 'string' ? ro
 const selectedPeerKey = ref('')
 const selectedExecutionRunId = ref('')
 const selectedScheduleId = ref('')
-const activeTab = ref<'messages' | 'executions' | 'schedules' | 'turnLogs'>(
-  route.query.tab === 'executions' || route.query.tab === 'schedules' || route.query.tab === 'turnLogs'
+const activeTab = ref<'messages' | 'executions' | 'schedules' | 'turnLogs' | 'missions'>(
+  route.query.tab === 'executions' || route.query.tab === 'schedules' || route.query.tab === 'turnLogs' || route.query.tab === 'missions'
     ? route.query.tab
     : 'messages',
 )
@@ -1434,7 +1449,7 @@ async function focusExecutionRun(runId?: string | null) {
   await syncRoute()
 }
 
-async function setActiveTab(tab: 'messages' | 'executions' | 'schedules' | 'turnLogs') {
+async function setActiveTab(tab: 'messages' | 'executions' | 'schedules' | 'turnLogs' | 'missions') {
   if (activeTab.value === tab) return
   activeTab.value = tab
   await syncRoute()

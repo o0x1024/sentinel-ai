@@ -1,6 +1,6 @@
 use crate::commands::monitor_commands::{
-    inject_monitor_execution_context, inject_monitor_plugin_targets, monitor_plugin_runtime_label,
-    monitor_plugin_has_invocable_input, MonitorSchedulerState,
+    inject_monitor_execution_context, inject_monitor_plugin_targets,
+    monitor_plugin_has_invocable_input, monitor_plugin_runtime_label, MonitorSchedulerState,
 };
 use crate::commands::monitor_config_support::save_tasks_to_db;
 use crate::commands::monitor_execution_heartbeat_support::start_monitor_execution_heartbeat;
@@ -13,13 +13,14 @@ use crate::commands::monitor_plugin_execution_support::execute_monitor_plugin;
 use crate::commands::monitor_plugin_output_support::extract_plugin_failure;
 use crate::commands::monitor_progress_support::{
     build_monitor_task_log_event, build_monitor_task_progress_event, collect_monitor_plugins,
-    emit_monitor_task_log, emit_monitor_task_progress,
+    emit_monitor_task_log, emit_monitor_task_progress, with_monitor_target_breakdown,
 };
 use crate::commands::monitor_snapshot_support::{
     persist_api_monitor_inventory_output, persist_monitor_plugin_snapshots_to_task,
 };
 use crate::commands::monitor_surface_support::{
-    collect_monitor_target_payload_for_plugin, ingest_surface_plugin_output,
+    collect_monitor_target_payload_for_plugin, format_monitor_target_breakdown,
+    ingest_surface_plugin_output,
 };
 use chrono::Utc;
 use sentinel_bounty::services::MonitorPluginConfig;
@@ -290,6 +291,7 @@ pub async fn monitor_trigger_task(
                     }
                 };
                 let plugin_targets = &resolved_targets.targets;
+                let target_breakdown_label = format_monitor_target_breakdown(&resolved_targets);
 
                 if cancel_requested_task_ids
                     .read()
@@ -359,6 +361,26 @@ pub async fn monitor_trigger_task(
                     continue;
                 }
 
+                emit_monitor_task_progress(
+                    &app_clone,
+                    &with_monitor_target_breakdown(
+                        build_monitor_task_progress_event(
+                            &task_clone,
+                            "manual_trigger",
+                            "running",
+                            completed_steps,
+                            total_steps,
+                            Some(attempt_label.as_str()),
+                            Some(index + 1),
+                            plugin_targets.len(),
+                            total_imported,
+                            Some(format!("Running plugin {}", attempt_label)),
+                            &execution_started_at,
+                        ),
+                        target_breakdown_label.clone(),
+                    ),
+                );
+
                 let plugin_started_at = Instant::now();
                 let mut input = candidate.plugin_params.clone();
                 if !input.is_object() {
@@ -398,6 +420,51 @@ pub async fn monitor_trigger_task(
                 )
                 .await;
                 heartbeat.stop().await;
+
+                if cancel_requested_task_ids
+                    .read()
+                    .await
+                    .contains(&task_id_clone)
+                {
+                    tracing::info!(
+                        "Manual execution of task '{}' stopped by user request during plugin '{}'",
+                        task_clone.name,
+                        attempt_label
+                    );
+                    stopped = true;
+                    emit_monitor_task_progress(
+                        &app_clone,
+                        &build_monitor_task_progress_event(
+                            &task_clone,
+                            "manual_trigger",
+                            "stopped",
+                            completed_steps,
+                            total_steps,
+                            Some(attempt_label.as_str()),
+                            Some(index + 1),
+                            plugin_targets.len(),
+                            total_imported,
+                            Some(format!("Stopped during plugin {}", attempt_label)),
+                            &execution_started_at,
+                        ),
+                    );
+                    emit_monitor_task_log(
+                        &app_clone,
+                        &build_monitor_task_log_event(
+                            &task_clone,
+                            attempt_label.as_str(),
+                            "manual_trigger",
+                            "stopped",
+                            index + 1,
+                            total_steps,
+                            Some(plugin_started_at.elapsed().as_millis() as u64),
+                            0,
+                            total_imported,
+                            format!("Stopped during plugin {}", attempt_label),
+                        ),
+                    );
+                    break;
+                }
 
                 if !result.success {
                     last_failure_reason = normalize_monitor_error_message(

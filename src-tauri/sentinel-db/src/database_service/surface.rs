@@ -47,6 +47,7 @@ pub struct SurfaceAssetRow {
     pub exposed_to_internet_flag: Option<bool>,
     pub viewed_at: Option<String>,
     pub viewed_by: Option<String>,
+    pub is_favorite: bool,
     pub metadata_json: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -361,8 +362,17 @@ pub struct SurfaceAssetFilter {
     pub service_name: Option<String>,
     pub transport_protocol: Option<String>,
     pub view_state: Option<String>,
+    pub is_favorite: Option<bool>,
+    pub column_filters: Option<Vec<SurfaceAssetColumnFilter>>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SurfaceAssetColumnFilter {
+    pub key: String,
+    pub operator: Option<String>,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1080,6 +1090,8 @@ impl DatabaseService {
             service_name: filter.service_name.clone(),
             transport_protocol: filter.transport_protocol.clone(),
             view_state: filter.view_state.clone(),
+            is_favorite: filter.is_favorite,
+            column_filters: filter.column_filters.clone(),
             limit: None,
             offset: None,
         };
@@ -1121,6 +1133,54 @@ impl DatabaseService {
         };
 
         Ok(rows as usize)
+    }
+
+    pub async fn set_surface_asset_favorite(
+        &self,
+        asset_id: &str,
+        is_favorite: bool,
+        updated_at: &str,
+        updated_by: &str,
+    ) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let rows = match runtime {
+            DatabasePool::SQLite(pool) => sqlx::query(
+                "UPDATE surface_assets SET is_favorite = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+            )
+            .bind(is_favorite)
+            .bind(updated_at)
+            .bind(updated_by)
+            .bind(asset_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query(
+                "UPDATE surface_assets SET is_favorite = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+            )
+            .bind(is_favorite)
+            .bind(updated_at)
+            .bind(updated_by)
+            .bind(asset_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::PostgreSQL(pool) => sqlx::query(
+                "UPDATE surface_assets SET is_favorite = $1, updated_at = $2, updated_by = $3 WHERE id = $4",
+            )
+            .bind(is_favorite)
+            .bind(updated_at)
+            .bind(updated_by)
+            .bind(asset_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+        };
+
+        Ok(rows > 0)
     }
 
     pub async fn upsert_surface_asset(&self, asset: &SurfaceAssetRow) -> Result<SurfaceAssetRow> {

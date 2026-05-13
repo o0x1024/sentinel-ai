@@ -395,6 +395,8 @@ impl DatabaseService {
             service_name: filter.service_name.clone(),
             transport_protocol: filter.transport_protocol.clone(),
             view_state: filter.view_state.clone(),
+            is_favorite: filter.is_favorite,
+            column_filters: filter.column_filters.clone(),
             limit: None,
             offset: None,
         };

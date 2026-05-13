@@ -5,12 +5,79 @@
 use crate::error::{PluginError, Result};
 use crate::plugin_engine::PluginEngine;
 use crate::types::{Finding, HttpTransaction, PluginMetadata};
+use deno_core::v8;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+
+type ActivePluginExecutionMap = HashMap<String, HashMap<String, v8::IsolateHandle>>;
+
+static ACTIVE_PLUGIN_EXECUTIONS: OnceLock<Mutex<ActivePluginExecutionMap>> = OnceLock::new();
+
+fn active_plugin_executions() -> &'static Mutex<ActivePluginExecutionMap> {
+    ACTIVE_PLUGIN_EXECUTIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct ActivePluginExecutionGuard {
+    run_id: String,
+    execution_id: String,
+}
+
+impl Drop for ActivePluginExecutionGuard {
+    fn drop(&mut self) {
+        let mut should_clear_suppressed_progress = false;
+        let mut executions = active_plugin_executions()
+            .lock()
+            .expect("active plugin execution registry poisoned");
+        if let Some(run_executions) = executions.get_mut(&self.run_id) {
+            run_executions.remove(&self.execution_id);
+            if run_executions.is_empty() {
+                executions.remove(&self.run_id);
+                should_clear_suppressed_progress = true;
+            }
+        }
+        drop(executions);
+
+        if should_clear_suppressed_progress {
+            crate::runtime_events::clear_suppressed_monitor_progress_for_run(&self.run_id);
+        }
+    }
+}
+
+fn register_active_plugin_execution(
+    run_id: &str,
+    handle: v8::IsolateHandle,
+) -> ActivePluginExecutionGuard {
+    let execution_id = uuid::Uuid::new_v4().to_string();
+    let mut executions = active_plugin_executions()
+        .lock()
+        .expect("active plugin execution registry poisoned");
+    executions
+        .entry(run_id.to_string())
+        .or_default()
+        .insert(execution_id.clone(), handle);
+
+    ActivePluginExecutionGuard {
+        run_id: run_id.to_string(),
+        execution_id,
+    }
+}
+
+pub fn terminate_plugin_executions_by_run(run_id: &str) -> usize {
+    let executions = active_plugin_executions()
+        .lock()
+        .expect("active plugin execution registry poisoned");
+    let Some(run_executions) = executions.get(run_id) else {
+        return 0;
+    };
+    for handle in run_executions.values() {
+        handle.terminate_execution();
+    }
+    run_executions.len()
+}
 
 /// 插件统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -437,11 +504,13 @@ impl PluginManager {
             rt.block_on(async move {
                 let mut engine = PluginEngine::new()?;
                 engine.load_plugin_with_metadata(&code, metadata).await?;
+                let _active_execution =
+                    register_active_plugin_execution(&run_id, engine.isolate_handle());
                 engine
                     .execute_agent_with_runtime_context(
                         &input_clone,
                         Some(execution_context),
-                        Some(run_id),
+                        Some(run_id.clone()),
                     )
                     .await
             })

@@ -9,6 +9,7 @@ export type ImmersiveToolCoordinatorId =
 
 type ImmersiveToolCloser = () => void
 type ImmersiveToolBlockingStateReader = () => boolean
+export type ImmersiveToolCloseScope = 'all' | 'transient'
 
 const immersiveToolEntries = new Map<
   ImmersiveToolCoordinatorId,
@@ -28,6 +29,14 @@ const immersiveToolLayerOrder: ImmersiveToolCoordinatorId[] = [
   'traffic-workbench',
 ]
 
+const persistentImmersiveToolIds = new Set<ImmersiveToolCoordinatorId>([
+  'traffic-workbench',
+])
+
+function canCloseInScope(id: ImmersiveToolCoordinatorId, scope: ImmersiveToolCloseScope) {
+  return scope === 'all' || !persistentImmersiveToolIds.has(id)
+}
+
 export function registerImmersiveToolCloser(
   id: ImmersiveToolCoordinatorId,
   closer: ImmersiveToolCloser,
@@ -39,14 +48,22 @@ export function registerImmersiveToolCloser(
   })
 }
 
-export function closeAllImmersiveTools() {
-  immersiveToolEntries.forEach(entry => {
+export function closeAllImmersiveTools(scope: ImmersiveToolCloseScope = 'all') {
+  immersiveToolEntries.forEach((entry, id) => {
+    if (!canCloseInScope(id, scope)) {
+      return
+    }
+
     entry.close()
   })
 }
 
-export function closeTopmostImmersiveTool() {
+export function closeTopmostImmersiveTool(scope: ImmersiveToolCloseScope = 'all') {
   for (const id of immersiveToolLayerOrder) {
+    if (!canCloseInScope(id, scope)) {
+      continue
+    }
+
     const entry = immersiveToolEntries.get(id)
     if (!entry || !entry.isBlocking()) {
       continue
@@ -59,8 +76,12 @@ export function closeTopmostImmersiveTool() {
   return false
 }
 
-export function hasOpenImmersiveTools() {
-  for (const entry of immersiveToolEntries.values()) {
+export function hasOpenImmersiveTools(scope: ImmersiveToolCloseScope = 'all') {
+  for (const [id, entry] of immersiveToolEntries.entries()) {
+    if (!canCloseInScope(id, scope)) {
+      continue
+    }
+
     if (entry.isBlocking()) {
       return true
     }

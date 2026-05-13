@@ -94,12 +94,12 @@ globalThis.Sentinel = {
      * @param {string} hostname - target hostname
      * @param {object} [options] - options
      * @param {number} [options.port=443] - target port
-     * @param {number} [options.timeout=10000] - timeout in milliseconds
+     * @param {number} [options.timeout=3000] - timeout in milliseconds
      * @returns {Promise<{success: boolean, cert?: object, error?: string}>}
      */
     getCertificate: async (hostname, options = {}) => {
       const port = options.port || 443
-      const timeout = options.timeout || 10000
+      const timeout = 3000
       return await Deno.core.ops.op_get_tls_certificate(hostname, port, timeout)
     },
   },
@@ -110,7 +110,7 @@ globalThis.Sentinel = {
      * @param {object} request
      * @param {{host: string, ports?: number[]}[]} request.targets
      * @param {number[]} [request.ports]
-     * @param {number} [request.timeout_ms=1500]
+     * @param {number} [request.timeout_ms=3000]
      * @param {number} [request.batch_size=512]
      * @param {number} [request.concurrency=32]
      * @param {number} [request.tries=1]
@@ -646,9 +646,7 @@ globalThis.fetch = async function (input, init = {}) {
   }
 
   const body = await serializeFetchBody(init.body)
-  const timeout = activeProbeOptions
-    ? activeProbeOptions.timeoutMs
-    : (init.timeout || 30000)
+  const timeout = 3000
   const redirect = init.redirect || 'follow'
   const maxRedirects =
     typeof init.maxRedirects === 'number' && Number.isFinite(init.maxRedirects)

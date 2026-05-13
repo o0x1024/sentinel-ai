@@ -1,7 +1,7 @@
 <template>
-  <div class="grid h-full gap-4 xl:grid-cols-[minmax(24rem,30rem)_1fr]">
-    <section class="card bg-base-100 shadow-md">
-      <div class="card-body gap-4 p-4">
+  <div class="grid h-full min-w-0 gap-4 xl:grid-cols-[minmax(24rem,30rem)_minmax(0,1fr)]">
+    <section class="card min-w-0 overflow-hidden bg-base-100 shadow-md">
+      <div class="card-body min-w-0 gap-4 p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 class="card-title">{{ t('bugBounty.knowledge.title') }}</h2>
@@ -101,16 +101,13 @@
       </div>
     </section>
 
-    <section class="card bg-base-100 shadow-md">
-      <div class="card-body gap-4 p-4">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 class="card-title">
+    <section class="card min-w-0 overflow-hidden bg-base-100 shadow-md">
+      <div class="card-body min-h-0 min-w-0 gap-3 p-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="min-w-0">
+            <h2 class="truncate text-base font-semibold">
               {{ draft.id ? t('bugBounty.knowledge.editNote') : t('bugBounty.knowledge.newNote') }}
             </h2>
-            <p class="text-sm text-base-content/65">
-              {{ t('bugBounty.knowledge.editorHint') }}
-            </p>
           </div>
           <div class="flex gap-2">
             <button
@@ -137,20 +134,20 @@
           </div>
         </div>
 
-        <label class="form-control gap-2">
-          <span class="label-text">{{ t('bugBounty.knowledge.fields.title') }}</span>
-          <input
-            v-model="draft.title"
-            type="text"
-            class="input input-bordered"
-            :placeholder="t('bugBounty.knowledge.fields.titlePlaceholder')"
-          />
-        </label>
+        <div class="grid gap-2 rounded-lg border border-base-300 bg-base-200/35 p-2 xl:grid-cols-[minmax(14rem,1.4fr)_minmax(10rem,0.8fr)_minmax(12rem,1fr)]">
+          <label class="form-control gap-1">
+            <span class="label-text text-xs">{{ t('bugBounty.knowledge.fields.title') }}</span>
+            <input
+              v-model="draft.title"
+              type="text"
+              class="input input-bordered input-sm"
+              :placeholder="t('bugBounty.knowledge.fields.titlePlaceholder')"
+            />
+          </label>
 
-        <div class="grid gap-4 lg:grid-cols-2">
-          <label class="form-control gap-2">
-            <span class="label-text">{{ t('bugBounty.knowledge.fields.program') }}</span>
-            <select v-model="draft.program_id" class="select select-bordered">
+          <label class="form-control gap-1">
+            <span class="label-text text-xs">{{ t('bugBounty.knowledge.fields.program') }}</span>
+            <select v-model="draft.program_id" class="select select-bordered select-sm">
               <option value="">{{ t('bugBounty.knowledge.unboundProgram') }}</option>
               <option
                 v-for="program in programs"
@@ -162,29 +159,61 @@
             </select>
           </label>
 
-          <label class="form-control gap-2">
-            <span class="label-text">{{ t('bugBounty.knowledge.fields.tags') }}</span>
+          <label class="form-control gap-1">
+            <span class="label-text text-xs">{{ t('bugBounty.knowledge.fields.tags') }}</span>
             <input
               v-model="draft.tagsInput"
               type="text"
-              class="input input-bordered"
+              class="input input-bordered input-sm"
               :placeholder="t('bugBounty.knowledge.fields.tagsPlaceholder')"
             />
           </label>
         </div>
 
-        <label class="form-control flex-1 gap-2">
-          <span class="label-text">{{ t('bugBounty.knowledge.fields.content') }}</span>
+        <div class="form-control min-h-0 min-w-0 flex-1 gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="label-text">{{ t('bugBounty.knowledge.fields.content') }}</span>
+            <div class="join">
+              <button
+                type="button"
+                class="btn join-item btn-xs"
+                :class="contentMode === 'edit' ? 'btn-primary' : 'btn-outline'"
+                @click="contentMode = 'edit'"
+              >
+                <i class="fas fa-pen-to-square mr-1"></i>
+                {{ t('bugBounty.knowledge.markdown.edit') }}
+              </button>
+              <button
+                type="button"
+                class="btn join-item btn-xs"
+                :class="contentMode === 'preview' ? 'btn-primary' : 'btn-outline'"
+                @click="contentMode = 'preview'"
+              >
+                <i class="fas fa-eye mr-1"></i>
+                {{ t('bugBounty.knowledge.markdown.preview') }}
+              </button>
+            </div>
+          </div>
           <textarea
-            v-model="draft.content"
-            class="textarea textarea-bordered min-h-[22rem] flex-1 font-mono text-sm"
+            v-if="contentMode === 'edit'"
+            ref="contentTextarea"
+            v-model="editorContent"
+            class="textarea textarea-bordered min-h-[28rem] flex-1 resize-none font-mono text-sm"
             :placeholder="t('bugBounty.knowledge.fields.contentPlaceholder')"
+            @input="syncDraftContentFromEditor"
+            @paste="handleContentPaste"
           />
-        </label>
-
-        <div class="rounded-2xl bg-base-200/70 px-4 py-3 text-xs text-base-content/55">
-          <div>{{ t('bugBounty.knowledge.tips.search') }}</div>
-          <div class="mt-1">{{ t('bugBounty.knowledge.tips.binding') }}</div>
+          <div
+            v-else-if="fullDraftContent.trim()"
+            class="knowledge-markdown-preview min-h-[28rem] min-w-0 flex-1 rounded-lg border border-base-300 bg-base-100 px-4 py-3"
+            v-html="renderedDraftContent"
+          ></div>
+          <div
+            v-else
+            class="flex min-h-[28rem] flex-1 items-center justify-center rounded-lg border border-dashed border-base-300 bg-base-100 text-sm text-base-content/45"
+          >
+            {{ t('bugBounty.knowledge.markdown.emptyPreview') }}
+          </div>
         </div>
       </div>
     </section>
@@ -192,13 +221,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { dialog } from '@/composables/useDialog'
 import { emitBountyKnowledgeUpdated } from '@/services/bountyKnowledgeEvents'
+import {
+  formatBountyKnowledgeMarkdownSnippet,
+  renderBountyKnowledgeMarkdown,
+} from './bountyKnowledgeMarkdown'
+import {
+  buildPastedImageReferenceMarkdown,
+  collapseBountyKnowledgeImageContent,
+  expandBountyKnowledgeImageContent,
+  findFirstClipboardImageFile,
+  insertTextAtSelection,
+  readImageFileAsDataUrl,
+  type BountyKnowledgeImageReference,
+} from './bountyKnowledgeImagePaste'
 
 interface ProgramSummary {
   id: string
@@ -233,6 +275,11 @@ const deleting = ref(false)
 const notes = ref<KnowledgeNoteSummary[]>([])
 const searchQuery = ref('')
 const scopeFilter = ref<ScopeFilter>('all')
+const contentMode = ref<'edit' | 'preview'>('edit')
+const contentTextarea = ref<HTMLTextAreaElement | null>(null)
+const editorContent = ref('')
+const imageReferences = ref<BountyKnowledgeImageReference[]>([])
+const pastedImageCount = ref(0)
 const selectedNoteId = ref('')
 const stats = ref({
   total_notes: 0,
@@ -250,6 +297,21 @@ const draft = ref({
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const selectedProgramId = computed(() => props.selectedProgram?.id || '')
+const fullDraftContent = computed(() =>
+  expandBountyKnowledgeImageContent(editorContent.value, imageReferences.value),
+)
+const renderedDraftContent = computed(() => renderBountyKnowledgeMarkdown(fullDraftContent.value))
+
+const syncEditorFromContent = (content: string) => {
+  const collapsed = collapseBountyKnowledgeImageContent(content)
+  editorContent.value = collapsed.content
+  imageReferences.value = collapsed.references
+  draft.value.content = expandBountyKnowledgeImageContent(editorContent.value, imageReferences.value)
+}
+
+const syncDraftContentFromEditor = () => {
+  draft.value.content = fullDraftContent.value
+}
 
 const createEmptyDraft = () => {
   draft.value = {
@@ -259,6 +321,8 @@ const createEmptyDraft = () => {
     program_id: selectedProgramId.value,
     tagsInput: '',
   }
+  editorContent.value = ''
+  imageReferences.value = []
   selectedNoteId.value = ''
 }
 
@@ -279,10 +343,40 @@ const parseTags = (tagsJson?: string | null) => {
 }
 
 const formatSnippet = (value?: string | null) =>
-  String(value || '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+  formatBountyKnowledgeMarkdownSnippet(String(value || ''))
+
+const handleContentPaste = async (event: ClipboardEvent) => {
+  const file = findFirstClipboardImageFile(event.clipboardData)
+  if (!file) return
+
+  event.preventDefault()
+
+  try {
+    const target = event.target instanceof HTMLTextAreaElement ? event.target : contentTextarea.value
+    const selectionStart = target?.selectionStart ?? draft.value.content.length
+    const selectionEnd = target?.selectionEnd ?? selectionStart
+    const dataUrl = await readImageFileAsDataUrl(file)
+    pastedImageCount.value += 1
+    const id = `bounty-image-${Date.now()}-${pastedImageCount.value}`
+    const markdown = buildPastedImageReferenceMarkdown(
+      id,
+      t('bugBounty.knowledge.markdown.pastedImageAlt', { index: pastedImageCount.value }),
+    )
+    const next = insertTextAtSelection(editorContent.value, markdown, selectionStart, selectionEnd)
+    editorContent.value = next.value
+    imageReferences.value = [...imageReferences.value, { id, dataUrl }]
+    syncDraftContentFromEditor()
+
+    await nextTick()
+    const textarea = contentTextarea.value
+    textarea?.focus()
+    textarea?.setSelectionRange(next.cursor, next.cursor)
+    toast.success(t('bugBounty.knowledge.markdown.imagePasted'))
+  } catch (error) {
+    console.error('Failed to paste bounty knowledge image:', error)
+    toast.error(t('bugBounty.knowledge.markdown.imagePasteFailed'))
+  }
+}
 
 const serializeTags = (raw: string) => {
   const tags = raw
@@ -380,6 +474,7 @@ const applyNoteToDraft = (note: any) => {
     program_id: note.program_id || '',
     tagsInput: parseTags(note.tags_json).join(', '),
   }
+  syncEditorFromContent(draft.value.content)
 }
 
 const openNote = async (noteId: string) => {
@@ -403,7 +498,7 @@ const createNewNote = () => {
 const saveNote = async () => {
   const isEditing = Boolean(draft.value.id)
   const title = draft.value.title.trim()
-  const content = draft.value.content.trim()
+  const content = fullDraftContent.value.trim()
 
   if (!title || !content) {
     toast.warning(t('bugBounty.knowledge.validation.required'))
@@ -519,3 +614,124 @@ onBeforeUnmount(() => {
   }
 })
 </script>
+
+<style scoped>
+.knowledge-markdown-preview {
+  width: 100%;
+  max-width: 100%;
+  overflow: auto;
+  line-height: 1.65;
+  color: hsl(var(--bc));
+  overflow-wrap: anywhere;
+}
+
+.knowledge-markdown-preview :deep(h1),
+.knowledge-markdown-preview :deep(h2),
+.knowledge-markdown-preview :deep(h3) {
+  margin: 0.9rem 0 0.45rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.knowledge-markdown-preview :deep(h1) {
+  font-size: 1.35rem;
+}
+
+.knowledge-markdown-preview :deep(h2) {
+  font-size: 1.18rem;
+}
+
+.knowledge-markdown-preview :deep(h3) {
+  font-size: 1.05rem;
+}
+
+.knowledge-markdown-preview :deep(p) {
+  margin: 0.55rem 0;
+}
+
+.knowledge-markdown-preview :deep(ul),
+.knowledge-markdown-preview :deep(ol) {
+  margin: 0.55rem 0 0.55rem 1.35rem;
+}
+
+.knowledge-markdown-preview :deep(ul) {
+  list-style: disc;
+}
+
+.knowledge-markdown-preview :deep(ol) {
+  list-style: decimal;
+}
+
+.knowledge-markdown-preview :deep(li) {
+  margin: 0.25rem 0;
+}
+
+.knowledge-markdown-preview :deep(blockquote) {
+  margin: 0.75rem 0;
+  padding: 0.45rem 0.75rem;
+  border-left: 3px solid hsl(var(--p) / 0.55);
+  background: hsl(var(--b2) / 0.55);
+  color: hsl(var(--bc) / 0.72);
+}
+
+.knowledge-markdown-preview :deep(code) {
+  white-space: break-spaces;
+  border-radius: 0.35rem;
+  background: hsl(var(--b2));
+  padding: 0.1rem 0.35rem;
+  font-size: 0.86em;
+}
+
+.knowledge-markdown-preview :deep(pre) {
+  max-width: 100%;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: hsl(var(--b2));
+  padding: 0.75rem;
+}
+
+.knowledge-markdown-preview :deep(pre code) {
+  white-space: pre;
+  background: transparent;
+  padding: 0;
+}
+
+.knowledge-markdown-preview :deep(a) {
+  color: hsl(var(--p));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.knowledge-markdown-preview :deep(img) {
+  display: block;
+  max-width: min(100%, 48rem);
+  max-height: 28rem;
+  height: auto;
+  margin: 0.75rem auto;
+  border-radius: 0.5rem;
+  border: 1px solid hsl(var(--b3));
+  object-fit: contain;
+}
+
+.knowledge-markdown-preview :deep(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  width: max-content;
+  margin: 0.75rem 0;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.knowledge-markdown-preview :deep(th),
+.knowledge-markdown-preview :deep(td) {
+  border: 1px solid hsl(var(--b3));
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+}
+
+.knowledge-markdown-preview :deep(th) {
+  background: hsl(var(--b2));
+}
+</style>

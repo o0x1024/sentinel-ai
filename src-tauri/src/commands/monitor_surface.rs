@@ -87,6 +87,7 @@ async fn upsert_surface_shell_asset(
         exposed_to_internet_flag: Some(true),
         viewed_at: None,
         viewed_by: None,
+        is_favorite: false,
         metadata_json: metadata.map(|value| value.to_string()),
         created_at: now.clone(),
         updated_at: now,

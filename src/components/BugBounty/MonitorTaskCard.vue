@@ -164,6 +164,9 @@
           <span v-if="progress.target_count > 0">
             {{ t('bugBounty.monitor.targetCount', { count: progress.target_count }) }}
           </span>
+          <span v-if="progress.target_breakdown_label">
+            {{ progress.target_breakdown_label }}
+          </span>
           <span v-if="progress.imported_assets > 0">
             {{ t('bugBounty.monitor.assetsImported') }}: {{ progress.imported_assets }}
           </span>
@@ -640,10 +643,13 @@ const serviceProbeEngineBadges = computed(() => {
 })
 
 const formatInterval = (secs: number) => {
+  const minutes = secs / 60
   const hours = secs / 3600
   const days = hours / 24
-  if (days >= 1) return `${days} ${t('bugBounty.monitor.days')}`
-  return `${hours} ${t('bugBounty.monitor.hours')}`
+  if (Number.isInteger(days) && days >= 1) return `${days} ${t('bugBounty.monitor.days')}`
+  if (Number.isInteger(hours) && hours >= 1) return `${hours} ${t('bugBounty.monitor.hours')}`
+  if (Number.isInteger(minutes) && minutes >= 1) return `${minutes} ${t('bugBounty.monitor.minutes')}`
+  return `${secs} ${t('bugBounty.monitor.seconds')}`
 }
 
 const formatDateTime = (dateStr: string) => new Date(dateStr).toLocaleString()

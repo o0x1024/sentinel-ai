@@ -42,6 +42,9 @@ type FilterRuleAddedPayload = {
   relationship: string
 }
 
+const CONFIG_SAVE_DEBOUNCE_MS = 350
+const LOCAL_SETTINGS_TOAST_DEBOUNCE_MS = 350
+
 interface UseProxyConfigurationOptions {
   t: TranslateFn
   emitFilterRuleAdded: (payload: FilterRuleAddedPayload) => void
@@ -105,6 +108,7 @@ export function useProxyConfiguration({ t, emitFilterRuleAdded }: UseProxyConfig
   const lastSavedTrafficOastConfigSnapshot = ref('')
   const trafficOastAutoSaveState = ref<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle')
   const trafficOastLastSavedAt = ref<string | null>(null)
+  let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
   const proxyConfig = ref(createDefaultProxyConfig())
   const requestBodySizeMB = ref(2)
@@ -822,10 +826,13 @@ export function useProxyConfiguration({ t, emitFilterRuleAdded }: UseProxyConfig
       return
     }
 
-    if (saveQueued.value) return
+    if (saveDebounceTimer) {
+      clearTimeout(saveDebounceTimer)
+    }
 
     saveQueued.value = true
-    queueMicrotask(async () => {
+    saveDebounceTimer = setTimeout(async () => {
+      saveDebounceTimer = null
       saveQueued.value = false
       if (isSaving.value) {
         saveAgainAfterCurrent.value = true
@@ -837,7 +844,7 @@ export function useProxyConfiguration({ t, emitFilterRuleAdded }: UseProxyConfig
         saveAgainAfterCurrent.value = false
         debouncedSave()
       }
-    })
+    }, CONFIG_SAVE_DEBOUNCE_MS)
   }
 
   const debouncedLocalSettingsToast = () => {
@@ -850,7 +857,7 @@ export function useProxyConfiguration({ t, emitFilterRuleAdded }: UseProxyConfig
     localSettingsToastTimeout.value = setTimeout(() => {
       dialog.toast.success('修改成功')
       localSettingsToastTimeout.value = null
-    }, 0)
+    }, LOCAL_SETTINGS_TOAST_DEBOUNCE_MS)
   }
 
   const resetToDefaults = () => {
@@ -1555,6 +1562,14 @@ export function useProxyConfiguration({ t, emitFilterRuleAdded }: UseProxyConfig
     if (unlistenProxyStatus) unlistenProxyStatus()
     if (unlistenFilterRule) unlistenFilterRule()
     if (unlistenBehaviorStatus) unlistenBehaviorStatus()
+    if (saveDebounceTimer) {
+      clearTimeout(saveDebounceTimer)
+      saveDebounceTimer = null
+      saveQueued.value = false
+      if (!isInitialLoad.value) {
+        void saveConfiguration()
+      }
+    }
     if (localSettingsToastTimeout.value) {
       clearTimeout(localSettingsToastTimeout.value)
     }

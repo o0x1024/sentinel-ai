@@ -253,11 +253,7 @@ describe('ImmersiveDrillDock', () => {
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await nextTick()
-    expect(workbenchOpen.value).toBe(false)
-    expect(immersiveDrillModeEnabled.value).toBe(true)
-
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    await nextTick()
+    expect(workbenchOpen.value).toBe(true)
     expect(immersiveDrillModeEnabled.value).toBe(false)
 
     wrapper.unmount()

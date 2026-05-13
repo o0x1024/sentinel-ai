@@ -3,7 +3,7 @@
     <Transition name="modal">
       <div v-if="visible" class="modal modal-open">
         <div class="modal-box max-w-4xl max-h-[90vh] flex flex-col">
-      <h3 class="font-bold text-lg mb-4">{{ t('bugBounty.createFinding') }}</h3>
+      <h3 class="font-bold text-lg mb-4">{{ t('bugBounty.createFinding.title') }}</h3>
       
       <!-- Template Selector -->
       <div class="bg-base-200 rounded-lg p-3 mb-4">
@@ -168,12 +168,11 @@
               <i class="fas fa-magic mr-1"></i>{{ t('bugBounty.createFinding.fillFromTemplate') }}
             </span>
           </label>
-          <textarea 
-            v-model="form.description" 
-            class="textarea textarea-bordered font-mono text-sm"
-            rows="5"
+          <BountyMarkdownEditor
+            v-model="form.description"
+            min-height="10rem"
             :placeholder="t('bugBounty.form.findingDescriptionPlaceholder')"
-          ></textarea>
+          />
         </div>
         
         <div class="form-control">
@@ -183,12 +182,11 @@
               <i class="fas fa-magic mr-1"></i>{{ t('bugBounty.createFinding.fillFromTemplate') }}
             </span>
           </label>
-          <textarea 
-            v-model="form.impact" 
-            class="textarea textarea-bordered font-mono text-sm"
-            rows="3"
+          <BountyMarkdownEditor
+            v-model="form.impact"
+            min-height="7rem"
             :placeholder="t('bugBounty.form.impactPlaceholder')"
-          ></textarea>
+          />
         </div>
 
         <div class="form-control">
@@ -198,12 +196,11 @@
               <i class="fas fa-magic mr-1"></i>{{ t('bugBounty.createFinding.fillFromTemplate') }}
             </span>
           </label>
-          <textarea 
-            v-model="form.reproduction_steps" 
-            class="textarea textarea-bordered font-mono text-sm"
-            rows="4"
+          <BountyMarkdownEditor
+            v-model="form.reproduction_steps"
+            min-height="8rem"
             :placeholder="stepsPlaceholder"
-          ></textarea>
+          />
         </div>
 
         <div class="form-control">
@@ -213,12 +210,11 @@
               <i class="fas fa-magic mr-1"></i>{{ t('bugBounty.createFinding.fillFromTemplate') }}
             </span>
           </label>
-          <textarea 
-            v-model="form.remediation" 
-            class="textarea textarea-bordered font-mono text-sm"
-            rows="3"
+          <BountyMarkdownEditor
+            v-model="form.remediation"
+            min-height="7rem"
             :placeholder="t('bugBounty.form.remediationPlaceholder')"
-          ></textarea>
+          />
         </div>
       </div>
       
@@ -244,6 +240,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import BountyMarkdownEditor from './BountyMarkdownEditor.vue'
 
 const { t } = useI18n()
 
@@ -601,16 +598,9 @@ const fillFromTemplate = (field: 'description' | 'impact' | 'steps' | 'remediati
 const submit = () => {
   if (!isValid.value) return
   
-  // Parse reproduction steps to array
-  const stepsArray = form.reproduction_steps
-    .split('\n')
-    .map(s => s.trim())
-    .filter(s => s)
-    .map(s => s.replace(/^\d+\.\s*/, ''))
-  
   emit('submit', { 
     ...form,
-    reproduction_steps: stepsArray.length > 0 ? stepsArray : null,
+    reproduction_steps: form.reproduction_steps.trim() ? [form.reproduction_steps] : null,
   })
 }
 

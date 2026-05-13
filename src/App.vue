@@ -39,7 +39,6 @@ import {
   immersiveDrillModeEnabled,
   toggleImmersiveDrillMode,
 } from './services/immersiveDrillMode'
-import { showImmersiveTrafficHistory } from './components/traffic/immersiveTrafficDockState'
 import { closeTrafficAssistant } from './services/trafficAssistantWorkspace'
 import { applyTheme } from './views/settingsUiSupport'
 import { useToast } from './composables/useToast'
@@ -368,7 +367,6 @@ const shouldShowSidebar = computed(
 
 const handleNavbarImmersiveDrillModeToggle = () => {
   if (!immersiveDrillModeEnabled.value) {
-    showImmersiveTrafficHistory()
     closeTrafficAssistant()
   }
 

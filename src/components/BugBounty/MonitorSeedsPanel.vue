@@ -252,7 +252,12 @@
                     <button type="button" class="btn btn-ghost btn-xs" @click="openEditModal(seed)">
                       <i class="fas fa-pen"></i>
                     </button>
-                    <button type="button" class="btn btn-ghost btn-xs text-error" @click="openDeleteModal(seed)">
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-xs text-error"
+                      :disabled="deleting"
+                      @click="deleteSeed(seed)"
+                    >
                       <i class="fas fa-trash"></i>
                     </button>
                   </div>
@@ -589,27 +594,6 @@
       <div class="modal-backdrop" @click="closeEditorModal"></div>
     </div>
 
-    <div v-if="open && seedPendingDelete" class="modal modal-open">
-      <div class="modal-box max-w-md">
-        <h3 class="font-bold text-lg">{{ t('bugBounty.monitor.seeds.deleteTitle') }}</h3>
-        <p class="py-4 text-sm text-base-content/70">
-          {{ t('bugBounty.monitor.seeds.deleteConfirm') }}
-        </p>
-        <div class="rounded-md bg-base-200 px-3 py-2 font-mono text-xs">
-          {{ seedPendingDelete.seed_value }}
-        </div>
-        <div class="modal-action">
-          <button type="button" class="btn" @click="seedPendingDelete = null">
-            {{ t('common.cancel') }}
-          </button>
-          <button type="button" class="btn btn-error" :disabled="deleting" @click="deleteSeed">
-            <span v-if="deleting" class="loading loading-spinner loading-xs"></span>
-            {{ t('common.delete') }}
-          </button>
-        </div>
-      </div>
-      <div class="modal-backdrop" @click="seedPendingDelete = null"></div>
-    </div>
   </Teleport>
 </template>
 
@@ -731,7 +715,6 @@ const localProgramId = ref('')
 const showCandidatesModal = ref(false)
 const showEditorModal = ref(false)
 const editingSeed = ref<SurfaceSeedRow | null>(null)
-const seedPendingDelete = ref<SurfaceSeedRow | null>(null)
 const searchQuery = ref('')
 const typeFilter = ref('all')
 const statusFilter = ref('all')
@@ -861,15 +844,18 @@ const buildSeedQueryRequest = () => ({
   source: sourceFilter.value === 'all' ? null : sourceFilter.value,
 })
 
-const loadSeeds = async () => {
+const loadSeeds = async (options?: { silent?: boolean }) => {
   if (!resolvedProgramId.value) {
     seeds.value = []
     totalSeeds.value = 0
     selectedSeedIds.value = []
     return
   }
+  const silent = options?.silent === true
   try {
-    loading.value = true
+    if (!silent) {
+      loading.value = true
+    }
     const result = await invoke<SurfaceSeedQueryResult>('surface_query_seeds', {
       request: {
         ...buildSeedQueryRequest(),
@@ -887,7 +873,9 @@ const loadSeeds = async () => {
     selectedSeedIds.value = []
     toast.error(t('bugBounty.monitor.seeds.loadFailed'))
   } finally {
-    loading.value = false
+    if (!silent) {
+      loading.value = false
+    }
   }
 }
 
@@ -1064,18 +1052,14 @@ const saveSeed = async () => {
   }
 }
 
-const openDeleteModal = (seed: SurfaceSeedRow) => {
-  seedPendingDelete.value = seed
-}
-
-const deleteSeed = async () => {
-  if (!seedPendingDelete.value) return
+const deleteSeed = async (seed: SurfaceSeedRow) => {
+  if (!seed.id) return
   try {
     deleting.value = true
-    await invoke('surface_delete_seed', { seedId: seedPendingDelete.value.id })
-    seedPendingDelete.value = null
+    await invoke('surface_delete_seed', { seedId: seed.id })
     toast.success(t('bugBounty.monitor.seeds.deleted'))
-    await loadSeeds()
+    // 先用无 loading 刷新，避免删除操作时整块闪烁
+    await loadSeeds({ silent: true })
     await loadDistribution()
     await loadLegacySyncedSeedCount()
   } catch (error) {
@@ -1143,7 +1127,7 @@ const deleteSelectedSeeds = async () => {
     const deleted = await invoke<number>('surface_batch_delete_seeds', { seedIds: selectedSeedIds.value })
     selectedSeedIds.value = []
     toast.success(t('bugBounty.monitor.seeds.deleteSuccess', { count: deleted }))
-    await loadSeeds()
+    await loadSeeds({ silent: true })
     await loadDistribution()
     await loadLegacySyncedSeedCount()
   } catch (error) {
@@ -1167,7 +1151,7 @@ const deleteAllSeeds = async () => {
     })
     selectedSeedIds.value = []
     toast.success(t('bugBounty.monitor.seeds.deleteAllSuccess', { count: deleted }))
-    await loadSeeds()
+    await loadSeeds({ silent: true })
     await loadDistribution()
     await loadLegacySyncedSeedCount()
   } catch (error) {
@@ -1378,7 +1362,6 @@ watch(
       showCandidatesModal.value = false
       showEditorModal.value = false
       editingSeed.value = null
-      seedPendingDelete.value = null
       selectedSeedIds.value = []
       selectedCandidateIds.value = []
       expandedCandidateGroupKeys.value = []

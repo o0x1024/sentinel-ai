@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
 import { ref } from 'vue'
+import { getProxyRequestByTrafficRequestId } from '@/api/trafficHistory'
 import type { ProxyRequest } from '../../proxyHistoryTypes'
 
 export function useActiveProbePreview() {
@@ -17,30 +17,6 @@ export function useActiveProbePreview() {
     }
   }
 
-  async function loadRequestByTrafficRequestId(trafficRequestId: string): Promise<ProxyRequest | null> {
-    const listResponse = await invoke<any>('list_proxy_requests', {
-      limit: 200,
-      offset: 0,
-    })
-
-    const summary = listResponse?.success
-      ? (listResponse.data as ProxyRequest[]).find(
-          request => request.traffic_request_id === trafficRequestId,
-        )
-      : null
-
-    if (!summary) {
-      return null
-    }
-
-    const detailResponse = await invoke<any>('get_proxy_request', { id: summary.id })
-    if (!detailResponse?.success || !detailResponse.data) {
-      return null
-    }
-
-    return detailResponse.data as ProxyRequest
-  }
-
   async function ensurePreview(trafficRequestId: string) {
     if (!trafficRequestId || previewRequests.value[trafficRequestId]) {
       return previewRequests.value[trafficRequestId] ?? null
@@ -48,7 +24,7 @@ export function useActiveProbePreview() {
 
     previewLoadingId.value = trafficRequestId
     try {
-      const request = await loadRequestByTrafficRequestId(trafficRequestId)
+      const request = await getProxyRequestByTrafficRequestId(trafficRequestId)
       if (request) {
         rememberPreviewRequest(request)
       }

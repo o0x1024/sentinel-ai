@@ -20,13 +20,15 @@ pub mod bounty_workflow_ops;
 pub mod cache;
 pub mod config;
 pub mod connection_manager;
+pub mod database_ddl;
 pub mod db_config;
 pub mod execution_tasks;
 pub mod init;
+pub mod llm_test_suites;
 pub mod memory;
 pub mod migration;
-pub mod mission;
 pub mod migrations;
+pub mod mission;
 pub mod monitor_tasks;
 pub mod plugin;
 pub mod proxifier;
@@ -37,6 +39,7 @@ pub mod scan_session;
 pub mod service;
 pub mod skills;
 pub mod sliding_window;
+pub mod sqlite_performance;
 pub mod sqlx_compat;
 pub mod surface;
 pub mod surface_artifacts;
@@ -111,6 +114,8 @@ pub use execution_tasks::*;
 #[allow(unused_imports)]
 pub use init::*;
 #[allow(unused_imports)]
+pub use llm_test_suites::*;
+#[allow(unused_imports)]
 pub use memory::*;
 #[allow(unused_imports)]
 pub use migration::*;
@@ -135,6 +140,8 @@ pub use service::*;
 pub use skills::*;
 #[allow(unused_imports)]
 pub use sliding_window::*;
+#[allow(unused_imports)]
+pub use sqlite_performance::*;
 #[allow(unused_imports)]
 pub use sqlx_compat::*;
 #[allow(unused_imports)]

@@ -565,14 +565,80 @@ const subCategories = computed<SubCategory[]>(() => {
 })
 
 const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
+  const dialogToast = dialogRef.value?.showToast
+  if (typeof dialogToast === 'function') {
+    dialogToast(message, type)
+    return
+  }
+
   const toast = document.createElement('div')
-  toast.className = 'toast toast-top toast-end z-[9999999]'
-  toast.style.top = '5rem'
+  toast.className = 'toast toast-bottom toast-end'
+  toast.style.bottom = '1rem'
+  toast.style.right = '1rem'
+  toast.style.position = 'fixed'
+  toast.style.zIndex = '2147483647'
+
   const alertClass = { success: 'alert-success', error: 'alert-error', info: 'alert-info', warning: 'alert-warning' }[type]
   const icon = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' }[type]
-  toast.innerHTML = `<div class="alert ${alertClass} shadow-lg"><i class="fas ${icon}"></i><span>${message}</span></div>`
+
+  const alertEl = document.createElement('div')
+  alertEl.className = `alert ${alertClass} shadow-lg`
+  const iconEl = document.createElement('i')
+  iconEl.className = `fas ${icon}`
+  const textEl = document.createElement('span')
+  textEl.textContent = message
+
+  alertEl.append(iconEl, textEl)
+  toast.appendChild(alertEl)
   document.body.appendChild(toast)
+
   setTimeout(() => toast.remove(), 3000)
+}
+
+const parseErrorMessage = (error: unknown, fallback: string) => {
+  if (typeof error === 'string' && error.trim()) {
+    return error.trim()
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim()
+  }
+
+  if (error && typeof error === 'object') {
+    const candidateList = [
+      (error as Record<string, unknown>).message,
+      (error as Record<string, unknown>).error,
+      (error as Record<string, unknown>).details,
+      (error as Record<string, unknown>).description,
+    ]
+    for (const candidate of candidateList) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim()
+      }
+      if (
+        candidate &&
+        typeof candidate === 'object' &&
+        typeof (candidate as Record<string, unknown>).message === 'string'
+      ) {
+        const nestedMessage = (candidate as Record<string, unknown>).message
+        if (typeof nestedMessage === 'string' && nestedMessage.trim()) {
+          return nestedMessage.trim()
+        }
+      }
+    }
+  }
+
+  const stringValue = String(error)
+  if (stringValue && stringValue !== '[object Object]') {
+    return stringValue
+  }
+
+  return fallback
+}
+
+const setPluginError = (message: string) => {
+  store.codeError = message
+  showToast(message, 'error')
 }
 
 // Editor Initialization
@@ -1165,7 +1231,7 @@ const handleSavePlugin = async () => {
   if (!store.editingPlugin) return
   const monitorTypeError = validateRequiredMonitorType()
   if (monitorTypeError) {
-    store.codeError = monitorTypeError
+    setPluginError(monitorTypeError)
     return
   }
   store.saving = true
@@ -1175,7 +1241,7 @@ const handleSavePlugin = async () => {
     const tags = store.newPluginMetadata.tagsString.split(',').map(t => t.trim()).filter(t => t.length > 0)
     const parsedSeedBindings = parseSeedBindingsText(store.newPluginMetadata.seedBindingsText || '[]')
     if (parsedSeedBindings.error) {
-      store.codeError = `Seed bindings JSON 无效: ${parsedSeedBindings.error}`
+      setPluginError(`Seed bindings JSON 无效: ${parsedSeedBindings.error}`)
       return
     }
     const backendCategory = store.newPluginMetadata.category
@@ -1213,10 +1279,10 @@ const handleSavePlugin = async () => {
       showToast(t('plugins.pluginSaved', '插件已保存'), 'success')
       // Plugin change event is automatically handled by backend
     } else {
-      store.codeError = response.error || t('common.saveFailed', '保存失败')
+      setPluginError(response.error || t('common.saveFailed', '保存失败'))
     }
   } catch (error) {
-    store.codeError = error instanceof Error ? error.message : t('common.saveFailed', '保存失败')
+    setPluginError(parseErrorMessage(error, t('common.saveFailed', '保存失败')))
   } finally {
     store.saving = false
   }
@@ -1225,7 +1291,7 @@ const handleSavePlugin = async () => {
 const handleCreateNewPlugin = async () => {
   const monitorTypeError = validateRequiredMonitorType()
   if (monitorTypeError) {
-    store.codeError = monitorTypeError
+    setPluginError(monitorTypeError)
     return
   }
   store.saving = true
@@ -1235,7 +1301,7 @@ const handleCreateNewPlugin = async () => {
     const tags = store.newPluginMetadata.tagsString.split(',').map(t => t.trim()).filter(t => t.length > 0)
     const parsedSeedBindings = parseSeedBindingsText(store.newPluginMetadata.seedBindingsText || '[]')
     if (parsedSeedBindings.error) {
-      store.codeError = `Seed bindings JSON 无效: ${parsedSeedBindings.error}`
+      setPluginError(`Seed bindings JSON 无效: ${parsedSeedBindings.error}`)
       return
     }
     const backendCategory = store.newPluginMetadata.category
@@ -1270,10 +1336,10 @@ const handleCreateNewPlugin = async () => {
       showToast(t('plugins.pluginCreated', '插件创建成功'), 'success')
       // Plugin change event is automatically handled by backend
     } else {
-      store.codeError = response.error || t('common.createFailed', '创建失败')
+      setPluginError(response.error || t('common.createFailed', '创建失败'))
     }
   } catch (error) {
-    store.codeError = error instanceof Error ? error.message : t('common.createFailed', '创建失败')
+    setPluginError(parseErrorMessage(error, t('common.createFailed', '创建失败')))
   } finally {
     store.saving = false
   }

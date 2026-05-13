@@ -34,9 +34,7 @@ fn is_missing_required_input_value(value: Option<&Value>) -> bool {
 
 fn collect_missing_required_inputs(schema: &Value, input: &Value, path: &[String]) -> Vec<String> {
     let mut missing = Vec::new();
-    let properties = schema
-        .get("properties")
-        .and_then(|value| value.as_object());
+    let properties = schema.get("properties").and_then(|value| value.as_object());
 
     if let Some(required_fields) = schema.get("required").and_then(|value| value.as_array()) {
         for required_field in required_fields {

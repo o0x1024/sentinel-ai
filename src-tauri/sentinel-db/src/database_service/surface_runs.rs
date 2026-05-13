@@ -723,7 +723,9 @@ mod tests {
     #[test]
     fn observation_item_count_counts_array_items() {
         assert_eq!(
-            surface_observation_item_count(r#"[{"asset_key":"https://a"},{"asset_key":"https://b"}]"#),
+            surface_observation_item_count(
+                r#"[{"asset_key":"https://a"},{"asset_key":"https://b"}]"#
+            ),
             2
         );
         assert_eq!(

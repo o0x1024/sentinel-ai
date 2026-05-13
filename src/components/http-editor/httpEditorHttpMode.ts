@@ -1,6 +1,6 @@
 import { StreamLanguage } from '@codemirror/language'
 import { css } from '@codemirror/legacy-modes/mode/css'
-import { javascript, json } from '@codemirror/legacy-modes/mode/javascript'
+import { javascript } from '@codemirror/legacy-modes/mode/javascript'
 import { html, xml } from '@codemirror/legacy-modes/mode/xml'
 import { tags as t } from '@lezer/highlight'
 import type { Extension } from '@codemirror/state'
@@ -17,6 +17,7 @@ import {
   readUrlEncodedToken,
   type UrlEncodedTokenizerState,
 } from './httpEditorUrlEncodedTokenizer'
+import { createHttpJsonStreamMode } from './httpEditorJsonTokenizer'
 import {
   httpEditorCookieNameTag,
   httpEditorCookieValueTag,
@@ -159,7 +160,7 @@ const detectBodyMode = (content: string): { key: BodyModeKey; mode: LegacyMode |
     case 'xml':
       return { key: 'xml', mode: withBurpTokenTable(xml as LegacyMode) }
     case 'json':
-      return { key: 'json', mode: withBurpTokenTable(json as LegacyMode) }
+      return { key: 'json', mode: createHttpJsonStreamMode({ tokenTable: BURP_HTTP_TOKEN_TABLE }) }
     case 'css':
       return { key: 'css', mode: withBurpTokenTable(css as LegacyMode) }
     case 'javascript':

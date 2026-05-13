@@ -661,6 +661,16 @@ fn op_abort_fetch(#[string] request_id: String) -> bool {
 }
 
 pub fn cancel_plugin_fetch_requests_by_run(run_id: &str, reason: &str) -> usize {
+    crate::runtime_events::suppress_monitor_progress_for_run(run_id);
+
+    let terminated = crate::terminate_plugin_executions_by_run(run_id);
+    if terminated > 0 {
+        info!(
+            "Requested termination for {} active plugin execution(s) in run {}",
+            terminated, run_id
+        );
+    }
+
     let kinds = [
         PluginFetchPolicyKind::BountyFetch,
         PluginFetchPolicyKind::MonitorFetch,
@@ -699,7 +709,7 @@ async fn op_fetch(
         method: "GET".to_string(),
         headers: std::collections::HashMap::new(),
         body: None,
-        timeout: Some(3000), // 5s default
+        timeout: Some(3000), // 3s default
         redirect: Some("follow".to_string()),
         max_redirects: Some(10),
         max_body_bytes: None,
@@ -724,7 +734,7 @@ async fn op_fetch(
     let timeout_ms = if active_probe.is_some() {
         active_probe_defaults.timeout_ms
     } else {
-        opts.timeout.unwrap_or(3000)
+        3000
     };
     let plugin_ctx = {
         let op_state = state.borrow();
@@ -1214,7 +1224,7 @@ async fn op_get_tls_certificate(
     #[smi] timeout_ms: u32,
 ) -> TlsCertificateResponse {
     let timeout_ms = if timeout_ms == 0 {
-        10_000
+        3_000
     } else {
         timeout_ms as u64
     };

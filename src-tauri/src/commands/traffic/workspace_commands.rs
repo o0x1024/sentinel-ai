@@ -10,6 +10,7 @@ const TRAFFIC_WORKBENCH_DIR: &str = "traffic-workbench";
 const TRAFFIC_DRAFTS_FILE: &str = "drafts.json";
 const ATTACK_WORKSPACES_FILE: &str = "attack_workspaces.json";
 const REPLAY_RUNS_FILE: &str = "replay_runs.json";
+const COMPARER_STORE_FILE: &str = "comparer.json";
 const INTRUDER_WORKSPACE_SESSIONS_FILE: &str = "intruder_workspace_sessions.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +166,19 @@ pub struct PersistedReplayRunStore {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PersistedComparerStore {
+    pub active_item_id: Option<String>,
+    pub items: Vec<serde_json::Value>,
+    pub view_mode: Option<String>,
+    pub compare_render_mode: Option<String>,
+    pub pinned_baseline: Option<serde_json::Value>,
+    pub show_draft_composer: Option<bool>,
+    pub draft_sequence: Option<i64>,
+    pub draft: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PersistedIntruderWorkspaceSessionStore {
     pub active_workspace_id: Option<String>,
     pub workspaces: Vec<serde_json::Value>,
@@ -195,6 +209,10 @@ fn attack_workspaces_file_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn replay_runs_file_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(resolve_traffic_workbench_dir(app)?.join(REPLAY_RUNS_FILE))
+}
+
+fn comparer_store_file_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(resolve_traffic_workbench_dir(app)?.join(COMPARER_STORE_FILE))
 }
 
 fn intruder_workspace_sessions_file_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -291,6 +309,25 @@ pub async fn save_replay_run_store(
     store: PersistedReplayRunStore,
 ) -> Result<CommandResponse<()>, String> {
     let path = replay_runs_file_path(&app)?;
+    write_json_file(&path, &store)?;
+    Ok(CommandResponse::ok(()))
+}
+
+#[tauri::command]
+pub async fn load_comparer_store(
+    app: AppHandle,
+) -> Result<CommandResponse<PersistedComparerStore>, String> {
+    let path = comparer_store_file_path(&app)?;
+    let store: PersistedComparerStore = read_json_file(&path)?;
+    Ok(CommandResponse::ok(store))
+}
+
+#[tauri::command]
+pub async fn save_comparer_store(
+    app: AppHandle,
+    store: PersistedComparerStore,
+) -> Result<CommandResponse<()>, String> {
+    let path = comparer_store_file_path(&app)?;
     write_json_file(&path, &store)?;
     Ok(CommandResponse::ok(()))
 }

@@ -67,6 +67,11 @@
       @apply="applyHistoryFilters"
     />
 
+    <TrafficScopeRuleDialog
+      ref="scopeRuleDialogRef"
+      @save="saveScopeRuleFromDialog"
+    />
+
     <div
       v-if="contextMenu.visible"
       ref="contextMenuRef"
@@ -82,6 +87,11 @@
       <TrafficContextSubmenu
         v-if="historyFilterSubmenu"
         :submenu="historyFilterSubmenu"
+        label-prefix="trafficAnalysis.history.contextMenu"
+      />
+      <TrafficContextSubmenu
+        v-if="historyScopeSubmenu"
+        :submenu="historyScopeSubmenu"
         label-prefix="trafficAnalysis.history.contextMenu"
       />
       <div class="divider my-1 h-0"></div>
@@ -322,6 +332,8 @@ import { buildTrafficRequestSendMenuItems } from './trafficSendMenuSupport'
 import { useTrafficSendTargets } from './trafficSendTargets'
 import { useTrafficContextCandidatePreferences } from './useTrafficContextCandidatePreferences'
 import { buildTrafficContextSubmenu } from './trafficContextSubmenuSupport'
+import TrafficScopeRuleDialog from './TrafficScopeRuleDialog.vue'
+import { useProxyHistoryScopeRuleActions } from './useProxyHistoryScopeRuleActions'
 import type {
   RecommendTrafficContextDictionaryCandidatesResponse,
   TrafficContextCandidateEvidenceSelection,
@@ -642,6 +654,17 @@ const {
 })
 
 const exportAsHar = () => exportAsHAR()
+const {
+  historyScopeSubmenu,
+  saveScopeRuleFromDialog,
+  scopeRuleDialogRef,
+} = useProxyHistoryScopeRuleActions({
+  contextMenu,
+  hideContextMenu,
+  scopeIncludeRules,
+  scopeExcludeRules,
+  t,
+})
 
 const canCompareRequestFromContext = computed(() => canCompareRequestVersions(contextMenu.value.request))
 const canCompareResponseFromContext = computed(() => canCompareResponseVersions(contextMenu.value.request))

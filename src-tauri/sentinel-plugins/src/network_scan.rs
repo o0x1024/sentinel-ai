@@ -17,7 +17,7 @@ const DEFAULT_BATCH_SIZE: u16 = 512;
 const MAX_BATCH_SIZE: u16 = 2048;
 const DEFAULT_CONCURRENCY: usize = 500;
 const MAX_CONCURRENCY: usize = 1000;
-const DEFAULT_TIMEOUT_MS: u64 = 1500;
+const DEFAULT_TIMEOUT_MS: u64 = 3000;
 const DEFAULT_TRIES: u8 = 1;
 
 #[derive(Debug, Clone, Serialize)]
@@ -438,7 +438,7 @@ pub async fn op_scan_ports(#[serde] request: PortScanRequest) -> PortScanRespons
     }
 
     let default_ports = normalize_ports(&request.ports);
-    let timeout_ms = request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).max(100);
+    let timeout_ms = DEFAULT_TIMEOUT_MS;
     let tries = request.tries.unwrap_or(DEFAULT_TRIES).max(1);
     let batch_size = request
         .batch_size

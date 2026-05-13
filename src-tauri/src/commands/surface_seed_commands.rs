@@ -295,6 +295,17 @@ async fn upsert_pending_seed_candidate(
         .await
         .map_err(|e| e.to_string())?
     {
+        let seed_missing = db_service
+            .get_surface_seed_by_identity(program_id, &candidate.seed_type, &candidate.seed_value)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_none();
+
+        if existing.status != "pending" && seed_missing {
+            existing.status = "pending".to_string();
+            existing.reviewed_at = None;
+        }
+
         existing.source_asset_type = candidate.source_asset_type;
         existing.source_display_value = candidate.source_display_value;
         existing.source_canonical_url = candidate.source_canonical_url;
@@ -351,6 +362,8 @@ async fn list_program_surface_assets(
             service_name: None,
             transport_protocol: None,
             view_state: None,
+            is_favorite: None,
+            column_filters: None,
             limit: None,
             offset: None,
         })

@@ -46,6 +46,17 @@ export interface PersistedReplayRunStore {
   replayRuns: ReplayRun[]
 }
 
+export interface PersistedTrafficComparerStore {
+  activeItemId: string | null
+  items: unknown[]
+  viewMode?: string | null
+  compareRenderMode?: string | null
+  pinnedBaseline?: unknown | null
+  showDraftComposer?: boolean | null
+  draftSequence?: number | null
+  draft?: unknown | null
+}
+
 async function expectCommandData<T>(command: string, response: CommandResponse<T>) {
   if (!response.success) {
     throw new Error(response.error || `Failed to execute ${command}`)
@@ -90,6 +101,19 @@ export async function loadReplayRunStore(): Promise<PersistedReplayRunStore> {
 export async function saveReplayRunStore(store: PersistedReplayRunStore): Promise<void> {
   const response = await invoke<CommandResponse<null>>('save_replay_run_store', { store })
   await expectCommandData('save_replay_run_store', {
+    ...response,
+    data: response.data ?? null,
+  })
+}
+
+export async function loadComparerStore(): Promise<PersistedTrafficComparerStore> {
+  const response = await invoke<CommandResponse<PersistedTrafficComparerStore>>('load_comparer_store')
+  return expectCommandData('load_comparer_store', response)
+}
+
+export async function saveComparerStore(store: PersistedTrafficComparerStore): Promise<void> {
+  const response = await invoke<CommandResponse<null>>('save_comparer_store', { store })
+  await expectCommandData('save_comparer_store', {
     ...response,
     data: response.data ?? null,
   })
