@@ -16,7 +16,7 @@
                   {{ faviconHash }}
                 </p>
                 <p class="mt-1 text-xs text-base-content/60">
-                  {{ t('bugBounty.surface.types.classifiedTotal') }}: {{ response.total }}
+                  {{ t('bugBounty.surface.types.classifiedTotal') }}: {{ total }}
                 </p>
               </div>
               <button class="btn btn-sm btn-ghost shrink-0" @click="$emit('close')">✕</button>
@@ -68,7 +68,7 @@
               {{ t('bugBounty.surface.inventory.faviconAssets.empty') }}
             </div>
 
-            <div v-if="response.total > 0" class="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div v-if="response.items.length > 0 || total > 0" class="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
               <div class="text-sm text-base-content/70">
                 {{ t('bugBounty.surface.inventory.pageInfo', { page, total: pageCount }) }}
               </div>
@@ -79,11 +79,8 @@
                 <button class="join-item btn btn-sm" :disabled="page <= 1 || loading" @click="setPage(page - 1)">
                   {{ t('common.previous') }}
                 </button>
-                <button class="join-item btn btn-sm" :disabled="page >= pageCount || loading" @click="setPage(page + 1)">
+                <button class="join-item btn btn-sm" :disabled="!response.has_next || loading" @click="setPage(page + 1)">
                   {{ t('common.next') }}
-                </button>
-                <button class="join-item btn btn-sm" :disabled="page >= pageCount || loading" @click="setPage(pageCount)">
-                  {{ t('bugBounty.surface.inventory.lastPage') }}
                 </button>
               </div>
             </div>
@@ -106,7 +103,14 @@ interface SurfaceInventoryItem {
 
 interface SurfaceInventoryResponse {
   items: SurfaceInventoryItem[]
-  total: number
+  total?: number | null
+  has_next: boolean
+  next_cursor?: SurfaceInventoryCursor | null
+}
+
+interface SurfaceInventoryCursor {
+  last_seen_at: string
+  id: string
 }
 
 const props = defineProps<{
@@ -124,11 +128,14 @@ const { t } = useI18n()
 
 const loading = ref(false)
 const error = ref('')
-const response = ref<SurfaceInventoryResponse>({ items: [], total: 0 })
+const response = ref<SurfaceInventoryResponse>({ items: [], total: null, has_next: false, next_cursor: null })
+const total = ref(0)
 const page = ref(1)
 const pageSize = 10
+const cursorByPage = ref<Record<number, SurfaceInventoryCursor | null>>({ 1: null })
+const nextCursorByPage = ref<Record<number, SurfaceInventoryCursor | null>>({})
 
-const pageCount = computed(() => Math.max(1, Math.ceil(response.value.total / pageSize)))
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
 const formatTime = (value?: string | null) => {
   if (!value) return '-'
@@ -144,6 +151,7 @@ const loadAssets = async () => {
   try {
     loading.value = true
     error.value = ''
+    const cursor = cursorByPage.value[page.value] || null
     response.value = await invoke<SurfaceInventoryResponse>('surface_list_inventory', {
       filter: {
         program_id: props.programId || null,
@@ -154,27 +162,71 @@ const loadAssets = async () => {
         service_name: null,
         transport_protocol: null,
         view_state: null,
+        is_favorite: null,
+        column_filters: null,
         limit: pageSize,
-        offset: (page.value - 1) * pageSize,
+        offset: null,
       },
+      cursor,
     })
+    if (response.value.has_next && response.value.next_cursor) {
+      nextCursorByPage.value[page.value] = response.value.next_cursor
+      cursorByPage.value[page.value + 1] = response.value.next_cursor
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('bugBounty.surface.inventory.faviconAssets.loadFailed')
-    response.value = { items: [], total: 0 }
+    response.value = { items: [], total: null, has_next: false, next_cursor: null }
   } finally {
     loading.value = false
   }
 }
 
 const setPage = (nextPage: number) => {
-  page.value = Math.min(Math.max(1, nextPage), pageCount.value)
+  const targetPage = Math.max(1, nextPage)
+  if (targetPage > page.value && !nextCursorByPage.value[page.value]) return
+  if (targetPage === 1) {
+    cursorByPage.value = { 1: null }
+    nextCursorByPage.value = {}
+  }
+  page.value = Math.min(targetPage, Math.max(page.value + 1, pageCount.value))
+}
+
+const loadTotal = async () => {
+  const faviconHash = props.faviconHash?.trim()
+  if (!props.visible || !faviconHash) return
+  try {
+    total.value = await invoke<number>('surface_count_assets', {
+      filter: {
+        program_id: props.programId || null,
+        asset_type: 'web',
+        status: null,
+        search: null,
+        favicon_hash: faviconHash,
+        has_favicon_hash: null,
+        http_status_code: null,
+        service_name: null,
+        transport_protocol: null,
+        view_state: null,
+        is_favorite: null,
+        column_filters: null,
+        limit: null,
+        offset: null,
+      },
+    })
+  } catch (err) {
+    total.value = 0
+  }
 }
 
 watch(
   () => [props.visible, props.programId, props.faviconHash],
   () => {
     page.value = 1
+    total.value = 0
+    cursorByPage.value = { 1: null }
+    nextCursorByPage.value = {}
     loadAssets()
+    loadTotal()
   },
   { immediate: true },
 )

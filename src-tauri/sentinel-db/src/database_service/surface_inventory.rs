@@ -16,9 +16,17 @@ pub struct SurfaceInventoryItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurfaceInventoryCursor {
+    pub last_seen_at: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SurfaceInventoryResponse {
     pub items: Vec<SurfaceInventoryItem>,
-    pub total: i64,
+    pub total: Option<i64>,
+    pub has_next: bool,
+    pub next_cursor: Option<SurfaceInventoryCursor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -44,8 +52,10 @@ impl DatabaseService {
     pub async fn list_surface_inventory(
         &self,
         filter: &SurfaceAssetFilter,
+        cursor: Option<&SurfaceInventoryCursor>,
     ) -> Result<SurfaceInventoryResponse> {
-        let total_filter = SurfaceAssetFilter {
+        let page_limit = filter.limit.unwrap_or(100).clamp(1, 1_000);
+        let query_filter = SurfaceAssetFilter {
             program_id: filter.program_id.clone(),
             asset_type: filter.asset_type.clone(),
             status: filter.status.clone(),
@@ -58,12 +68,25 @@ impl DatabaseService {
             view_state: filter.view_state.clone(),
             is_favorite: filter.is_favorite,
             column_filters: filter.column_filters.clone(),
-            limit: None,
+            limit: Some(page_limit + 1),
             offset: None,
         };
 
-        let total = self.count_surface_assets(&total_filter).await?;
-        let assets = self.list_surface_assets(filter).await?;
+        let mut assets = self
+            .list_surface_assets_after(&query_filter, cursor)
+            .await?;
+        let has_next = assets.len() > page_limit as usize;
+        if has_next {
+            assets.truncate(page_limit as usize);
+        }
+        let next_cursor = if has_next {
+            assets.last().map(|asset| SurfaceInventoryCursor {
+                last_seen_at: asset.last_seen_at.clone(),
+                id: asset.id.clone(),
+            })
+        } else {
+            None
+        };
         let mut typed_details_by_id = self.list_surface_typed_details_map(&assets).await?;
         let mut rows = Vec::with_capacity(assets.len());
 
@@ -74,7 +97,12 @@ impl DatabaseService {
             });
         }
 
-        Ok(SurfaceInventoryResponse { items: rows, total })
+        Ok(SurfaceInventoryResponse {
+            items: rows,
+            total: None,
+            has_next,
+            next_cursor,
+        })
     }
 
     pub async fn get_surface_inventory_facets(

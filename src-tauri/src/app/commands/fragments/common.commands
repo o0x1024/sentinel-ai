@@ -204,6 +204,7 @@
     commands::surface_count_assets_by_type,
     commands::surface_count_assets,
     commands::surface_list_inventory,
+    commands::surface_export_inventory,
     commands::surface_get_inventory_facets,
     commands::surface_manual_import_assets,
     commands::surface_update_asset,

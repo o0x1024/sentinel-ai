@@ -1,4 +1,5 @@
 use crate::database_service::surface::{SurfaceAssetColumnFilter, SurfaceAssetFilter};
+use crate::database_service::surface_inventory::SurfaceInventoryCursor;
 use sqlx::{Database, Encode, QueryBuilder, Type};
 
 #[derive(Clone, Copy)]
@@ -898,6 +899,29 @@ pub(crate) fn push_surface_asset_filters<'args, DB>(
     push_surface_asset_search_filters(query_builder, filter);
 }
 
+pub(crate) fn push_surface_asset_cursor<'args, DB>(
+    query_builder: &mut QueryBuilder<'args, DB>,
+    cursor: Option<&SurfaceInventoryCursor>,
+) where
+    DB: Database,
+    String: for<'q> Encode<'q, DB> + Type<DB>,
+{
+    let Some(cursor) = cursor else {
+        return;
+    };
+    if cursor.last_seen_at.trim().is_empty() || cursor.id.trim().is_empty() {
+        return;
+    }
+
+    query_builder.push(" AND (last_seen_at < ");
+    query_builder.push_bind(cursor.last_seen_at.clone());
+    query_builder.push(" OR (last_seen_at = ");
+    query_builder.push_bind(cursor.last_seen_at.clone());
+    query_builder.push(" AND id < ");
+    query_builder.push_bind(cursor.id.clone());
+    query_builder.push("))");
+}
+
 pub(crate) fn push_surface_asset_pagination<'args, DB>(
     query_builder: &mut QueryBuilder<'args, DB>,
     filter: &SurfaceAssetFilter,
@@ -930,6 +954,7 @@ pub(crate) fn push_surface_asset_pagination<'args, DB>(
 mod tests {
     use super::*;
     use crate::database_service::surface::SurfaceAssetColumnFilter;
+    use crate::database_service::surface_inventory::SurfaceInventoryCursor;
 
     #[test]
     fn column_filter_targets_visible_typed_column() {
@@ -970,5 +995,22 @@ mod tests {
         push_surface_asset_filters(&mut query_builder, &filter);
 
         assert!(query_builder.sql().contains("AND 1=0"));
+    }
+
+    #[test]
+    fn cursor_filter_uses_keyset_boundary() {
+        let cursor = SurfaceInventoryCursor {
+            last_seen_at: "2026-05-13T10:00:00Z".to_string(),
+            id: "asset-100".to_string(),
+        };
+        let mut query_builder =
+            QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM surface_assets WHERE 1=1");
+
+        push_surface_asset_cursor(&mut query_builder, Some(&cursor));
+
+        let sql = query_builder.sql();
+        assert!(sql.contains("last_seen_at < ?"));
+        assert!(sql.contains("last_seen_at = ?"));
+        assert!(sql.contains("id < ?"));
     }
 }

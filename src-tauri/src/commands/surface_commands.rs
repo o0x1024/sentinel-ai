@@ -4,8 +4,9 @@ use sentinel_db::{
     DatabaseService, SurfaceAssetDetailResponse, SurfaceAssetFilter,
     SurfaceDiscoveryRunDetailResponse, SurfaceDiscoveryRunRow, SurfaceFingerprintAssetFilter,
     SurfaceFingerprintAssetInventoryResponse, SurfaceFingerprintCategoryAggregation,
-    SurfaceInventoryFacetsResponse, SurfaceInventoryResponse, SurfaceObservationRow,
-    SurfaceOverview, SurfaceRelationFilter, SurfaceRelationRow, SurfaceTopologyResponse,
+    SurfaceInventoryCursor, SurfaceInventoryFacetsResponse, SurfaceInventoryResponse,
+    SurfaceObservationRow, SurfaceOverview, SurfaceRelationFilter, SurfaceRelationRow,
+    SurfaceTopologyResponse,
 };
 use tauri::State;
 
@@ -85,9 +86,10 @@ pub async fn surface_count_assets(
 pub async fn surface_list_inventory(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: SurfaceAssetFilter,
+    cursor: Option<SurfaceInventoryCursor>,
 ) -> Result<SurfaceInventoryResponse, String> {
     db_service
-        .list_surface_inventory(&filter)
+        .list_surface_inventory(&filter, cursor.as_ref())
         .await
         .map_err(|e| e.to_string())
 }

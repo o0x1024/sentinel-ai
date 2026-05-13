@@ -2,8 +2,9 @@ use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
 use crate::database_service::sqlx_compat::{MySql, Postgres};
 use crate::database_service::surface_asset_query::{
-    push_surface_asset_filters, push_surface_asset_pagination,
+    push_surface_asset_cursor, push_surface_asset_filters, push_surface_asset_pagination,
 };
+use crate::database_service::surface_inventory::SurfaceInventoryCursor;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::QueryBuilder;
@@ -1675,9 +1676,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn list_surface_assets(
+    async fn list_surface_assets_with_cursor(
         &self,
         filter: &SurfaceAssetFilter,
+        cursor: Option<&SurfaceInventoryCursor>,
     ) -> Result<Vec<SurfaceAssetRow>> {
         let runtime = self
             .runtime_pool
@@ -1689,6 +1691,7 @@ impl DatabaseService {
                 let mut query_builder =
                     QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM surface_assets WHERE 1=1");
                 push_surface_asset_filters(&mut query_builder, filter);
+                push_surface_asset_cursor(&mut query_builder, cursor);
                 query_builder.push(" ORDER BY last_seen_at DESC, id DESC");
                 push_surface_asset_pagination(
                     &mut query_builder,
@@ -1704,6 +1707,7 @@ impl DatabaseService {
                 let mut query_builder =
                     QueryBuilder::<MySql>::new("SELECT * FROM surface_assets WHERE 1=1");
                 push_surface_asset_filters(&mut query_builder, filter);
+                push_surface_asset_cursor(&mut query_builder, cursor);
                 query_builder.push(" ORDER BY last_seen_at DESC, id DESC");
                 push_surface_asset_pagination(
                     &mut query_builder,
@@ -1719,6 +1723,7 @@ impl DatabaseService {
                 let mut query_builder =
                     QueryBuilder::<Postgres>::new("SELECT * FROM surface_assets WHERE 1=1");
                 push_surface_asset_filters(&mut query_builder, filter);
+                push_surface_asset_cursor(&mut query_builder, cursor);
                 query_builder.push(" ORDER BY last_seen_at DESC, id DESC");
                 push_surface_asset_pagination(&mut query_builder, filter, None);
                 query_builder
@@ -1729,6 +1734,21 @@ impl DatabaseService {
         };
 
         Ok(rows)
+    }
+
+    pub async fn list_surface_assets(
+        &self,
+        filter: &SurfaceAssetFilter,
+    ) -> Result<Vec<SurfaceAssetRow>> {
+        self.list_surface_assets_with_cursor(filter, None).await
+    }
+
+    pub async fn list_surface_assets_after(
+        &self,
+        filter: &SurfaceAssetFilter,
+        cursor: Option<&SurfaceInventoryCursor>,
+    ) -> Result<Vec<SurfaceAssetRow>> {
+        self.list_surface_assets_with_cursor(filter, cursor).await
     }
 
     pub async fn list_surface_relations(

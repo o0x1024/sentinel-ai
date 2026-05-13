@@ -321,7 +321,7 @@
           </table>
         </div>
         <div v-if="!inventoryLoading && !assets.length" class="text-sm text-base-content/60">{{ t('bugBounty.surface.inventory.empty') }}</div>
-        <div v-if="inventoryTotal > 0" class="flex flex-col gap-3 pt-2 xl:flex-row xl:items-center xl:justify-between">
+        <div v-if="inventoryItems.length > 0 || inventoryTotal > 0" class="flex flex-col gap-3 pt-2 xl:flex-row xl:items-center xl:justify-between">
           <div class="flex items-center gap-2 text-sm">
             <span class="text-base-content/70">{{ t('bugBounty.surface.inventory.pageSizeLabel') }}</span>
             <select v-model.number="inventoryPageSize" class="select select-bordered select-sm">
@@ -352,36 +352,10 @@
               </button>
               <button
                 class="join-item btn btn-sm"
-                :disabled="inventoryPage >= inventoryPageCount || inventoryLoading"
+                :disabled="!inventoryHasNext || inventoryLoading"
                 @click="goToNextInventoryPage"
               >
                 {{ t('common.next') }}
-              </button>
-              <button
-                class="join-item btn btn-sm"
-                :disabled="inventoryPage >= inventoryPageCount || inventoryLoading"
-                @click="goToLastInventoryPage"
-              >
-                {{ t('bugBounty.surface.inventory.lastPage') }}
-              </button>
-            </div>
-
-            <div class="flex items-center gap-2">
-              <input
-                v-model="inventoryPageInput"
-                type="number"
-                min="1"
-                :max="inventoryPageCount"
-                class="input input-bordered input-sm w-24"
-                :placeholder="t('bugBounty.surface.inventory.jumpPlaceholder')"
-                @keyup.enter="applyInventoryPageJump"
-              />
-              <button
-                class="btn btn-sm btn-outline"
-                :disabled="inventoryLoading"
-                @click="applyInventoryPageJump"
-              >
-                {{ t('bugBounty.surface.inventory.jump') }}
               </button>
             </div>
           </div>
@@ -564,7 +538,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit as tauriEmit } from '@tauri-apps/api/event'
 import { save } from '@tauri-apps/plugin-dialog'
-import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import SurfaceAssetListModal from './SurfaceAssetListModal.vue'
@@ -583,9 +556,6 @@ import SurfaceTableTextFilter from './SurfaceTableTextFilter.vue'
 import { type SurfaceAssetEditPayload, type SurfaceAssetEditTarget } from './surfaceAssetEditSupport'
 import { buildReferencedSurfaceAsset } from './surfaceAssetUtils'
 import {
-  buildSurfaceAssetExportRows,
-  convertSurfaceAssetExportRowsToCsv,
-  filterSurfaceInventoryItemsForExport,
   sanitizeExportFilenamePart,
   type SurfaceAssetExportType,
 } from './surfaceAssetExportSupport'
@@ -624,8 +594,8 @@ const columnFilterValues = ref<Record<string, string>>({})
 const inventoryPage = ref(1)
 const inventoryHasNext = ref(false)
 const inventoryTotal = ref(0)
+const inventoryTotalLoading = ref(false)
 const inventoryPageSize = ref(10)
-const inventoryPageInput = ref('1')
 const inventoryPageSizeOptions = [10, 20, 50, 100]
 const newAssetTotal = ref(0)
 const runPage = ref(1)
@@ -670,6 +640,9 @@ const httpStatusOptions = ref<Array<{ value: string; count: number }>>([])
 const preferredExportType = ref<SurfaceAssetExportType>('all')
 const httpStatusFilter = ref('')
 const showMoreInventoryActions = ref(false)
+type SurfaceInventoryCursor = { last_seen_at: string; id: string }
+const inventoryCursorByPage = ref<Record<number, SurfaceInventoryCursor | null>>({ 1: null })
+const inventoryNextCursorByPage = ref<Record<number, SurfaceInventoryCursor | null>>({})
 const commonHttpStatusCodes = ['200', '201', '204', '301', '302', '304', '400', '401', '403', '404', '405', '429', '500', '502', '503', '504']
 const httpStatusGroupLabels: Record<string, string> = {
   '1': '1xx',
@@ -746,6 +719,11 @@ const httpStatusFilterValue = computed(() => {
   const parsed = Number.parseInt(httpStatusFilter.value, 10)
   return Number.isFinite(parsed) ? parsed : null
 })
+
+const resetInventoryCursorPagination = () => {
+  inventoryCursorByPage.value = { 1: null }
+  inventoryNextCursorByPage.value = {}
+}
 
 const columnFilterKeyMatchesAssetType = (key: string, assetType?: string | null) => {
   if (assetColumnFilterKeys.has(key)) return true
@@ -943,6 +921,7 @@ const inventoryColumns = computed(() => {
 const loadInventory = async (programId = selectedProgramId.value || null, useLoading = true) => {
   try {
     if (useLoading) inventoryLoading.value = true
+    const cursor = inventoryCursorByPage.value[inventoryPage.value] || null
     const response = await invoke<any>('surface_list_inventory', {
       filter: {
         program_id: programId,
@@ -956,16 +935,25 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
         service_name: serviceNameFilter.value || null,
         transport_protocol: transportProtocolFilter.value || null,
         column_filters: columnFilterPayload.value.length ? columnFilterPayload.value : null,
-        limit: inventoryPageSize.value + 1,
-        offset: (inventoryPage.value - 1) * inventoryPageSize.value,
+        limit: inventoryPageSize.value,
+        offset: null,
       },
+      cursor,
     })
 
     const rows = Array.isArray(response?.items) ? response.items : []
-    inventoryTotal.value = Number(response?.total || 0)
-    inventoryHasNext.value = rows.length > inventoryPageSize.value
-    inventoryItems.value = rows.slice(0, inventoryPageSize.value)
+    inventoryHasNext.value = Boolean(response?.has_next)
+    inventoryItems.value = rows
     assets.value = inventoryItems.value.map((item) => item.asset)
+    const nextCursor = response?.next_cursor || null
+    if (inventoryHasNext.value && nextCursor) {
+      inventoryNextCursorByPage.value[inventoryPage.value] = nextCursor
+      inventoryCursorByPage.value[inventoryPage.value + 1] = nextCursor
+    } else {
+      const nextCursors = { ...inventoryNextCursorByPage.value }
+      delete nextCursors[inventoryPage.value]
+      inventoryNextCursorByPage.value = nextCursors
+    }
     for (const item of inventoryItems.value) {
       const assetId = String(item?.asset?.id || '').trim()
       const assetType = String(item?.asset?.asset_type || '').trim()
@@ -981,6 +969,21 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
     selectedAssetIds.value = []
   } finally {
     if (useLoading) inventoryLoading.value = false
+  }
+}
+
+const loadInventoryTotal = async (programId = selectedProgramId.value || null) => {
+  try {
+    inventoryTotalLoading.value = true
+    const count = await invoke<number>('surface_count_assets', {
+      filter: getInventoryFilterPayload(programId),
+    })
+    inventoryTotal.value = Number(count || 0)
+  } catch (error) {
+    console.error('Failed to load surface inventory count:', error)
+    inventoryTotal.value = 0
+  } finally {
+    inventoryTotalLoading.value = false
   }
 }
 
@@ -1056,9 +1059,10 @@ const loadAll = async () => {
     const programId = selectedProgramId.value || null
     const [overviewData, runData] = await Promise.all([
       invoke<any>('surface_get_overview', { programId }),
-      invoke<any[]>('surface_list_discovery_runs', { programId, limit: null }),
+      invoke<any[]>('surface_list_discovery_runs', { programId, limit: 500 }),
     ])
     await loadInventory(programId, false)
+    await loadInventoryTotal(programId)
     await loadInventoryFacets(programId)
     await loadNewAssetCount(programId)
 
@@ -1324,6 +1328,7 @@ const formatInventoryValue = (item: any, column: any) => {
 }
 
 const reloadInventoryFromFirstPage = () => {
+  resetInventoryCursorPagination()
   if (inventoryPage.value !== 1) {
     inventoryPage.value = 1
     return
@@ -1382,8 +1387,8 @@ const toggleSelectCurrentPage = () => {
   selectedAssetTypeById.value = nextTypes
 }
 
-const getInventoryFilterPayload = () => ({
-  program_id: selectedProgramId.value || null,
+const getInventoryFilterPayload = (programId = selectedProgramId.value || null) => ({
+  program_id: programId,
   asset_type: assetTypeFilter.value || null,
   status: statusFilter.value || null,
   view_state: viewStateFilter.value || null,
@@ -1646,48 +1651,26 @@ const buildExportFilename = (exportType: SurfaceAssetExportType, format: 'csv' |
 const exportInventoryAssets = async (payload: SurfaceAssetExportPayload) => {
   try {
     exportingAssets.value = true
-
-    const response = await invoke<any>('surface_list_inventory', {
-      filter: buildExportFilterPayload(payload.exportType),
-    })
-    const allItems = Array.isArray(response?.items) ? response.items : []
-    const filteredItems = filterSurfaceInventoryItemsForExport(
-      allItems,
-      payload.exportType,
-      assetTypeFilter.value || null,
-    )
-
-    if (!filteredItems.length) {
-      toast.warning(t('bugBounty.surface.inventory.export.empty'))
-      return
-    }
-
     const filePath = await save({
       defaultPath: buildExportFilename(payload.exportType, payload.format),
       filters: [{ name: payload.format.toUpperCase(), extensions: [payload.format] }],
     })
     if (!filePath) return
 
-    const content = payload.format === 'json'
-      ? JSON.stringify(
-        {
-          exported_at: new Date().toISOString(),
-          program_id: selectedProgramId.value || null,
-          export_type: payload.exportType,
-          filter: buildExportFilterPayload(payload.exportType),
-          total: filteredItems.length,
-          items: filteredItems,
-        },
-        null,
-        2,
-      )
-      : convertSurfaceAssetExportRowsToCsv(
-        buildSurfaceAssetExportRows(filteredItems, payload.exportType),
-      )
-
-    await writeTextFile(filePath, content)
+    const result = await invoke<{ exported: number; output_path: string }>('surface_export_inventory', {
+      request: {
+        filter: buildExportFilterPayload(payload.exportType),
+        export_type: payload.exportType,
+        format: payload.format,
+        output_path: filePath,
+      },
+    })
     closeExportModal()
-    toast.success(t('bugBounty.surface.inventory.export.success', { count: filteredItems.length }))
+    if (!result.exported) {
+      toast.warning(t('bugBounty.surface.inventory.export.empty'))
+      return
+    }
+    toast.success(t('bugBounty.surface.inventory.export.success', { count: result.exported }))
   } catch (error) {
     console.error('Failed to export surface inventory assets:', error)
     toast.error(t('bugBounty.surface.inventory.export.failed'))
@@ -1697,7 +1680,13 @@ const exportInventoryAssets = async (payload: SurfaceAssetExportPayload) => {
 }
 
 const setInventoryPage = (page: number) => {
-  const nextPage = Math.min(Math.max(1, page), inventoryPageCount.value)
+  const maxKnownPage = inventoryHasNext.value
+    ? Math.max(inventoryPage.value + 1, inventoryPageCount.value)
+    : Math.max(inventoryPage.value, inventoryPageCount.value)
+  const nextPage = Math.min(Math.max(1, page), maxKnownPage)
+  if (nextPage > inventoryPage.value && !inventoryNextCursorByPage.value[inventoryPage.value]) {
+    return
+  }
   if (inventoryPage.value === nextPage) {
     loadInventory()
     return
@@ -1707,6 +1696,7 @@ const setInventoryPage = (page: number) => {
 
 const goToFirstInventoryPage = () => {
   if (inventoryLoading.value || inventoryPage.value <= 1) return
+  resetInventoryCursorPagination()
   setInventoryPage(1)
 }
 
@@ -1716,23 +1706,8 @@ const goToPreviousInventoryPage = () => {
 }
 
 const goToNextInventoryPage = () => {
-  if (inventoryPage.value >= inventoryPageCount.value || inventoryLoading.value) return
+  if (!inventoryHasNext.value || inventoryLoading.value) return
   setInventoryPage(inventoryPage.value + 1)
-}
-
-const goToLastInventoryPage = () => {
-  if (inventoryLoading.value || inventoryPage.value >= inventoryPageCount.value) return
-  setInventoryPage(inventoryPageCount.value)
-}
-
-const applyInventoryPageJump = () => {
-  if (inventoryLoading.value) return
-  const page = Number.parseInt(inventoryPageInput.value, 10)
-  if (Number.isNaN(page)) {
-    inventoryPageInput.value = String(inventoryPage.value)
-    return
-  }
-  setInventoryPage(page)
 }
 
 const setRunPage = (page: number) => {
@@ -1822,6 +1797,7 @@ watch(
 
 watch(selectedProgramId, () => {
   clearSelection()
+  resetInventoryCursorPagination()
   inventoryPage.value = 1
   runPage.value = 1
   runPageInput.value = '1'
@@ -1831,6 +1807,7 @@ watch(selectedProgramId, () => {
 watch([assetTypeFilter, statusFilter, viewStateFilter, favoriteFilter, faviconPresenceFilter, httpStatusFilter, serviceNameFilter, transportProtocolFilter, columnFilterValues], () => {
   clearSelection()
   reloadInventoryFromFirstPage()
+  loadInventoryTotal()
   loadInventoryFacets()
 })
 
@@ -1853,13 +1830,12 @@ watch(assetTypeFilter, (value) => {
 })
 
 watch(inventoryPage, () => {
-  inventoryPageInput.value = String(inventoryPage.value)
   loadInventory()
 })
 
 watch(inventoryPageSize, () => {
-  inventoryPageInput.value = '1'
   reloadInventoryFromFirstPage()
+  loadInventoryTotal()
 })
 
 watch(runPage, () => {
@@ -1879,6 +1855,7 @@ watch(search, () => {
   searchDebounceTimer = setTimeout(() => {
     clearSelection()
     reloadInventoryFromFirstPage()
+    loadInventoryTotal()
     loadInventoryFacets()
   }, 250)
 })
@@ -1890,7 +1867,6 @@ onBeforeUnmount(() => {
 })
 
 onMounted(() => {
-  inventoryPageInput.value = String(inventoryPage.value)
   runPageInput.value = String(runPage.value)
   loadAll()
 })
