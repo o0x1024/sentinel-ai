@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -23,6 +23,12 @@ struct SurfaceEnrichmentOutcome {
     skipped_missing_assets: usize,
 }
 
+#[derive(Debug, Clone)]
+struct SurfaceAssetMaterialization {
+    id: String,
+    created: bool,
+}
+
 impl SurfaceEnrichmentOutcome {
     fn record_existing_asset(&mut self, asset_id: String) {
         if !self.existing_asset_ids.contains(&asset_id) {
@@ -40,10 +46,11 @@ async fn upsert_surface_shell_asset(
     display_name: Option<String>,
     source: &str,
     metadata: Option<serde_json::Value>,
-) -> Result<String, String> {
+) -> Result<SurfaceAssetMaterialization, String> {
     let now = Utc::now().to_rfc3339();
+    let new_asset_id = Uuid::new_v4().to_string();
     let asset = SurfaceAssetRow {
-        id: Uuid::new_v4().to_string(),
+        id: new_asset_id.clone(),
         program_id: program_id.to_string(),
         asset_type: asset_type.to_string(),
         asset_name: asset_name.to_string(),
@@ -98,7 +105,10 @@ async fn upsert_surface_shell_asset(
     db_service
         .upsert_surface_asset(&asset)
         .await
-        .map(|row| row.id)
+        .map(|row| SurfaceAssetMaterialization {
+            created: row.id == new_asset_id,
+            id: row.id,
+        })
         .map_err(|e| e.to_string())
 }
 
@@ -112,9 +122,9 @@ async fn upsert_artifact_asset(
     asset_name: &str,
     display_name: Option<String>,
     artifact: serde_json::Value,
-) -> Result<(), String> {
+) -> Result<SurfaceAssetMaterialization, String> {
     let normalized_asset_name = normalize_surface_asset_key(asset_type, asset_name);
-    let id = upsert_surface_shell_asset(
+    let materialized = upsert_surface_shell_asset(
         db_service,
         program_id,
         discovery_task_id,
@@ -127,12 +137,15 @@ async fn upsert_artifact_asset(
     .await?;
 
     db_service
-        .upsert_surface_extension_from_artifact(asset_type, &id, &artifact)
+        .upsert_surface_extension_from_artifact(asset_type, &materialized.id, &artifact)
         .await
         .map_err(|e| e.to_string())?;
 
-    ids.insert((asset_type.to_string(), normalized_asset_name), id);
-    Ok(())
+    ids.insert(
+        (asset_type.to_string(), normalized_asset_name),
+        materialized.id.clone(),
+    );
+    Ok(materialized)
 }
 
 fn is_topology_asset_type(asset_type: &str) -> bool {
@@ -196,16 +209,11 @@ fn favicon_hash_from_evidence(object: &serde_json::Map<String, Value>) -> Option
         .filter(|value| !value.trim().is_empty())
 }
 
-fn collect_materialized_surface_asset_ids(
-    ids: &HashMap<(String, String), String>,
-    enriched_asset_ids: &[String],
-) -> Vec<String> {
-    let mut affected_asset_ids: HashSet<String> = ids.values().cloned().collect();
-    affected_asset_ids.extend(enriched_asset_ids.iter().cloned());
-
-    let mut affected_asset_ids: Vec<String> = affected_asset_ids.into_iter().collect();
-    affected_asset_ids.sort();
-    affected_asset_ids
+fn sorted_unique_asset_ids(asset_ids: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut asset_ids: Vec<String> = asset_ids.into_iter().collect();
+    asset_ids.sort();
+    asset_ids.dedup();
+    asset_ids
 }
 
 fn required_string_field(
@@ -657,18 +665,19 @@ async fn materialize_surface_evidence(
     Ok(outcome)
 }
 
-async fn materialize_surface_changes(
+async fn materialize_surface_changes_and_collect_assets(
     db_service: &Arc<DatabaseService>,
     ids: &HashMap<(String, String), String>,
     program_id: &str,
     run_id: Option<&str>,
     plugin_id: &str,
     artifacts: &serde_json::Map<String, Value>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let Some(changes) = artifacts.get("changes").and_then(|value| value.as_array()) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
 
+    let mut changed_asset_ids = Vec::new();
     for change in changes {
         let asset_type = change.get("asset_type").and_then(|value| value.as_str());
         let asset_key = change.get("asset_key").and_then(|value| value.as_str());
@@ -678,6 +687,10 @@ async fn materialize_surface_changes(
             }
             None => None,
         };
+
+        if let Some(asset_id) = &asset_id {
+            changed_asset_ids.push(asset_id.clone());
+        }
 
         let title = change
             .get("title")
@@ -722,7 +735,7 @@ async fn materialize_surface_changes(
             .map_err(|e| e.to_string())?;
     }
 
-    Ok(())
+    Ok(sorted_unique_asset_ids(changed_asset_ids))
 }
 
 pub(crate) async fn materialize_surface_artifacts(
@@ -734,11 +747,12 @@ pub(crate) async fn materialize_surface_artifacts(
 ) -> Result<SurfaceMaterializationStats, String> {
     let mut ids: HashMap<(String, String), String> = HashMap::new();
     let mut stats = SurfaceMaterializationStats::default();
+    let mut created_asset_ids = Vec::new();
 
     if let Some(domains) = artifacts.get("domains").and_then(|value| value.as_array()) {
         for domain in domains {
             if let Some(fqdn) = domain.get("fqdn").and_then(|value| value.as_str()) {
-                upsert_artifact_asset(
+                let materialized = upsert_artifact_asset(
                     db_service,
                     &mut ids,
                     program_id,
@@ -750,7 +764,10 @@ pub(crate) async fn materialize_surface_artifacts(
                     domain.clone(),
                 )
                 .await?;
-                stats.created_assets += 1;
+                if materialized.created {
+                    stats.created_assets += 1;
+                    created_asset_ids.push(materialized.id);
+                }
             }
         }
     }
@@ -762,7 +779,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 .or_else(|| ip.get("ip"))
                 .and_then(|value| value.as_str());
             if let Some(asset_name) = asset_name {
-                upsert_artifact_asset(
+                let materialized = upsert_artifact_asset(
                     db_service,
                     &mut ids,
                     program_id,
@@ -774,7 +791,10 @@ pub(crate) async fn materialize_surface_artifacts(
                     ip.clone(),
                 )
                 .await?;
-                stats.created_assets += 1;
+                if materialized.created {
+                    stats.created_assets += 1;
+                    created_asset_ids.push(materialized.id);
+                }
             }
         }
     }
@@ -786,7 +806,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 .or_else(|| host.get("fqdn"))
                 .and_then(|value| value.as_str());
             if let Some(asset_name) = asset_name {
-                upsert_artifact_asset(
+                let materialized = upsert_artifact_asset(
                     db_service,
                     &mut ids,
                     program_id,
@@ -798,7 +818,10 @@ pub(crate) async fn materialize_surface_artifacts(
                     host.clone(),
                 )
                 .await?;
-                stats.created_assets += 1;
+                if materialized.created {
+                    stats.created_assets += 1;
+                    created_asset_ids.push(materialized.id);
+                }
             }
         }
     }
@@ -820,7 +843,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 .unwrap_or("tcp");
             let asset_name = format!("{host_key}:{port_number}/{transport_protocol}");
 
-            upsert_artifact_asset(
+            let materialized = upsert_artifact_asset(
                 db_service,
                 &mut ids,
                 program_id,
@@ -832,7 +855,10 @@ pub(crate) async fn materialize_surface_artifacts(
                 port.clone(),
             )
             .await?;
-            stats.created_assets += 1;
+            if materialized.created {
+                stats.created_assets += 1;
+                created_asset_ids.push(materialized.id);
+            }
         }
     }
 
@@ -858,7 +884,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 .and_then(|value| value.as_str())
                 .map(str::to_string);
 
-            upsert_artifact_asset(
+            let materialized = upsert_artifact_asset(
                 db_service,
                 &mut ids,
                 program_id,
@@ -870,7 +896,10 @@ pub(crate) async fn materialize_surface_artifacts(
                 service.clone(),
             )
             .await?;
-            stats.created_assets += 1;
+            if materialized.created {
+                stats.created_assets += 1;
+                created_asset_ids.push(materialized.id);
+            }
         }
     }
 
@@ -889,7 +918,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 .map(str::to_string)
                 .or_else(|| Some(canonical_url.clone()));
 
-            upsert_artifact_asset(
+            let materialized = upsert_artifact_asset(
                 db_service,
                 &mut ids,
                 program_id,
@@ -901,7 +930,10 @@ pub(crate) async fn materialize_surface_artifacts(
                 web.clone(),
             )
             .await?;
-            stats.created_assets += 1;
+            if materialized.created {
+                stats.created_assets += 1;
+                created_asset_ids.push(materialized.id);
+            }
         }
     }
 
@@ -911,7 +943,7 @@ pub(crate) async fn materialize_surface_artifacts(
     {
         for certificate in certs {
             if let Some(sha256) = certificate.get("sha256").and_then(|value| value.as_str()) {
-                upsert_artifact_asset(
+                let materialized = upsert_artifact_asset(
                     db_service,
                     &mut ids,
                     program_id,
@@ -923,7 +955,10 @@ pub(crate) async fn materialize_surface_artifacts(
                     certificate.clone(),
                 )
                 .await?;
-                stats.created_assets += 1;
+                if materialized.created {
+                    stats.created_assets += 1;
+                    created_asset_ids.push(materialized.id);
+                }
             }
         }
     }
@@ -959,7 +994,7 @@ pub(crate) async fn materialize_surface_artifacts(
             }
 
             if !ids.contains_key(&(from_type.to_string(), from_key.to_string())) {
-                let id = upsert_surface_shell_asset(
+                let materialized = upsert_surface_shell_asset(
                     db_service,
                     program_id,
                     run_id,
@@ -970,11 +1005,18 @@ pub(crate) async fn materialize_surface_artifacts(
                     None,
                 )
                 .await?;
-                ids.insert((from_type.to_string(), from_key.to_string()), id);
+                ids.insert(
+                    (from_type.to_string(), from_key.to_string()),
+                    materialized.id.clone(),
+                );
+                if materialized.created {
+                    stats.created_assets += 1;
+                    created_asset_ids.push(materialized.id);
+                }
             }
 
             if !ids.contains_key(&(to_type.to_string(), to_key.to_string())) {
-                let id = upsert_surface_shell_asset(
+                let materialized = upsert_surface_shell_asset(
                     db_service,
                     program_id,
                     run_id,
@@ -985,7 +1027,14 @@ pub(crate) async fn materialize_surface_artifacts(
                     None,
                 )
                 .await?;
-                ids.insert((to_type.to_string(), to_key.to_string()), id);
+                ids.insert(
+                    (to_type.to_string(), to_key.to_string()),
+                    materialized.id.clone(),
+                );
+                if materialized.created {
+                    stats.created_assets += 1;
+                    created_asset_ids.push(materialized.id);
+                }
             }
 
             let now = Utc::now().to_rfc3339();
@@ -1025,29 +1074,35 @@ pub(crate) async fn materialize_surface_artifacts(
     stats.skipped_missing_assets += evidence_outcome.skipped_missing_assets;
     enriched_asset_ids.extend(evidence_outcome.existing_asset_ids);
 
-    materialize_surface_changes(db_service, &ids, program_id, run_id, plugin_id, artifacts).await?;
+    let changed_asset_ids = materialize_surface_changes_and_collect_assets(
+        db_service, &ids, program_id, run_id, plugin_id, artifacts,
+    )
+    .await?;
 
     enriched_asset_ids.sort();
     enriched_asset_ids.dedup();
     stats.enriched_assets = enriched_asset_ids.len();
-    stats.changed_assets = enriched_asset_ids.len();
+    stats.changed_assets = changed_asset_ids.len();
 
-    let affected_asset_ids = collect_materialized_surface_asset_ids(&ids, &enriched_asset_ids);
-    db_service
-        .mark_surface_assets_new(&affected_asset_ids)
-        .await
-        .map_err(|e| e.to_string())?;
+    let unread_asset_ids = sorted_unique_asset_ids(
+        created_asset_ids
+            .into_iter()
+            .chain(changed_asset_ids.into_iter()),
+    );
+    if !unread_asset_ids.is_empty() {
+        db_service
+            .mark_surface_assets_new(&unread_asset_ids)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok(stats)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        collect_materialized_surface_asset_ids, favicon_hash_from_evidence, fingerprint_identity,
-    };
+    use super::{favicon_hash_from_evidence, fingerprint_identity, sorted_unique_asset_ids};
     use serde_json::json;
-    use std::collections::HashMap;
 
     #[test]
     fn web_asset_identity_ignores_root_trailing_slash() {
@@ -1079,26 +1134,31 @@ mod tests {
     }
 
     #[test]
-    fn materialized_asset_ids_include_created_and_enriched_once() {
-        let ids = HashMap::from([
-            (
-                ("web".to_string(), "https://a.example".to_string()),
-                "asset-a".to_string(),
-            ),
-            (
-                ("web".to_string(), "https://b.example".to_string()),
-                "asset-b".to_string(),
-            ),
-        ]);
-        let enriched_asset_ids = vec!["asset-b".to_string(), "asset-c".to_string()];
-
+    fn sorted_unique_asset_ids_deduplicates_unread_markers() {
         assert_eq!(
-            collect_materialized_surface_asset_ids(&ids, &enriched_asset_ids),
-            vec![
+            sorted_unique_asset_ids([
+                "asset-b".to_string(),
                 "asset-a".to_string(),
                 "asset-b".to_string(),
-                "asset-c".to_string()
-            ]
+            ]),
+            vec!["asset-a".to_string(), "asset-b".to_string()]
+        );
+    }
+
+    #[test]
+    fn unread_markers_exclude_enrichment_only_assets() {
+        let created_asset_ids = vec!["asset-a".to_string()];
+        let changed_asset_ids = vec!["asset-c".to_string()];
+        let enriched_asset_ids = ["asset-b".to_string()];
+
+        assert_eq!(enriched_asset_ids.len(), 1);
+        assert_eq!(
+            sorted_unique_asset_ids(
+                created_asset_ids
+                    .into_iter()
+                    .chain(changed_asset_ids.into_iter())
+            ),
+            vec!["asset-a".to_string(), "asset-c".to_string()]
         );
     }
 }
