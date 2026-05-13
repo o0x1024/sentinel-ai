@@ -11,6 +11,7 @@ pub mod grep;
 pub mod http_request;
 pub mod lsp;
 pub mod memory;
+pub mod mission_scheduler;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 pub mod plugin_authoring;
@@ -46,6 +47,7 @@ pub use grep::GrepTool;
 pub use http_request::HttpRequestTool;
 pub use lsp::LspTool;
 pub use memory::MemoryManagerTool;
+pub use mission_scheduler::MissionSchedulerTool;
 #[cfg(feature = "ocr")]
 pub use ocr::OcrTool;
 pub use plugin_authoring::PluginAuthoringTool;
@@ -90,6 +92,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(RouteDiscoveryTool);
     toolset.add_tool(SearchExploitTool);
     toolset.add_tool(MemoryManagerTool);
+    toolset.add_tool(MissionSchedulerTool);
     toolset.add_tool(PluginAuthoringTool);
     #[cfg(feature = "ocr")]
     toolset.add_tool(OcrTool);
@@ -135,6 +138,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(RouteDiscoveryTool),
         Box::new(SearchExploitTool),
         Box::new(MemoryManagerTool),
+        Box::new(MissionSchedulerTool),
         Box::new(PluginAuthoringTool),
         #[cfg(feature = "ocr")]
         Box::new(OcrTool),

@@ -17,7 +17,9 @@ use tokio::sync::RwLock;
 
 #[cfg(test)]
 use sentinel_tools::buildin_tools::ShellTool;
-use sentinel_tools::buildin_tools::{MemoryManagerTool, SkillsTool, ToolSearchTool};
+use sentinel_tools::buildin_tools::{
+    MemoryManagerTool, MissionSchedulerTool, SkillsTool, ToolSearchTool,
+};
 pub use types::{
     SelectedSkill, ToolCategory, ToolConfig, ToolCost, ToolExposure, ToolMetadata,
     ToolSelectionPlan, ToolSelectionStrategy, ToolStatistics, ToolUsageRecord, ToolUsageStatistics,
@@ -465,6 +467,34 @@ impl ToolRouter {
                 || (task_lower.contains("历史") && task_lower.contains("思路"));
             if memory_intent && tool.id == MemoryManagerTool::NAME {
                 score += 25; // High priority for memory operations
+            }
+            let mission_intent = task_lower.contains("mission")
+                || task_lower.contains("schedule")
+                || task_lower.contains("scheduled")
+                || task_lower.contains("cron")
+                || task_lower.contains("recurring")
+                || task_lower.contains("periodic")
+                || task_lower.contains("daily")
+                || task_lower.contains("weekly")
+                || task_lower.contains("monthly")
+                || task_lower.contains("monitoring")
+                || task_lower.contains("每天")
+                || task_lower.contains("每周")
+                || task_lower.contains("每月")
+                || task_lower.contains("定时")
+                || task_lower.contains("长期")
+                || task_lower.contains("持续")
+                || task_lower.contains("监控")
+                || task_lower.contains("订阅")
+                || task_lower.contains("推送")
+                || task_lower.contains("发给我")
+                || task_lower.contains("修改")
+                || task_lower.contains("更新")
+                || task_lower.contains("纠正")
+                || task_lower.contains("修正")
+                || task_lower.contains("改成");
+            if mission_intent && tool.id == MissionSchedulerTool::NAME {
+                score += 35;
             }
             if (task_lower.contains("ocr")
                 || task_lower.contains("text from image")

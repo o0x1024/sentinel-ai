@@ -10,9 +10,9 @@ use crate::buildin_tools::tool_search::set_tool_search_executor;
 use crate::buildin_tools::OcrTool;
 use crate::buildin_tools::{
     AskUserQuestionTool, BrowserShellTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
-    GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, PluginAuthoringTool, RouteDiscoveryTool,
-    SearchExploitTool, ShellTool, SkillsTool, TenthManTool, ToolSearchArgs, ToolSearchOutput,
-    ToolSearchTool, WebSearchTool,
+    GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, MissionSchedulerTool,
+    PluginAuthoringTool, RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool,
+    TenthManTool, ToolSearchArgs, ToolSearchOutput, ToolSearchTool, WebSearchTool,
 };
 #[cfg(feature = "plugins")]
 use crate::buildin_tools::{PortScanTool, SubdomainBruteTool};
@@ -1194,6 +1194,58 @@ impl ToolServer {
             .expect("Failed to build memory tool");
 
         self.registry.register(memory_def).await;
+
+        let mission_scheduler_def =
+            DynamicToolBuilder::new(MissionSchedulerTool::NAME.to_string())
+                .description(MissionSchedulerTool::DESCRIPTION.to_string())
+                .input_schema(
+                    serde_json::to_value(schemars::schema_for!(
+                        crate::buildin_tools::mission_scheduler::MissionSchedulerArgs
+                    ))
+                    .unwrap_or_default(),
+                )
+                .source(ToolSource::Builtin)
+                .category(ToolCategory::Monitoring)
+                .tags(vec![
+                    "mission".to_string(),
+                    "schedule".to_string(),
+                    "cron".to_string(),
+                    "recurring".to_string(),
+                    "bot".to_string(),
+                ])
+                .search_hint(
+                    "Create durable recurring missions, cron jobs, monitoring tasks, and scheduled bot deliveries."
+                        .to_string(),
+                )
+                .execution_policy(ToolExecutionPolicy {
+                    read_only: false,
+                    mutating: true,
+                    concurrency_safe: false,
+                    requires_permission: false,
+                    supports_background: false,
+                })
+                .executor(|args| async move {
+                    use crate::buildin_tools::mission_scheduler::{
+                        MissionSchedulerArgs, MissionSchedulerTool,
+                    };
+                    use rig::tool::Tool;
+
+                    let tool_args: MissionSchedulerArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                    let tool = MissionSchedulerTool;
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("Mission scheduler operation failed: {}", e))?;
+
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build mission_scheduler tool");
+
+        self.registry.register(mission_scheduler_def).await;
 
         let plugin_authoring_def = DynamicToolBuilder::new(PluginAuthoringTool::NAME.to_string())
             .description(PluginAuthoringTool::DESCRIPTION.to_string())

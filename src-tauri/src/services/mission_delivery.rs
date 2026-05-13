@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use sentinel_core::models::mission::{Mission, MissionRun};
+use sentinel_db::Database;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
@@ -104,13 +105,7 @@ pub async fn deliver_mission_result(
     let result = match target.kind.as_str() {
         "app_notification" => deliver_to_app_notification(app_handle, mission, run, &payload).await,
         "webhook" => deliver_to_webhook(target, &payload_json).await,
-        "bot" => {
-            tracing::info!(
-                "Mission {} delivery target=bot (not yet wired to bot gateway)",
-                mission.id
-            );
-            Ok(())
-        }
+        "bot" => deliver_to_bot(db, target, &payload, run).await,
         "assistant_conversation" => {
             tracing::info!(
                 "Mission {} delivery target=assistant_conversation (stored as observation)",
@@ -138,6 +133,98 @@ pub async fn deliver_mission_result(
     }
 
     result
+}
+
+async fn deliver_to_bot(
+    db: &Arc<DatabaseService>,
+    target: &MissionDeliveryTarget,
+    payload: &serde_json::Value,
+    run: &MissionRun,
+) -> Result<(), String> {
+    let transport = target
+        .ref_data
+        .get("transport")
+        .and_then(|v| v.as_str())
+        .ok_or("Bot target missing transport")?;
+    if transport != "weixin" {
+        return Err(format!("Unsupported bot transport: {transport}"));
+    }
+
+    let account_id = target
+        .ref_data
+        .get("account_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Bot target missing account_id")?;
+    let peer_type = target
+        .ref_data
+        .get("peer_type")
+        .and_then(|v| v.as_str())
+        .ok_or("Bot target missing peer_type")?;
+    let peer_id = target
+        .ref_data
+        .get("peer_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Bot target missing peer_id")?;
+
+    let config = load_weixin_config(db).await?;
+    if config.account_id != account_id {
+        return Err(format!(
+            "Weixin delivery account mismatch: mission target={} configured={}",
+            account_id, config.account_id
+        ));
+    }
+
+    let text = format_bot_delivery_text(payload);
+    crate::services::weixin_gateway::runtime::deliver_weixin_text(
+        db,
+        &config.account_id,
+        &config.base_url,
+        &config.token,
+        peer_type,
+        peer_id,
+        &text,
+        run.bot_execution_run_id
+            .as_deref()
+            .or(run.agent_execution_id.as_deref()),
+    )
+    .await
+}
+
+async fn load_weixin_config(
+    db: &Arc<DatabaseService>,
+) -> Result<crate::services::weixin_gateway::WeixinGatewayConfig, String> {
+    let raw = db
+        .get_config("network", "weixin_gateway_config")
+        .await
+        .map_err(|e| format!("Failed to load Weixin gateway config: {e}"))?
+        .ok_or("Weixin gateway config not found")?;
+    let mut config: crate::services::weixin_gateway::WeixinGatewayConfig =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid Weixin gateway config: {e}"))?;
+    config.normalize();
+    config.validate_for_runtime()?;
+    Ok(config)
+}
+
+fn format_bot_delivery_text(payload: &serde_json::Value) -> String {
+    let title = payload
+        .get("mission_title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Mission");
+    let status = payload
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let summary = payload
+        .get("result_summary")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("error_message").and_then(|v| v.as_str()))
+        .unwrap_or("");
+
+    if summary.trim().is_empty() {
+        format!("任务「{}」执行完成，状态：{}", title, status)
+    } else {
+        format!("任务「{}」执行完成，状态：{}\n\n{}", title, status, summary)
+    }
 }
 
 fn build_delivery_payload(mission: &Mission, run: &MissionRun) -> serde_json::Value {

@@ -694,6 +694,22 @@ impl DatabaseService {
         Ok(())
     }
 
+    pub async fn update_mission_last_error(
+        &self,
+        mission_id: &str,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        sqlx::query("UPDATE missions SET last_error = ?, updated_at = ? WHERE id = ?")
+            .bind(last_error)
+            .bind(now)
+            .bind(mission_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Artifacts
     // -----------------------------------------------------------------------

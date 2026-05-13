@@ -1193,6 +1193,65 @@ impl DatabaseService {
         Ok(records)
     }
 
+    pub async fn get_bot_execution_run(&self, id: &str) -> Result<Option<BotExecutionRun>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let record = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, BotExecutionRun>(
+                    r#"SELECT
+                        id, transport, account_id, peer_type, peer_id, sender_id, conversation_id,
+                        ai_execution_id, assistant_profile_id, trigger_kind, trigger_bot_message_id,
+                        trigger_ai_message_id, task_text, status, result_text, error_message,
+                        started_at, completed_at, created_at, updated_at
+                    FROM bot_execution_runs
+                    WHERE id = $1 OR ai_execution_id = $1
+                    LIMIT 1"#,
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, BotExecutionRun>(
+                    r#"SELECT
+                        id, transport, account_id, peer_type, peer_id, sender_id, conversation_id,
+                        ai_execution_id, assistant_profile_id, trigger_kind, trigger_bot_message_id,
+                        trigger_ai_message_id, task_text, status, result_text, error_message,
+                        started_at, completed_at, created_at, updated_at
+                    FROM bot_execution_runs
+                    WHERE id = ? OR ai_execution_id = ?
+                    LIMIT 1"#,
+                )
+                .bind(id)
+                .bind(id)
+                .fetch_optional(pool)
+                .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, BotExecutionRun>(
+                    r#"SELECT
+                        id, transport, account_id, peer_type, peer_id, sender_id, conversation_id,
+                        ai_execution_id, assistant_profile_id, trigger_kind, trigger_bot_message_id,
+                        trigger_ai_message_id, task_text, status, result_text, error_message,
+                        started_at, completed_at, created_at, updated_at
+                    FROM bot_execution_runs
+                    WHERE id = ? OR ai_execution_id = ?
+                    LIMIT 1"#,
+                )
+                .bind(id)
+                .bind(id)
+                .fetch_optional(pool)
+                .await?
+            }
+        };
+
+        Ok(record)
+    }
+
     pub async fn update_bot_execution_run_result(
         &self,
         id: &str,

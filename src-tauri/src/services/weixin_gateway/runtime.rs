@@ -506,21 +506,6 @@ async fn handle_inbound_message(
             .await
         }
         _ => {
-            if let Some(text) =
-                maybe_handle_recurring_intent(config, db, ai_manager, &inbound).await?
-            {
-                return send_text_chunks(
-                    db,
-                    client,
-                    config,
-                    &inbound.peer_type,
-                    &inbound.peer_id,
-                    &text,
-                    context_token,
-                    None,
-                )
-                .await;
-            }
             let peer_lock_key = execution_lock_key_for_inbound(config, &inbound);
             let conversation_id = session_id(config, &inbound);
             if active_execution_id(&peer_lock_key).await.is_some() {
@@ -883,215 +868,6 @@ async fn persist_outbound_bot_message(
         .await
         .map_err(|e| format!("Failed to persist outbound bot message: {e}"))?;
     Ok(())
-}
-
-/// Unified intent classifier: one LLM call decides mission vs schedule vs normal chat.
-async fn maybe_handle_recurring_intent(
-    config: &WeixinGatewayConfig,
-    db: &Arc<DatabaseService>,
-    ai_manager: &Arc<AiServiceManager>,
-    inbound: &InboundWeixinMessage,
-) -> Result<Option<String>, String> {
-    use super::mission_intent::classify_user_intent;
-    use sentinel_core::models::mission::CreateMissionRequest;
-
-    let intent = match classify_user_intent(ai_manager, inbound.text.trim()).await {
-        Ok(i) => i,
-        Err(e) => {
-            tracing::warn!("Intent classification failed, falling through to agent: {e}");
-            return Ok(None);
-        }
-    };
-
-    match intent.action.as_str() {
-        "create_mission" => {
-            let title = intent
-                .title
-                .as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-                .unwrap_or("未命名任务");
-            let objective = intent
-                .objective
-                .as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-                .unwrap_or(&inbound.text);
-            let cron = intent
-                .cron
-                .as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty());
-
-            if let Some(ref missing) = intent.missing_info {
-                if !missing.is_empty() {
-                    return Ok(Some(format!(
-                        "我想帮你创建一个长期任务「{}」，但还需要一些信息：\n\n{}",
-                        title, missing
-                    )));
-                }
-            }
-
-            let owner_ref = format!(
-                "weixin:{}:{}:{}",
-                config.account_id, inbound.peer_type, inbound.peer_id
-            );
-
-            let trigger_json = cron.map(|c| {
-                serde_json::json!({
-                    "kind": "cron",
-                    "cron_expr": c,
-                    "timezone": "Asia/Shanghai"
-                })
-                .to_string()
-            });
-
-            let delivery_policy_json = Some(
-                serde_json::json!({
-                    "onSuccess": "summary",
-                    "onChange": "immediate",
-                    "onFailure": "immediate",
-                    "primary": {
-                        "kind": "bot",
-                        "refData": {
-                            "transport": "weixin",
-                            "account_id": config.account_id,
-                            "peer_type": inbound.peer_type,
-                            "peer_id": inbound.peer_id
-                        }
-                    }
-                })
-                .to_string(),
-            );
-
-            let context_strategy_json =
-                Some(serde_json::json!({ "mode": intent.context_strategy }).to_string());
-
-            let next_run_at = if let Some(ref tj) = trigger_json {
-                crate::services::mission_scheduler::calculate_next_run_from_trigger_public(tj)
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
-
-            let request = CreateMissionRequest {
-                title: title.to_string(),
-                objective: objective.to_string(),
-                owner_kind: "bot_peer".to_string(),
-                owner_ref,
-                source_json: Some(
-                    serde_json::json!({
-                        "transport": "weixin",
-                        "sender_id": inbound.sender_id,
-                        "original_text": inbound.text
-                    })
-                    .to_string(),
-                ),
-                delivery_policy_json,
-                assistant_profile_id: config.assistant_profile_id.clone(),
-                trigger_json,
-                step_plan_json: None,
-                success_criteria_json: None,
-                context_strategy_json,
-                budget_json: Some(
-                    serde_json::json!({
-                        "max_runs_per_day": 24,
-                        "timeout_seconds": 300
-                    })
-                    .to_string(),
-                ),
-                failure_policy_json: None,
-                missed_run_policy: "skip".to_string(),
-                next_run_at,
-            };
-
-            let mission = db
-                .create_mission(request)
-                .await
-                .map_err(|e| format!("Failed to create mission: {e}"))?;
-
-            if cron.is_some() {
-                let _ = db.update_mission_status(&mission.id, "active").await;
-            }
-
-            let status_text = if cron.is_some() {
-                "已激活"
-            } else {
-                "草稿"
-            };
-            let cron_text = cron.unwrap_or("手动触发");
-            let next_run_text = next_run_at
-                .map(|t| {
-                    t.with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
-                        .format("%Y-%m-%d %H:%M")
-                        .to_string()
-                })
-                .unwrap_or_else(|| "-".to_string());
-
-            Ok(Some(format!(
-                "已创建长期任务\n任务: {}\n目标: {}\n触发: {}\n下次运行: {}\n上下文策略: {}\n状态: {}\n\n在 Bot 控制台的「任务」标签页可以查看和管理。",
-                title, objective, cron_text, next_run_text, intent.context_strategy, status_text
-            )))
-        }
-        "create_schedule" => {
-            let cron = intent
-                .cron
-                .as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty());
-            let task = intent
-                .task
-                .as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty());
-            match (cron, task) {
-                (Some(c), Some(t)) => {
-                    // Delegate to existing schedule creation
-                    create_schedule_from_intent(config, db, inbound, c, t).await
-                }
-                _ => Ok(None), // Incomplete, fall through to agent
-            }
-        }
-        _ => Ok(None), // "none" — normal chat, fall through to agent
-    }
-}
-
-/// Create a weixin schedule from classified intent (replaces keyword-based schedule detection).
-async fn create_schedule_from_intent(
-    config: &WeixinGatewayConfig,
-    db: &Arc<DatabaseService>,
-    inbound: &InboundWeixinMessage,
-    cron: &str,
-    task: &str,
-) -> Result<Option<String>, String> {
-    let assistant_profile = load_assistant_profile_by_id_or_default(
-        db.as_ref(),
-        config.assistant_profile_id.as_deref(),
-    )
-    .await?;
-    ensure_assistant_mode_profile(assistant_profile.as_ref())?;
-    let assistant_profile_id = assistant_profile.as_ref().map(|p| p.id.clone());
-
-    let schedule = new_weixin_schedule(
-        config.account_id.clone(),
-        inbound.peer_type.clone(),
-        inbound.peer_id.clone(),
-        inbound.sender_id.clone(),
-        assistant_profile_id,
-        inbound.text.clone(),
-        task.to_string(),
-        cron.to_string(),
-    )?;
-    upsert_weixin_schedule(db, &schedule).await?;
-
-    Ok(Some(format!(
-        "已创建定时任务\nID: {}\nCron: {}\n下次执行: {}\n任务: {}\n查看任务: /schedules",
-        schedule.id,
-        schedule.cron_expr,
-        format_schedule_timestamp(schedule.next_run_at),
-        schedule.task_text
-    )))
 }
 
 #[allow(dead_code)]
@@ -1574,12 +1350,25 @@ fn normalize_tool_ids(items: &[String]) -> Vec<String> {
 }
 
 async fn resolve_weixin_system_prompt(db: &Arc<DatabaseService>) -> Result<String, String> {
-    Ok(db
+    let base = db
         .get_current_ai_role()
         .await
         .map_err(|e| format!("Failed to load current AI role: {e}"))?
         .map(|role| role.prompt)
-        .unwrap_or_default())
+        .unwrap_or_default();
+    let mission_rule = r#"
+
+[Weixin Bot Mission Rule]
+When the user asks for recurring, periodic, scheduled, daily, weekly, monthly, long-running,
+monitoring, subscription, or scheduled delivery work, use the mission_scheduler tool to create
+or manage a Mission. Ask for missing critical information first. Do not say a scheduled task has
+been created unless mission_scheduler returns success. Pass the current execution_id to
+mission_scheduler so the Mission is bound to this Weixin chat.
+When the user corrects, changes, or updates an existing scheduled task, first list Missions for
+the current execution_id, then call update_mission with the existing mission_id. Do not create a
+replacement Mission for a correction unless the user explicitly asks for a new separate task.
+"#;
+    Ok(format!("{}{}", base.trim_end(), mission_rule))
 }
 
 async fn ensure_conversation_exists(
@@ -1672,6 +1461,44 @@ async fn send_text_chunks(
         .await?;
     }
     Ok(())
+}
+
+pub async fn deliver_weixin_text(
+    db: &Arc<DatabaseService>,
+    account_id: &str,
+    base_url: &str,
+    token: &str,
+    peer_type: &str,
+    peer_id: &str,
+    text: &str,
+    linked_execution_run_id: Option<&str>,
+) -> Result<(), String> {
+    let config = WeixinGatewayConfig {
+        enabled: true,
+        account_id: account_id.to_string(),
+        token: token.to_string(),
+        base_url: base_url.to_string(),
+        assistant_profile_id: None,
+        dm_policy: "open".to_string(),
+        allowed_users: Vec::new(),
+        group_policy: "open".to_string(),
+        group_allowed_users: Vec::new(),
+        default_service_name: "default".to_string(),
+        max_iterations: 1,
+        timeout_secs: 30,
+    };
+    let client = WeixinIlinkClient::new()?;
+    send_text_chunks(
+        db,
+        &client,
+        &config,
+        peer_type,
+        peer_id,
+        text,
+        None,
+        linked_execution_run_id,
+    )
+    .await
 }
 
 #[derive(Debug)]
