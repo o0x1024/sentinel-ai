@@ -475,6 +475,18 @@
             <div class="stat-desc">{{ $t('plugins.unique', '唯一') }}: {{ advancedResult.unique_findings }}</div>
           </div>
         </div>
+        <div v-if="advancedDownloadableFiles.length > 0" class="flex items-center justify-between gap-3 rounded-lg border border-base-300 bg-base-200 p-3">
+          <div class="min-w-0 text-sm">
+            <div class="font-medium">{{ $t('plugins.downloadableFiles', '可下载文件') }}</div>
+            <div class="text-xs text-base-content/60">
+              {{ advancedDownloadableFiles.length }} {{ $t('plugins.files', '个文件') }}
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary shrink-0" @click="handleDownloadAdvancedResultFiles">
+            <i class="fas fa-download"></i>
+            {{ $t('plugins.downloadZip', '下载 ZIP') }}
+          </button>
+        </div>
         <div class="card bg-base-200">
           <div class="card-body">
             <h4 class="font-semibold mb-2">{{ $t('plugins.runDetails', '运行详情') }}</h4>
@@ -568,6 +580,10 @@ import {
   cloneValue,
   getFieldPathKey,
 } from '@/components/BugBounty/monitorPluginParamsSupport'
+import {
+  collectDownloadablePluginFiles,
+  downloadPluginResultFiles,
+} from './pluginResultDownloadSupport'
 import type { PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult, AdvancedRunStat, AdvancedForm } from './types'
 import { agentsCategories, bountyCategories, intruderCategories, trafficCategories } from './types'
 
@@ -767,6 +783,7 @@ const advancedEditableFields = computed(() =>
   buildEditableFields(props.advancedInputSchema, { hideInjectedMonitorFields: false })
 )
 const hasAdvancedEditableSchema = computed(() => advancedEditableFields.value.length > 0)
+const advancedDownloadableFiles = computed(() => collectDownloadablePluginFiles(props.advancedResult))
 
 const clearAdvancedInputEditorErrors = () => {
   advancedInputLocalError.value = ''
@@ -854,6 +871,17 @@ async function copyRunOutput(run: AdvancedRunStat) {
 // Toggle JSON view for a specific run
 function toggleRunJsonView(runIndex: number) {
   runJsonViewStates[runIndex] = !runJsonViewStates[runIndex]
+}
+
+function handleDownloadAdvancedResultFiles() {
+  if (!props.advancedResult || !props.advancedPlugin) return
+
+  const count = downloadPluginResultFiles(props.advancedResult, props.advancedPlugin.metadata.id)
+  if (count > 0) {
+    dialog.toast.success(t('plugins.downloadStarted', '下载已开始'))
+  } else {
+    dialog.toast.error(t('plugins.noDownloadableFiles', '没有可下载文件'))
+  }
 }
 
 watch(
