@@ -1018,39 +1018,21 @@ pub async fn update_plugin(
                 plugin_metadata,
             )
             .await;
+        let default_input = load_plugin_default_inputs(db.as_ref(), &plugin_id).await?;
 
-        let executor = sentinel_tools::dynamic_tool::create_executor({
-            let pid = plugin_id.clone();
-            move |args: serde_json::Value| {
-                let plugin_id = pid.clone();
-                async move {
-                    if let Some(ctx) =
-                        sentinel_tools::plugin_adapter::get_plugin_context(&plugin_id).await
-                    {
-                        tracing::info!("Executing plugin: {} (id: {})", ctx.name, ctx.plugin_id);
-                        Ok(serde_json::json!({
-                            "plugin_id": ctx.plugin_id,
-                            "plugin_name": ctx.name,
-                            "input": args,
-                            "status": "executed"
-                        }))
-                    } else {
-                        Err(format!("Plugin '{}' not registered", plugin_id))
-                    }
-                }
-            }
-        });
-
-        tool_server
-            .register_plugin_tool(
-                &plugin_id,
-                &plugin_name,
-                &plugin_description,
+        sentinel_tools::plugin_adapter::load_plugin_tools_to_server(
+            &tool_server,
+            vec![sentinel_tools::plugin_adapter::PluginToolMeta {
+                plugin_id: plugin_id.clone(),
+                name: plugin_name.clone(),
+                description: plugin_description,
                 input_schema,
                 output_schema,
-                executor,
-            )
-            .await;
+                default_input,
+                code: Some(plugin_code),
+            }],
+        )
+        .await;
 
         tracing::info!("Plugin tool re-registered to ToolServer: {}", tool_name);
     }
