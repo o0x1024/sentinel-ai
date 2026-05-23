@@ -112,11 +112,11 @@
 - [x] 默认 `mark_failed`，记录中断原因
 - **验收**: 应用崩溃后重启，stale run 被正确标记 ✅
 
-### T-3.5 与 bot_schedules 共存
-- [x] Mission scheduler loop 同时处理 `bot_schedules` 的 due items
-- [x] 或：保留现有 bot_schedules scheduler，Mission scheduler 独立运行
-- [x] 确保不会出现两个 scheduler 竞争同一个 schedule
-- **验收**: 现有 bot_schedules 功能不受影响 ✅
+### T-3.5 移除旧 Bot schedule 调度链
+- [x] Mission scheduler 作为唯一 Bot 调度入口
+- [x] 移除旧 Bot schedule scheduler loop 和 Bot Console 展示入口
+- [x] 确保不会出现两个 scheduler 竞争同一个任务
+- **验收**: Bot 定时/长期任务统一通过 Mission 管理 ✅
 
 ---
 

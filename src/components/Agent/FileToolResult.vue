@@ -94,6 +94,16 @@
         </div>
 
         <div
+          v-if="errorOutput"
+          class="overflow-hidden rounded-lg border border-error/30 bg-error/5"
+        >
+          <div class="border-b border-error/20 px-3 py-2 text-xs font-medium text-error">
+            {{ t('agent.toolCardErrorOutput') }}
+          </div>
+          <pre class="max-h-72 overflow-auto whitespace-pre-wrap break-all px-3 py-2 text-xs text-error/90">{{ errorOutput }}</pre>
+        </div>
+
+        <div
           v-if="changeItems.length > 0"
           class="rounded-lg border border-base-300 bg-base-200/40 px-3 py-3"
         >
@@ -316,6 +326,25 @@ const previewSections = computed<PreviewSection[]>(() => {
     sections.push({ label: t('agent.toolCardAfter'), content: afterPreview })
   }
   return sections
+})
+
+const errorOutput = computed(() => {
+  if (status.value !== 'failed') return ''
+
+  if (typeof parsedResult.value === 'string') {
+    return parsedResult.value.trim()
+  }
+
+  const errorValue = resultRecord.value?.error ?? resultRecord.value?.message
+  if (typeof errorValue === 'string') {
+    return errorValue.trim()
+  }
+
+  if (errorValue !== null && errorValue !== undefined) {
+    return formatJsonValueIfPossible(errorValue) || String(errorValue)
+  }
+
+  return ''
 })
 
 const changeItems = computed<ChangeItem[]>(() => {

@@ -11,6 +11,7 @@ export interface AgentStartEvent {
 
 export interface AgentChunkEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   chunk_type: string
   content?: string
@@ -20,6 +21,7 @@ export interface AgentChunkEvent {
 
 export interface AgentToolCallEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   tool_id: string
   tool_name: string
@@ -28,6 +30,7 @@ export interface AgentToolCallEvent {
 
 export interface AgentToolCallCompleteEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   tool_call_id: string
   tool_name: string
@@ -36,6 +39,7 @@ export interface AgentToolCallCompleteEvent {
 
 export interface AgentToolResultEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   tool_name: string
   tool_input: any
@@ -45,6 +49,7 @@ export interface AgentToolResultEvent {
 
 export interface AgentToolResultNewEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   tool_call_id: string
   result: string
@@ -54,12 +59,14 @@ export interface AgentToolResultNewEvent {
 
 export interface AgentToolsSelectedEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   tools: string[]
 }
 
 export interface AgentToolsActivatedEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   tool_ids: string[]
   query?: string | null
@@ -69,6 +76,7 @@ export interface AgentToolsActivatedEvent {
 
 export interface AgentToolExecutedEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   tool: string
   arguments: any
@@ -79,6 +87,7 @@ export interface AgentToolExecutedEvent {
 
 export interface AgentIterationEvent {
   execution_id: string
+  conversation_id?: string | null
   generation?: number | null
   iteration: number
   max_iterations: number

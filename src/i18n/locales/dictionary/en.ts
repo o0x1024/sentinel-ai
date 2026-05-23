@@ -54,6 +54,11 @@ export default {
      sql_injection: 'SQL Injection',
      custom: 'Custom'
    },
+   groups: {
+     brute: 'Brute-force',
+     rules: 'Security Rules',
+     payloads: 'Attack Payloads',
+   },
    serviceTypes: {
      web: 'Web Service',
      ssh: 'SSH Service',

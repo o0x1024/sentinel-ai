@@ -170,11 +170,13 @@ const submitting = ref(false)
 
 let unlisten: UnlistenFn | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let mounted = false
 
 const matchesExecution = (request: PendingAskUserQuestionRequest) => {
   const requestExecutionId = String(request.execution_id || '').trim()
   const currentExecutionId = String(props.executionId || '').trim()
-  if (!requestExecutionId || !currentExecutionId) return false
+  if (!currentExecutionId) return true
+  if (!requestExecutionId) return true
   return requestExecutionId === currentExecutionId
 }
 
@@ -227,11 +229,6 @@ const pickLatestRelevantRequest = (requests: PendingAskUserQuestionRequest[]) =>
 }
 
 const loadPendingQuestions = async () => {
-  if (!props.executionId) {
-    setPendingRequest(null)
-    return
-  }
-
   try {
     const requests = await invoke<PendingAskUserQuestionRequest[]>('get_pending_ask_user_questions')
     setPendingRequest(pickLatestRelevantRequest(requests))
@@ -370,19 +367,32 @@ watch(() => props.executionId, () => {
   void loadPendingQuestions()
 }, { immediate: true })
 
-onMounted(async () => {
-  unlisten = await listen('ask-user-question-request', (event) => {
+onMounted(() => {
+  mounted = true
+  void loadPendingQuestions()
+  pollTimer = setInterval(() => {
+    void loadPendingQuestions()
+  }, 2000)
+
+  void listen('ask-user-question-request', (event) => {
     const request = normalizeRequest(event.payload)
     if (!request || !matchesExecution(request)) return
     setPendingRequest(request)
   })
-
-  pollTimer = setInterval(() => {
-    void loadPendingQuestions()
-  }, 2000)
+    .then(listener => {
+      if (!mounted) {
+        listener()
+        return
+      }
+      unlisten = listener
+    })
+    .catch(error => {
+      console.error('[AskUserQuestionModal] Failed to listen for question requests:', error)
+    })
 })
 
 onUnmounted(() => {
+  mounted = false
   if (unlisten) {
     unlisten()
     unlisten = null

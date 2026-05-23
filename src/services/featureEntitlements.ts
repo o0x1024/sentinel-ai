@@ -2,16 +2,22 @@ import { invoke } from '@tauri-apps/api/core'
 import { readonly, ref } from 'vue'
 
 export interface AppFeatureEntitlements {
-  tier: 'free' | 'pro' | string
+  tier: 'free' | 'trial' | 'pro' | string
   is_licensed: boolean
   has_local_license: boolean
   access_source: string
+  trial_active: boolean
+  trial_started_at: number | null
+  trial_expires_at: number | null
+  trial_remaining_seconds: number | null
+  trial_days_remaining: number | null
   has_valid_entitlement_token: boolean
   entitlement_feature_ids: string[]
   entitlement_expires_at: number | null
   entitlement_license_id: string | null
   can_access_all_plugins: boolean
   can_access_bug_bounty: boolean
+  can_access_bot_console: boolean
   can_manage_plugin_catalog: boolean
   can_add_plugins: boolean
   can_edit_plugins: boolean
@@ -26,12 +32,18 @@ const entitlementsState = ref<AppFeatureEntitlements>({
   is_licensed: false,
   has_local_license: false,
   access_source: 'free',
+  trial_active: false,
+  trial_started_at: null,
+  trial_expires_at: null,
+  trial_remaining_seconds: null,
+  trial_days_remaining: null,
   has_valid_entitlement_token: false,
   entitlement_feature_ids: [],
   entitlement_expires_at: null,
   entitlement_license_id: null,
   can_access_all_plugins: false,
   can_access_bug_bounty: false,
+  can_access_bot_console: false,
   can_manage_plugin_catalog: false,
   can_add_plugins: false,
   can_edit_plugins: false,

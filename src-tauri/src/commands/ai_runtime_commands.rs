@@ -971,7 +971,13 @@ pub async fn agent_execute(
                         service_name: "default".to_string(),
                         model_name: "default".to_string(),
                         model_provider: None,
-                        context_type: None,
+                        context_type: if conv_id.starts_with("mission:")
+                            && conv_id.contains(":run:")
+                        {
+                            Some("mission_run".to_string())
+                        } else {
+                            None
+                        },
                         project_id: None,
                         vulnerability_id: None,
                         scan_task_id: None,

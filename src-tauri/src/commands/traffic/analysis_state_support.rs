@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use sentinel_db::{Database, DatabaseService};
 use sentinel_traffic::{
-    CertificateService, InterceptFilterRule as TrafficInterceptFilterRule,
-    MatchReplaceRule as TrafficMatchReplaceRule, PendingInterceptRequest, PendingInterceptResponse,
-    PendingInterceptWebSocketMessage, PluginManager, PluginMetadata, PluginRecord, PluginStatus,
-    ProxyScopeRule, ProxyService, ScanTask,
+    CertificateService, InterceptFilterRule as TrafficInterceptFilterRule, InterceptedRequest,
+    InterceptedResponse, MatchReplaceRule as TrafficMatchReplaceRule, PendingInterceptRequest,
+    PendingInterceptResponse, PendingInterceptWebSocketMessage, PluginManager, PluginMetadata,
+    PluginRecord, PluginStatus, ProxyScopeRule, ProxyService, ScanTask,
 };
 use tauri::AppHandle;
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
@@ -19,28 +19,6 @@ use crate::services::{
     load_plugin_default_inputs, merge_plugin_input_defaults, PluginMainCategory,
 };
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct InterceptedRequest {
-    pub id: String,
-    pub method: String,
-    pub url: String,
-    pub path: String,
-    pub protocol: String,
-    pub headers: std::collections::HashMap<String, String>,
-    pub body: Option<String>,
-    pub timestamp: i64,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct InterceptedResponse {
-    pub id: String,
-    pub request_id: String,
-    pub status: u16,
-    pub headers: std::collections::HashMap<String, String>,
-    pub body: Option<String>,
-    pub timestamp: i64,
-}
 
 pub struct InterceptedRequestInternal {
     pub request: InterceptedRequest,

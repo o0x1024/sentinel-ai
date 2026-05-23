@@ -646,7 +646,6 @@ globalThis.fetch = async function (input, init = {}) {
   }
 
   const body = await serializeFetchBody(init.body)
-  const timeout = 3000
   const redirect = init.redirect || 'follow'
   const maxRedirects =
     typeof init.maxRedirects === 'number' && Number.isFinite(init.maxRedirects)
@@ -674,8 +673,6 @@ globalThis.fetch = async function (input, init = {}) {
     throw new DOMException('The operation was aborted.', 'AbortError')
   }
 
-  let timeoutId = null
-  let didTimeout = false
   let aborted = false
   const abortRequest = () => {
     aborted = true
@@ -685,12 +682,6 @@ globalThis.fetch = async function (input, init = {}) {
   if (signal) {
     signal.addEventListener('abort', abortRequest, { once: true })
   }
-  if (timeout > 0) {
-    timeoutId = setTimeout(() => {
-      didTimeout = true
-      abortRequest()
-    }, timeout)
-  }
 
   let result
   try {
@@ -698,7 +689,6 @@ globalThis.fetch = async function (input, init = {}) {
       method,
       headers,
       body,
-      timeout,
       redirect,
       max_redirects: maxRedirects,
       max_body_bytes: maxBodyBytes,
@@ -706,15 +696,14 @@ globalThis.fetch = async function (input, init = {}) {
       active_probe: activeProbePayload,
     })
   } finally {
-    if (timeoutId) clearTimeout(timeoutId)
     if (signal) {
       signal.removeEventListener('abort', abortRequest)
     }
   }
 
   if (!result.success) {
-    if (didTimeout || /timeout/i.test(result.error || '')) {
-      throw new Error(`Timeout after ${timeout}ms`)
+    if (/timeout/i.test(result.error || '')) {
+      throw new Error(result.error || 'Request timed out')
     }
     if (aborted || /aborted/i.test(result.error || '')) {
       throw new DOMException('The operation was aborted.', 'AbortError')

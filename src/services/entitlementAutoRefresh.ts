@@ -20,7 +20,7 @@ export interface EntitlementAutoRefreshOptions {
 export type EntitlementAutoRefreshOutcome =
   | {
       status: 'skipped'
-      reason: 'debug' | 'cooldown' | 'not_needed'
+      reason: 'debug' | 'trial' | 'cooldown' | 'not_needed'
     }
   | {
       status: 'success'
@@ -43,6 +43,10 @@ export async function attemptEntitlementAutoRefresh(
 
   if (entitlements.access_source === 'debug') {
     return { status: 'skipped', reason: 'debug' }
+  }
+
+  if (entitlements.access_source === 'trial' || entitlements.trial_active) {
+    return { status: 'skipped', reason: 'trial' }
   }
 
   const tokenStatus = await getEntitlementTokenStatus()

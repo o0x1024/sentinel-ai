@@ -8,6 +8,30 @@ use sentinel_db::Database;
 
 use crate::agents::executor::types::ToolCallRecord;
 
+pub async fn persist_subagent_message_with_retry(
+    db: Arc<sentinel_db::DatabaseService>,
+    msg: sentinel_core::models::database::SubagentMessage,
+    log_label: &str,
+) {
+    const MAX_RETRIES: usize = 3;
+    for attempt in 0..=MAX_RETRIES {
+        match db.upsert_subagent_message_internal(&msg).await {
+            Ok(_) => return,
+            Err(e) => {
+                let err = e.to_string().to_lowercase();
+                let locked = err.contains("database is locked") || err.contains("(code: 5)");
+                if locked && attempt < MAX_RETRIES {
+                    let backoff_ms = 30u64 * (1u64 << attempt);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+                tracing::warn!("Failed to persist subagent {}: {}", log_label, e);
+                return;
+            }
+        }
+    }
+}
+
 pub fn mark_first_response_ms(
     first_response_ms: &std::sync::Mutex<Option<i64>>,
     execution_started_at_ms: i64,
@@ -83,14 +107,24 @@ pub async fn save_assistant_message(
         let message_id = uuid::Uuid::new_v4().to_string();
         let tool_calls_json = tool_calls.map(|tc| serde_json::to_string(tc).unwrap_or_default());
 
+        let enriched_metadata = {
+            let mut value = metadata.unwrap_or_else(|| json!({}));
+            if let Some(object) = value.as_object_mut() {
+                object.insert("execution_id".to_string(), json!(execution_id));
+                object.insert("conversation_id".to_string(), json!(conversation_id));
+                if let Some(generation) = generation {
+                    object.insert("generation".to_string(), json!(generation));
+                }
+            }
+            value
+        };
+
         let msg = core_db::AiMessage {
             id: message_id.clone(),
             conversation_id: conversation_id.to_string(),
             role: "assistant".to_string(),
             content: content.to_string(),
-            metadata: metadata
-                .as_ref()
-                .and_then(|value| serde_json::to_string(value).ok()),
+            metadata: serde_json::to_string(&enriched_metadata).ok(),
             token_count: Some(content.len() as i32),
             cost: None,
             tool_calls: tool_calls_json,
@@ -120,7 +154,7 @@ pub async fn save_assistant_message(
                         "generation": generation,
                     "message_id": message_id,
                     "content": content,
-                    "metadata": metadata,
+                    "metadata": enriched_metadata,
                     "reasoning_content": msg.reasoning_content,
                     "timestamp": msg.timestamp.timestamp_millis(),
                     "tool_calls": tool_calls,

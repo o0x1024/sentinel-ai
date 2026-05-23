@@ -297,6 +297,10 @@ impl DynamicTool {
     pub fn source(&self) -> &ToolSource {
         &self.def.source
     }
+
+    pub fn def(&self) -> &DynamicToolDef {
+        &self.def
+    }
 }
 
 /// Implementation of Rig's Tool trait for DynamicTool

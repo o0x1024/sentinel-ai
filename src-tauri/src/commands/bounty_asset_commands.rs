@@ -571,8 +571,6 @@ pub async fn bounty_add_asset_labels(
 /// Get available high-value labels
 #[tauri::command]
 pub async fn bounty_get_high_value_labels() -> Result<Vec<String>, String> {
-    ensure_bounty_feature()?;
-
     Ok(HIGH_VALUE_LABELS.iter().map(|s| s.to_string()).collect())
 }
 
@@ -583,8 +581,6 @@ pub async fn bounty_get_assets_by_label(
     program_id: String,
     label: String,
 ) -> Result<Vec<BountyAssetRow>, String> {
-    ensure_bounty_feature()?;
-
     // Get all assets for program
     let assets = db_service
         .list_bounty_assets(
@@ -625,8 +621,6 @@ pub async fn bounty_get_assets_by_tech(
     program_id: String,
     tech_name: String,
 ) -> Result<Vec<BountyAssetRow>, String> {
-    ensure_bounty_feature()?;
-
     let assets = db_service
         .list_bounty_assets(
             Some(&program_id),
@@ -842,8 +836,6 @@ pub async fn bounty_get_priority_queue(
     program_id: String,
     limit: Option<i64>,
 ) -> Result<Vec<PriorityQueueItem>, String> {
-    ensure_bounty_feature()?;
-
     let assets = db_service
         .get_top_priority_assets(&program_id, limit.unwrap_or(20))
         .await

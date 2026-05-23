@@ -59,6 +59,45 @@ describe('agentConversationHistorySupport', () => {
     expect(timeline[0].metadata?.kind).toBe('tools_activated')
   })
 
+  it('hydrates persisted thinking segments instead of rendering aggregate reasoning twice', () => {
+    const timeline = buildConversationTimeline(
+      [
+        {
+          id: 'thinking-1',
+          role: 'system',
+          content: 'first reasoning segment',
+          metadata: JSON.stringify({
+            kind: 'thinking_segment',
+            status: 'complete',
+            execution_id: 'run-1',
+            generation: 2,
+          }),
+          timestamp: '2026-04-17T00:00:00Z',
+        },
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: 'final answer',
+          metadata: JSON.stringify({
+            execution_id: 'run-1',
+            generation: 2,
+          }),
+          reasoning_content: 'first reasoning segment\nsecond reasoning segment',
+          timestamp: '2026-04-17T00:00:01Z',
+        },
+      ],
+      {
+        toolCallCompletedLabel: 'Tool call completed',
+      },
+    )
+
+    expect(timeline.map(message => message.type)).toEqual(['thinking', 'final'])
+    expect(timeline[0].content).toBe('first reasoning segment')
+    expect(timeline[0].metadata?.status).toBe('complete')
+    expect(timeline[1].content).toBe('final answer')
+  })
+
+
   it('strips legacy tool previews from persisted skill_loaded system messages', () => {
     const timeline = buildConversationTimeline(
       [

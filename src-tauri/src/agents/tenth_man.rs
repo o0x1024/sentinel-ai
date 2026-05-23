@@ -256,9 +256,13 @@ pub struct TenthMan {
 impl TenthMan {
     pub fn new(params: &AgentExecuteParams) -> Self {
         let rig_provider = params.rig_provider.to_lowercase();
-        let mut llm_config = LlmConfig::new(&rig_provider, &params.model)
-            .with_timeout(params.timeout_secs)
-            .with_rig_provider(&rig_provider);
+        let mut llm_config =
+            LlmConfig::new(&rig_provider, &params.model).with_rig_provider(&rig_provider);
+        if params.timeout_secs == 0 {
+            llm_config = llm_config.without_timeout();
+        } else {
+            llm_config = llm_config.with_timeout(params.timeout_secs);
+        }
 
         if let Some(ref api_key) = params.api_key {
             llm_config = llm_config.with_api_key(api_key);

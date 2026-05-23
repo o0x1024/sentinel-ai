@@ -362,5 +362,7 @@ onUnmounted(() => {
 .searchable-select .input {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  text-align: left;
 }
 </style>

@@ -22,6 +22,7 @@ pub mod search_exploit;
 pub mod shell;
 pub mod shell_background;
 pub mod shell_policy;
+pub mod skill_creator;
 pub mod skills;
 #[cfg(feature = "db")]
 pub mod sops;
@@ -56,6 +57,7 @@ pub use port_scan::PortScanTool;
 pub use route_discovery::RouteDiscoveryTool;
 pub use search_exploit::SearchExploitTool;
 pub use shell::ShellTool;
+pub use skill_creator::SkillCreatorTool;
 pub use skills::SkillsTool;
 #[cfg(feature = "db")]
 pub use sops::{set_sops_app_handle, SopsTool};
@@ -94,6 +96,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(MemoryManagerTool);
     toolset.add_tool(MissionSchedulerTool);
     toolset.add_tool(PluginAuthoringTool);
+    toolset.add_tool(SkillCreatorTool);
     #[cfg(feature = "ocr")]
     toolset.add_tool(OcrTool);
     toolset.add_tool(SkillsTool);
@@ -140,6 +143,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(MemoryManagerTool),
         Box::new(MissionSchedulerTool),
         Box::new(PluginAuthoringTool),
+        Box::new(SkillCreatorTool),
         #[cfg(feature = "ocr")]
         Box::new(OcrTool),
         Box::new(SkillsTool),

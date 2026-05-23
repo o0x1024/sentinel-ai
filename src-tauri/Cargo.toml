@@ -54,8 +54,6 @@ tauri-plugin-http = "2.5.1"
 tauri-plugin-shell = "2"
 
 
-petgraph = "0.6"
-
 # MCP协议支持 - 使用官方Rust SDK，启用所有新特性
 rmcp = { workspace = true }
 
@@ -84,10 +82,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 
+# 压缩
+tar = "0.4"
+
 # 日志
 log = "0.4"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time", "local-time", "chrono"] }
 tracing-appender = "0.2"
 
 # 目录路径
@@ -111,7 +112,7 @@ anyhow = "1.0"
 arboard = "3.4"
 
 # 随机数生成
-rand = "0.8"
+rand = { workspace = true }
 
 # 正则表达式
 regex = "1"
@@ -206,10 +207,17 @@ debug = 0
 
 [profile.release]
 panic = "abort"   # 在发布版本中遇到panic时中止
-codegen-units = 16 # 并行编译以加快构建速度 (was 1)
+codegen-units = 64 # 并行编译以加快构建速度
 lto = "thin"      # 启用 ThinLTO，构建速度更快 (was true)
-opt-level = "s"   # 优化代码大小
+opt-level = 2     # speed 优化，编译速度比 "s" 快
 strip = true      # 从二进制文件中剥离符号信息
+
+[profile.release-fast]
+inherits = "release"
+lto = false
+strip = false
+opt-level = 1
+codegen-units = 256
 
 
 [features]
@@ -291,3 +299,14 @@ rmcp = { version = "0.9.1", features = [
 ] }
 rig-core = { version = "0.35.0", default-features = false, features = ["derive", "reqwest", "native-tls"] }
 rig-sqlite = "0.2.1"
+# 统一版本：避免多个 crate 因版本号不一致导致重复编译
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+anyhow = "1.0"
+tokio = { version = "1", features = ["full"] }
+dirs = "5.0"
+sha2 = "0.10"

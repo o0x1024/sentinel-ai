@@ -1,5 +1,6 @@
 use crate::services::ai::AiServiceManager;
 use crate::services::database::DatabaseService;
+use crate::services::ensure_bot_console_access;
 use chrono_tz::Tz;
 use std::sync::Arc;
 use std::time::Duration;
@@ -73,6 +74,11 @@ async fn dispatch_due_missions(
     app_handle: &AppHandle,
     state: &MissionSchedulerState,
 ) -> Result<(), String> {
+    if ensure_bot_console_access().is_err() {
+        tracing::debug!("Mission scheduler skipped because Bot Console is not activated");
+        return Ok(());
+    }
+
     let due = db
         .list_due_missions()
         .await
@@ -183,6 +189,11 @@ async fn dispatch_due_missions(
                                 &mission_for_run.id,
                                 outcome.error_message.as_deref(),
                             )
+                            .await;
+                    } else {
+                        // Clear stale error on successful run
+                        let _ = db_for_run
+                            .update_mission_last_error(&mission_for_run.id, None)
                             .await;
                     }
 
@@ -371,6 +382,37 @@ fn calculate_next_run_from_trigger(
                 .unwrap_or(3600);
             let next = chrono::Utc::now() + chrono::Duration::seconds(interval_secs);
             Ok(Some(next))
+        }
+        "multi_cron" => {
+            let ticks = trigger
+                .get("ticks")
+                .and_then(|v| v.as_array())
+                .ok_or("multi_cron trigger requires ticks")?;
+            let mut next_runs = Vec::new();
+            for tick in ticks {
+                let name = tick
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(unnamed)");
+                let cron_expr = tick
+                    .get("cron_expr")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| format!("multi_cron tick {name} missing cron_expr"))?;
+                let timezone = tick
+                    .get("timezone")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Asia/Shanghai")
+                    .parse::<Tz>()
+                    .map_err(|e| format!("Invalid trigger timezone for tick {name}: {e}"))?;
+                let schedule = cron_expr
+                    .parse::<cron::Schedule>()
+                    .map_err(|e| format!("Invalid cron expression for tick {name}: {e}"))?;
+                if let Some(next) = schedule.upcoming(timezone).next() {
+                    next_runs.push(next.with_timezone(&chrono::Utc));
+                }
+            }
+            next_runs.sort_unstable();
+            Ok(next_runs.into_iter().next())
         }
         "manual" | "event" => Ok(None),
         _ => {

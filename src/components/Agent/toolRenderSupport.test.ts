@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  getToolHeaderDetail,
   isFileToolName,
   isSearchToolName,
   isShellLikeToolName,
@@ -21,6 +22,30 @@ describe('toolRenderSupport', () => {
     expect(isFileToolName('grep')).toBe(false)
     expect(isSearchToolName('glob')).toBe(true)
     expect(isSearchToolName('file_edit')).toBe(false)
+  })
+
+  it('shows the http_request URL as a tool header detail', () => {
+    expect(
+      getToolHeaderDetail({
+        toolName: 'http_request',
+        args: { method: 'GET', url: 'https://example.com/api/users?active=1' },
+      }),
+    ).toBe('https://example.com/api/users?active=1')
+  })
+
+  it('does not show header details for other tools or missing URLs', () => {
+    expect(
+      getToolHeaderDetail({
+        toolName: 'web_search',
+        args: { url: 'https://example.com' },
+      }),
+    ).toBe('')
+    expect(
+      getToolHeaderDetail({
+        toolName: 'http_request',
+        args: { method: 'GET' },
+      }),
+    ).toBe('')
   })
 
   it('keeps specialized shell rendering for normal shell output', () => {

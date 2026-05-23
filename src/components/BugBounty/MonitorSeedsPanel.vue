@@ -336,36 +336,76 @@
         </div>
 
         <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="grid w-full gap-2 lg:grid-cols-[minmax(220px,1fr)_160px_180px_160px_auto]">
+            <label class="input input-bordered input-sm flex items-center gap-2">
+              <i class="fas fa-search text-base-content/50"></i>
+              <input
+                v-model.trim="candidateSearchQuery"
+                type="text"
+                class="grow"
+                :disabled="candidateLoading || candidateRefreshing || candidateReviewing"
+                :placeholder="t('bugBounty.monitor.seeds.candidateSearchPlaceholder')"
+              />
+            </label>
             <select
               v-model="candidateStatusFilter"
-              class="select select-bordered select-sm w-40"
+              class="select select-bordered select-sm w-full"
               :disabled="candidateLoading || candidateRefreshing || candidateReviewing"
             >
               <option value="pending">{{ t('bugBounty.monitor.seeds.candidateStatusPending') }}</option>
               <option value="rejected">{{ t('bugBounty.monitor.seeds.candidateStatusRejected') }}</option>
             </select>
+            <select
+              v-model="candidateTypeFilter"
+              class="select select-bordered select-sm w-full"
+              :disabled="candidateLoading || candidateRefreshing || candidateReviewing"
+            >
+              <option value="all">{{ t('bugBounty.monitor.seeds.allCandidateTypes') }}</option>
+              <option v-for="option in candidateSeedTypeOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+            <select
+              v-model="candidateSourceAssetTypeFilter"
+              class="select select-bordered select-sm w-full"
+              :disabled="candidateLoading || candidateRefreshing || candidateReviewing"
+            >
+              <option value="all">{{ t('bugBounty.monitor.seeds.allCandidateSourceAssetTypes') }}</option>
+              <option v-for="option in candidateSourceAssetTypeOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+            <button
+              type="button"
+              class="btn btn-sm btn-ghost"
+              :disabled="candidateLoading || candidateRefreshing || candidateReviewing || !hasActiveCandidateFilters"
+              @click="resetCandidateFilters"
+            >
+              {{ t('bugBounty.monitor.seeds.clearCandidateFilters') }}
+            </button>
+          </div>
+          <div class="flex w-full flex-wrap items-center justify-between gap-2">
             <div class="badge badge-outline badge-sm">
               {{ candidateStatusCountLabel }}
             </div>
+            <span v-if="candidateRefreshing" class="inline-flex items-center gap-2 text-xs text-base-content/50">
+              <span class="loading loading-spinner loading-xs"></span>
+              {{ t('common.loading') }}
+            </span>
           </div>
-          <span v-if="candidateRefreshing" class="inline-flex items-center gap-2 text-xs text-base-content/50">
-            <span class="loading loading-spinner loading-xs"></span>
-            {{ t('common.loading') }}
-          </span>
         </div>
 
         <div v-if="candidateLoading" class="flex justify-center py-10">
           <span class="loading loading-spinner loading-lg"></span>
         </div>
 
-        <template v-else-if="candidateGroups.length > 0">
+        <template v-else-if="filteredCandidateGroups.length > 0">
           <div
             v-if="selectedCandidateIds.length > 0"
             class="mt-4 flex flex-col gap-3 rounded-lg border border-base-300 bg-base-200/40 p-3 lg:flex-row lg:items-center lg:justify-between"
           >
             <div class="text-sm text-base-content/70">
-              {{ t('bugBounty.monitor.seeds.candidateSelectionSummary', { selected: selectedCandidateIds.length, total: candidateGroups.length }) }}
+              {{ t('bugBounty.monitor.seeds.candidateSelectionSummary', { selected: selectedCandidateIds.length, total: visibleCandidateIds.length }) }}
             </div>
             <div class="flex flex-wrap items-center gap-2">
               <button
@@ -399,7 +439,7 @@
                       type="checkbox"
                       class="checkbox checkbox-sm"
                       :checked="allPendingCandidatesSelected"
-                      :disabled="!pendingCandidates.length || candidateReviewing"
+                      :disabled="!visibleCandidateIds.length || candidateReviewing"
                       @click.stop
                       @change="toggleSelectAllCandidates"
                     />
@@ -413,7 +453,7 @@
                 </tr>
               </thead>
               <tbody>
-                <template v-for="group in candidateGroups" :key="group.key">
+                <template v-for="group in filteredCandidateGroups" :key="group.key">
                   <tr>
                     <td @click.stop>
                       <input
@@ -719,7 +759,10 @@ const searchQuery = ref('')
 const typeFilter = ref('all')
 const statusFilter = ref('all')
 const sourceFilter = ref('all')
+const candidateSearchQuery = ref('')
 const candidateStatusFilter = ref<'pending' | 'rejected'>('pending')
+const candidateTypeFilter = ref('all')
+const candidateSourceAssetTypeFilter = ref('all')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const pageInput = ref('')
@@ -820,20 +863,112 @@ const candidateGroups = computed<CandidateGroup[]>(() => {
     || left.seed_value.localeCompare(right.seed_value)
   ))
 })
+const candidateSeedTypeOptions = computed(() => {
+  const values = Array.from(new Set(
+    pendingCandidates.value
+      .map(candidate => String(candidate.seed_type || '').trim())
+      .filter(Boolean)
+  )).sort((left, right) => seedTypeLabel(left).localeCompare(seedTypeLabel(right)))
+
+  return values.map(value => ({
+    value,
+    label: seedTypeLabel(value),
+  }))
+})
+const candidateSourceAssetTypeOptions = computed(() => {
+  const values = Array.from(new Set(
+    pendingCandidates.value
+      .map(candidate => String(candidate.source_asset_type || '').trim())
+      .filter(Boolean)
+  )).sort((left, right) => sourceAssetTypeLabel(left).localeCompare(sourceAssetTypeLabel(right)))
+
+  return values.map(value => ({
+    value,
+    label: sourceAssetTypeLabel(value),
+  }))
+})
+const hasActiveCandidateFilters = computed(() => (
+  candidateSearchQuery.value.trim().length > 0
+  || candidateTypeFilter.value !== 'all'
+  || candidateSourceAssetTypeFilter.value !== 'all'
+))
+const candidateMatchesSearch = (candidate: SurfaceSeedCandidateRow, normalizedQuery: string) => {
+  if (!normalizedQuery) return true
+  return [
+    candidate.seed_type,
+    seedTypeLabel(candidate.seed_type),
+    candidate.seed_value,
+    candidate.source_asset_type,
+    sourceAssetTypeLabel(candidate.source_asset_type),
+    candidate.source_detail_key,
+    candidate.source_display_value,
+    candidate.source_canonical_url || '',
+  ]
+    .some(value => String(value || '').toLowerCase().includes(normalizedQuery))
+}
+const filteredCandidateGroups = computed<CandidateGroup[]>(() => {
+  const normalizedQuery = candidateSearchQuery.value.trim().toLowerCase()
+  const selectedType = candidateTypeFilter.value
+  const selectedSourceAssetType = candidateSourceAssetTypeFilter.value
+
+  return candidateGroups.value
+    .map(group => {
+      if (selectedType !== 'all' && group.seed_type !== selectedType) {
+        return null
+      }
+
+      const items = group.items.filter(candidate => (
+        (selectedSourceAssetType === 'all' || candidate.source_asset_type === selectedSourceAssetType)
+        && candidateMatchesSearch(candidate, normalizedQuery)
+      ))
+
+      if (!items.length) {
+        return null
+      }
+
+      const latest = [...items].sort((left, right) => right.observed_at.localeCompare(left.observed_at))[0]
+      const filteredGroup: CandidateGroup = {
+        key: group.key,
+        seed_type: group.seed_type,
+        seed_value: group.seed_value,
+        candidate_ids: items.map(candidate => candidate.id),
+        items,
+        source_count: items.length,
+        latest_source_display_value: latest.source_display_value,
+        latest_source_canonical_url: latest.source_canonical_url,
+        latest_observed_at: latest.observed_at,
+        max_confidence_score: items.reduce<number | null>((max, candidate) => {
+          if (typeof candidate.confidence_score !== 'number' || Number.isNaN(candidate.confidence_score)) {
+            return max
+          }
+          return max === null ? candidate.confidence_score : Math.max(max, candidate.confidence_score)
+        }, null),
+      }
+      return filteredGroup
+    })
+    .filter((group): group is CandidateGroup => Boolean(group))
+    .sort((left, right) => (
+      right.source_count - left.source_count
+      || right.latest_observed_at.localeCompare(left.latest_observed_at)
+      || left.seed_type.localeCompare(right.seed_type)
+      || left.seed_value.localeCompare(right.seed_value)
+    ))
+})
+const visibleCandidateIds = computed(() => filteredCandidateGroups.value.flatMap(group => group.candidate_ids))
 const allCurrentPageSelected = computed(() =>
   currentPageSeedIds.value.length > 0
   && currentPageSeedIds.value.every((seedId) => selectedSeedIdSet.value.has(seedId))
 )
 const allPendingCandidatesSelected = computed(() =>
-  pendingCandidateIds.value.length > 0
-  && pendingCandidateIds.value.every((candidateId) => selectedCandidateIdSet.value.has(candidateId))
+  visibleCandidateIds.value.length > 0
+  && visibleCandidateIds.value.every((candidateId) => selectedCandidateIdSet.value.has(candidateId))
 )
 const canRejectVisibleCandidates = computed(() => candidateStatusFilter.value === 'pending')
 const candidateStatusCountLabel = computed(() => {
   if (candidateStatusFilter.value === 'rejected') {
-    return t('bugBounty.monitor.seeds.rejectedCount', { count: candidateGroups.value.length })
+    return t('bugBounty.monitor.seeds.rejectedCount', { count: filteredCandidateGroups.value.length })
   }
-  return t('bugBounty.monitor.seeds.pendingCount', { count: candidateGroups.value.length })
+  return t('bugBounty.monitor.seeds.pendingCount', { count: filteredCandidateGroups.value.length })
 })
 
 const buildSeedQueryRequest = () => ({
@@ -986,6 +1121,14 @@ const resetFilters = () => {
   selectedSeedIds.value = []
 }
 
+const resetCandidateFilters = () => {
+  candidateSearchQuery.value = ''
+  candidateTypeFilter.value = 'all'
+  candidateSourceAssetTypeFilter.value = 'all'
+  selectedCandidateIds.value = []
+  expandedCandidateGroupKeys.value = []
+}
+
 const openCreateModal = () => {
   editingSeed.value = null
   resetSeedForm()
@@ -1003,6 +1146,7 @@ const openCandidatesModal = async () => {
 
 const closeCandidatesModal = () => {
   showCandidatesModal.value = false
+  resetCandidateFilters()
   if (candidateStatusFilter.value !== 'pending') {
     candidateStatusFilter.value = 'pending'
   }
@@ -1085,8 +1229,10 @@ const toggleCandidateSelection = (candidateId: string) => {
 }
 
 const toggleSelectAllCandidates = () => {
-  if (!pendingCandidateIds.value.length) return
-  selectedCandidateIds.value = allPendingCandidatesSelected.value ? [] : [...pendingCandidateIds.value]
+  if (!visibleCandidateIds.value.length) return
+  selectedCandidateIds.value = allPendingCandidatesSelected.value
+    ? selectedCandidateIds.value.filter((id) => !visibleCandidateIds.value.includes(id))
+    : Array.from(new Set([...selectedCandidateIds.value, ...visibleCandidateIds.value]))
 }
 
 const isCandidateGroupExpanded = (groupKey: string) => expandedCandidateGroupKeys.value.includes(groupKey)
@@ -1262,6 +1408,13 @@ const sourceLabel = (value?: string | null) => {
   return value
 }
 
+const sourceAssetTypeLabel = (value?: string | null) => {
+  if (!value) return '-'
+  const key = `bugBounty.surface.assetTypes.${value}`
+  const label = t(key)
+  return label === key ? value : label
+}
+
 const goToFirstPage = () => {
   currentPage.value = 1
 }
@@ -1322,6 +1475,12 @@ watch(candidateStatusFilter, () => {
   loadPendingCandidates()
 })
 
+watch([candidateSearchQuery, candidateTypeFilter, candidateSourceAssetTypeFilter], () => {
+  selectedCandidateIds.value = selectedCandidateIds.value.filter((id) => visibleCandidateIds.value.includes(id))
+  expandedCandidateGroupKeys.value = expandedCandidateGroupKeys.value.filter((key) =>
+    filteredCandidateGroups.value.some((group) => group.key === key))
+})
+
 watch([searchQuery, typeFilter, statusFilter, sourceFilter], () => {
   currentPage.value = 1
   pageInput.value = ''
@@ -1367,6 +1526,7 @@ watch(
       expandedCandidateGroupKeys.value = []
       ensureResolvedProgramSelection()
       resetFilters()
+      resetCandidateFilters()
       resetSeedForm()
     }
   }

@@ -1,6 +1,7 @@
 use crate::commands::monitor_plugin_execution_support::execute_monitor_plugin;
 use crate::commands::monitor_surface::materialize_surface_artifacts;
 use crate::commands::monitor_surface_support::surface_observation_count_from_output;
+use crate::services::ensure_bug_bounty_access;
 use chrono::Utc;
 use sentinel_db::{BountyAssetRow, DatabaseService, SurfaceDiscoveryRunRow, SurfaceObservationRow};
 use serde::{Deserialize, Serialize};
@@ -137,6 +138,8 @@ pub async fn monitor_discover_and_import_assets(
     plugin_manager: State<'_, Arc<sentinel_traffic::PluginManager>>,
     request: MonitorDiscoverAssetsRequest,
 ) -> Result<MonitorDiscoverAssetsResponse, String> {
+    ensure_bug_bounty_access()?;
+
     let run_id = Uuid::new_v4().to_string();
     let run_started_at = Utc::now().to_rfc3339();
     let run_metadata = serde_json::json!({

@@ -5,6 +5,8 @@ import { useAssistantProfiles } from '@/components/Agent/assistantProfiles'
 import {
   listMissions,
   listMissionRuns,
+  getMissionRuntimeDetail,
+  listMissionDeliveries,
   createMission,
   activateMission,
   pauseMission,
@@ -14,6 +16,8 @@ import {
   runMissionNow,
   type Mission,
   type MissionRun,
+  type MissionDelivery,
+  type MissionRuntimeDetail,
   type ListMissionsFilter,
   type CreateMissionRequest,
 } from '@/api/missions'
@@ -29,10 +33,16 @@ const { profileOptions, loadAssistantProfiles } = useAssistantProfiles()
 const missions = ref<Mission[]>([])
 const selectedMission = ref<Mission | null>(null)
 const missionRuns = ref<MissionRun[]>([])
+const missionRuntime = ref<MissionRuntimeDetail | null>(null)
+const missionDeliveries = ref<MissionDelivery[]>([])
 const loading = ref(false)
 const loadingRuns = ref(false)
+const loadingRuntime = ref(false)
+const loadingDeliveries = ref(false)
 const statusFilter = ref<string>('all')
 const error = ref('')
+const runtimeTab = ref<'state' | 'actions' | 'observations' | 'events' | 'deliveries'>('state')
+const selectedRuntimeRunId = ref<string | null>(null)
 
 // Create dialog
 const showCreateDialog = ref(false)
@@ -72,6 +82,14 @@ const statusBadgeClass = (status: string) => {
     partial: 'badge-warning',
     timed_out: 'badge-error',
     cancelled: 'badge-neutral',
+    pending: 'badge-warning',
+    sent: 'badge-success',
+    recorded: 'badge-info',
+    info: 'badge-info',
+    low: 'badge-success',
+    medium: 'badge-warning',
+    high: 'badge-error',
+    critical: 'badge-error',
   }
   return map[status] || 'badge-ghost'
 }
@@ -79,6 +97,37 @@ const statusBadgeClass = (status: string) => {
 const filteredMissions = computed(() => {
   if (statusFilter.value === 'all') return missions.value
   return missions.value.filter((m) => m.status === statusFilter.value)
+})
+
+const actionResultsByAction = computed(() => {
+  const grouped = new Map<string, MissionRuntimeDetail['action_results']>()
+  for (const result of missionRuntime.value?.action_results || []) {
+    const current = grouped.get(result.action_id) || []
+    current.push(result)
+    grouped.set(result.action_id, current)
+  }
+  return grouped
+})
+
+const selectedRuntimeRun = computed(() => {
+  if (!selectedRuntimeRunId.value) return null
+  return missionRuns.value.find((run) => run.id === selectedRuntimeRunId.value) || null
+})
+
+const selectedRunStatePatchJson = computed(() => {
+  if (!selectedRuntimeRunId.value) return null
+  for (const event of missionRuntime.value?.events || []) {
+    if (!event.payload_json) continue
+    try {
+      const payload = JSON.parse(event.payload_json)
+      if (payload && typeof payload === 'object' && 'state_patch' in payload) {
+        return JSON.stringify(payload.state_patch)
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
 })
 
 async function loadMissions() {
@@ -98,7 +147,8 @@ async function loadMissions() {
 
 async function selectMission(mission: Mission) {
   selectedMission.value = mission
-  await loadRuns(mission.id)
+  selectedRuntimeRunId.value = null
+  await Promise.all([loadRuns(mission.id), loadRuntime(mission.id), loadDeliveries(mission.id)])
 }
 
 async function loadRuns(missionId: string) {
@@ -110,6 +160,51 @@ async function loadRuns(missionId: string) {
   } finally {
     loadingRuns.value = false
   }
+}
+
+async function loadRuntime(missionId: string, runId: string | null = selectedRuntimeRunId.value) {
+  loadingRuntime.value = true
+  try {
+    missionRuntime.value = await getMissionRuntimeDetail(missionId, runId, 50)
+  } catch (e) {
+    console.error('Failed to load mission runtime detail:', e)
+    missionRuntime.value = null
+  } finally {
+    loadingRuntime.value = false
+  }
+}
+
+async function loadDeliveries(missionId: string, runId: string | null = selectedRuntimeRunId.value) {
+  loadingDeliveries.value = true
+  try {
+    missionDeliveries.value = await listMissionDeliveries(missionId, runId)
+  } catch (e) {
+    console.error('Failed to load mission deliveries:', e)
+    missionDeliveries.value = []
+  } finally {
+    loadingDeliveries.value = false
+  }
+}
+
+async function selectRuntimeRun(run: MissionRun) {
+  if (!selectedMission.value) return
+  selectedRuntimeRunId.value = run.id
+  runtimeTab.value = 'state'
+  await Promise.all([loadRuntime(selectedMission.value.id, run.id), loadDeliveries(selectedMission.value.id, run.id)])
+}
+
+async function clearRuntimeRunFilter() {
+  if (!selectedMission.value) return
+  selectedRuntimeRunId.value = null
+  await Promise.all([loadRuntime(selectedMission.value.id, null), loadDeliveries(selectedMission.value.id, null)])
+}
+
+async function refreshMissionProgress() {
+  if (!selectedMission.value) return
+  await Promise.all([
+    loadRuntime(selectedMission.value.id, selectedRuntimeRunId.value),
+    loadDeliveries(selectedMission.value.id, selectedRuntimeRunId.value),
+  ])
 }
 
 async function handlePause(id: string) {
@@ -142,7 +237,13 @@ async function handleArchive(id: string) {
 async function handleDelete(id: string) {
   try {
     await deleteMission(id)
-    if (selectedMission.value?.id === id) selectedMission.value = null
+    if (selectedMission.value?.id === id) {
+      selectedMission.value = null
+      missionRuns.value = []
+      missionRuntime.value = null
+      missionDeliveries.value = []
+      selectedRuntimeRunId.value = null
+    }
     await loadMissions()
   } catch (e) {
     error.value = String(e)
@@ -153,7 +254,7 @@ async function handleRunNow(id: string) {
   try {
     await runMissionNow(id)
     if (selectedMission.value?.id === id) {
-      await loadRuns(id)
+      await Promise.all([loadRuns(id), loadRuntime(id, selectedRuntimeRunId.value), loadDeliveries(id, selectedRuntimeRunId.value)])
     }
     await loadMissions()
   } catch (e) {
@@ -227,6 +328,14 @@ async function handleCreate() {
     })
 
     const contextStrategyJson = JSON.stringify({ mode: f.contextStrategy })
+    const missionSpecJson = JSON.stringify({
+      kind: 'generic_stateful_mission',
+      objective: f.objective.trim(),
+      state_schema: { type: 'object' },
+      action_schema: { type: 'object' },
+      completion_policy: { kind: 'manual_or_agent_completion' },
+      report_policy: { kind: 'each_run_summary' },
+    })
 
     const request: CreateMissionRequest = {
       title: f.title.trim(),
@@ -234,6 +343,7 @@ async function handleCreate() {
       ownerKind: props.ownerKind || 'user',
       ownerRef: props.ownerRef || 'default',
       triggerJson,
+      missionSpecJson,
       deliveryPolicyJson,
       assistantProfileId: f.assistantProfileId || undefined,
       contextStrategyJson,
@@ -259,6 +369,75 @@ function formatDate(dateStr: string | null): string {
   } catch {
     return dateStr
   }
+}
+
+function formatJson(json: string | null): string {
+  if (!json) return '-'
+  try {
+    return JSON.stringify(JSON.parse(json), null, 2)
+  } catch {
+    return json
+  }
+}
+
+function formatRedactedJson(json: string | null): string {
+  if (!json) return '-'
+  try {
+    return JSON.stringify(redactSensitiveJson(JSON.parse(json)), null, 2)
+  } catch {
+    return json
+  }
+}
+
+function redactSensitiveJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSensitiveJson)
+  if (!value || typeof value !== 'object') return value
+  const result: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    result[key] = key === 'context_token' ? '[redacted]' : redactSensitiveJson(item)
+  }
+  return result
+}
+
+function parseRunCheckpoint(run: MissionRun): Record<string, unknown> | null {
+  if (!run.checkpoint_json) return null
+  try {
+    const parsed = JSON.parse(run.checkpoint_json)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return { raw: run.checkpoint_json }
+  }
+}
+
+function checkpointString(run: MissionRun, key: string): string {
+  const value = parseRunCheckpoint(run)?.[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function checkpointNumber(run: MissionRun, key: string): number | null {
+  const value = parseRunCheckpoint(run)?.[key]
+  return typeof value === 'number' ? value : null
+}
+
+function hasRunCheckpointDetails(run: MissionRun): boolean {
+  const checkpoint = parseRunCheckpoint(run)
+  return Boolean(checkpoint && (
+    checkpoint.response_preview
+    || checkpoint.failure_stage
+    || checkpoint.raw
+    || checkpoint.completion
+  ))
+}
+
+function compactId(id: string | null): string {
+  if (!id) return '-'
+  return id.length > 8 ? id.slice(0, 8) : id
+}
+
+function actionResultsFor(actionId: string): MissionRuntimeDetail['action_results'] {
+  return actionResultsByAction.value.get(actionId) || []
 }
 
 watch(() => [props.ownerKind, props.ownerRef], loadMissions, { immediate: false })
@@ -389,7 +568,6 @@ onMounted(() => {
               {{ t('botConsole.missions.archive') }}
             </button>
             <button
-              v-if="selectedMission.status === 'draft' || selectedMission.status === 'archived'"
               class="btn btn-error btn-xs btn-outline"
               @click="handleDelete(selectedMission.id)"
             >
@@ -430,6 +608,225 @@ onMounted(() => {
             {{ selectedMission.last_error }}
           </div>
 
+          <!-- Runtime Detail -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <div>
+                <h4 class="font-medium text-sm">{{ t('botConsole.missions.runtime.title') }}</h4>
+                <div v-if="selectedRuntimeRun" class="text-xs text-base-content/50 mt-0.5">
+                  {{ t('botConsole.missions.runtime.filteredRun', { index: selectedRuntimeRun.run_index }) }}
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  v-if="selectedRuntimeRunId"
+                  class="btn btn-ghost btn-xs"
+                  @click="clearRuntimeRunFilter"
+                  :disabled="loadingRuntime"
+                >
+                  {{ t('botConsole.missions.runtime.showAll') }}
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs"
+                  @click="refreshMissionProgress"
+                  :disabled="loadingRuntime || loadingDeliveries"
+                >
+                  {{ t('botConsole.missions.refresh') }}
+                </button>
+              </div>
+            </div>
+            <div class="tabs tabs-boxed tabs-sm mb-3">
+              <button
+                class="tab"
+                :class="{ 'tab-active': runtimeTab === 'state' }"
+                @click="runtimeTab = 'state'"
+              >
+                {{ t('botConsole.missions.runtime.state') }}
+              </button>
+              <button
+                class="tab"
+                :class="{ 'tab-active': runtimeTab === 'actions' }"
+                @click="runtimeTab = 'actions'"
+              >
+                {{ t('botConsole.missions.runtime.actions') }}
+              </button>
+              <button
+                class="tab"
+                :class="{ 'tab-active': runtimeTab === 'observations' }"
+                @click="runtimeTab = 'observations'"
+              >
+                {{ t('botConsole.missions.runtime.observations') }}
+              </button>
+              <button
+                class="tab"
+                :class="{ 'tab-active': runtimeTab === 'events' }"
+                @click="runtimeTab = 'events'"
+              >
+                {{ t('botConsole.missions.runtime.events') }}
+              </button>
+              <button
+                class="tab"
+                :class="{ 'tab-active': runtimeTab === 'deliveries' }"
+                @click="runtimeTab = 'deliveries'"
+              >
+                {{ t('botConsole.missions.runtime.deliveries') }}
+              </button>
+            </div>
+
+            <div v-if="loadingRuntime || loadingDeliveries" class="flex items-center justify-center py-4">
+              <span class="loading loading-spinner loading-xs"></span>
+            </div>
+
+            <div v-else-if="runtimeTab === 'state'">
+              <div v-if="!missionRuntime?.latest_state" class="text-sm text-base-content/40 py-2">
+                {{ t('botConsole.missions.runtime.emptyState') }}
+              </div>
+              <div v-else class="border border-base-200 rounded-lg overflow-hidden">
+                <div class="flex items-center justify-between px-3 py-2 bg-base-200/60 text-xs text-base-content/60">
+                  <span>#{{ missionRuntime.latest_state.snapshot_index }}</span>
+                  <span>{{ formatDate(missionRuntime.latest_state.created_at) }}</span>
+                </div>
+                <pre class="p-3 text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ formatJson(missionRuntime.latest_state.state_json) }}</pre>
+              </div>
+              <div v-if="selectedRunStatePatchJson" class="mt-3 border border-base-200 rounded-lg overflow-hidden">
+                <div class="px-3 py-2 bg-base-200/60 text-xs text-base-content/60">
+                  {{ t('botConsole.missions.runtime.statePatch') }}
+                </div>
+                <pre class="p-3 text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ formatJson(selectedRunStatePatchJson) }}</pre>
+              </div>
+            </div>
+
+            <div v-else-if="runtimeTab === 'actions'">
+              <div v-if="!missionRuntime || missionRuntime.actions.length === 0" class="text-sm text-base-content/40 py-2">
+                {{ t('botConsole.missions.runtime.emptyActions') }}
+              </div>
+              <div v-else class="space-y-2">
+                <div
+                  v-for="action in missionRuntime.actions"
+                  :key="action.id"
+                  class="border border-base-200 rounded-lg p-3 text-sm"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="font-medium truncate">{{ action.action_type }}</div>
+                    <span class="badge badge-xs" :class="statusBadgeClass(action.status)">
+                      {{ action.status }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-base-content/50 mt-1">
+                    #{{ compactId(action.run_id) }} · {{ formatDate(action.created_at) }}
+                  </div>
+                  <pre v-if="action.input_json" class="mt-2 p-2 rounded bg-base-200/50 text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ formatJson(action.input_json) }}</pre>
+                  <pre v-if="action.result_json" class="mt-2 p-2 rounded bg-base-200/50 text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ formatJson(action.result_json) }}</pre>
+                  <div v-if="action.error_message" class="text-xs mt-2 text-error">
+                    {{ action.error_message }}
+                  </div>
+                  <div v-if="actionResultsFor(action.id).length" class="mt-2 space-y-1">
+                    <div
+                      v-for="result in actionResultsFor(action.id)"
+                      :key="result.id"
+                      class="border-l-2 border-base-300 pl-2 text-xs"
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-base-content/60">{{ formatDate(result.created_at) }}</span>
+                        <span class="badge badge-xs" :class="statusBadgeClass(result.status)">{{ result.status }}</span>
+                      </div>
+                      <pre v-if="result.result_json" class="mt-1 overflow-x-auto whitespace-pre-wrap break-words">{{ formatJson(result.result_json) }}</pre>
+                      <div v-if="result.error_message" class="mt-1 text-error">{{ result.error_message }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-else-if="runtimeTab === 'observations'">
+              <div v-if="!missionRuntime || missionRuntime.observations.length === 0" class="text-sm text-base-content/40 py-2">
+                {{ t('botConsole.missions.runtime.emptyObservations') }}
+              </div>
+              <div v-else class="space-y-2">
+                <div
+                  v-for="observation in missionRuntime.observations"
+                  :key="observation.id"
+                  class="border border-base-200 rounded-lg p-3 text-sm"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="font-medium truncate">{{ observation.title }}</div>
+                    <span class="badge badge-xs" :class="statusBadgeClass(observation.severity)">
+                      {{ observation.severity }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-base-content/50 mt-1">
+                    {{ observation.observation_type }} · #{{ compactId(observation.run_id) }} · {{ formatDate(observation.created_at) }}
+                  </div>
+                  <div v-if="observation.summary" class="text-xs mt-2 text-base-content/70">
+                    {{ observation.summary }}
+                  </div>
+                  <pre v-if="observation.data_json" class="mt-2 p-2 rounded bg-base-200/50 text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ formatJson(observation.data_json) }}</pre>
+                </div>
+              </div>
+            </div>
+
+            <div v-else-if="runtimeTab === 'events'">
+              <div v-if="!missionRuntime || missionRuntime.events.length === 0" class="text-sm text-base-content/40 py-2">
+                {{ t('botConsole.missions.runtime.emptyEvents') }}
+              </div>
+              <div v-else class="space-y-2">
+                <div
+                  v-for="event in missionRuntime.events"
+                  :key="event.id"
+                  class="border border-base-200 rounded-lg p-3 text-sm"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="font-medium truncate">{{ event.title }}</div>
+                    <span class="text-xs text-base-content/50">{{ event.event_type }}</span>
+                  </div>
+                  <div class="text-xs text-base-content/50 mt-1">
+                    #{{ compactId(event.run_id) }} · {{ formatDate(event.created_at) }}
+                  </div>
+                  <pre v-if="event.payload_json" class="mt-2 p-2 rounded bg-base-200/50 text-xs overflow-x-auto whitespace-pre-wrap break-words">{{ formatJson(event.payload_json) }}</pre>
+                </div>
+              </div>
+            </div>
+
+            <div v-else>
+              <div v-if="missionDeliveries.length === 0" class="text-sm text-base-content/40 py-2">
+                {{ t('botConsole.missions.runtime.emptyDeliveries') }}
+              </div>
+              <div v-else class="space-y-2">
+                <div
+                  v-for="delivery in missionDeliveries"
+                  :key="delivery.id"
+                  class="border border-base-200 rounded-lg p-3 text-sm"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="font-medium truncate">{{ t('botConsole.missions.runtime.delivery') }}</div>
+                    <span class="badge badge-xs" :class="statusBadgeClass(delivery.status)">
+                      {{ delivery.status }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-base-content/50 mt-1">
+                    #{{ compactId(delivery.run_id) }} · {{ formatDate(delivery.created_at) }}
+                    <span v-if="delivery.updated_at"> → {{ formatDate(delivery.updated_at) }}</span>
+                  </div>
+                  <div v-if="delivery.message_id" class="text-xs text-base-content/60 mt-2 break-all">
+                    {{ t('botConsole.missions.runtime.messageId') }}: {{ delivery.message_id }}
+                  </div>
+                  <div v-if="delivery.error_message" class="text-xs mt-2 text-error whitespace-pre-wrap break-words">
+                    {{ delivery.error_message }}
+                  </div>
+                  <details class="mt-2 rounded border border-base-200 bg-base-100">
+                    <summary class="cursor-pointer px-2 py-1 text-xs text-base-content/60">
+                      {{ t('botConsole.missions.runtime.deliveryPayload') }}
+                    </summary>
+                    <div class="space-y-2 px-2 pb-2">
+                      <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-base-200/60 p-2 text-xs">{{ formatRedactedJson(delivery.target_json) }}</pre>
+                      <pre v-if="delivery.payload_json" class="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-base-200/60 p-2 text-xs">{{ formatJson(delivery.payload_json) }}</pre>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Runs -->
           <div>
             <h4 class="font-medium text-sm mb-2">{{ t('botConsole.missions.runHistory') }}</h4>
@@ -460,6 +857,49 @@ onMounted(() => {
                 </div>
                 <div v-if="run.error_message" class="text-xs mt-1 text-error">
                   {{ run.error_message }}
+                </div>
+                <details v-if="hasRunCheckpointDetails(run)" class="mt-2 rounded border border-base-200 bg-base-100">
+                  <summary class="cursor-pointer px-2 py-1 text-xs text-base-content/60">
+                    {{ t('botConsole.missions.runtime.diagnostics') }}
+                  </summary>
+                  <div class="space-y-2 px-2 pb-2 text-xs">
+                    <div v-if="checkpointString(run, 'failure_stage')" class="text-base-content/60">
+                      {{ t('botConsole.missions.runtime.failureStage') }}:
+                      {{ checkpointString(run, 'failure_stage') }}
+                    </div>
+                    <div v-if="checkpointString(run, 'error_message')" class="text-error">
+                      {{ t('botConsole.missions.runtime.errorMessage') }}:
+                      {{ checkpointString(run, 'error_message') }}
+                    </div>
+                    <div v-if="checkpointString(run, 'failed_at')" class="text-base-content/60">
+                      {{ t('botConsole.missions.runtime.failedAt') }}:
+                      {{ formatDate(checkpointString(run, 'failed_at')) }}
+                    </div>
+                    <div v-if="checkpointNumber(run, 'response_length') !== null" class="text-base-content/60">
+                      {{ t('botConsole.missions.runtime.responseLength') }}:
+                      {{ checkpointNumber(run, 'response_length') }}
+                    </div>
+                    <div v-if="checkpointString(run, 'response_preview')">
+                      <div class="mb-1 text-base-content/60">
+                        {{ t('botConsole.missions.runtime.responsePreview') }}
+                      </div>
+                      <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-base-200/60 p-2">{{ checkpointString(run, 'response_preview') }}</pre>
+                    </div>
+                    <div v-else-if="checkpointString(run, 'raw')">
+                      <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-base-200/60 p-2">{{ checkpointString(run, 'raw') }}</pre>
+                    </div>
+                    <pre v-else class="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-base-200/60 p-2">{{ formatJson(run.checkpoint_json) }}</pre>
+                  </div>
+                </details>
+                <div class="mt-2">
+                  <button
+                    class="btn btn-ghost btn-xs"
+                    :class="{ 'btn-active': selectedRuntimeRunId === run.id }"
+                    @click="selectRuntimeRun(run)"
+                    :disabled="loadingRuntime"
+                  >
+                    {{ t('botConsole.missions.runtime.viewRun') }}
+                  </button>
                 </div>
               </div>
             </div>

@@ -10,7 +10,7 @@ import {
   useFeatureAccessStatusState,
 } from '../services/featureAccessStatus'
 import {
-  getEntitlementRefreshConfig,
+  activateWithLicenseCard,
   refreshEntitlementTokenFromServer,
 } from '../services/entitlementRefresh'
 import { getFeatureAccessIssueMessage } from '../services/featureAccessMessaging'
@@ -27,6 +27,11 @@ interface LicenseInfo {
   machine_id: string
   is_licensed: boolean
   needs_activation: boolean
+  trial_active: boolean
+  trial_started_at: number | null
+  trial_expires_at: number | null
+  trial_remaining_seconds: number | null
+  trial_days_remaining: number | null
 }
 
 const emit = defineEmits<{
@@ -37,17 +42,14 @@ const entitlements = useFeatureEntitlementsState()
 const featureAccessStatus = useFeatureAccessStatusState()
 const entitlementRefreshRuntime = useEntitlementRefreshRuntimeState()
 const licenseInfo = ref<LicenseInfo | null>(null)
-const refreshConfig = ref({
-  enabled: false,
-  endpoint: '',
-  api_key_configured: false,
-})
 const loading = ref(false)
 const accessSyncLoading = ref(false)
 const error = ref('')
 const accessSyncError = ref('')
 const accessSyncMessage = ref('')
 const copied = ref(false)
+const activationUsername = ref('')
+const activationKey = ref('')
 const dialogOpen = ref(false)
 const featureAccessToolsOpen = ref(false)
 const upgradeToolbarRef = ref<HTMLElement | null>(null)
@@ -63,16 +65,21 @@ const upgradeToolbarDrag = ref<{
 const UPGRADE_TOOLBAR_POSITION_KEY = 'sentinel.license-upgrade-toolbar-position'
 const UPGRADE_TOOLBAR_MARGIN = 12
 
-const hasLocalLicense = computed(() => entitlements.value.has_local_license || Boolean(licenseInfo.value?.is_licensed))
+const isTrialAccess = computed(() => entitlements.value.access_source === 'trial' || entitlements.value.trial_active || Boolean(licenseInfo.value?.trial_active))
+const hasLocalLicense = computed(() => (
+  entitlements.value.has_local_license
+  || (Boolean(licenseInfo.value?.is_licensed) && !isTrialAccess.value)
+))
 const hasFullAccess = computed(() => entitlements.value.is_licensed)
 const isDebugAccess = computed(() => entitlements.value.access_source === 'debug')
 const showUpgradeEntry = computed(() => !hasFullAccess.value)
-const refreshServiceConfigured = computed(
-  () => refreshConfig.value.enabled && refreshConfig.value.endpoint.trim().length > 0,
-)
+const refreshServiceConfigured = computed(() => true)
 const activationView = computed(() => buildLicenseActivationViewState({
   hasLocalLicense: hasLocalLicense.value,
   isDebugAccess: isDebugAccess.value,
+  isTrialAccess: isTrialAccess.value,
+  trialExpiresAt: entitlements.value.trial_expires_at ?? licenseInfo.value?.trial_expires_at ?? null,
+  trialDaysRemaining: entitlements.value.trial_days_remaining ?? licenseInfo.value?.trial_days_remaining ?? null,
   featureAccessStatus: featureAccessStatus.value,
   refreshServiceConfigured: refreshServiceConfigured.value,
   refreshRuntime: entitlementRefreshRuntime.value,
@@ -80,7 +87,7 @@ const activationView = computed(() => buildLicenseActivationViewState({
   formatTimestamp,
   formatDuration: formatDurationLabel,
 }))
-const activateButtonLabel = computed(() => (loading.value ? '激活中...' : '服务端激活'))
+const activateButtonLabel = computed(() => (loading.value ? '激活中...' : '激活'))
 const upgradeToolbarStyle = computed(() => {
   if (!upgradeToolbarPosition.value) {
     return {
@@ -123,12 +130,12 @@ async function checkFeatureAccessStatus() {
 
 async function refreshAllStatus() {
   await refreshFeatureEntitlements()
-  await Promise.all([checkLicenseStatus(), checkFeatureAccessStatus(), loadRefreshConfig()])
+  await Promise.all([checkLicenseStatus(), checkFeatureAccessStatus()])
 }
 
 async function activateLicense() {
-  if (!refreshServiceConfigured.value) {
-    error.value = '服务端激活服务尚未配置'
+  if (!activationUsername.value.trim() || !activationKey.value.trim()) {
+    error.value = '请输入用户名和激活密钥'
     return
   }
 
@@ -136,7 +143,10 @@ async function activateLicense() {
   error.value = ''
 
   try {
-    const result = await refreshEntitlementTokenFromServer()
+    const result = await activateWithLicenseCard({
+      username: activationUsername.value.trim(),
+      activation_key: activationKey.value.trim(),
+    })
 
     if (result.success) {
       error.value = ''
@@ -178,14 +188,6 @@ async function copyMachineId() {
   }
 }
 
-async function loadRefreshConfig() {
-  try {
-    refreshConfig.value = await getEntitlementRefreshConfig()
-  } catch (e) {
-    console.error('Failed to load entitlement refresh config:', e)
-  }
-}
-
 async function refreshFeatureAccessFromServer() {
   accessSyncLoading.value = true
   accessSyncError.value = ''
@@ -197,8 +199,6 @@ async function refreshFeatureAccessFromServer() {
       markEntitlementRefreshSuccess()
       accessSyncMessage.value = result.message
       await refreshAllStatus()
-    } else if (!result.configured) {
-      accessSyncError.value = '尚未配置服务端激活服务'
     } else {
       markEntitlementRefreshFailure({
         message: result.message,
@@ -380,7 +380,37 @@ defineExpose({
 
           <div class="form-control mb-4">
             <label class="label">
-              <span class="label-text font-medium">设备标识</span>
+              <span class="label-text font-medium">用户名</span>
+            </label>
+            <input
+              v-model="activationUsername"
+              type="text"
+              class="input input-bordered"
+              placeholder="输入管理员分配的用户名"
+              autocomplete="username"
+            />
+          </div>
+
+          <div class="form-control mb-4">
+            <label class="label">
+              <span class="label-text font-medium">激活密钥</span>
+            </label>
+            <input
+              v-model="activationKey"
+              type="password"
+              class="input input-bordered font-mono"
+              placeholder="输入管理员分配的卡密"
+              autocomplete="one-time-code"
+              @keyup.enter="activateLicense"
+            />
+            <label class="label">
+              <span class="label-text-alt text-base-content/50">激活成功后会自动绑定当前设备，后续无需重复输入。</span>
+            </label>
+          </div>
+
+          <div class="form-control mb-4">
+            <label class="label">
+              <span class="label-text font-medium">当前设备</span>
             </label>
             <div class="join w-full">
               <input
@@ -398,21 +428,8 @@ defineExpose({
               </button>
             </div>
             <label class="label">
-              <span class="label-text-alt text-base-content/50">服务端激活会使用这串标识绑定当前设备。</span>
+              <span class="label-text-alt text-base-content/50">仅用于设备绑定和设备数限制。</span>
             </label>
-          </div>
-
-          <div class="rounded-xl border border-base-300 bg-base-200/50 px-4 py-3 text-sm text-base-content/70 mb-4">
-            <div class="flex items-center justify-between gap-3">
-              <span class="font-medium text-base-content">服务端激活配置</span>
-              <span class="badge" :class="refreshServiceConfigured ? 'badge-success' : 'badge-ghost'">
-                {{ refreshServiceConfigured ? '已配置' : '未配置' }}
-              </span>
-            </div>
-            <p class="mt-2">{{ activationView.refreshServiceHint }}</p>
-            <p v-if="refreshServiceConfigured" class="mt-1 text-xs text-base-content/50 break-all">
-              服务地址：{{ refreshConfig.endpoint }}
-            </p>
           </div>
 
           <div v-if="error" class="alert alert-error mb-4">
@@ -424,7 +441,7 @@ defineExpose({
             <button
               class="btn btn-primary btn-wide"
               :class="{ 'loading': loading }"
-              :disabled="loading || !refreshServiceConfigured"
+              :disabled="loading || !activationUsername.trim() || !activationKey.trim()"
               @click="activateLicense"
             >
               <i v-if="!loading" class="fas fa-unlock mr-2"></i>
@@ -494,7 +511,7 @@ defineExpose({
                   <button
                     class="btn btn-outline"
                     :class="{ 'loading': accessSyncLoading }"
-                    :disabled="accessSyncLoading || !refreshConfig.enabled || !refreshConfig.endpoint.trim()"
+                    :disabled="accessSyncLoading"
                     @click="refreshFeatureAccessFromServer"
                   >
                     <i v-if="!accessSyncLoading" class="fas fa-rotate-right mr-2"></i>
@@ -508,22 +525,9 @@ defineExpose({
                   <i class="fas fa-rotate"></i>
                   <span>{{ activationView.refreshRuntimeText }}</span>
                 </div>
-
-                <div class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 text-sm text-base-content/70">
-                  <div class="flex items-center justify-between gap-3">
-                    <span class="font-medium text-base-content">服务端激活配置</span>
-                    <span class="badge" :class="refreshServiceConfigured ? 'badge-success' : 'badge-ghost'">
-                      {{ refreshServiceConfigured ? '已配置' : '未配置' }}
-                    </span>
-                  </div>
-                  <p class="mt-2">{{ activationView.refreshServiceHint }}</p>
-                  <p v-if="refreshServiceConfigured" class="mt-1 text-xs text-base-content/50 break-all">
-                    服务地址：{{ refreshConfig.endpoint }}
-                  </p>
-                  <p class="mt-2 text-xs text-base-content/50">
-                    手工写入或清除服务端授权令牌的管理员工具已移至 设置 &gt; 安全 &gt; 高级功能权限同步管理。
-                  </p>
-                </div>
+                <p class="text-xs text-base-content/50 text-center">
+                  自动续期使用当前设备保存的服务端凭证，不需要用户维护服务地址或 refresh key。
+                </p>
               </div>
             </div>
           </template>

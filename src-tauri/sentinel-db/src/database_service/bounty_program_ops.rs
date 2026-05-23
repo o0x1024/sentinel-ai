@@ -616,7 +616,8 @@ impl DatabaseService {
 
     /// Create a new program scope
     pub async fn create_program_scope(&self, scope: &ProgramScopeRow) -> Result<()> {
-        self.create_program_scopes(std::slice::from_ref(scope)).await
+        self.create_program_scopes(std::slice::from_ref(scope))
+            .await
     }
 
     /// Create multiple program scopes in a single transaction

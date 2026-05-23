@@ -32,6 +32,16 @@
     <button type="button" class="icon-btn" title="清空会话" @click="emit('clear-conversation')">
       <i class="fas fa-eraser"></i>
     </button>
+    <button
+      type="button"
+      class="icon-btn"
+      :disabled="!canExportConversation"
+      :title="canExportConversation ? '导出会话记录' : '当前会话暂无可导出的消息'"
+      aria-label="导出会话记录"
+      @click="emit('export-conversation')"
+    >
+      <i class="fas fa-download"></i>
+    </button>
   </div>
 </template>
 
@@ -39,6 +49,7 @@
 defineProps<{
   ragEnabled: boolean
   webSearchEnabled: boolean
+  canExportConversation: boolean
 }>()
 
 const emit = defineEmits<{
@@ -48,6 +59,7 @@ const emit = defineEmits<{
   (e: 'toggle-web-search'): void
   (e: 'open-slash-manager'): void
   (e: 'clear-conversation'): void
+  (e: 'export-conversation'): void
 }>()
 </script>
 
@@ -65,6 +77,15 @@ const emit = defineEmits<{
 
 .icon-btn:hover {
   background-color: hsl(var(--b3) / 0.7);
+}
+
+.icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.icon-btn:disabled:hover {
+  background-color: transparent;
 }
 
 .icon-btn:focus-visible {

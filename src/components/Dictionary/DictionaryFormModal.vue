@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal modal-open dictionary-modal">
+    <div v-if="open" class="modal modal-open dictionary-modal" @click.self="$emit('cancel')">
       <div class="modal-box max-w-2xl dictionary-modal-box">
         <h3 class="font-bold text-lg mb-4">
           {{ isEditing ? '编辑字典' : '创建字典' }}

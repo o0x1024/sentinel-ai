@@ -20,6 +20,15 @@
               </span>
             </div>
             <div class="text-xs text-base-content/60 mt-1 space-y-1">
+              <div v-if="isGroupedTask">
+                <i class="fas fa-layer-group mr-1"></i>
+                {{
+                  t('bugBounty.monitor.groupedTaskPrograms', {
+                    count: programDisplayNames.length,
+                    names: programDisplayNames.join(', '),
+                  })
+                }}
+              </div>
               <div>
                 <i class="fas fa-clock mr-1"></i>
                 {{ t('bugBounty.monitor.interval') }}: {{ formatInterval(task.interval_secs) }}
@@ -250,6 +259,14 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const now = ref(Date.now())
 let ticker: ReturnType<typeof setInterval> | null = null
+const isGroupedTask = computed(() =>
+  props.task?.__is_group === true &&
+  Array.isArray(props.task?.child_tasks) &&
+  props.task.child_tasks.length > 1
+)
+const programDisplayNames = computed(() =>
+  Array.isArray(props.task?.program_names) ? props.task.program_names : []
+)
 
 onMounted(() => {
   ticker = setInterval(() => {

@@ -60,6 +60,10 @@ async fn test_tool_server_init() {
         .get_tool("skills")
         .await
         .expect("skills should exist");
+    let skill_creator = server
+        .get_tool("skill_creator")
+        .await
+        .expect("skill_creator should exist");
     let search_exploit = server
         .get_tool("search_exploit")
         .await
@@ -70,6 +74,7 @@ async fn test_tool_server_init() {
     assert_eq!(shell.category, ToolCategory::Terminal);
     assert_eq!(tasks.category, ToolCategory::Collaboration);
     assert_eq!(skills.category, ToolCategory::KnowledgeExtension);
+    assert_eq!(skill_creator.category, ToolCategory::KnowledgeExtension);
     assert_eq!(search_exploit.category, ToolCategory::VulnerabilityResearch);
 
     let skills_schema = skills.input_schema.to_string();
@@ -82,6 +87,14 @@ async fn test_tool_server_init() {
         !skills_schema.contains("\"read_file\""),
         "skills schema must not expose ambiguous read_file action: {}",
         skills_schema
+    );
+
+    let skill_creator_schema = skill_creator.input_schema.to_string();
+    assert!(
+        skill_creator_schema.contains("\"create\"")
+            && skill_creator_schema.contains("\"validate\""),
+        "skill_creator schema should expose authoring actions: {}",
+        skill_creator_schema
     );
 }
 
@@ -203,12 +216,18 @@ async fn shell_interactive_command_without_yield_time_stays_one_shot() {
         output
     );
     assert_eq!(
-        output.get("interaction_required").and_then(|value| value.as_bool()),
+        output
+            .get("interaction_required")
+            .and_then(|value| value.as_bool()),
         Some(true),
         "unexpected interactive one-shot output: {}",
         output
     );
-    assert!(output.get("session_id").is_none(), "unexpected session output: {}", output);
+    assert!(
+        output.get("session_id").is_none(),
+        "unexpected session output: {}",
+        output
+    );
 }
 
 #[tokio::test]

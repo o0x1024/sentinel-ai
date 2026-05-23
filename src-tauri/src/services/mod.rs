@@ -23,6 +23,7 @@ pub mod mission_delivery;
 pub mod mission_planner;
 pub mod mission_runner;
 pub mod mission_scheduler;
+pub mod mission_stateful_runtime;
 pub mod mission_success_criteria;
 pub mod model_capabilities;
 pub mod system_agents;
@@ -60,9 +61,9 @@ pub use ai_task_plugin_fix::{run_plugin_fix_task, PluginFixTaskRequest, PluginFi
 pub use asset_service::AssetService;
 pub use database::DatabaseService;
 pub use feature_entitlements::{
-    build_app_entitlements, ensure_bug_bounty_access, ensure_plugin_allowed_for_current_tier,
-    ensure_plugin_catalog_write_access, ensure_plugin_delete_access,
-    filter_plugins_for_current_tier, AppEntitlements,
+    build_app_entitlements, ensure_bot_console_access, ensure_bug_bounty_access,
+    ensure_plugin_allowed_for_current_tier, ensure_plugin_catalog_write_access,
+    ensure_plugin_delete_access, filter_plugins_for_current_tier, AppEntitlements,
 };
 pub use plugin_authoring::{
     execute_plugin_authoring, PluginAuthoringAction, PluginAuthoringRequest, PluginAuthoringResult,

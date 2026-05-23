@@ -9,6 +9,11 @@ import { createWorkbenchEntityId } from '../services/id'
 const draftsState = ref<RequestDraft[]>([])
 const revisionsState = ref<Record<string, DraftRevision[]>>({})
 const activeDraftIdState = ref<string | null>(null)
+const mutationVersionState = ref(0)
+
+function markMutated() {
+  mutationVersionState.value += 1
+}
 
 function findDraft(draftId: string) {
   return draftsState.value.find(draft => draft.id === draftId) ?? null
@@ -27,11 +32,13 @@ function createDraftFromExchangeRequest(options: {
     [draft.id]: [initialRevision],
   }
   activeDraftIdState.value = draft.id
+  markMutated()
   return draft
 }
 
 function selectDraft(draftId: string | null) {
   activeDraftIdState.value = draftId
+  markMutated()
 }
 
 function appendRevision(draftId: string, reason: DraftRevisionReason) {
@@ -62,6 +69,7 @@ function appendRevision(draftId: string, reason: DraftRevisionReason) {
       }
       : item,
   )
+  markMutated()
   return revision
 }
 
@@ -76,6 +84,7 @@ function updateDraftRequest(draftId: string, rawRequest: string) {
       }
       : draft,
   )
+  markMutated()
 }
 
 function updateDraftEndpoint(draftId: string, endpoint: HttpEndpoint, mode: RequestDraft['endpointMode']) {
@@ -90,6 +99,7 @@ function updateDraftEndpoint(draftId: string, endpoint: HttpEndpoint, mode: Requ
       }
       : draft,
   )
+  markMutated()
 }
 
 function pinDraft(draftId: string, pinned: boolean) {
@@ -103,6 +113,7 @@ function pinDraft(draftId: string, pinned: boolean) {
       }
       : draft,
   )
+  markMutated()
 }
 
 function removeDraft(draftId: string) {
@@ -114,6 +125,7 @@ function removeDraft(draftId: string) {
   if (activeDraftIdState.value === draftId) {
     activeDraftIdState.value = draftsState.value.at(-1)?.id ?? null
   }
+  markMutated()
 }
 
 function replaceState(
@@ -137,12 +149,14 @@ function replaceState(
   activeDraftIdState.value = activeDraftId && draftsState.value.some(draft => draft.id === activeDraftId)
     ? activeDraftId
     : draftsState.value.at(-1)?.id ?? null
+  markMutated()
 }
 
 function resetDraftStore() {
   draftsState.value = []
   revisionsState.value = {}
   activeDraftIdState.value = null
+  markMutated()
 }
 
 export function useDraftStore() {
@@ -155,6 +169,7 @@ export function useDraftStore() {
     drafts: draftsState,
     revisions: revisionsState,
     activeDraftId: activeDraftIdState,
+    mutationVersion: mutationVersionState,
     activeDraft,
     activeDraftRevisions,
     createDraftFromExchangeRequest,

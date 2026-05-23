@@ -7,6 +7,7 @@
 //! - Asset Surface Management (ASM) integration
 //! - Change monitoring and workflow triggers
 
+pub mod command_api;
 pub mod error;
 pub mod models;
 pub mod services;

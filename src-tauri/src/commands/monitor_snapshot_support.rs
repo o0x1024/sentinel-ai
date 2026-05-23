@@ -116,6 +116,18 @@ pub(crate) async fn persist_api_monitor_inventory_output(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let results: Vec<Value> = results
+        .into_iter()
+        .filter(|result| {
+            result
+                .get("snapshot")
+                .and_then(Value::as_object)
+                .and_then(|snapshot| snapshot.get("apiEndpoints"))
+                .and_then(Value::as_array)
+                .map(|endpoints| !endpoints.is_empty())
+                .unwrap_or(false)
+        })
+        .collect();
     if results.is_empty() {
         return Ok(0);
     }

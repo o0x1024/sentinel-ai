@@ -36,6 +36,12 @@ pub struct MonitorTask {
     pub program_id: String,
     /// Task name
     pub name: String,
+    /// Display group id for batch-created multi-program tasks
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
+    /// Display group name for batch-created multi-program tasks
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_name: Option<String>,
     /// Check interval in seconds
     pub interval_secs: u64,
     /// Enabled status
@@ -61,6 +67,8 @@ impl MonitorTask {
             id: uuid::Uuid::new_v4().to_string(),
             program_id,
             name,
+            group_id: None,
+            group_name: None,
             interval_secs,
             enabled: true,
             config: ChangeMonitorConfig::default(),

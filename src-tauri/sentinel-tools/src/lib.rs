@@ -28,6 +28,7 @@ pub mod terminal;
 mod terminal_output;
 mod tool_search_runtime;
 pub mod tool_server;
+mod tool_server_knowledge;
 pub mod tool_timeout;
 pub mod workflow_adapter;
 

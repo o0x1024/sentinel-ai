@@ -467,6 +467,88 @@ describe('useAgentEvents', () => {
     wrapper.unmount()
   })
 
+  it('keeps streaming thinking unlimited until text closes the segment', async () => {
+    const wrapper = await mountHarness()
+
+    await emitTauriEvent('agent:chunk', {
+      execution_id: 'conversation-1',
+      generation: 1,
+      chunk_type: 'reasoning',
+      content: 'first thought',
+    })
+
+    expect(api?.messages.value).toHaveLength(1)
+    expect(api?.messages.value[0]?.type).toBe('thinking')
+    expect(api?.messages.value[0]?.metadata?.status).toBe('streaming')
+
+    await emitTauriEvent('agent:chunk', {
+      execution_id: 'conversation-1',
+      generation: 1,
+      chunk_type: 'text',
+      content: 'answer',
+    })
+
+    expect(api?.messages.value.map(message => message.type)).toEqual(['thinking', 'final'])
+    expect(api?.messages.value[0]?.metadata?.status).toBe('complete')
+    expect(api?.messages.value[1]?.content).toBe('answer')
+
+    wrapper.unmount()
+  })
+
+  it('splits thinking into separate segments around assistant text', async () => {
+    const wrapper = await mountHarness()
+
+    await emitTauriEvent('agent:chunk', {
+      execution_id: 'conversation-1',
+      generation: 1,
+      chunk_type: 'reasoning',
+      content: 'plan A',
+    })
+    await emitTauriEvent('agent:chunk', {
+      execution_id: 'conversation-1',
+      generation: 1,
+      chunk_type: 'text',
+      content: 'partial answer',
+    })
+    await emitTauriEvent('agent:chunk', {
+      execution_id: 'conversation-1',
+      generation: 1,
+      chunk_type: 'reasoning',
+      content: 'plan B',
+    })
+
+    expect(api?.messages.value.map(message => message.type)).toEqual([
+      'thinking',
+      'final',
+      'thinking',
+    ])
+    expect(api?.messages.value[0]?.content).toBe('plan A')
+    expect(api?.messages.value[0]?.metadata?.status).toBe('complete')
+    expect(api?.messages.value[2]?.content).toBe('plan B')
+    expect(api?.messages.value[2]?.metadata?.status).toBe('streaming')
+
+    wrapper.unmount()
+  })
+
+  it('accepts live chunks for the current conversation after refresh when execution id differs', async () => {
+    const wrapper = await mountHarness()
+
+    await emitTauriEvent('agent:chunk', {
+      execution_id: 'run-after-refresh',
+      conversation_id: 'conversation-1',
+      generation: 1,
+      chunk_type: 'text',
+      content: 'continued after refresh',
+    })
+
+    expect(api?.isExecuting.value).toBe(true)
+    expect(api?.currentExecutionId.value).toBe('run-after-refresh')
+    expect(api?.messages.value).toHaveLength(1)
+    expect(api?.messages.value[0]?.content).toBe('continued after refresh')
+
+    wrapper.unmount()
+  })
+
   it('syncs shell sessions without opening the terminal panel', async () => {
     const wrapper = await mountHarness()
     const terminal = useTerminal()

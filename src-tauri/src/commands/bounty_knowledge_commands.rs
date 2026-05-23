@@ -111,8 +111,6 @@ pub async fn bounty_get_knowledge_note(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<BountyKnowledgeNoteRow>, String> {
-    ensure_bug_bounty_access()?;
-
     db_service
         .get_bounty_knowledge_note(id.trim())
         .await
@@ -180,8 +178,6 @@ pub async fn bounty_list_knowledge_notes(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<BountyKnowledgeNoteListRequest>,
 ) -> Result<Vec<BountyKnowledgeNoteSearchRow>, String> {
-    ensure_bug_bounty_access()?;
-
     let filter = filter.unwrap_or_default();
 
     db_service
@@ -200,8 +196,6 @@ pub async fn bounty_search_knowledge_notes(
     db_service: State<'_, Arc<DatabaseService>>,
     request: BountyKnowledgeNoteSearchRequest,
 ) -> Result<Vec<BountyKnowledgeNoteSearchRow>, String> {
-    ensure_bug_bounty_access()?;
-
     let query = request.query.trim().to_string();
     if query.is_empty() {
         return Ok(vec![]);
@@ -224,8 +218,6 @@ pub async fn bounty_get_knowledge_note_stats(
     db_service: State<'_, Arc<DatabaseService>>,
     program_id: Option<String>,
 ) -> Result<BountyKnowledgeNoteStats, String> {
-    ensure_bug_bounty_access()?;
-
     db_service
         .get_bounty_knowledge_note_stats(program_id.as_deref())
         .await

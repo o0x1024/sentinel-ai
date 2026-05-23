@@ -296,8 +296,6 @@ pub async fn bounty_list_change_event_workflow_runs(
     db_service: State<'_, Arc<DatabaseService>>,
     event_id: String,
 ) -> Result<Vec<BountyChangeEventWorkflowRunRow>, String> {
-    ensure_bug_bounty_access()?;
-
     db_service
         .list_bounty_change_event_workflow_runs(&event_id)
         .await
@@ -364,8 +362,6 @@ pub async fn bounty_get_triggered_workflows(
     db_service: State<'_, Arc<DatabaseService>>,
     event_id: String,
 ) -> Result<Vec<WorkflowTriggerResult>, String> {
-    ensure_bug_bounty_access()?;
-
     bounty_get_triggered_workflows_internal(db_service.inner(), &event_id).await
 }
 

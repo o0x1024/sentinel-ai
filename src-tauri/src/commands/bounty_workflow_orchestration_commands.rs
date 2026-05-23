@@ -571,8 +571,6 @@ pub struct StepRetryConfig {
 /// Get default retry configuration
 #[tauri::command]
 pub async fn bounty_get_default_retry_config() -> Result<StepRetryConfig, String> {
-    ensure_bounty_feature()?;
-
     Ok(StepRetryConfig {
         max_attempts: 3,
         initial_delay_ms: 1000,
@@ -594,8 +592,6 @@ pub struct RateLimiterStats {
 /// Get rate limiter statistics
 #[tauri::command]
 pub async fn bounty_get_rate_limiter_stats() -> Result<RateLimiterStats, String> {
-    ensure_bounty_feature()?;
-
     use sentinel_bounty::services::WorkflowOrchestrator;
 
     let orchestrator = WorkflowOrchestrator::new();
@@ -643,8 +639,6 @@ pub struct InputParamDef {
 /// Get plugin port definitions for data flow
 #[tauri::command]
 pub async fn bounty_get_plugin_ports(plugin_id: String) -> Result<Option<PluginPortInfo>, String> {
-    ensure_bounty_feature()?;
-
     use sentinel_bounty::services::PluginPortRegistry;
 
     let registry = PluginPortRegistry::new();
@@ -703,8 +697,6 @@ pub async fn bounty_get_plugin_ports(plugin_id: String) -> Result<Option<PluginP
 /// Get all registered plugin ports
 #[tauri::command]
 pub async fn bounty_list_plugin_ports() -> Result<Vec<PluginPortInfo>, String> {
-    ensure_bounty_feature()?;
-
     use sentinel_bounty::services::PluginPortRegistry;
 
     let registry = PluginPortRegistry::new();

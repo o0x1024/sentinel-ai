@@ -96,7 +96,40 @@
         </div>
 
         <div v-else class="space-y-3">
-          <MonitorTaskCard v-for="task in tasks" :key="task.id" :task="task" :is-running="isTaskRunning(task.id)" :stopping="stoppingTaskIds.has(task.id)" :progress="getTaskProgress(task.id)" @toggle="toggleTask" @discover="discoverAssets" @stop="stopTask" @trigger="triggerTask" @edit="editTask" @delete="deleteTask" />
+          <template
+            v-for="task in displayTasks"
+            :key="task.id"
+          >
+            <MonitorTaskGroupPanel
+              v-if="isMonitorTaskGroup(task)"
+              :task="task"
+              :is-running="isDisplayTaskRunning(task)"
+              :stopping="isDisplayTaskStopping(task)"
+              :progress="getDisplayTaskProgress(task)"
+              :is-child-running="isChildTaskRunning"
+              :is-child-stopping="isChildTaskStopping"
+              :get-child-progress="getChildTaskProgress"
+              @toggle="toggleTask"
+              @discover="discoverAssets"
+              @stop="stopTask"
+              @trigger="triggerTask"
+              @edit="editTask"
+              @delete="deleteTask"
+            />
+            <MonitorTaskCard
+              v-else
+              :task="task"
+              :is-running="isDisplayTaskRunning(task)"
+              :stopping="isDisplayTaskStopping(task)"
+              :progress="getDisplayTaskProgress(task)"
+              @toggle="toggleTask"
+              @discover="discoverAssets"
+              @stop="stopTask"
+              @trigger="triggerTask"
+              @edit="editTask"
+              @delete="deleteTask"
+            />
+          </template>
         </div>
       </div>
     </div>
@@ -376,6 +409,40 @@
               </div>
 
               <div class="form-control">
+                <div class="flex items-center justify-between gap-3 mb-2">
+                  <label class="label p-0">
+                    <span class="label-text">{{ t('bugBounty.monitor.discoverTargetPrograms') }} *</span>
+                  </label>
+                  <div v-if="isGroupedDiscovery" class="flex gap-2">
+                    <button type="button" class="btn btn-ghost btn-xs" @click="selectAllDiscoverPrograms">
+                      {{ t('bugBounty.monitor.selectAllPrograms') }}
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-xs" @click="clearDiscoverPrograms">
+                      {{ t('bugBounty.monitor.clearSelectedPrograms') }}
+                    </button>
+                  </div>
+                </div>
+                <div class="rounded-lg border border-base-300 bg-base-100 max-h-44 overflow-y-auto">
+                  <label
+                    v-for="program in discoverProgramOptions"
+                    :key="program.id"
+                    class="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-base-200"
+                  >
+                    <input
+                      type="checkbox"
+                      class="checkbox checkbox-sm checkbox-primary"
+                      :checked="discoverForm.program_ids.includes(program.id)"
+                      @change="toggleDiscoverProgram(program.id)"
+                    />
+                    <span class="text-sm">{{ program.name }}</span>
+                  </label>
+                </div>
+                <label class="label">
+                  <span class="label-text-alt">{{ discoverProgramSummary }}</span>
+                </label>
+              </div>
+
+              <div class="form-control">
                 <label class="label"
                   ><span class="label-text">{{ t('bugBounty.monitor.selectPlugin') }} *</span></label
                 >
@@ -494,7 +561,13 @@ import { useMonitorTaskProgress } from '../../composables/useMonitorTaskProgress
 import MonitorRunHistoryDrawer from './MonitorRunHistoryDrawer.vue'
 import MonitorSeedsPanel from './MonitorSeedsPanel.vue'
 import MonitorTaskCard from './MonitorTaskCard.vue'
+import MonitorTaskGroupPanel from './MonitorTaskGroupPanel.vue'
 import MonitorTypeConfigSection from './MonitorTypeConfigSection.vue'
+import {
+  buildMonitorTaskDisplayGroups,
+  getMonitorTaskChildren,
+  isMonitorTaskGroup,
+} from './monitorTaskGrouping'
 import {
   createEmptyPluginConfig,
   mapPluginTree,
@@ -947,6 +1020,10 @@ const selectedProgramSummary = computed(() => {
   return t('bugBounty.monitor.selectedProgramCount', { count: selectedProgramNames.value.length })
 })
 
+const displayTasks = computed(() =>
+  buildMonitorTaskDisplayGroups(tasks.value, programOptions.value)
+)
+
 const configProgramId = computed(() => {
   if (editingTask.value) {
     return taskForm.program_id
@@ -956,12 +1033,44 @@ const configProgramId = computed(() => {
 
 const discoverForm = reactive({
   plugin_id: '',
+  program_ids: [] as string[],
   domain: '',
   urls: '',
   auto_import: true,
 })
 
+const currentDiscoverChildren = computed(() =>
+  currentDiscoverTask.value ? getMonitorTaskChildren(currentDiscoverTask.value) : []
+)
+
+const discoverProgramOptions = computed(() => {
+  const seen = new Set<string>()
+  return currentDiscoverChildren.value.flatMap(child => {
+    const programId = child?.program_id
+    if (!programId || seen.has(programId)) {
+      return []
+    }
+    seen.add(programId)
+    const program = programOptions.value.find(option => option.id === programId)
+    return [{
+      id: programId,
+      name: program ? formatProgramOption(program) : programId,
+    }]
+  })
+})
+
+const isGroupedDiscovery = computed(() => discoverProgramOptions.value.length > 1)
+
+const discoverProgramSummary = computed(() => {
+  const selectedCount = discoverForm.program_ids.length
+  if (selectedCount === 0) {
+    return t('bugBounty.monitor.selectProgramsFirst')
+  }
+  return t('bugBounty.monitor.selectedProgramCount', { count: selectedCount })
+})
+
 const isDiscoverFormValid = computed(() => {
+  if (discoverForm.program_ids.length === 0) return false
   if (!discoverForm.plugin_id) return false
   if (['subdomain_enumerator', 'subdomain_brute'].includes(discoverForm.plugin_id) && !discoverForm.domain) return false
   if (discoverForm.plugin_id === 'http_prober' && !discoverForm.urls) return false
@@ -1027,6 +1136,28 @@ const loadTasks = async (options: LoadTasksOptions = {}) => {
       loading.value = false
     }
   }
+}
+
+const isDisplayTaskRunning = (task: any) =>
+  getMonitorTaskChildren(task).some(child => isTaskRunning(child.id))
+
+const isDisplayTaskStopping = (task: any) =>
+  getMonitorTaskChildren(task).some(child => stoppingTaskIds.value.has(child.id))
+
+const getDisplayTaskProgress = (task: any) => {
+  const runningChild = getMonitorTaskChildren(task).find(child => isTaskRunning(child.id))
+  return runningChild ? getTaskProgress(runningChild.id) : null
+}
+
+const isChildTaskRunning = (task: any) => isTaskRunning(task.id)
+
+const isChildTaskStopping = (task: any) => stoppingTaskIds.value.has(task.id)
+
+const getChildTaskProgress = (task: any) => getTaskProgress(task.id)
+
+const refreshTaskRuntimeState = async () => {
+  await loadTasks({ showLoading: false })
+  await loadRunningTasks(tasks.value)
 }
 
 const loadAvailablePlugins = async () => {
@@ -1143,6 +1274,22 @@ const selectAllPrograms = () => {
   taskForm.program_ids = programOptions.value.map(program => program.id)
 }
 
+const toggleDiscoverProgram = (programId: string) => {
+  if (discoverForm.program_ids.includes(programId)) {
+    discoverForm.program_ids = discoverForm.program_ids.filter(id => id !== programId)
+    return
+  }
+  discoverForm.program_ids = [...discoverForm.program_ids, programId]
+}
+
+const clearDiscoverPrograms = () => {
+  discoverForm.program_ids = []
+}
+
+const selectAllDiscoverPrograms = () => {
+  discoverForm.program_ids = discoverProgramOptions.value.map(program => program.id)
+}
+
 const saveTask = async () => {
   if (!taskForm.name.trim()) return
   const selectedProgramIds = Array.from(new Set(taskForm.program_ids.filter(Boolean)))
@@ -1175,15 +1322,22 @@ const saveTask = async () => {
     const normalizedConfig = await buildTaskConfigForSave(taskForm.config)
 
     if (editingTask.value) {
-      // Update existing task
-      await invoke('monitor_update_task', {
-        taskId: editingTask.value.id,
-        request: {
-          name: taskForm.name,
-          interval_secs: intervalSecs,
-          config: normalizedConfig,
-        },
-      })
+      const children = getMonitorTaskChildren(editingTask.value)
+      await Promise.all(children.map(child => {
+        const programIndex = editingTask.value.program_ids?.indexOf(child.program_id) ?? -1
+        const programName = editingTask.value.program_names?.[programIndex] || child.program_id
+        return invoke('monitor_update_task', {
+          taskId: child.id,
+          request: {
+            name: isMonitorTaskGroup(editingTask.value)
+              ? `${taskForm.name.trim()} - ${programName}`
+              : taskForm.name,
+            group_name: isMonitorTaskGroup(editingTask.value) ? taskForm.name.trim() : null,
+            interval_secs: intervalSecs,
+            config: normalizedConfig,
+          },
+        })
+      }))
       toast.success(t('bugBounty.monitor.taskUpdated'))
     } else {
       const createdTaskIds = await invoke('monitor_create_tasks_for_programs', {
@@ -1209,11 +1363,13 @@ const saveTask = async () => {
 
 const toggleTask = async (task: any) => {
   try {
-    if (task.enabled) {
-      await invoke('monitor_disable_task', { taskId: task.id })
+    const children = getMonitorTaskChildren(task)
+    const shouldDisable = children.some(child => child.enabled)
+    if (shouldDisable) {
+      await Promise.all(children.map(child => invoke('monitor_disable_task', { taskId: child.id })))
       toast.success(t('bugBounty.monitor.taskDisabled'))
     } else {
-      await invoke('monitor_enable_task', { taskId: task.id })
+      await Promise.all(children.map(child => invoke('monitor_enable_task', { taskId: child.id })))
       toast.success(t('bugBounty.monitor.taskEnabled'))
     }
     await loadTasks({ showLoading: false })
@@ -1225,21 +1381,20 @@ const toggleTask = async (task: any) => {
 
 const triggerTask = async (task: any) => {
   try {
-    await invoke('monitor_trigger_task', { taskId: task.id })
-    markTaskQueued(task, t('bugBounty.monitor.progressPreparing'))
+    const children = getMonitorTaskChildren(task)
+    await Promise.all(children.map(child => invoke('monitor_trigger_task', { taskId: child.id })))
+    children.forEach(child => markTaskQueued(child, t('bugBounty.monitor.progressPreparing')))
     toast.success(t('bugBounty.monitor.taskTriggered'))
 
     // Wait a bit for task to start, then reload tasks
     await new Promise(resolve => setTimeout(resolve, 500))
-    await loadTasks({ showLoading: false })
-    await loadRunningTasks()
+    await refreshTaskRuntimeState()
   } catch (error) {
     console.error('Failed to trigger task:', error)
     toast.error(formatInvokeError(error, t('bugBounty.errors.operationFailed')))
     // Still try to reload tasks even if trigger failed
     try {
-      await loadTasks({ showLoading: false })
-      await loadRunningTasks()
+      await refreshTaskRuntimeState()
     } catch (e) {
       console.error('Failed to reload tasks after trigger error:', e)
     }
@@ -1247,10 +1402,15 @@ const triggerTask = async (task: any) => {
 }
 
 const stopTask = async (task: any) => {
+  const children = getMonitorTaskChildren(task).filter(child => isTaskRunning(child.id))
   try {
-    stoppingTaskIds.value = new Set(stoppingTaskIds.value).add(task.id)
-    markTaskStopped(task.id)
-    await invoke('monitor_stop_task', { taskId: task.id })
+    const nextStopping = new Set(stoppingTaskIds.value)
+    children.forEach(child => {
+      nextStopping.add(child.id)
+      markTaskStopped(child.id)
+    })
+    stoppingTaskIds.value = nextStopping
+    await Promise.all(children.map(child => invoke('monitor_stop_task', { taskId: child.id })))
     toast.success(t('bugBounty.monitor.taskStopRequested'))
     await loadRunningTasks(tasks.value)
   } catch (error) {
@@ -1259,23 +1419,25 @@ const stopTask = async (task: any) => {
     await loadRunningTasks(tasks.value)
   } finally {
     const next = new Set(stoppingTaskIds.value)
-    next.delete(task.id)
+    children.forEach(child => next.delete(child.id))
     stoppingTaskIds.value = next
   }
 }
 
 const editTask = (task: any) => {
   editingTask.value = task
-  taskForm.name = task.name
+  taskForm.name = isMonitorTaskGroup(task) ? task.group_name || task.name : task.name
   taskForm.program_id = task.program_id
-  taskForm.program_ids = [task.program_id]
+  taskForm.program_ids = isMonitorTaskGroup(task) ? task.program_ids : [task.program_id]
   setTaskIntervalFields(task.interval_secs)
   taskForm.config = normalizeTaskConfig(task.config)
 }
 
 const deleteTask = async (task: any) => {
   try {
-    await invoke('monitor_delete_task', { taskId: task.id })
+    await Promise.all(
+      getMonitorTaskChildren(task).map(child => invoke('monitor_delete_task', { taskId: child.id }))
+    )
     toast.success(t('bugBounty.monitor.taskDeleted'))
     await loadTasks({ showLoading: false })
   } catch (error) {
@@ -1285,8 +1447,13 @@ const deleteTask = async (task: any) => {
 }
 
 const discoverAssets = (task: any) => {
-  const programId = task.program_id || props.selectedProgram?.id
-  if (!programId) {
+  const programIds = Array.from(
+    new Set(getMonitorTaskChildren(task).map(child => child?.program_id).filter(Boolean))
+  )
+  if (programIds.length === 0 && props.selectedProgram?.id) {
+    programIds.push(props.selectedProgram.id)
+  }
+  if (programIds.length === 0) {
     toast.error(t('bugBounty.monitor.selectProgramFirst'))
     return
   }
@@ -1295,15 +1462,16 @@ const discoverAssets = (task: any) => {
   discoverResult.value = null
   // Reset form
   discoverForm.plugin_id = ''
+  discoverForm.program_ids = programIds
   discoverForm.domain = ''
   discoverForm.urls = ''
   discoverForm.auto_import = true
 }
 
 const executeDiscovery = async () => {
-  const programId = currentDiscoverTask.value?.program_id || props.selectedProgram?.id
+  const programIds = Array.from(new Set(discoverForm.program_ids.filter(Boolean)))
 
-  if (!programId || !currentDiscoverTask.value) return
+  if (programIds.length === 0 || !currentDiscoverTask.value) return
 
   try {
     discovering.value = true
@@ -1326,21 +1494,71 @@ const executeDiscovery = async () => {
       }
     }
 
-    const result = await invoke('monitor_discover_and_import_assets', {
-      request: {
-        program_id: programId,
-        scope_id: null,
-        plugin_id: discoverForm.plugin_id,
-        plugin_input: pluginInput,
-        auto_import: discoverForm.auto_import,
-      },
-    })
+    const results = await Promise.all(programIds.map(async programId => {
+      const program = discoverProgramOptions.value.find(option => option.id === programId)
+      try {
+        const result = await invoke('monitor_discover_and_import_assets', {
+          request: {
+            program_id: programId,
+            scope_id: null,
+            plugin_id: discoverForm.plugin_id,
+            plugin_input: pluginInput,
+            auto_import: discoverForm.auto_import,
+          },
+        })
+        return {
+          program_id: programId,
+          program_name: program?.name || programId,
+          result: result as any,
+        }
+      } catch (error: any) {
+        return {
+          program_id: programId,
+          program_name: program?.name || programId,
+          result: {
+            success: false,
+            error: error?.toString() || 'Unknown error',
+            assets_discovered: 0,
+            assets_imported: 0,
+            events_created: 0,
+          },
+        }
+      }
+    }))
+
+    const failedResults = results.filter(item => !item.result?.success)
+    const result = {
+      success: failedResults.length === 0,
+      error: failedResults.length > 0
+        ? t('bugBounty.monitor.discoveryBatchFailed', {
+          failed: failedResults.length,
+          total: results.length,
+        })
+        : null,
+      assets_discovered: results.reduce(
+        (sum, item) => sum + Number(item.result?.assets_discovered || 0),
+        0
+      ),
+      assets_imported: results.reduce(
+        (sum, item) => sum + Number(item.result?.assets_imported || 0),
+        0
+      ),
+      events_created: results.reduce(
+        (sum, item) => sum + Number(item.result?.events_created || 0),
+        0
+      ),
+      plugin_output: results.map(item => ({
+        program_id: item.program_id,
+        program_name: item.program_name,
+        result: item.result,
+      })),
+    }
 
     discoverResult.value = result
 
-    if ((result as any).success) {
-      if ((result as any).assets_imported > 0) {
-        toast.success(t('bugBounty.monitor.assetsImportedSuccess', { count: (result as any).assets_imported }))
+    if (result.success) {
+      if (result.assets_imported > 0) {
+        toast.success(t('bugBounty.monitor.assetsImportedSuccess', { count: result.assets_imported }))
       } else {
         toast.info(t('bugBounty.monitor.noNewAssets'))
       }
@@ -1366,6 +1584,7 @@ const closeDiscoverModal = () => {
   showDiscoverModal.value = false
   currentDiscoverTask.value = null
   discoverResult.value = null
+  discoverForm.program_ids = []
 }
 
 const openCreateModal = () => {

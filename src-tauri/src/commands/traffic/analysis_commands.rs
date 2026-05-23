@@ -15,10 +15,10 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use sentinel_traffic::{
-    Finding, FindingDeduplicator, HttpRequestRecord,
-    InterceptFilterRule as TrafficInterceptFilterRule, InterceptState, PendingInterceptRequest,
-    PendingInterceptResponse, ProxyConfig, ProxyHistoryCache, ProxyService, ProxyStats,
-    ProxyStatus, ScanPipeline, VulnerabilityFilters,
+    Finding, FindingDeduplicator, HttpRequestRecord, InterceptRuleConfigSet, InterceptState,
+    PendingInterceptRequest, PendingInterceptResponse, ProxyConfig, ProxyHistoryCache,
+    ProxyService, ProxyStats, ProxyStatus, ScanPipeline, VulnerabilityFilters,
+    INTERCEPT_FILTER_RULES_CONFIG_KEY,
 };
 
 use crate::commands::command_response_support::CommandResponse;
@@ -35,15 +35,13 @@ use super::analysis_state_support::{
     InterceptedRequestInternal, InterceptedResponseInternal, InterceptedWebSocketMessageInternal,
 };
 use super::finding_support::TrafficFindingView;
-use super::intercept_commands::InterceptFilterRules;
 use super::replay_support::{
     replay_raw_request as replay_raw_request_impl, RawReplayConfig, RawReplayResult,
     ReplayEndpointInput, ReplayHeaderInput, ReplayRequestInput,
 };
 
-pub use super::analysis_state_support::{
-    InterceptedRequest, InterceptedResponse, TrafficAnalysisState,
-};
+pub use super::analysis_state_support::TrafficAnalysisState;
+pub use sentinel_traffic::{InterceptedRequest, InterceptedResponse};
 
 fn build_proxy_request_record(record: &HttpRequestRecord) -> sentinel_db::ProxyRequestRecord {
     sentinel_db::ProxyRequestRecord {
@@ -332,8 +330,11 @@ pub async fn start_traffic_analysis_internal(
 
     // 从数据库加载拦截过滤规则
     let db_service = state.get_db_service();
-    let loaded_rules = match db_service.load_proxy_config("intercept_filter_rules").await {
-        Ok(Some(json)) => match serde_json::from_str::<InterceptFilterRules>(&json) {
+    let loaded_rules = match db_service
+        .load_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY)
+        .await
+    {
+        Ok(Some(json)) => match serde_json::from_str::<InterceptRuleConfigSet>(&json) {
             Ok(rules) => {
                 tracing::info!(
                     "Loaded {} intercept filter rules from database",
@@ -353,24 +354,11 @@ pub async fn start_traffic_analysis_internal(
     };
 
     // 将加载的规则转换为运行时规则并分类
-    let mut request_rules = Vec::new();
-    let mut response_rules = Vec::new();
-
-    for rule in loaded_rules {
-        let runtime_rule = TrafficInterceptFilterRule {
-            enabled: rule.enabled,
-            operator: "And".to_string(), // Default operator
-            match_type: rule.match_type.clone(),
-            relationship: rule.relationship.clone(),
-            condition: rule.condition.clone(),
-        };
-
-        if rule.rule_type == "request" {
-            request_rules.push(runtime_rule);
-        } else if rule.rule_type == "response" {
-            response_rules.push(runtime_rule);
-        }
-    }
+    let rule_config = InterceptRuleConfigSet {
+        rules: loaded_rules,
+    };
+    let request_rules = rule_config.runtime_rules_for_type("request");
+    let response_rules = rule_config.runtime_rules_for_type("response");
 
     // 更新 state 中的过滤规则
     {

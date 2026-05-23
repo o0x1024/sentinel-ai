@@ -756,12 +756,8 @@ if (typeof get_metadata === 'function') {
             let op_state = self.runtime.op_state();
             let op_state_borrow = op_state.borrow();
             let plugin_ctx = op_state_borrow.borrow::<PluginContext>().clone();
-            if let Some(execution_context) = execution_context {
-                plugin_ctx.set_execution_context(Some(execution_context));
-            }
-            if let Some(run_id) = run_id {
-                plugin_ctx.set_run_id(Some(run_id));
-            }
+            plugin_ctx.set_execution_context(execution_context);
+            plugin_ctx.set_run_id(run_id);
         }
 
         // 依次尝试常见的Agent入口函数名称: analyze -> run -> execute

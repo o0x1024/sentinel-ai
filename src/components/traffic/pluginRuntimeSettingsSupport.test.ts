@@ -18,7 +18,7 @@ describe('pluginRuntimeSettingsSupport', () => {
 
     expect(merged.activeProbe.timeoutMs).toBe(9000)
     expect(merged.bountyFetch.maxQueueDepth).toBe(1000)
-    expect(merged.pluginTestFetch.timeoutMs).toBe(5000)
+    expect(merged.pluginTestFetch.timeoutMs).toBe(3000)
   })
 
   it('clamps invalid numeric values into allowed ranges', () => {
@@ -38,7 +38,7 @@ describe('pluginRuntimeSettingsSupport', () => {
     expect(normalized.activeProbe.maxGlobalConcurrent).toBe(128)
     expect(normalized.activeProbe.minHostCooldownMs).toBe(0)
     expect(normalized.activeProbe.jitterRange).toEqual([100, 9000])
-    expect(normalized.activeProbe.timeoutMs).toBe(3000)
+    expect(normalized.activeProbe.timeoutMs).toBe(120000)
   })
 
   it('balanced preset matches the shipped defaults', () => {

@@ -9,6 +9,9 @@ describe('licenseActivationViewState', () => {
     expect(buildLicenseActivationViewState({
       hasLocalLicense: false,
       isDebugAccess: false,
+      isTrialAccess: false,
+      trialExpiresAt: null,
+      trialDaysRemaining: null,
       featureAccessStatus: {
         exists: false,
         ready: false,
@@ -31,9 +34,9 @@ describe('licenseActivationViewState', () => {
       formatTimestamp,
       formatDuration,
     })).toMatchObject({
-      dialogTitle: '服务端激活',
-      dialogSubtitle: '连接授权服务，完成当前设备激活。',
-      upgradeEntryLabel: '服务端激活',
+      dialogTitle: '输入卡密激活',
+      dialogSubtitle: '输入管理员分配的用户名和激活密钥，完成当前设备激活。',
+      upgradeEntryLabel: '输入卡密激活',
       statusBadgeLabel: '未激活',
       featureAccessTone: 'alert-warning',
       featureAccessText: '当前未完成服务端激活。release 环境下付费功能不可用。',
@@ -44,6 +47,9 @@ describe('licenseActivationViewState', () => {
     expect(buildLicenseActivationViewState({
       hasLocalLicense: true,
       isDebugAccess: false,
+      isTrialAccess: false,
+      trialExpiresAt: null,
+      trialDaysRemaining: null,
       featureAccessStatus: {
         exists: true,
         ready: true,
@@ -81,6 +87,9 @@ describe('licenseActivationViewState', () => {
     expect(buildLicenseActivationViewState({
       hasLocalLicense: true,
       isDebugAccess: false,
+      isTrialAccess: false,
+      trialExpiresAt: null,
+      trialDaysRemaining: null,
       featureAccessStatus: {
         exists: true,
         ready: false,
@@ -105,13 +114,50 @@ describe('licenseActivationViewState', () => {
     })).toMatchObject({
       dialogTitle: '检查授权状态',
       dialogSubtitle: '当前授权令牌不可用，系统会继续从服务端刷新。',
-      upgradeEntryLabel: '服务端激活',
+      upgradeEntryLabel: '输入卡密激活',
       statusBadgeLabel: '待完成',
       featureAccessTone: 'alert-info',
       featureAccessText: '服务端授权不可用：服务端授权已过期。付费功能仍会受限。',
       featureAccessSummary: '当前服务端授权不可用：服务端授权已过期',
       refreshRuntimeText: '自动刷新冷却中，下次重试300s。',
-      refreshServiceHint: '服务端激活尚未配置。请让管理员在 设置 > 安全 > 高级功能权限同步管理 中配置刷新服务。',
+      refreshServiceHint: '当前授权服务不可用。请联系管理员确认卡密平台状态。',
+    })
+  })
+
+  it('describes the 7 day trial state without requiring a server token', () => {
+    expect(buildLicenseActivationViewState({
+      hasLocalLicense: false,
+      isDebugAccess: false,
+      isTrialAccess: true,
+      trialExpiresAt: 700,
+      trialDaysRemaining: 7,
+      featureAccessStatus: {
+        exists: false,
+        ready: false,
+        issueCode: 'missing',
+        tier: null,
+        scopeIds: [],
+        issuedAt: null,
+        expiresAt: null,
+        expiresInSeconds: null,
+        deviceMatched: false,
+        backendError: null,
+      },
+      refreshServiceConfigured: true,
+      refreshRuntime: {
+        last_success_at: null,
+        next_retry_at: null,
+        last_error: null,
+      },
+      refreshCooldownSeconds: 0,
+      formatTimestamp,
+      formatDuration,
+    })).toMatchObject({
+      dialogTitle: '试用授权状态',
+      statusBadgeLabel: '试用 7 天',
+      featureAccessTone: 'alert-success',
+      featureAccessText: '当前为 7 天试用期，付费功能暂可用，剩余 7 天。试用截止：ts:700',
+      refreshRuntimeText: '试用期内不会自动续期。试用结束后输入管理员分配的用户名和卡密完成正式激活。',
     })
   })
 })

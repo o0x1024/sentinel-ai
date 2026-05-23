@@ -1,6 +1,7 @@
 use crate::core::models::mission::{
-    CreateMissionRequest, ListMissionsFilter, Mission, MissionArtifact, MissionDelivery,
-    MissionObservation, MissionRun, MissionStatus, UpdateMissionFieldsRequest,
+    CreateMissionRequest, ListMissionsFilter, Mission, MissionAction, MissionActionResult,
+    MissionArtifact, MissionDelivery, MissionEvent, MissionObservation, MissionRun,
+    MissionRuntimeDetail, MissionStateSnapshot, MissionStatus, UpdateMissionFieldsRequest,
 };
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
@@ -27,6 +28,7 @@ impl DatabaseService {
                 delivery_policy_json TEXT,
                 assistant_profile_id TEXT,
                 trigger_json TEXT,
+                mission_spec_json TEXT,
                 step_plan_json TEXT,
                 success_criteria_json TEXT,
                 context_strategy_json TEXT,
@@ -58,6 +60,46 @@ impl DatabaseService {
                 error_message TEXT,
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS mission_state_snapshots (
+                id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL REFERENCES missions(id),
+                run_id TEXT REFERENCES mission_runs(id),
+                snapshot_index INTEGER NOT NULL,
+                state_json TEXT NOT NULL,
+                state_hash TEXT NOT NULL,
+                created_at DATETIME NOT NULL
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS mission_events (
+                id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL REFERENCES missions(id),
+                run_id TEXT REFERENCES mission_runs(id),
+                event_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                payload_json TEXT,
+                created_at DATETIME NOT NULL
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS mission_actions (
+                id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL REFERENCES missions(id),
+                run_id TEXT NOT NULL REFERENCES mission_runs(id),
+                action_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'recorded',
+                input_json TEXT,
+                result_json TEXT,
+                error_message TEXT,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS mission_action_results (
+                id TEXT PRIMARY KEY,
+                action_id TEXT NOT NULL REFERENCES mission_actions(id),
+                mission_id TEXT NOT NULL REFERENCES missions(id),
+                run_id TEXT NOT NULL REFERENCES mission_runs(id),
+                status TEXT NOT NULL,
+                result_json TEXT,
+                error_message TEXT,
+                created_at DATETIME NOT NULL
             )"#,
             r#"CREATE TABLE IF NOT EXISTS mission_steps (
                 id TEXT PRIMARY KEY,
@@ -122,6 +164,10 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_missions_status_next_run ON missions(status, next_run_at)",
             "CREATE INDEX IF NOT EXISTS idx_mission_runs_mission_id ON mission_runs(mission_id, run_index DESC)",
             "CREATE INDEX IF NOT EXISTS idx_mission_runs_status ON mission_runs(status)",
+            "CREATE INDEX IF NOT EXISTS idx_mission_state_snapshots_mission ON mission_state_snapshots(mission_id, snapshot_index DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_mission_events_mission ON mission_events(mission_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_mission_actions_mission ON mission_actions(mission_id, run_id)",
+            "CREATE INDEX IF NOT EXISTS idx_mission_action_results_action ON mission_action_results(action_id)",
             "CREATE INDEX IF NOT EXISTS idx_mission_steps_run_id ON mission_steps(run_id, step_index)",
             "CREATE INDEX IF NOT EXISTS idx_mission_artifacts_mission ON mission_artifacts(mission_id, run_id)",
             "CREATE INDEX IF NOT EXISTS idx_mission_artifacts_type ON mission_artifacts(mission_id, artifact_type)",
@@ -133,6 +179,29 @@ impl DatabaseService {
 
         for sql in statements {
             sqlx::query(sql).execute(pool).await?;
+        }
+        self.add_sqlite_column_if_missing(pool, "missions", "mission_spec_json", "TEXT")
+            .await?;
+        Ok(())
+    }
+
+    async fn add_sqlite_column_if_missing(
+        &self,
+        pool: &sqlx::SqlitePool,
+        table: &str,
+        column: &str,
+        column_type: &str,
+    ) -> Result<()> {
+        let pragma = format!("PRAGMA table_info({table})");
+        let rows = sqlx::query(&pragma).fetch_all(pool).await?;
+        let exists = rows.iter().any(|row| {
+            sqlx::Row::try_get::<String, _>(row, "name")
+                .map(|name| name == column)
+                .unwrap_or(false)
+        });
+        if !exists {
+            let alter_sql = format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}");
+            sqlx::query(&alter_sql).execute(pool).await?;
         }
         Ok(())
     }
@@ -165,14 +234,14 @@ impl DatabaseService {
             r#"INSERT INTO missions (
                 id, title, objective, status, owner_kind, owner_ref,
                 source_json, delivery_policy_json, assistant_profile_id,
-                trigger_json, step_plan_json, success_criteria_json,
+                trigger_json, mission_spec_json, step_plan_json, success_criteria_json,
                 context_strategy_json, budget_json, failure_policy_json,
                 missed_run_policy, next_run_at, last_run_at, last_error,
                 run_count, created_at, updated_at
             ) VALUES (
                 ?, ?, ?, 'draft', ?, ?,
                 ?, ?, ?,
-                ?, ?, ?,
+                ?, ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, NULL, NULL,
                 0, ?, ?
@@ -187,6 +256,7 @@ impl DatabaseService {
         .bind(&req.delivery_policy_json)
         .bind(&req.assistant_profile_id)
         .bind(&req.trigger_json)
+        .bind(&req.mission_spec_json)
         .bind(&req.step_plan_json)
         .bind(&req.success_criteria_json)
         .bind(&req.context_strategy_json)
@@ -299,6 +369,7 @@ impl DatabaseService {
         maybe_set!(title, "title");
         maybe_set!(objective, "objective");
         maybe_set!(trigger_json, "trigger_json");
+        maybe_set!(mission_spec_json, "mission_spec_json");
         maybe_set!(delivery_policy_json, "delivery_policy_json");
         maybe_set!(assistant_profile_id, "assistant_profile_id");
         maybe_set!(step_plan_json, "step_plan_json");
@@ -329,21 +400,9 @@ impl DatabaseService {
     pub async fn delete_mission(&self, id: &str) -> Result<()> {
         let pool = self.require_sqlite_pool()?;
 
-        let mission = self
-            .get_mission(id)
+        self.get_mission(id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("mission not found: {id}"))?;
-
-        let status: MissionStatus = mission
-            .status
-            .parse()
-            .map_err(|e: String| anyhow::anyhow!(e))?;
-        if !matches!(status, MissionStatus::Draft | MissionStatus::Archived) {
-            bail!(
-                "can only delete missions in draft or archived status, current: {}",
-                status
-            );
-        }
 
         sqlx::query("DELETE FROM mission_locks WHERE mission_id = ?")
             .bind(id)
@@ -354,6 +413,22 @@ impl DatabaseService {
             .execute(pool)
             .await?;
         sqlx::query("DELETE FROM mission_observations WHERE mission_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM mission_action_results WHERE mission_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM mission_actions WHERE mission_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM mission_events WHERE mission_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM mission_state_snapshots WHERE mission_id = ?")
             .bind(id)
             .execute(pool)
             .await?;
@@ -575,6 +650,308 @@ impl DatabaseService {
         .execute(pool)
         .await?;
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Stateful Mission Runtime
+    // -----------------------------------------------------------------------
+
+    pub async fn save_mission_state_snapshot(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+        state_json: &str,
+    ) -> Result<MissionStateSnapshot> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        let id = Uuid::new_v4().to_string();
+        let state_hash = format!("{:x}", md5::compute(state_json.as_bytes()));
+        let next_index: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(snapshot_index), 0) + 1 FROM mission_state_snapshots WHERE mission_id = ?",
+        )
+        .bind(mission_id)
+        .fetch_one(pool)
+        .await?;
+
+        sqlx::query(
+            r#"INSERT INTO mission_state_snapshots (
+                id, mission_id, run_id, snapshot_index, state_json, state_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(&id)
+        .bind(mission_id)
+        .bind(run_id)
+        .bind(next_index)
+        .bind(state_json)
+        .bind(&state_hash)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        sqlx::query_as::<_, MissionStateSnapshot>(
+            "SELECT * FROM mission_state_snapshots WHERE id = ?",
+        )
+        .bind(&id)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn get_latest_mission_state_snapshot(
+        &self,
+        mission_id: &str,
+    ) -> Result<Option<MissionStateSnapshot>> {
+        let pool = self.require_sqlite_pool()?;
+        sqlx::query_as::<_, MissionStateSnapshot>(
+            "SELECT * FROM mission_state_snapshots WHERE mission_id = ? ORDER BY snapshot_index DESC LIMIT 1",
+        )
+        .bind(mission_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn get_latest_mission_state_snapshot_for_run(
+        &self,
+        mission_id: &str,
+        run_id: &str,
+    ) -> Result<Option<MissionStateSnapshot>> {
+        let pool = self.require_sqlite_pool()?;
+        sqlx::query_as::<_, MissionStateSnapshot>(
+            "SELECT * FROM mission_state_snapshots WHERE mission_id = ? AND run_id = ? ORDER BY snapshot_index DESC LIMIT 1",
+        )
+        .bind(mission_id)
+        .bind(run_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn get_mission_runtime_detail(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+        limit: i64,
+    ) -> Result<MissionRuntimeDetail> {
+        let latest_state = match run_id {
+            Some(run_id) => {
+                self.get_latest_mission_state_snapshot_for_run(mission_id, run_id)
+                    .await?
+            }
+            None => self.get_latest_mission_state_snapshot(mission_id).await?,
+        };
+        let observations = self
+            .list_recent_mission_observations(mission_id, run_id, limit)
+            .await?;
+        let events = self.list_mission_events(mission_id, run_id, limit).await?;
+        let actions = self.list_mission_actions(mission_id, run_id, limit).await?;
+        let action_results = self
+            .list_mission_action_results_for_mission(mission_id, run_id, limit)
+            .await?;
+
+        Ok(MissionRuntimeDetail {
+            latest_state,
+            observations,
+            events,
+            actions,
+            action_results,
+        })
+    }
+
+    pub async fn save_mission_event(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+        event_type: &str,
+        title: &str,
+        payload_json: Option<&str>,
+    ) -> Result<MissionEvent> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        let id = Uuid::new_v4().to_string();
+
+        sqlx::query(
+            r#"INSERT INTO mission_events (
+                id, mission_id, run_id, event_type, title, payload_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(&id)
+        .bind(mission_id)
+        .bind(run_id)
+        .bind(event_type)
+        .bind(title)
+        .bind(payload_json)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        sqlx::query_as::<_, MissionEvent>("SELECT * FROM mission_events WHERE id = ?")
+            .bind(&id)
+            .fetch_one(pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn list_mission_events(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<MissionEvent>> {
+        let pool = self.require_sqlite_pool()?;
+        let rows = if let Some(run_id) = run_id {
+            sqlx::query_as::<_, MissionEvent>(
+                "SELECT * FROM mission_events WHERE mission_id = ? AND run_id = ? ORDER BY created_at DESC LIMIT ?",
+            )
+            .bind(mission_id)
+            .bind(run_id)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, MissionEvent>(
+                "SELECT * FROM mission_events WHERE mission_id = ? ORDER BY created_at DESC LIMIT ?",
+            )
+            .bind(mission_id)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        };
+        Ok(rows)
+    }
+
+    pub async fn save_mission_action(
+        &self,
+        mission_id: &str,
+        run_id: &str,
+        action_type: &str,
+        status: &str,
+        input_json: Option<&str>,
+        result_json: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Result<MissionAction> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        let id = Uuid::new_v4().to_string();
+
+        sqlx::query(
+            r#"INSERT INTO mission_actions (
+                id, mission_id, run_id, action_type, status, input_json,
+                result_json, error_message, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(&id)
+        .bind(mission_id)
+        .bind(run_id)
+        .bind(action_type)
+        .bind(status)
+        .bind(input_json)
+        .bind(result_json)
+        .bind(error_message)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        sqlx::query_as::<_, MissionAction>("SELECT * FROM mission_actions WHERE id = ?")
+            .bind(&id)
+            .fetch_one(pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn list_mission_actions(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<MissionAction>> {
+        let pool = self.require_sqlite_pool()?;
+        let rows = if let Some(run_id) = run_id {
+            sqlx::query_as::<_, MissionAction>(
+                "SELECT * FROM mission_actions WHERE mission_id = ? AND run_id = ? ORDER BY created_at DESC LIMIT ?",
+            )
+            .bind(mission_id)
+            .bind(run_id)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, MissionAction>(
+                "SELECT * FROM mission_actions WHERE mission_id = ? ORDER BY created_at DESC LIMIT ?",
+            )
+            .bind(mission_id)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        };
+        Ok(rows)
+    }
+
+    pub async fn save_mission_action_result(
+        &self,
+        action_id: &str,
+        mission_id: &str,
+        run_id: &str,
+        status: &str,
+        result_json: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Result<MissionActionResult> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        let id = Uuid::new_v4().to_string();
+
+        sqlx::query(
+            r#"INSERT INTO mission_action_results (
+                id, action_id, mission_id, run_id, status, result_json, error_message, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(&id)
+        .bind(action_id)
+        .bind(mission_id)
+        .bind(run_id)
+        .bind(status)
+        .bind(result_json)
+        .bind(error_message)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        sqlx::query_as::<_, MissionActionResult>(
+            "SELECT * FROM mission_action_results WHERE id = ?",
+        )
+        .bind(&id)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn list_mission_action_results_for_mission(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<MissionActionResult>> {
+        let pool = self.require_sqlite_pool()?;
+        let rows = if let Some(run_id) = run_id {
+            sqlx::query_as::<_, MissionActionResult>(
+                "SELECT * FROM mission_action_results WHERE mission_id = ? AND run_id = ? ORDER BY created_at DESC LIMIT ?",
+            )
+            .bind(mission_id)
+            .bind(run_id)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, MissionActionResult>(
+                "SELECT * FROM mission_action_results WHERE mission_id = ? ORDER BY created_at DESC LIMIT ?",
+            )
+            .bind(mission_id)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        };
+        Ok(rows)
     }
 
     // -----------------------------------------------------------------------
@@ -888,6 +1265,34 @@ impl DatabaseService {
         Ok(rows)
     }
 
+    pub async fn list_recent_mission_observations(
+        &self,
+        mission_id: &str,
+        run_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<MissionObservation>> {
+        let pool = self.require_sqlite_pool()?;
+        let rows = if let Some(run_id) = run_id {
+            sqlx::query_as::<_, MissionObservation>(
+                "SELECT * FROM mission_observations WHERE mission_id = ? AND run_id = ? ORDER BY created_at DESC LIMIT ?",
+            )
+            .bind(mission_id)
+            .bind(run_id)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, MissionObservation>(
+                "SELECT * FROM mission_observations WHERE mission_id = ? ORDER BY created_at DESC LIMIT ?",
+            )
+            .bind(mission_id)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?
+        };
+        Ok(rows)
+    }
+
     // -----------------------------------------------------------------------
     // Deliveries
     // -----------------------------------------------------------------------
@@ -987,5 +1392,220 @@ impl DatabaseService {
             Some(_) => bail!("Mission operations require SQLite database"),
             None => bail!("数据库未初始化"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database_service::connection_manager::DatabasePool;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn in_memory_service() -> DatabaseService {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite memory pool");
+        let mut service = DatabaseService::new();
+        service.runtime_pool = Some(DatabasePool::SQLite(pool.clone()));
+        service
+            .create_mission_schema(&pool)
+            .await
+            .expect("mission schema");
+        service
+    }
+
+    #[tokio::test]
+    async fn mission_runtime_state_records_are_persisted() {
+        let service = in_memory_service().await;
+        let mission = service
+            .create_mission(CreateMissionRequest {
+                title: "Stateful mission".to_string(),
+                objective: "Advance durable state".to_string(),
+                owner_kind: "user".to_string(),
+                owner_ref: "default".to_string(),
+                source_json: None,
+                delivery_policy_json: None,
+                assistant_profile_id: None,
+                trigger_json: Some(serde_json::json!({"kind":"manual"}).to_string()),
+                mission_spec_json: Some(
+                    serde_json::json!({
+                        "kind": "generic_stateful_mission",
+                        "state_schema": {"type": "object"},
+                        "action_schema": {"type": "object"},
+                        "completion_policy": {"kind": "manual_or_agent_completion"},
+                        "report_policy": {"kind": "each_run_summary"}
+                    })
+                    .to_string(),
+                ),
+                step_plan_json: None,
+                success_criteria_json: None,
+                context_strategy_json: None,
+                budget_json: None,
+                failure_policy_json: None,
+                missed_run_policy: "skip".to_string(),
+                next_run_at: None,
+            })
+            .await
+            .expect("create mission");
+        let run = service
+            .create_mission_run(&mission.id, "manual")
+            .await
+            .expect("create run");
+
+        let snapshot = service
+            .save_mission_state_snapshot(&mission.id, Some(&run.id), r#"{"day":1}"#)
+            .await
+            .expect("save state");
+        assert_eq!(snapshot.snapshot_index, 1);
+
+        let latest = service
+            .get_latest_mission_state_snapshot(&mission.id)
+            .await
+            .expect("latest state")
+            .expect("state exists");
+        assert_eq!(latest.state_json, r#"{"day":1}"#);
+
+        let action = service
+            .save_mission_action(
+                &mission.id,
+                &run.id,
+                "record_decision",
+                "succeeded",
+                Some(r#"{"input":true}"#),
+                Some(r#"{"ok":true}"#),
+                None,
+            )
+            .await
+            .expect("save action");
+        service
+            .save_mission_action_result(
+                &action.id,
+                &mission.id,
+                &run.id,
+                "succeeded",
+                Some(r#"{"ok":true}"#),
+                None,
+            )
+            .await
+            .expect("save action result");
+        service
+            .save_mission_event(
+                &mission.id,
+                Some(&run.id),
+                "mission_tick_completed",
+                "Tick completed",
+                Some(r#"{"summary":"ok"}"#),
+            )
+            .await
+            .expect("save event");
+
+        let detail = service
+            .get_mission_runtime_detail(&mission.id, None, 10)
+            .await
+            .expect("runtime detail");
+        assert_eq!(
+            detail.latest_state.expect("latest state").state_json,
+            r#"{"day":1}"#
+        );
+        assert_eq!(detail.actions.len(), 1);
+        assert_eq!(detail.action_results.len(), 1);
+        assert_eq!(detail.events.len(), 1);
+
+        let run_detail = service
+            .get_mission_runtime_detail(&mission.id, Some(&run.id), 10)
+            .await
+            .expect("runtime detail for run");
+        assert_eq!(
+            run_detail.latest_state.expect("run state").state_json,
+            r#"{"day":1}"#
+        );
+        assert_eq!(run_detail.actions.len(), 1);
+        assert_eq!(run_detail.action_results.len(), 1);
+        assert_eq!(run_detail.events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn active_mission_can_be_deleted_manually() {
+        let service = in_memory_service().await;
+        let mission = service
+            .create_mission(CreateMissionRequest {
+                title: "Delete active mission".to_string(),
+                objective: "Manual delete should remove active missions".to_string(),
+                owner_kind: "user".to_string(),
+                owner_ref: "default".to_string(),
+                source_json: None,
+                delivery_policy_json: None,
+                assistant_profile_id: None,
+                trigger_json: Some(serde_json::json!({"kind":"manual"}).to_string()),
+                mission_spec_json: None,
+                step_plan_json: None,
+                success_criteria_json: None,
+                context_strategy_json: None,
+                budget_json: None,
+                failure_policy_json: None,
+                missed_run_policy: "skip".to_string(),
+                next_run_at: None,
+            })
+            .await
+            .expect("create mission");
+
+        let active = service
+            .update_mission_status(&mission.id, "active")
+            .await
+            .expect("activate mission");
+        assert_eq!(active.status, "active");
+
+        let run = service
+            .create_mission_run(&mission.id, "manual")
+            .await
+            .expect("create run");
+        service
+            .save_mission_state_snapshot(&mission.id, Some(&run.id), r#"{"day":1}"#)
+            .await
+            .expect("save state");
+        let action = service
+            .save_mission_action(&mission.id, &run.id, "hold", "succeeded", None, None, None)
+            .await
+            .expect("save action");
+        service
+            .save_mission_action_result(&action.id, &mission.id, &run.id, "succeeded", None, None)
+            .await
+            .expect("save action result");
+        service
+            .save_mission_event(
+                &mission.id,
+                Some(&run.id),
+                "deleted_test",
+                "Delete test",
+                None,
+            )
+            .await
+            .expect("save event");
+
+        service
+            .delete_mission(&mission.id)
+            .await
+            .expect("delete active mission");
+
+        assert!(service
+            .get_mission(&mission.id)
+            .await
+            .expect("get mission")
+            .is_none());
+        assert!(service
+            .list_mission_runs(&mission.id, 10, 0)
+            .await
+            .expect("list runs")
+            .is_empty());
+        let detail = service
+            .get_mission_runtime_detail(&mission.id, None, 10)
+            .await
+            .expect("runtime detail");
+        assert!(detail.latest_state.is_none());
+        assert!(detail.actions.is_empty());
+        assert!(detail.action_results.is_empty());
+        assert!(detail.events.is_empty());
     }
 }

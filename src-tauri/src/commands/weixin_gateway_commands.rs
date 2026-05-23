@@ -1,5 +1,6 @@
 use crate::services::ai::AiServiceManager;
 use crate::services::database::DatabaseService;
+use crate::services::ensure_bot_console_access;
 use crate::services::weixin_gateway::{
     start_weixin_gateway_runtime, stop_weixin_gateway_runtime, weixin_gateway_status,
     WeixinGatewayConfig, WeixinGatewayStatus, WeixinIlinkClient, WeixinQrLoginResponse,
@@ -55,6 +56,7 @@ pub async fn auto_start_weixin_gateway_if_enabled(
     if !config.enabled {
         return Ok(());
     }
+    ensure_bot_console_access()?;
     start_weixin_gateway_runtime(config, db, ai_manager, app_handle).await
 }
 
@@ -70,6 +72,8 @@ pub async fn save_weixin_gateway_config(
     mut config: WeixinGatewayConfig,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
+    ensure_bot_console_access()?;
+
     config.normalize();
     save_weixin_gateway_config_internal(db.inner(), &config).await
 }
@@ -81,6 +85,8 @@ pub async fn start_weixin_gateway(
     ai_manager: State<'_, Arc<AiServiceManager>>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
+    ensure_bot_console_access()?;
+
     let resolved = if let Some(mut config) = config {
         config.normalize();
         config
@@ -99,6 +105,8 @@ pub async fn start_weixin_gateway(
 
 #[tauri::command]
 pub async fn stop_weixin_gateway() -> Result<String, String> {
+    ensure_bot_console_access()?;
+
     stop_weixin_gateway_runtime().await?;
     Ok("Weixin gateway stopped".to_string())
 }
@@ -112,6 +120,8 @@ pub async fn get_weixin_gateway_status() -> Result<WeixinGatewayStatus, String> 
 pub async fn create_weixin_qr_login(
     bot_type: Option<String>,
 ) -> Result<WeixinQrLoginResponse, String> {
+    ensure_bot_console_access()?;
+
     let client = WeixinIlinkClient::new()?;
     client
         .create_qr_login(bot_type.as_deref().unwrap_or("3"))
@@ -124,6 +134,8 @@ pub async fn poll_weixin_qr_login(
     base_url: Option<String>,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<WeixinQrLoginStatus, String> {
+    ensure_bot_console_access()?;
+
     let client = WeixinIlinkClient::new()?;
     let (status, credentials) = client
         .poll_qr_login_with_credentials(&qrcode, base_url.as_deref())

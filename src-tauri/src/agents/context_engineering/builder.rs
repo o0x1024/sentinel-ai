@@ -135,6 +135,7 @@ fn build_tool_usage_priority_block(
     has_bound_browser_shell_session: bool,
 ) -> String {
     let has_ask_user_question = tool_is_selected(selected_tool_ids, "ask_user_question");
+    let has_memory = tool_is_selected(selected_tool_ids, "memory");
     let has_shell = tool_is_selected(selected_tool_ids, "shell");
     let has_browser_shell = tool_is_selected(selected_tool_ids, "browser_shell");
     let has_glob = tool_is_selected(selected_tool_ids, "glob");
@@ -145,10 +146,21 @@ fn build_tool_usage_priority_block(
         "Use only tools that are actually available in this run. Do not guess or call tool names outside the active toolset.".to_string(),
     ];
 
+    if has_memory {
+        lines.push(
+            "For questions about remembered user facts, preferences, habits, prior statements, or saved decisions, use `memory` action=`retrieve` first. Do not ask the user to repeat stored preferences unless memory retrieval returns no relevant result.".to_string(),
+        );
+    }
+
     if has_ask_user_question {
         lines.push(
             "Use `ask_user_question` when requirements are ambiguous, when multiple implementation paths are viable, or when you need the user to choose between concrete options.".to_string(),
         );
+        if has_memory {
+            lines.push(
+                "`ask_user_question` is not the first step for questions like what the user likes, remembers, previously said, or prefers; retrieve memory first, then ask only if the memory result is empty or conflicting.".to_string(),
+            );
+        }
     }
 
     let mut file_search_tools = Vec::new();
@@ -1461,6 +1473,7 @@ mod tests {
         let rendered = build_tool_usage_priority_block(
             &vec![
                 "ask_user_question".to_string(),
+                "memory".to_string(),
                 "interactive_shell".to_string(),
                 "browser_shell".to_string(),
             ],
@@ -1468,6 +1481,8 @@ mod tests {
         );
 
         assert!(rendered.contains("Use `ask_user_question`"));
+        assert!(rendered.contains("use `memory` action=`retrieve` first"));
+        assert!(rendered.contains("retrieve memory first"));
         assert!(!rendered.contains("Use one-shot `shell`"));
         assert!(!rendered.contains("Use `interactive_shell`"));
         assert!(rendered.contains("Use `browser_shell`"));

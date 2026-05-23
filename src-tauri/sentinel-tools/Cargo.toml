@@ -72,21 +72,6 @@ rsubdomain = "1.2.14"
 jsonschema = "0.17.1"
 oar-ocr = { version = "0.5.0", optional = true }
 
-# Code Property Graph (CPG) engine - tree-sitter parsers
-tree-sitter = "0.24"
-tree-sitter-javascript = "0.23"
-tree-sitter-python = "0.23"
-tree-sitter-rust = "0.23"
-tree-sitter-java = "0.23"
-tree-sitter-go = "0.23"
-tree-sitter-c = "0.23"
-tree-sitter-cpp = "0.23"
-tree-sitter-typescript = "0.23"
-tree-sitter-php = "0.23"
-tree-sitter-ruby = "0.23"
-tree-sitter-c-sharp = "0.23"
-petgraph = "0.8.3"
-
 # WebSocket for interactive terminal
 tokio-tungstenite = "0.28.0"
 bytes = "1.8"

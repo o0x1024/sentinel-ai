@@ -6,6 +6,7 @@ const SHELL_TOOL_NAMES = new Set([
 ])
 const FILE_TOOL_NAMES = new Set(['file_read', 'file_write', 'file_edit'])
 const SEARCH_TOOL_NAMES = new Set(['glob', 'grep'])
+const HTTP_REQUEST_TOOL_NAME = 'http_request'
 
 const normalizeErrorText = (value: unknown): string => {
   if (typeof value === 'string') return value.trim().toLowerCase()
@@ -30,6 +31,20 @@ export const isFileToolName = (toolName: unknown): boolean => {
 export const isSearchToolName = (toolName: unknown): boolean => {
   const normalized = String(toolName || '').trim().toLowerCase()
   return SEARCH_TOOL_NAMES.has(normalized)
+}
+
+export const getToolHeaderDetail = (params: {
+  toolName?: unknown
+  args?: unknown
+}): string => {
+  const normalized = String(params.toolName || '').trim().toLowerCase()
+  if (normalized !== HTTP_REQUEST_TOOL_NAME) return ''
+  if (!params.args || typeof params.args !== 'object' || Array.isArray(params.args)) return ''
+
+  const url = (params.args as Record<string, unknown>).url
+  if (typeof url !== 'string') return ''
+
+  return url.trim()
 }
 
 export const shouldRenderSpecializedShellTool = (params: {

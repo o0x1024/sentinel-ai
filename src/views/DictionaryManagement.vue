@@ -21,63 +21,63 @@
       </div>
     </div>
 
-    <!-- 字典类型过滤器 -->
-    <div class="dictionary-type-tabs mb-6">
-      <div class="tabs tabs-boxed dictionary-tabs-list">
-      <a 
-        v-for="type in dictionaryTypes" 
-        :key="type.value"
-        class="tab dictionary-tab"
-        :class="{ 'tab-active': selectedType === type.value }"
-        @click="onTypeChange(type.value)"
-      >
-        <i :class="type.icon"></i>
-        <span class="dictionary-tab-label">{{ t(`dictionary.types.${type.value}`, type.label) }}</span>
-      </a>
+    <!-- 字典分组导航 -->
+    <div class="dictionary-group-nav mb-6">
+      <div class="dictionary-group-bar">
+        <button
+          v-for="group in categoryGroups"
+          :key="group.key"
+          class="dict-group-btn"
+          :class="{ active: activeGroup === group.key }"
+          @click="onGroupChange(group.key)"
+        >
+          <i :class="group.icon"></i>
+          <span>{{ group.label }}</span>
+          <span v-if="group.count" class="dict-group-count">{{ group.count }}</span>
+        </button>
+      </div>
+
+      <!-- 二级类型筛选 chips -->
+      <div v-if="activeGroupTypes.length > 1" class="dictionary-type-chips">
+        <button
+          class="dict-type-chip"
+          :class="{ active: selectedType === 'all' && activeGroup !== 'all' }"
+          @click="onTypeChange('all')"
+        >
+          {{ t('dictionary.types.all', '全部') }}
+        </button>
+        <button
+          v-for="type in activeGroupTypes"
+          :key="type.value"
+          class="dict-type-chip"
+          :class="{ active: selectedType === type.value }"
+          @click="onTypeChange(type.value)"
+        >
+          <i :class="type.icon" class="dict-chip-icon"></i>
+          {{ t(`dictionary.types.${type.value}`, type.label) }}
+        </button>
       </div>
     </div>
 
-    <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-      <div class="flex flex-col gap-4 self-start lg:self-auto lg:flex-row lg:items-end">
-        <div class="flex items-center gap-3">
-          <span class="text-sm text-base-content/70">{{ t('dictionary.viewMode', '显示方式') }}</span>
-          <div class="join">
-            <button
-              class="btn btn-sm join-item"
-              :class="viewMode === 'list' ? 'btn-primary' : 'btn-ghost'"
-              @click="viewMode = 'list'"
-            >
-              <i class="fas fa-list mr-2"></i>
-              {{ t('dictionary.viewModes.list', '列表') }}
-            </button>
-            <button
-              class="btn btn-sm join-item"
-              :class="viewMode === 'card' ? 'btn-primary' : 'btn-ghost'"
-              @click="viewMode = 'card'"
-            >
-              <i class="fas fa-th-large mr-2"></i>
-              {{ t('dictionary.viewModes.card', '卡片') }}
-            </button>
-          </div>
-        </div>
-
-        <div v-if="subtypeFilterVisible" class="min-w-60 max-w-sm">
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('dictionary.subtypeFilter', '子类型筛选') }}</span>
-            </label>
-            <select v-model="selectedSubtype" class="select select-bordered" @change="onSubtypeChange">
-              <option value="">{{ t('dictionary.allSubtypes', '全部子类型') }}</option>
-              <option
-                v-for="option in availableSubtypeOptions"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </option>
-            </select>
-          </div>
-        </div>
+    <div class="mb-4 flex items-center gap-3">
+      <span class="text-sm text-base-content/70">{{ t('dictionary.viewMode', '显示方式') }}</span>
+      <div class="join">
+        <button
+          class="btn btn-xs join-item"
+          :class="viewMode === 'list' ? 'btn-primary' : 'btn-ghost'"
+          @click="viewMode = 'list'"
+        >
+          <i class="fas fa-list mr-1"></i>
+          {{ t('dictionary.viewModes.list', '列表') }}
+        </button>
+        <button
+          class="btn btn-xs join-item"
+          :class="viewMode === 'card' ? 'btn-primary' : 'btn-ghost'"
+          @click="viewMode = 'card'"
+        >
+          <i class="fas fa-th-large mr-1"></i>
+          {{ t('dictionary.viewModes.card', '卡片') }}
+        </button>
       </div>
     </div>
 
@@ -188,7 +188,7 @@
 
     <!-- 词条管理模态框 -->
     <Teleport to="body">
-    <div v-if="managingDictionary" class="modal modal-open dictionary-modal">
+    <div v-if="managingDictionary" class="modal modal-open dictionary-modal" @click.self="closeManagedDictionaryWordsModal">
       <div class="modal-box max-w-4xl dictionary-modal-box">
         <h3 class="font-bold text-lg mb-4">
           {{ t('dictionary.manageWords', '管理词条') }} - {{ managingDictionary.name }}
@@ -241,6 +241,10 @@
           <button class="btn btn-secondary" @click="showImportModal = true">
             <i class="fas fa-upload mr-2"></i>
             {{ t('dictionary.import', '导入') }}
+          </button>
+          <button class="btn btn-accent" @click="showAiGenerateModal = true">
+            <i class="fas fa-magic mr-2"></i>
+            {{ isStructuredManagingDictionary ? 'AI生成规则' : 'AI生成字典' }}
           </button>
         </div>
         
@@ -353,7 +357,7 @@
           @export-selected="exportSelectedRules"
           @remove-selected="removeSelectedWords"
           @clear="clearDictionary"
-          @close="closeDictionaryWordsModal"
+          @close="closeManagedDictionaryWordsModal"
         />
         
       </div>
@@ -377,9 +381,19 @@
       @save="applyBatchRuleEdit"
     />
 
+    <DictionaryAIGenerateModal
+      :open="showAiGenerateModal"
+      :dictionary-name="managingDictionary?.name || ''"
+      :dictionary-type="managingDictionary?.dict_type || ''"
+      :is-structured="isStructuredManagingDictionary"
+      :generating="aiGenerating"
+      @cancel="closeAiGenerateModal"
+      @generate="generateDictionaryEntries"
+    />
+
     <!-- 导入模态框 -->
     <Teleport to="body">
-    <div v-if="showImportModal" class="modal modal-open dictionary-modal">
+    <div v-if="showImportModal" class="modal modal-open dictionary-modal" @click.self="showImportModal = false">
       <div class="modal-box dictionary-modal-box">
         <h3 class="font-bold text-lg mb-4">{{ t('dictionary.importWords', '导入词条') }}</h3>
         
@@ -480,6 +494,7 @@ import { writeTextFile }  from '@tauri-apps/plugin-fs';
 import DictionaryCardGrid from '@/components/Dictionary/DictionaryCardGrid.vue'
 import DictionaryListTable from '@/components/Dictionary/DictionaryListTable.vue'
 import DictionaryEmptyRuleState from '@/components/Dictionary/DictionaryEmptyRuleState.vue'
+import DictionaryAIGenerateModal from '@/components/Dictionary/DictionaryAIGenerateModal.vue'
 import DictionaryFormModal from '@/components/Dictionary/DictionaryFormModal.vue'
 import VirtualList from '@/components/VirtualList.vue'
 import DictionaryWordActionBar from '@/components/Dictionary/DictionaryWordActionBar.vue'
@@ -487,6 +502,7 @@ import RuleEntryEditorModal from '@/components/Dictionary/RuleEntryEditorModal.v
 import RuleBatchEditModal from '@/components/Dictionary/RuleBatchEditModal.vue'
 import StructuredRuleFilters from '@/components/Dictionary/StructuredRuleFilters.vue'
 import StructuredRuleWordList from '@/components/Dictionary/StructuredRuleWordList.vue'
+import { dialog } from '@/composables/useDialog'
 import {
   getAllSubtypeOptions,
   getSubtypeOptions,
@@ -537,6 +553,17 @@ type DictionaryView = Pick<Dictionary, 'id' | 'name' | 'dict_type' | 'service_ty
   is_builtin?: boolean;
 }
 
+interface GeneratedDictionaryEntry {
+  word: string
+  weight?: number | null
+  category?: string | null
+  metadata?: Record<string, any> | null
+}
+
+interface GenerateDictionaryEntriesResponse {
+  entries: GeneratedDictionaryEntry[]
+}
+
 // 响应式数据
 const dictionaries = ref<Dictionary[]>([])
 const selectedType = ref('all')
@@ -551,6 +578,8 @@ const showCreateModal = ref(false)
 const editingDictionary = ref<Dictionary | null>(null)
 const saving = ref(false)
 const initializing = ref(false)
+const showAiGenerateModal = ref(false)
+const aiGenerating = ref(false)
 // 默认字典映射：{ [dict_type]: dictionary_id }
 const defaultMap = ref<Record<string, string>>({})
 const pageSizeOptions = [10, 20, 50, 100]
@@ -586,6 +615,66 @@ const dictionaryTypes = [
   { value: 'custom', label: t('dictionary.types.custom', '自定义'), icon: 'fas fa-cog' }
 ]
 
+// 分组定义
+interface CategoryGroup {
+  key: string
+  label: string
+  icon: string
+  types: string[]  // 该分组包含的 dict_type values
+  count?: number
+}
+
+const categoryGroupDefs: CategoryGroup[] = [
+  {
+    key: 'all',
+    label: t('dictionary.types.all', '全部'),
+    icon: 'fas fa-layer-group',
+    types: [],
+  },
+  {
+    key: 'brute',
+    label: t('dictionary.groups.brute', '爆破字典'),
+    icon: 'fas fa-crosshairs',
+    types: ['subdomain', 'username', 'password', 'path', 'filename', 'extension', 'port', 'api_endpoint', 'http_param'],
+  },
+  {
+    key: 'rules',
+    label: t('dictionary.groups.rules', '安全规则'),
+    icon: 'fas fa-shield-alt',
+    types: ['sensitive_file', 'service_probe_rule', 'fingerprint_rule', 'poc_rule'],
+  },
+  {
+    key: 'payloads',
+    label: t('dictionary.groups.payloads', '攻击载荷'),
+    icon: 'fas fa-bolt',
+    types: ['xss_payload', 'sql_injection_payload'],
+  },
+  {
+    key: 'custom',
+    label: t('dictionary.types.custom', '自定义'),
+    icon: 'fas fa-cog',
+    types: ['custom'],
+  },
+]
+
+const activeGroup = ref('all')
+
+const categoryGroups = computed(() => {
+  return categoryGroupDefs.map(g => ({
+    ...g,
+    count: g.key === 'all' ? undefined : g.types.length,
+  }))
+})
+
+const activeGroupTypes = computed(() => {
+  const group = categoryGroupDefs.find(g => g.key === activeGroup.value)
+  if (!group || group.types.length === 0) return []
+  return group.types.map(typeValue => {
+    const typeDef = dictionaryTypes.find(t => t.value === typeValue)
+    return typeDef || { value: typeValue, label: typeValue, icon: 'fas fa-circle' }
+  })
+})
+
 // 服务类型定义
 const serviceTypes = [
   { value: 'web', label: t('dictionary.serviceTypes.web', '网站服务') },
@@ -600,11 +689,33 @@ const serviceTypes = [
 const pageCount = computed(() => Math.max(1, Math.ceil(totalDictionaries.value / pageSize.value)))
 
 // 方法
+/** 根据当前 group + type 选择，计算实际要发给后端的 dict_type 参数 */
+const effectiveDictType = computed(() => {
+  // 如果直接选了某个具体类型
+  if (selectedType.value !== 'all') return selectedType.value
+  // 如果 group 是 all，不传类型
+  const group = categoryGroupDefs.find(g => g.key === activeGroup.value)
+  if (!group || group.types.length === 0) return null
+  // 如果 group 只有一个类型，直接返回
+  if (group.types.length === 1) return group.types[0]
+  // 多类型 group 且选择了 "全部"，返回 null 让后端不过滤
+  // 但我们需要在前端做 group 范围过滤
+  return null
+})
+
+/** group 内需要过滤的类型列表 (当 effectiveDictType 为 null 但 group != all 时) */
+const groupTypeFilter = computed(() => {
+  if (activeGroup.value === 'all' || selectedType.value !== 'all') return null
+  const group = categoryGroupDefs.find(g => g.key === activeGroup.value)
+  return group && group.types.length > 1 ? group.types : null
+})
+
 const loadDictionaries = async () => {
   loadingDictionaries.value = true
   try {
     const result = await invoke<DictionaryPageResponse>('get_dictionaries_paged', {
-      dict_type: selectedType.value === 'all' ? null : selectedType.value,
+      dict_type: effectiveDictType.value,
+      dict_types: groupTypeFilter.value,
       service_type: null,
       category: null,
       is_builtin: null,
@@ -820,6 +931,7 @@ const {
   openRuleEditor,
   removeSelectedWords,
   removeWord,
+  resetAndLoadFirstPage,
   ruleCategoryFilter,
   ruleEnabledFilter,
   ruleProbeNameFilter,
@@ -846,6 +958,63 @@ const {
   onDictionaryChanged: loadDictionaries,
   confirmClearMessage: t('dictionary.confirmClear', '确定要清空这个字典吗？'),
 })
+
+const closeAiGenerateModal = () => {
+  if (aiGenerating.value) return
+  showAiGenerateModal.value = false
+}
+
+const closeManagedDictionaryWordsModal = () => {
+  if (aiGenerating.value) return
+  showAiGenerateModal.value = false
+  showImportModal.value = false
+  closeDictionaryWordsModal()
+}
+
+const generateDictionaryEntries = async (payload: { prompt: string; count: number }) => {
+  if (!managingDictionary.value || !payload.prompt.trim()) return
+
+  aiGenerating.value = true
+  try {
+    const response = await invoke<GenerateDictionaryEntriesResponse>('generate_dictionary_entries', {
+      request: {
+        dictionary_name: managingDictionary.value.name,
+        dict_type: managingDictionary.value.dict_type,
+        service_type: managingDictionary.value.service_type || null,
+        subtype: getDictionarySubtypeKey(managingDictionary.value),
+        prompt: payload.prompt.trim(),
+        count: payload.count,
+      },
+    })
+
+    const entries = response.entries || []
+    if (entries.length === 0) {
+      throw new Error('AI 未返回可写入的词条')
+    }
+
+    if (isStructuredManagingDictionary.value) {
+      await invoke('add_dictionary_entries', {
+        dictionary_id: managingDictionary.value.id,
+        entries,
+      })
+    } else {
+      await invoke('add_dictionary_words', {
+        dictionary_id: managingDictionary.value.id,
+        words: entries.map(entry => entry.word).filter(Boolean),
+      })
+    }
+
+    showAiGenerateModal.value = false
+    await resetAndLoadFirstPage()
+    await loadDictionaries()
+    dialog.toast.success(`AI 已生成 ${entries.length} 条${isStructuredManagingDictionary.value ? '规则' : '词条'}`)
+  } catch (error) {
+    console.error('Failed to generate dictionary entries with AI:', error)
+    await dialog.error(error instanceof Error ? error.message : String(error))
+  } finally {
+    aiGenerating.value = false
+  }
+}
 
 const closeModal = () => {
   showCreateModal.value = false
@@ -893,6 +1062,28 @@ const subtypeFilterVisible = computed(() => availableSubtypeOptions.value.length
 const managingDictionarySubtypeKey = computed(() =>
   managingDictionary.value ? getDictionarySubtypeKey(managingDictionary.value) : null
 )
+
+const onGroupChange = (groupKey: string) => {
+  if (activeGroup.value === groupKey) return
+  activeGroup.value = groupKey
+  const group = categoryGroupDefs.find(g => g.key === groupKey)
+  if (!group || group.types.length === 0) {
+    // "全部" 分组
+    selectedType.value = 'all'
+  } else if (group.types.length === 1) {
+    // 只有一个类型的分组，直接选中
+    selectedType.value = group.types[0]
+  } else {
+    // 多类型分组，默认显示全部
+    selectedType.value = 'all'
+  }
+  if (!availableSubtypeOptions.value.some(option => option.value === selectedSubtype.value)) {
+    selectedSubtype.value = ''
+  }
+  currentPage.value = 1
+  pageInput.value = '1'
+  loadDictionaries()
+}
 
 const onTypeChange = (value: string) => {
   if (selectedType.value === value) return
@@ -1005,44 +1196,126 @@ onMounted(async () => {
 .dict-grid {
   display: grid;
   grid-template-columns: 3rem minmax(0, 1fr) 12rem 5rem;
-  column-gap: 1rem; /* 等价于 gap-x-4 */
+  column-gap: 1rem;
 }
 
-.dictionary-type-tabs {
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 0.25rem;
-  scrollbar-width: thin;
+/* ── 分组导航 ── */
+.dictionary-group-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-.dictionary-tabs-list {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  min-width: max-content;
+.dictionary-group-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.375rem;
+  background: oklch(var(--b2));
+  border-radius: 0.75rem;
 }
 
-.dictionary-tab {
-  flex: 0 0 auto;
+.dict-group-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  border: none;
+  background: transparent;
+  color: oklch(var(--bc) / 0.65);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
   white-space: nowrap;
 }
 
-.dictionary-tab i {
+.dict-group-btn:hover {
+  background: oklch(var(--b3));
+  color: oklch(var(--bc));
+}
+
+.dict-group-btn.active {
+  background: oklch(var(--p));
+  color: oklch(var(--pc));
+  box-shadow: 0 1px 3px oklch(var(--p) / 0.3);
+}
+
+.dict-group-btn i {
+  font-size: 0.8rem;
   flex-shrink: 0;
 }
 
-.dictionary-tab-label {
+.dict-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: oklch(var(--bc) / 0.1);
+  color: oklch(var(--bc) / 0.6);
+}
+
+.dict-group-btn.active .dict-group-count {
+  background: oklch(var(--pc) / 0.2);
+  color: oklch(var(--pc));
+}
+
+/* ── 二级类型 chips ── */
+.dictionary-type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  padding-left: 0.25rem;
+}
+
+.dict-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid oklch(var(--bc) / 0.12);
+  background: transparent;
+  color: oklch(var(--bc) / 0.6);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
   white-space: nowrap;
 }
 
+.dict-type-chip:hover {
+  border-color: oklch(var(--p) / 0.4);
+  color: oklch(var(--p));
+  background: oklch(var(--p) / 0.06);
+}
+
+.dict-type-chip.active {
+  border-color: oklch(var(--p));
+  background: oklch(var(--p) / 0.1);
+  color: oklch(var(--p));
+  font-weight: 500;
+}
+
+.dict-chip-icon {
+  font-size: 0.7rem;
+}
+
 @media (max-width: 768px) {
-  .dictionary-tab {
-    min-height: 2.5rem;
-    padding-inline: 0.75rem;
-    font-size: 0.875rem;
+  .dict-group-btn {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
     gap: 0.375rem;
+  }
+
+  .dict-type-chip {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.6rem;
   }
 }
 </style>

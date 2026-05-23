@@ -1,10 +1,10 @@
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 use tauri::State;
 
-use crate::services::DatabaseService;
-use crate::services::DictionaryService;
+use crate::services::{AiServiceManager, DatabaseService, DictionaryService};
 use sentinel_core::models::dictionary::{
     Dictionary, DictionaryExport, DictionaryFilter, DictionaryImportOptions, DictionarySet,
     DictionaryStats, DictionaryType, DictionaryWord, DictionaryWordInput, ServiceType,
@@ -17,6 +17,145 @@ use std::collections::HashMap;
 pub struct DictionaryPageResponse {
     pub items: Vec<Dictionary>,
     pub total: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateDictionaryEntriesRequest {
+    pub dictionary_name: String,
+    pub dict_type: String,
+    pub service_type: Option<String>,
+    pub subtype: Option<String>,
+    pub prompt: String,
+    pub count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateDictionaryEntriesResponse {
+    pub entries: Vec<DictionaryWordInput>,
+}
+
+const DICTIONARY_AI_GENERATION_SYSTEM_PROMPT: &str = r#"You generate Sentinel dictionary entries.
+Return only strict JSON, no markdown, no comments, no prose.
+The JSON shape must be:
+{
+  "entries": [
+    {
+      "word": "stable_unique_identifier_or_dictionary_value",
+      "weight": 1.0,
+      "category": "short_category_or_null",
+      "metadata": {}
+    }
+  ]
+}
+
+Rules:
+- Generate exactly the requested number of entries unless the request is impossible.
+- Do not include duplicates, placeholders, explanations, or unsafe exploit payloads.
+- For normal dictionaries, keep metadata as an empty object.
+- For sensitive_file rules, metadata should include path, severity, tags, enabled, safe_mode when useful.
+- For fingerprint_rule and service_probe_rule, metadata should include service, product, vendor, protocol, probeName, ports, sslPorts, confidence, operator, matchers, enabled when useful.
+- matchers must be an array of objects with part, type, optional key, and value.
+- For poc_rule, metadata should describe safe verification: severity, safe_mode, requestMethod, requestPath, timeoutMs, matchers, enabled.
+- severity must be one of critical, high, medium, low, info.
+- enabled must be boolean when present.
+"#;
+
+/// 使用 AI 生成字典词条或结构化规则
+#[tauri::command(rename_all = "snake_case")]
+pub async fn generate_dictionary_entries(
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+    request: GenerateDictionaryEntriesRequest,
+) -> Result<GenerateDictionaryEntriesResponse, String> {
+    let prompt = request.prompt.trim();
+    if prompt.is_empty() {
+        return Err("Generation prompt is required".to_string());
+    }
+
+    let count = request.count.clamp(1, 100);
+    let user_input = serde_json::to_string_pretty(&serde_json::json!({
+        "dictionaryName": request.dictionary_name,
+        "dictionaryType": request.dict_type,
+        "serviceType": request.service_type,
+        "subtype": request.subtype,
+        "requestedCount": count,
+        "userRequirement": prompt,
+    }))
+    .map_err(|error| error.to_string())?;
+
+    let llm_config = ai_manager
+        .resolve_generation_llm_config(None, None)
+        .await
+        .map_err(|error| error.to_string())?;
+    let client = sentinel_llm::LlmClient::new(llm_config);
+    let raw = client
+        .completion(Some(DICTIONARY_AI_GENERATION_SYSTEM_PROMPT), &user_input)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let entries = parse_generated_dictionary_entries(&raw)?;
+    if entries.is_empty() {
+        return Err("AI returned no dictionary entries".to_string());
+    }
+
+    Ok(GenerateDictionaryEntriesResponse { entries })
+}
+
+fn parse_generated_dictionary_entries(raw: &str) -> Result<Vec<DictionaryWordInput>, String> {
+    let json_text = strip_json_code_fence(raw.trim());
+    let value = serde_json::from_str::<Value>(json_text)
+        .or_else(|_| {
+            let start = json_text.find('{').ok_or_else(|| {
+                serde_json::Error::io(std::io::Error::other("missing JSON object"))
+            })?;
+            let end = json_text.rfind('}').ok_or_else(|| {
+                serde_json::Error::io(std::io::Error::other("missing JSON object"))
+            })?;
+            serde_json::from_str::<Value>(&json_text[start..=end])
+        })
+        .map_err(|error| format!("Failed to parse AI JSON output: {error}"))?;
+
+    let entries_value = value
+        .get("entries")
+        .ok_or_else(|| "AI JSON output must contain an entries array".to_string())?;
+    let entries = serde_json::from_value::<Vec<DictionaryWordInput>>(entries_value.clone())
+        .map_err(|error| format!("Failed to parse generated entries: {error}"))?;
+
+    entries
+        .into_iter()
+        .map(|entry| {
+            let word = entry.word.trim().to_string();
+            if word.is_empty() {
+                return Err("AI returned an entry with an empty word".to_string());
+            }
+            Ok(DictionaryWordInput {
+                word,
+                weight: entry.weight.or(Some(1.0)),
+                category: entry
+                    .category
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                metadata: entry
+                    .metadata
+                    .or_else(|| Some(Value::Object(Default::default()))),
+            })
+        })
+        .collect()
+}
+
+fn strip_json_code_fence(value: &str) -> &str {
+    let trimmed = value.trim();
+    if !trimmed.starts_with("```") {
+        return trimmed;
+    }
+
+    let Some(first_line_end) = trimmed.find('\n') else {
+        return trimmed;
+    };
+    let body = &trimmed[first_line_end + 1..];
+    let Some(last_fence_start) = body.rfind("```") else {
+        return trimmed;
+    };
+    body[..last_fence_start].trim()
 }
 
 /// 获取字典列表
@@ -64,6 +203,7 @@ pub async fn get_dictionaries(
 pub async fn get_dictionaries_paged(
     db_service: State<'_, Arc<DatabaseService>>,
     dict_type: Option<String>,
+    dict_types: Option<Vec<String>>,
     service_type: Option<String>,
     category: Option<String>,
     is_builtin: Option<bool>,
@@ -100,11 +240,17 @@ pub async fn get_dictionaries_paged(
     let limit = limit.unwrap_or(10);
 
     let items = dictionary_service
-        .list_dictionaries_paged(filter.clone(), subtype.clone(), offset, limit)
+        .list_dictionaries_paged(
+            filter.clone(),
+            dict_types.clone(),
+            subtype.clone(),
+            offset,
+            limit,
+        )
         .await
         .map_err(|e| e.to_string())?;
     let total = dictionary_service
-        .count_dictionaries(filter, subtype)
+        .count_dictionaries(filter, dict_types, subtype)
         .await
         .map_err(|e| e.to_string())?;
 

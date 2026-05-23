@@ -449,22 +449,7 @@ impl ToolRouter {
             {
                 score += 15;
             }
-            let memory_intent = task_lower.contains("memory")
-                || task_lower.contains("remember")
-                || task_lower.contains("recall")
-                || task_lower.contains("store")
-                || task_lower.contains("save")
-                || task_lower.contains("记忆")
-                || task_lower.contains("回忆")
-                || task_lower.contains("回顾")
-                || task_lower.contains("复盘")
-                || task_lower.contains("历史思路")
-                || task_lower.contains("历史分析")
-                || task_lower.contains("之前分析")
-                || task_lower.contains("之前结论")
-                || task_lower.contains("解题思路")
-                || (task_lower.contains("之前") && task_lower.contains("思路"))
-                || (task_lower.contains("历史") && task_lower.contains("思路"));
+            let memory_intent = has_memory_intent(&task_lower);
             if memory_intent && tool.id == MemoryManagerTool::NAME {
                 score += 25; // High priority for memory operations
             }
@@ -1381,6 +1366,51 @@ Return ONLY:
     }
 }
 
+fn has_memory_intent(task_lower: &str) -> bool {
+    task_lower.contains("memory")
+        || task_lower.contains("remember")
+        || task_lower.contains("recall")
+        || task_lower.contains("store")
+        || task_lower.contains("save")
+        || task_lower.contains("preference")
+        || task_lower.contains("preferences")
+        || task_lower.contains("what do i like")
+        || task_lower.contains("what i like")
+        || task_lower.contains("what did i tell you")
+        || task_lower.contains("do you remember")
+        || task_lower.contains("记忆")
+        || task_lower.contains("记住")
+        || task_lower.contains("记一下")
+        || task_lower.contains("帮我记")
+        || task_lower.contains("以后记得")
+        || task_lower.contains("回忆")
+        || task_lower.contains("回顾")
+        || task_lower.contains("复盘")
+        || task_lower.contains("偏好")
+        || task_lower.contains("喜好")
+        || task_lower.contains("口味")
+        || task_lower.contains("习惯")
+        || task_lower.contains("记得我")
+        || task_lower.contains("我的设置")
+        || task_lower.contains("我的偏好")
+        || task_lower.contains("我的喜好")
+        || task_lower.contains("我的习惯")
+        || task_lower.contains("喜欢什么")
+        || task_lower.contains("爱吃什么")
+        || task_lower.contains("喜欢吃什么")
+        || (task_lower.contains("喜欢") && task_lower.contains("什么"))
+        || (task_lower.contains("爱吃") && task_lower.contains("什么"))
+        || (task_lower.contains("之前") && task_lower.contains("我"))
+        || (task_lower.contains("之前") && task_lower.contains("说"))
+        || task_lower.contains("历史思路")
+        || task_lower.contains("历史分析")
+        || task_lower.contains("之前分析")
+        || task_lower.contains("之前结论")
+        || task_lower.contains("解题思路")
+        || (task_lower.contains("之前") && task_lower.contains("思路"))
+        || (task_lower.contains("历史") && task_lower.contains("思路"))
+}
+
 impl Default for ToolRouter {
     fn default() -> Self {
         Self::new()
@@ -1496,6 +1526,28 @@ mod tests {
         let task = "Make an HTTP request to https://api.example.com";
         let selected = router.select_tools(task, &config, None).await.unwrap();
         assert!(selected.contains(&"http_request".to_string()));
+    }
+
+    #[tokio::test]
+    async fn keyword_memory_selection_handles_user_preference_queries() {
+        let router = ToolRouter::new_with_all_tools(None).await;
+        let config = ToolConfig {
+            enabled: true,
+            selection_strategy: ToolSelectionStrategy::Keyword,
+            max_tools: 5,
+            preselected_tools: vec![],
+            disabled_tools: vec![],
+            allowed_tools: vec![],
+        };
+
+        for task in ["我喜欢吃什么？", "你记得我的偏好吗", "我喜欢吃肉记住了"]
+        {
+            let selected = router.select_tools(task, &config, None).await.unwrap();
+            assert!(
+                selected.contains(&MemoryManagerTool::NAME.to_string()),
+                "memory tool should be selected for task: {task}, got {selected:?}"
+            );
+        }
     }
 
     #[tokio::test]

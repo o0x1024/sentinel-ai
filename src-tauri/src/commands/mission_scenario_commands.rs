@@ -43,6 +43,13 @@ pub async fn mission_scenario_daily_news(
         delivery_policy_json: Some(delivery.to_string()),
         assistant_profile_id: None,
         trigger_json: Some(trigger.to_string()),
+        mission_spec_json: Some(serde_json::json!({
+            "kind": "daily_digest",
+            "state_schema": { "type": "object" },
+            "action_schema": { "type": "object" },
+            "completion_policy": { "kind": "manual_or_agent_completion" },
+            "report_policy": { "kind": "each_run_summary" }
+        }).to_string()),
         step_plan_json: Some(serde_json::json!([
             {"description": "Search for latest AI news using web search"},
             {"description": "Fetch and read the top results"},
@@ -111,6 +118,13 @@ pub async fn mission_scenario_website_monitor(
         delivery_policy_json: Some(delivery.to_string()),
         assistant_profile_id: None,
         trigger_json: Some(trigger.to_string()),
+        mission_spec_json: Some(serde_json::json!({
+            "kind": "change_monitor",
+            "state_schema": { "type": "object" },
+            "action_schema": { "type": "object" },
+            "completion_policy": { "kind": "manual_or_agent_completion" },
+            "report_policy": { "kind": "on_change_summary" }
+        }).to_string()),
         step_plan_json: Some(serde_json::json!([
             {"description": format!("Fetch the webpage at {}", target_url)},
             {"description": "Store the page content as a snapshot artifact"},
@@ -188,6 +202,13 @@ pub async fn mission_scenario_daily_test(
         delivery_policy_json: Some(delivery.to_string()),
         assistant_profile_id: None,
         trigger_json: Some(trigger.to_string()),
+        mission_spec_json: Some(serde_json::json!({
+            "kind": "scheduled_test_run",
+            "state_schema": { "type": "object" },
+            "action_schema": { "type": "object" },
+            "completion_policy": { "kind": "manual_or_agent_completion" },
+            "report_policy": { "kind": "failure_summary" }
+        }).to_string()),
         step_plan_json: Some(serde_json::json!([
             {"description": format!("Navigate to project directory: {}", project_path)},
             {"description": format!("Run test command: {}", test_command)},

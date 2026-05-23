@@ -38,11 +38,20 @@
             <div class="flex items-center gap-2">
               <button
                 class="btn btn-xs btn-outline"
+                :disabled="!canCreateProfiles"
+                :title="profileCreationLockedTitle"
                 @click="showAiAgentCreator = !showAiAgentCreator"
               >
                 AI 创建
               </button>
-              <button class="btn btn-xs btn-outline" @click="createProfile">新增 Assistant</button>
+              <button
+                class="btn btn-xs btn-outline"
+                :disabled="!canCreateProfiles"
+                :title="profileCreationLockedTitle"
+                @click="createProfile"
+              >
+                新增 Assistant
+              </button>
             </div>
           </template>
 
@@ -57,7 +66,7 @@
                   v-model.trim="aiAgentDescription"
                   class="textarea textarea-bordered min-h-[92px] text-sm"
                   placeholder="例如：创建一个专门做漏洞复盘的审查型 Agent，默认启用工具和 10th Man。"
-                  :disabled="isAiCreatingAgent"
+                  :disabled="isAiCreatingAgent || !canCreateProfiles"
                 />
               </label>
               <div class="mt-3 flex items-center justify-end gap-2">
@@ -70,7 +79,7 @@
                 </button>
                 <button
                   class="btn btn-xs btn-primary"
-                  :disabled="isAiCreatingAgent || !aiAgentDescription.trim()"
+                  :disabled="isAiCreatingAgent || !canCreateProfiles || !aiAgentDescription.trim()"
                   @click="createProfileWithAi"
                 >
                   <span v-if="isAiCreatingAgent" class="loading loading-spinner loading-xs" />
@@ -361,6 +370,7 @@ import {
 } from '@/components/Settings/assistantProfileRegistrySupport'
 import { dialog } from '@/composables/useDialog'
 import { AI_CONFIG_UPDATED_EVENT, getAiConfigFromUpdateEvent } from '@/services/aiConfigEvents'
+import { useFeatureEntitlementsState } from '@/services/featureEntitlements'
 
 const {
   defaultAssistantProfileId,
@@ -387,6 +397,7 @@ interface AiCreatedAssistantProfileResponse {
 }
 
 const draftProfiles = ref<AssistantProfileOption[]>([])
+const entitlements = useFeatureEntitlementsState()
 const draftDefaultAssistantProfileId = ref('')
 const selectedProfileId = ref('')
 const activeRegistryTab = ref<RegistryTabKey>('agents')
@@ -405,6 +416,11 @@ const autoSaveState = ref<AutoSaveState>('idle')
 const suspendAutoSave = ref(false)
 const lastSavedProfilesSnapshot = ref('')
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+const canCreateProfiles = computed(() => entitlements.value.is_licensed)
+const profileCreationLockedTitle = computed(() =>
+  canCreateProfiles.value ? '' : '未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。'
+)
 
 const normalizeProviderName = (provider: string) => {
   const lower = provider.toLowerCase()
@@ -876,6 +892,10 @@ const queueAutoSave = () => {
 }
 
 const createProfile = () => {
+  if (!canCreateProfiles.value) {
+    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。')
+    return
+  }
   const { id, nextIndex } = createNextProfileIdentity(draftProfiles.value)
   const profile: AssistantProfileOption = {
     id,
@@ -906,6 +926,10 @@ const createProfile = () => {
 
 const createProfileWithAi = async () => {
   const description = aiAgentDescription.value.trim()
+  if (!canCreateProfiles.value) {
+    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。')
+    return
+  }
   if (!description || isAiCreatingAgent.value) return
 
   clearAutoSaveTimer()

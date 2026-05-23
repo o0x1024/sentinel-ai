@@ -3,6 +3,7 @@ use crate::commands::ai_runtime_harness::{
 };
 use crate::commands::assistant_profile_team_cleanup::prune_team_profiles_for_assistant_profiles;
 use crate::services::ai::AiServiceManager;
+use crate::services::build_app_entitlements;
 use sentinel_db::Database;
 use sentinel_llm::LlmClient;
 use serde::{Deserialize, Serialize};
@@ -227,118 +228,28 @@ fn default_profile_harness_max_continuations() -> u32 {
 }
 
 fn default_assistant_profiles() -> Vec<AssistantProfilePayload> {
-    vec![
-        AssistantProfilePayload {
-            id: "assistant.default".to_string(),
-            label: "Assistant".to_string(),
-            description: "默认交互助手，优先使用 Claude-like 上下文和单助手执行。".to_string(),
-            team_role: "specialist".to_string(),
-            default_model: None,
-            default_rag_enabled: false,
-            default_web_search_enabled: false,
-            default_tools_enabled: true,
-            default_tenth_man_enabled: false,
-            default_tool_selection_strategy: "Keyword".to_string(),
-            default_max_tools: 12,
-            default_harness_max_continuations: default_profile_harness_max_continuations(),
-            default_preselected_tools: vec![],
-            default_disabled_tools: vec![],
-            default_manual_tools: vec![],
-            default_team_orchestration_preset_id: None,
-            default_team_recovery_preset_id: None,
-            default_team_profile_id: None,
-            context_mode: "claude-like".to_string(),
-            run_mode: "assistant".to_string(),
-        },
-        AssistantProfilePayload {
-            id: "assistant.reviewer".to_string(),
-            label: "Reviewer".to_string(),
-            description: "偏审查与复盘的助手，默认使用 Codex-like 上下文。".to_string(),
-            team_role: "monitor".to_string(),
-            default_model: None,
-            default_rag_enabled: false,
-            default_web_search_enabled: false,
-            default_tools_enabled: true,
-            default_tenth_man_enabled: true,
-            default_tool_selection_strategy: "Hybrid".to_string(),
-            default_max_tools: 5,
-            default_harness_max_continuations: default_profile_harness_max_continuations(),
-            default_preselected_tools: vec![],
-            default_disabled_tools: vec![],
-            default_manual_tools: vec![],
-            default_team_orchestration_preset_id: None,
-            default_team_recovery_preset_id: None,
-            default_team_profile_id: None,
-            context_mode: "codex-like".to_string(),
-            run_mode: "assistant".to_string(),
-        },
-        AssistantProfilePayload {
-            id: "assistant.sentinel".to_string(),
-            label: "Sentinel".to_string(),
-            description: "长会话与多阶段任务入口，默认使用 Sentinel-like 上下文。".to_string(),
-            team_role: "specialist".to_string(),
-            default_model: None,
-            default_rag_enabled: false,
-            default_web_search_enabled: false,
-            default_tools_enabled: true,
-            default_tenth_man_enabled: true,
-            default_tool_selection_strategy: "Keyword".to_string(),
-            default_max_tools: 12,
-            default_harness_max_continuations: default_profile_harness_max_continuations(),
-            default_preselected_tools: vec![],
-            default_disabled_tools: vec![],
-            default_manual_tools: vec![],
-            default_team_orchestration_preset_id: None,
-            default_team_recovery_preset_id: None,
-            default_team_profile_id: None,
-            context_mode: "sentinel-like".to_string(),
-            run_mode: "assistant".to_string(),
-        },
-        AssistantProfilePayload {
-            id: "team.lead".to_string(),
-            label: "Team Lead".to_string(),
-            description: "默认团队编排入口，使用 Claude-like 上下文和 Team 运行模式。".to_string(),
-            team_role: "orchestrator".to_string(),
-            default_model: None,
-            default_rag_enabled: false,
-            default_web_search_enabled: false,
-            default_tools_enabled: true,
-            default_tenth_man_enabled: false,
-            default_tool_selection_strategy: "Hybrid".to_string(),
-            default_max_tools: 8,
-            default_harness_max_continuations: default_profile_harness_max_continuations(),
-            default_preselected_tools: vec![],
-            default_disabled_tools: vec![],
-            default_manual_tools: vec![],
-            default_team_orchestration_preset_id: Some("product_delivery_chain".to_string()),
-            default_team_recovery_preset_id: Some("balanced".to_string()),
-            default_team_profile_id: Some("team.profile.default".to_string()),
-            context_mode: "claude-like".to_string(),
-            run_mode: "team".to_string(),
-        },
-        AssistantProfilePayload {
-            id: "team.reviewer".to_string(),
-            label: "Team Reviewer".to_string(),
-            description: "团队审查型入口，使用 Codex-like 上下文和 Team 运行模式。".to_string(),
-            team_role: "orchestrator".to_string(),
-            default_model: None,
-            default_rag_enabled: false,
-            default_web_search_enabled: false,
-            default_tools_enabled: true,
-            default_tenth_man_enabled: true,
-            default_tool_selection_strategy: "Hybrid".to_string(),
-            default_max_tools: 8,
-            default_harness_max_continuations: default_profile_harness_max_continuations(),
-            default_preselected_tools: vec![],
-            default_disabled_tools: vec![],
-            default_manual_tools: vec![],
-            default_team_orchestration_preset_id: Some("incident_response_flow".to_string()),
-            default_team_recovery_preset_id: Some("conservative".to_string()),
-            default_team_profile_id: Some("team.profile.review".to_string()),
-            context_mode: "codex-like".to_string(),
-            run_mode: "team".to_string(),
-        },
-    ]
+    vec![AssistantProfilePayload {
+        id: "assistant.default".to_string(),
+        label: "Assistant".to_string(),
+        description: "默认交互助手，优先使用 Claude-like 上下文和单助手执行。".to_string(),
+        team_role: "specialist".to_string(),
+        default_model: None,
+        default_rag_enabled: false,
+        default_web_search_enabled: false,
+        default_tools_enabled: true,
+        default_tenth_man_enabled: false,
+        default_tool_selection_strategy: "Keyword".to_string(),
+        default_max_tools: 12,
+        default_harness_max_continuations: default_profile_harness_max_continuations(),
+        default_preselected_tools: vec![],
+        default_disabled_tools: vec![],
+        default_manual_tools: vec![],
+        default_team_orchestration_preset_id: None,
+        default_team_recovery_preset_id: None,
+        default_team_profile_id: None,
+        context_mode: "claude-like".to_string(),
+        run_mode: "assistant".to_string(),
+    }]
 }
 
 fn normalize_profile(mut profile: AssistantProfilePayload) -> AssistantProfilePayload {
@@ -531,123 +442,43 @@ fn normalize_tool_ids(tool_ids: Vec<String>) -> Vec<String> {
 }
 
 fn default_team_profiles() -> Vec<TeamProfilePayload> {
-    vec![
-        TeamProfilePayload {
-            id: "team.profile.default".to_string(),
-            name: "Team Lead".to_string(),
-            description: "通用 Orchestrator + Specialist + Monitor 团队。".to_string(),
-            orchestrator_profile_id: "team.lead".to_string(),
-            specialist_profile_ids: vec!["assistant.default".to_string()],
-            monitor_profile_id: "assistant.reviewer".to_string(),
-            default_model: None,
-            default_team_orchestration_preset_id: Some("product_delivery_chain".to_string()),
-            default_team_recovery_preset_id: Some("balanced".to_string()),
-            context_mode: "claude-like".to_string(),
-            memory_policy: serde_json::json!({
-                "monitorGate": "candidate_then_orchestrator_accept",
-                "shareScope": "high_value_only",
-                "longTermMemory": true
-            }),
-            tool_policy_matrix: serde_json::json!({
-                "orchestrator": {"tools": ["ask_user_question"]},
-                "specialist": {"tools": DEFAULT_TEAM_SPECIALIST_TOOLS},
-                "monitor": {"tools": ["tenth_man_review"]}
-            }),
-            harness_policy: serde_json::json!({
-                "heartbeatSecs": 30,
-                "leaseSecs": 600,
-                "checkpoint": "event_sequence",
-                "allowResume": true
-            }),
-            concurrency_policy: serde_json::json!({
-                "maxSpecialists": 2,
-                "maxTasksPerSpecialist": 1
-            }),
-            safety_policy: serde_json::json!({
-                "orchestratorNoDangerousTools": true,
-                "monitorReadOnly": true,
-                "requireApprovalForHighRiskTools": true
-            }),
-        },
-        TeamProfilePayload {
-            id: "team.profile.review".to_string(),
-            name: "Security Review Team".to_string(),
-            description: "安全审查 Orchestrator + 审查 Specialist + Monitor 团队。".to_string(),
-            orchestrator_profile_id: "team.reviewer".to_string(),
-            specialist_profile_ids: vec!["assistant.sentinel".to_string()],
-            monitor_profile_id: "assistant.reviewer".to_string(),
-            default_model: None,
-            default_team_orchestration_preset_id: Some("incident_response_flow".to_string()),
-            default_team_recovery_preset_id: Some("conservative".to_string()),
-            context_mode: "codex-like".to_string(),
-            memory_policy: serde_json::json!({
-                "monitorGate": "candidate_then_orchestrator_accept",
-                "shareScope": "evidence_risk_decision",
-                "longTermMemory": true
-            }),
-            tool_policy_matrix: serde_json::json!({
-                "orchestrator": {"tools": ["ask_user_question", "tenth_man_review"]},
-                "specialist": {"tools": DEFAULT_TEAM_SPECIALIST_TOOLS_WITH_REVIEW},
-                "monitor": {"tools": ["tenth_man_review"]}
-            }),
-            harness_policy: serde_json::json!({
-                "heartbeatSecs": 30,
-                "leaseSecs": 900,
-                "checkpoint": "event_sequence",
-                "allowResume": true
-            }),
-            concurrency_policy: serde_json::json!({
-                "maxSpecialists": 2,
-                "maxTasksPerSpecialist": 1
-            }),
-            safety_policy: serde_json::json!({
-                "orchestratorNoDangerousTools": true,
-                "monitorReadOnly": true,
-                "requireApprovalForHighRiskTools": true
-            }),
-        },
-        TeamProfilePayload {
-            id: "team.profile.incident".to_string(),
-            name: "Incident Team".to_string(),
-            description: "故障处理 Orchestrator + Log/Fix Specialist + Monitor 团队。".to_string(),
-            orchestrator_profile_id: "team.lead".to_string(),
-            specialist_profile_ids: vec![
-                "assistant.sentinel".to_string(),
-                "assistant.default".to_string(),
-            ],
-            monitor_profile_id: "assistant.reviewer".to_string(),
-            default_model: None,
-            default_team_orchestration_preset_id: Some("incident_response_flow".to_string()),
-            default_team_recovery_preset_id: Some("balanced".to_string()),
-            context_mode: "sentinel-like".to_string(),
-            memory_policy: serde_json::json!({
-                "monitorGate": "candidate_then_orchestrator_accept",
-                "shareScope": "evidence_risk_blocker_checkpoint",
-                "longTermMemory": true
-            }),
-            tool_policy_matrix: serde_json::json!({
-                "orchestrator": {"tools": ["ask_user_question"]},
-                "specialist": {"tools": DEFAULT_TEAM_SPECIALIST_TOOLS_WITH_REVIEW},
-                "monitor": {"tools": ["tenth_man_review"]}
-            }),
-            harness_policy: serde_json::json!({
-                "heartbeatSecs": 30,
-                "leaseSecs": 1200,
-                "checkpoint": "event_sequence",
-                "allowResume": true
-            }),
-            concurrency_policy: serde_json::json!({
-                "maxSpecialists": 2,
-                "maxTasksPerSpecialist": 1
-            }),
-            safety_policy: serde_json::json!({
-                "orchestratorNoDangerousTools": true,
-                "monitorReadOnly": true,
-                "requireApprovalForHighRiskTools": true,
-                "failFastWaitStartedAssignments": true
-            }),
-        },
-    ]
+    vec![TeamProfilePayload {
+        id: "team.profile.default".to_string(),
+        name: "Team Lead".to_string(),
+        description: "通用 Orchestrator + Specialist + Monitor 团队。".to_string(),
+        orchestrator_profile_id: "assistant.default".to_string(),
+        specialist_profile_ids: vec!["assistant.default".to_string()],
+        monitor_profile_id: "assistant.default".to_string(),
+        default_model: None,
+        default_team_orchestration_preset_id: Some("product_delivery_chain".to_string()),
+        default_team_recovery_preset_id: Some("balanced".to_string()),
+        context_mode: "claude-like".to_string(),
+        memory_policy: serde_json::json!({
+            "monitorGate": "candidate_then_orchestrator_accept",
+            "shareScope": "high_value_only",
+            "longTermMemory": true
+        }),
+        tool_policy_matrix: serde_json::json!({
+            "orchestrator": {"tools": ["ask_user_question"]},
+            "specialist": {"tools": DEFAULT_TEAM_SPECIALIST_TOOLS},
+            "monitor": {"tools": ["tenth_man_review"]}
+        }),
+        harness_policy: serde_json::json!({
+            "heartbeatSecs": 30,
+            "leaseSecs": 600,
+            "checkpoint": "event_sequence",
+            "allowResume": true
+        }),
+        concurrency_policy: serde_json::json!({
+            "maxSpecialists": 2,
+            "maxTasksPerSpecialist": 1
+        }),
+        safety_policy: serde_json::json!({
+            "orchestratorNoDangerousTools": true,
+            "monitorReadOnly": true,
+            "requireApprovalForHighRiskTools": true
+        }),
+    }]
 }
 
 fn normalize_json_object(value: serde_json::Value) -> serde_json::Value {
@@ -1435,6 +1266,51 @@ async fn persist_team_profiles_raw(
     .map_err(|e| e.to_string())
 }
 
+fn ensure_profile_creation_allowed() -> Result<(), String> {
+    if build_app_entitlements().is_licensed {
+        return Ok(());
+    }
+
+    Err(
+        "未激活版本只允许修改 Profile 配置，不支持创建 Profile。请输入卡密激活后再创建。"
+            .to_string(),
+    )
+}
+
+fn ensure_no_new_assistant_profile_ids(
+    existing_profiles: &[AssistantProfilePayload],
+    next_profiles: &[AssistantProfilePayload],
+) -> Result<(), String> {
+    let existing_ids = existing_profiles
+        .iter()
+        .map(|profile| profile.id.as_str())
+        .collect::<HashSet<_>>();
+    if next_profiles
+        .iter()
+        .any(|profile| !existing_ids.contains(profile.id.as_str()))
+    {
+        ensure_profile_creation_allowed()?;
+    }
+    Ok(())
+}
+
+fn ensure_no_new_team_profile_ids(
+    existing_profiles: &[TeamProfilePayload],
+    next_profiles: &[TeamProfilePayload],
+) -> Result<(), String> {
+    let existing_ids = existing_profiles
+        .iter()
+        .map(|profile| profile.id.as_str())
+        .collect::<HashSet<_>>();
+    if next_profiles
+        .iter()
+        .any(|profile| !existing_ids.contains(profile.id.as_str()))
+    {
+        ensure_profile_creation_allowed()?;
+    }
+    Ok(())
+}
+
 async fn prune_team_profiles_after_assistant_profile_save(
     db: &sentinel_db::DatabaseService,
     assistant_profiles: &[AssistantProfilePayload],
@@ -1480,6 +1356,7 @@ pub async fn ai_create_assistant_profile_from_description(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
     ai_manager: tauri::State<'_, Arc<AiServiceManager>>,
 ) -> Result<AiCreatedAssistantProfileResponse, String> {
+    ensure_profile_creation_allowed()?;
     let description = ensure_description(request.description)?;
     let db = db_service.inner().as_ref();
     let mut profiles = load_profiles(db).await?;
@@ -1513,8 +1390,10 @@ pub async fn save_assistant_profiles(
 ) -> Result<(), String> {
     let profiles = normalize_profiles(profiles);
     validate_profiles(&profiles)?;
-    let raw = serde_json::to_string(&profiles).map_err(|e| e.to_string())?;
     let db = db_service.inner().as_ref();
+    let existing_profiles = load_profiles(db).await?;
+    ensure_no_new_assistant_profile_ids(&existing_profiles, &profiles)?;
+    let raw = serde_json::to_string(&profiles).map_err(|e| e.to_string())?;
     db.set_config(
         ASSISTANT_PROFILE_CONFIG_NAMESPACE,
         ASSISTANT_PROFILE_CONFIG_KEY,
@@ -1593,6 +1472,7 @@ pub async fn ai_create_team_profile_from_description(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
     ai_manager: tauri::State<'_, Arc<AiServiceManager>>,
 ) -> Result<AiCreatedTeamProfileResponse, String> {
+    ensure_profile_creation_allowed()?;
     let description = ensure_description(request.description)?;
     let db = db_service.inner().as_ref();
     let mut assistant_profiles = load_profiles(db).await?;
@@ -1632,11 +1512,13 @@ pub async fn save_team_profiles(
     profiles: Vec<TeamProfilePayload>,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<(), String> {
-    let assistant_profiles = load_profiles(db_service.inner().as_ref()).await?;
+    let db = db_service.inner().as_ref();
+    let assistant_profiles = load_profiles(db).await?;
+    let existing_profiles = load_team_profiles(db).await?;
     let profiles = normalize_team_profiles(profiles);
     validate_team_profiles(&profiles, &assistant_profiles)?;
+    ensure_no_new_team_profile_ids(&existing_profiles, &profiles)?;
     let raw = serde_json::to_string(&profiles).map_err(|e| e.to_string())?;
-    let db = db_service.inner().as_ref();
     db.set_config(
         ASSISTANT_PROFILE_CONFIG_NAMESPACE,
         TEAM_PROFILE_CONFIG_KEY,
@@ -1701,6 +1583,26 @@ pub async fn save_default_team_profile_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_registries_keep_one_assistant_and_one_team_profile() {
+        let assistant_profiles = normalize_profiles(default_assistant_profiles());
+        let team_profiles = normalize_team_profiles(default_team_profiles());
+
+        assert_eq!(assistant_profiles.len(), 1);
+        assert_eq!(assistant_profiles[0].id, "assistant.default");
+        assert_eq!(team_profiles.len(), 1);
+        assert_eq!(team_profiles[0].id, "team.profile.default");
+        assert_eq!(
+            team_profiles[0].orchestrator_profile_id,
+            "assistant.default"
+        );
+        assert_eq!(team_profiles[0].monitor_profile_id, "assistant.default");
+        assert_eq!(
+            team_profiles[0].specialist_profile_ids,
+            vec!["assistant.default"]
+        );
+    }
 
     #[test]
     fn migrates_stored_legacy_profile_roles_before_validation() {
@@ -1917,16 +1819,28 @@ mod tests {
         assistant.default_preselected_tools = vec!["interactive_shell".to_string()];
         assistant.default_tool_selection_strategy = "Deferred".to_string();
 
-        let team = profiles
-            .iter_mut()
-            .find(|profile| profile.id == "team.lead")
-            .unwrap();
-        team.team_role = "assistant".to_string();
-        team.run_mode = "assistant".to_string();
-        team.default_team_profile_id = None;
-        team.default_preselected_tools = vec!["spawn_agent".to_string(), "wait_agents".to_string()];
-        team.default_manual_tools = vec!["ask_user_question".to_string()];
-        team.default_tool_selection_strategy = "Hybrid".to_string();
+        profiles.push(AssistantProfilePayload {
+            id: "team.lead".to_string(),
+            label: "Team Lead".to_string(),
+            description: "legacy team entry".to_string(),
+            team_role: "assistant".to_string(),
+            default_model: None,
+            default_rag_enabled: false,
+            default_web_search_enabled: false,
+            default_tools_enabled: true,
+            default_tenth_man_enabled: false,
+            default_tool_selection_strategy: "Hybrid".to_string(),
+            default_max_tools: 8,
+            default_harness_max_continuations: default_profile_harness_max_continuations(),
+            default_preselected_tools: vec!["spawn_agent".to_string(), "wait_agents".to_string()],
+            default_disabled_tools: vec![],
+            default_manual_tools: vec!["ask_user_question".to_string()],
+            default_team_orchestration_preset_id: Some("product_delivery_chain".to_string()),
+            default_team_recovery_preset_id: Some("balanced".to_string()),
+            default_team_profile_id: None,
+            context_mode: "claude-like".to_string(),
+            run_mode: "assistant".to_string(),
+        });
 
         let (migrated, changed) = migrate_builtin_profile_tool_injection(profiles);
         assert!(changed);

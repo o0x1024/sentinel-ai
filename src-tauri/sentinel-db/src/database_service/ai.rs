@@ -1002,7 +1002,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query(
-                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL::TEXT AS tags, NULL::TEXT AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY created_at DESC, updated_at DESC",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL::TEXT AS tags, NULL::TEXT AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND id NOT LIKE 'mission:%:run:%' AND (context_type IS NULL OR context_type NOT IN ('subagent', 'mission_run', 'bot_execution')) ORDER BY created_at DESC, updated_at DESC",
                 )
                 .fetch_all(pool)
                 .await?;
@@ -1013,7 +1013,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query(
-                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY created_at DESC, updated_at DESC",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND id NOT LIKE 'mission:%:run:%' AND (context_type IS NULL OR context_type NOT IN ('subagent', 'mission_run', 'bot_execution')) ORDER BY created_at DESC, updated_at DESC",
                 )
                 .fetch_all(pool)
                 .await?;
@@ -1024,7 +1024,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query(
-                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY created_at DESC, updated_at DESC",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND id NOT LIKE 'mission:%:run:%' AND (context_type IS NULL OR context_type NOT IN ('subagent', 'mission_run', 'bot_execution')) ORDER BY created_at DESC, updated_at DESC",
                 )
                 .fetch_all(pool)
                 .await?;
@@ -1048,7 +1048,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query(
-                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL::TEXT AS tags, NULL::TEXT AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY created_at DESC, updated_at DESC LIMIT $1 OFFSET $2",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL::TEXT AS tags, NULL::TEXT AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND id NOT LIKE 'mission:%:run:%' AND (context_type IS NULL OR context_type NOT IN ('subagent', 'mission_run', 'bot_execution')) ORDER BY created_at DESC, updated_at DESC LIMIT $1 OFFSET $2",
                 )
                 .bind(limit)
                 .bind(offset)
@@ -1061,7 +1061,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query(
-                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY created_at DESC, updated_at DESC LIMIT ? OFFSET ?",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND id NOT LIKE 'mission:%:run:%' AND (context_type IS NULL OR context_type NOT IN ('subagent', 'mission_run', 'bot_execution')) ORDER BY created_at DESC, updated_at DESC LIMIT ? OFFSET ?",
                 )
                 .bind(limit)
                 .bind(offset)
@@ -1074,7 +1074,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query(
-                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY created_at DESC, updated_at DESC LIMIT ? OFFSET ?",
+                    "SELECT id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, NULL AS tags, NULL AS tool_config, is_archived, created_at, updated_at FROM ai_conversations WHERE service_name != 'subagent' AND id NOT LIKE 'mission:%:run:%' AND (context_type IS NULL OR context_type NOT IN ('subagent', 'mission_run', 'bot_execution')) ORDER BY created_at DESC, updated_at DESC LIMIT ? OFFSET ?",
                 )
                 .bind(limit)
                 .bind(offset)
@@ -1096,21 +1096,21 @@ impl DatabaseService {
         let count: i64 = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent')",
+                    "SELECT COUNT(*) FROM ai_conversations WHERE service_name != 'subagent' AND id NOT LIKE 'mission:%:run:%' AND (context_type IS NULL OR context_type NOT IN ('subagent', 'mission_run', 'bot_execution'))",
                 )
                 .fetch_one(pool)
                 .await?
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent')",
+                    "SELECT COUNT(*) FROM ai_conversations WHERE service_name != 'subagent' AND id NOT LIKE 'mission:%:run:%' AND (context_type IS NULL OR context_type NOT IN ('subagent', 'mission_run', 'bot_execution'))",
                 )
                 .fetch_one(pool)
                 .await?
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent')",
+                    "SELECT COUNT(*) FROM ai_conversations WHERE service_name != 'subagent' AND id NOT LIKE 'mission:%:run:%' AND (context_type IS NULL OR context_type NOT IN ('subagent', 'mission_run', 'bot_execution'))",
                 )
                 .fetch_one(pool)
                 .await?

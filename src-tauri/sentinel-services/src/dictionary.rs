@@ -201,7 +201,7 @@ impl DictionaryService {
         &self,
         filter: Option<DictionaryFilter>,
     ) -> Result<Vec<Dictionary>> {
-        let (mut query, params) = self.build_dictionary_filter_query(filter, None);
+        let (mut query, params) = self.build_dictionary_filter_query(filter, None, None);
 
         query.push_str(" ORDER BY created_at DESC");
         let query = self.sql(&query);
@@ -236,11 +236,13 @@ impl DictionaryService {
     pub async fn list_dictionaries_paged(
         &self,
         filter: Option<DictionaryFilter>,
+        dict_types: Option<Vec<String>>,
         subtype: Option<String>,
         offset: u32,
         limit: u32,
     ) -> Result<Vec<Dictionary>> {
-        let (mut query, params) = self.build_dictionary_filter_query(filter, subtype.as_deref());
+        let (mut query, params) =
+            self.build_dictionary_filter_query(filter, dict_types, subtype.as_deref());
         query.push_str(&format!(
             " ORDER BY created_at DESC LIMIT {} OFFSET {}",
             limit, offset
@@ -277,9 +279,11 @@ impl DictionaryService {
     pub async fn count_dictionaries(
         &self,
         filter: Option<DictionaryFilter>,
+        dict_types: Option<Vec<String>>,
         subtype: Option<String>,
     ) -> Result<i64> {
-        let (query, params) = self.build_dictionary_count_query(filter, subtype.as_deref());
+        let (query, params) =
+            self.build_dictionary_count_query(filter, dict_types, subtype.as_deref());
         let query = self.sql(&query);
 
         let total = match &self.pool {
@@ -312,15 +316,17 @@ impl DictionaryService {
     fn build_dictionary_count_query(
         &self,
         filter: Option<DictionaryFilter>,
+        dict_types: Option<Vec<String>>,
         subtype: Option<&str>,
     ) -> (String, Vec<String>) {
-        let (query, params) = self.build_dictionary_filter_query(filter, subtype);
+        let (query, params) = self.build_dictionary_filter_query(filter, dict_types, subtype);
         (query.replacen("SELECT *", "SELECT COUNT(*)", 1), params)
     }
 
     fn build_dictionary_filter_query(
         &self,
         filter: Option<DictionaryFilter>,
+        dict_types: Option<Vec<String>>,
         subtype: Option<&str>,
     ) -> (String, Vec<String>) {
         let mut query = "SELECT * FROM dictionaries WHERE 1=1".to_string();
@@ -367,6 +373,24 @@ impl DictionaryService {
                 ));
                 params.push(format!("%{}%", search_term.to_lowercase()));
                 param_idx += 1;
+            }
+        }
+
+        // dict_types IN filter (only when dict_type single filter is not set)
+        if selected_dict_type.is_none() {
+            if let Some(ref types) = dict_types {
+                if !types.is_empty() {
+                    let placeholders: Vec<String> = types
+                        .iter()
+                        .map(|t| {
+                            let ph = format!("${}", param_idx);
+                            param_idx += 1;
+                            params.push(t.clone());
+                            ph
+                        })
+                        .collect();
+                    query.push_str(&format!(" AND dict_type IN ({})", placeholders.join(", ")));
+                }
             }
         }
 

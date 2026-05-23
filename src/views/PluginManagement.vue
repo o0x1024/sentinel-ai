@@ -310,7 +310,7 @@ const pluginEditorStore = usePluginEditorStore()
 const entitlements = useFeatureEntitlementsState()
 
 defineOptions({
-  name: 'Plugin',
+  name: 'PluginManagement',
 })
 
 // Component refs

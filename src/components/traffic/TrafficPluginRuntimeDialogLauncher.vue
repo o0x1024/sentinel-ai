@@ -137,6 +137,7 @@
               :is-saving-traffic-plugin-runtime-settings="isSavingTrafficPluginRuntimeSettings"
               :reset-traffic-plugin-runtime-policies="resetTrafficPluginRuntimePoliciesDraft"
               :apply-traffic-plugin-runtime-preset="applyTrafficPluginRuntimePreset"
+              :update-traffic-plugin-runtime-policy="updateTrafficPluginRuntimePolicy"
               :policy-ids="policyIds"
               :collapsible="collapsible"
               :default-expanded-policy-ids="defaultExpandedPolicyIds"
@@ -230,6 +231,7 @@ const {
   saveTrafficPluginRuntimeSettings,
   resetTrafficPluginRuntimePoliciesDraft: resetTrafficPluginRuntimePoliciesDraftSettings,
   applyTrafficPluginRuntimePreset,
+  updateTrafficPluginRuntimePolicy,
 } = useTrafficPluginRuntimeSettings()
 const { snapshot, history, refresh: refreshQueueState } = useTrafficPluginRuntimeQueue()
 const AUTO_SAVE_DELAY_MS = 700

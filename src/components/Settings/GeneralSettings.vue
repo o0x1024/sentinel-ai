@@ -620,7 +620,7 @@ const applyLanguagePreview = (language: string) => {
   const targetLocale = (finalLang.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en'
   
   // Use the setLanguage function for reliable locale switching in production
-  setLanguage(targetLocale)
+  void setLanguage(targetLocale)
 }
 
 // 监听窗口置顶设置

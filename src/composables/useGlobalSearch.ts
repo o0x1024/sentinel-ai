@@ -2,7 +2,6 @@ import { computed, unref, type ComputedRef, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Finding } from '@/components/SecurityCenter/vulnerabilityFindingTypes'
 import type { GlobalSearchEntry } from '@/services/globalSearch'
-import { useFeatureEntitlementsState } from '@/services/featureEntitlements'
 import { searchGlobalEntries } from '@/services/globalSearch'
 import {
   createBountyKnowledgeSearchEntries,
@@ -293,15 +292,8 @@ export function useGlobalSearch(options?: {
   plugins?: SearchEntrySource<SearchPluginItem[]>
 }) {
   const { t } = useI18n()
-  const entitlements = useFeatureEntitlementsState()
   const entries = computed(() => {
     const staticEntries = createGlobalSearchEntries((key, fallback) => t(key, fallback))
-      .filter(entry => {
-        if (entry.path === '/bug-bounty' && !entitlements.value.can_access_bug_bounty) {
-          return false
-        }
-        return true
-      })
     const notifications = createNotificationSearchEntries(unref(options?.notifications) || [])
     const findings = createFindingSearchEntries(unref(options?.findings) || [])
     const scanTasks = createScanTaskSearchEntries(unref(options?.scanTasks) || [])

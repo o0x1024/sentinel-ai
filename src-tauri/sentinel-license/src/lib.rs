@@ -14,6 +14,7 @@ mod integrity;
 mod machine_id;
 mod obfuscate;
 mod storage;
+mod trial;
 mod validator;
 
 pub use anti_debug::is_debugger_present;
@@ -28,6 +29,7 @@ pub use integrity::{
 };
 pub use machine_id::MachineId;
 pub use storage::LicenseStorage;
+pub use trial::{get_or_create_trial_status, has_active_trial, TrialStatus};
 pub use validator::{LicenseStatus, LicenseValidator, ValidationResult};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -40,6 +42,7 @@ static VALIDATION_TOKEN: AtomicU64 = AtomicU64::new(0);
 pub enum LicensedFeature {
     AiRuntime,
     BugBounty,
+    BotConsole,
     PluginCatalogRead,
     PluginCatalogWrite,
     PluginCatalogDelete,
@@ -54,6 +57,7 @@ impl LicensedFeature {
         match self {
             LicensedFeature::AiRuntime => "AI runtime",
             LicensedFeature::BugBounty => "bug bounty",
+            LicensedFeature::BotConsole => "Bot Console",
             LicensedFeature::PluginCatalogRead => "plugin access",
             LicensedFeature::PluginCatalogWrite => "plugin catalog management",
             LicensedFeature::PluginCatalogDelete => "plugin deletion",
@@ -68,6 +72,7 @@ impl LicensedFeature {
         match self {
             LicensedFeature::AiRuntime => Some("ai_runtime"),
             LicensedFeature::BugBounty => Some("bug_bounty"),
+            LicensedFeature::BotConsole => Some("bot_console"),
             LicensedFeature::PluginCatalogRead => Some("plugin_catalog_access"),
             LicensedFeature::PluginCatalogWrite => Some("plugin_catalog_write"),
             LicensedFeature::PluginCatalogDelete => Some("plugin_catalog_delete"),
@@ -134,8 +139,8 @@ pub fn initialize() -> ValidationResult {
             return ValidationResult::Invalid(obfuscate::decrypt_str("debug_detected"));
         }
 
-        // Check 3: Load and validate the server activation token.
-        if get_valid_entitlement_claims().is_some() {
+        // Check 3: Load and validate the server activation token or 7-day trial.
+        if get_valid_entitlement_claims().is_some() || has_active_trial() {
             LICENSE_VALID.store(true, Ordering::SeqCst);
             VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
             ValidationResult::Valid
@@ -159,7 +164,7 @@ pub fn is_licensed() -> bool {
 
     #[cfg(not(debug_assertions))]
     {
-        if get_valid_entitlement_claims().is_some() {
+        if get_valid_entitlement_claims().is_some() || has_active_trial() {
             LICENSE_VALID.store(true, Ordering::SeqCst);
             VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
         } else {

@@ -12,6 +12,11 @@ import {
 
 const workspacesState = ref<AttackWorkspace[]>([])
 const activeWorkspaceIdState = ref<string | null>(null)
+const mutationVersionState = ref(0)
+
+function markMutated() {
+  mutationVersionState.value += 1
+}
 
 function findWorkspace(workspaceId: string | null) {
   if (!workspaceId) {
@@ -28,6 +33,7 @@ function createWorkspaceFromExchangeRequest(options: {
   const workspace = createAttackWorkspaceFromExchangeRequest(options)
   workspacesState.value = [...workspacesState.value, workspace]
   activeWorkspaceIdState.value = workspace.id
+  markMutated()
   return workspace
 }
 
@@ -35,11 +41,13 @@ function createWorkspaceFromDraft(options: { draft: RequestDraft; revision: Draf
   const workspace = createAttackWorkspaceFromDraft(options)
   workspacesState.value = [...workspacesState.value, workspace]
   activeWorkspaceIdState.value = workspace.id
+  markMutated()
   return workspace
 }
 
 function selectWorkspace(workspaceId: string | null) {
   activeWorkspaceIdState.value = workspaceId
+  markMutated()
 }
 
 function updateWorkspaceRequestText(workspaceId: string, requestText: string) {
@@ -53,6 +61,7 @@ function updateWorkspaceRequestText(workspaceId: string, requestText: string) {
       }
       : workspace,
   )
+  markMutated()
 }
 
 function updateWorkspaceTarget(workspaceId: string, target: IntruderTarget) {
@@ -66,6 +75,7 @@ function updateWorkspaceTarget(workspaceId: string, target: IntruderTarget) {
       }
       : workspace,
   )
+  markMutated()
 }
 
 function updateWorkspacePositions(workspaceId: string, positions: IntruderPosition[]) {
@@ -79,6 +89,7 @@ function updateWorkspacePositions(workspaceId: string, positions: IntruderPositi
       }
       : workspace,
   )
+  markMutated()
 }
 
 function updateWorkspaceTitle(workspaceId: string, title: string) {
@@ -97,6 +108,7 @@ function updateWorkspaceTitle(workspaceId: string, title: string) {
       }
       : workspace,
   )
+  markMutated()
 }
 
 function updateWorkspaceRuntime(
@@ -119,6 +131,7 @@ function updateWorkspaceRuntime(
       }
       : workspace,
   )
+  markMutated()
 }
 
 function replaceState(workspaces: AttackWorkspace[], activeWorkspaceId: string | null) {
@@ -132,6 +145,7 @@ function replaceState(workspaces: AttackWorkspace[], activeWorkspaceId: string |
     && workspacesState.value.some(workspace => workspace.id === activeWorkspaceId)
     ? activeWorkspaceId
     : workspacesState.value.at(-1)?.id ?? null
+  markMutated()
 }
 
 function removeWorkspace(workspaceId: string) {
@@ -139,11 +153,13 @@ function removeWorkspace(workspaceId: string) {
   if (activeWorkspaceIdState.value === workspaceId) {
     activeWorkspaceIdState.value = workspacesState.value.at(-1)?.id ?? null
   }
+  markMutated()
 }
 
 function resetAttackWorkspaceStore() {
   workspacesState.value = []
   activeWorkspaceIdState.value = null
+  markMutated()
 }
 
 export function useAttackWorkspaceStore() {
@@ -152,6 +168,7 @@ export function useAttackWorkspaceStore() {
   return {
     workspaces: workspacesState,
     activeWorkspaceId: activeWorkspaceIdState,
+    mutationVersion: mutationVersionState,
     activeWorkspace,
     createWorkspaceFromExchangeRequest,
     createWorkspaceFromDraft,

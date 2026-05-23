@@ -746,6 +746,13 @@ impl AiService {
                     }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::ReasoningDelta { reasoning, .. },
+                )) => {
+                    if !reasoning.is_empty() && !on_chunk(StreamChunk::Reasoning(reasoning)) {
+                        break;
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCall { .. },
                 )) => {}
                 Ok(MultiTurnStreamItem::FinalResponse(resp)) => {

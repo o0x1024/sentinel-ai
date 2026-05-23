@@ -1,14 +1,14 @@
 <template>
   <Teleport to="body">
-  <div v-if="open" class="modal modal-open dictionary-modal">
-    <div class="modal-box max-w-4xl dictionary-modal-box">
+  <div v-if="open" class="modal modal-open dictionary-modal" @click.self="$emit('cancel')">
+    <div class="modal-box max-w-2xl dictionary-modal-box">
       <h3 class="font-bold text-lg mb-4">
         {{ editing ? '编辑规则' : '新增规则' }}
       </h3>
 
       <form class="space-y-4" @submit.prevent="submit">
-        <div v-if="!editing && starterTemplates.length > 0" class="rounded-lg border border-base-300 bg-base-200/50 p-4">
-          <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div v-if="!editing && starterTemplates.length > 0" class="rounded-lg border border-base-300 bg-base-200/50 p-3">
+          <div class="flex flex-col gap-3">
             <div>
               <div class="font-medium">快速模板</div>
               <div class="text-sm text-base-content/70">先填一组常见字段和 matcher，再按你的资产场景微调。</div>
@@ -27,7 +27,7 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="form-control md:col-span-2">
             <label class="label">
               <span class="label-text">规则标识</span>
@@ -41,7 +41,7 @@
             >
           </div>
 
-          <div class="form-control">
+          <div class="form-control md:col-span-2">
             <label class="label">
               <span class="label-text">分类</span>
             </label>
@@ -54,7 +54,7 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="form-control">
             <label class="label">
               <span class="label-text">权重</span>
@@ -161,7 +161,7 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="form-control">
               <label class="label">
                 <span class="label-text">服务名</span>
@@ -206,7 +206,7 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="form-control">
               <label class="label">
                 <span class="label-text">资产分类</span>
@@ -244,7 +244,7 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="form-control">
               <label class="label">
                 <span class="label-text">别名</span>
@@ -350,7 +350,7 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="form-control">
               <label class="label">
                 <span class="label-text">请求方法</span>
@@ -376,7 +376,7 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="form-control">
               <label class="label">
                 <span class="label-text">超时(ms)</span>
@@ -424,7 +424,7 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="form-control">
               <label class="label">
                 <span class="label-text">产品范围</span>
@@ -537,7 +537,7 @@
             :key="index"
             class="rounded-lg border border-base-300 p-3 space-y-3"
           >
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div class="form-control">
                 <label class="label">
                   <span class="label-text">Part</span>
@@ -602,7 +602,7 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             <div class="rounded-md bg-base-200 px-3 py-2">
               <div class="text-xs text-base-content/60">标识</div>
               <div class="font-medium break-all">{{ form.word || '-' }}</div>

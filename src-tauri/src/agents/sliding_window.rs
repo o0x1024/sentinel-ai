@@ -262,7 +262,11 @@ impl SlidingWindowManager {
                 }),
             );
 
-            if let Err(error) = self.create_segment_summary(llm_config).await {
+            let force_token_threshold_summary = recent_tokens > threshold_tokens;
+            if let Err(error) = self
+                .create_segment_summary(llm_config, force_token_threshold_summary)
+                .await
+            {
                 self.emit_compression_event(
                     "agent:context_compression_finished",
                     event_context.as_ref(),
@@ -351,14 +355,22 @@ impl SlidingWindowManager {
         let _ = self.app_handle.emit(event_name, &payload);
     }
 
-    async fn create_segment_summary(&mut self, llm_config: &LlmConfig) -> Result<()> {
+    async fn create_segment_summary(
+        &mut self,
+        llm_config: &LlmConfig,
+        force_token_threshold_summary: bool,
+    ) -> Result<()> {
         if self.recent_messages.is_empty() {
             return Ok(());
         }
 
         // Determine how many messages to summarize
         // We keep the most recent 'recent_message_count' / 2 messages to maintain context continuity
-        let mut keep_count = (self.config.recent_message_count / 2).min(self.recent_messages.len());
+        let mut keep_count = segment_keep_count(
+            self.recent_messages.len(),
+            self.config.recent_message_count,
+            force_token_threshold_summary,
+        );
         keep_count = self.adjust_keep_count_for_tool_boundaries(keep_count);
         if self.recent_messages.len() <= keep_count {
             return Ok(());
@@ -724,6 +736,19 @@ fn build_context_messages(
     context
 }
 
+fn segment_keep_count(
+    recent_len: usize,
+    recent_message_count: usize,
+    force_token_threshold_summary: bool,
+) -> usize {
+    let base_keep_count = (recent_message_count / 2).min(recent_len);
+    if force_token_threshold_summary && recent_len > 0 {
+        base_keep_count.min(recent_len.saturating_sub(1))
+    } else {
+        base_keep_count
+    }
+}
+
 fn trim_text(text: &str, max_lines: usize, max_chars: usize) -> String {
     if text.is_empty() {
         return String::new();
@@ -793,5 +818,13 @@ mod tests {
         assert!(!messages[0].content.contains("LONG-TERM MEMORY"));
         assert!(!messages[0].content.contains("RECENT ACTIVITY SUMMARY"));
         assert_eq!(messages[1].role, "user");
+    }
+
+    #[test]
+    fn token_threshold_summary_keeps_at_least_one_message_summarizable() {
+        assert_eq!(segment_keep_count(1, 20, true), 0);
+        assert_eq!(segment_keep_count(7, 20, true), 6);
+        assert_eq!(segment_keep_count(7, 20, false), 7);
+        assert_eq!(segment_keep_count(25, 20, true), 10);
     }
 }

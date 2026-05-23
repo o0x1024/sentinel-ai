@@ -2,6 +2,7 @@ use crate::commands::monitor_config_support::normalize_monitor_type;
 use crate::commands::monitor_plugin_execution_support::{
     is_monitor_execution_plugin_category, normalize_plugin_registry_id,
 };
+use crate::services::ensure_bug_bounty_access;
 use sentinel_db::{Database, DatabaseService};
 use sentinel_plugins::MonitorSeedBinding;
 use serde::{Deserialize, Serialize};
@@ -99,6 +100,8 @@ pub async fn monitor_test_plugin(
     db_service: State<'_, Arc<DatabaseService>>,
     plugin_id: String,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     let normalized_plugin_id = normalize_plugin_registry_id(&plugin_id);
     let plugin = db_service
         .get_plugin_from_registry(&normalized_plugin_id)

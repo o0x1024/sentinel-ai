@@ -116,6 +116,7 @@
         :active-draft-count="activeSkillCandidates.length"
         :rule-count="suppressionRules.length"
         :bulk-updating-skill-state="bulkUpdatingSkillState"
+        :bulk-deleting-skills="bulkDeletingSkills"
         :deleting-skill-ids="deletingSkillIds"
         :is-skill-enabled="isSkillEnabled"
         :get-skill-icon="getSkillIcon"
@@ -123,6 +124,8 @@
         @start-create="startCreate"
         @edit="startEdit"
         @delete="confirmDelete"
+        @delete-selected="confirmDeleteSelected"
+        @delete-all="confirmDeleteAll"
         @toggle-enabled="toggleSkillEnabled"
         @set-all-enabled="setAllSkillsEnabled"
         @open-memory-feedback="openMemoryFeedbackDialog"
@@ -196,6 +199,7 @@ const {
   loading,
   deletingSkillIds,
   bulkUpdatingSkillState,
+  bulkDeletingSkills,
   enabledSkillCount,
   disabledSkillCount,
   skillsWithContentCount,
@@ -204,6 +208,8 @@ const {
   setAllSkillsEnabled,
   loadSkills,
   confirmDelete,
+  confirmDeleteSelected,
+  confirmDeleteAll,
 } = useSkillsCrud({
   t,
   confirm: dialog.confirm,

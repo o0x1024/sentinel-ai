@@ -116,7 +116,11 @@ async fn execute_execution_plugin(
     input: Value,
 ) -> Result<(Option<Value>, Option<Vec<PluginExecutionFinding>>), String> {
     let (findings, result) = executor
-        .execute_agent(&input)
+        .execute_agent_with_runtime_context(
+            &input,
+            Some("plugin_test".to_string()),
+            Some(format!("plugin-test:{}", uuid::Uuid::new_v4())),
+        )
         .await
         .map_err(|error| format!("Plugin execution failed: {error}"))?;
 

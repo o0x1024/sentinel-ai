@@ -34,6 +34,14 @@
         >
           {{ item.badge }}
         </span>
+        <span
+          v-else-if="item.badgeIcon"
+          class="badge badge-xs absolute -top-1 -right-1 min-w-[1.1rem] h-4 px-1"
+          :class="item.badgeClass"
+          :title="item.badgeTitle"
+        >
+          <i :class="item.badgeIcon"></i>
+        </span>
       </router-link>
 
       <div class="divider divider-neutral my-2"></div>
@@ -100,6 +108,14 @@
                 <span v-else-if="item.badge" class="badge badge-sm ml-auto" :class="item.badgeClass">
                   {{ item.badge }}
                 </span>
+                <span
+                  v-else-if="item.badgeIcon"
+                  class="badge badge-sm ml-auto"
+                  :class="item.badgeClass"
+                  :title="item.badgeTitle"
+                >
+                  <i :class="item.badgeIcon"></i>
+                </span>
               </router-link>
             </li>
           </ul>
@@ -127,6 +143,14 @@
                 <span class="sidebar-menu-label font-medium">{{ item.name }}</span>
                 <span v-if="item.badge" class="badge badge-sm ml-auto" :class="item.badgeClass">
                   {{ item.badge }}
+                </span>
+                <span
+                  v-else-if="item.badgeIcon"
+                  class="badge badge-sm ml-auto"
+                  :class="item.badgeClass"
+                  :title="item.badgeTitle"
+                >
+                  <i :class="item.badgeIcon"></i>
                 </span>
               </router-link>
             </li>
@@ -190,7 +214,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
@@ -214,6 +238,8 @@ interface SidebarMenuItem {
   icon: string
   badge: string | null
   badgeClass: string
+  badgeIcon?: string | null
+  badgeTitle?: string
   badges?: SidebarBadgeItem[]
 }
 
@@ -292,6 +318,9 @@ const securityCenterBadgeClass = computed(() => {
   return ''
 })
 
+const activationBadgeIcon = 'fas fa-crown'
+const activationBadgeTitle = computed(() => t('sidebar.activateWithLicenseCard', '输入卡密激活'))
+
 // 主要功能菜单项
 const mainMenuItems = computed<SidebarMenuItem[]>(() => {
   const items: SidebarMenuItem[] = [
@@ -329,7 +358,9 @@ const mainMenuItems = computed<SidebarMenuItem[]>(() => {
       name: t('sidebar.botConsole', 'Bot Console'),
       icon: 'fas fa-comments',
       badge: null,
-      badgeClass: '',
+      badgeClass: entitlements.value.can_access_bot_console ? '' : 'badge-warning',
+      badgeIcon: entitlements.value.can_access_bot_console ? null : activationBadgeIcon,
+      badgeTitle: activationBadgeTitle.value,
     },
     {
       path: '/workflow-studio',
@@ -340,21 +371,21 @@ const mainMenuItems = computed<SidebarMenuItem[]>(() => {
     },
   ]
 
-  if (entitlements.value.can_access_bug_bounty) {
-    items.push({
-      path: '/bug-bounty',
-      name: t('sidebar.bugBounty', '漏洞赏金'),
-      icon: 'fas fa-trophy',
-      badge: null,
-      badgeClass: '',
-    })
-  }
+  items.push({
+    path: '/bug-bounty',
+    name: t('sidebar.bugBounty', '漏洞赏金'),
+    icon: 'fas fa-trophy',
+    badge: null,
+    badgeClass: entitlements.value.can_access_bug_bounty ? '' : 'badge-warning',
+    badgeIcon: entitlements.value.can_access_bug_bounty ? null : activationBadgeIcon,
+    badgeTitle: activationBadgeTitle.value,
+  })
 
   return items
 })
 
 // 工具与管理菜单项
-const toolMenuItems = computed(() => [
+const toolMenuItems = computed<SidebarMenuItem[]>(() => [
   // {
   //   path: '/plan-execute',
   //   name: 'Plan-and-Execute 演示',
@@ -415,7 +446,7 @@ const toolMenuItems = computed(() => [
 ])
 
 // 系统设置菜单项
-const systemMenuItems = computed(() => [
+const systemMenuItems = computed<SidebarMenuItem[]>(() => [
     {
     path: '/agent-management',
     name: t('sidebar.agentManagement', '智能体管理'),
@@ -503,6 +534,8 @@ const loadPendingPlugins = async () => {
   }
 }
 
+let taskProgressTimer: number | null = null
+
 // 模拟数据更新
 onMounted(() => {
   void getFeatureEntitlements()
@@ -518,7 +551,7 @@ onMounted(() => {
   // }, 10000) // 每10秒更新一次
 
   // 模拟任务进度更新
-  setInterval(() => {
+  taskProgressTimer = window.setInterval(() => {
     if (hasRunningTasks.value && taskProgress.value < 100) {
       taskProgress.value += Math.random() * 2
       if (taskProgress.value > 100) {
@@ -527,6 +560,13 @@ onMounted(() => {
       }
     }
   }, 5000)
+})
+
+onUnmounted(() => {
+  if (taskProgressTimer !== null) {
+    window.clearInterval(taskProgressTimer)
+    taskProgressTimer = null
+  }
 })
 </script>
 

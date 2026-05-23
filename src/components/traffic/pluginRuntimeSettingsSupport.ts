@@ -12,6 +12,8 @@ export type TrafficPluginRuntimePolicyId =
   | 'monitorFetch'
   | 'agentFetch'
   | 'pluginTestFetch'
+export type TrafficPluginRuntimePolicySettings =
+  TrafficPluginRuntimeSettings[TrafficPluginRuntimePolicyId]
 
 function clampInteger(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) {
@@ -39,7 +41,7 @@ function normalizeFetchPolicySettings(
     maxConcurrentPerPlugin: clampInteger(settings.maxConcurrentPerPlugin || 1, 1, 128),
     minHostDelayMs: clampInteger(settings.minHostDelayMs || 0, 0, 60000),
     jitterRange: normalizeJitterRange(settings.jitterRange, 30000),
-    timeoutMs: 3000,
+    timeoutMs: clampInteger(settings.timeoutMs || 3000, 1000, 120000),
   }
 }
 
@@ -56,7 +58,7 @@ function normalizeActiveProbeSettings(
     maxConcurrentPerHost: clampInteger(settings.maxConcurrentPerHost || 1, 1, 32),
     maxConcurrentPerRun: clampInteger(settings.maxConcurrentPerRun || 1, 1, 128),
     maxConcurrentPerPlugin: clampInteger(settings.maxConcurrentPerPlugin || 1, 1, 128),
-    timeoutMs: 3000,
+    timeoutMs: clampInteger(settings.timeoutMs || 3000, 1000, 120000),
   }
 }
 
@@ -251,4 +253,19 @@ export function resetTrafficPluginRuntimePoliciesToDefaults(
     nextSettings[policyId] = defaults[policyId]
   }
   return normalizeTrafficPluginRuntimeSettings(nextSettings)
+}
+
+export function updateTrafficPluginRuntimePolicySettings(
+  current: TrafficPluginRuntimeSettings,
+  policyId: TrafficPluginRuntimePolicyId,
+  policy: TrafficPluginRuntimePolicySettings
+): TrafficPluginRuntimeSettings {
+  return normalizeTrafficPluginRuntimeSettings({
+    ...current,
+    [policyId]: {
+      ...current[policyId],
+      ...policy,
+      jitterRange: [...policy.jitterRange] as [number, number],
+    },
+  })
 }

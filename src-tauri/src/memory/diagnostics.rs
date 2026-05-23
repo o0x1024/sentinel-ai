@@ -41,7 +41,7 @@ impl DurableMemoryDiagnosticsItem {
             .unwrap_or(false);
         let projection_issue = projection
             .as_ref()
-            .map(|state| !state.lexical_indexed || !state.vector_indexed || !state.skill_projected)
+            .map(|state| !retrievable_projection_ready || !state.skill_projected)
             .unwrap_or(true);
 
         Self {
@@ -108,8 +108,9 @@ fn summarize_counts<'a>(labels: impl Iterator<Item = &'a str>) -> Vec<MemoryTrac
 
 #[cfg(test)]
 mod tests {
-    use super::build_memory_retrieval_trace;
+    use super::{build_memory_retrieval_trace, DurableMemoryDiagnosticsItem};
     use crate::agents::RetrievedMemoryItem;
+    use sentinel_db::core::models::database::{DurableMemoryProjectionState, DurableMemoryRecord};
 
     #[test]
     fn memory_retrieval_trace_summarizes_hits() {
@@ -167,5 +168,62 @@ mod tests {
         assert_eq!(trace.kind_breakdown[0].label, "fact");
         assert_eq!(trace.kind_breakdown[0].count, 2);
         assert_eq!(trace.query_preview, "query with plenty of whitespace");
+    }
+
+    #[test]
+    fn diagnostics_treats_lexical_memory_as_ready_without_vector_projection() {
+        let item = DurableMemoryDiagnosticsItem::from_parts(
+            memory_record("mem-1"),
+            Some(DurableMemoryProjectionState {
+                memory_id: "mem-1".to_string(),
+                lexical_indexed: true,
+                vector_indexed: false,
+                skill_projected: true,
+                last_error: Some("vector projection skipped or unavailable".to_string()),
+                updated_at_ms: 2,
+            }),
+        );
+
+        assert!(item.retrievable_projection_ready);
+        assert!(!item.projection_issue);
+    }
+
+    #[test]
+    fn diagnostics_flags_memory_without_any_retrievable_projection() {
+        let item = DurableMemoryDiagnosticsItem::from_parts(
+            memory_record("mem-2"),
+            Some(DurableMemoryProjectionState {
+                memory_id: "mem-2".to_string(),
+                lexical_indexed: false,
+                vector_indexed: false,
+                skill_projected: true,
+                last_error: None,
+                updated_at_ms: 2,
+            }),
+        );
+
+        assert!(!item.retrievable_projection_ready);
+        assert!(item.projection_issue);
+    }
+
+    fn memory_record(id: &str) -> DurableMemoryRecord {
+        DurableMemoryRecord {
+            id: id.to_string(),
+            title: Some("Preference".to_string()),
+            text: "用户喜欢吃肉".to_string(),
+            kind: "preference".to_string(),
+            tier: "durable".to_string(),
+            scope: "project".to_string(),
+            stability: "stable".to_string(),
+            source: "memory_tool".to_string(),
+            confidence: 0.7,
+            importance: 4,
+            tags_json: "[]".to_string(),
+            origin_execution_id: Some("memory_tool".to_string()),
+            supersedes_memory_id: None,
+            status: "active".to_string(),
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
     }
 }

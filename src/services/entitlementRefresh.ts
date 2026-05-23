@@ -43,3 +43,8 @@ export const saveEntitlementRefreshConfig = async (config: {
 
 export const refreshEntitlementTokenFromServer = async () =>
   invoke<EntitlementRefreshResult>('refresh_entitlement_token')
+
+export const activateWithLicenseCard = async (input: {
+  username: string
+  activation_key: string
+}) => invoke<EntitlementRefreshResult>('activate_with_license_card', { input })

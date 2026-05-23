@@ -104,8 +104,6 @@ pub async fn bounty_get_submission_with_timeline(
     db_service: State<'_, Arc<DatabaseService>>,
     submission_id: String,
 ) -> Result<SubmissionWithTimeline, String> {
-    ensure_bounty_feature()?;
-
     let submission = db_service
         .get_bounty_submission(&submission_id)
         .await
@@ -168,8 +166,6 @@ pub async fn bounty_get_submissions_needing_followup(
     program_id: Option<String>,
     days_threshold: Option<i64>,
 ) -> Result<Vec<SubmissionWithTimeline>, String> {
-    ensure_bounty_feature()?;
-
     let submissions = db_service
         .list_bounty_submissions(
             program_id.as_deref(),

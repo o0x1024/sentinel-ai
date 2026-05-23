@@ -58,6 +58,8 @@
     commands::bounty_get_api_inventory_target,
     commands::bounty_list_api_inventory_target_keys,
     commands::bounty_list_api_inventory_targets,
+    commands::bounty_list_api_inventory_endpoint_request_history,
+    commands::bounty_request_api_inventory_endpoints,
     commands::bounty_import_traffic_finding,
     commands::bounty_batch_import_traffic_findings,
     commands::bounty_export_report,

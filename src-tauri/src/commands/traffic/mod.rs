@@ -23,7 +23,7 @@ pub mod workspace_commands;
 
 pub use active_probe_commands::*;
 pub use analysis_commands::*;
-pub use analysis_state_support::{InterceptedRequest, InterceptedResponse, TrafficAnalysisState};
+pub use analysis_state_support::TrafficAnalysisState;
 pub use behavior_commands::*;
 pub use behavior_effect_commands::*;
 pub use certificate_commands::*;
@@ -38,5 +38,6 @@ pub use oast_commands::*;
 pub use plugin_commands::*;
 pub use proxy_commands::*;
 pub use runtime_settings_commands::*;
+pub use sentinel_traffic::{InterceptedRequest, InterceptedResponse};
 pub use store_commands::*;
 pub use workspace_commands::*;

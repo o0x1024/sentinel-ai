@@ -121,15 +121,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onActivated, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { useRoute, useRouter } from 'vue-router'
-import RoleManagement from '@/components/RoleManagement.vue'
-import UserForcedRulesModal from '@/components/UserForcedRulesModal.vue'
-import TurnLogsModal from '@/components/Agent/TurnLogsModal.vue'
-import { AgentTabs, AgentView } from '@/components/Agent'
+import AgentTabs from '@/components/Agent/AgentTabs.vue'
+import AgentView from '@/components/Agent/AgentView.vue'
 import type { AiTurnLogSummaryEntry } from '@/api/aiLogs'
 import type { ReferencedTraffic, ReferencedAsset } from '@/types/agentReferences'
 import { useRoleManagement } from '@/composables/useRoleManagement'
@@ -169,6 +167,9 @@ defineOptions({
 })
 
 const { t } = useI18n()
+const RoleManagement = defineAsyncComponent(() => import('@/components/RoleManagement.vue'))
+const TurnLogsModal = defineAsyncComponent(() => import('@/components/Agent/TurnLogsModal.vue'))
+const UserForcedRulesModal = defineAsyncComponent(() => import('@/components/UserForcedRulesModal.vue'))
 const route = useRoute()
 const router = useRouter()
 const {

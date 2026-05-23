@@ -1,5 +1,8 @@
 [build]
-# 禁用增量编译以减少PDB文件大小
+# 使用 sccache 加速编译缓存（安装后取消下面注释启用）
+# 安装：brew install sccache 或 cargo install sccache --locked
+# rustc-wrapper = "sccache"
+# 或通过环境变量临时启用：RUSTC_WRAPPER=sccache cargo build
 # incremental = false # Commented out to improve build speed on non-Windows platforms
 
 [target.x86_64-pc-windows-msvc]
@@ -27,3 +30,11 @@ LIB = "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\ucrt\\x64;C
 # Protobuf 编译器路径 - 留空让系统自动查找
 # PROTOC = "C:\\protoc\\bin\\protoc.exe"
 # PROTOC_INCLUDE = "C:\\protoc\\include"
+
+# macOS: 使用 lld 链接器加速链接阶段（安装后取消注释）
+# 安装：brew install lld
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

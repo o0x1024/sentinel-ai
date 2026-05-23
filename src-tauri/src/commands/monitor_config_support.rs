@@ -5,10 +5,64 @@ use sentinel_bounty::services::{
 };
 use sentinel_db::{DatabaseService, MonitorTaskPersistRecord};
 use sentinel_plugins::MonitorSeedBinding;
+use std::collections::HashMap;
 
 pub fn normalize_loaded_monitor_task(mut task: MonitorTask) -> MonitorTask {
     task.config.migrate_legacy_port_service_plugins();
     task
+}
+
+pub fn apply_legacy_monitor_task_groups(
+    tasks: &mut [MonitorTask],
+    program_name_by_id: &HashMap<String, String>,
+) -> bool {
+    let mut candidates: HashMap<String, Vec<usize>> = HashMap::new();
+
+    for (index, task) in tasks.iter().enumerate() {
+        if task.group_id.is_some() {
+            continue;
+        }
+        let Some(program_name) = program_name_by_id.get(&task.program_id) else {
+            continue;
+        };
+        let suffix = format!(" - {}", program_name);
+        let Some(group_name) = task.name.strip_suffix(&suffix) else {
+            continue;
+        };
+        let group_name = group_name.trim();
+        if group_name.is_empty() {
+            continue;
+        }
+        let Ok(config_key) = serde_json::to_string(&task.config) else {
+            continue;
+        };
+        let key = format!(
+            "{}\n{}\n{}\n{}",
+            group_name,
+            task.interval_secs,
+            task.created_at.timestamp(),
+            config_key
+        );
+        candidates.entry(key).or_default().push(index);
+    }
+
+    let mut changed = false;
+    for (key, indexes) in candidates {
+        if indexes.len() < 2 {
+            continue;
+        }
+        let Some((group_name, _)) = key.split_once('\n') else {
+            continue;
+        };
+        let group_id = uuid::Uuid::new_v4().to_string();
+        for index in indexes {
+            tasks[index].group_id = Some(group_id.clone());
+            tasks[index].group_name = Some(group_name.to_string());
+            changed = true;
+        }
+    }
+
+    changed
 }
 
 fn monitor_task_to_record(task: &MonitorTask) -> Result<MonitorTaskPersistRecord, String> {
@@ -44,6 +98,34 @@ pub async fn save_tasks_to_db(
         .map_err(|e| e.to_string())
 }
 
+pub async fn repair_legacy_monitor_task_groups(
+    scheduler: &MonitorScheduler,
+    db: &DatabaseService,
+) -> Result<(), String> {
+    let programs = db
+        .list_bounty_programs(None, None, None, None, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let program_name_by_id = programs
+        .into_iter()
+        .map(|program| (program.id, program.name))
+        .collect::<HashMap<_, _>>();
+    let mut tasks = scheduler.list_tasks().await;
+    if !apply_legacy_monitor_task_groups(&mut tasks, &program_name_by_id) {
+        return Ok(());
+    }
+
+    for repaired_task in tasks {
+        scheduler
+            .update_task(&repaired_task.id, |task| {
+                task.group_id = repaired_task.group_id.clone();
+                task.group_name = repaired_task.group_name.clone();
+            })
+            .await?;
+    }
+    save_tasks_to_db(scheduler, db).await
+}
+
 pub async fn load_tasks_from_db(
     scheduler: &MonitorScheduler,
     db: &DatabaseService,
@@ -54,12 +136,29 @@ pub async fn load_tasks_from_db(
         .map_err(|e| e.to_string())?;
 
     if !task_jsons.is_empty() {
+        let programs = db
+            .list_bounty_programs(None, None, None, None, None)
+            .await
+            .map_err(|e| e.to_string())?;
+        let program_name_by_id = programs
+            .into_iter()
+            .map(|program| (program.id, program.name))
+            .collect::<HashMap<_, _>>();
+        let mut tasks = Vec::with_capacity(task_jsons.len());
         for json in task_jsons {
             let task: MonitorTask = serde_json::from_str(&json).map_err(|e| e.to_string())?;
             let task = normalize_loaded_monitor_task(task);
+            tasks.push(task);
+        }
+        let repaired_legacy_groups =
+            apply_legacy_monitor_task_groups(&mut tasks, &program_name_by_id);
+        for task in tasks {
             if scheduler.get_task(&task.id).await.is_none() {
                 scheduler.add_task(task).await?;
             }
+        }
+        if repaired_legacy_groups {
+            save_tasks_to_db(scheduler, db).await?;
         }
         return Ok(());
     }
@@ -215,5 +314,44 @@ pub fn apply_plugins_to_monitor_type(
         "web" => config.web_plugins = plugins,
         "risk" => config.risk_plugins = plugins,
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_monitor_group_repair_uses_project_suffix_and_batch_shape() {
+        let mut tasks = vec![
+            MonitorTask::new(
+                "program-1".to_string(),
+                "安全风险扫描 - 字节跳动".to_string(),
+                21_600,
+            ),
+            MonitorTask::new(
+                "program-2".to_string(),
+                "安全风险扫描 - 腾讯".to_string(),
+                21_600,
+            ),
+            MonitorTask::new("program-3".to_string(), "独立任务".to_string(), 21_600),
+        ];
+        let created_at = tasks[0].created_at;
+        tasks[1].created_at = created_at;
+        tasks[2].created_at = created_at;
+        let program_name_by_id = HashMap::from([
+            ("program-1".to_string(), "字节跳动".to_string()),
+            ("program-2".to_string(), "腾讯".to_string()),
+            ("program-3".to_string(), "独立项目".to_string()),
+        ]);
+
+        assert!(apply_legacy_monitor_task_groups(
+            &mut tasks,
+            &program_name_by_id
+        ));
+        assert_eq!(tasks[0].group_name.as_deref(), Some("安全风险扫描"));
+        assert_eq!(tasks[1].group_name.as_deref(), Some("安全风险扫描"));
+        assert_eq!(tasks[0].group_id, tasks[1].group_id);
+        assert!(tasks[2].group_id.is_none());
     }
 }

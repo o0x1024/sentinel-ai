@@ -508,7 +508,7 @@ function openWorkbenchTool(tool: WorkbenchTool) {
 
 function flushPendingComparerTransfers() {
   const mainStage = mainStageRef.value
-  if (!mainStage?.hasComparer()) {
+  if (!mainStage) {
     return
   }
 
@@ -873,17 +873,13 @@ onMounted(() => {
 
 watch(
   [
-    () => workbenchState.drafts.drafts.value,
-    () => workbenchState.drafts.revisions.value,
-    () => workbenchState.drafts.activeDraftId.value,
-    () => workbenchState.attack.workspaces.value,
-    () => workbenchState.attack.activeWorkspaceId.value,
-    () => workbenchState.replay.replayRuns.value,
+    () => workbenchState.drafts.mutationVersion.value,
+    () => workbenchState.attack.mutationVersion.value,
+    () => workbenchState.replay.mutationVersion.value,
   ],
   () => {
     persistence.schedulePersist()
   },
-  { deep: true },
 )
 
 watchEffect(() => {

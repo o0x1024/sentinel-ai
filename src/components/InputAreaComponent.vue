@@ -431,12 +431,14 @@
           <InputToolbarActions
             :rag-enabled="effectiveRagEnabled"
             :web-search-enabled="effectiveWebSearchEnabled"
+            :can-export-conversation="canExportConversation"
             @trigger-file-select="triggerFileSelect"
             @open-tool-config="emit('open-tool-config')"
             @toggle-rag="toggleRAG"
             @toggle-web-search="toggleWebSearch"
             @open-slash-manager="openSlashManager"
             @clear-conversation="clearConversation"
+            @export-conversation="exportConversationMessages"
           />
 
           <!-- Right side icons -->
@@ -751,9 +753,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
+import { defineAsyncComponent, onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import draggable from 'vuedraggable'
 import SearchableSelect from '@/components/SearchableSelect.vue'
 import InputToolbarActions from '@/components/InputArea/InputToolbarActions.vue'
 import {
@@ -787,6 +788,11 @@ import {
 } from '@/components/InputArea/mentionTokenSupport'
 import { useInputMentions } from '@/components/InputArea/useInputMentions'
 import { useInputSlashCommands } from '@/components/InputArea/useInputSlashCommands'
+import {
+  buildConversationExportMarkdown,
+  downloadConversationExport,
+  getExportableConversationMessages,
+} from '@/components/InputArea/conversationExport'
 import type {
   ReferencedAsset,
   ReferencedConversationMessage,
@@ -802,6 +808,7 @@ import type {
 import type { MentionTokenKind } from '@/components/InputArea/mentionTokenSupport'
 
 const { t } = useI18n()
+const draggable = defineAsyncComponent(() => import('vuedraggable'))
 
 // Context usage info type
 interface MemoryTraceCount {
@@ -945,6 +952,24 @@ const effectiveSelectedAgent = computed({
 const availableAgentOptions = computed(() => props.availableAgents || [])
 
 const placeholderText = computed(() => '在这里输入消息，按 Enter 发送')
+const exportableConversationMessages = computed(() =>
+  getExportableConversationMessages(props.availableConversationMessages || [])
+)
+const canExportConversation = computed(() => exportableConversationMessages.value.length > 0)
+
+const exportConversationMessages = () => {
+  if (!canExportConversation.value) return
+  const markdown = buildConversationExportMarkdown({
+    conversationId: props.conversationId,
+    messages: props.availableConversationMessages || [],
+  })
+  void downloadConversationExport({
+    conversationId: props.conversationId,
+    markdown,
+  }).catch(error => {
+    console.error('[InputAreaComponent] Failed to export conversation:', error)
+  })
+}
 
 const selectionState = ref({
   end: 0,

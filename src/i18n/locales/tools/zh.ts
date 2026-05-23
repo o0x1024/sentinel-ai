@@ -18,6 +18,8 @@ export default {
   skillsInstallHistory: '安装历史',
   skillsInstallHistoryEmpty: '暂无安装记录。',
   skillsInstallSelect: '选择要安装的 Skills',
+  skillsInstallSelectAll: '全选',
+  skillsInstallSelectedCount: '已选 {selected} / {total}',
   skillsInstallNoCandidates: '未在来源中发现 Skills。',
   skillsInstallConfirm: '安装',
   skillsGitUrl: 'Git URL',

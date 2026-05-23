@@ -130,17 +130,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, defineAsyncComponent, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { appDataDir, homeDir, join } from '@tauri-apps/api/path'
 import { dialog } from '@/composables/useDialog'
 import AISettings from '@/components/Settings/AISettings.vue'
-import RAGSettings from '@/components/Settings/RAGSettings.vue'
-import DatabaseSettings from '@/components/Settings/DatabaseSettings.vue'
-import GeneralSettings from '@/components/Settings/GeneralSettings.vue'
-import SecuritySettings from '@/components/Settings/SecuritySettings.vue'
-import NetworkSettings from '@/components/Settings/NetworkSettings.vue'
 import {
   createDefaultCustomProvider,
   createDefaultRagConfig,
@@ -172,6 +167,12 @@ import {
 } from './settingsUiSupport'
 
 const { t, locale } = useI18n()
+
+const DatabaseSettings = defineAsyncComponent(() => import('@/components/Settings/DatabaseSettings.vue'))
+const GeneralSettings = defineAsyncComponent(() => import('@/components/Settings/GeneralSettings.vue'))
+const NetworkSettings = defineAsyncComponent(() => import('@/components/Settings/NetworkSettings.vue'))
+const RAGSettings = defineAsyncComponent(() => import('@/components/Settings/RAGSettings.vue'))
+const SecuritySettings = defineAsyncComponent(() => import('@/components/Settings/SecuritySettings.vue'))
 
 // 响应式数据
 const activeCategory = ref('ai')
@@ -439,7 +440,7 @@ const loadSettings = async () => {
       applyFontSize(settings.value.general.fontSize)
     }
     if (settings.value.general?.language) {
-      applyLanguage(settings.value.general.language, locale)
+      void applyLanguage(settings.value.general.language, locale)
     }
     if (settings.value.general?.uiScale) {
       applyUIScale(settings.value.general.uiScale)
@@ -1281,7 +1282,7 @@ const saveGeneralConfig = async () => {
     
     // 应用语言设置
     if (settings.value.general?.language) {
-      applyLanguage(settings.value.general.language, locale)
+      void applyLanguage(settings.value.general.language, locale)
     }
     
     // 应用UI缩放设置
@@ -1422,7 +1423,7 @@ watch(() => settings.value.general, (newGeneral, oldGeneral) => {
 
     // 语言变更时应用
     if (newGeneral?.language !== oldGeneral?.language && newGeneral?.language) {
-      applyLanguage(newGeneral.language, locale)
+      void applyLanguage(newGeneral.language, locale)
     }
 
     // UI 缩放变更时应用

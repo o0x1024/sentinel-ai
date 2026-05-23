@@ -142,14 +142,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import SimpleMessageFlow, { type SimpleMessage } from './SimpleMessageFlow.vue'
 import TaskPanel from './TaskPanel.vue'
 import { mapTaskRuntimeItemsToAgentTasks } from '@/types/agentTask'
-import type { TaskRuntimeItem } from '@/types/taskRuntime'
+import type { SubagentMessageState } from './useSubagentMessageStore'
 
 type SubagentStatus = 'running' | 'queued' | 'completed' | 'failed'
 
@@ -167,22 +165,11 @@ interface SubagentItem {
   duration?: number
 }
 
-interface SubagentMessageRecord {
-  id: string
-  subagent_run_id: string
-  role: string
-  content?: string | null
-  metadata?: string | null
-  tool_calls?: string | null
-  attachments?: string | null
-  reasoning_content?: string | null
-  timestamp: string
-  structured_data?: string | null
-}
-
 const props = defineProps<{
   visible: boolean
   subagent: SubagentItem | null
+  messageState: SubagentMessageState | null
+  loadMessages: (subagentId: string) => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -192,18 +179,15 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const messageFlowRef = ref<InstanceType<typeof SimpleMessageFlow> | null>(null)
-const messages = ref<SubagentMessageRecord[]>([])
-const messagesLoading = ref(false)
-const taskItems = ref<TaskRuntimeItem[]>([])
 const showTasks = ref(false)
+const messages = computed(() => props.messageState?.messages || [])
+const messagesLoading = computed(() => props.messageState?.messagesLoading || false)
+const taskItems = computed(() => props.messageState?.taskItems || [])
+const streamingContent = computed(() => props.messageState?.streamingContent || '')
+const streamingReasoningContent = computed(
+  () => props.messageState?.streamingReasoningContent || ''
+)
 const panelTasks = computed(() => mapTaskRuntimeItemsToAgentTasks(taskItems.value, props.subagent?.id || undefined))
-
-// Streaming state for real-time display
-const streamingContent = ref('')
-const streamingReasoningContent = ref('')
-
-// Event listeners
-const unlisteners: UnlistenFn[] = []
 
 // Status styling
 const statusBadgeClass = computed(() => {
@@ -291,299 +275,43 @@ const formatDuration = (ms: number) => {
   return `${minutes}m ${seconds}s`
 }
 
-// Load messages
-let currentLoadId = 0
-
-const loadMessages = async () => {
-  const loadId = ++currentLoadId
-  const subagentId = props.subagent?.id
-  
-  if (!props.visible || !subagentId) {
-    if (loadId === currentLoadId) {
-      messages.value = []
-    }
-    return
-  }
-  
-  messagesLoading.value = true
-  try {
-    const result = await invoke<SubagentMessageRecord[]>('get_subagent_messages', {
-      subagentRunId: subagentId,
-    })
-    
-    if (loadId !== currentLoadId) return
-    
-    messages.value = result || []
-    
-    await nextTick()
-    messageFlowRef.value?.scrollToBottom()
-  } catch (e) {
-    console.error('[SubagentDetailModal] Failed to load messages:', e)
-    if (loadId === currentLoadId) {
-      messages.value = []
-    }
-  } finally {
-    if (loadId === currentLoadId) {
-      messagesLoading.value = false
-    }
-  }
-}
-
-// Start listening for real-time events
-const startListening = async () => {
-  // Listen for streaming chunks (agent:chunk) - this is how subagent streams content
-  const unlistenChunk = await listen<{
-    execution_id: string
-    chunk_type: string
-    content?: string
-  }>('agent:chunk', (event) => {
-    const payload = event.payload
-    const subagentId = props.subagent?.id
-    
-    // Only process if this chunk belongs to the current subagent
-    if (!subagentId || payload.execution_id !== subagentId) return
-    
-    if (payload.chunk_type === 'text' && payload.content) {
-      streamingContent.value += payload.content
-      // Scroll to bottom on new content
-      nextTick(() => {
-        messageFlowRef.value?.scrollToBottom()
-      })
-    } else if (payload.chunk_type === 'reasoning' && payload.content) {
-      streamingReasoningContent.value += payload.content
-      nextTick(() => {
-        messageFlowRef.value?.scrollToBottom()
-      })
-    }
-  })
-  unlisteners.push(unlistenChunk)
-
-  // Listen for new subagent messages (persisted messages)
-  const unlistenMessage = await listen<{
-    subagent_run_id: string
-    message_id: string
-    role: string
-    content: string
-    tool_calls?: string | null
-    reasoning_content?: string | null
-    timestamp: string
-  }>('subagent:message', (event) => {
-    const payload = event.payload
-    const subagentId = props.subagent?.id
-    
-    if (!subagentId || payload.subagent_run_id !== subagentId) return
-    
-    // Check if message already exists
-    const exists = messages.value.some(m => m.id === payload.message_id)
-    if (exists) return
-    
-    // Clear streaming content when a persisted message arrives (it replaces the streaming)
-    if (payload.role === 'assistant') {
-      streamingContent.value = ''
-      streamingReasoningContent.value = ''
-    }
-    
-    // Add new message
-    messages.value.push({
-      id: payload.message_id,
-      subagent_run_id: payload.subagent_run_id,
-      role: payload.role,
-      content: payload.content || null,
-      tool_calls: payload.tool_calls || null,
-      reasoning_content: payload.reasoning_content || null,
-      timestamp: payload.timestamp,
-      metadata: null,
-      attachments: null,
-      structured_data: null,
-    })
-    
-    // Scroll to bottom
-    nextTick(() => {
-      messageFlowRef.value?.scrollToBottom()
-    })
-  })
-  unlisteners.push(unlistenMessage)
-
-  // Listen for tool call events
-  const unlistenToolCall = await listen<{
-    execution_id: string
-    tool_call_id: string
-    tool_name: string
-    arguments?: string
-  }>('agent:tool_call_complete', (event) => {
-    const payload = event.payload
-    const subagentId = props.subagent?.id
-    
-    if (!subagentId || payload.execution_id !== subagentId) return
-    
-    // Clear streaming content before tool call (tool calls interrupt text streaming)
-    if (streamingContent.value) {
-      // Save current streaming content as a message before tool call
-      const tempId = 'stream-' + Date.now()
-      messages.value.push({
-        id: tempId,
-        subagent_run_id: subagentId,
-        role: 'assistant',
-        content: streamingContent.value || null,
-        tool_calls: null,
-        reasoning_content: streamingReasoningContent.value || null,
-        timestamp: new Date().toISOString(),
-        metadata: null,
-        attachments: null,
-        structured_data: null,
-      })
-      streamingContent.value = ''
-      streamingReasoningContent.value = ''
-    }
-    
-    // Add tool call message
-    const toolCallId = 'toolcall-' + payload.tool_call_id
-    if (!messages.value.some(m => m.id === toolCallId)) {
-      messages.value.push({
-        id: toolCallId,
-        subagent_run_id: subagentId,
-        role: 'tool',
-        content: `Calling: ${payload.tool_name}`,
-        tool_calls: null,
-        reasoning_content: null,
-        timestamp: new Date().toISOString(),
-        metadata: JSON.stringify({
-          tool_name: payload.tool_name,
-          tool_args: payload.arguments ? tryParseJson(payload.arguments) : {},
-          tool_call_id: payload.tool_call_id,
-          status: 'running',
-        }),
-        attachments: null,
-        structured_data: null,
-      })
-    }
-    
-    nextTick(() => {
-      messageFlowRef.value?.scrollToBottom()
-    })
-  })
-  unlisteners.push(unlistenToolCall)
-
-  // Listen for tool result events
-  const unlistenToolResult = await listen<{
-    execution_id: string
-    tool_call_id: string
-    result: string
-  }>('agent:tool_result', (event) => {
-    const payload = event.payload
-    const subagentId = props.subagent?.id
-    
-    if (!subagentId || payload.execution_id !== subagentId) return
-    
-    // Update the tool call message with result
-    const toolCallId = 'toolcall-' + payload.tool_call_id
-    const existingMsg = messages.value.find(m => m.id === toolCallId)
-    if (existingMsg) {
-      const meta = existingMsg.metadata ? tryParseJson(existingMsg.metadata) : {}
-      meta.status = 'completed'
-      meta.tool_result = payload.result
-      existingMsg.metadata = JSON.stringify(meta)
-      existingMsg.content = `Completed: ${meta.tool_name || 'tool'}`
-    }
-    
-    nextTick(() => {
-      messageFlowRef.value?.scrollToBottom()
-    })
-  })
-  unlisteners.push(unlistenToolResult)
-
-  // Listen for subagent completion
-  const unlistenDone = await listen<{
-    execution_id: string
-    parent_execution_id: string
-    success: boolean
-    output?: string
-  }>('subagent:done', (event) => {
-    const payload = event.payload
-    const subagentId = props.subagent?.id
-    
-    if (!subagentId || payload.execution_id !== subagentId) return
-    
-    // If there's remaining streaming content, save it as a final message
-    if (streamingContent.value || streamingReasoningContent.value) {
-      const tempId = 'final-' + Date.now()
-      messages.value.push({
-        id: tempId,
-        subagent_run_id: subagentId,
-        role: 'assistant',
-        content: streamingContent.value || payload.output || null,
-        tool_calls: null,
-        reasoning_content: streamingReasoningContent.value || null,
-        timestamp: new Date().toISOString(),
-        metadata: null,
-        attachments: null,
-        structured_data: null,
-      })
-      streamingContent.value = ''
-      streamingReasoningContent.value = ''
-    }
-    
-    nextTick(() => {
-      messageFlowRef.value?.scrollToBottom()
-    })
-  })
-  unlisteners.push(unlistenDone)
-
-  // Listen for task updates (filter by subagent execution_id)
-  const unlistenTasks = await listen<{
-    execution_id: string
-    tasks: TaskRuntimeItem[]
-  }>('agent-tasks-update', (event) => {
-    const payload = event.payload
-    const subagentId = props.subagent?.id
-    
-    if (!subagentId || payload.execution_id !== subagentId) return
-    
-    taskItems.value = payload.tasks
-    
-    // Auto show task panel when first task arrives
-    if (payload.tasks.length > 0 && !showTasks.value) {
-      showTasks.value = true
-    }
-  })
-  unlisteners.push(unlistenTasks)
-}
-
-// Stop listening
-const stopListening = () => {
-  unlisteners.forEach(unlisten => unlisten())
-  unlisteners.length = 0
-}
-
 // Watch for visibility and subagent changes
 watch(
   () => [props.visible, props.subagent?.id],
-  ([visible, subagentId]) => {
+  (nextValue, previousValue) => {
+    const [visible, subagentId] = nextValue
+    const previousSubagentId = previousValue?.[1]
     if (visible && subagentId) {
-      loadMessages()
-      // Clear streaming state and tasks when switching subagent
-      streamingContent.value = ''
-      streamingReasoningContent.value = ''
-      taskItems.value = []
-      showTasks.value = false
-    } else {
-      messages.value = []
-      streamingContent.value = ''
-      streamingReasoningContent.value = ''
-      taskItems.value = []
+      void props.loadMessages(String(subagentId)).then(() => {
+        nextTick(() => {
+          messageFlowRef.value?.scrollToBottom()
+        })
+      })
+      if (subagentId !== previousSubagentId) {
+        showTasks.value = false
+      }
     }
   },
   { immediate: true }
 )
 
-// Lifecycle
-onMounted(() => {
-  startListening()
-})
+watch(
+  () => [displayMessages.value.length, streamingContent.value, streamingReasoningContent.value],
+  () => {
+    nextTick(() => {
+      messageFlowRef.value?.scrollToBottom()
+    })
+  }
+)
 
-onUnmounted(() => {
-  stopListening()
-})
+watch(
+  () => taskItems.value.length,
+  (count, previousCount) => {
+    if (props.visible && count > 0 && previousCount === 0) {
+      showTasks.value = true
+    }
+  }
+)
 </script>
 
 <style scoped>

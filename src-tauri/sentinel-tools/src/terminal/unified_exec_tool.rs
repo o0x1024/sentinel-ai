@@ -938,7 +938,9 @@ mod tests {
 
     #[test]
     fn plain_output_without_prompt_does_not_keep_session_open() {
-        assert!(!prompt_screen_keeps_session_open("command finished successfully"));
+        assert!(!prompt_screen_keeps_session_open(
+            "command finished successfully"
+        ));
     }
 }
 

@@ -25,6 +25,8 @@ enum PluginCommand {
     ),
     ExecuteAgent(
         serde_json::Value,
+        Option<String>,
+        Option<String>,
         oneshot::Sender<Result<(Vec<Finding>, Option<serde_json::Value>)>>,
     ),
     Restart(oneshot::Sender<Result<()>>),
@@ -219,7 +221,7 @@ impl PluginExecutor {
                                 let _ = reply.send(res);
                             }
 
-                            PluginCommand::ExecuteAgent(input, reply) => {
+                            PluginCommand::ExecuteAgent(input, execution_context, run_id, reply) => {
                                 // Check if restart threshold reached (for monitoring only)
                                 let current_count =
                                     current_instance_executions.load(Ordering::Relaxed);
@@ -231,7 +233,13 @@ impl PluginExecutor {
                                 }
 
                                 // Execute agent
-                                let res = engine.execute_agent(&input).await;
+                                let res = engine
+                                    .execute_agent_with_runtime_context(
+                                        &input,
+                                        execution_context,
+                                        run_id,
+                                    )
+                                    .await;
                                 current_instance_executions.fetch_add(1, Ordering::Relaxed);
                                 total_executions.fetch_add(1, Ordering::Relaxed);
                                 let _ = reply.send(res);
@@ -320,11 +328,26 @@ impl PluginExecutor {
         &self,
         input: &serde_json::Value,
     ) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
+        self.execute_agent_with_runtime_context(input, None, None)
+            .await
+    }
+
+    pub async fn execute_agent_with_runtime_context(
+        &self,
+        input: &serde_json::Value,
+        execution_context: Option<String>,
+        run_id: Option<String>,
+    ) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
         let sender = self.sender.read().await;
         let (reply_tx, reply_rx) = oneshot::channel();
 
         sender
-            .send(PluginCommand::ExecuteAgent(input.clone(), reply_tx))
+            .send(PluginCommand::ExecuteAgent(
+                input.clone(),
+                execution_context,
+                run_id,
+                reply_tx,
+            ))
             .await
             .map_err(|e| PluginError::Execution(format!("Executor channel closed: {}", e)))?;
 

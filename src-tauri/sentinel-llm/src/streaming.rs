@@ -1378,27 +1378,29 @@ impl StreamingLlmClient {
 
         let stream_result = if chat_history.is_empty() {
             info!("Using stream_prompt for empty chat history");
-            tokio::time::timeout(
-                timeout,
-                agent
-                    .stream_prompt(user_message)
-                    .with_hook(ToolArgumentGuardHook)
-                    .multi_turn(max_turns),
-            )
-            .await
+            let future = agent
+                .stream_prompt(user_message)
+                .with_hook(ToolArgumentGuardHook)
+                .multi_turn(max_turns);
+            if timeout.is_zero() {
+                Ok(future.await)
+            } else {
+                tokio::time::timeout(timeout, future).await
+            }
         } else {
             info!(
                 "Using stream_chat with {} history messages",
                 chat_history.len()
             );
-            tokio::time::timeout(
-                timeout,
-                agent
-                    .stream_chat(user_message, chat_history)
-                    .with_hook(ToolArgumentGuardHook)
-                    .multi_turn(max_turns),
-            )
-            .await
+            let future = agent
+                .stream_chat(user_message, chat_history)
+                .with_hook(ToolArgumentGuardHook)
+                .multi_turn(max_turns);
+            if timeout.is_zero() {
+                Ok(future.await)
+            } else {
+                tokio::time::timeout(timeout, future).await
+            }
         };
 
         let mut stream_iter = match stream_result {
@@ -1447,6 +1449,19 @@ impl StreamingLlmClient {
                     if !piece.is_empty() {
                         emitted_output = true;
                         if !on_content(StreamContent::Reasoning(piece)) {
+                            info!("Stream cancelled by callback");
+                            break;
+                        }
+                    }
+                }
+                // 推理内容增量。DeepSeek 的 reasoning_content 在 rig-core 中以
+                // ReasoningDelta 形式流出，需要在这里映射到 Sentinel 内部推理事件。
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::ReasoningDelta { reasoning, .. },
+                )) => {
+                    if !reasoning.is_empty() {
+                        emitted_output = true;
+                        if !on_content(StreamContent::Reasoning(reasoning)) {
                             info!("Stream cancelled by callback");
                             break;
                         }

@@ -717,9 +717,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import Toast from '@/components/Toast.vue'
 import { loadRagQueryThreshold, loadSupportedFileTypes as fetchSupportedFileTypes } from './ragManagementConfigSupport'
 import { buildCollectionDetails } from './ragManagementDetailSupport'
@@ -733,6 +734,26 @@ import {
 } from './ragManagementUiSupport'
 
 const { t } = useI18n()
+
+const ragEventUnlisteners: UnlistenFn[] = []
+let ragEventListenersDisposed = false
+
+const registerRagEventListener = async (listener: Promise<UnlistenFn>) => {
+  const unlisten = await listener
+  if (ragEventListenersDisposed) {
+    unlisten()
+    return
+  }
+  ragEventUnlisteners.push(unlisten)
+}
+
+const cleanupRagEventListeners = () => {
+  ragEventListenersDisposed = true
+  while (ragEventUnlisteners.length > 0) {
+    const unlisten = ragEventUnlisteners.pop()
+    unlisten?.()
+  }
+}
 // 响应式数据
 const collections = ref([])
 const searchQuery = ref('')
@@ -1337,7 +1358,7 @@ onMounted(async () => {
   // 监听批量导入进度事件
   const { listen } = await import('@tauri-apps/api/event')
   
-  listen('rag_batch_ingest_progress', (event: any) => {
+  await registerRagEventListener(listen('rag_batch_ingest_progress', (event: any) => {
     const progress = event.payload
     if (progress) {
       batchProgress.value = {
@@ -1352,26 +1373,30 @@ onMounted(async () => {
         console.log(`正在处理: ${progress.current_file}`)
       }
     }
-  })
+  }))
   
   // 监听RAG配置更新事件
-  listen('rag_config_updated', async (event: any) => {
+  await registerRagEventListener(listen('rag_config_updated', async (event: any) => {
     console.log('RAG配置已更新:', event.payload)
     // 重新加载全局配置，更新查询参数
     await loadRagConfig()
     showToast(t('ragManagement.messages.configUpdated', 'Configuration updated'), 'info')
-  })
+  }))
   
   // 监听RAG服务重载事件
-  listen('rag_service_reloaded', () => {
+  await registerRagEventListener(listen('rag_service_reloaded', () => {
     console.log('RAG服务已重载')
     showToast(t('ragManagement.messages.serviceReloaded', 'Service reloaded successfully'), 'success')
-  })
+  }))
   
-  listen('rag_service_reload_failed', (event: any) => {
+  await registerRagEventListener(listen('rag_service_reload_failed', (event: any) => {
     console.error('RAG服务重载失败:', event.payload)
     showToast(t('ragManagement.messages.serviceReloadFailed', 'Service reload failed') + ': ' + event.payload, 'error')
-  })
+  }))
+})
+
+onUnmounted(() => {
+  cleanupRagEventListeners()
 })
 </script>
 

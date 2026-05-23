@@ -68,4 +68,31 @@ describe('TrafficWorkbenchSidebar', () => {
 
     wrapper.unmount()
   })
+
+  it('keeps plugins and basket adjacent to capture in compact actions', async () => {
+    const wrapper = mount(TrafficWorkbenchSidebar, {
+      props: {
+        basketCount: 1,
+        controlInterceptCount: 0,
+        repeaterHistoryCount: 0,
+        intruderHistoryCount: 0,
+        runningAttackCount: 0,
+        layoutToggleLabel: '左右布局',
+        layoutToggleIcon: 'fas fa-columns',
+        effectiveLayoutLabel: '左右布局',
+      },
+    })
+
+    await nextTick()
+    await wrapper.get('button[aria-haspopup="menu"]').trigger('click')
+    await nextTick()
+
+    const labels = Array.from(
+      document.body.querySelectorAll('.workbench-action-floating-menu li button'),
+    ).map(button => button.textContent?.replace(/\s+/g, ' ').trim())
+
+    expect(labels.slice(0, 3)).toEqual(['插件', '抓包', '篮子 1'])
+
+    wrapper.unmount()
+  })
 })

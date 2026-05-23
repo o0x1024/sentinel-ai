@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage, MessageType } from '@/types/agent'
 import { useAgentTasks } from '@/composables/useAgentTasks'
+import { useAgentThinkingSegments } from '@/composables/useAgentThinkingSegments'
 import { useTerminal } from '@/composables/useTerminal'
 import { buildToolsActivatedMessage, buildToolsPreview } from '@/utils/agentToolActivation'
 import { applyFileVerificationStatuses } from '@/components/Agent/fileVerificationSupport'
@@ -179,6 +180,18 @@ export function useAgentEvents(
     contextCompression.value = null
   }
 
+  const { appendThinkingChunk, finalizeCurrentThinkingSegment, resetThinkingSegmentSequence } =
+    useAgentThinkingSegments({
+    currentThinkingMessageId,
+    getTargetId,
+    messages,
+    onAssistantSegmentBoundary: () => {
+      currentAssistantMessageId.value = null
+      assistantSegmentBuffer.value = ''
+    },
+    thinkingBuffer,
+    })
+
   const markExecutionActive = (executionId: string): void => {
     if (currentExecutionId.value && currentExecutionId.value !== executionId) {
       contextCompression.value = null
@@ -223,6 +236,7 @@ export function useAgentEvents(
     currentGeneration.value = null
     executionStartedAt.value = null
     latestUsage.value = null
+    resetThinkingSegmentSequence()
     clearParallelRuns()
   }
 
@@ -714,7 +728,6 @@ export function useAgentEvents(
       if (!matchesTarget(payload.execution_id, payload)) return
       if (isSettledActivityEvent(payload.execution_id)) return
 
-      // Auto-recover execution state after page refresh
       if (!isExecuting.value) {
         console.log('[useAgentEvents] Auto-recovering execution state from iteration event')
         markExecutionActive(payload.execution_id)
@@ -761,16 +774,11 @@ export function useAgentEvents(
       error.value = null
 
       if (payload.chunk_type === 'text') {
-        // Text content: reset thinking state and accumulate text
-        if (currentThinkingMessageId.value) {
-          currentThinkingMessageId.value = null
-          thinkingBuffer.value = ''
-        }
+        finalizeCurrentThinkingSegment()
         contentBuffer.value += payload.content
         streamingContent.value = contentBuffer.value
         assistantSegmentBuffer.value += payload.content
 
-        // Ensure there's a visible assistant message in the message list so ordering matches arrival order
         if (!currentAssistantMessageId.value) {
           const msgId = crypto.randomUUID()
           currentAssistantMessageId.value = msgId
@@ -790,7 +798,6 @@ export function useAgentEvents(
           }
         }
       } else if (payload.chunk_type === 'usage') {
-        // Usage report from LLM API - update context usage with real token counts
         if (payload.input_tokens !== undefined && payload.output_tokens !== undefined) {
           const inputTokens = payload.input_tokens
           const outputTokens = payload.output_tokens
@@ -832,26 +839,7 @@ export function useAgentEvents(
           }
         }
       } else if (payload.chunk_type === 'reasoning') {
-        // Reasoning content: accumulate in existing thinking message or create new one
-        thinkingBuffer.value += payload.content
-
-        if (currentThinkingMessageId.value) {
-          // Update existing thinking message
-          const existingMsg = messages.value.find(m => m.id === currentThinkingMessageId.value)
-          if (existingMsg) {
-            existingMsg.content = thinkingBuffer.value
-          }
-        } else {
-          // Create new thinking message
-          const msgId = crypto.randomUUID()
-          currentThinkingMessageId.value = msgId
-          messages.value.push({
-            id: msgId,
-            type: 'thinking',
-            content: thinkingBuffer.value,
-            timestamp: Date.now(),
-          })
-        }
+        appendThinkingChunk(payload)
       }
     })
     unlisteners.push(unlistenChunk)
@@ -878,6 +866,8 @@ export function useAgentEvents(
         console.log('[useAgentEvents] Auto-recovering execution state from tool_call event')
         markExecutionActive(payload.execution_id)
       }
+
+      finalizeCurrentThinkingSegment()
 
       if (isShellContinuation(payload.tool_name, payload.tool_input)) {
         return
@@ -948,6 +938,8 @@ export function useAgentEvents(
           )
           markExecutionActive(payload.execution_id)
         }
+
+        finalizeCurrentThinkingSegment()
 
         // 解析参数 JSON
         let parsedArgs: any = {}
@@ -1035,6 +1027,8 @@ export function useAgentEvents(
         console.log('[useAgentEvents] Auto-recovering execution state from tool_result event')
         markExecutionActive(payload.execution_id)
       }
+
+      finalizeCurrentThinkingSegment()
 
       // 检查是否是新格式（有 tool_call_id 而没有 tool_name）
       const newPayload = payload as any
@@ -1385,8 +1379,17 @@ export function useAgentEvents(
       if (!matchesTarget(payload.execution_id, payload)) return
 
       console.log('[useAgentEvents] Assistant message saved:', payload.message_id)
+      finalizeCurrentThinkingSegment()
       const reasoningContent =
         typeof payload.reasoning_content === 'string' ? payload.reasoning_content.trim() : ''
+      const hasPersistedThinkingSegments = messages.value.some(message => {
+        if (message.type !== 'thinking') return false
+        if (message.metadata?.kind !== 'thinking_segment') return false
+        if (message.metadata?.execution_id !== payload.execution_id) return false
+        const messageGeneration = Number((message.metadata as any)?.generation)
+        const payloadGeneration = readGeneration(payload)
+        return !payloadGeneration || messageGeneration === payloadGeneration
+      })
 
       // 检测是否引用了知识库内容
       if (ragMetaInfo.value?.rag_applied) {
@@ -1414,7 +1417,7 @@ export function useAgentEvents(
         })()
         const lastAssistant = lastAssistantIndex >= 0 ? messages.value[lastAssistantIndex] : null
 
-        if (lastAssistant && reasoningContent) {
+        if (lastAssistant && reasoningContent && !hasPersistedThinkingSegments) {
           const previousMessage =
             lastAssistantIndex > 0 ? messages.value[lastAssistantIndex - 1] : null
           if (previousMessage?.type === 'thinking') {
@@ -1523,6 +1526,7 @@ export function useAgentEvents(
           settleParallelRunIfDone(parallelChild.run)
           return
         }
+        finalizeCurrentThinkingSegment()
         handleAgentExecutionFinished({
           currentExecutionId,
           error,

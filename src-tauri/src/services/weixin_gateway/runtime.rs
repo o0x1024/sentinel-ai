@@ -1,19 +1,11 @@
 use super::config::{WeixinGatewayConfig, WeixinGatewayStatus};
 use super::ilink_client::WeixinIlinkClient;
-use super::schedule::{
-    calculate_next_run_at, create_weixin_schedule_run, delete_weixin_schedule,
-    finalize_weixin_schedule_run, format_schedule_timestamp, get_weixin_schedule,
-    list_weixin_schedules_for_account, list_weixin_schedules_for_peer,
-    migrate_legacy_weixin_schedule_registry, new_weixin_schedule, new_weixin_schedule_run,
-    normalize_bot_schedule, upsert_weixin_schedule,
-};
-use super::schedule_parser::{looks_like_schedule_text, parse_schedule_intent};
 use crate::agents::{AgentExecuteParams, ContextEngineMode, ToolConfig, ToolSelectionStrategy};
 use crate::commands::ai::cancel_conversation_stream;
 use crate::commands::assistant_profile_commands::{
     load_assistant_profile_by_id_or_default, AssistantProfilePayload,
 };
-use crate::models::database::{AiConversation, AiMessage, BotMessage, BotSchedule};
+use crate::models::database::{AiConversation, AiMessage, BotMessage};
 use crate::services::ai::AiServiceManager;
 use crate::services::bot_execution::{execute_bot_execution, BotExecutionRequest};
 use crate::services::database::DatabaseService;
@@ -70,7 +62,6 @@ pub async fn start_weixin_gateway_runtime(
 ) -> Result<(), String> {
     config.normalize();
     config.validate_for_runtime()?;
-    migrate_legacy_weixin_schedule_registry(&db).await?;
 
     let mut state = WEIXIN_RUNTIME.write().await;
     if state
@@ -175,27 +166,10 @@ async fn run_loop(
     let mut sync_buf = String::new();
     let mut seen_messages = HashSet::new();
     let mut context_tokens: HashMap<String, String> = HashMap::new();
-    let running_schedule_ids = Arc::new(RwLock::new(HashSet::<String>::new()));
-    let mut schedule_tick = tokio::time::interval(Duration::from_secs(20));
-    schedule_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
             _ = &mut shutdown_rx => break,
-            _ = schedule_tick.tick() => {
-                if let Err(error) = dispatch_due_schedules(
-                    &config,
-                    &client,
-                    &db,
-                    &ai_manager,
-                    &app_handle,
-                    &running_schedule_ids,
-                )
-                .await
-                {
-                    set_runtime_error(error).await;
-                }
-            }
             result = client.get_updates(&config.base_url, &config.token, &sync_buf) => {
                 match result {
                     Ok(payload) => {
@@ -387,65 +361,6 @@ async fn handle_inbound_message(
             )
             .await
         }
-        "/schedules" => {
-            let text = list_peer_schedules(config, db, &inbound).await?;
-            send_text_chunks(
-                db,
-                client,
-                config,
-                &inbound.peer_type,
-                &inbound.peer_id,
-                &text,
-                context_token,
-                None,
-            )
-            .await
-        }
-        text if text.starts_with("/schedule pause ") => {
-            let schedule_id = text.trim_start_matches("/schedule pause ").trim();
-            let text = set_peer_schedule_enabled(config, db, &inbound, schedule_id, false).await?;
-            send_text_chunks(
-                db,
-                client,
-                config,
-                &inbound.peer_type,
-                &inbound.peer_id,
-                &text,
-                context_token,
-                None,
-            )
-            .await
-        }
-        text if text.starts_with("/schedule resume ") => {
-            let schedule_id = text.trim_start_matches("/schedule resume ").trim();
-            let text = set_peer_schedule_enabled(config, db, &inbound, schedule_id, true).await?;
-            send_text_chunks(
-                db,
-                client,
-                config,
-                &inbound.peer_type,
-                &inbound.peer_id,
-                &text,
-                context_token,
-                None,
-            )
-            .await
-        }
-        text if text.starts_with("/schedule delete ") => {
-            let schedule_id = text.trim_start_matches("/schedule delete ").trim();
-            let text = delete_peer_schedule(config, db, &inbound, schedule_id).await?;
-            send_text_chunks(
-                db,
-                client,
-                config,
-                &inbound.peer_type,
-                &inbound.peer_id,
-                &text,
-                context_token,
-                None,
-            )
-            .await
-        }
         text if text.starts_with("/approve ") => {
             let id = text.trim_start_matches("/approve ").trim();
             let result = crate::commands::tool_commands::respond_shell_permission(
@@ -499,7 +414,7 @@ async fn handle_inbound_message(
                 config,
                 &inbound.peer_type,
                 &inbound.peer_id,
-                "Unsupported command. Available: /status, /stop, /permissions, /approve <id>, /deny <id>, /schedules, /schedule pause <id>, /schedule resume <id>, /schedule delete <id>.",
+                "Unsupported command. Available: /status, /stop, /permissions, /approve <id>, /deny <id>.",
                 context_token,
                 None,
             )
@@ -871,402 +786,6 @@ async fn persist_outbound_bot_message(
 }
 
 #[allow(dead_code)]
-async fn maybe_create_schedule_from_message(
-    config: &WeixinGatewayConfig,
-    db: &Arc<DatabaseService>,
-    ai_manager: &Arc<AiServiceManager>,
-    inbound: &InboundWeixinMessage,
-) -> Result<Option<String>, String> {
-    if !looks_like_schedule_text(&inbound.text) {
-        return Ok(None);
-    }
-
-    let intent = parse_schedule_intent(ai_manager, inbound.text.trim()).await?;
-    if intent.action != "create" {
-        return Ok(Some(
-            "当前只支持周期性定时任务。请明确描述类似“每天早上 8 点给我发送新闻摘要”的需求。"
-                .to_string(),
-        ));
-    }
-
-    let cron = intent
-        .cron
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "schedule parser did not return cron".to_string())?;
-    let task = intent
-        .task
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "schedule parser did not return task".to_string())?;
-
-    let assistant_profile = load_assistant_profile_by_id_or_default(
-        db.as_ref(),
-        config.assistant_profile_id.as_deref(),
-    )
-    .await?;
-    ensure_assistant_mode_profile(assistant_profile.as_ref())?;
-    let assistant_profile_id = assistant_profile.as_ref().map(|profile| profile.id.clone());
-
-    let schedule = new_weixin_schedule(
-        config.account_id.clone(),
-        inbound.peer_type.clone(),
-        inbound.peer_id.clone(),
-        inbound.sender_id.clone(),
-        assistant_profile_id,
-        inbound.text.clone(),
-        task.to_string(),
-        cron.to_string(),
-    )?;
-    upsert_weixin_schedule(db, &schedule).await?;
-
-    Ok(Some(format!(
-        "已创建定时任务\nID: {}\nCron: {}\n下次执行: {}\n任务: {}\n查看任务: /schedules",
-        schedule.id,
-        schedule.cron_expr,
-        format_schedule_timestamp(schedule.next_run_at),
-        schedule.task_text
-    )))
-}
-
-async fn list_peer_schedules(
-    config: &WeixinGatewayConfig,
-    db: &Arc<DatabaseService>,
-    inbound: &InboundWeixinMessage,
-) -> Result<String, String> {
-    let items = list_weixin_schedules_for_peer(
-        db,
-        &config.account_id,
-        &inbound.peer_type,
-        &inbound.peer_id,
-    )
-    .await?;
-
-    if items.is_empty() {
-        return Ok("当前没有定时任务。".to_string());
-    }
-
-    let mut lines = vec!["当前定时任务:".to_string()];
-    for schedule in items {
-        lines.push(format!(
-            "{} [{}] cron={} next={} task={}",
-            schedule.id,
-            if schedule.enabled {
-                "enabled"
-            } else {
-                "paused"
-            },
-            schedule.cron_expr,
-            format_schedule_timestamp(schedule.next_run_at),
-            schedule.task_text
-        ));
-    }
-    Ok(lines.join("\n"))
-}
-
-async fn set_peer_schedule_enabled(
-    config: &WeixinGatewayConfig,
-    db: &Arc<DatabaseService>,
-    inbound: &InboundWeixinMessage,
-    schedule_id: &str,
-    enabled: bool,
-) -> Result<String, String> {
-    let now = Utc::now();
-    let Some(mut schedule) = get_weixin_schedule(db, schedule_id).await? else {
-        return Err(format!("schedule not found: {schedule_id}"));
-    };
-    if schedule.transport != "weixin"
-        || schedule.account_id != config.account_id
-        || schedule.peer_type != inbound.peer_type
-        || schedule.peer_id != inbound.peer_id
-    {
-        return Err(format!("schedule not found: {schedule_id}"));
-    }
-
-    schedule.enabled = enabled;
-    schedule.updated_at = now;
-    schedule.last_error = None;
-    schedule.next_run_at = if enabled {
-        Some(calculate_next_run_at(&schedule.cron_expr, now)?)
-    } else {
-        None
-    };
-    normalize_bot_schedule(&mut schedule)?;
-    upsert_weixin_schedule(db, &schedule).await?;
-    let schedule_id = schedule.id.clone();
-    let action_text = if enabled { "恢复" } else { "暂停" }.to_string();
-
-    Ok(format!("定时任务 {} 已{}。", schedule_id, action_text))
-}
-
-async fn delete_peer_schedule(
-    config: &WeixinGatewayConfig,
-    db: &Arc<DatabaseService>,
-    inbound: &InboundWeixinMessage,
-    schedule_id: &str,
-) -> Result<String, String> {
-    let Some(schedule) = get_weixin_schedule(db, schedule_id).await? else {
-        return Err(format!("schedule not found: {schedule_id}"));
-    };
-    if schedule.transport != "weixin"
-        || schedule.account_id != config.account_id
-        || schedule.peer_type != inbound.peer_type
-        || schedule.peer_id != inbound.peer_id
-    {
-        return Err(format!("schedule not found: {schedule_id}"));
-    }
-    delete_weixin_schedule(db, schedule_id).await?;
-    Ok(format!("定时任务 {} 已删除。", schedule_id))
-}
-
-async fn dispatch_due_schedules(
-    config: &WeixinGatewayConfig,
-    client: &WeixinIlinkClient,
-    db: &Arc<DatabaseService>,
-    ai_manager: &Arc<AiServiceManager>,
-    app_handle: &AppHandle,
-    running_schedule_ids: &Arc<RwLock<HashSet<String>>>,
-) -> Result<(), String> {
-    let mut schedules = list_weixin_schedules_for_account(db, &config.account_id).await?;
-    let now = Utc::now();
-    let active_runs = running_schedule_ids.read().await.clone();
-    let mut due_schedules = Vec::new();
-    let mut changed_schedules = Vec::new();
-
-    for schedule in &mut schedules {
-        if !schedule.enabled {
-            continue;
-        }
-        if active_runs.contains(&schedule.id) {
-            continue;
-        }
-
-        if schedule.next_run_at.is_none() {
-            match calculate_next_run_at(&schedule.cron_expr, now) {
-                Ok(next_run_at) => {
-                    schedule.next_run_at = Some(next_run_at);
-                    schedule.last_error = None;
-                }
-                Err(error) => {
-                    schedule.last_error = Some(error);
-                }
-            }
-            schedule.updated_at = now;
-            changed_schedules.push(schedule.clone());
-        }
-
-        let Some(next_run_at) = schedule.next_run_at else {
-            continue;
-        };
-        if next_run_at > now {
-            continue;
-        }
-
-        match calculate_next_run_at(&schedule.cron_expr, now) {
-            Ok(next_due) => {
-                schedule.next_run_at = Some(next_due);
-                schedule.last_error = None;
-                schedule.updated_at = now;
-                changed_schedules.push(schedule.clone());
-                due_schedules.push(schedule.clone());
-            }
-            Err(error) => {
-                schedule.last_error = Some(error);
-                schedule.next_run_at = None;
-                schedule.updated_at = now;
-                changed_schedules.push(schedule.clone());
-            }
-        }
-    }
-
-    for schedule in changed_schedules {
-        upsert_weixin_schedule(db, &schedule).await?;
-    }
-
-    for schedule in due_schedules {
-        {
-            let mut active_runs = running_schedule_ids.write().await;
-            active_runs.insert(schedule.id.clone());
-        }
-        let config = config.clone();
-        let client = client.clone();
-        let db = db.clone();
-        let ai_manager = ai_manager.clone();
-        let app_handle = app_handle.clone();
-        let running_schedule_ids = running_schedule_ids.clone();
-        tokio::spawn(async move {
-            run_scheduled_schedule(
-                config,
-                client,
-                db,
-                ai_manager,
-                app_handle,
-                schedule,
-                running_schedule_ids,
-            )
-            .await;
-        });
-    }
-
-    Ok(())
-}
-
-async fn run_scheduled_schedule(
-    config: WeixinGatewayConfig,
-    client: WeixinIlinkClient,
-    db: Arc<DatabaseService>,
-    ai_manager: Arc<AiServiceManager>,
-    app_handle: AppHandle,
-    schedule: BotSchedule,
-    running_schedule_ids: Arc<RwLock<HashSet<String>>>,
-) {
-    let schedule_run = new_weixin_schedule_run(&schedule);
-    if let Err(error) = create_weixin_schedule_run(&db, &schedule_run).await {
-        let _ = update_schedule_execution_result(
-            &db,
-            &schedule,
-            Some(format!("failed to create schedule run: {error}")),
-        )
-        .await;
-        running_schedule_ids.write().await.remove(&schedule.id);
-        return;
-    }
-
-    let execution_result = execute_weixin_task(
-        &config,
-        &db,
-        &ai_manager,
-        &app_handle,
-        &schedule.peer_type,
-        &schedule.peer_id,
-        &schedule.sender_id,
-        &schedule.task_text,
-        &schedule_conversation_id_for_peer(
-            &config,
-            &schedule.peer_type,
-            &schedule.peer_id,
-            &schedule.id,
-        ),
-        &session_id_for_peer(&config, &schedule.peer_type, &schedule.peer_id),
-        schedule.assistant_profile_id.as_deref(),
-        "schedule",
-        None,
-        None,
-    )
-    .await;
-
-    let send_result: Result<(Option<String>, String), (Option<String>, String)> =
-        match execution_result {
-            Ok(outcome) => match outcome.result {
-                Ok(response) => {
-                    let response_text = if response.trim().is_empty() {
-                        "Task completed.".to_string()
-                    } else {
-                        response
-                    };
-                    let execution_run_id = outcome.run_id;
-                    send_text_chunks(
-                        &db,
-                        &client,
-                        &config,
-                        &schedule.peer_type,
-                        &schedule.peer_id,
-                        &response_text,
-                        None,
-                        Some(execution_run_id.as_str()),
-                    )
-                    .await
-                    .map(|_| (Some(execution_run_id.clone()), response_text))
-                    .map_err(|error| (Some(execution_run_id), error))
-                }
-                Err(error) => {
-                    let execution_run_id = outcome.run_id;
-                    let text = format!("Scheduled task failed: {error}");
-                    match send_text_chunks(
-                        &db,
-                        &client,
-                        &config,
-                        &schedule.peer_type,
-                        &schedule.peer_id,
-                        &text,
-                        None,
-                        Some(execution_run_id.as_str()),
-                    )
-                    .await
-                    {
-                        Ok(_) => Err((Some(execution_run_id), error)),
-                        Err(send_error) => Err((
-                            Some(execution_run_id),
-                            format!("{error}; send failed: {send_error}"),
-                        )),
-                    }
-                }
-            },
-            Err(error) => {
-                let text = format!("Scheduled task failed: {error}");
-                match send_text_chunks(
-                    &db,
-                    &client,
-                    &config,
-                    &schedule.peer_type,
-                    &schedule.peer_id,
-                    &text,
-                    None,
-                    None,
-                )
-                .await
-                {
-                    Ok(_) => Err((None, error)),
-                    Err(send_error) => Err((None, format!("{error}; send failed: {send_error}"))),
-                }
-            }
-        };
-
-    match send_result {
-        Ok((execution_run_id, response)) => {
-            let _ = finalize_weixin_schedule_run(
-                &db,
-                &schedule_run.id,
-                execution_run_id.as_deref(),
-                "completed",
-                Some(response.as_str()),
-                None,
-            )
-            .await;
-            let _ = update_schedule_execution_result(&db, &schedule, None).await;
-        }
-        Err((execution_run_id, error)) => {
-            let _ = finalize_weixin_schedule_run(
-                &db,
-                &schedule_run.id,
-                execution_run_id.as_deref(),
-                "failed",
-                None,
-                Some(error.as_str()),
-            )
-            .await;
-            let _ = update_schedule_execution_result(&db, &schedule, Some(error)).await;
-        }
-    }
-    running_schedule_ids.write().await.remove(&schedule.id);
-}
-
-async fn update_schedule_execution_result(
-    db: &Arc<DatabaseService>,
-    schedule: &BotSchedule,
-    error: Option<String>,
-) -> Result<(), String> {
-    let mut updated = schedule.clone();
-    updated.last_run_at = Some(Utc::now());
-    updated.updated_at = Utc::now();
-    updated.last_error = error;
-    normalize_bot_schedule(&mut updated)?;
-    upsert_weixin_schedule(db, &updated).await?;
-    Ok(())
-}
-
 fn ensure_assistant_mode_profile(profile: Option<&AssistantProfilePayload>) -> Result<(), String> {
     if let Some(profile) = profile {
         if profile.run_mode == "team" {
@@ -1361,9 +880,11 @@ async fn resolve_weixin_system_prompt(db: &Arc<DatabaseService>) -> Result<Strin
 [Weixin Bot Mission Rule]
 When the user asks for recurring, periodic, scheduled, daily, weekly, monthly, long-running,
 monitoring, subscription, or scheduled delivery work, use the mission_scheduler tool to create
-or manage a Mission. Ask for missing critical information first. Do not say a scheduled task has
-been created unless mission_scheduler returns success. Pass the current execution_id to
-mission_scheduler so the Mission is bound to this Weixin chat.
+or manage a Mission. For stateful or multi-day work, pass a mission_spec with generic state_schema,
+action_schema, completion_policy, and report_policy so later runs can continue from persisted state.
+Ask for missing critical information first. Do not say a scheduled task has been created unless
+mission_scheduler returns success. Pass the current execution_id to mission_scheduler so the Mission
+is bound to this Weixin chat.
 When the user corrects, changes, or updates an existing scheduled task, first list Missions for
 the current execution_id, then call update_mission with the existing mission_id. Do not create a
 replacement Mission for a correction unless the user explicitly asks for a new separate task.
@@ -1471,6 +992,7 @@ pub async fn deliver_weixin_text(
     peer_type: &str,
     peer_id: &str,
     text: &str,
+    context_token: Option<&str>,
     linked_execution_run_id: Option<&str>,
 ) -> Result<(), String> {
     let config = WeixinGatewayConfig {
@@ -1495,193 +1017,18 @@ pub async fn deliver_weixin_text(
         peer_type,
         peer_id,
         text,
-        None,
+        context_token,
         linked_execution_run_id,
     )
     .await
 }
 
-#[derive(Debug)]
-struct InboundWeixinMessage {
-    message_id: String,
-    peer_type: String,
-    peer_id: String,
-    sender_id: String,
-    text: String,
-    context_token: Option<String>,
-}
-
-fn parse_inbound_message(
-    config: &WeixinGatewayConfig,
-    message: &Value,
-    message_id: String,
-) -> Option<InboundWeixinMessage> {
-    let text = extract_text(message.get("item_list").and_then(Value::as_array)?)?;
-    if text.trim().is_empty() {
-        return None;
-    }
-    let room_id = string_field(message, "room_id")
-        .or_else(|| string_field(message, "chat_room_id"))
-        .unwrap_or_default();
-    let from_user_id = string_field(message, "from_user_id")?;
-    let to_user_id = string_field(message, "to_user_id").unwrap_or_default();
-    let is_group = !room_id.is_empty()
-        || (!to_user_id.is_empty()
-            && to_user_id != config.account_id
-            && message.get("msg_type").and_then(Value::as_i64) == Some(1));
-    let peer_id = if is_group {
-        if room_id.is_empty() {
-            to_user_id
-        } else {
-            room_id
-        }
-    } else {
-        from_user_id.clone()
-    };
-
-    Some(InboundWeixinMessage {
-        message_id,
-        peer_type: if is_group { "group" } else { "dm" }.to_string(),
-        peer_id,
-        sender_id: from_user_id,
-        text,
-        context_token: string_field(message, "context_token"),
-    })
-}
-
-fn extract_text(items: &[Value]) -> Option<String> {
-    for item in items {
-        if item.get("type").and_then(Value::as_i64) == Some(1) {
-            return item
-                .get("text_item")
-                .and_then(|value| value.get("text"))
-                .and_then(Value::as_str)
-                .map(str::to_string);
-        }
-    }
-    for item in items {
-        if item.get("type").and_then(Value::as_i64) == Some(3) {
-            if let Some(text) = item
-                .get("voice_item")
-                .and_then(|value| value.get("text"))
-                .and_then(Value::as_str)
-            {
-                return Some(text.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn is_self_message(config: &WeixinGatewayConfig, message: &Value) -> bool {
-    string_field(message, "from_user_id").as_deref() == Some(config.account_id.as_str())
-}
-
-fn is_authorized(config: &WeixinGatewayConfig, message: &InboundWeixinMessage) -> bool {
-    if message.peer_type == "group" {
-        if config.group_policy == "open" {
-            return true;
-        }
-        return config.group_policy == "allowlist"
-            && config
-                .group_allowed_users
-                .iter()
-                .any(|value| value == &message.peer_id || value == &message.sender_id);
-    }
-    if config.dm_policy == "open" {
-        return true;
-    }
-    config.dm_policy == "allowlist"
-        && config
-            .allowed_users
-            .iter()
-            .any(|value| value == &message.sender_id || value == &message.peer_id)
-}
-
-fn session_id(config: &WeixinGatewayConfig, inbound: &InboundWeixinMessage) -> String {
-    session_id_for_peer(config, &inbound.peer_type, &inbound.peer_id)
-}
-
-fn execution_lock_key_for_inbound(
-    config: &WeixinGatewayConfig,
-    inbound: &InboundWeixinMessage,
-) -> String {
-    session_id_for_peer(config, &inbound.peer_type, &inbound.peer_id)
-}
-
-fn session_id_for_peer(config: &WeixinGatewayConfig, peer_type: &str, peer_id: &str) -> String {
-    format!("weixin:{}:{}:{}", config.account_id, peer_type, peer_id)
-}
-
-fn schedule_conversation_id_for_peer(
-    config: &WeixinGatewayConfig,
-    peer_type: &str,
-    peer_id: &str,
-    schedule_id: &str,
-) -> String {
-    format!(
-        "weixin:{}:{}:{}:schedule:{}",
-        config.account_id, peer_type, peer_id, schedule_id
-    )
-}
-
-fn message_identity(message: &Value) -> String {
-    string_field(message, "msg_id")
-        .or_else(|| string_field(message, "message_id"))
-        .unwrap_or_else(|| {
-            format!(
-                "{}:{}:{}",
-                string_field(message, "from_user_id").unwrap_or_default(),
-                message
-                    .get("create_time")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
-                string_field(message, "client_id").unwrap_or_default()
-            )
-        })
-}
-
-fn string_field(message: &Value, key: &str) -> Option<String> {
-    message
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn trim_seen_messages(seen_messages: &mut HashSet<String>) {
-    if seen_messages.len() <= 512 {
-        return;
-    }
-    seen_messages.clear();
-}
-
-fn split_message(text: &str, max_len: usize) -> Vec<String> {
-    if text.len() <= max_len {
-        return vec![text.to_string()];
-    }
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    for line in text.lines() {
-        if current.len() + line.len() + 1 > max_len && !current.is_empty() {
-            chunks.push(current.trim().to_string());
-            current.clear();
-        }
-        if line.len() > max_len {
-            for part in line.as_bytes().chunks(max_len) {
-                chunks.push(String::from_utf8_lossy(part).to_string());
-            }
-            continue;
-        }
-        current.push_str(line);
-        current.push('\n');
-    }
-    if !current.trim().is_empty() {
-        chunks.push(current.trim().to_string());
-    }
-    chunks
-}
+mod runtime_message;
+use runtime_message::{
+    execution_lock_key_for_inbound, is_authorized, is_self_message, message_identity,
+    parse_inbound_message, session_id, session_id_for_peer, split_message, trim_seen_messages,
+    InboundWeixinMessage,
+};
 
 async fn mark_message_seen() {
     let mut state = WEIXIN_RUNTIME.write().await;

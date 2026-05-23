@@ -7,11 +7,13 @@
   "scripts": {
     "dev": "vite",
     "build": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 vite build",
+    "build:license-admin": "vite build --config src-tauri/sentinel-license/admin-ui/vite.config.ts",
     "build:check": "vue-tsc --noEmit --skipLibCheck && cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "build:release": "npm run build && tauri build --release",
-    "build:dev": "tauri build",
+    "build:release": "tauri build --release",
+    "build:release:fast": "tauri build --no-bundle -- --profile release-fast",
+    "build:dev": "tauri build --debug --no-bundle",
     "ci:audit-gate": "node scripts/ci/check-audit-gate.mjs",
     "ci:audit-gate:file": "node scripts/ci/check-audit-gate.mjs --input .artifacts/audit_gate_result.json",
     "perf:report": "node scripts/performance-report.js",
@@ -78,7 +80,6 @@
     "vue3-json-viewer": "^2.4.1",
     "vuedraggable": "^4.1.0",
     "ws": "^8.18.3",
-    "yarn": "^1.22.22",
     "zod": "3.22.4"
   },
   "devDependencies": {

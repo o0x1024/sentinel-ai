@@ -3,6 +3,7 @@ pub mod agent_execution_turns;
 pub mod agent_harness;
 pub mod ai;
 pub mod ai_tool_messages;
+pub mod api_inventory_requests;
 pub mod asset;
 pub mod bot;
 pub mod bounty;
@@ -41,6 +42,7 @@ pub mod skills;
 pub mod sliding_window;
 pub mod sqlite_performance;
 pub mod sqlx_compat;
+pub mod subagent_messages;
 pub mod surface;
 pub mod surface_artifacts;
 pub mod surface_asset_classification;
@@ -75,6 +77,8 @@ pub use agent_harness::*;
 pub use ai::*;
 #[allow(unused_imports)]
 pub use ai_tool_messages::*;
+#[allow(unused_imports)]
+pub use api_inventory_requests::*;
 #[allow(unused_imports)]
 pub use asset::*;
 #[allow(unused_imports)]
@@ -144,6 +148,8 @@ pub use sliding_window::*;
 pub use sqlite_performance::*;
 #[allow(unused_imports)]
 pub use sqlx_compat::*;
+#[allow(unused_imports)]
+pub use subagent_messages::*;
 #[allow(unused_imports)]
 pub use surface::*;
 #[allow(unused_imports)]

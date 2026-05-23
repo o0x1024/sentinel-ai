@@ -12,6 +12,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::surface_scope_sync_support::infer_root_domain;
+use crate::services::ensure_bug_bounty_access;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SurfaceSeedUpsertRequest {
@@ -498,6 +499,8 @@ pub async fn surface_upsert_seed(
     db_service: State<'_, Arc<DatabaseService>>,
     request: SurfaceSeedUpsertRequest,
 ) -> Result<SurfaceSeedRow, String> {
+    ensure_bug_bounty_access()?;
+
     migrate_legacy_surface_seed_types(db_service.inner()).await?;
     let program_id = request.program_id.trim();
     if program_id.is_empty() {
@@ -588,6 +591,8 @@ pub async fn surface_delete_seed(
     db_service: State<'_, Arc<DatabaseService>>,
     seed_id: String,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .delete_surface_seed(&seed_id)
         .await
@@ -599,6 +604,8 @@ pub async fn surface_batch_delete_seeds(
     db_service: State<'_, Arc<DatabaseService>>,
     seed_ids: Vec<String>,
 ) -> Result<usize, String> {
+    ensure_bug_bounty_access()?;
+
     let mut deleted = 0usize;
     let mut seen = HashSet::new();
 
@@ -628,6 +635,8 @@ pub async fn surface_delete_filtered_seeds(
     db_service: State<'_, Arc<DatabaseService>>,
     request: SurfaceSeedQueryRequest,
 ) -> Result<usize, String> {
+    ensure_bug_bounty_access()?;
+
     migrate_legacy_surface_seed_types(db_service.inner()).await?;
     let program_id = request
         .program_id
@@ -682,6 +691,8 @@ pub async fn surface_review_seed_candidates(
     db_service: State<'_, Arc<DatabaseService>>,
     request: SurfaceSeedCandidateReviewRequest,
 ) -> Result<usize, String> {
+    ensure_bug_bounty_access()?;
+
     let decision = request.decision.trim().to_ascii_lowercase();
     if decision != "approved" && decision != "rejected" {
         return Err("Seed candidate decision must be 'approved' or 'rejected'".to_string());
@@ -819,6 +830,8 @@ pub async fn surface_retire_legacy_synced_seeds(
     db_service: State<'_, Arc<DatabaseService>>,
     program_id: String,
 ) -> Result<SurfaceLegacySeedRetireResult, String> {
+    ensure_bug_bounty_access()?;
+
     migrate_legacy_surface_seed_types(db_service.inner()).await?;
     let program_id = program_id.trim();
     if program_id.is_empty() {
@@ -866,6 +879,8 @@ pub async fn surface_sync_program_seeds(
     db_service: State<'_, Arc<DatabaseService>>,
     program_id: String,
 ) -> Result<SurfaceSeedSyncResult, String> {
+    ensure_bug_bounty_access()?;
+
     migrate_legacy_surface_seed_types(db_service.inner()).await?;
     let program_id = program_id.trim();
     if program_id.is_empty() {

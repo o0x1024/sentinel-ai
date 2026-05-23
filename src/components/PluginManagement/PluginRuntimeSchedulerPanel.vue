@@ -108,6 +108,7 @@
             :delay-label="item.delayLabel"
             :policy="trafficPluginRuntimeSettings[item.id]"
             :delay-field="item.delayField"
+            @update:policy="updateTrafficPluginRuntimePolicy(item.id, $event)"
           />
           <TrafficPluginRuntimeQueueStatusGrid
             :visible-policy-kinds="[item.queueKind]"
@@ -151,6 +152,10 @@ const props = withDefaults(
     applyTrafficPluginRuntimePreset: (
       preset: TrafficPluginRuntimePreset,
       policyIds: TrafficPluginRuntimePolicyId[]
+    ) => void
+    updateTrafficPluginRuntimePolicy: (
+      policyId: TrafficPluginRuntimePolicyId,
+      policy: TrafficPluginRuntimeSettings[TrafficPluginRuntimePolicyId]
     ) => void
     policyIds?: TrafficPluginRuntimePolicyId[]
     collapsible?: boolean

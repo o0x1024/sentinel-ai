@@ -25,6 +25,7 @@ use crate::agents::executor::file_tool_state::{
     ensure_file_snapshot_is_editable, record_file_read_snapshot, record_file_revision_snapshot,
 };
 use crate::agents::executor::http_request_override::build_http_override_def;
+use crate::agents::executor::model_context_tool::wrap_dynamic_tool_for_model_context;
 use crate::agents::executor::question_override::build_ask_user_question_override_def;
 use crate::agents::executor::shell_override::build_shell_override_def;
 use crate::agents::executor::tool_search_override::build_tool_search_override_def;
@@ -847,6 +848,11 @@ pub(super) async fn ensure_ai_conversation_exists_for_persistence(
 
     use sentinel_core::models::database as core_db;
     let now = chrono::Utc::now();
+    let context_type = if is_internal_mission_run_conversation(conversation_id) {
+        Some("mission_run".to_string())
+    } else {
+        None
+    };
     let conv = core_db::AiConversation {
         id: conversation_id.to_string(),
         title: None,
@@ -861,7 +867,7 @@ pub(super) async fn ensure_ai_conversation_exists_for_persistence(
             model.to_string()
         },
         model_provider: Some(provider.to_string()),
-        context_type: None,
+        context_type,
         project_id: None,
         vulnerability_id: None,
         scan_task_id: None,
@@ -891,6 +897,10 @@ pub(super) async fn ensure_ai_conversation_exists_for_persistence(
             );
         }
     }
+}
+
+fn is_internal_mission_run_conversation(conversation_id: &str) -> bool {
+    conversation_id.starts_with("mission:") && conversation_id.contains(":run:")
 }
 
 pub(super) fn build_retry_history(
@@ -1754,6 +1764,9 @@ pub(super) async fn patch_builtin_dynamic_tools(
     }
 
     dynamic_tools
+        .into_iter()
+        .map(|tool| wrap_dynamic_tool_for_model_context(tool, execution_id))
+        .collect()
 }
 
 pub(super) fn is_retryable_error(err_msg: &str) -> bool {

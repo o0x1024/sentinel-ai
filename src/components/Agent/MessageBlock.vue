@@ -351,6 +351,18 @@
     <ToolCallMessagePanel :message="message" />
   </div>
 
+  <div v-else-if="isThinkingMessage" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <ThinkingMessageBlock
+      :content="normalizedMessageContent"
+      :status="thinkingMessageStatus"
+      @heightChanged="emit('heightChanged')"
+    />
+  </div>
+
   <!-- Regular message block for non-tool-call messages (only render if has content) -->
   <div v-else-if="hasRegularMessageContent" class="message-container group relative max-w-full">
     <div :class="['message-block relative min-w-0 rounded-lg px-3 py-2 overflow-hidden', typeClass]">
@@ -722,7 +734,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, defineAsyncComponent, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
@@ -740,18 +752,8 @@ import type {
 } from '@/types/agentReferences'
 import { getMessageTypeName } from '@/types/agent'
 import { formatJsonStringIfPossible, formatJsonValueIfPossible } from '@/utils/jsonFormatting'
-import AskUserQuestionToolResult from './AskUserQuestionToolResult.vue'
-import FileToolResult from './FileToolResult.vue'
-import MemoryToolResult from './MemoryToolResult.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import ParallelModelResultPanel from './ParallelModelResultPanel.vue'
-import SearchToolResult from './SearchToolResult.vue'
-import ShellToolResult from './ShellToolResult.vue'
-import StoredArtifactPanel from './StoredArtifactPanel.vue'
-import TeamMessageAttribution from './TeamMessageAttribution.vue'
-import ToolCallMessagePanel from './ToolCallMessagePanel.vue'
-import ToolRuntimeMeta from './ToolRuntimeMeta.vue'
-import WebSearchToolResult from './WebSearchToolResult.vue'
+import ThinkingMessageBlock from './ThinkingMessageBlock.vue'
 import {
   formatSessionDuration,
   formatTokenRate,
@@ -768,6 +770,18 @@ import {
 } from './toolRenderSupport'
 
 const { t } = useI18n()
+
+const AskUserQuestionToolResult = defineAsyncComponent(() => import('./AskUserQuestionToolResult.vue'))
+const FileToolResult = defineAsyncComponent(() => import('./FileToolResult.vue'))
+const MemoryToolResult = defineAsyncComponent(() => import('./MemoryToolResult.vue'))
+const ParallelModelResultPanel = defineAsyncComponent(() => import('./ParallelModelResultPanel.vue'))
+const SearchToolResult = defineAsyncComponent(() => import('./SearchToolResult.vue'))
+const ShellToolResult = defineAsyncComponent(() => import('./ShellToolResult.vue'))
+const StoredArtifactPanel = defineAsyncComponent(() => import('./StoredArtifactPanel.vue'))
+const TeamMessageAttribution = defineAsyncComponent(() => import('./TeamMessageAttribution.vue'))
+const ToolCallMessagePanel = defineAsyncComponent(() => import('./ToolCallMessagePanel.vue'))
+const ToolRuntimeMeta = defineAsyncComponent(() => import('./ToolRuntimeMeta.vue'))
+const WebSearchToolResult = defineAsyncComponent(() => import('./WebSearchToolResult.vue'))
 
 const props = defineProps<{
   message: AgentMessage
@@ -1178,6 +1192,13 @@ const readTeamMetaString = (key: string): string => {
 
 const normalizedMessageContent = computed(() => {
   return props.message.content || ''
+})
+
+const isThinkingMessage = computed(() => props.message.type === 'thinking')
+
+const thinkingMessageStatus = computed<'streaming' | 'complete'>(() => {
+  const metadata = props.message.metadata as any
+  return metadata?.status === 'streaming' ? 'streaming' : 'complete'
 })
 
 const isLightweightStreamingRender = computed(() => {

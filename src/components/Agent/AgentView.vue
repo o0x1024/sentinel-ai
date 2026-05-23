@@ -56,12 +56,14 @@
           :title="conversationWorkingDirectoryTooltip"
         >
           <input
-            v-model.trim="conversationWorkingDirectoryOverride"
+            :value="conversationWorkingDirectoryInputValue"
             type="text"
             class="input input-sm h-8 w-full border-transparent bg-transparent pr-20 text-center font-mono text-xs shadow-none placeholder:text-base-content/65 hover:border-base-300 hover:bg-base-100/70 hover:text-left focus:border-base-300 focus:bg-base-100/70 focus:text-left focus:outline-none"
+            :readonly="agentExecutionMode === 'docker'"
             :placeholder="conversationWorkingDirectoryPlaceholder"
             :title="conversationWorkingDirectoryTooltip"
             aria-label="当前会话工作目录"
+            @input="handleConversationWorkingDirectoryInput"
           />
           <div
             class="absolute right-0 top-0 flex h-8 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
@@ -76,6 +78,7 @@
               <i class="fas fa-up-right-from-square"></i>
             </button>
             <button
+              v-if="agentExecutionMode !== 'docker'"
               class="btn btn-sm btn-outline h-8 min-h-8 rounded-l-none px-3"
               title="选择当前会话工作目录"
               aria-label="选择当前会话工作目录"
@@ -448,7 +451,8 @@
           <WorkspaceFilesPanel
             v-else-if="activeRightPanel === 'workspace-files'"
             :conversation-id="conversationId"
-            :working-directory="effectiveConversationWorkingDirectory"
+            :working-directory="workspaceFilesStorageDirectory"
+            :display-working-directory="displayedConversationWorkingDirectory"
             @close="deactivateRightPanel('workspace-files')"
           />
           <InteractiveTerminal
@@ -496,14 +500,15 @@
     <SubagentDetailModal
       :visible="showSubagentDetailModal"
       :subagent="selectedSubagent"
+      :message-state="selectedSubagentMessageState"
+      :load-messages="subagentMessageStore.loadMessages"
       @close="showSubagentDetailModal = false"
     />
-    <AskUserQuestionModal :execution-id="conversationId" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, type Ref } from 'vue'
+import { ref, computed, defineAsyncComponent, watch, nextTick, onMounted, onUnmounted, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
@@ -521,20 +526,10 @@ import { useAgentTasks } from '@/composables/useAgentTasks'
 import { useBrowserShell } from '@/composables/useBrowserShell'
 import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
-import AskUserQuestionModal from './AskUserQuestionModal.vue'
-import AgentHarnessPanel from './AgentHarnessPanel.vue'
 import MessageFlow from './MessageFlow.vue'
-import TaskPanel from './TaskPanel.vue'
-import HtmlPanel from './HtmlPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
-import SubagentDetailModal from './SubagentDetailModal.vue'
-import BrowserShellBridgePanel from '@/components/Tools/BrowserShellBridgePanel.vue'
-import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
-import AssistantWorkConfigPanel from './AssistantWorkConfigPanel.vue'
-import TeamV4WorkspacePanel from './TeamV4WorkspacePanel.vue'
-import WorkspaceFilesPanel from './WorkspaceFilesPanel.vue'
 import {
   type AgentExecutionFinishedEvent,
   getExecutionStateBadgeClass,
@@ -557,13 +552,25 @@ import { useAgentConversationBinding } from './useAgentConversationBinding'
 import { useAgentBrowserShellAvailability } from './useAgentBrowserShellAvailability'
 import { useAgentViewLifecycle } from './useAgentViewLifecycle'
 import { useAgentSubagents } from './useAgentSubagents'
+import { useSubagentMessageStore } from './useSubagentMessageStore'
 import { useAgentViewEffects } from './useAgentViewEffects'
 import { isVisionModelUnsupportedError } from './agentVisionErrorSupport'
 import { persistTeamV4Message } from './teamV4MessagePersistence'
+import { AI_CONFIG_UPDATED_EVENT } from '@/services/aiConfigEvents'
 
 interface AgentRuntimeSettings {
+  shell?: {
+    docker_config?: {
+      volumes?: Record<string, string> | null
+    } | null
+  } | null
+  terminal?: {
+    default_execution_mode?: 'docker' | 'host' | null
+  } | null
   working_directory?: string | null
 }
+
+const DEFAULT_DOCKER_WORKING_DIRECTORY = '/workspace'
 
 const props = withDefaults(
   defineProps<{
@@ -581,6 +588,16 @@ const props = withDefaults(
     active: true,
   }
 )
+
+const AgentHarnessPanel = defineAsyncComponent(() => import('./AgentHarnessPanel.vue'))
+const AssistantWorkConfigPanel = defineAsyncComponent(() => import('./AssistantWorkConfigPanel.vue'))
+const BrowserShellBridgePanel = defineAsyncComponent(() => import('@/components/Tools/BrowserShellBridgePanel.vue'))
+const HtmlPanel = defineAsyncComponent(() => import('./HtmlPanel.vue'))
+const InteractiveTerminal = defineAsyncComponent(() => import('@/components/Tools/InteractiveTerminal.vue'))
+const SubagentDetailModal = defineAsyncComponent(() => import('./SubagentDetailModal.vue'))
+const TaskPanel = defineAsyncComponent(() => import('./TaskPanel.vue'))
+const TeamV4WorkspacePanel = defineAsyncComponent(() => import('./TeamV4WorkspacePanel.vue'))
+const WorkspaceFilesPanel = defineAsyncComponent(() => import('./WorkspaceFilesPanel.vue'))
 
 const emit = defineEmits<{
   (e: 'submit', task: string): void
@@ -636,6 +653,32 @@ const conversationExecutionStateBadgeClass = computed(() => {
   return getExecutionStateBadgeClass(conversationExecutionState.value?.outcome)
 })
 const agentDefaultWorkingDirectory = ref('')
+const agentDockerWorkingDirectory = ref(DEFAULT_DOCKER_WORKING_DIRECTORY)
+const agentDockerStorageDirectory = ref('')
+const agentExecutionMode = ref<'docker' | 'host'>('host')
+
+const applyAgentRuntimeSettings = (config?: AgentRuntimeSettings | null) => {
+  agentDefaultWorkingDirectory.value = String(config?.working_directory || '').trim()
+  agentExecutionMode.value = config?.terminal?.default_execution_mode === 'docker' ? 'docker' : 'host'
+  const dockerVolumeEntries = Object.entries(config?.shell?.docker_config?.volumes || {})
+  const dockerWorkspaceVolume = dockerVolumeEntries.find(
+    ([, containerPath]) => containerPath.trim() === DEFAULT_DOCKER_WORKING_DIRECTORY,
+  )
+  agentDockerWorkingDirectory.value = String(
+    dockerWorkspaceVolume?.[1] || DEFAULT_DOCKER_WORKING_DIRECTORY,
+  ).trim()
+  agentDockerStorageDirectory.value = String(
+    dockerWorkspaceVolume?.[0] || '',
+  ).trim()
+}
+
+const loadAgentRuntimeSettings = () => {
+  void invoke<AgentRuntimeSettings>('get_agent_config')
+    .then(applyAgentRuntimeSettings)
+    .catch(error => {
+      console.warn('[AgentView] Failed to load runtime settings:', error)
+    })
+}
 
 const {
   defaultAssistantProfileId,
@@ -692,27 +735,59 @@ const effectiveConversationWorkingDirectory = computed(() => {
   if (overrideValue) return overrideValue
   return agentDefaultWorkingDirectory.value.trim()
 })
+const displayedConversationWorkingDirectory = computed(() => {
+  if (agentExecutionMode.value === 'docker') {
+    return agentDockerWorkingDirectory.value.trim()
+  }
+  return effectiveConversationWorkingDirectory.value.trim()
+})
+const conversationWorkingDirectoryInputValue = computed(() => {
+  if (agentExecutionMode.value === 'docker') {
+    return displayedConversationWorkingDirectory.value
+  }
+  return conversationWorkingDirectoryOverride.value
+})
+const workspaceFilesStorageDirectory = computed(() => {
+  if (agentExecutionMode.value === 'docker') {
+    return agentDockerStorageDirectory.value.trim()
+  }
+  return effectiveConversationWorkingDirectory.value.trim()
+})
 const conversationWorkingDirectoryPlaceholder = computed(() => {
-  const inherited = agentDefaultWorkingDirectory.value.trim()
+  const inherited = displayedConversationWorkingDirectory.value.trim()
   return inherited || '未配置工作目录'
 })
 const effectiveConversationWorkingDirectoryLabel = computed(() => {
-  const resolved = effectiveConversationWorkingDirectory.value.trim()
+  const resolved = displayedConversationWorkingDirectory.value.trim()
   return resolved || '未配置'
 })
 const conversationWorkingDirectoryTooltip = computed(() => {
   const overrideValue = conversationWorkingDirectoryOverride.value.trim()
   const resolved = effectiveConversationWorkingDirectoryLabel.value
+  if (agentExecutionMode.value === 'docker') {
+    return `Docker 工作目录: ${resolved}`
+  }
   return overrideValue ? `当前会话工作目录: ${resolved}` : `继承默认工作目录: ${resolved}`
 })
+const handleConversationWorkingDirectoryInput = (event: Event) => {
+  if (agentExecutionMode.value === 'docker') return
+  setWorkingDirectoryOverride((event.target as HTMLInputElement).value)
+}
 const canOpenConversationWorkingDirectory = computed(
-  () => effectiveConversationWorkingDirectory.value.trim().length > 0
+  () => agentExecutionMode.value !== 'docker' && effectiveConversationWorkingDirectory.value.trim().length > 0
 )
 const openConversationWorkingDirectoryTitle = computed(() => {
+  if (agentExecutionMode.value === 'docker') {
+    return `Docker 工作目录: ${displayedConversationWorkingDirectory.value || '未配置'}`
+  }
   const directory = effectiveConversationWorkingDirectory.value.trim()
   return directory ? `打开工作目录: ${directory}` : '未配置工作目录'
 })
 const openConversationWorkingDirectory = async () => {
+  if (agentExecutionMode.value === 'docker') {
+    localError.value = 'Docker 工作目录不能通过宿主机文件管理器直接打开。'
+    return
+  }
   const directory = effectiveConversationWorkingDirectory.value.trim()
   if (!directory) {
     localError.value = '未配置工作目录，无法打开。'
@@ -900,6 +975,12 @@ const { handleViewSubagentDetails, loadSubagentRuns, selectedSubagent, showSubag
     historyLoadToken,
     subagents: agentEvents.subagents,
   })
+const subagentMessageStore = useSubagentMessageStore({
+  parentExecutionId: conversationId,
+  subagents: agentEvents.subagents,
+})
+const selectedSubagentId = computed(() => selectedSubagent.value?.id || null)
+const selectedSubagentMessageState = subagentMessageStore.selectedState(selectedSubagentId)
 
 const taskComposable = useAgentTasks()
 const terminalComposable = useTerminal()
@@ -1149,18 +1230,14 @@ const handleParallelTaskSourceFocus = (event: Event) => {
 onMounted(() => {
   window.addEventListener('agent:parallel-task-source-focus', handleParallelTaskSourceFocus)
   window.addEventListener('keydown', handleGlobalKeydown)
-  void invoke<AgentRuntimeSettings>('get_agent_config')
-    .then(config => {
-      agentDefaultWorkingDirectory.value = String(config?.working_directory || '').trim()
-    })
-    .catch(error => {
-      console.warn('[AgentView] Failed to load default working directory:', error)
-    })
+  window.addEventListener(AI_CONFIG_UPDATED_EVENT, loadAgentRuntimeSettings)
+  loadAgentRuntimeSettings()
 })
 
 onUnmounted(() => {
   window.removeEventListener('agent:parallel-task-source-focus', handleParallelTaskSourceFocus)
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener(AI_CONFIG_UPDATED_EVENT, loadAgentRuntimeSettings)
 })
 
 // Handle retrieval toggle

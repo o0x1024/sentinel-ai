@@ -4,6 +4,11 @@ import type { ReplayRun } from '../model/replayRun'
 import { createWorkbenchEntityId } from '../services/id'
 
 const replayRunsState = ref<ReplayRun[]>([])
+const mutationVersionState = ref(0)
+
+function markMutated() {
+  mutationVersionState.value += 1
+}
 
 function startReplayRun(draftId: string, draftRevisionId: string) {
   const now = Date.now()
@@ -18,6 +23,7 @@ function startReplayRun(draftId: string, draftRevisionId: string) {
     updatedAt: now,
   }
   replayRunsState.value = [...replayRunsState.value, run]
+  markMutated()
   return run
 }
 
@@ -34,6 +40,7 @@ function completeReplayRun(runId: string, response: HttpReplayResponse) {
       }
       : run,
   )
+  markMutated()
 }
 
 function failReplayRun(runId: string, error: string) {
@@ -48,6 +55,7 @@ function failReplayRun(runId: string, error: string) {
       }
       : run,
   )
+  markMutated()
 }
 
 function cancelReplayRun(runId: string) {
@@ -61,6 +69,7 @@ function cancelReplayRun(runId: string) {
       }
       : run,
   )
+  markMutated()
 }
 
 function replaceState(replayRuns: ReplayRun[]) {
@@ -73,10 +82,12 @@ function replaceState(replayRuns: ReplayRun[]) {
       }
       : null,
   }))
+  markMutated()
 }
 
 function resetReplayStore() {
   replayRunsState.value = []
+  markMutated()
 }
 
 export function useReplayStore() {
@@ -86,6 +97,7 @@ export function useReplayStore() {
 
   return {
     replayRuns: replayRunsState,
+    mutationVersion: mutationVersionState,
     runningReplayCount,
     startReplayRun,
     completeReplayRun,

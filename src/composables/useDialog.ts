@@ -45,7 +45,7 @@ class DialogService {
   }
 
   // 显示提示对话框
-  alert(options: DialogOptions | string): Promise<void> {
+  alert = (options: DialogOptions | string): Promise<void> => {
     if (typeof options === 'string') {
       options = { message: options };
     }
@@ -61,7 +61,7 @@ class DialogService {
   }
 
   // 显示确认对话框
-  confirm(options: DialogOptions | string): Promise<boolean> {
+  confirm = (options: DialogOptions | string): Promise<boolean> => {
     if (typeof options === 'string') {
       options = { message: options };
     }
@@ -79,7 +79,7 @@ class DialogService {
   }
 
   // 输入对话框
-  input(options: InputDialogOptions | string): Promise<string | null> {
+  input = (options: InputDialogOptions | string): Promise<string | null> => {
     if (typeof options === 'string') {
       options = { message: options };
     }
@@ -96,7 +96,7 @@ class DialogService {
   }
 
   // 显示成功提示
-  success(message: string, title?: string): Promise<void> {
+  success = (message: string, title?: string): Promise<void> => {
     return this.alert({
       title: title || i18n.global.t('common.success'),
       message,
@@ -105,7 +105,7 @@ class DialogService {
   }
 
   // 显示错误提示
-  error(message: string, title?: string): Promise<void> {
+  error = (message: string, title?: string): Promise<void> => {
     return this.alert({
       title: title || i18n.global.t('common.error'),
       message,
@@ -130,7 +130,7 @@ class DialogService {
   }
 
   // 显示信息提示
-  info(options: DialogOptions | string): Promise<void> {
+  info = (options: DialogOptions | string): Promise<void> => {
     if (typeof options === 'string') {
       options = { message: options };
     }

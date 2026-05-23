@@ -18,7 +18,7 @@ pub struct LlmConfig {
     pub api_key: Option<String>,
     /// API Base URL
     pub base_url: Option<String>,
-    /// 请求超时（秒）
+    /// 请求超时（秒），0 表示不设置请求超时
     pub timeout_secs: u64,
     /// rig 提供商类型（决定使用哪个 client）
     pub rig_provider: Option<String>,
@@ -86,6 +86,11 @@ impl LlmConfig {
     /// 设置超时
     pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
         self.timeout_secs = timeout_secs;
+        self
+    }
+
+    pub fn without_timeout(mut self) -> Self {
+        self.timeout_secs = 0;
         self
     }
 

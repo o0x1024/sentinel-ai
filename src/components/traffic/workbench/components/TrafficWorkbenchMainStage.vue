@@ -48,8 +48,7 @@
 
       <template v-else>
         <ProxyRepeater
-          v-if="mountedTools.includes('repeater')"
-          v-show="activeWorkbenchTool === 'repeater'"
+          v-if="retainedTools.includes('repeater')"
           ref="repeaterRef"
           :initial-request="pendingRepeaterRequest"
           :initial-draft-id="pendingRepeaterDraftId"
@@ -63,8 +62,7 @@
           @switch-preview-variant="$emit('switchRequestVariant', $event)"
         />
         <ProxyIntruder
-          v-if="mountedTools.includes('intruder')"
-          v-show="activeWorkbenchTool === 'intruder'"
+          v-if="retainedTools.includes('intruder')"
           ref="intruderRef"
           :initial-request="pendingIntruderRequest"
           :initial-workspace-id="pendingIntruderWorkspaceId"
@@ -75,22 +73,19 @@
           @workspaceStatsChanged="$emit('intruderWorkspaceStatsChanged', $event)"
         />
         <ProxyComparer
-          v-if="mountedTools.includes('comparer')"
-          v-show="activeWorkbenchTool === 'comparer'"
+          v-if="retainedTools.includes('comparer')"
           ref="comparerRef"
           class="absolute inset-0 h-full overflow-auto"
           @createDraft="$emit('createDraftFromComparer', $event)"
         />
         <TrafficOastPanel
-          v-if="mountedTools.includes('oast')"
-          v-show="activeWorkbenchTool === 'oast'"
+          v-if="retainedTools.includes('oast')"
           class="absolute inset-0 h-full overflow-auto"
           @openConfig="$emit('openProxySettings')"
           @openSourceRequest="$emit('openHistoryRequestFromOast', $event)"
         />
         <PacketCapture
-          v-if="mountedTools.includes('capture')"
-          v-show="activeWorkbenchTool === 'capture'"
+          v-if="retainedTools.includes('capture')"
           class="absolute inset-0 h-full overflow-auto"
         />
       </template>
@@ -99,13 +94,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import PacketCapture from '../../PacketCapture.vue'
-import ProxyComparer from '../../ProxyComparer.vue'
-import ProxyIntruder from '../../ProxyIntruder.vue'
-import ProxyRepeater from '../../ProxyRepeater.vue'
-import TrafficOastPanel from '../../TrafficOastPanel.vue'
 import type { HttpExchangeRequest } from '../../http/model'
 import type { RepeaterActiveTabState, RepeaterTabStats } from '../../proxyRepeaterTypes'
 import type { TrafficComparerDraftRequestInput, TrafficComparePayload } from '../../transfers'
@@ -119,7 +109,13 @@ type WorkbenchTool = TrafficWorkbenchToolSession['tool']
 
 const { t } = useI18n()
 
-defineProps<{
+const PacketCapture = defineAsyncComponent(() => import('../../PacketCapture.vue'))
+const ProxyComparer = defineAsyncComponent(() => import('../../ProxyComparer.vue'))
+const ProxyIntruder = defineAsyncComponent(() => import('../../ProxyIntruder.vue'))
+const ProxyRepeater = defineAsyncComponent(() => import('../../ProxyRepeater.vue'))
+const TrafficOastPanel = defineAsyncComponent(() => import('../../TrafficOastPanel.vue'))
+
+const props = defineProps<{
   workbenchOpen: boolean
   activeWorkbenchTool: WorkbenchTool
   mountedTools: WorkbenchTool[]
@@ -160,6 +156,14 @@ defineEmits<{
 const repeaterRef = ref<InstanceType<typeof ProxyRepeater> | null>(null)
 const intruderRef = ref<InstanceType<typeof ProxyIntruder> | null>(null)
 const comparerRef = ref<InstanceType<typeof ProxyComparer> | null>(null)
+const pendingComparisonPayloads = ref<TrafficComparePayload[]>([])
+const pendingDraftRequests = ref<TrafficComparerDraftRequestInput[]>([])
+const retainedTools = computed(() => {
+  if (!props.workbenchOpen) {
+    return []
+  }
+  return props.mountedTools.filter(tool => tool === props.activeWorkbenchTool)
+})
 
 function hasRepeater() {
   return Boolean(repeaterRef.value)
@@ -178,12 +182,50 @@ function openPreviewRequest(request: HttpExchangeRequest) {
 }
 
 function addComparison(payload: TrafficComparePayload) {
-  comparerRef.value?.addComparison(payload)
+  if (comparerRef.value) {
+    comparerRef.value.addComparison(payload)
+    return
+  }
+
+  pendingComparisonPayloads.value = [...pendingComparisonPayloads.value, payload]
 }
 
 function addDraftRequest(payload: TrafficComparerDraftRequestInput) {
-  comparerRef.value?.addDraftRequest(payload)
+  if (comparerRef.value) {
+    comparerRef.value.addDraftRequest(payload)
+    return
+  }
+
+  pendingDraftRequests.value = [...pendingDraftRequests.value, payload]
 }
+
+async function flushPendingComparerPayloads() {
+  if (props.activeWorkbenchTool !== 'comparer') {
+    return
+  }
+
+  await nextTick()
+  const comparer = comparerRef.value
+  if (!comparer) {
+    return
+  }
+
+  const comparisonPayloads = pendingComparisonPayloads.value
+  const draftRequests = pendingDraftRequests.value
+  pendingComparisonPayloads.value = []
+  pendingDraftRequests.value = []
+
+  comparisonPayloads.forEach(payload => comparer.addComparison(payload))
+  draftRequests.forEach(payload => comparer.addDraftRequest(payload))
+}
+
+watch(
+  () => [props.activeWorkbenchTool, props.workbenchOpen] as const,
+  () => {
+    void flushPendingComparerPayloads()
+  },
+  { immediate: true },
+)
 
 defineExpose({
   hasRepeater,

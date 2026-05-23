@@ -10,16 +10,24 @@
       tabindex="0"
       role="button"
       :aria-expanded="isToolPanelExpanded ? 'true' : 'false'"
-      class="tool-panel-header flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-base-300/50 transition-colors"
+      class="tool-panel-header flex min-w-0 items-center gap-2 px-4 py-3 cursor-pointer hover:bg-base-300/50 transition-colors"
     >
       <i
         :class="[
-          'fas transition-transform text-xs',
+          'fas shrink-0 transition-transform text-xs',
           isToolPanelExpanded ? 'fa-chevron-down' : 'fa-chevron-right',
         ]"
       ></i>
 
-      <span class="font-mono text-sm font-semibold">{{ toolName || 'Tool' }}</span>
+      <span class="shrink-0 font-mono text-sm font-semibold">{{ toolName || 'Tool' }}</span>
+
+      <span
+        v-if="toolHeaderDetail"
+        class="min-w-0 flex-1 truncate text-xs text-base-content/45"
+        :title="toolHeaderDetail"
+      >
+        {{ toolHeaderDetail }}
+      </span>
 
       <span
         v-if="fileVerificationStatus"
@@ -120,6 +128,7 @@ import { formatJsonValueIfPossible } from '@/utils/jsonFormatting'
 import StoredArtifactPanel from './StoredArtifactPanel.vue'
 import ToolRuntimeMeta from './ToolRuntimeMeta.vue'
 import { buildStoredArtifactViews } from './storedArtifactSupport'
+import { getToolHeaderDetail } from './toolRenderSupport'
 
 const props = defineProps<{
   message: AgentMessage
@@ -224,6 +233,12 @@ const stringifyToolResultPreview = (value: any, maxChars: number) => {
 }
 
 const toolName = computed(() => props.message.metadata?.tool_name)
+const toolHeaderDetail = computed(() =>
+  getToolHeaderDetail({
+    toolName: props.message.metadata?.tool_name,
+    args: props.message.metadata?.tool_args,
+  })
+)
 const toolStatus = computed(() => props.message.metadata?.status)
 const toolPanelBorderClass = computed(() => 'border-l-warning')
 const hasToolArgs = computed(() => (

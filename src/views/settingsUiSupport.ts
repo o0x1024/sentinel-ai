@@ -164,7 +164,7 @@ export const applyFontSize = (fontSize: number) => {
   syncRootTypography()
 }
 
-export const applyLanguage = (language: string, locale: { value: string }) => {
+export const applyLanguage = async (language: string, locale: { value: string }) => {
   let finalLang = language
   if (language === 'auto') {
     const browserLang = navigator.language.toLowerCase()
@@ -182,8 +182,7 @@ export const applyLanguage = (language: string, locale: { value: string }) => {
     langCode = 'en'
   }
 
-  locale.value = langCode
-  applyI18nLanguage(langCode as 'zh' | 'en')
+  await applyI18nLanguage(langCode as 'zh' | 'en')
 }
 
 export const applyUIScale = (scale: number) => {

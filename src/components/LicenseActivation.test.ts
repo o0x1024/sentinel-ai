@@ -8,12 +8,18 @@ const entitlementsState = ref({
   is_licensed: false,
   has_local_license: true,
   access_source: 'server_activation',
+  trial_active: false,
+  trial_started_at: null,
+  trial_expires_at: null,
+  trial_remaining_seconds: null,
+  trial_days_remaining: null,
   has_valid_entitlement_token: false,
   entitlement_feature_ids: [],
   entitlement_expires_at: null,
   entitlement_license_id: null,
   can_access_all_plugins: false,
   can_access_bug_bounty: false,
+  can_access_bot_console: false,
   can_manage_plugin_catalog: false,
   can_add_plugins: false,
   can_edit_plugins: false,
@@ -95,6 +101,11 @@ describe('LicenseActivation', () => {
           machine_id: '84DE-A1B6-FCA0-88DD',
           is_licensed: true,
           needs_activation: false,
+          trial_active: false,
+          trial_started_at: null,
+          trial_expires_at: null,
+          trial_remaining_seconds: null,
+          trial_days_remaining: null,
         })
       }
 
@@ -102,7 +113,7 @@ describe('LicenseActivation', () => {
     })
   })
 
-  it('keeps admin refresh fields out of the activation dialog', async () => {
+  it('shows username and activation key instead of admin refresh fields', async () => {
     const wrapper = mount(LicenseActivation, {
       global: {
         stubs: {
@@ -122,7 +133,9 @@ describe('LicenseActivation', () => {
     expect(wrapper.text()).not.toContain('保存自动刷新配置')
     expect(wrapper.text()).not.toContain('写入 Token')
     expect(wrapper.text()).not.toContain('清除 Token')
-    expect(wrapper.text()).toContain('服务端激活配置')
+    expect(wrapper.text()).toContain('用户名')
+    expect(wrapper.text()).toContain('激活密钥')
+    expect(wrapper.text()).not.toContain('服务端激活配置')
 
     wrapper.unmount()
   })

@@ -19,15 +19,15 @@ const FETCH_JITTER_MIN_MS: u64 = 0;
 const FETCH_JITTER_MAX_MS: u64 = 30_000;
 const FETCH_DELAY_MIN_MS: u64 = 0;
 const FETCH_DELAY_MAX_MS: u64 = 60_000;
-const FETCH_TIMEOUT_MIN_MS: u64 = 3_000;
-const FETCH_TIMEOUT_MAX_MS: u64 = 3_000;
+const FETCH_TIMEOUT_MIN_MS: u64 = 1_000;
+const FETCH_TIMEOUT_MAX_MS: u64 = 120_000;
 
 const ACTIVE_PROBE_JITTER_MIN_MS: u64 = 0;
 const ACTIVE_PROBE_JITTER_MAX_MS: u64 = 30_000;
 const ACTIVE_PROBE_COOLDOWN_MIN_MS: u64 = 0;
 const ACTIVE_PROBE_COOLDOWN_MAX_MS: u64 = 60_000;
-const ACTIVE_PROBE_TIMEOUT_MIN_MS: u64 = 3_000;
-const ACTIVE_PROBE_TIMEOUT_MAX_MS: u64 = 3_000;
+const ACTIVE_PROBE_TIMEOUT_MIN_MS: u64 = 1_000;
+const ACTIVE_PROBE_TIMEOUT_MAX_MS: u64 = 120_000;
 const ACTIVE_PROBE_MAX_CONCURRENT_PER_HOST_MIN: u64 = 1;
 const ACTIVE_PROBE_MAX_CONCURRENT_PER_HOST_MAX: u64 = 32;
 
@@ -293,4 +293,43 @@ pub fn set_plugin_runtime_settings(settings: PluginRuntimeSettings) {
         .write()
         .expect("plugin runtime settings poisoned");
     *current = sanitized;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ActiveProbeRuntimeSettings, PluginFetchRuntimeSettings};
+
+    #[test]
+    fn preserves_configured_timeout_within_runtime_limits() {
+        let active_probe = ActiveProbeRuntimeSettings {
+            timeout_ms: 5_000,
+            ..ActiveProbeRuntimeSettings::default()
+        }
+        .sanitized();
+        let plugin_fetch = PluginFetchRuntimeSettings {
+            timeout_ms: 5_000,
+            ..PluginFetchRuntimeSettings::default()
+        }
+        .sanitized();
+
+        assert_eq!(active_probe.timeout_ms, 5_000);
+        assert_eq!(plugin_fetch.timeout_ms, 5_000);
+    }
+
+    #[test]
+    fn clamps_configured_timeout_to_runtime_limits() {
+        let active_probe = ActiveProbeRuntimeSettings {
+            timeout_ms: 999_999,
+            ..ActiveProbeRuntimeSettings::default()
+        }
+        .sanitized();
+        let plugin_fetch = PluginFetchRuntimeSettings {
+            timeout_ms: 0,
+            ..PluginFetchRuntimeSettings::default()
+        }
+        .sanitized();
+
+        assert_eq!(active_probe.timeout_ms, 120_000);
+        assert_eq!(plugin_fetch.timeout_ms, 1_000);
+    }
 }

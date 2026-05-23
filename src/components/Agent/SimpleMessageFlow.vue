@@ -74,7 +74,7 @@
                 {{ t('agent.toolResult') }}
               </div>
               <div class="bg-warning/5 border border-warning/20 rounded-lg p-2 text-xs font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto text-base-content">
-                {{ formatToolResult(msg.content) }}
+                {{ formatToolResult(msg) }}
               </div>
             </div>
           </div>
@@ -140,7 +140,24 @@ const getDisplayContent = (msg: SimpleMessage): string => {
 }
 
 // Format tool result
-const formatToolResult = (content?: string | null) => {
+const formatToolResult = (msg: SimpleMessage) => {
+  const metadata = msg.metadata
+  if (metadata?.kind === 'tool_call') {
+    return JSON.stringify(
+      {
+        tool_name: metadata.tool_name,
+        status: metadata.status,
+        tool_args: metadata.tool_args,
+        tool_result: metadata.tool_result,
+        success: metadata.success,
+        duration_ms: metadata.duration_ms,
+      },
+      null,
+      2
+    )
+  }
+
+  const content = msg.content
   if (!content) return '-'
   try {
     const parsed = JSON.parse(content)

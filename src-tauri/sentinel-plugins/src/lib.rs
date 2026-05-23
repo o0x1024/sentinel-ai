@@ -55,8 +55,8 @@ pub use monitor_progress::{
     emit_plugin_monitor_progress, MonitorProgressContext, PluginMonitorProgressUpdate,
 };
 pub use plugin::{
-    get_input_schema_from_code, get_output_schema_from_code, PluginManager, PluginRecord,
-    PluginStatus, terminate_plugin_executions_by_run,
+    get_input_schema_from_code, get_output_schema_from_code, terminate_plugin_executions_by_run,
+    PluginManager, PluginRecord, PluginStatus,
 };
 pub use plugin_context::PluginContext;
 pub use plugin_engine::PluginEngine;

@@ -335,8 +335,6 @@ pub async fn bounty_get_workflow_template(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<BountyWorkflowTemplateRow>, String> {
-    ensure_bounty_feature()?;
-
     db_service
         .get_bounty_workflow_template(&id)
         .await
@@ -350,8 +348,6 @@ pub async fn bounty_list_workflow_templates(
     category: Option<String>,
     is_built_in: Option<bool>,
 ) -> Result<Vec<BountyWorkflowTemplateRow>, String> {
-    ensure_bounty_feature()?;
-
     db_service
         .list_bounty_workflow_templates(category.as_deref(), is_built_in)
         .await
@@ -1274,8 +1270,6 @@ pub async fn bounty_list_workflow_bindings(
     scope_id: Option<String>,
     is_enabled: Option<bool>,
 ) -> Result<Vec<BountyWorkflowBindingRow>, String> {
-    ensure_bounty_feature()?;
-
     db_service
         .list_bounty_workflow_bindings(program_id.as_deref(), scope_id.as_deref(), is_enabled)
         .await

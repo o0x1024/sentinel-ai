@@ -8,6 +8,10 @@ import { createTrafficMessageViewTestGlobal } from './trafficMessageViewTestMoun
 import { createInterceptedRequest, createInterceptedResponse } from './trafficMessageViewTestData'
 
 const listenHandlers = new Map<string, (event: { payload: unknown }) => void>()
+const pendingInterceptState = vi.hoisted(() => ({
+  requests: [] as unknown[],
+  responses: [] as unknown[],
+}))
 
 vi.mock('vue-i18n', async () => {
   const { createVueI18nMock } = await import('./trafficMessageViewTestMocks')
@@ -36,6 +40,10 @@ vi.mock('@tauri-apps/api/core', () => ({
       case 'get_response_intercept_enabled':
       case 'get_websocket_intercept_enabled':
         return { success: true, data: false }
+      case 'get_intercepted_requests':
+        return { success: true, data: pendingInterceptState.requests }
+      case 'get_intercepted_responses':
+        return { success: true, data: pendingInterceptState.responses }
       default:
         return { success: true }
     }
@@ -113,6 +121,24 @@ function mountIntercept() {
 describe('ProxyIntercept', () => {
   beforeEach(() => {
     listenHandlers.clear()
+    pendingInterceptState.requests = []
+    pendingInterceptState.responses = []
+  })
+
+  it('hydrates pending intercepted requests when mounted after the event was emitted', async () => {
+    pendingInterceptState.requests = [
+      {
+        ...createInterceptedRequest(),
+        id: 'pending-sf-request',
+        url: 'https://ibu-sdm-core.sf-express.com/api/admin/queryUserInfo',
+        path: '/api/admin/queryUserInfo',
+      },
+    ]
+
+    const wrapper = mountIntercept()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('https://ibu-sdm-core.sf-express.com/api/admin/queryUserInfo')
   })
 
   it('uses readonly HttpMessageSurface for intercepted request raw and pretty views when editing is disabled', async () => {

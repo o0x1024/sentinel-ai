@@ -183,6 +183,7 @@ pub struct Mission {
     pub delivery_policy_json: Option<String>,
     pub assistant_profile_id: Option<String>,
     pub trigger_json: Option<String>,
+    pub mission_spec_json: Option<String>,
     pub step_plan_json: Option<String>,
     pub success_criteria_json: Option<String>,
     pub context_strategy_json: Option<String>,
@@ -277,6 +278,63 @@ pub struct MissionDelivery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MissionStateSnapshot {
+    pub id: String,
+    pub mission_id: String,
+    pub run_id: Option<String>,
+    pub snapshot_index: i64,
+    pub state_json: String,
+    pub state_hash: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MissionEvent {
+    pub id: String,
+    pub mission_id: String,
+    pub run_id: Option<String>,
+    pub event_type: String,
+    pub title: String,
+    pub payload_json: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MissionAction {
+    pub id: String,
+    pub mission_id: String,
+    pub run_id: String,
+    pub action_type: String,
+    pub status: String,
+    pub input_json: Option<String>,
+    pub result_json: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MissionActionResult {
+    pub id: String,
+    pub action_id: String,
+    pub mission_id: String,
+    pub run_id: String,
+    pub status: String,
+    pub result_json: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionRuntimeDetail {
+    pub latest_state: Option<MissionStateSnapshot>,
+    pub observations: Vec<MissionObservation>,
+    pub events: Vec<MissionEvent>,
+    pub actions: Vec<MissionAction>,
+    pub action_results: Vec<MissionActionResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct MissionLock {
     pub mission_id: String,
     pub run_id: String,
@@ -304,6 +362,8 @@ pub struct CreateMissionRequest {
     pub assistant_profile_id: Option<String>,
     #[serde(default)]
     pub trigger_json: Option<String>,
+    #[serde(default)]
+    pub mission_spec_json: Option<String>,
     #[serde(default)]
     pub step_plan_json: Option<String>,
     #[serde(default)]
@@ -334,6 +394,8 @@ pub struct UpdateMissionFieldsRequest {
     pub objective: Option<String>,
     #[serde(default)]
     pub trigger_json: Option<String>,
+    #[serde(default)]
+    pub mission_spec_json: Option<String>,
     #[serde(default)]
     pub delivery_policy_json: Option<String>,
     #[serde(default)]

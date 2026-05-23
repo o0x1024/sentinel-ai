@@ -1062,6 +1062,36 @@ impl DatabaseService {
         .execute(pool)
         .await?;
 
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS api_inventory_endpoint_requests (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                endpoint_path TEXT NOT NULL,
+                endpoint_source TEXT,
+                method TEXT NOT NULL,
+                request_url TEXT NOT NULL,
+                success BOOLEAN NOT NULL,
+                status_code INTEGER,
+                status_text TEXT,
+                duration_ms BIGINT NOT NULL DEFAULT 0,
+                response_bytes BIGINT NOT NULL DEFAULT 0,
+                response_content_type TEXT,
+                body_preview TEXT,
+                error_message TEXT,
+                request_body TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_api_inventory_endpoint_requests_lookup ON api_inventory_endpoint_requests(program_id, base_url, method, endpoint_path, created_at DESC, id DESC)",
+        )
+        .execute(pool)
+        .await?;
+
         // 添加压缩标记列（如果表已存在）
         let _ = sqlx::query(
             "ALTER TABLE proxy_requests ADD COLUMN request_body_compressed BOOLEAN NOT NULL DEFAULT FALSE"

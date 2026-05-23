@@ -38,7 +38,7 @@
       </div>
     </div>
 
-    <div v-if="!workingDirectory.trim()" class="p-4 text-sm text-base-content/60">
+    <div v-if="!storageWorkingDirectory" class="p-4 text-sm text-base-content/60">
       当前会话未配置工作目录。
     </div>
 
@@ -312,6 +312,7 @@ interface TreeRow {
 const props = defineProps<{
   conversationId: string | null
   workingDirectory: string
+  displayWorkingDirectory?: string
 }>()
 
 defineEmits<{
@@ -375,7 +376,11 @@ const PREVIEW_MIN_HEIGHT = 180
 const PREVIEW_DEFAULT_HEIGHT = 300
 const PREVIEW_MAX_HEIGHT = 720
 
-const rootLabel = computed(() => root.value || props.workingDirectory.trim() || '未配置工作目录')
+const storageWorkingDirectory = computed(() => props.workingDirectory.trim())
+const displayWorkingDirectory = computed(
+  () => props.displayWorkingDirectory?.trim() || storageWorkingDirectory.value,
+)
+const rootLabel = computed(() => displayWorkingDirectory.value || '未配置工作目录')
 const displayPath = computed(() => currentRelativePath.value || '.')
 const canGoParent = computed(() => currentRelativePath.value.length > 0)
 const entryMatchesFilter = (entry: WorkspaceEntry, query: string) => {
@@ -545,7 +550,7 @@ const stopFileWatcher = async () => {
 }
 
 const ensureDirectoryWatcher = async (relativePath: string) => {
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   if (!directory || directoryWatcherPath.value === relativePath) return
   await stopDirectoryWatcher()
   try {
@@ -563,7 +568,7 @@ const ensureDirectoryWatcher = async (relativePath: string) => {
 }
 
 const ensureFileWatcher = async (relativePath: string) => {
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   if (!directory || fileWatcherPath.value === relativePath) return
   await stopFileWatcher()
   try {
@@ -584,7 +589,7 @@ const loadDirectory = async (
   relativePath: string,
   options: { preservePreview?: boolean; preserveFilter?: boolean } = {},
 ) => {
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   if (!directory) return
 
   const currentSeq = ++loadSeq
@@ -638,7 +643,7 @@ const isDirectoryLoading = (relativePath: string) => loadingDirectories.value.ha
 
 const loadChildEntries = async (relativePath: string) => {
   if (childEntriesByDir.value[relativePath] || isDirectoryLoading(relativePath)) return
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   if (!directory) return
 
   loadingDirectories.value = new Set([...loadingDirectories.value, relativePath])
@@ -677,7 +682,7 @@ const toggleDirectory = (entry: WorkspaceEntry) => {
 }
 
 const resolveOpenTarget = async (relativePath: string) => {
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   if (!directory) return null
   return invoke<WorkingDirectoryOpenTarget>('resolve_working_directory_file_open_target', {
     conversationId: props.conversationId,
@@ -718,7 +723,7 @@ const readFilePreview = async (entry: WorkspaceEntry) => {
     const result = await invoke<WorkingDirectoryFilePreview>('read_working_directory_file_preview', {
       conversationId: props.conversationId,
       relativePath: entry.relative_path,
-      workingDirectory: props.workingDirectory.trim(),
+      workingDirectory: storageWorkingDirectory.value,
       maxChars: 12000,
     })
     if (currentSeq !== previewSeq) return
@@ -770,7 +775,7 @@ const refreshSelectedFile = () => {
 }
 
 const openSelectedFile = async () => {
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   if (!selectedPath.value || !directory || openingFile.value) return
 
   openingFile.value = true
@@ -839,7 +844,7 @@ const resetTreeAndReload = async (preservePreview = true) => {
 }
 
 const submitCreateEntry = async () => {
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   const name = createDialog.value.name.trim()
   if (!directory || !name || operationBusy.value) return
 
@@ -864,7 +869,7 @@ const submitCreateEntry = async () => {
 }
 
 const submitRenameEntry = async () => {
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   const relativePath = renameDialog.value.relativePath
   const newName = renameDialog.value.name.trim()
   if (!directory || !relativePath || !newName || operationBusy.value) return
@@ -908,7 +913,7 @@ const submitRenameEntry = async () => {
 }
 
 const submitDeleteEntry = async () => {
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   const relativePath = deleteDialog.value.relativePath
   if (!directory || !relativePath || operationBusy.value) return
 
@@ -960,7 +965,7 @@ const updateSelectedEntryMetadata = (result: WorkingDirectoryFilePreview) => {
 
 const saveEdit = async () => {
   const currentPreview = preview.value
-  const directory = props.workingDirectory.trim()
+  const directory = storageWorkingDirectory.value
   if (!currentPreview || !directory || saving.value || !hasDraftChange.value) return
 
   saving.value = true

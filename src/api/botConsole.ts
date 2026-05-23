@@ -26,8 +26,6 @@ export interface BotPeer {
   execution_run_count: number
   failed_execution_count: number
   running_execution_count: number
-  enabled_schedule_count: number
-  failed_schedule_run_count: number
   latest_execution_status: string | null
   latest_execution_started_at: string | null
   created_at: string
@@ -70,44 +68,6 @@ export interface BotExecutionRun {
   result_text: string | null
   error_message: string | null
   started_at: string
-  completed_at: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface BotSchedule {
-  id: string
-  transport: string
-  account_id: string
-  peer_type: string
-  peer_id: string
-  sender_id: string
-  assistant_profile_id: string | null
-  source_text: string
-  task_text: string
-  cron_expr: string
-  timezone: string
-  enabled: boolean
-  last_run_at: string | null
-  next_run_at: string | null
-  last_error: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface BotScheduleRun {
-  id: string
-  schedule_id: string
-  transport: string
-  account_id: string
-  peer_type: string
-  peer_id: string
-  sender_id: string
-  execution_run_id: string | null
-  status: string
-  result_text: string | null
-  error_message: string | null
-  triggered_at: string
   completed_at: string | null
   created_at: string
   updated_at: string
@@ -189,30 +149,6 @@ export async function listBotExecutionRunsForPeer(params: {
     peerType: params.peerType,
     peerId: params.peerId,
     limit: params.limit ?? null,
-  })
-}
-
-export async function listBotSchedules(params: {
-  transport: string
-  accountId: string
-  peerType?: string | null
-  peerId?: string | null
-}): Promise<BotSchedule[]> {
-  return await invoke<BotSchedule[]>('list_bot_schedules', {
-    transport: params.transport,
-    accountId: params.accountId,
-    peerType: params.peerType ?? null,
-    peerId: params.peerId ?? null,
-  })
-}
-
-export async function listBotScheduleRuns(
-  scheduleId: string,
-  limit?: number,
-): Promise<BotScheduleRun[]> {
-  return await invoke<BotScheduleRun[]>('list_bot_schedule_runs', {
-    scheduleId: scheduleId,
-    limit: limit ?? null,
   })
 }
 

@@ -81,6 +81,8 @@ export default {
   no: 'No',
   immersiveDrillMode: 'Immersive Drill Mode',
   exitImmersiveDrillMode: 'Exit Drill Mode',
+  hideNavbar: 'Hide Navbar',
+  showNavbar: 'Show Navbar',
   ok: 'OK',
   view: 'View',
   reset: 'Reset',

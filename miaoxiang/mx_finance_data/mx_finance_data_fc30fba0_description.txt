@@ -1,0 +1,8 @@
+金融数据查询结果说明
+========================================
+查询内容: 查询寒武纪688256.SH、新易盛300502.SZ、胜宏科技300476.SZ的最新ROE、资产负债率、市盈率PE
+数据文件路径: /Users/like/code/sentinel/sentinel-ai/miaoxiang/mx_finance_data/mx_finance_data_fc30fba0.xlsx
+描述文件路径: /Users/like/code/sentinel/sentinel-ai/miaoxiang/mx_finance_data/mx_finance_data_fc30fba0_description.txt
+数据行数: 12
+表数量: 5
+Sheet 列表: 寒武纪(688256.SH)的资产负债率、净资产收益率ROE, 新易盛(300502.SZ)的资产负债率、净资产收益率ROE, 胜宏科技(300476.SZ)的资产负债率、净资产收益率ROE, 寒武纪(688256.SH)等当前的市盈率(TTM), 寒武纪(688256.SH)等的市盈率PE(TTM)

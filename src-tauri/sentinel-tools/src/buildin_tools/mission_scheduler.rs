@@ -50,6 +50,14 @@ pub struct MissionTriggerInput {
     pub cron_expr: Option<String>,
     pub interval_seconds: Option<i64>,
     pub timezone: Option<String>,
+    pub ticks: Option<Vec<MissionTickInput>>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct MissionTickInput {
+    pub name: String,
+    pub cron_expr: String,
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -78,6 +86,7 @@ pub struct MissionSchedulerArgs {
     pub title: Option<String>,
     pub objective: Option<String>,
     pub trigger: Option<MissionTriggerInput>,
+    pub mission_spec: Option<serde_json::Value>,
     pub delivery: Option<MissionDeliveryInput>,
     pub context_strategy: Option<String>,
     pub assistant_profile_id: Option<String>,
@@ -115,6 +124,8 @@ impl MissionSchedulerTool {
     pub const DESCRIPTION: &'static str = concat!(
         "Create and manage durable scheduled Missions. Use this when the user asks for recurring, ",
         "periodic, daily, weekly, monthly, long-running, monitoring, subscription, or scheduled delivery work. ",
+        "For stateful or multi-day work, include mission_spec with a generic state_schema, action_schema, ",
+        "schedule/tick meaning, completion_policy, and report_policy; do not encode domain-specific state only in prose. ",
         "For bot conversations, pass execution_id so the tool can bind the Mission owner and delivery target ",
         "to the current bot chat. For corrections or changes to an existing scheduled task, list missions first ",
         "and call update_mission with the existing mission_id instead of creating another Mission. Do not claim ",
@@ -197,12 +208,18 @@ async fn update_mission(
         })
         .to_string()
     });
+    let mission_spec_json = args
+        .mission_spec
+        .as_ref()
+        .map(build_mission_spec_json)
+        .transpose()?;
 
     let update = UpdateMissionFieldsRequest {
         id: id.clone(),
         title: clean_optional_text(args.title),
         objective: clean_optional_text(args.objective),
         trigger_json,
+        mission_spec_json,
         delivery_policy_json,
         assistant_profile_id: clean_optional_text(args.assistant_profile_id),
         step_plan_json: None,
@@ -280,6 +297,10 @@ async fn create_mission(
 
     let delivery_policy_json =
         build_delivery_policy_json(args.delivery.as_ref(), bot_context.as_ref())?;
+    let mission_spec_json = match args.mission_spec.as_ref() {
+        Some(spec) => build_mission_spec_json(spec)?,
+        None => default_mission_spec_json(objective)?,
+    };
     let context_strategy = args
         .context_strategy
         .as_deref()
@@ -311,6 +332,7 @@ async fn create_mission(
                 .and_then(|ctx| ctx.assistant_profile_id.clone())
         }),
         trigger_json: Some(trigger_json),
+        mission_spec_json: Some(mission_spec_json),
         step_plan_json: None,
         success_criteria_json: None,
         context_strategy_json: Some(serde_json::json!({ "mode": context_strategy }).to_string()),
@@ -544,6 +566,46 @@ fn build_trigger_json(trigger: &MissionTriggerInput) -> Result<String, MissionSc
             })
             .to_string())
         }
+        "multi_cron" => {
+            let ticks = trigger.ticks.as_ref().ok_or_else(|| {
+                MissionSchedulerError::InvalidInput(
+                    "trigger.ticks is required for multi_cron".to_string(),
+                )
+            })?;
+            if ticks.is_empty() {
+                return Err(MissionSchedulerError::InvalidInput(
+                    "trigger.ticks cannot be empty for multi_cron".to_string(),
+                ));
+            }
+            let mut normalized_ticks = Vec::new();
+            for tick in ticks {
+                let name = required_text(Some(tick.name.as_str()), "trigger.ticks.name")?;
+                let cron_expr =
+                    required_text(Some(tick.cron_expr.as_str()), "trigger.ticks.cron_expr")?;
+                let timezone = tick
+                    .timezone
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("Asia/Shanghai");
+                parse_timezone(Some(timezone))?;
+                cron_expr.parse::<cron::Schedule>().map_err(|e| {
+                    MissionSchedulerError::InvalidInput(format!(
+                        "Invalid cron expression for tick {name}: {e}"
+                    ))
+                })?;
+                normalized_ticks.push(serde_json::json!({
+                    "name": name,
+                    "cron_expr": cron_expr,
+                    "timezone": timezone,
+                }));
+            }
+            Ok(serde_json::json!({
+                "kind": "multi_cron",
+                "ticks": normalized_ticks,
+            })
+            .to_string())
+        }
         "manual" => Ok(serde_json::json!({ "kind": "manual" }).to_string()),
         other => Err(MissionSchedulerError::InvalidInput(format!(
             "Unsupported trigger kind: {other}"
@@ -580,8 +642,72 @@ fn calculate_next_run(trigger_json: &str) -> Result<Option<DateTime<Utc>>, Missi
                 .unwrap_or(3600);
             Ok(Some(Utc::now() + chrono::Duration::seconds(seconds)))
         }
+        "multi_cron" => {
+            let ticks = trigger
+                .get("ticks")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    MissionSchedulerError::InvalidInput(
+                        "multi_cron trigger requires ticks".to_string(),
+                    )
+                })?;
+            let mut next_runs = Vec::new();
+            for tick in ticks {
+                let name = tick
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(unnamed)");
+                let cron_expr = required_text(
+                    tick.get("cron_expr").and_then(|v| v.as_str()),
+                    "trigger.ticks.cron_expr",
+                )?;
+                let timezone = parse_timezone(tick.get("timezone").and_then(|v| v.as_str()))?;
+                let schedule = cron_expr.parse::<cron::Schedule>().map_err(|e| {
+                    MissionSchedulerError::InvalidInput(format!(
+                        "Invalid cron expression for tick {name}: {e}"
+                    ))
+                })?;
+                if let Some(next) = schedule.upcoming(timezone).next() {
+                    next_runs.push(next.with_timezone(&Utc));
+                }
+            }
+            next_runs.sort_unstable();
+            Ok(next_runs.into_iter().next())
+        }
         _ => Ok(None),
     }
+}
+
+fn build_mission_spec_json(spec: &serde_json::Value) -> Result<String, MissionSchedulerError> {
+    let object = spec.as_object().ok_or_else(|| {
+        MissionSchedulerError::InvalidInput("mission_spec must be a JSON object".to_string())
+    })?;
+    for required_key in [
+        "state_schema",
+        "action_schema",
+        "completion_policy",
+        "report_policy",
+    ] {
+        if !object.contains_key(required_key) {
+            return Err(MissionSchedulerError::InvalidInput(format!(
+                "mission_spec.{required_key} is required"
+            )));
+        }
+    }
+    serde_json::to_string(spec)
+        .map_err(|e| MissionSchedulerError::InvalidInput(format!("Invalid mission_spec: {e}")))
+}
+
+fn default_mission_spec_json(objective: &str) -> Result<String, MissionSchedulerError> {
+    serde_json::to_string(&serde_json::json!({
+        "kind": "generic_stateful_mission",
+        "objective": objective,
+        "state_schema": { "type": "object" },
+        "action_schema": { "type": "object" },
+        "completion_policy": { "kind": "manual_or_agent_completion" },
+        "report_policy": { "kind": "each_run_summary" }
+    }))
+    .map_err(|e| MissionSchedulerError::InvalidInput(format!("Failed to build mission_spec: {e}")))
 }
 
 fn parse_timezone(timezone: Option<&str>) -> Result<Tz, MissionSchedulerError> {

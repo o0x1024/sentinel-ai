@@ -694,6 +694,7 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import { useTerminal } from '@/composables/useTerminal'
+import { emitAiConfigUpdated } from '@/services/aiConfigEvents'
 import ShellPermissionHistoryPanel from './ShellPermissionHistoryPanel.vue'
 
 interface ShellConfig {
@@ -935,6 +936,7 @@ async function saveWorkingDirectory() {
         }
       ]
     })
+    emitAiConfigUpdated({ working_directory: workingDirectory.value || '' })
     dialog.toast.success(t('settings.saveSuccess'))
   } catch (e) {
     console.error('Failed to save working directory:', e)
@@ -1052,6 +1054,7 @@ async function autoSaveConfig() {
         completion_guard: completionGuardConfig.value
       }
       await invoke('save_agent_config', { config: agentConfig })
+      emitAiConfigUpdated(agentConfig)
       console.log('Agent config auto-saved')
       dialog.toast.success(t('settings.saveSuccess'))
     } catch (e) {

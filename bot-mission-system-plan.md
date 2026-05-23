@@ -21,7 +21,7 @@ sentinel-ai 是 Tauri 桌面应用，不是 7x24 运行的服务端。所有设�
 1. **桌面生命周期**：用户随时可能关闭应用或合上笔记本。Scheduler 必须是 best-effort 语义，不能假设持续在线。
 2. **资源有限**：桌面应用不能像服务端一样并行跑大量 Mission run。必须有全局并发控制。
 3. **单数据库引擎**：Mission 数据层只针对 SQLite 实现，避免现有 3x match（PostgreSQL/SQLite/MySQL）模式导致的代码膨胀。如有 PostgreSQL 需求，用条件编译 feature flag 隔离。
-4. **与现有 bot_schedules 共存**：Mission scheduler 是 bot_schedules scheduler 的超集，不同时维护两套独立的 scheduler loop。
+4. **Mission 是唯一 Bot 调度入口**：旧 Bot schedule 调度链已移除，长期、周期、订阅和投递类任务统一进入 Mission。
 
 ## 产品目标
 
@@ -445,7 +445,7 @@ Delivery
 - 增加全局并发控制（`max_concurrent_runs`，默认 1）。
 - 增加 retry 和 timeout handling。
 - 应用启动时恢复 stale running runs（支持 resume/restart/mark_failed）。
-- 与现有 `bot_schedules` 共存：Mission scheduler 扫描时也处理 bot_schedules 的 due items。
+- Mission scheduler 只扫描 Mission，不再处理旧 Bot schedule 表。
 
 验收：
 - 应用重启后，到期 Mission 按 missed-run policy 处理。

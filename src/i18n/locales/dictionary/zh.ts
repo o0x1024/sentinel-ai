@@ -54,6 +54,11 @@ export default {
      sql_injection: 'SQL注入',
      custom: '自定义'
    },
+   groups: {
+     brute: '爆破字典',
+     rules: '安全规则',
+     payloads: '攻击载荷',
+   },
    serviceTypes: {
      web: 'Web服务',
      ssh: 'SSH服务',

@@ -7,12 +7,18 @@ const pendingServerActivationEntitlements = {
   is_licensed: false,
   has_local_license: false,
   access_source: 'free',
+  trial_active: false,
+  trial_started_at: null,
+  trial_expires_at: null,
+  trial_remaining_seconds: null,
+  trial_days_remaining: null,
   has_valid_entitlement_token: false,
   entitlement_feature_ids: [],
   entitlement_expires_at: null,
   entitlement_license_id: null,
   can_access_all_plugins: false,
   can_access_bug_bounty: false,
+  can_access_bot_console: false,
   can_manage_plugin_catalog: false,
   can_add_plugins: false,
   can_edit_plugins: false,
@@ -31,6 +37,28 @@ const fullEntitlements = {
   has_valid_entitlement_token: true,
   can_access_all_plugins: true,
   can_access_bug_bounty: true,
+  can_access_bot_console: true,
+  can_manage_plugin_catalog: true,
+  can_add_plugins: true,
+  can_edit_plugins: true,
+  can_delete_plugins: true,
+  can_install_plugins: true,
+  can_review_plugins: true,
+}
+
+const trialEntitlements = {
+  ...pendingServerActivationEntitlements,
+  tier: 'trial',
+  is_licensed: true,
+  access_source: 'trial',
+  trial_active: true,
+  trial_started_at: 100,
+  trial_expires_at: 100 + 7 * 24 * 60 * 60,
+  trial_remaining_seconds: 7 * 24 * 60 * 60,
+  trial_days_remaining: 7,
+  can_access_all_plugins: true,
+  can_access_bug_bounty: true,
+  can_access_bot_console: true,
   can_manage_plugin_catalog: true,
   can_add_plugins: true,
   can_edit_plugins: true,
@@ -139,6 +167,32 @@ describe('attemptEntitlementAutoRefresh', () => {
     expect(outcome).toEqual({
       status: 'skipped',
       reason: 'cooldown',
+    })
+    expect(global.testUtils.mockInvoke).not.toHaveBeenCalledWith('refresh_entitlement_token')
+  })
+
+  it('skips refresh requests while the local trial is active', async () => {
+    global.testUtils.mockInvoke.mockImplementation((command: string) => {
+      if (command === 'get_app_entitlements') {
+        return Promise.resolve(trialEntitlements)
+      }
+
+      if (command === 'get_entitlement_token_status') {
+        throw new Error('token status should not be requested during trial')
+      }
+
+      if (command === 'refresh_entitlement_token') {
+        throw new Error('refresh should not be called during trial')
+      }
+
+      throw new Error(`Unexpected command: ${command}`)
+    })
+
+    const outcome = await attemptEntitlementAutoRefresh()
+
+    expect(outcome).toEqual({
+      status: 'skipped',
+      reason: 'trial',
     })
     expect(global.testUtils.mockInvoke).not.toHaveBeenCalledWith('refresh_entitlement_token')
   })

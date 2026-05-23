@@ -4,24 +4,27 @@ import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
 import App from './App.vue'
 import AppDialog from './components/AppDialog.vue'
 import AppModal from './components/AppModal.vue'
-import '@fortawesome/fontawesome-free/css/all.min.css'
+import '@fortawesome/fontawesome-free/css/fontawesome.min.css'
+import '@fortawesome/fontawesome-free/css/solid.min.css'
+import '@fortawesome/fontawesome-free/css/regular.min.css'
 import './style.css'
 import 'driver.js/dist/driver.css'
 import { performanceService } from './services/performance'
 import { initializeCache } from './services/cache'
-import i18n, { setLanguage } from './i18n' // 导入i18n配置和setLanguage函数
+import i18n, { initializeI18n, setLanguage } from './i18n' // 导入i18n配置和setLanguage函数
 import DialogPlugin from './composables/useDialog' // 导入对话框插件
 import ToastPlugin from './composables/useToast' // 导入Toast插件
 import { open as openExternal } from '@tauri-apps/plugin-shell'
 import { resolveStandaloneBootstrapRoute } from './router/standalone'
-import { getFeatureEntitlements } from './services/featureEntitlements'
 import { applyFontSize, applyTheme, applyUIScale, migrateLegacyAppearanceSettings } from './views/settingsUiSupport'
 
 // 启动时应用已保存的通用设置（主题/字体/语言）
-const applyStartupSettings = () => {
+const applyStartupSettings = (): 'zh' | 'en' => {
+  let startupLanguage: 'zh' | 'en' = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+
   try {
     const saved = localStorage.getItem('sentinel-settings')
-    if (!saved) return
+    if (!saved) return startupLanguage
     const parsed = JSON.parse(saved)
     const migrated = migrateLegacyAppearanceSettings(parsed)
     const general = parsed?.general || {}
@@ -59,16 +62,14 @@ const applyStartupSettings = () => {
         }
       }
       const langCode = (finalLang.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en'
-      // 使用导出的 setLanguage 函数来确保一致性
-      try {
-        setLanguage(langCode)
-      } catch {
-        console.warn('Failed to set language')
-      }
+      localStorage.setItem('sentinel-language', langCode)
+      startupLanguage = langCode
     }
   } catch (e) {
     console.warn('applyStartupSettings failed', e)
   }
+
+  return startupLanguage
 }
 
 // 懒加载页面组件 - 性能优化
@@ -196,7 +197,7 @@ const routes = [
     path: '/bug-bounty',
     name: 'BugBounty',
     component: BugBounty,
-    meta: { title: '漏洞赏金', requiredEntitlement: 'bugBounty' },
+    meta: { title: '漏洞赏金' },
   },
   {
     path: '/cyberchef',
@@ -255,14 +256,6 @@ router.beforeEach(async (to, _from, next) => {
   // 设置页面标题
   if (to.meta?.title) {
     document.title = `${to.meta.title} - Sentinel AI`
-  }
-
-  if (to.meta?.requiredEntitlement === 'bugBounty') {
-    const entitlements = await getFeatureEntitlements()
-    if (!entitlements.can_access_bug_bounty) {
-      next('/dashboard')
-      return
-    }
   }
 
   // 开始路由性能监控
@@ -342,7 +335,7 @@ document.addEventListener(
 )
 
 // 在应用挂载前应用本地持久化的通用设置
-applyStartupSettings()
+const startupLanguage = applyStartupSettings()
 
 // 初始化缓存系统
 initializeCache().catch(err => {
@@ -351,6 +344,9 @@ initializeCache().catch(err => {
 
 // 独立窗口通过查询参数启动时，先切换到目标路由，避免被根路径重定向到总览页。
 const mountApp = async () => {
+  await initializeI18n(startupLanguage)
+  void setLanguage(startupLanguage)
+
   const bootstrapRoute = resolveStandaloneBootstrapRoute()
   if (bootstrapRoute) {
     try {

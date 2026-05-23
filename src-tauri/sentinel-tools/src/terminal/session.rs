@@ -353,7 +353,8 @@ impl TerminalSession {
                     Err(e) => {
                         error!("Failed to read from PTY: {}", e);
                         tokio::runtime::Handle::current().block_on(async {
-                            TerminalSession::set_runtime_state(&state_clone, SessionState::Error).await;
+                            TerminalSession::set_runtime_state(&state_clone, SessionState::Error)
+                                .await;
                         });
                         break;
                     }
@@ -533,7 +534,8 @@ impl TerminalSession {
                     Err(e) => {
                         error!("Failed to read from host PTY: {}", e);
                         tokio::runtime::Handle::current().block_on(async {
-                            TerminalSession::set_runtime_state(&state_clone, SessionState::Error).await;
+                            TerminalSession::set_runtime_state(&state_clone, SessionState::Error)
+                                .await;
                         });
                         break;
                     }

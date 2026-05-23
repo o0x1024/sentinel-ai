@@ -23,9 +23,13 @@ pub async fn execute_agent_simple(
     let storage_conversation_id = params.storage_conversation_id().to_string();
 
     let mut config = LlmConfig::new(&rig_provider, &params.model)
-        .with_timeout(params.timeout_secs)
         .with_rig_provider(&rig_provider)
         .with_conversation_id(&storage_conversation_id);
+    if params.timeout_secs == 0 {
+        config = config.without_timeout();
+    } else {
+        config = config.with_timeout(params.timeout_secs);
+    }
 
     if let Some(ref api_key) = params.api_key {
         config = config.with_api_key(api_key);
@@ -74,6 +78,7 @@ pub async fn execute_agent_simple(
                         "agent:chunk",
                         &serde_json::json!({
                             "execution_id": execution_id,
+                            "conversation_id": storage_conversation_id,
                             "generation": cancellation_generation,
                             "chunk_type": "text",
                             "content": text,
@@ -92,6 +97,7 @@ pub async fn execute_agent_simple(
                         "agent:chunk",
                         &serde_json::json!({
                             "execution_id": execution_id,
+                            "conversation_id": storage_conversation_id,
                             "generation": cancellation_generation,
                             "chunk_type": "reasoning",
                             "content": reasoning,

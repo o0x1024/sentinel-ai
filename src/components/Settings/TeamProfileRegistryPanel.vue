@@ -14,10 +14,22 @@
     >
       <template #actions>
         <div class="flex items-center gap-2">
-          <button class="btn btn-xs btn-outline" @click="showAiTeamCreator = !showAiTeamCreator">
+          <button
+            class="btn btn-xs btn-outline"
+            :disabled="!canCreateProfiles"
+            :title="profileCreationLockedTitle"
+            @click="showAiTeamCreator = !showAiTeamCreator"
+          >
             AI 创建
           </button>
-          <button class="btn btn-xs btn-outline" @click="createTeamProfile">新增 Team</button>
+          <button
+            class="btn btn-xs btn-outline"
+            :disabled="!canCreateProfiles"
+            :title="profileCreationLockedTitle"
+            @click="createTeamProfile"
+          >
+            新增 Team
+          </button>
         </div>
       </template>
 
@@ -29,7 +41,7 @@
               v-model.trim="aiTeamDescription"
               class="textarea textarea-bordered min-h-[92px] text-sm"
               placeholder="例如：合建一个漏洞挖掘 Team，包含指挥、信息收集、验证和复盘观察角色。"
-              :disabled="isAiCreatingTeam"
+              :disabled="isAiCreatingTeam || !canCreateProfiles"
             />
           </label>
           <div class="mt-3 flex items-center justify-end gap-2">
@@ -42,7 +54,7 @@
             </button>
             <button
               class="btn btn-xs btn-primary"
-              :disabled="isAiCreatingTeam || !aiTeamDescription.trim()"
+              :disabled="isAiCreatingTeam || !canCreateProfiles || !aiTeamDescription.trim()"
               @click="createTeamWithAi"
             >
               <span v-if="isAiCreatingTeam" class="loading loading-spinner loading-xs" />
@@ -309,6 +321,7 @@ import {
   TEAM_RECOVERY_PRESETS,
 } from '@/components/Settings/teamProfilePresetOptions'
 import { dialog } from '@/composables/useDialog'
+import { useFeatureEntitlementsState } from '@/services/featureEntitlements'
 
 const {
   defaultTeamProfileId,
@@ -337,6 +350,7 @@ type AutoSaveState = 'idle' | 'saving' | 'saved' | 'error'
 type IdentityEditField = 'title' | 'description' | null
 
 const draftTeamProfiles = ref<TeamProfileOption[]>([])
+const entitlements = useFeatureEntitlementsState()
 const draftDefaultTeamProfileId = ref('')
 const selectedTeamProfileId = ref('')
 const editingIdentityField = ref<IdentityEditField>(null)
@@ -353,6 +367,10 @@ const lastSavedTeamProfilesSnapshot = ref('')
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 const teamOrchestrationPresetOptions = TEAM_ORCHESTRATION_PRESET_METAS
 const teamRecoveryPresetOptions = TEAM_RECOVERY_PRESETS
+const canCreateProfiles = computed(() => entitlements.value.is_licensed)
+const profileCreationLockedTitle = computed(() =>
+  canCreateProfiles.value ? '' : '未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。'
+)
 
 const loading = computed(
   () =>
@@ -628,6 +646,10 @@ const queueAutoSave = () => {
 }
 
 const createTeamProfile = () => {
+  if (!canCreateProfiles.value) {
+    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。')
+    return
+  }
   const ids = new Set(draftTeamProfiles.value.map(profile => profile.id))
   let index = draftTeamProfiles.value.length + 1
   while (ids.has(`team.profile.custom.${index}`)) index += 1
@@ -683,6 +705,10 @@ const createTeamProfile = () => {
 
 const createTeamWithAi = async () => {
   const description = aiTeamDescription.value.trim()
+  if (!canCreateProfiles.value) {
+    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。')
+    return
+  }
   if (!description || isAiCreatingTeam.value) return
 
   isAiCreatingTeam.value = true

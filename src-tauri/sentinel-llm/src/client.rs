@@ -591,27 +591,37 @@ impl LlmClient {
         self.validate_moonshot_temperature()?;
         // 非助手场景统一走真正的非流式 completion，避免 SSE/chunked 中途断流。
         let content = if chat_history.is_empty() {
-            match tokio::time::timeout(timeout, agent.prompt(user_message)).await {
-                Ok(result) => result.map_err(|e| {
-                    error!("LLM prompt error: {}", e);
-                    anyhow!("LLM prompt error: {}", e)
-                })?,
-                Err(_) => {
-                    error!("LLM request timeout");
-                    return Err(anyhow!("LLM request timeout"));
+            let result = if timeout.is_zero() {
+                agent.prompt(user_message).await
+            } else {
+                match tokio::time::timeout(timeout, agent.prompt(user_message)).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        error!("LLM request timeout");
+                        return Err(anyhow!("LLM request timeout"));
+                    }
                 }
-            }
+            };
+            result.map_err(|e| {
+                error!("LLM prompt error: {}", e);
+                anyhow!("LLM prompt error: {}", e)
+            })?
         } else {
-            match tokio::time::timeout(timeout, agent.chat(user_message, chat_history)).await {
-                Ok(result) => result.map_err(|e| {
-                    error!("LLM chat error: {}", e);
-                    anyhow!("LLM chat error: {}", e)
-                })?,
-                Err(_) => {
-                    error!("LLM request timeout");
-                    return Err(anyhow!("LLM request timeout"));
+            let result = if timeout.is_zero() {
+                agent.chat(user_message, chat_history).await
+            } else {
+                match tokio::time::timeout(timeout, agent.chat(user_message, chat_history)).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        error!("LLM request timeout");
+                        return Err(anyhow!("LLM request timeout"));
+                    }
                 }
-            }
+            };
+            result.map_err(|e| {
+                error!("LLM chat error: {}", e);
+                anyhow!("LLM chat error: {}", e)
+            })?
         };
 
         if content.trim().is_empty() {

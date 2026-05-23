@@ -570,6 +570,12 @@ import type { ContextMenuState, FilterRule, ProxyInterceptListenerCleanup } from
 import { buildInterceptViewTabs, createDefaultInterceptFilterRule } from './proxyInterceptViewSupport'
 import { buildInterceptStateKey, resolveTrafficTextDisplayMode } from './trafficMessagePresentationSupport'
 
+interface CommandResponse<T> {
+  success: boolean
+  data?: T
+  message?: string
+}
+
 const { t, locale } = useI18n();
 const { enabledTargets } = useTrafficSendTargets()
 const {
@@ -1623,6 +1629,78 @@ async function refreshStatus() {
   }
 }
 
+function selectFirstInterceptItemIfNeeded(item: InterceptedItem) {
+  if (interceptedItems.value.length !== 1) {
+    return
+  }
+
+  currentItemIndex.value = 0
+  currentItemType.value = item.type
+  requestContent.value = registerInterceptItemOriginalContent(item)
+}
+
+function upsertInterceptedRequest(request: InterceptedRequest) {
+  const existingIndex = interceptedRequests.value.findIndex(item => item.id === request.id)
+  if (existingIndex >= 0) {
+    interceptedRequests.value[existingIndex] = request
+    return
+  }
+
+  interceptedRequests.value.push(request)
+  selectFirstInterceptItemIfNeeded({ type: 'request', data: request })
+}
+
+function upsertInterceptedResponse(response: InterceptedResponse) {
+  const existingIndex = interceptedResponses.value.findIndex(item => item.id === response.id)
+  if (existingIndex >= 0) {
+    interceptedResponses.value[existingIndex] = response
+    return
+  }
+
+  interceptedResponses.value.push(response)
+  selectFirstInterceptItemIfNeeded({ type: 'response', data: response })
+}
+
+function upsertInterceptedWebSocket(message: InterceptedWebSocketMessage) {
+  const existingIndex = interceptedWebsockets.value.findIndex(item => item.id === message.id)
+  if (existingIndex >= 0) {
+    interceptedWebsockets.value[existingIndex] = message
+    return
+  }
+
+  interceptedWebsockets.value.push(message)
+  selectFirstInterceptItemIfNeeded({ type: 'websocket', data: message })
+}
+
+async function hydratePendingInterceptItems() {
+  try {
+    const [requestResponse, responseResponse] = await Promise.all([
+      invoke<CommandResponse<InterceptedRequest[]>>('get_intercepted_requests'),
+      invoke<CommandResponse<InterceptedResponse[]>>('get_intercepted_responses'),
+    ])
+
+    const pendingItems: InterceptedItem[] = []
+    if (requestResponse.success && Array.isArray(requestResponse.data)) {
+      pendingItems.push(...requestResponse.data.map(request => ({ type: 'request' as const, data: request })))
+    }
+    if (responseResponse.success && Array.isArray(responseResponse.data)) {
+      pendingItems.push(...responseResponse.data.map(response => ({ type: 'response' as const, data: response })))
+    }
+
+    pendingItems
+      .sort((left, right) => left.data.timestamp - right.data.timestamp)
+      .forEach(item => {
+        if (item.type === 'request') {
+          upsertInterceptedRequest(item.data)
+          return
+        }
+        upsertInterceptedResponse(item.data)
+      })
+  } catch (error: any) {
+    console.error('Failed to hydrate pending intercept items:', error)
+  }
+}
+
 async function setupEventListeners() {
   listenerCleanup = await setupProxyInterceptEventListeners({
     listen,
@@ -1630,29 +1708,14 @@ async function setupEventListeners() {
       proxyStatus.value = status
     },
     onInterceptRequest: (request) => {
-      interceptedRequests.value.push(request)
-      if (interceptedItems.value.length === 1) {
-        currentItemIndex.value = 0
-        currentItemType.value = 'request'
-        requestContent.value = registerInterceptItemOriginalContent({ type: 'request', data: request })
-      }
+      upsertInterceptedRequest(request)
     },
     onInterceptResponse: (response) => {
-      interceptedResponses.value.push(response)
-      if (interceptedItems.value.length === 1) {
-        currentItemIndex.value = 0
-        currentItemType.value = 'response'
-        requestContent.value = registerInterceptItemOriginalContent({ type: 'response', data: response })
-      }
+      upsertInterceptedResponse(response)
     },
     onInterceptWebSocket: (message) => {
       console.log('[ProxyIntercept] Received intercept websocket:', message)
-      interceptedWebsockets.value.push(message)
-      if (interceptedItems.value.length === 1) {
-        currentItemIndex.value = 0
-        currentItemType.value = 'websocket'
-        requestContent.value = registerInterceptItemOriginalContent({ type: 'websocket', data: message })
-      }
+      upsertInterceptedWebSocket(message)
     },
   })
 }
@@ -1675,6 +1738,7 @@ watch(
 // 生命周期
 onMounted(async () => {
   await setupEventListeners();
+  await hydratePendingInterceptItems();
   await refreshStatus();
 });
 

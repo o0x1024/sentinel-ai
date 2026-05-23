@@ -59,6 +59,59 @@ pub struct StoredAdminUser {
 }
 
 #[derive(Debug, Clone)]
+pub struct StoredLicenseCard {
+    pub id: i64,
+    pub batch_id: Option<i64>,
+    pub username: Option<String>,
+    pub activation_key: Option<String>,
+    pub tier: String,
+    pub feature_ids: Vec<String>,
+    pub status: String,
+    pub device_limit: usize,
+    pub expires_at: Option<i64>,
+    pub first_activated_at: Option<i64>,
+    pub last_activated_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredLicenseCardWithUsage {
+    pub card: StoredLicenseCard,
+    pub device_count: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewLicenseCard {
+    pub batch_id: Option<i64>,
+    pub username: String,
+    pub activation_key: String,
+    pub card_key_hash: String,
+    pub tier: String,
+    pub feature_ids: Vec<String>,
+    pub device_limit: usize,
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredLicenseDevice {
+    pub id: i64,
+    pub card_id: i64,
+    pub username: String,
+    pub machine_id: String,
+    pub device_name: Option<String>,
+    pub revoked: bool,
+    pub first_seen_at: i64,
+    pub last_seen_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct LicenseActivationRecord {
+    pub card: StoredLicenseCard,
+    pub device: StoredLicenseDevice,
+}
+
+#[derive(Debug, Clone)]
 pub struct NewAuditEvent {
     pub event_type: String,
     pub actor: String,
@@ -161,6 +214,13 @@ impl EntitlementStore {
             .context("failed to count entitlement customers")
     }
 
+    pub async fn license_card_count(&self) -> Result<i64> {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM license_cards")
+            .fetch_one(&self.pool)
+            .await
+            .context("failed to count license cards")
+    }
+
     pub async fn device_binding_count(&self) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM entitlement_device_bindings")
             .fetch_one(&self.pool)
@@ -189,6 +249,369 @@ impl EntitlementStore {
         .fetch_one(&self.pool)
         .await
         .context("failed to count active admin users")
+    }
+
+    pub async fn create_card_batch(&self, name: Option<&str>) -> Result<i64> {
+        let now = current_unix_timestamp();
+        let result = sqlx::query(
+            r#"
+            INSERT INTO license_card_batches (name, created_at)
+            VALUES (?, ?)
+            "#,
+        )
+        .bind(name.map(str::trim).filter(|value| !value.is_empty()))
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("failed to create license card batch")?;
+        Ok(result.last_insert_rowid())
+    }
+
+    pub async fn insert_license_card(&self, card: NewLicenseCard) -> Result<StoredLicenseCard> {
+        let now = current_unix_timestamp();
+        let feature_ids_json = serde_json::to_string(&card.feature_ids)
+            .context("failed to encode card feature_ids")?;
+        let result = sqlx::query(
+            r#"
+            INSERT INTO license_cards (
+                batch_id, card_key_hash, username, activation_key, tier, feature_ids_json, status,
+                device_limit, expires_at, first_activated_at, last_activated_at,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'unused', ?, ?, NULL, NULL, ?, ?)
+            "#,
+        )
+        .bind(card.batch_id)
+        .bind(card.card_key_hash)
+        .bind(card.username)
+        .bind(card.activation_key)
+        .bind(card.tier)
+        .bind(feature_ids_json)
+        .bind(card.device_limit as i64)
+        .bind(card.expires_at)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("failed to insert license card")?;
+
+        self.get_license_card_by_id(result.last_insert_rowid())
+            .await?
+            .ok_or_else(|| anyhow!("license card missing after insert"))
+    }
+
+    pub async fn list_license_cards(&self) -> Result<Vec<StoredLicenseCardWithUsage>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT c.id, c.batch_id, c.card_key_hash, c.username, c.activation_key, c.tier,
+                   c.feature_ids_json, c.status, c.device_limit, c.expires_at,
+                   c.first_activated_at, c.last_activated_at, c.created_at, c.updated_at,
+                   COUNT(d.id) AS device_count
+            FROM license_cards c
+            LEFT JOIN license_devices d ON d.card_id = c.id AND d.revoked = 0
+            GROUP BY c.id
+            ORDER BY c.created_at DESC, c.id DESC
+            LIMIT 500
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list license cards")?;
+
+        rows.into_iter()
+            .map(decode_license_card_usage_row)
+            .collect()
+    }
+
+    pub async fn get_license_card_by_id(&self, id: i64) -> Result<Option<StoredLicenseCard>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, batch_id, card_key_hash, username, activation_key, tier, feature_ids_json, status,
+                   device_limit, expires_at, first_activated_at, last_activated_at,
+                   created_at, updated_at
+            FROM license_cards
+            WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| format!("failed to load license card {}", id))?;
+
+        row.map(decode_license_card_row).transpose()
+    }
+
+    pub async fn get_license_card_by_key_hash(
+        &self,
+        card_key_hash: &str,
+    ) -> Result<Option<StoredLicenseCard>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, batch_id, card_key_hash, username, activation_key, tier, feature_ids_json, status,
+                   device_limit, expires_at, first_activated_at, last_activated_at,
+                   created_at, updated_at
+            FROM license_cards
+            WHERE card_key_hash = ?
+            "#,
+        )
+        .bind(card_key_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to load license card by key hash")?;
+
+        row.map(decode_license_card_row).transpose()
+    }
+
+    pub async fn activate_license_card(
+        &self,
+        card_id: i64,
+        username: &str,
+        machine_id_full: &str,
+        device_name: Option<&str>,
+        refresh_token_hash: &str,
+    ) -> Result<LicenseActivationRecord> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("failed to start license card activation transaction")?;
+        let now = current_unix_timestamp();
+        let card = sqlx::query(
+            r#"
+            SELECT id, batch_id, card_key_hash, username, activation_key, tier, feature_ids_json, status,
+                   device_limit, expires_at, first_activated_at, last_activated_at,
+                   created_at, updated_at
+            FROM license_cards
+            WHERE id = ?
+            "#,
+        )
+        .bind(card_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("failed to lock license card for activation")?
+        .map(decode_license_card_row)
+        .transpose()?
+        .ok_or_else(|| anyhow!("license card does not exist"))?;
+
+        let device_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM license_devices WHERE card_id = ? AND revoked = 0",
+        )
+        .bind(card_id)
+        .fetch_one(&mut *tx)
+        .await
+        .context("failed to count license card devices")?;
+        let existing_device = sqlx::query(
+            r#"
+            SELECT id, card_id, username, machine_id, device_name, refresh_token_hash,
+                   revoked, first_seen_at, last_seen_at
+            FROM license_devices
+            WHERE card_id = ? AND machine_id = ?
+            "#,
+        )
+        .bind(card_id)
+        .bind(machine_id_full)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("failed to load existing license device")?
+        .map(decode_license_device_row)
+        .transpose()?;
+
+        if existing_device.is_none() && device_count >= card.device_limit as i64 {
+            return Err(anyhow!(
+                "device limit exceeded for license card {} (limit {})",
+                card_id,
+                card.device_limit
+            ));
+        }
+
+        let resolved_username = card
+            .username
+            .as_deref()
+            .map(str::to_string)
+            .unwrap_or_else(|| username.to_string());
+        sqlx::query(
+            r#"
+            UPDATE license_cards
+            SET username = ?, status = 'active',
+                first_activated_at = COALESCE(first_activated_at, ?),
+                last_activated_at = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(&resolved_username)
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .bind(card_id)
+        .execute(&mut *tx)
+        .await
+        .context("failed to update activated license card")?;
+
+        let device = if let Some(existing_device) = existing_device {
+            sqlx::query(
+                r#"
+                UPDATE license_devices
+                SET username = ?, device_name = ?, refresh_token_hash = ?,
+                    revoked = 0, last_seen_at = ?
+                WHERE id = ?
+                "#,
+            )
+            .bind(&resolved_username)
+            .bind(device_name)
+            .bind(refresh_token_hash)
+            .bind(now)
+            .bind(existing_device.id)
+            .execute(&mut *tx)
+            .await
+            .context("failed to update license device")?;
+            existing_device.id
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO license_devices (
+                    card_id, username, machine_id, device_name, refresh_token_hash,
+                    revoked, first_seen_at, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+                "#,
+            )
+            .bind(card_id)
+            .bind(&resolved_username)
+            .bind(machine_id_full)
+            .bind(device_name)
+            .bind(refresh_token_hash)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .context("failed to insert license device")?
+            .last_insert_rowid()
+        };
+
+        tx.commit()
+            .await
+            .context("failed to commit license card activation")?;
+
+        let card = self
+            .get_license_card_by_id(card_id)
+            .await?
+            .ok_or_else(|| anyhow!("license card missing after activation"))?;
+        let device = self
+            .get_license_device_by_id(device)
+            .await?
+            .ok_or_else(|| anyhow!("license device missing after activation"))?;
+        Ok(LicenseActivationRecord { card, device })
+    }
+
+    pub async fn get_license_device_by_id(&self, id: i64) -> Result<Option<StoredLicenseDevice>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, card_id, username, machine_id, device_name, refresh_token_hash,
+                   revoked, first_seen_at, last_seen_at
+            FROM license_devices
+            WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .with_context(|| format!("failed to load license device {}", id))?;
+
+        row.map(decode_license_device_row).transpose()
+    }
+
+    pub async fn get_license_device_by_refresh_hash(
+        &self,
+        refresh_token_hash: &str,
+    ) -> Result<Option<StoredLicenseDevice>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, card_id, username, machine_id, device_name, refresh_token_hash,
+                   revoked, first_seen_at, last_seen_at
+            FROM license_devices
+            WHERE refresh_token_hash = ?
+            "#,
+        )
+        .bind(refresh_token_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to load license device by refresh token hash")?;
+
+        row.map(decode_license_device_row).transpose()
+    }
+
+    pub async fn touch_license_device(&self, device_id: i64) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE license_devices
+            SET last_seen_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(current_unix_timestamp())
+        .bind(device_id)
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("failed to touch license device {}", device_id))?;
+        Ok(())
+    }
+
+    pub async fn list_license_devices(&self, card_id: i64) -> Result<Vec<StoredLicenseDevice>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, card_id, username, machine_id, device_name, refresh_token_hash,
+                   revoked, first_seen_at, last_seen_at
+            FROM license_devices
+            WHERE card_id = ?
+            ORDER BY last_seen_at DESC, id DESC
+            "#,
+        )
+        .bind(card_id)
+        .fetch_all(&self.pool)
+        .await
+        .with_context(|| format!("failed to list license devices for card {}", card_id))?;
+
+        rows.into_iter().map(decode_license_device_row).collect()
+    }
+
+    pub async fn delete_license_card(&self, card_id: i64) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM license_cards WHERE id = ?")
+            .bind(card_id)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("failed to delete license card {}", card_id))?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn delete_license_cards(&self, card_ids: &[i64]) -> Result<Vec<i64>> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("failed to start license card bulk delete transaction")?;
+        let mut deleted_ids = Vec::new();
+        for card_id in card_ids {
+            let result = sqlx::query("DELETE FROM license_cards WHERE id = ?")
+                .bind(card_id)
+                .execute(&mut *tx)
+                .await
+                .with_context(|| format!("failed to delete license card {}", card_id))?;
+            if result.rows_affected() > 0 {
+                deleted_ids.push(*card_id);
+            }
+        }
+        tx.commit()
+            .await
+            .context("failed to commit license card bulk delete")?;
+        Ok(deleted_ids)
+    }
+
+    pub async fn license_card_username_exists(&self, username: &str) -> Result<bool> {
+        let count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM license_cards WHERE username = ?")
+                .bind(username)
+                .fetch_one(&self.pool)
+                .await
+                .with_context(|| format!("failed to check license card username {}", username))?;
+        Ok(count > 0)
     }
 
     pub async fn get_customer(&self, customer_id: &str) -> Result<Option<StoredCustomer>> {
@@ -712,6 +1135,85 @@ impl EntitlementStore {
         .await
         .context("failed to create entitlement_admin_users api_key_hash index")?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS license_card_batches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NULL,
+                created_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("failed to create license_card_batches table")?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS license_cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                batch_id INTEGER NULL,
+                card_key_hash TEXT NOT NULL UNIQUE,
+                username TEXT NULL,
+                activation_key TEXT NULL,
+                tier TEXT NOT NULL,
+                feature_ids_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'unused',
+                device_limit INTEGER NOT NULL DEFAULT 1,
+                expires_at INTEGER NULL,
+                first_activated_at INTEGER NULL,
+                last_activated_at INTEGER NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (batch_id) REFERENCES license_card_batches(id) ON DELETE SET NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("failed to create license_cards table")?;
+        add_column_if_missing(
+            &self.pool,
+            "ALTER TABLE license_cards ADD COLUMN activation_key TEXT NULL",
+        )
+        .await
+        .context("failed to ensure license_cards activation_key column")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_license_cards_status ON license_cards(status, created_at DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .context("failed to create license_cards status index")?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS license_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id INTEGER NOT NULL,
+                username TEXT NOT NULL,
+                machine_id TEXT NOT NULL,
+                device_name TEXT NULL,
+                refresh_token_hash TEXT NOT NULL UNIQUE,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                first_seen_at INTEGER NOT NULL,
+                last_seen_at INTEGER NOT NULL,
+                UNIQUE(card_id, machine_id),
+                FOREIGN KEY (card_id) REFERENCES license_cards(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("failed to create license_devices table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_license_devices_card_id ON license_devices(card_id, last_seen_at DESC)",
+        )
+        .execute(&self.pool)
+        .await
+        .context("failed to create license_devices card index")?;
+
         Ok(())
     }
 
@@ -917,6 +1419,49 @@ fn decode_admin_user_row(row: sqlx::sqlite::SqliteRow) -> Result<StoredAdminUser
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
         last_used_at: row.try_get("last_used_at")?,
+    })
+}
+
+fn decode_license_card_row(row: sqlx::sqlite::SqliteRow) -> Result<StoredLicenseCard> {
+    let feature_ids_json: String = row.try_get("feature_ids_json")?;
+    Ok(StoredLicenseCard {
+        id: row.try_get("id")?,
+        batch_id: row.try_get("batch_id")?,
+        username: row.try_get("username")?,
+        activation_key: row.try_get("activation_key")?,
+        tier: row.try_get("tier")?,
+        feature_ids: serde_json::from_str(&feature_ids_json)
+            .context("failed to decode license card feature_ids_json")?,
+        status: row.try_get("status")?,
+        device_limit: row.try_get::<i64, _>("device_limit")? as usize,
+        expires_at: row.try_get("expires_at")?,
+        first_activated_at: row.try_get("first_activated_at")?,
+        last_activated_at: row.try_get("last_activated_at")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
+fn decode_license_card_usage_row(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<StoredLicenseCardWithUsage> {
+    let device_count = row.try_get("device_count")?;
+    Ok(StoredLicenseCardWithUsage {
+        card: decode_license_card_row(row)?,
+        device_count,
+    })
+}
+
+fn decode_license_device_row(row: sqlx::sqlite::SqliteRow) -> Result<StoredLicenseDevice> {
+    Ok(StoredLicenseDevice {
+        id: row.try_get("id")?,
+        card_id: row.try_get("card_id")?,
+        username: row.try_get("username")?,
+        machine_id: row.try_get("machine_id")?,
+        device_name: row.try_get("device_name")?,
+        revoked: row.try_get::<i64, _>("revoked")? != 0,
+        first_seen_at: row.try_get("first_seen_at")?,
+        last_seen_at: row.try_get("last_seen_at")?,
     })
 }
 

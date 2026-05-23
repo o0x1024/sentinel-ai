@@ -10,6 +10,8 @@ use sentinel_db::{
 };
 use tauri::State;
 
+use crate::services::ensure_bug_bounty_access;
+
 #[tauri::command]
 pub async fn surface_get_overview(
     db_service: State<'_, Arc<DatabaseService>>,
@@ -176,6 +178,8 @@ pub async fn surface_create_observation(
     db_service: State<'_, Arc<DatabaseService>>,
     observation: SurfaceObservationRow,
 ) -> Result<(), String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .create_surface_observation(&observation)
         .await

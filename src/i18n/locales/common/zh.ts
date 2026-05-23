@@ -63,6 +63,8 @@ export default {
   no: '否',
   immersiveDrillMode: '沉浸式挖洞模式',
   exitImmersiveDrillMode: '退出挖洞模式',
+  hideNavbar: '隐藏导航栏',
+  showNavbar: '显示导航栏',
 
   // Navigation
   nav: {

@@ -1,11 +1,13 @@
 use crate::commands::monitor_commands::MonitorSchedulerState;
 use crate::commands::monitor_config_support::{
-    apply_plugins_to_monitor_type, load_tasks_from_db, save_tasks_to_db,
+    apply_plugins_to_monitor_type, load_tasks_from_db, repair_legacy_monitor_task_groups,
+    save_tasks_to_db,
 };
 use crate::commands::monitor_progress_support::{
     build_monitor_task_progress_event, emit_monitor_task_progress,
 };
 use crate::commands::traffic::analysis_state_support::resolve_plugin_registry_id;
+use crate::services::ensure_bug_bounty_access;
 use chrono::Utc;
 use sentinel_bounty::services::{
     ChangeMonitorConfig, MonitorPluginConfig, MonitorPluginSeedBindingConfig,
@@ -482,6 +484,8 @@ pub async fn monitor_create_task(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateMonitorTaskRequest,
 ) -> Result<String, String> {
+    ensure_bug_bounty_access()?;
+
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
     let CreateMonitorTaskRequest {
         program_id,
@@ -515,6 +519,8 @@ pub async fn monitor_create_tasks_for_programs(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateMonitorTasksForProgramsRequest,
 ) -> Result<Vec<String>, String> {
+    ensure_bug_bounty_access()?;
+
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
     let CreateMonitorTasksForProgramsRequest {
         program_ids,
@@ -538,6 +544,7 @@ pub async fn monitor_create_tasks_for_programs(
 
     let programs = resolve_monitor_target_programs(db_service.inner(), &program_ids).await?;
     let append_program_name = programs.len() > 1;
+    let group_id = append_program_name.then(|| uuid::Uuid::new_v4().to_string());
     let state_guard = state.read().await;
     let mut task_ids = Vec::with_capacity(programs.len());
 
@@ -547,6 +554,10 @@ pub async fn monitor_create_tasks_for_programs(
             scoped_task_name(name, &program, append_program_name),
             interval_secs,
         );
+        if let Some(group_id) = group_id.as_ref() {
+            task.group_id = Some(group_id.clone());
+            task.group_name = Some(name.to_string());
+        }
         if let Some(config_dto) = sanitized_config.clone() {
             task.config = config_dto.into();
         }
@@ -577,6 +588,7 @@ pub async fn monitor_list_tasks(
 ) -> Result<Vec<MonitorTask>, String> {
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
     let state_guard = state.read().await;
+    repair_legacy_monitor_task_groups(&state_guard.scheduler, db_service.inner()).await?;
     let mut tasks = state_guard.scheduler.list_tasks().await;
 
     if let Some(pid) = program_id {
@@ -606,6 +618,8 @@ pub async fn monitor_stop_task(
     app: AppHandle,
     task_id: String,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     let state_guard = state.read().await;
     let is_running = state_guard.running_task_ids.read().await.contains(&task_id);
     if !is_running {
@@ -665,6 +679,8 @@ pub async fn monitor_delete_task(
     db_service: State<'_, Arc<DatabaseService>>,
     task_id: String,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
     let state_guard = state.read().await;
     state_guard.scheduler.remove_task(&task_id).await?;
@@ -678,6 +694,8 @@ pub async fn monitor_enable_task(
     db_service: State<'_, Arc<DatabaseService>>,
     task_id: String,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
     let state_guard = state.read().await;
     state_guard.scheduler.enable_task(&task_id).await?;
@@ -691,6 +709,8 @@ pub async fn monitor_disable_task(
     db_service: State<'_, Arc<DatabaseService>>,
     task_id: String,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
     let state_guard = state.read().await;
     state_guard.scheduler.disable_task(&task_id).await?;
@@ -701,6 +721,7 @@ pub async fn monitor_disable_task(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateMonitorTaskRequest {
     pub name: Option<String>,
+    pub group_name: Option<String>,
     pub interval_secs: Option<u64>,
     pub config: Option<MonitorConfigDto>,
 }
@@ -712,9 +733,12 @@ pub async fn monitor_update_task(
     task_id: String,
     request: UpdateMonitorTaskRequest,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
     let UpdateMonitorTaskRequest {
         name,
+        group_name,
         interval_secs,
         config,
     } = request;
@@ -735,6 +759,11 @@ pub async fn monitor_update_task(
         .update_task(&task_id, |task| {
             if let Some(name) = name {
                 task.name = name;
+            }
+            if let Some(group_name) = group_name {
+                if task.group_id.is_some() {
+                    task.group_name = Some(group_name);
+                }
             }
             if let Some(interval) = interval_secs {
                 task.interval_secs = interval;
@@ -757,6 +786,8 @@ pub async fn monitor_create_default_tasks(
     db_service: State<'_, Arc<DatabaseService>>,
     program_id: String,
 ) -> Result<Vec<String>, String> {
+    ensure_bug_bounty_access()?;
+
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
     let state_guard = state.read().await;
     let mut task_ids = Vec::new();
@@ -853,6 +884,8 @@ pub async fn monitor_update_task_plugins(
     task_id: String,
     request: UpdatePluginConfigRequest,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     ensure_monitor_tasks_loaded(state.inner(), db_service.inner()).await?;
     let UpdatePluginConfigRequest {
         monitor_type,

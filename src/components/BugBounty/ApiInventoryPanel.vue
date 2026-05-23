@@ -10,6 +10,22 @@
             </p>
           </div>
           <div class="flex items-center gap-2">
+            <button
+              class="btn btn-sm btn-primary"
+              :disabled="!programFilter || requestingProject || requestingBatch || loading"
+              :title="programFilter ? t('bugBounty.apiInventory.requestProjectEndpointsHint') : t('bugBounty.apiInventory.selectProgramFirst')"
+              @click="requestProjectAllEndpoints"
+            >
+              <span v-if="requestingProject" class="loading loading-spinner loading-xs"></span>
+              <i v-else class="fas fa-layer-group mr-2"></i>
+              <span v-if="requestingProject">
+                {{ t('bugBounty.apiInventory.requestProjectEndpointsRunning', {
+                  done: projectRequestProgress.processedTargets,
+                  total: projectRequestProgress.totalTargets,
+                }) }}
+              </span>
+              <span v-else>{{ t('bugBounty.apiInventory.requestProjectEndpoints') }}</span>
+            </button>
             <button class="btn btn-sm btn-outline" :disabled="loading" @click="loadTargets(true)">
               <i class="fas fa-sync-alt mr-2"></i>
               {{ t('common.refresh') }}
@@ -21,7 +37,7 @@
           </div>
         </div>
 
-        <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
           <label class="input input-bordered input-sm flex items-center gap-2">
             <i class="fas fa-search text-base-content/50"></i>
             <input
@@ -43,12 +59,41 @@
             </option>
           </select>
 
-          <select v-model="statusFilter" class="select select-bordered select-sm">
-            <option value="all">{{ t('bugBounty.apiInventory.allStatuses') }}</option>
-            <option value="success">{{ t('common.success') }}</option>
-            <option value="failed">{{ t('common.failed') }}</option>
-          </select>
-          
+          <div class="join h-8" role="group" :aria-label="t('bugBounty.apiInventory.status')">
+            <button
+              type="button"
+              class="btn btn-sm join-item"
+              :class="statusFilter === 'all' ? 'btn-primary' : 'btn-outline'"
+              @click="statusFilter = 'all'"
+            >
+              {{ t('bugBounty.apiInventory.allStatuses') }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm join-item px-3"
+              :class="statusFilter === 'success' ? 'btn-outline border-success bg-success/10' : 'btn-outline'"
+              :title="t('common.success')"
+              :aria-label="t('common.success')"
+              @click="statusFilter = 'success'"
+            >
+              <span class="inline-block h-2.5 w-2.5 rounded-full bg-success"></span>
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm join-item px-3"
+              :class="statusFilter === 'failed' ? 'btn-outline border-error bg-error/10' : 'btn-outline'"
+              :title="t('common.failed')"
+              :aria-label="t('common.failed')"
+              @click="statusFilter = 'failed'"
+            >
+              <span class="inline-block h-2.5 w-2.5 rounded-full bg-error"></span>
+            </button>
+          </div>
+          <label class="flex h-8 items-center gap-2 rounded-lg border border-base-300 px-3 text-sm">
+            <input v-model="changedOnly" type="checkbox" class="checkbox checkbox-sm" />
+            <span>{{ t('bugBounty.apiInventory.changedOnly') }}</span>
+          </label>
+
           <select v-model="sortBy" class="select select-bordered select-sm">
             <option value="observed_desc">{{ t('bugBounty.apiInventory.sortNewest') }}</option>
             <option value="endpoint_desc">{{ t('bugBounty.apiInventory.sortEndpointCount') }}</option>
@@ -79,12 +124,6 @@
             <option value="scheduler">{{ t('bugBounty.monitor.scheduledRun') }}</option>
             <option value="manual">{{ t('bugBounty.monitor.manualRun') }}</option>
           </select>
-
-          <select v-model="capabilityFilter" class="select select-bordered select-sm">
-            <option value="all">{{ t('bugBounty.apiInventory.allCapabilities') }}</option>
-            <option value="changed">{{ t('bugBounty.apiInventory.changedOnly') }}</option>
-            <option value="errors">{{ t('bugBounty.apiInventory.withErrors') }}</option>
-          </select>
         </div>
 
         <div class="mt-4 grid grid-cols-2 gap-4 xl:grid-cols-5">
@@ -96,13 +135,17 @@
             <div class="stat-title text-xs">{{ t('bugBounty.apiInventory.endpoints') }}</div>
             <div class="stat-value text-lg">{{ totalEndpoints }}</div>
           </div>
-          <div class="stat bg-base-200 rounded-lg p-3">
-            <div class="stat-title text-xs">{{ t('common.success') }}</div>
-            <div class="stat-value text-lg text-success">{{ successfulTargets }}</div>
+          <div class="stat bg-base-200 rounded-lg p-3" :title="t('common.success')">
+            <div class="stat-title text-xs">
+              <span class="inline-block h-2.5 w-2.5 rounded-full bg-success"></span>
+            </div>
+            <div class="stat-value text-lg">{{ successfulTargets }}</div>
           </div>
-          <div class="stat bg-base-200 rounded-lg p-3">
-            <div class="stat-title text-xs">{{ t('common.failed') }}</div>
-            <div class="stat-value text-lg text-error">{{ failedTargets }}</div>
+          <div class="stat bg-base-200 rounded-lg p-3" :title="t('common.failed')">
+            <div class="stat-title text-xs">
+              <span class="inline-block h-2.5 w-2.5 rounded-full bg-error"></span>
+            </div>
+            <div class="stat-value text-lg">{{ failedTargets }}</div>
           </div>
           <div class="stat bg-base-200 rounded-lg p-3">
             <div class="stat-title text-xs">{{ t('bugBounty.apiInventory.changes') }}</div>
@@ -143,7 +186,7 @@
               </div>
 
               <div
-                v-if="selectedTargetKeys.length > 0"
+                v-if="showBatchActions"
                 class="flex flex-col gap-2 rounded-lg border border-base-300 bg-base-200/40 p-3"
               >
                 <div class="text-xs text-base-content/60">
@@ -255,12 +298,11 @@
                     </div>
                   </td>
                   <td>
-                    <span class="badge badge-sm" :class="target.success ? 'badge-success' : 'badge-error'">
-                      {{ target.success ? t('common.success') : t('common.failed') }}
-                    </span>
-                    <div v-if="target.error_message" class="mt-1 text-xs text-warning">
-                      {{ t('bugBounty.apiInventory.withErrors') }}
-                    </div>
+                    <span
+                      class="inline-block h-3 w-3 rounded-full"
+                      :class="target.success ? 'bg-success' : 'bg-error'"
+                      :title="target.success ? t('common.success') : t('common.failed')"
+                    ></span>
                   </td>
                   <td class="min-w-[8rem] text-xs text-base-content/60">
                     {{ formatDateTime(target.observed_at) }}
@@ -331,9 +373,11 @@
               <div class="rounded-lg bg-base-200 p-3">
                 <div class="text-xs text-base-content/60">{{ t('bugBounty.apiInventory.targetStatus') }}</div>
                 <div class="mt-1">
-                  <span class="badge badge-sm" :class="selectedDetail.success ? 'badge-success' : 'badge-error'">
-                    {{ selectedDetail.success ? t('common.success') : t('common.failed') }}
-                  </span>
+                  <span
+                    class="inline-block h-3 w-3 rounded-full"
+                    :class="selectedDetail.success ? 'bg-success' : 'bg-error'"
+                    :title="selectedDetail.success ? t('common.success') : t('common.failed')"
+                  ></span>
                 </div>
               </div>
               <div class="rounded-lg bg-base-200 p-3">
@@ -362,6 +406,53 @@
               </a>
             </div>
 
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <select v-model="endpointRequestMethod" class="select select-bordered select-sm w-24">
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+              </select>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline"
+                :disabled="!selectedEndpoint || requestingProject || requestingBatch || isEndpointRequesting(selectedEndpoint)"
+                @click="requestSingleEndpoint(selectedEndpoint)"
+              >
+                <span v-if="selectedEndpoint && isEndpointRequesting(selectedEndpoint)" class="loading loading-spinner loading-xs"></span>
+                <i v-else class="fas fa-paper-plane mr-2"></i>
+                {{ t('bugBounty.apiInventory.requestSelectedEndpoint') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm btn-primary"
+                :disabled="visibleEndpoints.length === 0 || requestingProject || requestingBatch"
+                @click="requestVisibleEndpoints"
+              >
+                <span v-if="requestingBatch" class="loading loading-spinner loading-xs"></span>
+                <i v-else class="fas fa-layer-group mr-2"></i>
+                {{ t('bugBounty.apiInventory.requestVisibleEndpoints', { count: visibleEndpoints.length }) }}
+              </button>
+              <label
+                class="flex h-8 items-center gap-2 rounded-lg border border-base-300 px-3 text-sm"
+                :class="hasEndpointRequestResultsForCurrentMethod ? '' : 'opacity-60'"
+                :title="t('bugBounty.apiInventory.jsonOnlyHint')"
+              >
+                <input
+                  v-model="jsonOnly"
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  :disabled="!hasEndpointRequestResultsForCurrentMethod"
+                />
+                <span>{{ t('bugBounty.apiInventory.jsonOnly') }}</span>
+              </label>
+            </div>
+
+            <textarea
+              v-if="endpointRequestMethod === 'POST'"
+              v-model="endpointRequestBody"
+              class="textarea textarea-bordered mt-3 min-h-20 w-full font-mono text-xs"
+              :placeholder="t('bugBounty.apiInventory.postBodyPlaceholder')"
+            ></textarea>
+
             <div class="mt-4 overflow-hidden rounded-lg border border-base-200">
               <div class="max-h-[42vh] overflow-auto">
                 <table class="table table-zebra">
@@ -369,18 +460,51 @@
                     <tr>
                       <th>{{ t('bugBounty.apiInventory.path') }}</th>
                       <th>{{ t('bugBounty.apiInventory.source') }}</th>
+                      <th>{{ t('bugBounty.apiInventory.requestResult') }}</th>
+                      <th class="w-12">{{ t('bugBounty.apiInventory.actions') }}</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr
-                      v-for="endpoint in visibleEndpoints"
-                      :key="endpointKeyOf(endpoint)"
-                      class="cursor-pointer"
-                      :class="selectedEndpointKey === endpointKeyOf(endpoint) ? 'bg-primary/10' : ''"
-                      @click="selectEndpoint(endpoint)"
-                    >
+	                      v-for="endpoint in visibleEndpoints"
+	                      :key="endpointKeyOf(endpoint)"
+	                      class="cursor-pointer"
+	                      :class="selectedEndpointKey === endpointKeyOf(endpoint) ? 'bg-primary/10' : ''"
+	                      @click="openEndpointResultDialog(endpoint)"
+	                    >
                       <td class="font-mono text-xs">{{ endpoint.path }}</td>
                       <td class="text-xs text-base-content/60">{{ endpoint.source || '-' }}</td>
+	                      <td class="text-xs">
+	                        <span v-if="isEndpointRequesting(endpoint)" class="loading loading-spinner loading-xs"></span>
+	                        <span v-else-if="endpointRequestResultOf(endpoint)" class="flex flex-wrap items-center gap-1">
+	                          <span
+	                            class="badge badge-sm"
+	                            :class="endpointRequestResultClass(endpointRequestResultOf(endpoint))"
+	                            :title="endpointRequestResultTitle(endpointRequestResultOf(endpoint))"
+	                          >
+	                            {{ endpointRequestResultLabel(endpointRequestResultOf(endpoint)) }}
+	                          </span>
+	                          <span
+	                            v-if="isJsonRequestResult(endpointRequestResultOf(endpoint))"
+	                            class="badge badge-info badge-outline badge-sm"
+	                          >
+	                            JSON
+	                          </span>
+	                        </span>
+	                        <span v-else class="text-base-content/40">-</span>
+	                      </td>
+                      <td @click.stop>
+                        <button
+	                          type="button"
+	                          class="btn btn-ghost btn-xs"
+	                          :disabled="requestingProject || requestingBatch || isEndpointRequesting(endpoint)"
+                          :title="t('bugBounty.apiInventory.requestEndpoint')"
+                          @click="requestSingleEndpoint(endpoint)"
+                        >
+                          <span v-if="isEndpointRequesting(endpoint)" class="loading loading-spinner loading-xs"></span>
+                          <i v-else class="fas fa-paper-plane"></i>
+                        </button>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -412,8 +536,73 @@
                   </div>
                 </div>
               </div>
+
             </div>
           </template>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="endpointResultDialogEndpoint && endpointResultDialogResult"
+      ref="endpointResultDialogOverlay"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      tabindex="0"
+      @click.self="closeEndpointResultDialog"
+      @keydown.esc="closeEndpointResultDialog"
+    >
+      <div class="max-h-[86vh] w-full max-w-4xl overflow-hidden rounded-lg bg-base-100 shadow-xl">
+        <div class="flex items-start justify-between gap-4 border-b border-base-200 p-4">
+          <div class="min-w-0">
+            <div class="text-sm font-semibold">{{ t('bugBounty.apiInventory.latestRequestResult') }}</div>
+            <div class="mt-1 break-all font-mono text-xs text-base-content/70">
+              {{ endpointResultDialogResult.method }} {{ endpointResultDialogResult.url }}
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm" type="button" @click="closeEndpointResultDialog">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+
+        <div class="max-h-[calc(86vh-4rem)] overflow-auto p-4">
+          <div class="grid grid-cols-1 gap-3 text-sm md:grid-cols-4">
+            <div class="rounded-lg bg-base-200 p-3">
+              <div class="text-xs text-base-content/60">{{ t('bugBounty.apiInventory.statusCode') }}</div>
+              <span class="badge badge-sm mt-1" :class="endpointRequestResultClass(endpointResultDialogResult)">
+                {{ endpointRequestResultLabel(endpointResultDialogResult) }}
+              </span>
+            </div>
+            <div class="rounded-lg bg-base-200 p-3">
+              <div class="text-xs text-base-content/60">{{ t('bugBounty.apiInventory.duration') }}</div>
+              <div class="mt-1 font-medium">{{ endpointResultDialogResult.durationMs }}ms</div>
+            </div>
+            <div class="rounded-lg bg-base-200 p-3">
+              <div class="text-xs text-base-content/60">{{ t('bugBounty.apiInventory.responseSize') }}</div>
+              <div class="mt-1 font-medium">{{ endpointResultDialogResult.responseBytes }}B</div>
+            </div>
+            <div class="rounded-lg bg-base-200 p-3">
+              <div class="text-xs text-base-content/60">{{ t('bugBounty.apiInventory.requestTime') }}</div>
+              <div class="mt-1 text-xs">{{ formatDateTime(endpointResultDialogResult.createdAt) }}</div>
+            </div>
+          </div>
+
+          <div class="mt-3 rounded-lg bg-base-200 p-3">
+            <div class="text-xs text-base-content/60">Content-Type</div>
+            <div class="mt-1 break-all font-mono text-xs">
+              {{ endpointResultDialogResult.responseContentType || '-' }}
+            </div>
+          </div>
+
+          <div v-if="endpointResultDialogResult.error" class="mt-3 rounded-lg bg-error/10 p-3 text-sm text-error">
+            {{ endpointResultDialogResult.error }}
+          </div>
+          <pre
+            v-else-if="endpointResultDialogResult.bodyPreview"
+            class="mt-3 max-h-[44vh] overflow-auto whitespace-pre-wrap rounded-lg bg-base-300 p-3 text-xs"
+          >{{ endpointResultDialogResult.bodyPreview }}</pre>
+          <div v-else class="mt-3 rounded-lg bg-base-200 p-6 text-center text-sm text-base-content/60">
+            {{ t('bugBounty.apiInventory.responseEmpty') }}
+          </div>
         </div>
       </div>
     </div>
@@ -421,7 +610,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '../../composables/useToast'
@@ -485,24 +674,41 @@ interface RawApiInventoryDeleteTarget {
 }
 
 interface ApiInventoryListStats {
-  total_endpoints: number
-  successful_targets: number
-  failed_targets: number
-  changed_targets: number
+  totalEndpoints: number
+  successfulTargets: number
+  failedTargets: number
+  changedTargets: number
 }
 
 interface ApiInventoryListResponse {
   items: ApiInventoryTargetSummary[]
   total: number
-  filtered_total: number
-  has_more: boolean
+  filteredTotal: number
+  hasMore: boolean
   stats: ApiInventoryListStats
+}
+
+interface ApiInventoryEndpointRequestResult {
+  path: string
+  source?: string | null
+  method: EndpointRequestMethod
+  url: string
+  success: boolean
+  status?: number | null
+  statusText?: string | null
+  durationMs: number
+  responseBytes: number
+  responseContentType?: string | null
+  bodyPreview?: string | null
+  error?: string | null
+  createdAt?: string | null
 }
 
 type StatusFilter = 'all' | 'success' | 'failed'
 type ExecutionModeFilter = 'all' | 'scheduler' | 'manual'
-type CapabilityFilter = 'all' | 'changed' | 'errors'
+type CapabilityFilter = 'all' | 'changed'
 type EndpointTab = 'all' | 'added' | 'removed'
+type EndpointRequestMethod = 'GET' | 'POST'
 type SortBy = 'observed_desc' | 'endpoint_desc' | 'changes_desc' | 'base_url_asc'
 
 const TARGET_PAGE_SIZE = 50
@@ -534,15 +740,30 @@ const filteredTargetCount = ref(0)
 const hasMoreTargets = ref(false)
 const selectedTargetEntries = ref<ApiInventoryDeleteTarget[]>([])
 const targetStats = ref<ApiInventoryListStats>({
-  total_endpoints: 0,
-  successful_targets: 0,
-  failed_targets: 0,
-  changed_targets: 0,
+  totalEndpoints: 0,
+  successfulTargets: 0,
+  failedTargets: 0,
+  changedTargets: 0,
 })
 const selectedTargetKey = ref('')
 const selectedDetail = ref<ApiInventoryTargetDetail | null>(null)
 const endpointTab = ref<EndpointTab>('all')
 const selectedEndpointKey = ref('')
+const endpointRequestMethod = ref<EndpointRequestMethod>('GET')
+const endpointRequestBody = ref('')
+const jsonOnly = ref(false)
+const requestingBatch = ref(false)
+const requestingProject = ref(false)
+const requestingEndpointKeys = ref<string[]>([])
+const endpointRequestResults = ref<Record<string, ApiInventoryEndpointRequestResult>>({})
+const endpointResultDialogEndpoint = ref<ApiInventoryEndpoint | null>(null)
+const endpointResultDialogOverlay = ref<HTMLElement | null>(null)
+const projectRequestProgress = ref({
+  totalTargets: 0,
+  processedTargets: 0,
+  requestedEndpoints: 0,
+  failedEndpoints: 0,
+})
 
 const propSelectedProgramId = computed(() => String(props.selectedProgram?.id || ''))
 const programOptions = computed(() => Array.isArray(props.programs) ? props.programs : [])
@@ -561,6 +782,12 @@ const normalizeDeleteTarget = (target: RawApiInventoryDeleteTarget): ApiInventor
 }
 
 const endpointKeyOf = (endpoint: ApiInventoryEndpoint) => `${endpoint.path}::${endpoint.source || ''}`
+
+const endpointRequestKeyOf = (
+  endpoint: ApiInventoryEndpoint,
+  method = endpointRequestMethod.value,
+  baseUrl = selectedDetail.value?.base_url || '',
+) => `${method}::${resolveEndpointUrl(baseUrl, endpoint.path)}`
 
 const normalizeEndpoint = (endpoint: RawApiInventoryEndpoint): ApiInventoryEndpoint => ({
   path: endpoint.path,
@@ -589,13 +816,18 @@ const currentProgramLabel = computed(() => (
 
 const hasAdvancedFilters = computed(() => (
   executionModeFilter.value !== 'all'
-  || capabilityFilter.value !== 'all'
 ))
 
 const activeAdvancedFilterCount = computed(() => (
   Number(executionModeFilter.value !== 'all')
-  + Number(capabilityFilter.value !== 'all')
 ))
+
+const changedOnly = computed({
+  get: () => capabilityFilter.value === 'changed',
+  set: (value: boolean) => {
+    capabilityFilter.value = value ? 'changed' : 'all'
+  },
+})
 
 const selectedTargetKeys = computed(() => (
   selectedTargetEntries.value.map(target => targetKeyOf(target))
@@ -628,31 +860,37 @@ const allFilteredSelected = computed(() => (
 ))
 
 const totalEndpoints = computed(() =>
-  targetStats.value.total_endpoints,
+  targetStats.value.totalEndpoints,
 )
 
 const successfulTargets = computed(() =>
-  targetStats.value.successful_targets,
+  targetStats.value.successfulTargets,
 )
 
 const failedTargets = computed(() =>
-  targetStats.value.failed_targets,
+  targetStats.value.failedTargets,
 )
 
 const changedTargets = computed(() =>
-  targetStats.value.changed_targets,
+  targetStats.value.changedTargets,
 )
 
 const visibleEndpoints = computed(() => {
   if (!selectedDetail.value) return []
+  let endpoints: ApiInventoryEndpoint[]
   switch (endpointTab.value) {
     case 'added':
-      return selectedDetail.value.added_endpoints
+      endpoints = selectedDetail.value.added_endpoints
+      break
     case 'removed':
-      return selectedDetail.value.removed_endpoints
+      endpoints = selectedDetail.value.removed_endpoints
+      break
     default:
-      return selectedDetail.value.endpoints
+      endpoints = selectedDetail.value.endpoints
   }
+
+  if (!jsonOnly.value || !hasEndpointRequestResultsForCurrentMethod.value) return endpoints
+  return endpoints.filter(endpoint => isJsonRequestResult(endpointRequestResultOf(endpoint)))
 })
 
 const selectedEndpoint = computed(() => {
@@ -661,6 +899,18 @@ const selectedEndpoint = computed(() => {
     visibleEndpoints.value.find(endpoint => endpointKeyOf(endpoint) === selectedEndpointKey.value)
     || visibleEndpoints.value[0]
   )
+})
+
+const endpointResultDialogResult = computed(() => (
+  endpointResultDialogEndpoint.value
+    ? endpointRequestResultOf(endpointResultDialogEndpoint.value)
+    : null
+))
+
+const hasEndpointRequestResultsForCurrentMethod = computed(() => {
+  const detail = selectedDetail.value
+  if (!detail) return false
+  return detail.endpoints.some(endpoint => Boolean(endpointRequestResultOf(endpoint)))
 })
 
 const buildFilterPayload = (offset = 0, limit = TARGET_PAGE_SIZE) => ({
@@ -673,6 +923,28 @@ const buildFilterPayload = (offset = 0, limit = TARGET_PAGE_SIZE) => ({
   offset,
   limit,
 })
+
+const buildKeyFilterPayload = () => ({
+  programId: programFilter.value || null,
+  search: search.value.trim() || null,
+  status: statusFilter.value,
+  executionMode: executionModeFilter.value,
+  capability: capabilityFilter.value,
+  sortBy: sortBy.value,
+})
+
+const buildProjectRequestTargetFilterPayload = () => ({
+  programId: programFilter.value || null,
+  search: null,
+  status: 'all',
+  executionMode: 'all',
+  capability: 'all',
+  sortBy: 'base_url_asc',
+})
+
+const showBatchActions = computed(() => (
+  selectedTargetKeys.value.length > 0
+))
 
 const syncSelectedTargetWithFilters = async () => {
   const selectedVisible = targets.value.find(target => targetKeyOf(target) === selectedTargetKey.value) || null
@@ -704,13 +976,13 @@ const loadTargets = async (reset = true) => {
       ? (Array.isArray(response?.items) ? response.items : [])
       : [...targets.value, ...(Array.isArray(response?.items) ? response.items : [])]
     totalTargetCount.value = Number(response?.total || 0)
-    filteredTargetCount.value = Number(response?.filtered_total || 0)
-    hasMoreTargets.value = Boolean(response?.has_more)
+    filteredTargetCount.value = Number(response?.filteredTotal || 0)
+    hasMoreTargets.value = Boolean(response?.hasMore)
     targetStats.value = response?.stats || {
-      total_endpoints: 0,
-      successful_targets: 0,
-      failed_targets: 0,
-      changed_targets: 0,
+      totalEndpoints: 0,
+      successfulTargets: 0,
+      failedTargets: 0,
+      changedTargets: 0,
     }
     await syncSelectedTargetWithFilters()
   } catch (error) {
@@ -722,10 +994,10 @@ const loadTargets = async (reset = true) => {
       filteredTargetCount.value = 0
       hasMoreTargets.value = false
       targetStats.value = {
-        total_endpoints: 0,
-        successful_targets: 0,
-        failed_targets: 0,
-        changed_targets: 0,
+        totalEndpoints: 0,
+        successfulTargets: 0,
+        failedTargets: 0,
+        changedTargets: 0,
       }
       selectedDetail.value = null
       selectedEndpointKey.value = ''
@@ -759,6 +1031,7 @@ const loadTargetDetail = async (target: ApiInventoryTargetSummary | null) => {
     })
     selectedDetail.value = normalizeTargetDetail(detail)
     endpointTab.value = 'all'
+    await loadEndpointRequestHistory(selectedDetail.value)
   } catch (error) {
     console.error('Failed to load API inventory detail:', error)
     toast.error(t('bugBounty.errors.loadFailed'))
@@ -769,6 +1042,35 @@ const loadTargetDetail = async (target: ApiInventoryTargetSummary | null) => {
   }
 }
 
+const loadTargetDetailByKey = async (target: ApiInventoryDeleteTarget) => {
+  const detail = await invoke<RawApiInventoryTargetDetail | null>('bounty_get_api_inventory_target', {
+    programId: target.program_id,
+    baseUrl: target.base_url,
+  })
+  return normalizeTargetDetail(detail)
+}
+
+const loadEndpointRequestHistory = async (
+  detail: ApiInventoryTargetDetail | null,
+  method = endpointRequestMethod.value,
+) => {
+  if (!detail) return
+  const paths = detail.endpoints.map(endpoint => endpoint.path)
+  if (paths.length === 0) return
+
+  try {
+    const results = await invoke<ApiInventoryEndpointRequestResult[]>('bounty_list_api_inventory_endpoint_request_history', {
+      programId: detail.program_id,
+      baseUrl: detail.base_url,
+      method,
+      paths,
+    })
+    mergeEndpointRequestResults(results, detail.base_url)
+  } catch (error) {
+    console.error('Failed to load API inventory endpoint request history:', error)
+  }
+}
+
 const selectTarget = async (target: ApiInventoryTargetSummary) => {
   selectedTargetKey.value = targetKeyOf(target)
   await loadTargetDetail(target)
@@ -776,6 +1078,99 @@ const selectTarget = async (target: ApiInventoryTargetSummary) => {
 
 const selectEndpoint = (endpoint: ApiInventoryEndpoint) => {
   selectedEndpointKey.value = endpointKeyOf(endpoint)
+}
+
+const openEndpointResultDialog = async (endpoint: ApiInventoryEndpoint) => {
+  selectEndpoint(endpoint)
+  endpointResultDialogEndpoint.value = endpointRequestResultOf(endpoint) ? endpoint : null
+  if (endpointResultDialogEndpoint.value) {
+    await nextTick()
+    endpointResultDialogOverlay.value?.focus()
+  }
+}
+
+const closeEndpointResultDialog = () => {
+  endpointResultDialogEndpoint.value = null
+}
+
+const markEndpointsRequesting = (
+  endpoints: ApiInventoryEndpoint[],
+  method = endpointRequestMethod.value,
+  baseUrl = selectedDetail.value?.base_url || '',
+) => {
+  const next = new Set(requestingEndpointKeys.value)
+  for (const endpoint of endpoints) {
+    next.add(endpointRequestKeyOf(endpoint, method, baseUrl))
+  }
+  requestingEndpointKeys.value = [...next]
+}
+
+const unmarkEndpointsRequesting = (
+  endpoints: ApiInventoryEndpoint[],
+  method = endpointRequestMethod.value,
+  baseUrl = selectedDetail.value?.base_url || '',
+) => {
+  const next = new Set(requestingEndpointKeys.value)
+  for (const endpoint of endpoints) {
+    next.delete(endpointRequestKeyOf(endpoint, method, baseUrl))
+  }
+  requestingEndpointKeys.value = [...next]
+}
+
+const isEndpointRequesting = (endpoint: ApiInventoryEndpoint | null) => (
+  Boolean(endpoint && requestingEndpointKeys.value.includes(endpointRequestKeyOf(endpoint)))
+)
+
+const endpointRequestResultOf = (endpoint: ApiInventoryEndpoint | null) => {
+  if (!endpoint) return null
+  return endpointRequestResults.value[endpointRequestKeyOf(endpoint)] || null
+}
+
+const endpointRequestResultClass = (result: ApiInventoryEndpointRequestResult | null) => {
+  if (!result) return 'badge-ghost'
+  if (!result.success || result.error) return 'badge-error'
+  if (typeof result.status === 'number' && result.status >= 400) return 'badge-warning'
+  return 'badge-success'
+}
+
+const endpointRequestResultLabel = (result: ApiInventoryEndpointRequestResult | null) => {
+  if (!result) return '-'
+  if (result.status) return String(result.status)
+  return result.success ? 'OK' : t('common.failed')
+}
+
+const endpointRequestResultTitle = (result: ApiInventoryEndpointRequestResult | null) => {
+  if (!result) return ''
+  if (result.error) return result.error
+  return `${result.method} ${result.url} ${result.durationMs}ms ${result.responseBytes}B ${formatDateTime(result.createdAt)}`
+}
+
+const isJsonRequestResult = (result: ApiInventoryEndpointRequestResult | null) => {
+  if (!result || result.error) return false
+  const contentType = String(result.responseContentType || '').toLowerCase()
+  if (contentType.includes('application/json') || contentType.includes('+json')) {
+    return true
+  }
+  const preview = String(result.bodyPreview || '').trim()
+  if (!preview || !['{', '['].includes(preview[0])) return false
+  try {
+    JSON.parse(preview)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const mergeEndpointRequestResults = (
+  results: ApiInventoryEndpointRequestResult[] | null | undefined,
+  baseUrl: string,
+) => {
+  const next = { ...endpointRequestResults.value }
+  for (const result of Array.isArray(results) ? results : []) {
+    const resultUrl = result.url || resolveEndpointUrl(baseUrl, result.path)
+    next[`${result.method}::${resultUrl}`] = result
+  }
+  endpointRequestResults.value = next
 }
 
 const isTargetSelected = (target: ApiInventoryTargetSummary) => (
@@ -816,7 +1211,7 @@ const selectAllFilteredTargets = async () => {
   try {
     selectingAll.value = true
     const rows = await invoke<RawApiInventoryDeleteTarget[]>('bounty_list_api_inventory_target_keys', {
-      filter: buildFilterPayload(0, TARGET_PAGE_SIZE),
+      filter: buildKeyFilterPayload(),
     })
     selectedTargetEntries.value = Array.isArray(rows)
       ? rows
@@ -887,7 +1282,7 @@ const deleteAllFilteredTargets = async () => {
   try {
     selectingAll.value = true
     const rows = await invoke<RawApiInventoryDeleteTarget[]>('bounty_list_api_inventory_target_keys', {
-      filter: buildFilterPayload(0, TARGET_PAGE_SIZE),
+      filter: buildKeyFilterPayload(),
     })
     const targetRows = Array.isArray(rows)
       ? rows
@@ -900,6 +1295,129 @@ const deleteAllFilteredTargets = async () => {
     toast.error(t('bugBounty.errors.deleteFailed'))
   } finally {
     selectingAll.value = false
+  }
+}
+
+const requestEndpointBatch = async (
+  detail: ApiInventoryTargetDetail,
+  endpoints: ApiInventoryEndpoint[],
+  markVisible = false,
+) => {
+  const method = endpointRequestMethod.value
+  if (markVisible) {
+    markEndpointsRequesting(endpoints, method, detail.base_url)
+  }
+
+  try {
+    const results = await invoke<ApiInventoryEndpointRequestResult[]>('bounty_request_api_inventory_endpoints', {
+      request: {
+        programId: detail.program_id,
+        baseUrl: detail.base_url,
+        method,
+        endpoints: endpoints.map(endpoint => ({
+          path: endpoint.path,
+          source: endpoint.source || null,
+        })),
+        body: method === 'POST' ? endpointRequestBody.value : null,
+      },
+    })
+    mergeEndpointRequestResults(results, detail.base_url)
+    return Array.isArray(results) ? results : []
+  } finally {
+    if (markVisible) {
+      unmarkEndpointsRequesting(endpoints, method, detail.base_url)
+    }
+  }
+}
+
+const requestEndpoints = async (endpoints: ApiInventoryEndpoint[]) => {
+  const detail = selectedDetail.value
+  if (!detail || endpoints.length === 0) return
+
+  try {
+    if (endpoints.length > 1) {
+      requestingBatch.value = true
+    }
+    const results = await requestEndpointBatch(detail, endpoints, true)
+
+    const failedCount = results.filter(result => (
+      !result.success || Boolean(result.error)
+    )).length
+    toast.success(t('bugBounty.apiInventory.requestCompleted', {
+      total: results.length,
+      failed: failedCount,
+    }))
+  } catch (error) {
+    console.error('Failed to request API inventory endpoints:', error)
+    toast.error(t('bugBounty.apiInventory.requestFailed'))
+  } finally {
+    requestingBatch.value = false
+  }
+}
+
+const requestSingleEndpoint = async (endpoint: ApiInventoryEndpoint | null) => {
+  if (!endpoint) return
+  await requestEndpoints([endpoint])
+}
+
+const requestVisibleEndpoints = async () => {
+  await requestEndpoints(visibleEndpoints.value)
+}
+
+const requestProjectAllEndpoints = async () => {
+  if (!programFilter.value || requestingProject.value) {
+    toast.warning(t('bugBounty.apiInventory.selectProgramFirst'))
+    return
+  }
+
+  try {
+    requestingProject.value = true
+    projectRequestProgress.value = {
+      totalTargets: 0,
+      processedTargets: 0,
+      requestedEndpoints: 0,
+      failedEndpoints: 0,
+    }
+
+    const rows = await invoke<RawApiInventoryDeleteTarget[]>('bounty_list_api_inventory_target_keys', {
+      filter: buildProjectRequestTargetFilterPayload(),
+    })
+    const targetRows = Array.isArray(rows)
+      ? rows
+        .map(normalizeDeleteTarget)
+        .filter((target): target is ApiInventoryDeleteTarget => Boolean(target))
+      : []
+
+    projectRequestProgress.value.totalTargets = targetRows.length
+    if (targetRows.length === 0) {
+      toast.warning(t('bugBounty.apiInventory.noProjectTargets'))
+      return
+    }
+
+    for (const target of targetRows) {
+      const detail = await loadTargetDetailByKey(target)
+      projectRequestProgress.value.processedTargets += 1
+      if (!detail || detail.endpoints.length === 0) {
+        continue
+      }
+
+      const shouldMarkVisible = selectedTargetKey.value === targetKeyOf(target)
+      const results = await requestEndpointBatch(detail, detail.endpoints, shouldMarkVisible)
+      const failedCount = results.filter(result => !result.success || Boolean(result.error)).length
+      projectRequestProgress.value.requestedEndpoints += results.length
+      projectRequestProgress.value.failedEndpoints += failedCount
+    }
+
+    toast.success(t('bugBounty.apiInventory.projectRequestCompleted', {
+      targets: projectRequestProgress.value.processedTargets,
+      total: projectRequestProgress.value.requestedEndpoints,
+      failed: projectRequestProgress.value.failedEndpoints,
+    }))
+  } catch (error) {
+    console.error('Failed to request project API inventory endpoints:', error)
+    toast.error(t('bugBounty.apiInventory.requestFailed'))
+  } finally {
+    requestingProject.value = false
   }
 }
 
@@ -923,6 +1441,7 @@ const clearFilters = () => {
   executionModeFilter.value = 'all'
   capabilityFilter.value = 'all'
   sortBy.value = 'observed_desc'
+  jsonOnly.value = false
   programFilterTouched.value = false
   programFilter.value = propSelectedProgramId.value
   advancedFiltersExpanded.value = false
@@ -966,6 +1485,17 @@ watch(
 
 watch(endpointTab, () => {
   selectedEndpointKey.value = ''
+})
+
+watch(endpointRequestMethod, async method => {
+  closeEndpointResultDialog()
+  await loadEndpointRequestHistory(selectedDetail.value, method)
+})
+
+watch(hasEndpointRequestResultsForCurrentMethod, hasResults => {
+  if (!hasResults) {
+    closeEndpointResultDialog()
+  }
 })
 
 watch(

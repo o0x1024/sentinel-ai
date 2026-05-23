@@ -28,6 +28,7 @@ mod file_tool_state;
 mod final_review;
 mod http_request_override;
 pub mod message_store;
+mod model_context_tool;
 mod outcome;
 mod question_override;
 pub mod run_simple;
@@ -192,9 +193,13 @@ pub async fn execute_agent_turn(
     let storage_conversation_id = params.storage_conversation_id().to_string();
 
     let mut tenth_man_llm_config = LlmConfig::new(&rig_provider, &params.model)
-        .with_timeout(params.timeout_secs)
         .with_rig_provider(&rig_provider)
         .with_conversation_id(&storage_conversation_id);
+    if params.timeout_secs == 0 {
+        tenth_man_llm_config = tenth_man_llm_config.without_timeout();
+    } else {
+        tenth_man_llm_config = tenth_man_llm_config.with_timeout(params.timeout_secs);
+    }
 
     if let Some(ref api_key) = params.api_key {
         tenth_man_llm_config = tenth_man_llm_config.with_api_key(api_key);

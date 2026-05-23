@@ -7,8 +7,17 @@
             {{ t('trafficAnalysis.workbench.sidebar.title', '工作台') }}
           </h2>
           <div v-if="!compactHeaderActions" class="flex shrink-0 flex-wrap justify-end gap-2">
+            <button type="button" class="btn btn-xs btn-outline rounded-2xl" @click="emitSidebarAction('openPlugins')">
+              <i class="fas fa-puzzle-piece mr-1"></i>
+              {{ t('trafficAnalysis.workbench.actions.plugins', '插件') }}
+            </button>
             <button type="button" class="btn btn-xs btn-outline rounded-2xl" @click="emitSidebarAction('openCapture')">
               {{ t('trafficAnalysis.tabs.capture', '抓包') }}
+            </button>
+            <button type="button" class="btn btn-xs btn-outline rounded-2xl" @click="emitSidebarAction('toggleBasket')">
+              <i class="fas fa-basket-shopping mr-1"></i>
+              {{ t('trafficAnalysis.workbench.actions.basket', '篮子') }}
+              <span v-if="basketCount > 0" class="badge badge-xs badge-primary">{{ basketCount }}</span>
             </button>
             <button
               type="button"
@@ -24,18 +33,9 @@
               {{ t('trafficAnalysis.workbench.actions.control', '代理控制') }}
               <span v-if="controlInterceptCount > 0" class="badge badge-xs badge-warning">{{ controlInterceptCount }}</span>
             </button>
-            <button type="button" class="btn btn-xs btn-outline rounded-2xl" @click="emitSidebarAction('toggleBasket')">
-              <i class="fas fa-basket-shopping mr-1"></i>
-              {{ t('trafficAnalysis.workbench.actions.basket', '篮子') }}
-              <span v-if="basketCount > 0" class="badge badge-xs badge-primary">{{ basketCount }}</span>
-            </button>
             <button type="button" class="btn btn-xs btn-outline rounded-2xl" @click="emitSidebarAction('openSettings')">
               <i class="fas fa-cog mr-1"></i>
               {{ t('trafficAnalysis.workbench.actions.settings', '代理设置') }}
-            </button>
-            <button type="button" class="btn btn-xs btn-outline rounded-2xl" @click="emitSidebarAction('openPlugins')">
-              <i class="fas fa-puzzle-piece mr-1"></i>
-              {{ t('trafficAnalysis.workbench.actions.plugins', '插件') }}
             </button>
           </div>
           <div v-else ref="actionMenuRef" class="relative shrink-0">
@@ -66,9 +66,22 @@
               @keydown.esc.stop.prevent="closeActionMenu"
             >
               <li>
+                <button type="button" @click="emitSidebarAction('openPlugins')">
+                  <i class="fas fa-puzzle-piece"></i>
+                  {{ t('trafficAnalysis.workbench.actions.plugins', '插件') }}
+                </button>
+              </li>
+              <li>
                 <button type="button" @click="emitSidebarAction('openCapture')">
                   <i class="fas fa-wave-square"></i>
                   {{ t('trafficAnalysis.tabs.capture', '抓包') }}
+                </button>
+              </li>
+              <li>
+                <button type="button" @click="emitSidebarAction('toggleBasket')">
+                  <i class="fas fa-basket-shopping"></i>
+                  {{ t('trafficAnalysis.workbench.actions.basket', '篮子') }}
+                  <span v-if="basketCount > 0" class="badge badge-xs badge-primary ml-auto">{{ basketCount }}</span>
                 </button>
               </li>
               <li>
@@ -85,22 +98,9 @@
                 </button>
               </li>
               <li>
-                <button type="button" @click="emitSidebarAction('toggleBasket')">
-                  <i class="fas fa-basket-shopping"></i>
-                  {{ t('trafficAnalysis.workbench.actions.basket', '篮子') }}
-                  <span v-if="basketCount > 0" class="badge badge-xs badge-primary ml-auto">{{ basketCount }}</span>
-                </button>
-              </li>
-              <li>
                 <button type="button" @click="emitSidebarAction('openSettings')">
                   <i class="fas fa-cog"></i>
                   {{ t('trafficAnalysis.workbench.actions.settings', '代理设置') }}
-                </button>
-              </li>
-              <li>
-                <button type="button" @click="emitSidebarAction('openPlugins')">
-                  <i class="fas fa-puzzle-piece"></i>
-                  {{ t('trafficAnalysis.workbench.actions.plugins', '插件') }}
                 </button>
               </li>
             </ul>

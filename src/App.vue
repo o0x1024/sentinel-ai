@@ -12,7 +12,9 @@ import ImmersiveMinimizedToolTray from './components/Layout/ImmersiveMinimizedTo
 import ImmersiveSecurityCenterOverlay from './components/Layout/ImmersiveSecurityCenterOverlay.vue'
 import Sidebar from './components/Layout/Sidebar.vue'
 import LicenseActivation from './components/LicenseActivation.vue'
+import AppDialog from './components/AppDialog.vue'
 import GlobalPluginEditor from './components/PluginManagement/GlobalPluginEditor.vue'
+import AskUserQuestionModal from './components/Agent/AskUserQuestionModal.vue'
 
 import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
@@ -51,12 +53,23 @@ const entitlements = useFeatureEntitlementsState()
 const featureAccessStatus = useFeatureAccessStatusState()
 const entitlementRefreshRuntime = useEntitlementRefreshRuntimeState()
 const isStandaloneRoute = computed(() => Boolean(route.meta?.standalone))
+const routeKeepAliveIncludes = [
+  'CyberChefView',
+  'BotConsole',
+  'WorkflowStudio',
+  'AgentManagement',
+  'PluginManagement',
+  'BugBountyView',
+  'AIAssistant',
+]
 const mainContentRef = ref<HTMLElement | null>(null)
 const licenseActivationRef = ref<InstanceType<typeof LicenseActivation> | null>(null)
+const SECURITY_DISCLAIMER_STORAGE_KEY = 'sentinel:security-disclaimer:accepted:v1'
 const routeScrollPositions = new Map<string, number>()
 let featureAccessReminderTimer: number | null = null
 let featureAccessPollTimer: number | null = null
 let hasShownFeatureAccessReminder = false
+const NAVBAR_VISIBILITY_STORAGE_KEY = 'sentinel:navbar:visible:v1'
 
 // 初始化i18n
 const { t, locale } = useI18n()
@@ -66,8 +79,32 @@ const { t, locale } = useI18n()
 
 // 顶栏与侧边栏控制
 const sidebarCollapsed = ref(false)
+const navbarVisible = ref(
+  window.localStorage.getItem(NAVBAR_VISIBILITY_STORAGE_KEY) !== 'false',
+)
+const securityDisclaimerOpen = ref(false)
 const toggleSidebar = () => {
   sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
+const toggleNavbarVisibility = () => {
+  navbarVisible.value = !navbarVisible.value
+  window.localStorage.setItem(NAVBAR_VISIBILITY_STORAGE_KEY, String(navbarVisible.value))
+}
+
+const showNavbar = () => {
+  navbarVisible.value = true
+  window.localStorage.setItem(NAVBAR_VISIBILITY_STORAGE_KEY, 'true')
+}
+
+const showStartupSecurityDisclaimer = () => {
+  securityDisclaimerOpen.value =
+    window.localStorage.getItem(SECURITY_DISCLAIMER_STORAGE_KEY) !== 'true'
+}
+
+const acceptSecurityDisclaimer = () => {
+  window.localStorage.setItem(SECURITY_DISCLAIMER_STORAGE_KEY, 'true')
+  securityDisclaimerOpen.value = false
 }
 
 // 移动端菜单控制
@@ -230,7 +267,8 @@ const scheduleFeatureAccessPolling = () => {
 
 // 在组件挂载时导航到Dashboard (如果当前在根路径)
 onMounted(async () => {
-  setLanguage((locale.value.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en')
+  showStartupSecurityDisclaimer()
+  void setLanguage((locale.value.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en')
 
   await refreshFeatureEntitlements()
   await refreshFeatureAccessStatus()
@@ -338,12 +376,12 @@ const setTheme = (theme: string) => {
   applyTheme(theme, settings)
 }
 
-const switchLanguage = (lang: string) => {
+const switchLanguage = async (lang: string) => {
+  const nextLang = (lang.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en'
   updateStoredGeneralSettings(general => {
-    general.language = lang
+    general.language = nextLang
   })
-  locale.value = lang
-  setLanguage(lang as 'zh' | 'en')
+  await setLanguage(nextLang)
 }
 
 const availableLanguages = [
@@ -358,7 +396,7 @@ const availableThemes = [
 ]
 
 const shouldShowNavbar = computed(
-  () => !isStandaloneRoute.value && !immersiveDrillModeEnabled.value,
+  () => !isStandaloneRoute.value && !immersiveDrillModeEnabled.value && navbarVisible.value,
 )
 
 const shouldShowSidebar = computed(
@@ -408,16 +446,66 @@ watch(
 <template>
   <div id="app" class="h-screen bg-base-100 overflow-hidden" :style="appShellStyle">
     <LicenseActivation ref="licenseActivationRef" @activated="onLicenseActivated" />
+    <AppDialog :open="securityDisclaimerOpen" @cancel.prevent>
+      <div class="modal-box max-w-2xl">
+        <div class="flex items-start gap-4">
+          <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-warning/10 text-warning">
+            <i class="fas fa-shield-alt text-2xl"></i>
+          </div>
+          <div class="min-w-0">
+            <h2 class="text-xl font-semibold text-base-content">授权安全测试免责声明</h2>
+            <p class="mt-2 text-sm leading-6 text-base-content/70">
+              本应用仅可用于已获得明确授权的安全测试、漏洞验证、资产自查、应急响应与防护能力评估。
+            </p>
+          </div>
+        </div>
+
+        <div class="mt-5 space-y-3 text-sm leading-6 text-base-content/75">
+          <p>
+            使用前请确认你对目标系统、网络、账号、数据和第三方服务拥有合法授权，并遵守适用法律法规、平台规则、客户授权范围和内部安全制度。
+          </p>
+          <p>
+            请勿将本应用用于未授权扫描、入侵、绕过访问控制、破坏服务可用性、窃取或扩散敏感数据、规避审计、批量滥用接口，或任何可能损害他人系统与权益的行为。
+          </p>
+          <p>
+            涉及漏洞利用、流量重放、自动化探测、Bot 接入和插件执行时，请优先使用低风险配置，控制请求频率与影响范围，并保留授权、测试计划和操作记录。
+          </p>
+        </div>
+
+        <div class="mt-5 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm leading-6 text-base-content/75">
+          继续使用即表示你已理解并承诺：所有操作均在授权范围内进行，测试结果仅用于合法的安全改进、验证和报告。
+        </div>
+
+        <div class="modal-action">
+          <button type="button" class="btn btn-primary" @click="acceptSecurityDisclaimer">
+            我已知悉并承诺合规使用
+          </button>
+        </div>
+      </div>
+    </AppDialog>
     <GlobalSearchPalette v-if="!isStandaloneRoute" />
 
     <template v-if="!isStandaloneRoute">
       <TopNavbar
         v-if="shouldShowNavbar"
         @toggle-sidebar="toggleSidebar"
+        @toggle-navbar-visibility="toggleNavbarVisibility"
         @toggle-immersive-drill-mode="handleNavbarImmersiveDrillModeToggle"
         @set-theme="setTheme"
         @switch-language="switchLanguage"
       />
+
+      <button
+        v-if="!shouldShowNavbar && !isStandaloneRoute && !immersiveDrillModeEnabled"
+        type="button"
+        class="fixed right-4 top-4 z-[1100] btn btn-sm btn-primary shadow-lg"
+        :title="t('common.showNavbar', '显示导航栏')"
+        :aria-label="t('common.showNavbar', '显示导航栏')"
+        @click="showNavbar"
+      >
+        <i class="fas fa-chevron-down mr-2"></i>
+        {{ t('common.showNavbar', '显示导航栏') }}
+      </button>
 
       <div :style="appViewportStyle" class="flex">
         <Sidebar
@@ -434,7 +522,7 @@ watch(
           'ml-64': shouldShowSidebar && !sidebarCollapsed
         }">
           <router-view v-slot="{ Component }">
-            <keep-alive :include="['TrafficAnalysis','CyberChefView', 'AIAssistant', 'BotConsole', 'Vulnerabilities','Settings','Plugin','SecurityCenter','WorkflowStudio','BugBountyView','AgentManagement']">
+            <keep-alive :include="routeKeepAliveIncludes" :max="4">
               <component
                 :is="Component"
                 class="min-h-full"
@@ -455,6 +543,7 @@ watch(
     </template>
 
     <Toast />
+    <AskUserQuestionModal />
   </div>
 </template>
 

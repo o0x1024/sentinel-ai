@@ -1,14 +1,22 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::services::ensure_bug_bounty_access;
-use sentinel_db::{DatabaseService, SurfaceObservationRow};
+use chrono::Utc;
+use futures::stream::{self, StreamExt};
+use reqwest::{header::CONTENT_TYPE, Client, Method, Url};
+use sentinel_db::{ApiInventoryEndpointRequestRow, DatabaseService, SurfaceObservationRow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
+use uuid::Uuid;
 
 const API_MONITOR_PLUGIN_ID: &str = "api_monitor";
 const API_SNAPSHOT_ARTIFACT_TYPE: &str = "api_snapshot";
+const API_ENDPOINT_REQUEST_TIMEOUT_SECS: u64 = 15;
+const API_ENDPOINT_REQUEST_CONCURRENCY: usize = 8;
+const API_ENDPOINT_REQUEST_BODY_PREVIEW_LIMIT: usize = 2_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiInventoryEndpointPayload {
@@ -79,6 +87,41 @@ pub struct ApiInventoryDeleteTarget {
     pub program_id: String,
     #[serde(alias = "baseUrl")]
     pub base_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiInventoryEndpointRequestItem {
+    pub path: String,
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiInventoryEndpointRequest {
+    pub program_id: String,
+    pub base_url: String,
+    pub method: String,
+    pub endpoints: Vec<ApiInventoryEndpointRequestItem>,
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiInventoryEndpointRequestResult {
+    pub path: String,
+    pub source: Option<String>,
+    pub method: String,
+    pub url: String,
+    pub success: bool,
+    pub status: Option<u16>,
+    pub status_text: Option<String>,
+    pub duration_ms: u128,
+    pub response_bytes: usize,
+    pub response_content_type: Option<String>,
+    pub body_preview: Option<String>,
+    pub error: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -210,7 +253,6 @@ fn apply_inventory_filters(
         })
         .filter(|target| match capability.as_deref() {
             Some("changed") => has_changes(target),
-            Some("errors") => target.error_message.is_some(),
             _ => true,
         })
         .filter(|target| matches_search(target, &search))
@@ -248,6 +290,173 @@ fn build_inventory_stats(rows: &[ApiInventoryTargetSummary]) -> ApiInventoryList
         successful_targets: rows.iter().filter(|target| target.success).count(),
         failed_targets: rows.iter().filter(|target| !target.success).count(),
         changed_targets: rows.iter().filter(|target| has_changes(target)).count(),
+    }
+}
+
+fn parse_endpoint_request_method(method: &str) -> Result<Method, String> {
+    match method.trim().to_ascii_uppercase().as_str() {
+        "GET" => Ok(Method::GET),
+        "POST" => Ok(Method::POST),
+        _ => Err("API endpoint requests only support GET or POST".to_string()),
+    }
+}
+
+fn resolve_endpoint_request_url(base_url: &str, path: &str) -> Result<String, String> {
+    let base = Url::parse(base_url).map_err(|e| format!("Invalid base URL: {e}"))?;
+    base.join(path)
+        .map(|url| url.to_string())
+        .map_err(|e| format!("Invalid endpoint path: {e}"))
+}
+
+fn body_preview(bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let limit = bytes.len().min(API_ENDPOINT_REQUEST_BODY_PREVIEW_LIMIT);
+    Some(String::from_utf8_lossy(&bytes[..limit]).to_string())
+}
+
+async fn request_api_inventory_endpoint(
+    client: Client,
+    method: Method,
+    base_url: String,
+    item: ApiInventoryEndpointRequestItem,
+    body: Option<String>,
+) -> ApiInventoryEndpointRequestResult {
+    let started = Instant::now();
+    let method_label = method.as_str().to_string();
+    let url = match resolve_endpoint_request_url(&base_url, &item.path) {
+        Ok(url) => url,
+        Err(error) => {
+            return ApiInventoryEndpointRequestResult {
+                path: item.path,
+                source: item.source,
+                method: method_label,
+                url: String::new(),
+                success: false,
+                status: None,
+                status_text: None,
+                duration_ms: started.elapsed().as_millis(),
+                response_bytes: 0,
+                response_content_type: None,
+                body_preview: None,
+                error: Some(error),
+                created_at: Utc::now().to_rfc3339(),
+            };
+        }
+    };
+
+    let mut builder = client.request(method.clone(), &url);
+    if method == Method::POST {
+        builder = builder.body(body.unwrap_or_default());
+    }
+
+    match builder.send().await {
+        Ok(response) => {
+            let status = response.status();
+            let response_content_type = response
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
+            match response.bytes().await {
+                Ok(bytes) => ApiInventoryEndpointRequestResult {
+                    path: item.path,
+                    source: item.source,
+                    method: method_label,
+                    url,
+                    success: true,
+                    status: Some(status.as_u16()),
+                    status_text: status.canonical_reason().map(str::to_string),
+                    duration_ms: started.elapsed().as_millis(),
+                    response_bytes: bytes.len(),
+                    response_content_type,
+                    body_preview: body_preview(&bytes),
+                    error: None,
+                    created_at: Utc::now().to_rfc3339(),
+                },
+                Err(error) => ApiInventoryEndpointRequestResult {
+                    path: item.path,
+                    source: item.source,
+                    method: method_label,
+                    url,
+                    success: false,
+                    status: Some(status.as_u16()),
+                    status_text: status.canonical_reason().map(str::to_string),
+                    duration_ms: started.elapsed().as_millis(),
+                    response_bytes: 0,
+                    response_content_type,
+                    body_preview: None,
+                    error: Some(format!("Failed to read response body: {error}")),
+                    created_at: Utc::now().to_rfc3339(),
+                },
+            }
+        }
+        Err(error) => ApiInventoryEndpointRequestResult {
+            path: item.path,
+            source: item.source,
+            method: method_label,
+            url,
+            success: false,
+            status: None,
+            status_text: None,
+            duration_ms: started.elapsed().as_millis(),
+            response_bytes: 0,
+            response_content_type: None,
+            body_preview: None,
+            error: Some(error.to_string()),
+            created_at: Utc::now().to_rfc3339(),
+        },
+    }
+}
+
+fn request_result_to_history_row(
+    program_id: &str,
+    base_url: &str,
+    request_body: Option<&str>,
+    result: &ApiInventoryEndpointRequestResult,
+) -> ApiInventoryEndpointRequestRow {
+    ApiInventoryEndpointRequestRow {
+        id: Uuid::new_v4().to_string(),
+        program_id: program_id.to_string(),
+        base_url: base_url.to_string(),
+        endpoint_path: result.path.clone(),
+        endpoint_source: result.source.clone(),
+        method: result.method.clone(),
+        request_url: result.url.clone(),
+        success: result.success,
+        status_code: result.status.map(i32::from),
+        status_text: result.status_text.clone(),
+        duration_ms: i64::try_from(result.duration_ms).unwrap_or(i64::MAX),
+        response_bytes: i64::try_from(result.response_bytes).unwrap_or(i64::MAX),
+        response_content_type: result.response_content_type.clone(),
+        body_preview: result.body_preview.clone(),
+        error_message: result.error.clone(),
+        request_body: request_body.map(str::to_string),
+        created_at: Utc::now(),
+    }
+}
+
+fn history_row_to_request_result(
+    row: ApiInventoryEndpointRequestRow,
+) -> ApiInventoryEndpointRequestResult {
+    ApiInventoryEndpointRequestResult {
+        path: row.endpoint_path,
+        source: row.endpoint_source,
+        method: row.method,
+        url: row.request_url,
+        success: row.success,
+        status: row
+            .status_code
+            .and_then(|status| u16::try_from(status).ok()),
+        status_text: row.status_text,
+        duration_ms: row.duration_ms.max(0) as u128,
+        response_bytes: row.response_bytes.max(0) as usize,
+        response_content_type: row.response_content_type,
+        body_preview: row.body_preview,
+        error: row.error_message,
+        created_at: row.created_at.to_rfc3339(),
     }
 }
 
@@ -356,8 +565,6 @@ pub async fn bounty_list_api_inventory_targets(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<ApiInventoryListFilter>,
 ) -> Result<ApiInventoryListResponse, String> {
-    ensure_bug_bounty_access()?;
-
     let filter = filter.unwrap_or_default();
     let observations = db_service
         .list_latest_surface_observations_by_target(
@@ -395,8 +602,6 @@ pub async fn bounty_get_api_inventory_target(
     program_id: Option<String>,
     base_url: String,
 ) -> Result<Option<ApiInventoryTargetDetail>, String> {
-    ensure_bug_bounty_access()?;
-
     let observations = db_service
         .list_surface_observations_filtered(
             program_id.as_deref(),
@@ -416,6 +621,82 @@ pub async fn bounty_get_api_inventory_target(
     }
 
     Ok(None)
+}
+
+#[tauri::command]
+pub async fn bounty_request_api_inventory_endpoints(
+    db_service: State<'_, Arc<DatabaseService>>,
+    request: ApiInventoryEndpointRequest,
+) -> Result<Vec<ApiInventoryEndpointRequestResult>, String> {
+    ensure_bug_bounty_access()?;
+
+    if request.endpoints.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let method = parse_endpoint_request_method(&request.method)?;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(API_ENDPOINT_REQUEST_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+    let program_id = request.program_id;
+    let base_url = request.base_url;
+    let body = request.body;
+
+    let results: Vec<ApiInventoryEndpointRequestResult> =
+        stream::iter(request.endpoints.into_iter().map(|item| {
+            request_api_inventory_endpoint(
+                client.clone(),
+                method.clone(),
+                base_url.clone(),
+                item,
+                body.clone(),
+            )
+        }))
+        .buffer_unordered(API_ENDPOINT_REQUEST_CONCURRENCY)
+        .collect()
+        .await;
+
+    let request_body = if method == Method::POST {
+        body.as_deref()
+    } else {
+        None
+    };
+    for result in &results {
+        let row = request_result_to_history_row(&program_id, &base_url, request_body, result);
+        db_service
+            .create_api_inventory_endpoint_request(&row)
+            .await
+            .map_err(|e| format!("Failed to persist API endpoint request history: {e}"))?;
+    }
+
+    Ok(results)
+}
+
+#[tauri::command]
+pub async fn bounty_list_api_inventory_endpoint_request_history(
+    db_service: State<'_, Arc<DatabaseService>>,
+    program_id: String,
+    base_url: String,
+    method: String,
+    paths: Option<Vec<String>>,
+) -> Result<Vec<ApiInventoryEndpointRequestResult>, String> {
+    let method = parse_endpoint_request_method(&method)?;
+    let rows = db_service
+        .list_latest_api_inventory_endpoint_requests(
+            &program_id,
+            &base_url,
+            method.as_str(),
+            paths.as_deref(),
+            Some(2_000),
+        )
+        .await
+        .map_err(|e| format!("Failed to load API endpoint request history: {e}"))?;
+
+    Ok(rows
+        .into_iter()
+        .map(history_row_to_request_result)
+        .collect())
 }
 
 #[tauri::command]
@@ -445,8 +726,6 @@ pub async fn bounty_list_api_inventory_target_keys(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: Option<ApiInventoryListFilter>,
 ) -> Result<Vec<ApiInventoryDeleteTarget>, String> {
-    ensure_bug_bounty_access()?;
-
     let filter = filter.unwrap_or_default();
     let observations = db_service
         .list_latest_surface_observations_by_target(

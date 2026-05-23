@@ -58,7 +58,6 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
-import hljs from 'highlight.js'
 
 const props = defineProps<{
   content: string
@@ -78,6 +77,15 @@ const showCitationDetails = ref(false)
 const selectedCitation = ref<any>(null)
 const citationPosition = ref({ x: 0, y: 0 })
 const markdownBodyRef = ref<HTMLElement | null>(null)
+const renderTick = ref(0)
+let highlightTimer: number | null = null
+
+type HighlightApi = {
+  getLanguage: (language: string) => unknown
+  highlight: (code: string, options: { language: string }) => { value: string }
+}
+
+let highlightModule: HighlightApi | null = null
 
 // Configure marked with highlight.js for code highlighting
 const markedOptions = {
@@ -90,11 +98,38 @@ const markedOptions = {
 type CodeBlock = { code: string; lang: string }
 let codeBlocks: CodeBlock[] = []
 
+const MAX_SYNC_HIGHLIGHT_CHARS = 12000
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function normalizeCodeLanguage(lang?: string) {
+  const rawLanguage = lang?.trim() || 'plaintext'
+  if (!highlightModule) {
+    return rawLanguage
+  }
+  return highlightModule.getLanguage(rawLanguage) ? rawLanguage : 'plaintext'
+}
+
+function renderHighlightedCode(text: string, language: string) {
+  if (!highlightModule || text.length > MAX_SYNC_HIGHLIGHT_CHARS) {
+    return escapeHtml(text)
+  }
+
+  return highlightModule.highlight(text, { language }).value
+}
+
 // Custom renderer for code highlighting with action buttons
 const renderer = new marked.Renderer()
 renderer.code = ({ text, lang }: { text: string; lang?: string }) => {
-  const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
-  const highlighted = hljs.highlight(text, { language }).value
+  const language = normalizeCodeLanguage(lang)
+  const highlighted = renderHighlightedCode(text, language)
   const blockIndex = codeBlocks.length
   codeBlocks.push({ code: text, lang: language })
   
@@ -117,6 +152,7 @@ renderer.code = ({ text, lang }: { text: string; lang?: string }) => {
 }
 
 const renderedHtml = computed(() => {
+  renderTick.value
   try {
     codeBlocks = []
     let content = props.content
@@ -150,6 +186,27 @@ const renderedHtml = computed(() => {
     return props.content
   }
 })
+
+const hasHighlightableCode = computed(() =>
+  /```|<pre|<code/i.test(props.content) && props.content.length <= MAX_SYNC_HIGHLIGHT_CHARS * 2,
+)
+
+const scheduleHighlightLoad = () => {
+  if (highlightModule || !hasHighlightableCode.value) {
+    return
+  }
+
+  if (highlightTimer !== null) {
+    window.clearTimeout(highlightTimer)
+  }
+  highlightTimer = window.setTimeout(() => {
+    highlightTimer = null
+    void import('highlight.js/lib/common').then(module => {
+      highlightModule = module.default as HighlightApi
+      renderTick.value += 1
+    })
+  }, 250)
+}
 
 // Wrap tables with download button after DOM update
 const wrapTablesWithDownloadButton = () => {
@@ -190,6 +247,14 @@ watch(renderedHtml, () => {
     wrapTablesWithDownloadButton()
   })
 })
+
+watch(
+  () => props.content,
+  () => {
+    scheduleHighlightLoad()
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   nextTick(() => {

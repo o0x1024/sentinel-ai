@@ -155,6 +155,17 @@
       >
         <i class="fas fa-crosshairs text-lg sm:text-xl"></i>
       </button>
+
+      <button
+        type="button"
+        class="btn btn-ghost btn-circle btn-sm sm:btn-md tooltip tooltip-bottom"
+        :data-tip="t('common.hideNavbar', '隐藏导航栏')"
+        :title="t('common.hideNavbar', '隐藏导航栏')"
+        :aria-label="t('common.hideNavbar', '隐藏导航栏')"
+        @click="toggleNavbarVisibility"
+      >
+        <i class="fas fa-eye-slash text-lg sm:text-xl"></i>
+      </button>
     </div>
   </div>
 </template>
@@ -376,6 +387,10 @@ const availableThemes = computed(() => [
 // 方法
 const toggleSidebar = () => {
   emit('toggleSidebar')
+}
+
+const toggleNavbarVisibility = () => {
+  emit('toggleNavbarVisibility')
 }
 
 const toggleImmersiveDrillMode = () => {

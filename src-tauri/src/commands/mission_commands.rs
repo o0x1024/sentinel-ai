@@ -1,24 +1,29 @@
 use std::sync::Arc;
 
 use sentinel_core::models::mission::{
-    CreateMissionRequest, ListMissionsFilter, Mission, MissionRun, UpdateMissionFieldsRequest,
+    CreateMissionRequest, ListMissionsFilter, Mission, MissionDelivery, MissionRun,
+    MissionRuntimeDetail, UpdateMissionFieldsRequest,
 };
 use tauri::State;
 
 use crate::commands::assistant_profile_commands::load_assistant_profile_by_id_or_default;
 use crate::services::ai::AiServiceManager;
 use crate::services::database::DatabaseService;
+use crate::services::ensure_bot_console_access;
 use crate::services::mission_planner::{
     plan_mission_from_text, validate_mission_draft, MissionDraft, PlannerResult,
 };
 
 const DEFAULT_RUN_LIMIT: i64 = 50;
+const DEFAULT_RUNTIME_DETAIL_LIMIT: i64 = 50;
 
 #[tauri::command]
 pub async fn mission_create(
     request: CreateMissionRequest,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Mission, String> {
+    ensure_bot_console_access()?;
+
     if let Some(ref profile_id) = request.assistant_profile_id {
         let profile = load_assistant_profile_by_id_or_default(&db_service, Some(profile_id))
             .await?
@@ -62,6 +67,8 @@ pub async fn mission_update_fields(
     request: UpdateMissionFieldsRequest,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Mission, String> {
+    ensure_bot_console_access()?;
+
     if let Some(ref profile_id) = request.assistant_profile_id {
         let profile = load_assistant_profile_by_id_or_default(&db_service, Some(profile_id))
             .await?
@@ -82,6 +89,8 @@ pub async fn mission_pause(
     id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Mission, String> {
+    ensure_bot_console_access()?;
+
     db_service
         .update_mission_status(&id, "paused")
         .await
@@ -93,6 +102,8 @@ pub async fn mission_resume(
     id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Mission, String> {
+    ensure_bot_console_access()?;
+
     db_service
         .update_mission_status(&id, "active")
         .await
@@ -104,6 +115,8 @@ pub async fn mission_archive(
     id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Mission, String> {
+    ensure_bot_console_access()?;
+
     db_service
         .update_mission_status(&id, "archived")
         .await
@@ -115,6 +128,8 @@ pub async fn mission_activate(
     id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Mission, String> {
+    ensure_bot_console_access()?;
+
     db_service
         .update_mission_status(&id, "active")
         .await
@@ -126,6 +141,8 @@ pub async fn mission_delete(
     id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
+    ensure_bot_console_access()?;
+
     db_service
         .delete_mission(&id)
         .await
@@ -137,6 +154,8 @@ pub async fn mission_run_now(
     id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<MissionRun, String> {
+    ensure_bot_console_access()?;
+
     let mission = db_service
         .get_mission(&id)
         .await
@@ -185,6 +204,35 @@ pub async fn mission_get_run(
         .map_err(|e| format!("Failed to get mission run: {e}"))
 }
 
+#[tauri::command]
+pub async fn mission_get_runtime_detail(
+    mission_id: String,
+    run_id: Option<String>,
+    limit: Option<i64>,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<MissionRuntimeDetail, String> {
+    db_service
+        .get_mission_runtime_detail(
+            &mission_id,
+            run_id.as_deref(),
+            limit.unwrap_or(DEFAULT_RUNTIME_DETAIL_LIMIT),
+        )
+        .await
+        .map_err(|e| format!("Failed to get mission runtime detail: {e}"))
+}
+
+#[tauri::command]
+pub async fn mission_list_deliveries(
+    mission_id: String,
+    run_id: Option<String>,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<MissionDelivery>, String> {
+    db_service
+        .list_mission_deliveries(&mission_id, run_id.as_deref())
+        .await
+        .map_err(|e| format!("Failed to list mission deliveries: {e}"))
+}
+
 /// Load the assistant profile and serialize a snapshot for the mission run.
 async fn build_profile_snapshot(
     db_service: &DatabaseService,
@@ -222,6 +270,8 @@ pub async fn mission_plan_from_text(
     text: String,
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<PlannerResult, String> {
+    ensure_bot_console_access()?;
+
     plan_mission_from_text(&ai_manager, &text).await
 }
 

@@ -77,6 +77,20 @@ export const buildConversationTimeline = (
     }
 
     if (row.role === 'system') {
+      if (parsedMetadata?.kind === 'thinking_segment') {
+        timeline.push({
+          id: row.id,
+          type: 'thinking',
+          content: row.content || '',
+          timestamp: ts,
+          metadata: {
+            ...parsedMetadata,
+            status: 'complete',
+          },
+        })
+        return
+      }
+
       if (parsedMetadata?.kind === 'agent_task_update') {
         return
       }
@@ -172,13 +186,26 @@ export const buildConversationTimeline = (
       }
     }
 
-    if (row.role === 'assistant' && reasoningContent) {
+    const hasPersistedThinkingSegmentForAssistant = timeline.some(message => {
+      if (message.type !== 'thinking') return false
+      if (message.metadata?.kind !== 'thinking_segment') return false
+      if (!parsedMetadata?.execution_id) return false
+      if (message.metadata?.execution_id !== parsedMetadata.execution_id) return false
+      const messageGeneration = Number((message.metadata as any)?.generation)
+      const assistantGeneration = Number(parsedMetadata?.generation)
+      return !Number.isFinite(assistantGeneration) || messageGeneration === assistantGeneration
+    })
+
+    if (row.role === 'assistant' && reasoningContent && !hasPersistedThinkingSegmentForAssistant) {
       timeline.push({
         id: `thinking:${row.id}`,
         type: 'thinking',
         content: reasoningContent,
         timestamp: ts,
-        metadata: parsedMetadata,
+        metadata: {
+          ...(parsedMetadata || {}),
+          status: 'complete',
+        },
       })
     }
 

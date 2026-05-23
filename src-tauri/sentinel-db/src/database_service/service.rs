@@ -1171,6 +1171,25 @@ impl DatabaseService {
                 request_body_compressed BOOLEAN NOT NULL DEFAULT FALSE,
                 response_body_compressed BOOLEAN NOT NULL DEFAULT FALSE
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS api_inventory_endpoint_requests (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                endpoint_path TEXT NOT NULL,
+                endpoint_source TEXT,
+                method TEXT NOT NULL,
+                request_url TEXT NOT NULL,
+                success BOOLEAN NOT NULL,
+                status_code INTEGER,
+                status_text TEXT,
+                duration_ms BIGINT NOT NULL DEFAULT 0,
+                response_bytes BIGINT NOT NULL DEFAULT 0,
+                response_content_type TEXT,
+                body_preview TEXT,
+                error_message TEXT,
+                request_body TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#,
             r#"CREATE TABLE IF NOT EXISTS mcp_server_configs (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -1512,6 +1531,8 @@ impl DatabaseService {
         self.ensure_runtime_bounty_asset_domain_schema(runtime)
             .await?;
         self.ensure_runtime_proxy_request_schema(runtime).await?;
+        self.ensure_runtime_api_inventory_endpoint_request_schema(runtime)
+            .await?;
         self.ensure_runtime_traffic_vulnerability_view_schema(runtime)
             .await?;
         self.execute_runtime_ddl(
@@ -1647,6 +1668,53 @@ impl DatabaseService {
         self.execute_runtime_ddl(
             runtime,
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_source_draft_revision_id ON proxy_requests(source_draft_revision_id)",
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn ensure_runtime_api_inventory_endpoint_request_schema(
+        &self,
+        runtime: &DatabasePool,
+    ) -> Result<()> {
+        let existing_columns = self
+            .runtime_table_columns(runtime, "api_inventory_endpoint_requests")
+            .await?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if existing_columns.is_empty() {
+            return Ok(());
+        }
+
+        let required_columns = [
+            ("program_id", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN program_id TEXT NOT NULL DEFAULT ''"),
+            ("base_url", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN base_url TEXT NOT NULL DEFAULT ''"),
+            ("endpoint_path", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN endpoint_path TEXT NOT NULL DEFAULT ''"),
+            ("endpoint_source", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN endpoint_source TEXT"),
+            ("method", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN method TEXT NOT NULL DEFAULT 'GET'"),
+            ("request_url", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN request_url TEXT NOT NULL DEFAULT ''"),
+            ("success", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN success BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("status_code", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN status_code INTEGER"),
+            ("status_text", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN status_text TEXT"),
+            ("duration_ms", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN duration_ms BIGINT NOT NULL DEFAULT 0"),
+            ("response_bytes", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN response_bytes BIGINT NOT NULL DEFAULT 0"),
+            ("response_content_type", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN response_content_type TEXT"),
+            ("body_preview", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN body_preview TEXT"),
+            ("error_message", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN error_message TEXT"),
+            ("request_body", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN request_body TEXT"),
+            ("created_at", "ALTER TABLE api_inventory_endpoint_requests ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+        ];
+        for (column, ddl) in required_columns {
+            if existing_columns.contains(column) {
+                continue;
+            }
+            self.execute_runtime_ddl(runtime, ddl).await?;
+        }
+
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_api_inventory_endpoint_requests_lookup ON api_inventory_endpoint_requests(program_id, base_url, method, endpoint_path, created_at DESC, id DESC)",
         )
         .await?;
 

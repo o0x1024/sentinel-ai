@@ -11,6 +11,7 @@ export interface Mission {
   delivery_policy_json: string | null
   assistant_profile_id: string | null
   trigger_json: string | null
+  mission_spec_json: string | null
   step_plan_json: string | null
   success_criteria_json: string | null
   context_strategy_json: string | null
@@ -45,6 +46,85 @@ export interface MissionRun {
   updated_at: string
 }
 
+export interface MissionStateSnapshot {
+  id: string
+  mission_id: string
+  run_id: string | null
+  snapshot_index: number
+  state_json: string
+  state_hash: string
+  created_at: string
+}
+
+export interface MissionObservation {
+  id: string
+  mission_id: string
+  run_id: string
+  step_id: string | null
+  observation_type: string
+  severity: string
+  title: string
+  summary: string | null
+  data_json: string | null
+  artifact_ids_json: string | null
+  created_at: string
+}
+
+export interface MissionEvent {
+  id: string
+  mission_id: string
+  run_id: string | null
+  event_type: string
+  title: string
+  payload_json: string | null
+  created_at: string
+}
+
+export interface MissionAction {
+  id: string
+  mission_id: string
+  run_id: string
+  action_type: string
+  status: string
+  input_json: string | null
+  result_json: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MissionActionResult {
+  id: string
+  action_id: string
+  mission_id: string
+  run_id: string
+  status: string
+  result_json: string | null
+  error_message: string | null
+  created_at: string
+}
+
+export interface MissionDelivery {
+  id: string
+  mission_id: string
+  run_id: string
+  target_json: string
+  status: string
+  message_id: string | null
+  payload_json: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MissionRuntimeDetail {
+  latest_state: MissionStateSnapshot | null
+  observations: MissionObservation[]
+  events: MissionEvent[]
+  actions: MissionAction[]
+  action_results: MissionActionResult[]
+}
+
 export interface CreateMissionRequest {
   title: string
   objective: string
@@ -54,6 +134,7 @@ export interface CreateMissionRequest {
   deliveryPolicyJson?: string | null
   assistantProfileId?: string | null
   triggerJson?: string | null
+  missionSpecJson?: string | null
   stepPlanJson?: string | null
   successCriteriaJson?: string | null
   contextStrategyJson?: string | null
@@ -68,6 +149,7 @@ export interface UpdateMissionFieldsRequest {
   title?: string | null
   objective?: string | null
   triggerJson?: string | null
+  missionSpecJson?: string | null
   deliveryPolicyJson?: string | null
   assistantProfileId?: string | null
   stepPlanJson?: string | null
@@ -143,4 +225,26 @@ export async function listMissionRuns(
 
 export async function getMissionRun(runId: string): Promise<MissionRun | null> {
   return await invoke<MissionRun | null>('mission_get_run', { runId })
+}
+
+export async function getMissionRuntimeDetail(
+  missionId: string,
+  runId?: string | null,
+  limit?: number,
+): Promise<MissionRuntimeDetail> {
+  return await invoke<MissionRuntimeDetail>('mission_get_runtime_detail', {
+    missionId,
+    runId: runId ?? null,
+    limit: limit ?? null,
+  })
+}
+
+export async function listMissionDeliveries(
+  missionId: string,
+  runId?: string | null,
+): Promise<MissionDelivery[]> {
+  return await invoke<MissionDelivery[]>('mission_list_deliveries', {
+    missionId,
+    runId: runId ?? null,
+  })
 }

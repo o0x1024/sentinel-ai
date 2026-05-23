@@ -15,7 +15,7 @@ path = "src/bin/entitlement_server.rs"
 [dependencies]
 # Ed25519 signature
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
-rand = "0.8"
+rand = { workspace = true }
 
 # Hash
 sha2 = "0.10"

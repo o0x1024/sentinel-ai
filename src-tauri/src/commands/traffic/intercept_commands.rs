@@ -2,37 +2,10 @@ use tauri::{AppHandle, State};
 
 use super::{InterceptedRequest, InterceptedResponse, TrafficAnalysisState};
 use crate::commands::command_response_support::CommandResponse;
-use sentinel_traffic::InterceptAction;
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct InterceptFilterRule {
-    pub id: String,
-    pub rule_type: String,
-    pub match_type: String,
-    pub relationship: String,
-    pub condition: String,
-    pub action: String,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct InterceptFilterRules {
-    pub rules: Vec<InterceptFilterRule>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RuntimeInterceptRule {
-    pub enabled: bool,
-    pub operator: String,
-    pub match_type: String,
-    pub relationship: String,
-    pub condition: String,
-}
+use sentinel_traffic::{
+    InterceptAction, InterceptRuleConfig, InterceptRuleConfigSet, RuntimeInterceptRule,
+    INTERCEPT_FILTER_RULES_CONFIG_KEY,
+};
 
 #[tauri::command]
 pub async fn set_intercept_enabled(
@@ -319,30 +292,25 @@ pub async fn drop_intercepted_websocket(
 #[tauri::command]
 pub async fn add_intercept_filter_rule(
     state: State<'_, TrafficAnalysisState>,
-    rule: InterceptFilterRule,
-) -> Result<CommandResponse<InterceptFilterRule>, String> {
+    rule: InterceptRuleConfig,
+) -> Result<CommandResponse<InterceptRuleConfig>, String> {
     tracing::info!("Adding intercept filter rule: {:?}", rule);
 
     let db = state.get_db_service();
-    let mut rules = match db.load_proxy_config("intercept_filter_rules").await {
-        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
-        _ => InterceptFilterRules::default(),
+    let mut rules = match db
+        .load_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY)
+        .await
+    {
+        Ok(Some(json)) => serde_json::from_str::<InterceptRuleConfigSet>(&json).unwrap_or_default(),
+        _ => InterceptRuleConfigSet::default(),
     };
 
-    let new_rule = InterceptFilterRule {
-        id: uuid::Uuid::new_v4().to_string(),
-        rule_type: rule.rule_type,
-        match_type: rule.match_type,
-        relationship: rule.relationship,
-        condition: rule.condition,
-        action: rule.action,
-        enabled: rule.enabled,
-    };
+    let new_rule = rule.with_new_id();
 
     rules.rules.push(new_rule.clone());
 
     let json = serde_json::to_string(&rules).map_err(|e| format!("Serialization error: {}", e))?;
-    db.save_proxy_config("intercept_filter_rules", &json)
+    db.save_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY, &json)
         .await
         .map_err(|e| format!("Failed to save rules: {}", e))?;
 
@@ -353,12 +321,15 @@ pub async fn add_intercept_filter_rule(
 #[tauri::command]
 pub async fn get_intercept_filter_rules(
     state: State<'_, TrafficAnalysisState>,
-) -> Result<CommandResponse<Vec<InterceptFilterRule>>, String> {
+) -> Result<CommandResponse<Vec<InterceptRuleConfig>>, String> {
     let db = state.get_db_service();
 
-    let rules = match db.load_proxy_config("intercept_filter_rules").await {
+    let rules = match db
+        .load_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY)
+        .await
+    {
         Ok(Some(json)) => {
-            serde_json::from_str::<InterceptFilterRules>(&json)
+            serde_json::from_str::<InterceptRuleConfigSet>(&json)
                 .unwrap_or_default()
                 .rules
         }
@@ -376,15 +347,18 @@ pub async fn remove_intercept_filter_rule(
     tracing::info!("Removing intercept filter rule: {}", rule_id);
 
     let db = state.get_db_service();
-    let mut rules = match db.load_proxy_config("intercept_filter_rules").await {
-        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
-        _ => InterceptFilterRules::default(),
+    let mut rules = match db
+        .load_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY)
+        .await
+    {
+        Ok(Some(json)) => serde_json::from_str::<InterceptRuleConfigSet>(&json).unwrap_or_default(),
+        _ => InterceptRuleConfigSet::default(),
     };
 
     rules.rules.retain(|r| r.id != rule_id);
 
     let json = serde_json::to_string(&rules).map_err(|e| format!("Serialization error: {}", e))?;
-    db.save_proxy_config("intercept_filter_rules", &json)
+    db.save_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY, &json)
         .await
         .map_err(|e| format!("Failed to save rules: {}", e))?;
 
@@ -395,14 +369,17 @@ pub async fn remove_intercept_filter_rule(
 #[tauri::command]
 pub async fn update_intercept_filter_rule(
     state: State<'_, TrafficAnalysisState>,
-    rule: InterceptFilterRule,
+    rule: InterceptRuleConfig,
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Updating intercept filter rule: {:?}", rule);
 
     let db = state.get_db_service();
-    let mut rules = match db.load_proxy_config("intercept_filter_rules").await {
-        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
-        _ => InterceptFilterRules::default(),
+    let mut rules = match db
+        .load_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY)
+        .await
+    {
+        Ok(Some(json)) => serde_json::from_str::<InterceptRuleConfigSet>(&json).unwrap_or_default(),
+        _ => InterceptRuleConfigSet::default(),
     };
 
     if let Some(existing) = rules.rules.iter_mut().find(|r| r.id == rule.id) {
@@ -412,7 +389,7 @@ pub async fn update_intercept_filter_rule(
     }
 
     let json = serde_json::to_string(&rules).map_err(|e| format!("Serialization error: {}", e))?;
-    db.save_proxy_config("intercept_filter_rules", &json)
+    db.save_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY, &json)
         .await
         .map_err(|e| format!("Failed to save rules: {}", e))?;
 
@@ -432,16 +409,8 @@ pub async fn update_runtime_filter_rules(
         rules.len()
     );
 
-    let traffic_rules: Vec<sentinel_traffic::InterceptFilterRule> = rules
-        .iter()
-        .map(|r| sentinel_traffic::InterceptFilterRule {
-            enabled: r.enabled,
-            operator: r.operator.clone(),
-            match_type: r.match_type.clone(),
-            relationship: r.relationship.clone(),
-            condition: r.condition.clone(),
-        })
-        .collect();
+    let traffic_rules: Vec<sentinel_traffic::InterceptFilterRule> =
+        rules.iter().map(Into::into).collect();
 
     if rule_type == "request" {
         let mut guard = state.request_filter_rules.write().await;
@@ -459,28 +428,19 @@ pub async fn update_runtime_filter_rules(
     }
 
     let db = state.get_db_service();
-    let mut all_rules = match db.load_proxy_config("intercept_filter_rules").await {
-        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
-        _ => InterceptFilterRules::default(),
+    let mut all_rules = match db
+        .load_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY)
+        .await
+    {
+        Ok(Some(json)) => serde_json::from_str::<InterceptRuleConfigSet>(&json).unwrap_or_default(),
+        _ => InterceptRuleConfigSet::default(),
     };
 
-    all_rules.rules.retain(|r| r.rule_type != rule_type);
-
-    for rule in &rules {
-        all_rules.rules.push(InterceptFilterRule {
-            id: uuid::Uuid::new_v4().to_string(),
-            rule_type: rule_type.clone(),
-            match_type: rule.match_type.clone(),
-            relationship: rule.relationship.clone(),
-            condition: rule.condition.clone(),
-            action: "exclude".to_string(),
-            enabled: rule.enabled,
-        });
-    }
+    all_rules.replace_runtime_rules(&rule_type, &rules);
 
     let json = serde_json::to_string(&all_rules)
         .map_err(|e| format!("Failed to serialize rules: {}", e))?;
-    db.save_proxy_config("intercept_filter_rules", &json)
+    db.save_proxy_config(INTERCEPT_FILTER_RULES_CONFIG_KEY, &json)
         .await
         .map_err(|e| format!("Failed to persist rules: {}", e))?;
 

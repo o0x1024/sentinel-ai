@@ -8,6 +8,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use super::surface_scope_sync_support::{create_missing_in_scope_domains, infer_root_domain};
+use crate::services::ensure_bug_bounty_access;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SurfaceAssetUpdateRequest {
@@ -209,6 +210,8 @@ pub async fn surface_update_asset(
     asset_id: String,
     request: SurfaceAssetUpdateRequest,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     let SurfaceAssetUpdateRequest {
         display_name,
         description,
@@ -286,6 +289,8 @@ pub async fn surface_manual_import_assets(
     db_service: State<'_, Arc<DatabaseService>>,
     request: SurfaceAssetManualImportRequest,
 ) -> Result<SurfaceAssetManualImportResult, String> {
+    ensure_bug_bounty_access()?;
+
     let program_id = request.program_id.trim();
     if program_id.is_empty() {
         return Err("Program is required".to_string());
@@ -420,6 +425,8 @@ pub async fn surface_delete_asset(
     db_service: State<'_, Arc<DatabaseService>>,
     asset_id: String,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .delete_surface_assets_by_ids(&[asset_id])
         .await
@@ -432,6 +439,8 @@ pub async fn surface_batch_delete_assets(
     db_service: State<'_, Arc<DatabaseService>>,
     asset_ids: Vec<String>,
 ) -> Result<usize, String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .delete_surface_assets_by_ids(&asset_ids)
         .await
@@ -443,6 +452,8 @@ pub async fn surface_delete_inventory(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: SurfaceAssetFilter,
 ) -> Result<usize, String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .delete_surface_inventory(&filter)
         .await
@@ -454,6 +465,8 @@ pub async fn surface_mark_asset_viewed(
     db_service: State<'_, Arc<DatabaseService>>,
     asset_id: String,
 ) -> Result<usize, String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .mark_surface_assets_viewed(&[asset_id], &Utc::now().to_rfc3339(), "surface_inventory")
         .await
@@ -465,6 +478,8 @@ pub async fn surface_batch_mark_assets_viewed(
     db_service: State<'_, Arc<DatabaseService>>,
     asset_ids: Vec<String>,
 ) -> Result<usize, String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .mark_surface_assets_viewed(&asset_ids, &Utc::now().to_rfc3339(), "surface_inventory")
         .await
@@ -476,6 +491,8 @@ pub async fn surface_mark_inventory_viewed(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: SurfaceAssetFilter,
 ) -> Result<usize, String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .mark_surface_inventory_viewed(&filter, &Utc::now().to_rfc3339(), "surface_inventory")
         .await
@@ -488,6 +505,8 @@ pub async fn surface_set_asset_favorite(
     asset_id: String,
     is_favorite: bool,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     db_service
         .set_surface_asset_favorite(
             &asset_id,

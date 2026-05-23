@@ -11,8 +11,8 @@ use crate::buildin_tools::OcrTool;
 use crate::buildin_tools::{
     AskUserQuestionTool, BrowserShellTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
     GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, MissionSchedulerTool,
-    PluginAuthoringTool, RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool,
-    TenthManTool, ToolSearchArgs, ToolSearchOutput, ToolSearchTool, WebSearchTool,
+    RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool, TenthManTool, ToolSearchArgs,
+    ToolSearchOutput, ToolSearchTool, WebSearchTool,
 };
 #[cfg(feature = "plugins")]
 use crate::buildin_tools::{PortScanTool, SubdomainBruteTool};
@@ -23,6 +23,7 @@ use crate::dynamic_tool::{
     ToolExecutor, ToolExposure, ToolRegistry, ToolSource,
 };
 use crate::tool_search_runtime::run_tool_search;
+use crate::tool_server_knowledge::register_knowledge_extension_tools;
 
 static TOOL_SERVER: Lazy<Arc<ToolServer>> = Lazy::new(|| Arc::new(ToolServer::new()));
 static TAVILY_API_KEY: Lazy<Arc<RwLock<Option<String>>>> =
@@ -1247,54 +1248,7 @@ impl ToolServer {
 
         self.registry.register(mission_scheduler_def).await;
 
-        let plugin_authoring_def = DynamicToolBuilder::new(PluginAuthoringTool::NAME.to_string())
-            .description(PluginAuthoringTool::DESCRIPTION.to_string())
-            .input_schema(
-                serde_json::to_value(schemars::schema_for!(
-                    crate::buildin_tools::plugin_authoring::PluginAuthoringArgs
-                ))
-                .unwrap_or_default(),
-            )
-            .source(ToolSource::Builtin)
-            .category(ToolCategory::KnowledgeExtension)
-            .tags(vec![
-                "plugin".to_string(),
-                "authoring".to_string(),
-                "generate".to_string(),
-                "draft".to_string(),
-                "enable".to_string(),
-            ])
-            .search_hint("generate, validate, test, save draft, or enable a Sentinel plugin")
-            .exposure(ToolExposure::Standard)
-            .execution_policy(ToolExecutionPolicy {
-                read_only: false,
-                mutating: true,
-                concurrency_safe: false,
-                requires_permission: false,
-                supports_background: false,
-            })
-            .executor(|args| async move {
-                use crate::buildin_tools::plugin_authoring::{
-                    PluginAuthoringArgs, PluginAuthoringTool,
-                };
-                use rig::tool::Tool;
-
-                let tool_args: PluginAuthoringArgs = serde_json::from_value(args)
-                    .map_err(|error| format!("Invalid arguments: {error}"))?;
-
-                let tool = PluginAuthoringTool;
-                let result = tool
-                    .call(tool_args)
-                    .await
-                    .map_err(|error| format!("Plugin authoring failed: {error}"))?;
-
-                serde_json::to_value(result)
-                    .map_err(|error| format!("Failed to serialize result: {error}"))
-            })
-            .build()
-            .expect("Failed to build plugin_authoring tool");
-
-        self.registry.register(plugin_authoring_def).await;
+        register_knowledge_extension_tools(&self.registry).await;
 
         // Register web_search tool
         let web_search_def = DynamicToolBuilder::new(WebSearchTool::NAME.to_string())

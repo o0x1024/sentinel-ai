@@ -10,7 +10,9 @@ import {
   mergeTrafficPluginRuntimeSettings,
   normalizeTrafficPluginRuntimeSettings,
   resetTrafficPluginRuntimePoliciesToDefaults,
+  updateTrafficPluginRuntimePolicySettings,
   type TrafficPluginRuntimePolicyId,
+  type TrafficPluginRuntimePolicySettings,
   type TrafficPluginRuntimePreset,
 } from './pluginRuntimeSettingsSupport'
 
@@ -96,6 +98,17 @@ export function useTrafficPluginRuntimeSettings() {
     )
   }
 
+  const updateTrafficPluginRuntimePolicy = (
+    policyId: TrafficPluginRuntimePolicyId,
+    policy: TrafficPluginRuntimePolicySettings
+  ) => {
+    trafficPluginRuntimeSettings.value = updateTrafficPluginRuntimePolicySettings(
+      trafficPluginRuntimeSettings.value,
+      policyId,
+      policy
+    )
+  }
+
   return {
     trafficPluginRuntimeSettings,
     isSavingTrafficPluginRuntimeSettings,
@@ -105,5 +118,6 @@ export function useTrafficPluginRuntimeSettings() {
     resetTrafficPluginRuntimePoliciesDraft,
     resetTrafficPluginRuntimePolicies,
     applyTrafficPluginRuntimePreset,
+    updateTrafficPluginRuntimePolicy,
   }
 }

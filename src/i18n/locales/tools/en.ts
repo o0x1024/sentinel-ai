@@ -17,6 +17,8 @@ export default {
   skillsInstallHistory: 'Install History',
   skillsInstallHistoryEmpty: 'No install history yet.',
   skillsInstallSelect: 'Select Skills to Install',
+  skillsInstallSelectAll: 'Select all',
+  skillsInstallSelectedCount: '{selected} / {total} selected',
   skillsInstallNoCandidates: 'No skills found in source.',
   skillsInstallConfirm: 'Install',
   skillsGitUrl: 'Git URL',

@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 
+use crate::services::ensure_bug_bounty_access;
+
 const SURFACE_EXPORT_BATCH_SIZE: i64 = 1_000;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -208,6 +210,8 @@ pub async fn surface_export_inventory(
     db_service: State<'_, Arc<DatabaseService>>,
     request: SurfaceInventoryExportRequest,
 ) -> Result<SurfaceInventoryExportResponse, String> {
+    ensure_bug_bounty_access()?;
+
     let export_type = normalize_export_type(request.export_type.as_str()).to_string();
     let export_format = normalize_export_format(request.format.as_str()).to_string();
     let mut filter = request.filter.clone();

@@ -439,7 +439,7 @@
                       </span>
                       <span v-if="item.projection_issue" class="badge badge-warning badge-sm">issue</span>
                     </div>
-                    <div v-if="item.projection?.last_error" class="text-[11px] text-warning break-all">
+                    <div v-if="item.projection?.last_error" :class="memoryProjectionMessageClass(item)">
                       {{ item.projection.last_error }}
                     </div>
                   </td>
@@ -858,6 +858,12 @@ function projectionBadgeClass(ok: boolean | undefined) {
   return ok === true
     ? 'badge badge-success badge-sm'
     : 'badge badge-warning badge-sm'
+}
+
+function memoryProjectionMessageClass(item: DurableMemoryDiagnosticsItem) {
+  return item.projection_issue
+    ? 'text-[11px] text-warning break-all'
+    : 'text-[11px] text-base-content/50 break-all'
 }
 
 function formatTimestamp(timestamp: number) {

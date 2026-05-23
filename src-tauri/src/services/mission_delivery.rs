@@ -173,6 +173,9 @@ async fn deliver_to_bot(
             account_id, config.account_id
         ));
     }
+    let context_token =
+        resolve_weixin_delivery_context_token(db, transport, account_id, peer_type, peer_id)
+            .await?;
 
     let text = format_bot_delivery_text(payload);
     crate::services::weixin_gateway::runtime::deliver_weixin_text(
@@ -183,11 +186,41 @@ async fn deliver_to_bot(
         peer_type,
         peer_id,
         &text,
+        Some(&context_token),
         run.bot_execution_run_id
             .as_deref()
             .or(run.agent_execution_id.as_deref()),
     )
     .await
+    .map_err(|e| {
+        format!(
+            "{e}; delivery_context={{transport:{transport}, account_id:{account_id}, peer_type:{peer_type}, peer_id:{peer_id}, has_context_token:true}}"
+        )
+    })
+}
+
+async fn resolve_weixin_delivery_context_token(
+    db: &Arc<DatabaseService>,
+    transport: &str,
+    account_id: &str,
+    peer_type: &str,
+    peer_id: &str,
+) -> Result<String, String> {
+    let messages = db
+        .list_bot_messages_for_peer(transport, account_id, peer_type, peer_id, 50)
+        .await
+        .map_err(|e| format!("Failed to load bot context token: {e}"))?;
+
+    messages
+        .into_iter()
+        .filter_map(|message| message.context_token)
+        .map(|token| token.trim().to_string())
+        .find(|token| !token.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "Weixin bot delivery missing context_token; delivery_context={{transport:{transport}, account_id:{account_id}, peer_type:{peer_type}, peer_id:{peer_id}, has_context_token:false}}"
+            )
+        })
 }
 
 async fn load_weixin_config(

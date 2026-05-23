@@ -148,25 +148,42 @@
           <div v-if="installCandidates.length === 0" class="text-sm text-base-content/60">
             {{ $t('Tools.skillsInstallNoCandidates') }}
           </div>
-          <div v-else class="space-y-2 max-h-64 overflow-y-auto">
-            <label v-for="skill in installCandidates" :key="skill.id" class="flex items-start gap-2 p-2 rounded hover:bg-base-200 cursor-pointer">
-              <input
-                type="checkbox"
-                class="checkbox checkbox-sm checkbox-primary mt-1"
-                v-model="selectedInstallSkills"
-                :value="skill.id"
-              />
-              <div class="min-w-0">
-                <div class="font-medium">{{ skill.name }}</div>
-                <div class="text-xs text-base-content/60">{{ skill.description }}</div>
-                <div class="text-xs font-mono text-base-content/50">{{ skill.id }}</div>
-              </div>
-            </label>
+          <div v-else>
+            <div class="flex items-center justify-between gap-3 mb-2 px-2 py-1.5 rounded border border-base-300 bg-base-200/50">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm checkbox-primary"
+                  :checked="allInstallSkillsSelected"
+                  :indeterminate="installSkillsPartiallySelected"
+                  @change="toggleAllInstallSkills"
+                />
+                <span class="text-sm font-medium">{{ $t('Tools.skillsInstallSelectAll') }}</span>
+              </label>
+              <span class="text-xs text-base-content/60">
+                {{ $t('Tools.skillsInstallSelectedCount', { selected: selectedInstallCandidateCount, total: installCandidates.length }) }}
+              </span>
+            </div>
+            <div class="space-y-2 max-h-64 overflow-y-auto">
+              <label v-for="skill in installCandidates" :key="skill.id" class="flex items-start gap-2 p-2 rounded hover:bg-base-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm checkbox-primary mt-1"
+                  v-model="selectedInstallSkills"
+                  :value="skill.id"
+                />
+                <div class="min-w-0">
+                  <div class="font-medium">{{ skill.name }}</div>
+                  <div class="text-xs text-base-content/60">{{ skill.description }}</div>
+                  <div class="text-xs font-mono text-base-content/50">{{ skill.id }}</div>
+                </div>
+              </label>
+            </div>
           </div>
         </div>
         <div class="modal-action">
           <button @click="closeInstallModal" class="btn">{{ $t('common.cancel') }}</button>
-          <button @click="installSelected" class="btn btn-primary" :disabled="installCandidates.length > 1 && selectedInstallSkills.length === 0">
+          <button @click="installSelected" class="btn btn-primary" :disabled="installCandidates.length === 0 || (installCandidates.length > 1 && selectedInstallCandidateCount === 0)">
             {{ $t('Tools.skillsInstallConfirm') }}
           </button>
         </div>
@@ -197,7 +214,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -221,9 +238,28 @@ const historyLoading = ref(false)
 const showInstallHistory = ref(false)
 const historyLoaded = ref(false)
 const skillsEnabled = ref(true)
-const skillsViewMode = ref<'card' | 'list'>('card')
+const skillsViewMode = ref<'card' | 'list'>('list')
 const isDragOver = ref(false)
 let unlistenDragDrop: UnlistenFn | null = null
+
+const installCandidateIds = computed(() => installCandidates.value.map((skill) => skill.id))
+
+const selectedInstallCandidateCount = computed(() => {
+  const selectedIds = new Set(selectedInstallSkills.value)
+  return installCandidateIds.value.filter((id) => selectedIds.has(id)).length
+})
+
+const allInstallSkillsSelected = computed(() => {
+  return installCandidateIds.value.length > 0 && selectedInstallCandidateCount.value === installCandidateIds.value.length
+})
+
+const installSkillsPartiallySelected = computed(() => {
+  return selectedInstallCandidateCount.value > 0 && !allInstallSkillsSelected.value
+})
+
+const toggleAllInstallSkills = () => {
+  selectedInstallSkills.value = allInstallSkillsSelected.value ? [] : [...installCandidateIds.value]
+}
 
 const refresh = () => {
   skillsManagerRef.value?.refresh?.()

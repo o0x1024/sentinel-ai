@@ -7,6 +7,11 @@
       </div>
     </div>
 
+    <div v-if="!isBugBountyActivated" class="alert alert-warning flex-shrink-0">
+      <i class="fas fa-lock"></i>
+      <span>当前未完成服务端激活，漏洞赏金可预览数据和界面，创建、导入、删除、监控执行等操作会被限制。</span>
+    </div>
+
     <!-- Statistics Cards -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 flex-shrink-0">
       <div class="stat bg-base-200 rounded-lg">
@@ -113,7 +118,7 @@
 
     <!-- Tab Content -->
     <div class="flex-1 min-h-0">
-      <div v-if="mountedTabs.programs" v-show="activeTab === 'programs'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('programs')" v-show="activeTab === 'programs'" class="h-full overflow-auto">
         <ProgramsPanel
           :programs="programs"
           :loading="loading"
@@ -125,7 +130,7 @@
         />
       </div>
 
-      <div v-if="mountedTabs.assets" v-show="activeTab === 'assets'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('assets')" v-show="activeTab === 'assets'" class="h-full overflow-auto">
         <AssetsPanelV2
           ref="assetsPanelRef"
           :program-id="selectedProgram?.id"
@@ -134,14 +139,14 @@
         />
       </div>
 
-      <div v-if="mountedTabs['api-inventory']" v-show="activeTab === 'api-inventory'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('api-inventory')" v-show="activeTab === 'api-inventory'" class="h-full overflow-auto">
         <ApiInventoryPanel
           :selected-program="selectedProgram"
           :programs="programs"
         />
       </div>
 
-      <div v-if="mountedTabs.findings" v-show="activeTab === 'findings'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('findings')" v-show="activeTab === 'findings'" class="h-full overflow-auto">
         <FindingsPanel
           :findings="findings"
           :programs="programs"
@@ -168,14 +173,14 @@
         />
       </div>
 
-      <div v-if="mountedTabs.knowledge" v-show="activeTab === 'knowledge'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('knowledge')" v-show="activeTab === 'knowledge'" class="h-full overflow-auto">
         <KnowledgeBasePanel
           :programs="programs"
           :selected-program="selectedProgram"
         />
       </div>
 
-      <div v-if="mountedTabs.submissions" v-show="activeTab === 'submissions'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('submissions')" v-show="activeTab === 'submissions'" class="h-full overflow-auto">
         <SubmissionsPanel
           :submissions="submissions"
           :loading="loadingSubmissions"
@@ -196,7 +201,7 @@
         />
       </div>
 
-      <div v-if="mountedTabs.statistics" v-show="activeTab === 'statistics'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('statistics')" v-show="activeTab === 'statistics'" class="h-full overflow-auto">
         <StatisticsPanel
           :finding-stats="findingStats"
           :submission-stats="submissionStats"
@@ -206,7 +211,7 @@
         />
       </div>
 
-      <div v-if="mountedTabs['import-export']" v-show="activeTab === 'import-export'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('import-export')" v-show="activeTab === 'import-export'" class="h-full overflow-auto">
         <ImportExportPanel
           :programs="programs"
           :findings="findings"
@@ -215,13 +220,13 @@
         />
       </div>
 
-      <div v-if="mountedTabs.templates" v-show="activeTab === 'templates'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('templates')" v-show="activeTab === 'templates'" class="h-full overflow-auto">
         <ReportTemplatesPanel
           @use-template="onUseTemplate"
         />
       </div>
 
-      <div v-if="mountedTabs.changes" v-show="activeTab === 'changes'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('changes')" v-show="activeTab === 'changes'" class="h-full overflow-auto">
         <ChangeEventsPanel
           @view="viewChangeEvent"
           @trigger-workflow="triggerWorkflowFromEvent"
@@ -229,7 +234,7 @@
         />
       </div>
 
-      <div v-if="mountedTabs.workflows" v-show="activeTab === 'workflows'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('workflows')" v-show="activeTab === 'workflows'" class="h-full overflow-auto">
         <WorkflowTemplatesPanel
           :programs="programs"
           :selected-program="selectedProgram"
@@ -237,7 +242,7 @@
         />
       </div>
 
-      <div v-if="mountedTabs.monitor" v-show="activeTab === 'monitor'" class="h-full overflow-auto">
+      <div v-if="retainedTabs.has('monitor')" v-show="activeTab === 'monitor'" class="h-full overflow-auto">
         <MonitorPanel
           :selected-program="selectedProgram"
           :programs="programs"
@@ -332,36 +337,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { ref, computed, defineAsyncComponent, nextTick, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useRoute } from 'vue-router'
 import { useToast } from '../composables/useToast'
 import { dialog } from '../composables/useDialog'
-import { 
-  ApiInventoryPanel,
-  ProgramsPanel, 
-  FindingsPanel, 
-  KnowledgeBasePanel,
-  SubmissionsPanel, 
-  ChangeEventsPanel,
-  ChangeEventDetailModal,
-  WorkflowTemplatesPanel,
-  WorkflowTemplateDetailModal,
-  StatisticsPanel,
-  ImportExportPanel,
-  ReportTemplatesPanel,
-  CreateProgramModal,
-  CreateFindingModal,
-  CreateSubmissionModal,
-  ProgramDetailModal,
-  FindingDetailModal,
-  SubmissionDetailModal,
-  DiscoverAssetsModal
-} from '../components/BugBounty'
-import MonitorPanel from '../components/BugBounty/MonitorPanel.vue'
-import CreateChangeEventModal from '../components/BugBounty/CreateChangeEventModal.vue'
-import AssetsPanelV2 from '../components/BugBounty/AssetsPanelV2.vue'
+import { useFeatureEntitlementsState } from '../services/featureEntitlements'
 
 
 defineOptions({
@@ -371,6 +353,30 @@ defineOptions({
 const { t } = useI18n()
 const toast = useToast()
 const route = useRoute()
+const entitlements = useFeatureEntitlementsState()
+
+const ApiInventoryPanel = defineAsyncComponent(() => import('../components/BugBounty/ApiInventoryPanel.vue'))
+const ProgramsPanel = defineAsyncComponent(() => import('../components/BugBounty/ProgramsPanel.vue'))
+const FindingsPanel = defineAsyncComponent(() => import('../components/BugBounty/FindingsPanel.vue'))
+const KnowledgeBasePanel = defineAsyncComponent(() => import('../components/BugBounty/KnowledgeBasePanel.vue'))
+const SubmissionsPanel = defineAsyncComponent(() => import('../components/BugBounty/SubmissionsPanel.vue'))
+const ChangeEventsPanel = defineAsyncComponent(() => import('../components/BugBounty/ChangeEventsPanel.vue'))
+const ChangeEventDetailModal = defineAsyncComponent(() => import('../components/BugBounty/ChangeEventDetailModal.vue'))
+const WorkflowTemplatesPanel = defineAsyncComponent(() => import('../components/BugBounty/WorkflowTemplatesPanel.vue'))
+const WorkflowTemplateDetailModal = defineAsyncComponent(() => import('../components/BugBounty/WorkflowTemplateDetailModal.vue'))
+const StatisticsPanel = defineAsyncComponent(() => import('../components/BugBounty/StatisticsPanel.vue'))
+const ImportExportPanel = defineAsyncComponent(() => import('../components/BugBounty/ImportExportPanel.vue'))
+const ReportTemplatesPanel = defineAsyncComponent(() => import('../components/BugBounty/ReportTemplatesPanel.vue'))
+const CreateProgramModal = defineAsyncComponent(() => import('../components/BugBounty/CreateProgramModal.vue'))
+const CreateFindingModal = defineAsyncComponent(() => import('../components/BugBounty/CreateFindingModal.vue'))
+const CreateSubmissionModal = defineAsyncComponent(() => import('../components/BugBounty/CreateSubmissionModal.vue'))
+const ProgramDetailModal = defineAsyncComponent(() => import('../components/BugBounty/ProgramDetailModal.vue'))
+const FindingDetailModal = defineAsyncComponent(() => import('../components/BugBounty/FindingDetailModal.vue'))
+const SubmissionDetailModal = defineAsyncComponent(() => import('../components/BugBounty/SubmissionDetailModal.vue'))
+const DiscoverAssetsModal = defineAsyncComponent(() => import('../components/BugBounty/DiscoverAssetsModal.vue'))
+const MonitorPanel = defineAsyncComponent(() => import('../components/BugBounty/MonitorPanel.vue'))
+const CreateChangeEventModal = defineAsyncComponent(() => import('../components/BugBounty/CreateChangeEventModal.vue'))
+const AssetsPanelV2 = defineAsyncComponent(() => import('../components/BugBounty/AssetsPanelV2.vue'))
 
 // State
 const loading = ref(false)
@@ -396,19 +402,13 @@ type BugBountyTab =
   | 'monitor'
 
 const activeTab = ref<BugBountyTab>('assets')
-const mountedTabs = ref<Record<BugBountyTab, boolean>>({
-  programs: false,
-  assets: true,
-  'api-inventory': false,
-  findings: false,
-  knowledge: false,
-  submissions: false,
-  statistics: false,
-  'import-export': false,
-  templates: false,
-  changes: false,
-  workflows: false,
-  monitor: false,
+const previousTab = ref<BugBountyTab | null>(null)
+const retainedTabs = computed(() => {
+  const tabs = new Set<BugBountyTab>([activeTab.value])
+  if (previousTab.value) {
+    tabs.add(previousTab.value)
+  }
+  return tabs
 })
 const loadedTabs = ref({
   findings: false,
@@ -507,6 +507,7 @@ const totalEarnings = computed(() =>
 )
 const findingPageCount = computed(() => Math.max(1, Math.ceil(findingTotal.value / findingPageSize.value)))
 const submissionPageCount = computed(() => Math.max(1, Math.ceil(submissionTotal.value / pageSize.value)))
+const isBugBountyActivated = computed(() => entitlements.value.can_access_bug_bounty)
 
 const refreshProgramsOverview = async () => {
   await Promise.all([loadPrograms(), loadStats()])
@@ -528,7 +529,9 @@ const refreshSubmissionsData = async () => {
 
 // Methods
 const switchTab = async (tab: BugBountyTab) => {
-  mountedTabs.value[tab] = true
+  if (tab !== activeTab.value) {
+    previousTab.value = activeTab.value
+  }
   activeTab.value = tab
   if (tab === 'findings') {
     if (!loadedTabs.value.findings) {

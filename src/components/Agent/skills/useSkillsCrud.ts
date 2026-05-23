@@ -23,6 +23,7 @@ export const useSkillsCrud = ({
   const loading = ref(false)
   const deletingSkillIds = ref<string[]>([])
   const bulkUpdatingSkillState = ref(false)
+  const bulkDeletingSkills = ref(false)
 
   const enabledSkillCount = computed(() =>
     skills.value.filter(skill => isSkillEnabled(skill.id)).length
@@ -134,11 +135,50 @@ export const useSkillsCrud = ({
     }
   }
 
+  const deleteSkillsByIds = async (ids: string[], confirmMessage: string) => {
+    const uniqueIds = Array.from(new Set(ids)).filter(Boolean)
+    if (uniqueIds.length === 0 || bulkDeletingSkills.value) return
+    if (!(await confirm(confirmMessage))) return
+
+    bulkDeletingSkills.value = true
+    deletingSkillIds.value = Array.from(new Set([...deletingSkillIds.value, ...uniqueIds]))
+    try {
+      const results = await Promise.all(uniqueIds.map(id => invoke<boolean>('delete_skill', { id })))
+      if (results.some(deleted => !deleted)) {
+        throw new Error(t('agent.skillDeleteNotFound'))
+      }
+      const editingSkill = getEditingSkill()
+      if (editingSkill && uniqueIds.includes(editingSkill.id)) {
+        cancelEdit()
+      }
+      await loadSkills()
+      onChanged()
+    } catch (error) {
+      console.error('Failed to delete skills:', error)
+      alert(`${t('agent.skillDeleteFailed')}: ${error}`)
+    } finally {
+      deletingSkillIds.value = deletingSkillIds.value.filter(id => !uniqueIds.includes(id))
+      bulkDeletingSkills.value = false
+    }
+  }
+
+  const confirmDeleteSelected = async (ids: string[]) => {
+    await deleteSkillsByIds(ids, t('agent.skillBatchDeleteConfirm', { count: ids.length }))
+  }
+
+  const confirmDeleteAll = async () => {
+    await deleteSkillsByIds(
+      skills.value.map(skill => skill.id),
+      t('agent.skillDeleteAllConfirm', { count: skills.value.length })
+    )
+  }
+
   return {
     skills,
     loading,
     deletingSkillIds,
     bulkUpdatingSkillState,
+    bulkDeletingSkills,
     enabledSkillCount,
     disabledSkillCount,
     skillsWithContentCount,
@@ -147,5 +187,7 @@ export const useSkillsCrud = ({
     setAllSkillsEnabled,
     loadSkills,
     confirmDelete,
+    confirmDeleteSelected,
+    confirmDeleteAll,
   }
 }

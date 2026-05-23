@@ -55,11 +55,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import SecurityCenterImmersiveSidebar from '@/components/SecurityCenter/SecurityCenterImmersiveSidebar.vue'
-import SecurityCenter from '@/views/SecurityCenter.vue'
 import {
   clearImmersiveSecurityCenterReturnPath,
   closeImmersiveSecurityCenterSidebar,
@@ -80,6 +79,7 @@ defineOptions({
 })
 
 const { t } = useI18n()
+const SecurityCenter = defineAsyncComponent(() => import('@/views/SecurityCenter.vue'))
 const route = useRoute()
 const router = useRouter()
 const overlayRootRef = ref<HTMLElement | null>(null)

@@ -12,6 +12,8 @@ use crate::database_service::surface::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+const SURFACE_ASSET_IDENTITY_QUERY_CHUNK_SIZE: usize = 400;
+
 fn surface_observation_item_count(payload_json: &str) -> i32 {
     match serde_json::from_str::<Value>(payload_json) {
         Ok(Value::Array(items)) => items.len().try_into().unwrap_or(i32::MAX),
@@ -534,48 +536,64 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let safe_limit = limit.map(|value| value.max(0));
         let base_sql = "SELECT * FROM surface_assets WHERE program_id = ";
+        let mut assets = Vec::new();
 
         match runtime {
             DatabasePool::SQLite(pool) => {
-                let mut query = QueryBuilder::<sqlx::Sqlite>::new(base_sql);
-                query.push_bind(program_id.to_string());
-                Self::push_surface_asset_identity_filters(&mut query, identities);
-                query.push(" ORDER BY last_seen_at DESC, id DESC");
-                if let Some(limit) = safe_limit {
-                    query.push(" LIMIT ").push_bind(limit);
+                for chunk in identities.chunks(SURFACE_ASSET_IDENTITY_QUERY_CHUNK_SIZE) {
+                    let mut query = QueryBuilder::<sqlx::Sqlite>::new(base_sql);
+                    query.push_bind(program_id.to_string());
+                    Self::push_surface_asset_identity_filters(&mut query, chunk);
+                    query.push(" ORDER BY last_seen_at DESC, id DESC");
+                    assets.extend(
+                        query
+                            .build_query_as::<SurfaceAssetRow>()
+                            .fetch_all(pool)
+                            .await?,
+                    );
                 }
-                Ok(query
-                    .build_query_as::<SurfaceAssetRow>()
-                    .fetch_all(pool)
-                    .await?)
             }
             DatabasePool::MySQL(pool) => {
-                let mut query = QueryBuilder::<MySql>::new(base_sql);
-                query.push_bind(program_id.to_string());
-                Self::push_surface_asset_identity_filters(&mut query, identities);
-                query.push(" ORDER BY last_seen_at DESC, id DESC");
-                if let Some(limit) = safe_limit {
-                    query.push(" LIMIT ").push_bind(limit);
+                for chunk in identities.chunks(SURFACE_ASSET_IDENTITY_QUERY_CHUNK_SIZE) {
+                    let mut query = QueryBuilder::<MySql>::new(base_sql);
+                    query.push_bind(program_id.to_string());
+                    Self::push_surface_asset_identity_filters(&mut query, chunk);
+                    query.push(" ORDER BY last_seen_at DESC, id DESC");
+                    assets.extend(
+                        query
+                            .build_query_as::<SurfaceAssetRow>()
+                            .fetch_all(pool)
+                            .await?,
+                    );
                 }
-                Ok(query
-                    .build_query_as::<SurfaceAssetRow>()
-                    .fetch_all(pool)
-                    .await?)
             }
             DatabasePool::PostgreSQL(pool) => {
-                let mut query = QueryBuilder::<Postgres>::new(base_sql);
-                query.push_bind(program_id.to_string());
-                Self::push_surface_asset_identity_filters(&mut query, identities);
-                query.push(" ORDER BY last_seen_at DESC, id DESC");
-                if let Some(limit) = safe_limit {
-                    query.push(" LIMIT ").push_bind(limit);
+                for chunk in identities.chunks(SURFACE_ASSET_IDENTITY_QUERY_CHUNK_SIZE) {
+                    let mut query = QueryBuilder::<Postgres>::new(base_sql);
+                    query.push_bind(program_id.to_string());
+                    Self::push_surface_asset_identity_filters(&mut query, chunk);
+                    query.push(" ORDER BY last_seen_at DESC, id DESC");
+                    assets.extend(
+                        query
+                            .build_query_as::<SurfaceAssetRow>()
+                            .fetch_all(pool)
+                            .await?,
+                    );
                 }
-                Ok(query
-                    .build_query_as::<SurfaceAssetRow>()
-                    .fetch_all(pool)
-                    .await?)
             }
         }
+
+        assets.sort_by(|left, right| {
+            right
+                .last_seen_at
+                .cmp(&left.last_seen_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        if let Some(limit) = safe_limit {
+            assets.truncate(limit as usize);
+        }
+
+        Ok(assets)
     }
 
     fn merge_surface_run_assets(

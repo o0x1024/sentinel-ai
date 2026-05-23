@@ -1,6 +1,7 @@
 //! Tool-enabled execution path.
 
 use anyhow::Result;
+use chrono::TimeZone;
 use serde_json::json;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -11,7 +12,7 @@ use sentinel_llm::{
     StreamingLlmClient,
 };
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
-use sentinel_tools::buildin_tools::{ShellTool, ToolSearchTool};
+use sentinel_tools::buildin_tools::ToolSearchTool;
 use sentinel_tools::ToolServer;
 
 use super::context_compaction::{ContextCompactionOrchestrator, ContextCompactionRequest};
@@ -31,7 +32,8 @@ use crate::agents::context_engineering::reflection::{
 };
 use crate::agents::executor::final_review::run_final_tenth_man_review;
 use crate::agents::executor::message_store::{
-    build_assistant_session_stats_metadata, mark_first_response_ms, save_assistant_message,
+    build_assistant_session_stats_metadata, mark_first_response_ms,
+    persist_subagent_message_with_retry, save_assistant_message,
 };
 use crate::agents::executor::skill_loaded_events::emit_and_persist_skill_loaded;
 use crate::agents::executor::team_runtime_log_context::{
@@ -89,10 +91,14 @@ pub async fn execute_agent_with_tools(
 
     let rig_provider = params.rig_provider.to_lowercase();
     let mut llm_config = sentinel_llm::LlmConfig::new(&rig_provider, &params.model)
-        .with_timeout(params.timeout_secs)
         .with_max_turns(params.max_iterations)
         .with_rig_provider(&rig_provider)
         .with_conversation_id(&storage_conversation_id);
+    if params.timeout_secs == 0 {
+        llm_config = llm_config.without_timeout();
+    } else {
+        llm_config = llm_config.with_timeout(params.timeout_secs);
+    }
 
     if let Some(ref api_key) = params.api_key {
         llm_config = llm_config.with_api_key(api_key);
@@ -198,6 +204,15 @@ pub async fn execute_agent_with_tools(
         } else {
             None
         };
+    let subagent_db_for_stream: Option<std::sync::Arc<sentinel_db::DatabaseService>> =
+        if params.subagent_run_id.is_some() {
+            app_handle
+                .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
+                .map(|s| s.inner().clone())
+        } else {
+            None
+        };
+    let subagent_run_id_for_stream = params.subagent_run_id.clone();
     if let Some(db) = db_for_stream.as_ref() {
         ensure_ai_conversation_exists_for_persistence(
             db.as_ref(),
@@ -259,6 +274,8 @@ pub async fn execute_agent_with_tools(
     let persisted_seg_count = persisted_segment_count.clone();
     let team_log_context_for_stream = team_log_context.clone();
     let tool_protocol_for_stream = tool_protocol_tracker.clone();
+    let subagent_db = subagent_db_for_stream.clone();
+    let subagent_run_id = subagent_run_id_for_stream.clone();
 
     // Ensure skills tool enforces per-skill enable flags at execution time.
     if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
@@ -272,8 +289,6 @@ pub async fn execute_agent_with_tools(
     let max_empty_response_retries = 2;
     let mut silent_retry_pending = false;
     let mut last_error: Option<anyhow::Error> = None;
-    let mut skill_reload_count = 0;
-    let max_skill_reload = 3;
     let mut tool_activation_reload_count = 0;
     let max_tool_activation_reload = 6;
 
@@ -283,8 +298,6 @@ pub async fn execute_agent_with_tools(
     let accumulated_assistant_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let mut base_history_messages = history_chat_messages.clone();
 
-    let skill_reload_requested = Arc::new(AtomicBool::new(false));
-    let loaded_skill_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let tool_activation_reload_requested = Arc::new(AtomicBool::new(false));
     let activated_tool_ids: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let activated_tool_query: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -560,6 +573,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:chunk",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "conversation_id": storage_conversation_id,
                                     "generation": cancellation_generation,
                                     "chunk_type": "text",
                                     "content": text,
@@ -576,6 +590,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:chunk",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "conversation_id": storage_conversation_id,
                                     "generation": cancellation_generation,
                                     "chunk_type": "reasoning",
                                     "content": reasoning,
@@ -628,6 +643,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:tool_call_start",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "conversation_id": storage_conversation_id,
                                     "generation": cancellation_generation,
                                     "tool_call_id": id,
                                     "tool_name": name,
@@ -639,6 +655,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:tool_call_delta",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "conversation_id": storage_conversation_id,
                                     "generation": cancellation_generation,
                                     "tool_call_id": id,
                                     "delta": delta,
@@ -738,7 +755,9 @@ pub async fn execute_agent_with_tools(
                             }
 
                             // Flush assistant segment BEFORE inserting tool call message (preserve ordering on reload).
-                            if let Some(db) = db_for_stream.clone() {
+                            if db_for_stream.is_some()
+                                || (subagent_db.is_some() && subagent_run_id.is_some())
+                            {
                                 use sentinel_core::models::database as core_db;
                                 use chrono::TimeZone;
                                 let seg = segment_buf
@@ -767,63 +786,87 @@ pub async fn execute_agent_with_tools(
                                             } else {
                                                 r
                                             })
-                                        })
+                                            })
                                         .ok()
                                         .flatten();
 
-                                    let seg_msg = core_db::AiMessage {
-                                        id: uuid::Uuid::new_v4().to_string(),
-                                        conversation_id: storage_conversation_id.clone(),
-                                        role: "assistant".to_string(),
-                                        content: seg_trimmed.clone(),
-                                        metadata: None,
-                                        token_count: Some(seg_trimmed.len() as i32),
-                                        cost: None,
-                                        tool_calls: None,
-                                        attachments: None,
-                                        reasoning_content: reasoning,
-                                        timestamp: seg_ts,
-                                        architecture_type: None,
-                                        architecture_meta: None,
-                                        structured_data: None,
-                                    };
-                                    tauri::async_runtime::spawn(async move {
-                                        persist_ai_message_with_retry(
-                                            db,
-                                            seg_msg,
-                                            "assistant segment",
-                                        )
-                                        .await;
-                                    });
+                                    if let Some(db) = db_for_stream.clone() {
+                                        let seg_msg = core_db::AiMessage {
+                                            id: uuid::Uuid::new_v4().to_string(),
+                                            conversation_id: storage_conversation_id.clone(),
+                                            role: "assistant".to_string(),
+                                            content: seg_trimmed.clone(),
+                                            metadata: None,
+                                            token_count: Some(seg_trimmed.len() as i32),
+                                            cost: None,
+                                            tool_calls: None,
+                                            attachments: None,
+                                            reasoning_content: reasoning.clone(),
+                                            timestamp: seg_ts,
+                                            architecture_type: None,
+                                            architecture_meta: None,
+                                            structured_data: None,
+                                        };
+                                        tauri::async_runtime::spawn(async move {
+                                            persist_ai_message_with_retry(
+                                                db,
+                                                seg_msg,
+                                                "assistant segment",
+                                            )
+                                            .await;
+                                        });
+                                    }
+
+                                    if let (Some(db), Some(run_id)) =
+                                        (subagent_db.clone(), subagent_run_id.clone())
+                                    {
+                                        let seg_msg = core_db::SubagentMessage {
+                                            id: uuid::Uuid::new_v4().to_string(),
+                                            subagent_run_id: run_id,
+                                            role: "assistant".to_string(),
+                                            content: seg_trimmed,
+                                            metadata: None,
+                                            tool_calls: None,
+                                            attachments: None,
+                                            reasoning_content: reasoning,
+                                            timestamp: seg_ts,
+                                            structured_data: None,
+                                        };
+                                        tauri::async_runtime::spawn(async move {
+                                            persist_subagent_message_with_retry(
+                                                db,
+                                                seg_msg,
+                                                "assistant segment",
+                                            )
+                                            .await;
+                                        });
+                                    }
                                 }
                             }
 
                             // Persist tool call as a standalone message (role=tool) so history ordering is correct.
+                            let (started_at_ms, seq) = pending
+                                .lock()
+                                .ok()
+                                .and_then(|m| m.get(&id).map(|(_, _, ms, s)| (*ms, *s)))
+                                .unwrap_or((chrono::Utc::now().timestamp_millis(), 0));
+                            let started_at = chrono::Utc
+                                .timestamp_millis_opt(started_at_ms)
+                                .single()
+                                .unwrap_or_else(chrono::Utc::now);
+                            let tool_args_val = normalize_tool_call_arguments_str(&name, &arguments);
+                            let meta = json!({
+                                "kind": "tool_call",
+                                "tool_name": name,
+                                "tool_args": tool_args_val,
+                                "tool_call_id": id,
+                                "status": "running",
+                                "sequence": seq,
+                                "started_at_ms": started_at_ms,
+                            });
+
                             if let Some(db) = db_for_stream.clone() {
                                 use sentinel_core::models::database as core_db;
-                                use chrono::TimeZone;
-                                let (started_at_ms, seq) = pending
-                                    .lock()
-                                    .ok()
-                                    .and_then(|m| m.get(&id).map(|(_, _, ms, s)| (*ms, *s)))
-                                    .unwrap_or((chrono::Utc::now().timestamp_millis(), 0));
-
-                                let started_at = chrono::Utc
-                                    .timestamp_millis_opt(started_at_ms)
-                                    .single()
-                                    .unwrap_or_else(chrono::Utc::now);
-
-                                let tool_args_val =
-                                    normalize_tool_call_arguments_str(&name, &arguments);
-                                let meta = json!({
-                                    "kind": "tool_call",
-                                    "tool_name": name,
-                                    "tool_args": tool_args_val,
-                                    "tool_call_id": id,
-                                    "status": "running",
-                                    "sequence": seq,
-                                    "started_at_ms": started_at_ms,
-                                });
 
                                 let tool_msg = core_db::AiMessage {
                                     id: id.clone(),
@@ -846,11 +889,37 @@ pub async fn execute_agent_with_tools(
                                         .await;
                                 });
                             }
+                            if let (Some(db), Some(run_id)) =
+                                (subagent_db.clone(), subagent_run_id.clone())
+                            {
+                                use sentinel_core::models::database as core_db;
+                                let tool_msg = core_db::SubagentMessage {
+                                    id: id.clone(),
+                                    subagent_run_id: run_id,
+                                    role: "tool".to_string(),
+                                    content: format!("Calling: {}", name),
+                                    metadata: Some(meta.to_string()),
+                                    tool_calls: None,
+                                    attachments: None,
+                                    reasoning_content: None,
+                                    timestamp: started_at,
+                                    structured_data: None,
+                                };
+                                tauri::async_runtime::spawn(async move {
+                                    persist_subagent_message_with_retry(
+                                        db,
+                                        tool_msg,
+                                        "tool call message",
+                                    )
+                                    .await;
+                                });
+                            }
 
                             let _ = app.emit(
                                 "agent:tool_call_complete",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "conversation_id": storage_conversation_id,
                                     "generation": cancellation_generation,
                                     "tool_call_id": id,
                                     "tool_name": name,
@@ -928,31 +997,29 @@ pub async fn execute_agent_with_tools(
                                     }
 
                                     // Update persisted tool message with result (keep timestamp as started_at to avoid reordering).
+                                    let started_at = chrono::Utc
+                                        .timestamp_millis_opt(started_at_ms)
+                                        .single()
+                                        .unwrap_or_else(chrono::Utc::now);
+                                    let tool_args_val = normalize_tool_call_arguments_str(
+                                        &name_for_meta,
+                                        &args_for_meta,
+                                    );
+                                    let meta = json!({
+                                        "kind": "tool_call",
+                                        "tool_name": name_for_meta,
+                                        "tool_args": tool_args_val,
+                                        "tool_call_id": id,
+                                        "status": if tool_success { "completed" } else { "failed" },
+                                        "sequence": seq,
+                                        "started_at_ms": started_at_ms,
+                                        "completed_at_ms": completed_at_ms,
+                                        "duration_ms": duration_ms,
+                                        "tool_result": result,
+                                        "success": tool_success,
+                                    });
                                     if let Some(db) = db_for_stream.clone() {
                                         use sentinel_core::models::database as core_db;
-                                        use chrono::TimeZone;
-                                        let started_at = chrono::Utc
-                                            .timestamp_millis_opt(started_at_ms)
-                                            .single()
-                                            .unwrap_or_else(chrono::Utc::now);
-
-                                        let tool_args_val = normalize_tool_call_arguments_str(
-                                            &name_for_meta,
-                                            &args_for_meta,
-                                        );
-                                        let meta = json!({
-                                            "kind": "tool_call",
-                                            "tool_name": name_for_meta,
-                                            "tool_args": tool_args_val,
-                                            "tool_call_id": id,
-                                            "status": if tool_success { "completed" } else { "failed" },
-                                            "sequence": seq,
-                                            "started_at_ms": started_at_ms,
-                                            "completed_at_ms": completed_at_ms,
-                                            "duration_ms": duration_ms,
-                                            "tool_result": result,
-                                            "success": tool_success,
-                                        });
                                         let tool_msg = core_db::AiMessage {
                                             id: id.clone(),
                                             conversation_id: storage_conversation_id.clone(),
@@ -978,6 +1045,31 @@ pub async fn execute_agent_with_tools(
                                             .await;
                                         });
                                     }
+                                    if let (Some(db), Some(run_id)) =
+                                        (subagent_db.clone(), subagent_run_id.clone())
+                                    {
+                                        use sentinel_core::models::database as core_db;
+                                        let tool_msg = core_db::SubagentMessage {
+                                            id: id.clone(),
+                                            subagent_run_id: run_id,
+                                            role: "tool".to_string(),
+                                            content: format!("Completed: {}", name_for_meta),
+                                            metadata: Some(meta.to_string()),
+                                            tool_calls: None,
+                                            attachments: None,
+                                            reasoning_content: None,
+                                            timestamp: started_at,
+                                            structured_data: None,
+                                        };
+                                        tauri::async_runtime::spawn(async move {
+                                            persist_subagent_message_with_retry(
+                                                db,
+                                                tool_msg,
+                                                "tool result update",
+                                            )
+                                            .await;
+                                        });
+                                    }
 
                                     if name_for_meta == "skills" {
                                         if let Ok(args_json) =
@@ -993,11 +1085,15 @@ pub async fn execute_agent_with_tools(
                                                     .get("skill_id")
                                                     .and_then(|v| v.as_str())
                                                 {
-                                                    if let Ok(mut slot) = loaded_skill_id.lock() {
-                                                        *slot = Some(skill_id.to_string());
-                                                    }
-                                                    skill_reload_requested
-                                                        .store(true, Ordering::SeqCst);
+                                                    emit_and_persist_skill_loaded(
+                                                        &app,
+                                                        &execution_id,
+                                                        &storage_conversation_id,
+                                                        cancellation_generation,
+                                                        skill_id,
+                                                        skill_id,
+                                                        db_for_stream.clone(),
+                                                    );
                                                 }
                                             }
                                         }
@@ -1247,6 +1343,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:tool_result",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "conversation_id": storage_conversation_id,
                                     "generation": cancellation_generation,
                                     "tool_call_id": id,
                                     "result": result,
@@ -1273,6 +1370,7 @@ pub async fn execute_agent_with_tools(
                                 "agent:chunk",
                                 &json!({
                                     "execution_id": execution_id,
+                                    "conversation_id": storage_conversation_id,
                                     "generation": cancellation_generation,
                                     "chunk_type": "usage",
                                     "input_tokens": input_tokens,
@@ -1330,9 +1428,6 @@ pub async fn execute_agent_with_tools(
                         }
                     }
                     if loop_break_flag.load(Ordering::SeqCst) {
-                        return false;
-                    }
-                    if skill_reload_requested.load(Ordering::SeqCst) {
                         return false;
                     }
                     if tool_activation_reload_requested.load(Ordering::SeqCst) {
@@ -1432,97 +1527,6 @@ pub async fn execute_agent_with_tools(
                 }
 
                 tool_activation_reload_requested.store(false, Ordering::SeqCst);
-                low_evidence_warning_issued.store(false, Ordering::SeqCst);
-                if let Ok(mut tracker) = hypothesis_tracker.lock() {
-                    tracker.clear();
-                }
-                force_history_with_tools = true;
-                continue;
-            }
-        }
-
-        if skill_reload_requested.load(Ordering::SeqCst) {
-            if skill_reload_count >= max_skill_reload {
-                skill_reload_requested.store(false, Ordering::SeqCst);
-            } else {
-                skill_reload_count += 1;
-
-                accumulate_progress(
-                    &tool_calls_collector,
-                    &accumulated_tool_calls,
-                    &assistant_segment_buf,
-                    &accumulated_assistant_output,
-                    Some(&pending),
-                );
-                settle_running_tool_messages_for_interrupted_turn(
-                    db_for_stream.as_ref(),
-                    &params.execution_id,
-                    "Skill reload interrupted a pending tool call before its result was recorded",
-                )
-                .await;
-
-                let skill_id = if let Ok(mut slot) = loaded_skill_id.lock() {
-                    slot.take()
-                } else {
-                    None
-                };
-                if let Some(skill_id) = skill_id {
-                    if let Some(db) =
-                        app_handle.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
-                    {
-                        if let Ok(Some(skill)) = db.get_skill(&skill_id).await {
-                            let mut next_tools = vec![
-                                "skills".to_string(),
-                                "tasks".to_string(),
-                                "http_request".to_string(),
-                                "spawn_agent".to_string(),
-                                "wait_agents".to_string(),
-                                "list_agents".to_string(),
-                                "close_agent".to_string(),
-                                "tenth_man_review".to_string(),
-                            ];
-                            if !tool_config
-                                .disabled_tools
-                                .contains(&ShellTool::NAME.to_string())
-                            {
-                                next_tools.push(ShellTool::NAME.to_string());
-                            }
-                            next_tools.extend(skill.allowed_tools.clone());
-                            next_tools.extend(tool_config.preselected_tools.clone());
-                            let available_tools = tool_server
-                                .list_tools()
-                                .await
-                                .into_iter()
-                                .map(|t| t.name)
-                                .collect::<std::collections::HashSet<_>>();
-                            let mut seen = std::collections::HashSet::new();
-                            next_tools.retain(|id| seen.insert(id.clone()));
-                            next_tools.retain(|id| available_tools.contains(id));
-                            next_tools.retain(|id| !tool_config.disabled_tools.contains(id));
-                            current_tool_ids =
-                                apply_tool_config_scope_policy(next_tools.clone(), &tool_config);
-                            let _ = app_handle.emit(
-                                "agent:tools_selected",
-                                &json!({
-                                    "execution_id": params.execution_id,
-                                    "generation": params.cancellation_generation,
-                                    "tools": current_tool_ids,
-                                }),
-                            );
-                            emit_and_persist_skill_loaded(
-                                app_handle,
-                                &params.execution_id,
-                                &storage_conversation_id,
-                                params.cancellation_generation,
-                                &skill.id,
-                                &skill.name,
-                                db_for_stream.clone(),
-                            );
-                        }
-                    }
-                }
-
-                skill_reload_requested.store(false, Ordering::SeqCst);
                 low_evidence_warning_issued.store(false, Ordering::SeqCst);
                 if let Ok(mut tracker) = hypothesis_tracker.lock() {
                     tracker.clear();

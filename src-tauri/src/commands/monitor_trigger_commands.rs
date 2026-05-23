@@ -22,6 +22,7 @@ use crate::commands::monitor_surface_support::{
     collect_monitor_target_payload_for_plugin, format_monitor_target_breakdown,
     ingest_surface_plugin_output,
 };
+use crate::services::ensure_bug_bounty_access;
 use chrono::Utc;
 use sentinel_bounty::services::MonitorPluginConfig;
 use sentinel_db::{BountyAssetRow, BountyChangeEventRow, DatabaseService};
@@ -40,6 +41,8 @@ pub async fn monitor_trigger_task(
     app: AppHandle,
     task_id: String,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     tracing::info!(
         "Manually triggering task for immediate execution: task_id={}",
         task_id

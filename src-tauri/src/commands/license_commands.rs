@@ -15,6 +15,11 @@ pub struct LicenseInfo {
     pub machine_id: String,
     pub is_licensed: bool,
     pub needs_activation: bool,
+    pub trial_active: bool,
+    pub trial_started_at: Option<i64>,
+    pub trial_expires_at: Option<i64>,
+    pub trial_remaining_seconds: Option<i64>,
+    pub trial_days_remaining: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,20 +58,36 @@ pub struct EntitlementRefreshResult {
     pub status: sentinel_license::EntitlementTokenStatus,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LicenseCardActivationInput {
+    pub username: String,
+    pub activation_key: String,
+}
+
 const LICENSE_CONFIG_CATEGORY: &str = "license";
 const ENTITLEMENT_REFRESH_ENABLED_KEY: &str = "entitlement_refresh_enabled";
 const ENTITLEMENT_REFRESH_ENDPOINT_KEY: &str = "entitlement_refresh_endpoint";
 const ENTITLEMENT_REFRESH_API_KEY_KEY: &str = "entitlement_refresh_api_key";
 const ENTITLEMENT_REFRESH_CUSTOMER_ID_KEY: &str = "entitlement_refresh_customer_id";
 const ENTITLEMENT_REFRESH_TIMEOUT_SECS_KEY: &str = "entitlement_refresh_timeout_secs";
+const LICENSE_CARD_USERNAME_KEY: &str = "license_card_username";
+const LICENSE_CARD_DEVICE_REFRESH_TOKEN_KEY: &str = "license_card_device_refresh_token";
+const DEFAULT_LICENSE_SERVER_BASE_URL: &str = "http://119.29.111.31:24001";
 
 /// Get license information
 #[tauri::command]
 pub fn get_license_info() -> LicenseInfo {
+    let trial_status = sentinel_license::get_or_create_trial_status();
+
     LicenseInfo {
         machine_id: sentinel_license::get_machine_id(),
         is_licensed: sentinel_license::is_licensed(),
         needs_activation: sentinel_license::needs_activation(),
+        trial_active: trial_status.active,
+        trial_started_at: trial_status.started_at,
+        trial_expires_at: trial_status.expires_at,
+        trial_remaining_seconds: trial_status.remaining_seconds,
+        trial_days_remaining: trial_status.days_remaining,
     }
 }
 
@@ -173,6 +194,81 @@ pub fn get_entitlement_token_status() -> sentinel_license::EntitlementTokenStatu
 }
 
 #[tauri::command]
+pub async fn activate_with_license_card(
+    db: State<'_, Arc<DatabaseService>>,
+    input: LicenseCardActivationInput,
+) -> Result<EntitlementRefreshResult, String> {
+    let username = input.username.trim();
+    let activation_key = input.activation_key.trim();
+    if username.is_empty() || activation_key.is_empty() {
+        return Ok(EntitlementRefreshResult {
+            success: false,
+            configured: true,
+            message: "用户名和激活密钥不能为空".to_string(),
+            error_code: Some("missing_activation_fields".to_string()),
+            retry_after_secs: None,
+            token_stored: false,
+            status: sentinel_license::get_entitlement_token_status(),
+        });
+    }
+
+    let endpoint = format!("{}/api/licenses/activate", license_server_base_url());
+    let request_body = serde_json::json!({
+        "username": username,
+        "activation_key": activation_key,
+        "machine_id": sentinel_license::get_machine_id(),
+        "machine_id_full": sentinel_license::get_machine_id_full(),
+        "client": {
+            "product": "sentinel-ai",
+            "version": env!("CARGO_PKG_VERSION"),
+            "platform": std::env::consts::OS,
+        }
+    });
+
+    let response = post_license_server_json(&endpoint, request_body).await?;
+    if !response.status_code.is_success() {
+        let error_payload = extract_refresh_error_payload(&response.text);
+        return Ok(EntitlementRefreshResult {
+            success: false,
+            configured: true,
+            message: error_payload.message.unwrap_or_else(|| {
+                format!("Activation endpoint returned HTTP {}", response.status_code)
+            }),
+            error_code: error_payload
+                .code
+                .or_else(|| Some(format!("http_{}", response.status_code.as_u16()))),
+            retry_after_secs: error_payload.retry_after_secs,
+            token_stored: false,
+            status: sentinel_license::get_entitlement_token_status(),
+        });
+    }
+
+    let token = extract_entitlement_token(&response.text).ok_or_else(|| {
+        "Activation endpoint did not return a supported token payload".to_string()
+    })?;
+    let device_refresh_token = extract_string_field(&response.text, "device_refresh_token")
+        .ok_or_else(|| "Activation endpoint did not return device_refresh_token".to_string())?;
+    db.set_config(
+        LICENSE_CONFIG_CATEGORY,
+        LICENSE_CARD_USERNAME_KEY,
+        username,
+        Some("License card username for automatic activation refresh"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    db.set_config(
+        LICENSE_CONFIG_CATEGORY,
+        LICENSE_CARD_DEVICE_REFRESH_TOKEN_KEY,
+        &device_refresh_token,
+        Some("Device refresh token for license card activation"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    store_activation_token(token).await
+}
+
+#[tauri::command]
 pub async fn get_entitlement_refresh_config(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<EntitlementRefreshConfig, String> {
@@ -233,114 +329,105 @@ pub async fn save_entitlement_refresh_config(
 pub async fn refresh_entitlement_token(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<EntitlementRefreshResult, String> {
-    let config = load_entitlement_refresh_config(db.inner().as_ref()).await?;
-    if !config.enabled || config.endpoint.trim().is_empty() {
-        return Ok(EntitlementRefreshResult {
-            success: false,
-            configured: false,
-            message: "Entitlement refresh service is not configured".to_string(),
-            error_code: Some("refresh_not_configured".to_string()),
-            retry_after_secs: None,
-            token_stored: false,
-            status: sentinel_license::get_entitlement_token_status(),
-        });
+    if let Some(result) = refresh_license_card_token(db.inner().as_ref()).await? {
+        return Ok(result);
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(config.timeout_secs.clamp(5, 120)))
-        .build()
-        .map_err(|e| format!("Failed to build refresh client: {}", e))?;
+    Ok(EntitlementRefreshResult {
+        success: false,
+        configured: false,
+        message: "当前设备尚未完成卡密激活".to_string(),
+        error_code: Some("license_card_not_activated".to_string()),
+        retry_after_secs: None,
+        token_stored: false,
+        status: sentinel_license::get_entitlement_token_status(),
+    })
+}
 
-    let current_status = sentinel_license::get_entitlement_token_status();
+struct LicenseServerResponse {
+    status_code: reqwest::StatusCode,
+    text: String,
+}
+
+async fn post_license_server_json(
+    endpoint: &str,
+    body: Value,
+) -> Result<LicenseServerResponse, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to build license client: {}", e))?;
+    let response = client
+        .post(endpoint)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to contact license server: {}", error))?;
+    let status_code = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read license server response: {}", e))?;
+    Ok(LicenseServerResponse { status_code, text })
+}
+
+async fn refresh_license_card_token(
+    db: &DatabaseService,
+) -> Result<Option<EntitlementRefreshResult>, String> {
+    let device_refresh_token = db
+        .get_config(
+            LICENSE_CONFIG_CATEGORY,
+            LICENSE_CARD_DEVICE_REFRESH_TOKEN_KEY,
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .filter(|value| !value.trim().is_empty());
+    let Some(device_refresh_token) = device_refresh_token else {
+        return Ok(None);
+    };
+
+    let endpoint = format!("{}/api/licenses/refresh", license_server_base_url());
     let request_body = serde_json::json!({
+        "device_refresh_token": device_refresh_token,
         "machine_id": sentinel_license::get_machine_id(),
         "machine_id_full": sentinel_license::get_machine_id_full(),
-        "customer_id": trim_to_option(&config.customer_id),
-        "license_present": sentinel_license::get_entitlement_token_status().valid,
-        "current_entitlement": {
-            "exists": current_status.exists,
-            "license_id": current_status.license_id,
-            "tier": current_status.tier,
-            "feature_ids": current_status.feature_ids,
-            "issued_at": current_status.issued_at,
-            "expires_at": current_status.expires_at,
-            "valid": current_status.valid,
-        },
         "client": {
             "product": "sentinel-ai",
             "version": env!("CARGO_PKG_VERSION"),
             "platform": std::env::consts::OS,
         }
     });
-
-    let mut request = client
-        .post(config.endpoint.trim())
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .json(&request_body);
-
-    if !config.api_key.trim().is_empty() {
-        request = request.bearer_auth(config.api_key.trim());
-    }
-
-    let response = match request.send().await {
-        Ok(response) => response,
-        Err(error) => {
-            return Ok(EntitlementRefreshResult {
-                success: false,
-                configured: true,
-                message: format!("Failed to refresh entitlement token: {}", error),
-                error_code: Some("network_request_failed".to_string()),
-                retry_after_secs: Some(300),
-                token_stored: false,
-                status: sentinel_license::get_entitlement_token_status(),
-            });
-        }
-    };
-    let status_code = response.status();
-    let response_text = response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read entitlement refresh response: {}", e))?;
-
-    if !status_code.is_success() {
-        let error_payload = extract_refresh_error_payload(&response_text);
-        let message = error_payload
-            .message
-            .unwrap_or_else(|| format!("Refresh endpoint returned HTTP {}", status_code));
-        return Ok(EntitlementRefreshResult {
+    let response = post_license_server_json(&endpoint, request_body).await?;
+    if !response.status_code.is_success() {
+        let error_payload = extract_refresh_error_payload(&response.text);
+        return Ok(Some(EntitlementRefreshResult {
             success: false,
             configured: true,
-            message,
+            message: error_payload.message.unwrap_or_else(|| {
+                format!("Refresh endpoint returned HTTP {}", response.status_code)
+            }),
             error_code: error_payload
                 .code
-                .or_else(|| Some(format!("http_{}", status_code.as_u16()))),
+                .or_else(|| Some(format!("http_{}", response.status_code.as_u16()))),
             retry_after_secs: error_payload.retry_after_secs,
             token_stored: false,
             status: sentinel_license::get_entitlement_token_status(),
-        });
+        }));
     }
 
-    let token = match extract_entitlement_token(&response_text) {
-        Some(token) => token,
-        None => {
-            return Ok(EntitlementRefreshResult {
-                success: false,
-                configured: true,
-                message: "Refresh endpoint did not return a supported token payload".to_string(),
-                error_code: Some("invalid_response_payload".to_string()),
-                retry_after_secs: Some(300),
-                token_stored: false,
-                status: sentinel_license::get_entitlement_token_status(),
-            });
-        }
-    };
+    let token = extract_entitlement_token(&response.text)
+        .ok_or_else(|| "Refresh endpoint did not return a supported token payload".to_string())?;
+    store_activation_token(token).await.map(Some)
+}
 
+async fn store_activation_token(token: String) -> Result<EntitlementRefreshResult, String> {
     match sentinel_license::store_entitlement_token(&token) {
         Ok(claims) => Ok(EntitlementRefreshResult {
             success: true,
             configured: true,
             message: format!(
-                "Entitlement token refreshed successfully (tier={}, expires_at={})",
+                "授权激活成功 (tier={}, expires_at={})",
                 claims.tier, claims.expires_at
             ),
             error_code: None,
@@ -431,13 +518,12 @@ fn parse_bool_like(value: &str) -> bool {
     )
 }
 
-fn trim_to_option(value: &str) -> Option<&str> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
+fn license_server_base_url() -> String {
+    std::env::var("SENTINEL_LICENSE_SERVER_URL")
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_LICENSE_SERVER_BASE_URL.to_string())
 }
 
 fn extract_entitlement_token(response_text: &str) -> Option<String> {
@@ -459,6 +545,12 @@ fn extract_entitlement_token(response_text: &str) -> Option<String> {
     }
 
     Some(trimmed.to_string())
+}
+
+fn extract_string_field(response_text: &str, field: &str) -> Option<String> {
+    serde_json::from_str::<Value>(response_text.trim())
+        .ok()
+        .and_then(|value| value.get(field).and_then(Value::as_str).map(str::to_string))
 }
 
 #[derive(Debug, Default)]

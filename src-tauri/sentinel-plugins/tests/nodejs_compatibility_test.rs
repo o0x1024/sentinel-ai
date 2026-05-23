@@ -316,7 +316,9 @@ async fn test_nodejs_crypto() {
 async fn test_fetch_array_buffer_preserves_binary_bytes() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let payload = vec![0x00_u8, 0x00, 0x01, 0x00, 0x10, 0xff, 0x80, 0x41, 0x42, 0x43];
+    let payload = vec![
+        0x00_u8, 0x00, 0x01, 0x00, 0x10, 0xff, 0x80, 0x41, 0x42, 0x43,
+    ];
     let expected_hex = "0000010010ff80414243";
 
     let server = tokio::spawn({

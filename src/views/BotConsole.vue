@@ -27,7 +27,6 @@
             <option value="all">{{ t('botConsole.peerFilters.all') }}</option>
             <option value="failures">{{ t('botConsole.peerFilters.failures') }}</option>
             <option value="running">{{ t('botConsole.peerFilters.running') }}</option>
-            <option value="schedules">{{ t('botConsole.peerFilters.schedules') }}</option>
           </select>
 
           <button class="btn btn-sm btn-primary" :disabled="loadingPeers || loadingDetails" @click="refreshConsole">
@@ -39,6 +38,11 @@
 
       <div v-if="loadError" class="alert alert-error">
         <span>{{ loadError }}</span>
+      </div>
+
+      <div v-if="!isBotConsoleActivated" class="alert alert-warning">
+        <i class="fas fa-lock"></i>
+        <span>当前未完成服务端激活，Bot 控制台可预览会话、消息和历史执行，账号配置、登录、Mission 变更和运行会被限制。</span>
       </div>
 
       <section class="rounded-lg border border-base-300 bg-base-100 px-4 py-3">
@@ -68,7 +72,7 @@
           </div>
 
           <div class="flex items-center justify-end">
-            <button class="btn btn-sm btn-outline" @click="openAccountsDialog">
+            <button class="btn btn-sm btn-outline" :disabled="!isBotConsoleActivated" @click="openAccountsDialog">
               {{ t('botConsole.accounts.configure') }}
             </button>
           </div>
@@ -121,9 +125,6 @@
                     </span>
                     <span v-if="peer.failed_execution_count > 0" class="badge badge-error badge-xs">
                       {{ t('botConsole.peerBadges.failedExecutions', { count: peer.failed_execution_count }) }}
-                    </span>
-                    <span v-if="peer.enabled_schedule_count > 0" class="badge badge-outline badge-xs">
-                      {{ t('botConsole.peerBadges.enabledSchedules', { count: peer.enabled_schedule_count }) }}
                     </span>
                   </div>
                 </div>
@@ -188,7 +189,7 @@
 
           <template v-else>
             <div class="border-b border-base-300 px-4 py-3">
-              <div class="grid grid-cols-2 gap-3 xl:grid-cols-4">
+              <div class="grid grid-cols-2 gap-3 xl:grid-cols-3">
                 <div class="rounded-lg bg-base-200/60 px-4 py-3">
                   <div class="text-xs text-base-content/60">{{ t('botConsole.peerSummary.messages') }}</div>
                   <div class="mt-1 text-lg font-semibold">{{ selectedPeer.message_count }}</div>
@@ -201,17 +202,10 @@
                   <div class="text-xs text-base-content/60">{{ t('botConsole.peerSummary.failedExecutions') }}</div>
                   <div class="mt-1 text-lg font-semibold">{{ selectedPeer.failed_execution_count }}</div>
                 </div>
-                <div class="rounded-lg bg-base-200/60 px-4 py-3">
-                  <div class="text-xs text-base-content/60">{{ t('botConsole.peerSummary.enabledSchedules') }}</div>
-                  <div class="mt-1 text-lg font-semibold">{{ selectedPeer.enabled_schedule_count }}</div>
-                </div>
               </div>
               <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-base-content/70">
                 <span v-if="selectedPeer.running_execution_count > 0" class="badge badge-primary badge-sm">
                   {{ t('botConsole.peerBadges.runningExecutions', { count: selectedPeer.running_execution_count }) }}
-                </span>
-                <span v-if="selectedPeer.failed_schedule_run_count > 0" class="badge badge-error badge-sm">
-                  {{ t('botConsole.peerBadges.failedSchedules', { count: selectedPeer.failed_schedule_run_count }) }}
                 </span>
                 <span v-if="selectedPeer.latest_execution_status">
                   {{ t('botConsole.peerSummary.latestExecution') }}:
@@ -238,13 +232,6 @@
                   @click="setActiveTab('executions')"
                 >
                   {{ t('botConsole.tabs.executions') }}
-                </button>
-                <button
-                  class="tab"
-                  :class="{ 'tab-active': activeTab === 'schedules' }"
-                  @click="setActiveTab('schedules')"
-                >
-                  {{ t('botConsole.tabs.schedules') }}
                 </button>
                 <button
                   class="tab"
@@ -318,7 +305,6 @@
                       <option value="failures">{{ t('botConsole.executionFilters.failures') }}</option>
                       <option value="running">{{ t('botConsole.executionFilters.running') }}</option>
                       <option value="message">{{ t('botConsole.executionFilters.message') }}</option>
-                      <option value="schedule">{{ t('botConsole.executionFilters.schedule') }}</option>
                     </select>
                   </div>
                 </div>
@@ -336,7 +322,7 @@
                         <div class="truncate text-sm font-medium">{{ run.task_text }}</div>
                         <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
                           <span class="badge badge-outline badge-xs">{{ triggerKindLabel(run.trigger_kind) }}</span>
-                          <span class="badge badge-ghost badge-xs">{{ executionMemoryScopeLabel(run.trigger_kind) }}</span>
+                          <span class="badge badge-ghost badge-xs">{{ executionMemoryScopeLabel() }}</span>
                           <span>{{ shortId(run.id) }}</span>
                         </div>
                       </div>
@@ -383,7 +369,7 @@
                         </div>
                         <div>
                           <div class="text-xs text-base-content/60">{{ t('botConsole.executions.memoryScope') }}</div>
-                          <div>{{ executionMemoryScopeLabel(selectedExecutionRun.trigger_kind) }}</div>
+                          <div>{{ executionMemoryScopeLabel() }}</div>
                         </div>
                         <div>
                           <div class="text-xs text-base-content/60">{{ t('botConsole.executions.assistantProfile') }}</div>
@@ -476,111 +462,6 @@
 
                 <div v-else class="p-4 text-sm text-base-content/60">
                   {{ t('botConsole.executions.emptyDetail') }}
-                </div>
-              </div>
-            </div>
-
-            <div v-else-if="activeTab === 'schedules'" class="grid min-h-0 grid-cols-1 gap-4 p-4 xl:grid-cols-[20rem_minmax(0,1fr)]">
-              <div class="rounded-lg border border-base-300 overflow-hidden">
-                <div class="border-b border-base-300 px-3 py-2 text-sm font-semibold">
-                  {{ t('botConsole.schedules.listTitle') }}
-                </div>
-                <div class="max-h-[calc(100vh-23rem)] overflow-y-auto">
-                  <div v-if="schedules.length === 0" class="p-4 text-sm text-base-content/60">{{ t('botConsole.schedules.empty') }}</div>
-                  <button
-                    v-for="schedule in schedules"
-                    :key="schedule.id"
-                    class="w-full border-b border-base-200 px-3 py-3 text-left hover:bg-base-200/60"
-                    :class="selectedScheduleId === schedule.id ? 'bg-primary/10' : ''"
-                    @click="selectSchedule(schedule.id)"
-                  >
-                    <div class="flex items-start justify-between gap-3">
-                      <div class="min-w-0">
-                        <div class="truncate text-sm font-medium">{{ schedule.task_text }}</div>
-                        <div class="mt-1 text-xs text-base-content/60">
-                          {{ schedule.cron_expr }}
-                        </div>
-                      </div>
-                      <span class="badge badge-sm" :class="schedule.enabled ? 'badge-success' : 'badge-ghost'">
-                        {{ enabledLabel(schedule.enabled) }}
-                      </span>
-                    </div>
-                    <div class="mt-2 text-xs text-base-content/60">
-                      {{ t('botConsole.schedules.nextRun') }} {{ formatTimestamp(schedule.next_run_at) }}
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              <div class="rounded-lg border border-base-300 min-h-[32rem] overflow-hidden">
-                <div v-if="selectedSchedule" class="flex h-full flex-col">
-                  <div class="border-b border-base-300 px-4 py-3">
-                    <div class="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div class="text-base font-semibold">{{ selectedSchedule.task_text }}</div>
-                        <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
-                          <span class="font-mono">{{ selectedSchedule.id }}</span>
-                          <span>{{ selectedSchedule.cron_expr }}</span>
-                          <span>{{ selectedSchedule.timezone }}</span>
-                        </div>
-                      </div>
-                      <span class="badge badge-sm" :class="selectedSchedule.enabled ? 'badge-success' : 'badge-ghost'">
-                        {{ enabledLabel(selectedSchedule.enabled) }}
-                      </span>
-                    </div>
-                    <div v-if="selectedSchedule.last_error" class="mt-3 rounded bg-error/10 px-3 py-2 text-sm text-error">
-                      {{ selectedSchedule.last_error }}
-                    </div>
-                  </div>
-
-                  <div v-if="loadingScheduleRuns" class="p-4 text-sm text-base-content/60">{{ t('botConsole.schedules.loadingRuns') }}</div>
-
-                  <div v-else class="flex-1 overflow-y-auto p-4">
-                    <div v-if="scheduleRuns.length === 0" class="text-sm text-base-content/60">{{ t('botConsole.schedules.emptyRuns') }}</div>
-                    <div v-else class="space-y-3">
-                      <article
-                        v-for="run in scheduleRuns"
-                        :key="run.id"
-                        class="rounded-lg border border-base-300 p-4"
-                      >
-                        <div class="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <div class="text-sm font-medium">{{ formatTimestamp(run.triggered_at) }}</div>
-                            <div class="mt-1 text-xs text-base-content/60">
-                              {{ t('botConsole.labels.runId', { id: run.id }) }}
-                            </div>
-                          </div>
-                          <span class="badge badge-sm" :class="statusBadgeClass(run.status)">
-                            {{ statusLabel(run.status) }}
-                          </span>
-                        </div>
-
-                        <div v-if="run.result_text" class="mt-3">
-                          <div class="text-xs text-base-content/60 mb-1">{{ t('botConsole.schedules.result') }}</div>
-                          <pre class="whitespace-pre-wrap break-words rounded bg-base-200 p-3 text-sm">{{ run.result_text }}</pre>
-                        </div>
-                        <div v-if="run.error_message" class="mt-3">
-                          <div class="text-xs text-error mb-1">{{ t('botConsole.schedules.error') }}</div>
-                          <pre class="whitespace-pre-wrap break-words rounded bg-error/10 p-3 text-sm text-error">{{ run.error_message }}</pre>
-                        </div>
-
-                        <div class="mt-3 flex flex-wrap items-center gap-3 text-xs text-base-content/60">
-                          <span v-if="run.completed_at">{{ t('botConsole.labels.completedAt', { time: formatTimestamp(run.completed_at) }) }}</span>
-                          <button
-                            v-if="run.execution_run_id"
-                            class="link link-hover"
-                            @click="focusExecutionRun(run.execution_run_id)"
-                          >
-                            {{ t('botConsole.schedules.openExecution') }}
-                          </button>
-                        </div>
-                      </article>
-                    </div>
-                  </div>
-                </div>
-
-                <div v-else class="p-4 text-sm text-base-content/60">
-                  {{ t('botConsole.schedules.emptyDetail') }}
                 </div>
               </div>
             </div>
@@ -774,7 +655,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppDialog from '@/components/AppDialog.vue'
@@ -795,8 +676,6 @@ import {
   listBotExecutionRunsForPeer,
   listBotMessagesForPeer,
   listBotPeers,
-  listBotScheduleRuns,
-  listBotSchedules,
   type AgentHarnessCheckpoint,
   type AgentHarnessEvent,
   type AgentTaskHistoryItem,
@@ -804,9 +683,8 @@ import {
   type BotExecutionRun,
   type BotMessage,
   type BotPeer,
-  type BotSchedule,
-  type BotScheduleRun,
 } from '@/api/botConsole'
+import { useFeatureEntitlementsState } from '@/services/featureEntitlements'
 
 defineOptions({
   name: 'BotConsole',
@@ -815,6 +693,7 @@ defineOptions({
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const entitlements = useFeatureEntitlementsState()
 
 const selectedTransport = ref(typeof route.query.transport === 'string' ? route.query.transport : 'weixin')
 const selectedAccountId = ref(typeof route.query.accountId === 'string' ? route.query.accountId : '')
@@ -823,19 +702,17 @@ const peerStateFilter = ref(typeof route.query.peerState === 'string' ? route.qu
 const executionFilter = ref(typeof route.query.executionFilter === 'string' ? route.query.executionFilter : 'all')
 const selectedPeerKey = ref('')
 const selectedExecutionRunId = ref('')
-const selectedScheduleId = ref('')
-const activeTab = ref<'messages' | 'executions' | 'schedules' | 'turnLogs' | 'missions'>(
-  route.query.tab === 'executions' || route.query.tab === 'schedules' || route.query.tab === 'turnLogs' || route.query.tab === 'missions'
+const activeTab = ref<'messages' | 'executions' | 'turnLogs' | 'missions'>(
+  route.query.tab === 'executions' || route.query.tab === 'turnLogs' || route.query.tab === 'missions'
     ? route.query.tab
     : 'messages',
 )
+const isBotConsoleActivated = computed(() => entitlements.value.can_access_bot_console)
 
 const accounts = ref<BotAccount[]>([])
 const peers = ref<BotPeer[]>([])
 const messages = ref<BotMessage[]>([])
 const executionRuns = ref<BotExecutionRun[]>([])
-const schedules = ref<BotSchedule[]>([])
-const scheduleRuns = ref<BotScheduleRun[]>([])
 const executionTasks = ref<AgentTaskHistoryItem[]>([])
 const harnessEvents = ref<AgentHarnessEvent[]>([])
 const harnessCheckpoints = ref<AgentHarnessCheckpoint[]>([])
@@ -847,15 +724,12 @@ const turnLogDetailErrors = ref<Record<string, string>>({})
 const loadingPeers = ref(false)
 const loadingDetails = ref(false)
 const loadingExecutionDetail = ref(false)
-const loadingScheduleRuns = ref(false)
 const loadingTurnLogs = ref(false)
 const loadError = ref('')
 const turnLogError = ref('')
 const turnLogDate = ref(new Date().toISOString().slice(0, 10))
 const turnLogLimit = ref(50)
 const accountsDialogRef = ref<{ showModal: () => void; close: () => void } | null>(null)
-
-let refreshTimer: number | null = null
 
 function isBotConsoleRouteActive(): boolean {
   return route.name === 'BotConsole' || route.path === '/bot-console'
@@ -973,14 +847,8 @@ function directionLabel(direction?: string | null): string {
     : t('botConsole.messages.outbound')
 }
 
-function enabledLabel(enabled: boolean): string {
-  return enabled ? t('botConsole.schedules.enabled') : t('botConsole.schedules.disabled')
-}
-
 function triggerKindLabel(triggerKind?: string | null): string {
   switch ((triggerKind || '').trim().toLowerCase()) {
-    case 'schedule':
-      return t('botConsole.labels.schedule')
     case 'message':
       return t('botConsole.labels.message')
     default:
@@ -988,10 +856,8 @@ function triggerKindLabel(triggerKind?: string | null): string {
   }
 }
 
-function executionMemoryScopeLabel(triggerKind?: string | null): string {
-  return String(triggerKind || '').trim().toLowerCase() === 'schedule'
-    ? t('botConsole.labels.scheduleMemory')
-    : t('botConsole.labels.chatMemory')
+function executionMemoryScopeLabel(): string {
+  return t('botConsole.labels.chatMemory')
 }
 
 function formatDuration(value?: number | null): string {
@@ -1058,11 +924,9 @@ const selectedBotAccount = computed(() =>
 const filteredPeers = computed(() => {
   switch (peerStateFilter.value) {
     case 'failures':
-      return peers.value.filter((peer) => peer.failed_execution_count > 0 || peer.failed_schedule_run_count > 0)
+      return peers.value.filter((peer) => peer.failed_execution_count > 0)
     case 'running':
       return peers.value.filter((peer) => peer.running_execution_count > 0)
-    case 'schedules':
-      return peers.value.filter((peer) => peer.enabled_schedule_count > 0)
     default:
       return peers.value
   }
@@ -1076,14 +940,14 @@ const selectedExecutionRun = computed(() =>
   executionRuns.value.find((run) => run.id === selectedExecutionRunId.value) ?? null,
 )
 
-const selectedSchedule = computed(() =>
-  schedules.value.find((schedule) => schedule.id === selectedScheduleId.value) ?? null,
-)
-
 const selectedConversationId = computed(() => {
-  if (selectedExecutionRun.value?.conversation_id) return selectedExecutionRun.value.conversation_id
-  const fromMessages = messages.value.find((message) => message.conversation_id)?.conversation_id
-  return fromMessages || null
+  if (!selectedPeer.value) return null
+  return [
+    selectedPeer.value.transport,
+    selectedPeer.value.account_id,
+    selectedPeer.value.peer_type,
+    selectedPeer.value.peer_id,
+  ].join(':')
 })
 
 const messageTimeline = computed(() => [...messages.value].reverse())
@@ -1095,8 +959,6 @@ const visibleExecutionRuns = computed(() => {
       return executionRuns.value.filter((run) => isRunningStatus(run.status))
     case 'message':
       return executionRuns.value.filter((run) => normalizedStatus(run.trigger_kind) === 'message')
-    case 'schedule':
-      return executionRuns.value.filter((run) => normalizedStatus(run.trigger_kind) === 'schedule')
     default:
       return executionRuns.value
   }
@@ -1130,18 +992,11 @@ function clearExecutionDetail() {
   harnessCheckpoints.value = []
 }
 
-function clearScheduleDetail() {
-  scheduleRuns.value = []
-}
-
 function clearPeerDetails() {
   messages.value = []
   executionRuns.value = []
-  schedules.value = []
   selectedExecutionRunId.value = ''
-  selectedScheduleId.value = ''
   clearExecutionDetail()
-  clearScheduleDetail()
   clearTurnLogs()
 }
 
@@ -1171,20 +1026,6 @@ async function loadExecutionDetail(runId: string) {
     harnessCheckpoints.value = checkpoints
   } finally {
     loadingExecutionDetail.value = false
-  }
-}
-
-async function loadScheduleRunHistory(scheduleId: string) {
-  if (!scheduleId) {
-    clearScheduleDetail()
-    return
-  }
-
-  loadingScheduleRuns.value = true
-  try {
-    scheduleRuns.value = await listBotScheduleRuns(scheduleId, 100)
-  } finally {
-    loadingScheduleRuns.value = false
   }
 }
 
@@ -1265,7 +1106,7 @@ async function loadPeerDetails(peer: BotPeer) {
   loadError.value = ''
 
   try {
-    const [nextMessages, nextRuns, nextSchedules] = await Promise.all([
+    const [nextMessages, nextRuns] = await Promise.all([
       listBotMessagesForPeer({
         transport: peer.transport,
         accountId: peer.account_id,
@@ -1280,29 +1121,16 @@ async function loadPeerDetails(peer: BotPeer) {
         peerId: peer.peer_id,
         limit: 100,
       }),
-      listBotSchedules({
-        transport: peer.transport,
-        accountId: peer.account_id,
-        peerType: peer.peer_type,
-        peerId: peer.peer_id,
-      }),
     ])
 
     messages.value = nextMessages
     executionRuns.value = nextRuns
-    schedules.value = nextSchedules
 
     selectedExecutionRunId.value = nextRuns.some((run) => run.id === selectedExecutionRunId.value)
       ? selectedExecutionRunId.value
       : nextRuns[0]?.id || ''
     await syncSelectedExecutionForCurrentFilter()
     await loadTurnLogs()
-
-    const nextScheduleId = nextSchedules.some((schedule) => schedule.id === selectedScheduleId.value)
-      ? selectedScheduleId.value
-      : nextSchedules[0]?.id || ''
-    selectedScheduleId.value = nextScheduleId
-    await loadScheduleRunHistory(nextScheduleId)
   } catch (error) {
     loadError.value = String(error)
     clearPeerDetails()
@@ -1356,6 +1184,7 @@ async function refreshConsole() {
 }
 
 function openAccountsDialog() {
+  if (!isBotConsoleActivated.value) return
   accountsDialogRef.value?.showModal()
 }
 
@@ -1423,12 +1252,6 @@ async function selectExecutionRun(runId: string) {
   await loadTurnLogs()
 }
 
-async function selectSchedule(scheduleId: string) {
-  if (!scheduleId || selectedScheduleId.value === scheduleId) return
-  selectedScheduleId.value = scheduleId
-  await loadScheduleRunHistory(scheduleId)
-}
-
 async function handleExecutionFilterChange() {
   await syncSelectedExecutionForCurrentFilter()
   await loadTurnLogs()
@@ -1449,7 +1272,7 @@ async function focusExecutionRun(runId?: string | null) {
   await syncRoute()
 }
 
-async function setActiveTab(tab: 'messages' | 'executions' | 'schedules' | 'turnLogs' | 'missions') {
+async function setActiveTab(tab: 'messages' | 'executions' | 'turnLogs' | 'missions') {
   if (activeTab.value === tab) return
   activeTab.value = tab
   await syncRoute()
@@ -1472,37 +1295,8 @@ async function openTurnLogConversation(conversationId?: string | null) {
   })
 }
 
-function startRefreshTimer() {
-  if (refreshTimer !== null) {
-    window.clearInterval(refreshTimer)
-  }
-  refreshTimer = window.setInterval(() => {
-    void refreshSelectedPeer()
-  }, 15000)
-}
-
-function stopRefreshTimer() {
-  if (refreshTimer !== null) {
-    window.clearInterval(refreshTimer)
-    refreshTimer = null
-  }
-}
-
 onMounted(async () => {
   await loadPeerList()
   await syncRoute()
-  startRefreshTimer()
-})
-
-onActivated(() => {
-  startRefreshTimer()
-})
-
-onDeactivated(() => {
-  stopRefreshTimer()
-})
-
-onUnmounted(() => {
-  stopRefreshTimer()
 })
 </script>

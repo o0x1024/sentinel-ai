@@ -349,11 +349,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, emit } from '@tauri-apps/api/event'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
 
 // 导入子组件
@@ -366,6 +367,26 @@ import SkillsTab from '@/components/Tools/SkillsTab.vue'
 
 
 const { t } = useI18n()
+
+const eventUnlisteners: UnlistenFn[] = []
+let eventListenersDisposed = false
+
+const registerEventListener = async (listener: Promise<UnlistenFn>) => {
+  const unlisten = await listener
+  if (eventListenersDisposed) {
+    unlisten()
+    return
+  }
+  eventUnlisteners.push(unlisten)
+}
+
+const cleanupEventListeners = () => {
+  eventListenersDisposed = true
+  while (eventUnlisteners.length > 0) {
+    const unlisten = eventUnlisteners.pop()
+    unlisten?.()
+  }
+}
 const route = useRoute()
 const router = useRouter()
 
@@ -755,19 +776,23 @@ onMounted(async () => {
   refreshWorkflowToolCount()
   refreshPluginToolCount()
   refreshAll()
-  listen('plugin:changed', async () => {
+  await registerEventListener(listen('plugin:changed', async () => {
     refreshPluginToolCount()
     pluginToolsRef.value?.refresh?.()
-  })
-  listen('mcp:tools-changed', async (event) => {
+  }))
+  await registerEventListener(listen('mcp:tools-changed', async (event) => {
     console.log('MCP tools changed event received:', event.payload)
     builtinToolsRef.value?.refresh?.()
     mcpServersRef.value?.fetchConnections?.()
-  })
-  listen('workflow:changed', async () => {
+  }))
+  await registerEventListener(listen('workflow:changed', async () => {
     refreshWorkflowToolCount()
     workflowToolsRef.value?.refresh?.()
-  })
+  }))
+})
+
+onUnmounted(() => {
+  cleanupEventListeners()
 })
 
 watch(

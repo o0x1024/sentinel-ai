@@ -231,12 +231,9 @@ impl Tool for HttpRequestTool {
         request = request.timeout(std::time::Duration::from_secs(args.timeout_secs));
 
         // Send request
-        let response = request
-            .send()
-            .await
-            .map_err(|error| {
-                HttpRequestError::RequestFailed(Self::format_reqwest_error("request send", &error))
-            })?;
+        let response = request.send().await.map_err(|error| {
+            HttpRequestError::RequestFailed(Self::format_reqwest_error("request send", &error))
+        })?;
 
         let status_code = response.status().as_u16();
         let status_text = response.status().to_string();
@@ -250,15 +247,12 @@ impl Tool for HttpRequestTool {
         }
 
         // Get body
-        let body = response
-            .text()
-            .await
-            .map_err(|error| {
-                HttpRequestError::RequestFailed(Self::format_reqwest_error(
-                    "response body read",
-                    &error,
-                ))
-            })?;
+        let body = response.text().await.map_err(|error| {
+            HttpRequestError::RequestFailed(Self::format_reqwest_error(
+                "response body read",
+                &error,
+            ))
+        })?;
         let original_size = body.len();
         let mut stored_artifacts = Vec::new();
 

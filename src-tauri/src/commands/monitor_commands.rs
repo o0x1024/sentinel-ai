@@ -22,6 +22,7 @@ use crate::commands::monitor_surface_support::{
     collect_monitor_target_payload_for_plugin, format_monitor_target_breakdown,
     ingest_surface_plugin_output, MonitorResolvedTargets,
 };
+use crate::services::ensure_bug_bounty_access;
 use chrono::Utc;
 use sentinel_bounty::services::{MonitorPluginConfig, MonitorScheduler, MonitorStats, MonitorTask};
 use sentinel_db::{BountyAssetRow, DatabaseService};
@@ -194,6 +195,8 @@ pub async fn monitor_start_scheduler(
     plugin_manager: State<'_, Arc<sentinel_traffic::PluginManager>>,
     app: AppHandle,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     ensure_monitor_scheduler_initialized(state.inner(), db_service.inner()).await?;
 
     let state_guard = state.read().await;
@@ -1624,6 +1627,8 @@ pub async fn monitor_stop_scheduler(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
     app: AppHandle,
 ) -> Result<bool, String> {
+    ensure_bug_bounty_access()?;
+
     let state_guard = state.read().await;
     state_guard.scheduler.stop().await?;
     let active_task_ids = state_guard

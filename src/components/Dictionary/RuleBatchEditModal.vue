@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-  <div v-if="open" class="modal modal-open dictionary-modal">
+  <div v-if="open" class="modal modal-open dictionary-modal" @click.self="$emit('cancel')">
     <div class="modal-box max-w-2xl dictionary-modal-box">
       <h3 class="font-bold text-lg mb-4">批量编辑规则</h3>
 
