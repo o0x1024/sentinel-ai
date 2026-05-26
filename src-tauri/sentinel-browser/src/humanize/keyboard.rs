@@ -1,5 +1,5 @@
 use rand::Rng;
-use rand_distr::{LogNormal, Normal, Distribution};
+use rand_distr::{LogNormal, Distribution};
 
 use super::profile::HumanProfileConfig;
 

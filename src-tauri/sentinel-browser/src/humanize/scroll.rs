@@ -10,12 +10,12 @@ pub struct ScrollStep {
 }
 
 pub struct ScrollHumanizer {
-    config: HumanProfileConfig,
+    _config: HumanProfileConfig,
 }
 
 impl ScrollHumanizer {
     pub fn new(config: HumanProfileConfig) -> Self {
-        Self { config }
+        Self { _config: config }
     }
 
     /// Generate smooth scroll steps simulating trackpad/mouse wheel physics

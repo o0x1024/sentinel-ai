@@ -272,6 +272,7 @@ members = [
     "sentinel-license",
     "sentinel-bounty",
     "sentinel-js",
+    "sentinel-browser",
 ]
 resolver = "2"
 

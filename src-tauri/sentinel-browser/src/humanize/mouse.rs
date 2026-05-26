@@ -1,5 +1,5 @@
 use rand::Rng;
-use rand_distr::{LogNormal, Normal, Distribution};
+use rand_distr::{Normal, Distribution};
 
 use crate::adapter::traits::Point;
 use super::profile::HumanProfileConfig;
@@ -121,14 +121,12 @@ impl MouseHumanizer {
         let mut sum = 0.0;
         for i in 0..n {
             let t = i as f64 / (n - 1) as f64;
-            // Sine ease-in-out: slower at edges
             let ease = (1.0 - (std::f64::consts::PI * t).cos()) / 2.0;
             let delta = if i == 0 { 0.0 } else { ease - cumulative_ease.last().unwrap_or(&0.0) };
             sum += delta.max(0.001);
             cumulative_ease.push(ease);
         }
 
-        let mut elapsed = 0.0;
         for i in 0..n {
             let fraction = if i == 0 {
                 0.0
@@ -136,8 +134,7 @@ impl MouseHumanizer {
                 (cumulative_ease[i] - cumulative_ease[i - 1]).max(0.001) / sum
             };
             let delay = (total_time_ms * fraction) as u64;
-            steps[i].delay_ms = delay.max(4); // minimum 4ms between events
-            elapsed += delay as f64;
+            steps[i].delay_ms = delay.max(4);
         }
         steps[0].delay_ms = 0;
     }

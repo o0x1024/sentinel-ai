@@ -4,7 +4,7 @@ use crate::humanize::mouse::MouseHumanizer;
 use crate::humanize::profile::{HumanProfile, HumanizationLevel};
 use crate::humanize::scroll::ScrollHumanizer;
 use crate::humanize::timing::TimingController;
-use crate::page::element::{ElementSelector, ResolvedElement};
+use crate::page::element::ResolvedElement;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;

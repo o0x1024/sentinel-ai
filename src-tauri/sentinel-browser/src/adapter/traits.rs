@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TabId(pub String);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,7 +72,7 @@ pub struct KeyEvent {
     pub modifiers: KeyModifiers,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyEventKind {
     Down,
     Up,
