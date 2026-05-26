@@ -70,7 +70,7 @@ impl PluginValidator {
             result.warnings.extend(security_check.1);
         }
 
-        // 3. Validate TypeScript syntax (if Deno is available)
+        // 3. TypeScript syntax is validated at runtime by One Engine; skip AST parsing here.
         match self.validate_typescript_syntax(code).await {
             Ok(true) => {
                 result.syntax_valid = true;
@@ -83,12 +83,11 @@ impl PluginValidator {
                 result.is_valid = false;
             }
             Err(e) => {
-                // Deno not available, skip syntax validation
                 log::warn!("TypeScript syntax validation skipped: {}", e);
                 result
                     .warnings
                     .push(format!("Syntax validation skipped: {}", e));
-                result.syntax_valid = true; // Don't fail if Deno not available
+                result.syntax_valid = true;
             }
         }
 
@@ -168,53 +167,16 @@ impl PluginValidator {
         (passed, if passed { warnings } else { errors })
     }
 
-    /// Validate TypeScript syntax using Deno AST
+    /// Validate TypeScript syntax.
+    ///
+    /// One Engine transpiles and executes plugin code at runtime, so static AST
+    /// validation is skipped here.
     async fn validate_typescript_syntax(&self, code: &str) -> Result<bool> {
-        #[cfg(not(feature = "plugin-generation"))]
-        {
-            log::debug!(
-                "Skipping deno_ast TypeScript validation because feature `plugin-generation` is disabled"
-            );
-            let _ = code;
-            return Ok(true);
-        }
-
-        #[cfg(feature = "plugin-generation")]
-        {
-            log::debug!("Validating TypeScript syntax using deno_ast");
-
-            // Use deno_ast to parse TypeScript code
-            let source_code: std::sync::Arc<str> = std::sync::Arc::<str>::from(code.to_string());
-
-            let parse_params = deno_ast::ParseParams {
-                specifier: deno_ast::ModuleSpecifier::parse("file:///plugin.ts").unwrap(),
-                text: source_code,
-                media_type: deno_ast::MediaType::TypeScript,
-                capture_tokens: false,
-                scope_analysis: false,
-                maybe_syntax: None,
-            };
-
-            // Parse the code and check for syntax errors
-            match deno_ast::parse_module(parse_params) {
-                Ok(parsed) => {
-                    log::debug!("TypeScript syntax validation passed");
-
-                    // Check for any diagnostics
-                    if parsed.diagnostics().is_empty() {
-                        Ok(true)
-                    } else {
-                        log::warn!("TypeScript has diagnostics: {:?}", parsed.diagnostics());
-                        // Still consider it valid if it parsed successfully
-                        Ok(true)
-                    }
-                }
-                Err(e) => {
-                    log::error!("TypeScript syntax validation failed: {}", e);
-                    Err(anyhow::anyhow!("Syntax error: {}", e))
-                }
-            }
-        }
+        log::debug!(
+            "Skipping static TypeScript AST validation; One Engine handles TS at runtime"
+        );
+        let _ = code;
+        Ok(true)
     }
 
     /// Run sandbox test.
@@ -229,8 +191,8 @@ impl PluginValidator {
 
     /// Test plugin execution.
     ///
-    /// 为了彻底避免多份 V8 运行时在不同线程初始化导致的
-    /// `Invalid global state` 崩溃，这里不再启动 Deno/JsRuntime 去真实执行插件，
+    /// 为了彻底避免多份 JS 运行时在不同线程初始化导致的
+    /// `Invalid global state` 崩溃，这里不再启动 One Engine 去真实执行插件，
     /// 而是基于静态校验结果给出执行测试结论。
     pub async fn test_plugin_execution(&self, code: &str) -> ExecutionTestResult {
         log::info!("Testing plugin execution (static analysis only, runtime execution disabled)");

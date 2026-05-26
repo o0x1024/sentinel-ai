@@ -1258,17 +1258,30 @@ pub(crate) fn build_execution_environment_context(
     os_name: &str,
     working_dir: &str,
 ) -> String {
-    format!(
+    let base = format!(
         "[Execution Environment]\n\
         - Environment: {}\n\
         - OS: {}\n\
         - Working Directory: {}\n\n\
         [Working Directory Note]\n\
-        When performing file operations, executing scripts, or any file system related tasks, use this directory as your base path unless explicitly specified otherwise by the user.",
+        When performing file operations, executing scripts, or any file system related tasks, \
+        you MUST use this directory as your base path unless explicitly specified otherwise by the user.",
         environment.trim(),
         os_name.trim(),
         working_dir.trim()
-    )
+    );
+
+    if environment.trim() == "docker" {
+        format!(
+            "{}\n\
+            Files created outside /workspace/context/ and /workspace/uploads/ are automatically \
+            deleted when the session ends. Always create your working files under this working \
+            directory to ensure they persist for user review.",
+            base
+        )
+    } else {
+        base
+    }
 }
 
 pub(crate) fn build_context_storage_context(
@@ -1293,13 +1306,28 @@ pub(crate) fn build_context_storage_context(
         - Prefer `file_read` with increasing `offset` and bounded `limit` for host files; use shell line-range reads for container files.\n\
         - If you have only read part of a stored artifact, say the result is partial and cite the ranges inspected.\n\
         - Use local runtime context for detailed file exploration commands.\n\
-        - Keep model responses focused on task-critical facts and artifact references.",
+        - Keep model responses focused on task-critical facts and artifact references.\n\n\
+        [Session File Persistence]\n\
+        IMPORTANT: When the session ends, ALL files and directories under /workspace are automatically \
+        cleaned up EXCEPT for /workspace/context/ and /workspace/uploads/. Any files you create outside \
+        these two directories will be permanently lost and the user will not be able to review them later.\n\
+        - You MUST create all working files, scripts, downloads, extracted artifacts, and intermediate \
+        outputs inside your session directory: '{}'\n\
+        - Create subdirectories under your session directory as needed, e.g. '{}/work/', '{}/exploit/', '{}/output/'\n\
+        - Do NOT create files or directories directly under /workspace/ (e.g. /workspace/ctf_work/, \
+        /workspace/temp/, /workspace/scripts/) — they will be deleted after the session\n\
+        - If you need to compile, extract, or generate files, always use your session directory as the \
+        working base path",
         environment.trim(),
         os_name.trim(),
         execution_id.trim(),
         context_dir.trim(),
         execution_session_dir.trim(),
-        history_path.trim()
+        history_path.trim(),
+        execution_session_dir.trim(),
+        execution_session_dir.trim(),
+        execution_session_dir.trim(),
+        execution_session_dir.trim()
     )
 }
 

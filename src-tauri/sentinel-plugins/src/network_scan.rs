@@ -1,4 +1,3 @@
-use deno_core::op2;
 use futures::stream::{self, StreamExt};
 use rustscan::input::ScanOrder;
 use rustscan::port_strategy::PortStrategy;
@@ -420,9 +419,7 @@ async fn scan_target_with_progress(
     }
 }
 
-#[op2(async)]
-#[serde]
-pub async fn op_scan_ports(#[serde] request: PortScanRequest) -> PortScanResponse {
+pub async fn op_scan_ports(request: PortScanRequest) -> PortScanResponse {
     if request.targets.is_empty() {
         return PortScanResponse {
             success: false,

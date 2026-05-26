@@ -1,14 +1,14 @@
 //! Sentinel AI 流量分析插件系统
 //!
 //! 此 crate 提供：
-//! - **插件引擎**: 基于 Deno Core 的 JS/TS 插件运行时
+//! - **插件引擎**: 基于 One Engine 的 JS/TS 插件运行时
 //! - **插件管理器**: 插件加载、启用/禁用、注册表管理
 //! - **内置插件**: SQL 注入、XSS、敏感信息检测等
 //! - **类型定义**: TypeScript 类型定义和插件模板
 //!
 //! ## 模块结构
 //!
-//! - `plugin_engine`: Deno Core 插件引擎
+//! - `plugin_engine`: One Engine 插件引擎
 //! - `plugin`: 插件管理器（PluginManager）
 //! - `types`: 核心类型（Finding, RequestContext, ResponseContext 等）
 //! - `error`: 错误类型
@@ -22,10 +22,14 @@
 //! - `plugins/README.md` - 开发指南
 
 pub mod active_probe_scheduler;
+pub mod compile_cache;
 pub mod dictionary_runtime;
+pub mod engine_pool;
 pub mod error;
 pub mod executor;
+pub mod extensions;
 mod monitor_progress;
+pub mod permissions;
 mod network_scan;
 pub mod plugin;
 pub mod plugin_context;
@@ -34,6 +38,10 @@ mod plugin_fetch_context;
 mod plugin_fetch_types;
 mod plugin_finding_sanitizer;
 pub mod plugin_ops;
+// Legacy module — kept for reference but not compiled (one_* crates removed)
+// pub mod one_plugin_runtime;
+pub mod qjs_runtime;
+pub mod sentinel_js_runtime;
 pub mod request_scheduler;
 pub mod runtime_config;
 mod runtime_events;
@@ -41,6 +49,7 @@ mod service_probe;
 mod service_probe_engine;
 mod service_probe_native;
 mod service_probe_runtime;
+pub mod ts_strip;
 pub mod types;
 
 pub use active_probe_scheduler::{
@@ -48,9 +57,12 @@ pub use active_probe_scheduler::{
     get_active_probe_queue_snapshot, mark_active_probe_running, ActiveProbeDispatchGrant,
     ActiveProbeQueueEntry, ActiveProbeQueuePhase, ActiveProbeQueueSnapshot, ActiveProbeRequest,
 };
+pub use compile_cache::CompileCacheStats;
 pub use dictionary_runtime::init_dictionary_pool;
+pub use engine_pool::{EnginePool, EnginePoolConfig, EnginePoolStats};
 pub use error::{PluginError, Result};
 pub use executor::{ExecutorStats, PluginExecutor};
+pub use permissions::{FsPermission, NetworkPermission, PluginPermissions, ResourceLimits};
 pub use monitor_progress::{
     emit_plugin_monitor_progress, MonitorProgressContext, PluginMonitorProgressUpdate,
 };
@@ -60,7 +72,7 @@ pub use plugin::{
 };
 pub use plugin_context::PluginContext;
 pub use plugin_engine::PluginEngine;
-pub use plugin_ops::{cancel_plugin_fetch_requests_by_run, sentinel_plugin_ext};
+pub use plugin_ops::cancel_plugin_fetch_requests_by_run;
 pub use request_scheduler::{
     cancel_plugin_request, cancel_plugin_requests_by_run, complete_plugin_request,
     enqueue_plugin_request, fail_plugin_request, get_plugin_request_queue_snapshot,

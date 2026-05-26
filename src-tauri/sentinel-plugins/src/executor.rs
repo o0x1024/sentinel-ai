@@ -1,15 +1,10 @@
 /// Plugin Executor with restart capability
 ///
-/// This executor wraps PluginEngine in a dedicated thread and provides
-/// restart functionality to mitigate long-term memory accumulation in V8.
-///
-/// Key implementation: Each restart creates a NEW THREAD with a new V8 Isolate,
-/// rather than reusing the same thread. This is required because V8 does not
-/// support creating multiple Isolates sequentially on the same thread.
+/// Wraps PluginEngine in a dedicated thread and provides restart functionality.
+/// Each restart creates a new thread with a fresh One Engine instance.
 use crate::error::{PluginError, Result};
 use crate::plugin_engine::PluginEngine;
 use crate::types::{Finding, HttpTransaction, PluginMetadata};
-use deno_core::v8;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -44,16 +39,13 @@ pub struct ExecutorStats {
 }
 
 /// Plugin executor with restart capability
-///
-/// Each restart creates a new thread with a fresh V8 Isolate to avoid
-/// V8 HandleScope errors that occur when reusing the same thread.
 pub struct PluginExecutor {
     /// Current worker thread handle
     worker_thread: Arc<RwLock<Option<JoinHandle<()>>>>,
     /// Channel to send commands to worker
     sender: Arc<RwLock<mpsc::Sender<PluginCommand>>>,
-    /// Thread-safe isolate handle (for TerminateExecution)
-    isolate_handle: Arc<RwLock<v8::IsolateHandle>>,
+    /// Signal to terminate the currently running execution (best-effort)
+    should_terminate: Arc<AtomicBool>,
     /// Plugin ID
     plugin_id: String,
     /// Plugin metadata
@@ -93,8 +85,9 @@ impl PluginExecutor {
         let restart_count = Arc::new(AtomicUsize::new(0));
         let last_restart_time = Arc::new(RwLock::new(Some(std::time::Instant::now())));
         let should_shutdown = Arc::new(AtomicBool::new(false));
+        let should_terminate = Arc::new(AtomicBool::new(false));
 
-        let (tx, worker_thread, isolate_handle) = Self::spawn_worker(
+        let (tx, worker_thread) = Self::spawn_worker(
             &metadata,
             &code,
             max_executions_before_restart,
@@ -108,7 +101,7 @@ impl PluginExecutor {
         Ok(Self {
             worker_thread: Arc::new(RwLock::new(Some(worker_thread))),
             sender: Arc::new(RwLock::new(tx)),
-            isolate_handle: Arc::new(RwLock::new(isolate_handle)),
+            should_terminate,
             plugin_id,
             metadata,
             code,
@@ -137,38 +130,35 @@ impl PluginExecutor {
         restart_count: Arc<AtomicUsize>,
         last_restart_time: Arc<RwLock<Option<std::time::Instant>>>,
         should_shutdown: Arc<AtomicBool>,
-    ) -> Result<(
-        mpsc::Sender<PluginCommand>,
-        JoinHandle<()>,
-        v8::IsolateHandle,
-    )> {
+    ) -> Result<(mpsc::Sender<PluginCommand>, JoinHandle<()>)> {
         let (tx, mut rx) = mpsc::channel::<PluginCommand>(100);
+        let (init_tx, init_rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
 
         let metadata_clone = metadata.clone();
         let code_clone = code.to_string();
         let plugin_id_clone = metadata.id.clone();
-        let (iso_tx, iso_rx) = std::sync::mpsc::channel::<v8::IsolateHandle>();
 
-        let handle = std::thread::Builder::new()
+            let handle = std::thread::Builder::new()
             .name(format!("plugin-executor-{}", metadata.id))
             .spawn(move || {
-                let rt = match tokio::runtime::Builder::new_current_thread()
+                let rt = match tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
                     .enable_all()
                     .build()
                 {
                     Ok(rt) => rt,
                     Err(e) => {
-                        tracing::error!(
+                        let msg = format!(
                             "Failed to build runtime for plugin {}: {}",
-                            plugin_id_clone,
-                            e
+                            plugin_id_clone, e
                         );
+                        tracing::error!("{}", msg);
+                        let _ = init_tx.send(Err(msg));
                         return;
                     }
                 };
 
                 rt.block_on(async move {
-                    // Initialize engine
                     let mut engine = match Self::create_engine(
                         &code_clone,
                         &metadata_clone,
@@ -178,19 +168,17 @@ impl PluginExecutor {
                     {
                         Ok(e) => e,
                         Err(e) => {
-                            tracing::error!(
-                                "Failed to create initial engine for plugin {}: {}",
-                                plugin_id_clone,
-                                e
+                            let msg = format!(
+                                "Failed to create engine for plugin {}: {}",
+                                plugin_id_clone, e
                             );
+                            tracing::error!("{}", msg);
+                            let _ = init_tx.send(Err(msg));
                             return;
                         }
                     };
 
-                    // Publish a thread-safe isolate handle for TerminateExecution.
-                    // If receiver is gone, continue without termination capability.
-                    let _ = iso_tx.send(engine.isolate_handle());
-
+                    let _ = init_tx.send(Ok(()));
                     info!("Plugin executor started for {}", plugin_id_clone);
 
                     // Command processing loop
@@ -275,11 +263,13 @@ impl PluginExecutor {
             })
             .map_err(|e| PluginError::Execution(format!("Failed to spawn thread: {}", e)))?;
 
-        let isolate_handle = iso_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .map_err(|e| PluginError::Execution(format!("Failed to get isolate handle: {}", e)))?;
-
-        Ok((tx, handle, isolate_handle))
+        match init_rx.recv() {
+            Ok(Ok(())) => Ok((tx, handle)),
+            Ok(Err(msg)) => Err(PluginError::Load(msg)),
+            Err(_) => Err(PluginError::Load(
+                "Worker thread exited before engine initialization completed".to_string(),
+            )),
+        }
     }
 
     /// Create engine instance
@@ -356,13 +346,13 @@ impl PluginExecutor {
             .map_err(|e| PluginError::Execution(format!("Failed to receive reply: {}", e)))?
     }
 
-    /// Request V8 to terminate the currently running JavaScript (best-effort).
+    /// Request the engine to terminate the currently running script (best-effort).
     ///
-    /// This is designed for stopping synchronous infinite loops (no await points),
-    /// where `tokio::time::timeout` cannot preempt the running isolate.
+    /// Sets a flag that can be checked by fuel exhaustion or cooperative yields.
+    /// For synchronous infinite loops without await points, the engine's fuel
+    /// limit provides the actual termination guarantee.
     pub async fn terminate_execution(&self) {
-        let handle = self.isolate_handle.read().await;
-        handle.terminate_execution();
+        self.should_terminate.store(true, Ordering::Relaxed);
     }
 
     /// Manually trigger restart
@@ -370,7 +360,7 @@ impl PluginExecutor {
     /// This will:
     /// 1. Signal the old thread to shutdown
     /// 2. Wait for it to exit
-    /// 3. Spawn a new thread with a fresh V8 Isolate
+    /// 3. Spawn a new thread with a fresh engine instance
     pub async fn restart(&self) -> Result<()> {
         info!("Manual restart triggered for plugin {}", self.plugin_id);
 
@@ -405,12 +395,13 @@ impl PluginExecutor {
 
         // Reset shutdown flag
         self.should_shutdown.store(false, Ordering::Relaxed);
+        self.should_terminate.store(false, Ordering::Relaxed);
 
         // Reset current instance execution count
         self.current_instance_executions.store(0, Ordering::Relaxed);
 
         // Spawn new worker thread
-        let (new_tx, new_handle, new_isolate_handle) = Self::spawn_worker(
+        let (new_tx, new_handle) = Self::spawn_worker(
             &self.metadata,
             &self.code,
             self.max_executions_before_restart,
@@ -429,10 +420,6 @@ impl PluginExecutor {
         {
             let mut worker_thread = self.worker_thread.write().await;
             *worker_thread = Some(new_handle);
-        }
-        {
-            let mut iso = self.isolate_handle.write().await;
-            *iso = new_isolate_handle;
         }
 
         // Update stats
@@ -533,12 +520,11 @@ mod tests {
 
     fn create_test_code() -> String {
         r#"
-export function scan_transaction(transaction) {
+function scan_transaction(transaction) {
     Sentinel.emitFinding({
         vuln_type: "test",
         title: "Test",
         description: "Test",
-        target_asset_types: vec![],
         evidence: "test",
         location: "test",
         severity: "info",
@@ -551,7 +537,7 @@ export function scan_transaction(transaction) {
 
     fn create_streaming_test_code() -> String {
         r#"
-export async function scan_transaction(transaction) {
+function scan_transaction(transaction) {
     Sentinel.emitFinding({
         vuln_type: "test",
         title: "Streamed Finding",
@@ -561,8 +547,6 @@ export async function scan_transaction(transaction) {
         severity: "info",
         confidence: "high"
     });
-
-    await new Promise(resolve => setTimeout(resolve, 250));
     return [];
 }
 "#

@@ -1,4 +1,3 @@
-use deno_core::op2;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -406,9 +405,7 @@ pub async fn probe_services(request: ServiceProbeRequest) -> ServiceProbeRespons
     }
 }
 
-#[op2(async)]
-#[serde]
-pub async fn op_probe_services(#[serde] request: ServiceProbeRequest) -> ServiceProbeResponse {
+pub async fn op_probe_services(request: ServiceProbeRequest) -> ServiceProbeResponse {
     probe_services(request).await
 }
 

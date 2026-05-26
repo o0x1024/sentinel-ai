@@ -5,15 +5,14 @@
 use crate::error::{PluginError, Result};
 use crate::plugin_engine::PluginEngine;
 use crate::types::{Finding, HttpTransaction, PluginMetadata};
-use deno_core::v8;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-type ActivePluginExecutionMap = HashMap<String, HashMap<String, v8::IsolateHandle>>;
+type ActivePluginExecutionMap = HashMap<String, HashSet<String>>;
 
 static ACTIVE_PLUGIN_EXECUTIONS: OnceLock<Mutex<ActivePluginExecutionMap>> = OnceLock::new();
 
@@ -47,10 +46,7 @@ impl Drop for ActivePluginExecutionGuard {
     }
 }
 
-fn register_active_plugin_execution(
-    run_id: &str,
-    handle: v8::IsolateHandle,
-) -> ActivePluginExecutionGuard {
+fn register_active_plugin_execution(run_id: &str) -> ActivePluginExecutionGuard {
     let execution_id = uuid::Uuid::new_v4().to_string();
     let mut executions = active_plugin_executions()
         .lock()
@@ -58,7 +54,7 @@ fn register_active_plugin_execution(
     executions
         .entry(run_id.to_string())
         .or_default()
-        .insert(execution_id.clone(), handle);
+        .insert(execution_id.clone());
 
     ActivePluginExecutionGuard {
         run_id: run_id.to_string(),
@@ -73,9 +69,6 @@ pub fn terminate_plugin_executions_by_run(run_id: &str) -> usize {
     let Some(run_executions) = executions.get(run_id) else {
         return 0;
     };
-    for handle in run_executions.values() {
-        handle.terminate_execution();
-    }
     run_executions.len()
 }
 
@@ -504,8 +497,7 @@ impl PluginManager {
             rt.block_on(async move {
                 let mut engine = PluginEngine::new()?;
                 engine.load_plugin_with_metadata(&code, metadata).await?;
-                let _active_execution =
-                    register_active_plugin_execution(&run_id, engine.isolate_handle());
+                let _active_execution = register_active_plugin_execution(&run_id);
                 engine
                     .execute_agent_with_runtime_context(
                         &input_clone,

@@ -47,7 +47,7 @@ pub struct SentinelJsRuntime {
 impl SentinelJsRuntime {
     pub fn new() -> Result<Self> {
         let config = RuntimeConfig {
-            max_memory: 64 * 1024 * 1024,
+            max_memory: 256 * 1024 * 1024,
             max_execution_ms: 30_000,
             max_stack_depth: 512,
             node_compat: true,
@@ -321,8 +321,9 @@ fn register_fetch_bindings(bindings: &mut HostBindingsExt) {
                 }
             });
 
-        let response =
+        let mut response =
             block_on_async(async { crate::plugin_engine::plugin_fetch(url, options).await });
+        response.body_bytes = Vec::new();
         serde_json::to_string(&response).unwrap_or_else(|_| "null".to_string())
     });
 

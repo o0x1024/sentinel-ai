@@ -1653,7 +1653,7 @@ impl DictionaryService {
         )
         .await?;
 
-        self.ensure_builtin_dictionary(
+        self.ensure_builtin_dictionary_seed_once(
             Dictionary {
                 id: "builtin_safe_poc_rules".to_string(),
                 name: "Safe Risk Verification Rules".to_string(),
@@ -1965,6 +1965,38 @@ impl DictionaryService {
             self.update_dictionary(updated).await?;
             self.sync_builtin_dictionary_words(&dictionary.id, entries)
                 .await?;
+        } else {
+            self.create_dictionary(dictionary.clone()).await?;
+            self.add_word_entries(&dictionary.id, entries).await?;
+        }
+        Ok(())
+    }
+
+    /// Seed entries on first creation; on subsequent runs only update metadata,
+    /// preserving any user modifications to the dictionary entries.
+    async fn ensure_builtin_dictionary_seed_once(
+        &self,
+        dictionary: Dictionary,
+        entries: Vec<DictionaryWordInput>,
+    ) -> Result<()> {
+        if let Some(existing) = self.get_dictionary(&dictionary.id).await? {
+            let mut updated = existing;
+            updated.name = dictionary.name;
+            updated.description = dictionary.description;
+            updated.dict_type = dictionary.dict_type;
+            updated.service_type = dictionary.service_type;
+            updated.category = dictionary.category;
+            updated.is_builtin = dictionary.is_builtin;
+            updated.is_active = dictionary.is_active;
+            updated.file_size = dictionary.file_size;
+            updated.checksum = dictionary.checksum;
+            updated.version = dictionary.version;
+            updated.author = dictionary.author;
+            updated.source_url = dictionary.source_url;
+            updated.tags = dictionary.tags;
+            updated.metadata = dictionary.metadata;
+
+            self.update_dictionary(updated).await?;
         } else {
             self.create_dictionary(dictionary.clone()).await?;
             self.add_word_entries(&dictionary.id, entries).await?;

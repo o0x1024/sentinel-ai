@@ -99,19 +99,13 @@ impl PluginContext {
 
     pub fn emit_finding(&self, finding: Finding) -> bool {
         if let Some(sink) = self.finding_sink.lock().unwrap().clone() {
-            match sink.send(finding.clone()) {
-                Ok(_) => {
-                    let mut findings = self.findings.lock().unwrap();
-                    findings.push(finding);
-                    return true;
-                }
-                Err(error) => {
-                    warn!("Failed to stream finding to traffic pipeline: {}", error);
-                    return false;
-                }
+            if let Err(error) = sink.send(finding.clone()) {
+                warn!("Failed to stream finding to traffic pipeline: {}", error);
             }
         }
 
-        false
+        let mut findings = self.findings.lock().unwrap();
+        findings.push(finding);
+        true
     }
 }

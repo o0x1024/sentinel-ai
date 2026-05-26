@@ -1,4 +1,3 @@
-use deno_error::JsErrorBox;
 use serde::Serialize;
 use std::sync::OnceLock;
 
@@ -60,7 +59,7 @@ pub fn init_dictionary_pool(pool: DictionaryPool) {
     }
 }
 
-fn get_dictionary_pool() -> Result<&'static DictionaryPool, JsErrorBox> {
+fn get_dictionary_pool() -> Result<&'static DictionaryPool, String> {
     match DICTIONARY_POOL.get() {
         Some(pool) => Ok(pool),
         None => {
@@ -68,7 +67,7 @@ fn get_dictionary_pool() -> Result<&'static DictionaryPool, JsErrorBox> {
                 "Dictionary pool requested before initialization in sentinel-plugins runtime (backend={})",
                 dictionary_backend_name()
             );
-            Err(JsErrorBox::generic("Dictionary database not initialized"))
+            Err("Dictionary database not initialized".to_string())
         }
     }
 }
@@ -77,30 +76,30 @@ fn get_dictionary_pool() -> Result<&'static DictionaryPool, JsErrorBox> {
 async fn resolve_dictionary_id(
     pool: &DictionaryPool,
     id_or_name: &str,
-) -> Result<Option<String>, JsErrorBox> {
+) -> Result<Option<String>, String> {
     sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = $1 OR name = $2")
         .bind(id_or_name)
         .bind(id_or_name)
         .fetch_optional(pool)
         .await
-        .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))
+        .map_err(|e| format!("Query error: {}", e))
 }
 
 #[cfg(not(feature = "db-postgres"))]
 async fn resolve_dictionary_id(
     pool: &DictionaryPool,
     id_or_name: &str,
-) -> Result<Option<String>, JsErrorBox> {
+) -> Result<Option<String>, String> {
     sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = ? OR name = ?")
         .bind(id_or_name)
         .bind(id_or_name)
         .fetch_optional(pool)
         .await
-        .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))
+        .map_err(|e| format!("Query error: {}", e))
 }
 
 #[cfg(feature = "db-postgres")]
-pub async fn get_dictionary(id_or_name: String) -> Result<Option<JsDictionary>, JsErrorBox> {
+pub async fn get_dictionary(id_or_name: String) -> Result<Option<JsDictionary>, String> {
     let pool = get_dictionary_pool()?;
     let row: Option<(
         String,
@@ -118,7 +117,7 @@ pub async fn get_dictionary(id_or_name: String) -> Result<Option<JsDictionary>, 
     .bind(&id_or_name)
     .fetch_optional(pool)
     .await
-    .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?;
+    .map_err(|e| format!("Query error: {}", e))?;
 
     Ok(row.map(
         |(id, name, description, dict_type, service_type, category, word_count, tags)| {
@@ -137,7 +136,7 @@ pub async fn get_dictionary(id_or_name: String) -> Result<Option<JsDictionary>, 
 }
 
 #[cfg(not(feature = "db-postgres"))]
-pub async fn get_dictionary(id_or_name: String) -> Result<Option<JsDictionary>, JsErrorBox> {
+pub async fn get_dictionary(id_or_name: String) -> Result<Option<JsDictionary>, String> {
     let pool = get_dictionary_pool()?;
     let row: Option<(
         String,
@@ -155,7 +154,7 @@ pub async fn get_dictionary(id_or_name: String) -> Result<Option<JsDictionary>, 
     .bind(&id_or_name)
     .fetch_optional(pool)
     .await
-    .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?;
+    .map_err(|e| format!("Query error: {}", e))?;
 
     Ok(row.map(
         |(id, name, description, dict_type, service_type, category, word_count, tags)| {
@@ -174,7 +173,7 @@ pub async fn get_dictionary(id_or_name: String) -> Result<Option<JsDictionary>, 
 }
 
 #[cfg(feature = "db-postgres")]
-pub async fn get_default_dictionary_id(dict_type: String) -> Result<String, JsErrorBox> {
+pub async fn get_default_dictionary_id(dict_type: String) -> Result<String, String> {
     let pool = get_dictionary_pool()?;
     let dict_id: Option<String> = sqlx::query_scalar(
         "SELECT value FROM configurations WHERE category = 'dictionary_default' AND key = $1",
@@ -182,7 +181,7 @@ pub async fn get_default_dictionary_id(dict_type: String) -> Result<String, JsEr
     .bind(&dict_type)
     .fetch_optional(pool)
     .await
-    .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?;
+    .map_err(|e| format!("Query error: {}", e))?;
 
     Ok(dict_id
         .filter(|value| !value.trim().is_empty())
@@ -190,7 +189,7 @@ pub async fn get_default_dictionary_id(dict_type: String) -> Result<String, JsEr
 }
 
 #[cfg(not(feature = "db-postgres"))]
-pub async fn get_default_dictionary_id(dict_type: String) -> Result<String, JsErrorBox> {
+pub async fn get_default_dictionary_id(dict_type: String) -> Result<String, String> {
     let pool = get_dictionary_pool()?;
     let dict_id: Option<String> = sqlx::query_scalar(
         "SELECT value FROM configurations WHERE category = 'dictionary_default' AND key = ?",
@@ -198,7 +197,7 @@ pub async fn get_default_dictionary_id(dict_type: String) -> Result<String, JsEr
     .bind(&dict_type)
     .fetch_optional(pool)
     .await
-    .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?;
+    .map_err(|e| format!("Query error: {}", e))?;
 
     Ok(dict_id
         .filter(|value| !value.trim().is_empty())
@@ -208,7 +207,7 @@ pub async fn get_default_dictionary_id(dict_type: String) -> Result<String, JsEr
 pub async fn get_dictionary_words(
     id_or_name: String,
     limit: Option<i32>,
-) -> Result<Vec<String>, JsErrorBox> {
+) -> Result<Vec<String>, String> {
     let pool = get_dictionary_pool()?;
     let Some(dict_id) = resolve_dictionary_id(pool, &id_or_name).await? else {
         return Ok(vec![]);
@@ -225,7 +224,7 @@ pub async fn get_dictionary_words(
             .bind(limit_val)
             .fetch_all(pool)
             .await
-            .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)));
+            .map_err(|e| format!("Query error: {}", e));
     }
 
     #[cfg(feature = "db-postgres")]
@@ -239,13 +238,13 @@ pub async fn get_dictionary_words(
         .bind(&dict_id)
         .fetch_all(pool)
         .await
-        .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))
+        .map_err(|e| format!("Query error: {}", e))
 }
 
 pub async fn get_dictionary_entries(
     id_or_name: String,
     limit: Option<i32>,
-) -> Result<Vec<JsDictionaryEntry>, JsErrorBox> {
+) -> Result<Vec<JsDictionaryEntry>, String> {
     let pool = get_dictionary_pool()?;
     let Some(dict_id) = resolve_dictionary_id(pool, &id_or_name).await? else {
         return Ok(vec![]);
@@ -264,7 +263,7 @@ pub async fn get_dictionary_entries(
             .bind(limit_val)
             .fetch_all(pool)
             .await
-            .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?
+            .map_err(|e| format!("Query error: {}", e))?
     } else {
         #[cfg(feature = "db-postgres")]
             let query = "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC";
@@ -275,7 +274,7 @@ pub async fn get_dictionary_entries(
             .bind(&dict_id)
             .fetch_all(pool)
             .await
-            .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?
+            .map_err(|e| format!("Query error: {}", e))?
     };
 
     Ok(rows
@@ -293,7 +292,7 @@ pub async fn get_dictionary_entries(
 pub async fn list_dictionaries(
     dict_type: Option<String>,
     category: Option<String>,
-) -> Result<Vec<JsDictionary>, JsErrorBox> {
+) -> Result<Vec<JsDictionary>, String> {
     let pool = get_dictionary_pool()?;
 
     let mut query = "SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE 1=1".to_string();
@@ -332,7 +331,7 @@ pub async fn list_dictionaries(
     let rows = sql_query
         .fetch_all(pool)
         .await
-        .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?;
+        .map_err(|e| format!("Query error: {}", e))?;
 
     Ok(rows
         .into_iter()
@@ -357,7 +356,7 @@ pub async fn list_dictionaries(
 pub async fn list_dictionaries(
     dict_type: Option<String>,
     category: Option<String>,
-) -> Result<Vec<JsDictionary>, JsErrorBox> {
+) -> Result<Vec<JsDictionary>, String> {
     let pool = get_dictionary_pool()?;
 
     let mut query = "SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE 1=1".to_string();
@@ -393,7 +392,7 @@ pub async fn list_dictionaries(
     let rows = sql_query
         .fetch_all(pool)
         .await
-        .map_err(|e| JsErrorBox::generic(format!("Query error: {}", e)))?;
+        .map_err(|e| format!("Query error: {}", e))?;
 
     Ok(rows
         .into_iter()

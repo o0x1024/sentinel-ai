@@ -49,7 +49,7 @@ impl QjsPluginRuntime {
             .map_err(|e| PluginError::Load(format!("Failed to create QuickJS runtime: {e}")))?;
 
         runtime.set_max_stack_size(512 * 1024);
-        runtime.set_memory_limit(64 * 1024 * 1024);
+        runtime.set_memory_limit(256 * 1024 * 1024);
 
         let context = Context::full(&runtime)
             .map_err(|e| PluginError::Load(format!("Failed to create QuickJS context: {e}")))?;
@@ -322,9 +322,10 @@ fn host_fetch<'js>(
             }
         });
 
-    let response =
+    let mut response =
         block_on_async(async { crate::plugin_engine::plugin_fetch(url, options).await });
-    let json = serde_json::to_value(response).unwrap_or(serde_json::Value::Null);
+    response.body_bytes = Vec::new();
+    let json = serde_json::to_value(&response).unwrap_or(serde_json::Value::Null);
     json_to_qjs(&ctx, &json)
 }
 

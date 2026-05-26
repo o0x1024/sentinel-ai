@@ -595,3 +595,53 @@ fn relative_display_path(base_path: &Path, candidate: &Path) -> String {
 struct DockerExecOutput {
     stdout: Vec<u8>,
 }
+
+#[derive(Debug)]
+pub struct RuntimeProcessOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub success: bool,
+}
+
+/// Execute an external program in the current file-runtime context.
+///
+/// Host mode: spawns the process with the runtime working directory as cwd.
+/// Docker mode: runs via `docker exec -w <workdir>` in the active container.
+pub async fn execute_in_runtime(
+    program: &str,
+    args: &[String],
+) -> Result<RuntimeProcessOutput, String> {
+    match effective_context() {
+        FileRuntimeMode::Host(context) => {
+            let output = Command::new(program)
+                .args(args)
+                .current_dir(&context.working_dir)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .map_err(|e| format!("{}: {}", program, e))?;
+            Ok(RuntimeProcessOutput {
+                success: output.status.success(),
+                stdout: output.stdout,
+                stderr: output.stderr,
+            })
+        }
+        FileRuntimeMode::Docker(context) => {
+            let container_ref = ensure_docker_container_ref(&context).await?;
+            let output = Command::new("docker")
+                .args(["exec", "-w", &context.working_dir, &container_ref, program])
+                .args(args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .map_err(|e| format!("docker exec {}: {}", program, e))?;
+            Ok(RuntimeProcessOutput {
+                success: output.status.success(),
+                stdout: output.stdout,
+                stderr: output.stderr,
+            })
+        }
+    }
+}

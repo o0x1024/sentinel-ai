@@ -10,7 +10,8 @@ default = ["db-sqlite"]
 db-sqlite = ["sqlx/sqlite", "sentinel-core/db-sqlite"]
 db-postgres = ["sqlx/postgres", "sentinel-core/db-postgres"]
 db-mysql = ["sqlx/mysql", "sentinel-core/db-mysql"]
-plugin-ts-transpile = ["dep:deno_ast"]
+# Legacy feature gate; kept to avoid breaking test cfg attributes.
+plugin-ts-transpile = []
 
 [dependencies]
 # Sentinel core for proxy support
@@ -18,19 +19,14 @@ sentinel-core = { path = "../sentinel-core", default-features = false }
 # SQLx for database queries (dictionary access)
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "derive", "macros"] }
 
-# Deno Core and extensions for plugin execution
-# Using deno_core 0.373.0 for stability, file system via custom ops
-deno_core = "0.373.0"
-deno_ast = { version = "0.51.0", features = ["transpiling"], optional = true }
-deno_error = "0.7.0"
-deno_features = "0.20.0"
-deno_net = "0.215.0"
-deno_permissions = "0.82.0"
-deno_crypto = "0.237.0"
+# QuickJS via rquickjs — ES2023-compliant JS engine for plugin execution
+rquickjs = { version = "0.11", features = ["classes", "properties", "parallel"] }
 
-# Deno extensions for native Web APIs (TextEncoder, URL, console, Headers, etc.)
-deno_webidl = "0.223.0"
-deno_web = "0.254.0"
+# Sentinel JS — embedded plugin runtime built on QuickJS-NG
+sentinel-js = { path = "../sentinel-js" }
+
+# Oxc — TypeScript type stripping via proper AST parse + codegen
+oxc = { version = ">=0.120, <0.127", features = ["full"] }
 
 anyhow = "1.0"
 regex = "1"
@@ -52,18 +48,13 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 dirs = "5.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
-sys_traits = { version = "0.1.17", features = ["real", "libc"] }
+ureq = "3"
 tokio-rustls = "0.26"
 rustls = "0.23"
 webpki-roots = "0.26"
 x509-parser = "0.16"
 tauri = { version = "2.7.0", default-features = false }
 
-# JavaScript AST parsing
-oxc_parser = "0.110.0"
-oxc_allocator = "0.110.0"
-oxc_ast = "0.110.0"
-oxc_span = "0.110.0"
 rustscan = { package = "myrustscan", version = "2.4.2" }
 
 # HTTP client
@@ -76,3 +67,4 @@ reqwest = { version = "0.12", features = ["json", "native-tls"] }
 [dev-dependencies]
 sysinfo = "0.30"
 num_cpus = "1.0"
+walkdir = "2"

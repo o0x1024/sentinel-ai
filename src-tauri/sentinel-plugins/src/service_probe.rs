@@ -1,5 +1,4 @@
 use crate::service_probe_engine::{native_engine_capability, resolve_service_probe_engine};
-use deno_core::op2;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,8 +26,6 @@ pub fn service_probe_capabilities() -> ServiceProbeCapabilitiesResponse {
     }
 }
 
-#[op2]
-#[serde]
 pub fn op_get_service_probe_capabilities() -> ServiceProbeCapabilitiesResponse {
     service_probe_capabilities()
 }
