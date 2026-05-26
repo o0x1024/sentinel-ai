@@ -125,6 +125,35 @@ impl SentinelJsRuntime {
                     resolve: function(result) { if (typeof __sentinel_return === "function") __sentinel_return(result); },
                 };
             }
+            if (!globalThis.Sentinel.Dictionary) {
+                globalThis.Sentinel.Dictionary = {
+                    get: function(idOrName) {
+                        return (typeof __sentinel_get_dictionary === "function")
+                            ? __sentinel_get_dictionary(idOrName) : null;
+                    },
+                    getDefaultId: function(dictType) {
+                        return (typeof __sentinel_get_default_dictionary_id === "function")
+                            ? __sentinel_get_default_dictionary_id(dictType) : "";
+                    },
+                    getWords: function(idOrName, limit) {
+                        return (typeof __sentinel_get_dictionary_words === "function")
+                            ? __sentinel_get_dictionary_words(idOrName, limit) : [];
+                    },
+                    getEntries: function(idOrName, limit) {
+                        return (typeof __sentinel_get_dictionary_entries === "function")
+                            ? __sentinel_get_dictionary_entries(idOrName, limit) : [];
+                    },
+                    list: function(filter) {
+                        if (typeof __sentinel_list_dictionaries !== "function") return [];
+                        var dictType = null, category = null;
+                        if (filter) {
+                            if (filter.dictType) dictType = filter.dictType;
+                            if (filter.category) category = filter.category;
+                        }
+                        return __sentinel_list_dictionaries(dictType, category);
+                    }
+                };
+            }
             if (typeof globalThis.Deno === "undefined") {
                 globalThis.Deno = { build: { os: process.platform, arch: process.arch } };
             }
