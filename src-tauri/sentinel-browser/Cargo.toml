@@ -1,0 +1,30 @@
+[package]
+name = "sentinel-browser"
+version = "0.1.0"
+edition = "2021"
+description = "Humanized browser automation for Sentinel AI Agent"
+
+[features]
+default = ["cdp"]
+cdp = []
+juggler = []
+stealth = ["juggler"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+thiserror = "2"
+tracing = "0.1"
+rand = "0.8"
+rand_distr = "0.4"
+kurbo = "0.11"
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+url = "2"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
