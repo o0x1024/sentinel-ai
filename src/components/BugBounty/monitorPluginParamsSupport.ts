@@ -6,6 +6,7 @@ export type FieldControl =
   | 'array-multiselect'
   | 'array-lines'
   | 'object-fields'
+  | 'dictionary-picker'
   | 'json'
 
 export type SchemaProperty = {
@@ -18,6 +19,8 @@ export type SchemaProperty = {
   maximum?: number
   readOnly?: boolean
   properties?: Record<string, SchemaProperty>
+  'x-control'?: string
+  'x-dictionary-type'?: string
 }
 
 export type EditableField = {
@@ -37,6 +40,7 @@ export type EditableField = {
   typeLabel: string
   secret: boolean
   arraySuggestedOptions: string[]
+  dictionaryType?: string
 }
 
 export const PARAM_EDITOR_INVALID_KEY = '__monitorParamEditorInvalid'
@@ -122,7 +126,20 @@ const parseAvailableOptionsFromDescription = (description: string) => {
 export const isSecretFieldName = (fieldName: string) =>
   SECRET_FIELD_PATTERNS.some(pattern => pattern.test(fieldName))
 
-const getFieldControl = (property: SchemaProperty): FieldControl => {
+const DICTIONARY_FIELD_NAME_PATTERN = /^dictionary[_-]?id$/i
+
+const isDictionaryPickerField = (name: string, property: SchemaProperty): boolean => {
+  if (property['x-control'] === 'dictionary-picker') {
+    return true
+  }
+  return property.type === 'string' && DICTIONARY_FIELD_NAME_PATTERN.test(name)
+}
+
+const getFieldControl = (property: SchemaProperty, name?: string): FieldControl => {
+  if (name && isDictionaryPickerField(name, property)) {
+    return 'dictionary-picker'
+  }
+
   if (Array.isArray(property.enum) && property.enum.length > 0) {
     return 'enum'
   }
@@ -175,6 +192,8 @@ const buildEditableField = (
       buildEditableField(childName, childProperty, objectRequiredFields, [...path, childName])
     )
 
+  const control = getFieldControl(property, name)
+
   return {
     name,
     path,
@@ -188,13 +207,17 @@ const buildEditableField = (
     maximum: property.maximum,
     properties: property.properties,
     objectFields,
-    control: getFieldControl(property),
+    control,
     typeLabel: buildTypeLabel(property),
     secret: isSecretFieldName(name),
     arraySuggestedOptions:
       property.type === 'array' && property.items?.type === 'string'
         ? parseAvailableOptionsFromDescription(String(property.description || ''))
         : [],
+    dictionaryType:
+      control === 'dictionary-picker'
+        ? (property['x-dictionary-type'] || undefined)
+        : undefined,
   }
 }
 

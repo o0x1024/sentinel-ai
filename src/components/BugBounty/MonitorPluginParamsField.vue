@@ -144,6 +144,53 @@
       />
     </div>
 
+    <div
+      v-else-if="field.control === 'dictionary-picker'"
+      class="space-y-2"
+    >
+      <div class="flex items-center gap-2">
+        <select
+          v-if="!dictManualMode"
+          :value="getExplicitValue() ?? ''"
+          class="select select-sm select-bordered flex-1 min-w-0"
+          @change="setDictionaryValue(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">{{ t('bugBounty.monitor.usePluginDefaultParamValue', '使用插件默认值') }}</option>
+          <option
+            v-for="dict in filteredDictionaries"
+            :key="dict.id"
+            :value="dict.id"
+          >
+            {{ dict.name }} ({{ dict.dict_type }}) [{{ dict.word_count }}]
+          </option>
+        </select>
+        <input
+          v-else
+          :value="getStringValue()"
+          type="text"
+          class="input input-sm input-bordered flex-1 min-w-0"
+          :placeholder="t('bugBounty.monitor.dictionaryIdPlaceholder', '输入字典 ID 或名称')"
+          @input="setStringValue(($event.target as HTMLInputElement).value)"
+        />
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs whitespace-nowrap"
+          @click="dictManualMode = !dictManualMode"
+        >
+          {{ dictManualMode ? t('bugBounty.monitor.dictionaryPickerMode', '选择') : t('bugBounty.monitor.dictionaryManualMode', '手动输入') }}
+        </button>
+      </div>
+      <div v-if="dictLoading" class="text-xs text-base-content/50">
+        {{ t('bugBounty.monitor.loadingDictionaries', '加载字典列表...') }}
+      </div>
+      <div v-if="dictLoadError" class="text-xs text-warning">
+        {{ dictLoadError }}
+      </div>
+      <div v-if="selectedDictionaryInfo && !dictManualMode" class="text-xs text-base-content/60">
+        {{ selectedDictionaryInfo }}
+      </div>
+    </div>
+
     <textarea
       v-else
       :value="getJsonEditorText()"
@@ -175,8 +222,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
 import {
   buildFieldHint,
   cloneValue,
@@ -190,6 +238,15 @@ import {
   setValueAtPath,
   type EditableField,
 } from './monitorPluginParamsSupport'
+
+type DictionaryItem = {
+  id: string
+  name: string
+  dict_type: string
+  word_count: number
+  is_active: boolean
+  description?: string
+}
 
 defineOptions({ name: 'MonitorPluginParamsField' })
 
@@ -213,6 +270,67 @@ const props = withDefaults(
 
 const { t } = useI18n()
 const secretVisible = ref(false)
+
+const dictManualMode = ref(false)
+const dictLoading = ref(false)
+const dictLoadError = ref('')
+const allDictionaries = ref<DictionaryItem[]>([])
+
+const filteredDictionaries = computed(() => {
+  const dictType = props.field.dictionaryType
+  const list = allDictionaries.value.filter(d => d.is_active !== false)
+  if (!dictType) return list
+  return list.filter(d => d.dict_type === dictType)
+})
+
+const selectedDictionaryInfo = computed(() => {
+  const currentId = getExplicitValue()
+  if (!currentId || typeof currentId !== 'string') return ''
+  const dict = allDictionaries.value.find(d => d.id === currentId)
+  if (!dict) return ''
+  const desc = dict.description ? ` — ${dict.description}` : ''
+  return `${dict.name} (${dict.dict_type}, ${dict.word_count} ${t('dictionary.wordCount', '词条')})${desc}`
+})
+
+const setDictionaryValue = (value: string) => {
+  if (!value) {
+    resetField()
+    return
+  }
+  delete props.fieldErrors[pathKey.value]
+  setValueAtPath(props.params, props.field.path, value)
+}
+
+const loadDictionaries = async () => {
+  if (allDictionaries.value.length > 0) return
+  dictLoading.value = true
+  dictLoadError.value = ''
+  try {
+    const result = await invoke<DictionaryItem[]>('get_dictionaries', {
+      dict_type: props.field.dictionaryType || null,
+      service_type: null,
+      category: null,
+      is_builtin: null,
+      is_active: null,
+      search_term: null,
+    })
+    allDictionaries.value = result
+  } catch (err) {
+    dictLoadError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    dictLoading.value = false
+  }
+}
+
+watch(
+  () => props.field.control,
+  (control) => {
+    if (control === 'dictionary-picker') {
+      loadDictionaries()
+    }
+  },
+  { immediate: true },
+)
 
 const pathKey = computed(() => getFieldPathKey(props.field.path))
 const fullHint = computed(() => buildFieldHint(props.field, t))
