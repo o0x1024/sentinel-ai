@@ -35,6 +35,7 @@ const TARGET_ASSET_OPTIONS = [
   { value: 'host', label: '主机' },
   { value: 'ip', label: 'IP' },
   { value: 'service', label: '服务端点' },
+  { value: 'api', label: 'API清单' },
 ]
 
 const props = defineProps<{

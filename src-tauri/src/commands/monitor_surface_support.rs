@@ -391,34 +391,10 @@ fn push_unique_resolved_target(
     }
 }
 
-fn high_cost_monitor_target_limit(plugin_id: &str) -> Option<usize> {
-    match plugin_id {
-        "api_monitor" => Some(500),
-        "content_monitor" | "risk_scanner" | "sensitive_file_scanner" => Some(1_000),
-        "directory_bruteforcer" | "subdomain_takeover" => Some(800),
-        _ => None,
-    }
-}
-
 fn finalize_monitor_resolved_targets(
-    plugin_id: &str,
-    mut resolved: MonitorResolvedTargets,
+    _plugin_id: &str,
+    resolved: MonitorResolvedTargets,
 ) -> MonitorResolvedTargets {
-    if let Some(limit) = high_cost_monitor_target_limit(plugin_id) {
-        let original = resolved.targets.len();
-        if original > limit {
-            resolved.targets.truncate(limit);
-            resolved.target_objects.truncate(limit);
-            resolved.extra_input.insert(
-                "__monitorTargetLimit".to_string(),
-                json!({
-                    "original": original,
-                    "limit": limit,
-                    "reason": "high_cost_plugin"
-                }),
-            );
-        }
-    }
     resolved
 }
 
@@ -440,6 +416,7 @@ fn monitor_target_type_label(value: &str) -> &str {
         "service" => "服务",
         "ip" => "IP",
         "host" => "主机",
+        "api" => "API清单",
         "generic" => "通用",
         _ => value,
     }
@@ -475,24 +452,7 @@ pub(crate) fn format_monitor_target_breakdown(resolved: &MonitorResolvedTargets)
         .into_iter()
         .map(|(label, count)| format!("{label} {count}"))
         .collect::<Vec<_>>();
-    let mut label = format!("目标来源：{}", parts.join(", "));
-    if let Some(limit) = resolved
-        .extra_input
-        .get("__monitorTargetLimit")
-        .and_then(Value::as_object)
-    {
-        let original = limit
-            .get("original")
-            .and_then(Value::as_u64)
-            .unwrap_or_default();
-        let limit_value = limit
-            .get("limit")
-            .and_then(Value::as_u64)
-            .unwrap_or_default();
-        if original > 0 && limit_value > 0 {
-            label.push_str(&format!("；高成本插件已截断：{original} -> {limit_value}"));
-        }
-    }
+    let label = format!("目标来源：{}", parts.join(", "));
     Some(label)
 }
 
@@ -509,6 +469,7 @@ fn normalize_monitor_target_asset_type(value: &str) -> Option<&'static str> {
         "host" | "hostname" => Some("host"),
         "ip" | "ip_address" => Some("ip"),
         "service" | "port" | "endpoint" => Some("service"),
+        "api" | "api_path" | "api_endpoint" => Some("api"),
         _ => None,
     }
 }
@@ -1287,6 +1248,64 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                         }),
                     );
                 }
+            }
+        }
+    }
+
+    if requested_asset_types.contains("api") {
+        if let Ok(observations) = db_service
+            .list_latest_surface_observations_by_target(
+                Some(&task.program_id),
+                Some("api_monitor"),
+                Some("api_snapshot"),
+            )
+            .await
+        {
+            let mut api_paths: Vec<String> = Vec::new();
+            let mut api_path_seen: HashSet<String> = HashSet::new();
+
+            for obs in &observations {
+                let base_url = match &obs.object_key {
+                    Some(key) => key.trim_end_matches('/').to_string(),
+                    None => continue,
+                };
+
+                let payload: Value = match serde_json::from_str(&obs.payload_json) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                let endpoints = payload
+                    .get("snapshot")
+                    .and_then(|s| s.get("apiEndpoints"))
+                    .and_then(Value::as_array);
+
+                if let Some(endpoints) = endpoints {
+                    for ep in endpoints {
+                        if let Some(path) = ep.get("path").and_then(Value::as_str) {
+                            let full_url = if path.starts_with('/') {
+                                format!("{}{}", base_url, path)
+                            } else {
+                                format!("{}/{}", base_url, path)
+                            };
+                            if api_path_seen.insert(full_url.clone()) {
+                                api_paths.push(full_url);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !api_paths.is_empty() {
+                resolved.extra_input.insert(
+                    "api_paths".to_string(),
+                    Value::Array(
+                        api_paths
+                            .into_iter()
+                            .map(Value::String)
+                            .collect(),
+                    ),
+                );
             }
         }
     }

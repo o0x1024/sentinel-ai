@@ -240,6 +240,7 @@ fn default_target_asset_types_for_plugin(plugin_id: &str) -> Vec<&'static str> {
         | "js_analyzer"
         | "js_link_finder"
         | "risk_scanner" => vec!["web"],
+        "actuator_scanner" => vec!["web", "api"],
         "fofa_asset_monitor" => vec!["web", "domain"],
         "subdomain_enumerator" | "dns_resolver" | "subdomain_brute" => vec!["domain"],
         "cert_monitor" => vec!["domain"],

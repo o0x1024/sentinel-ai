@@ -38,6 +38,7 @@ export const ALL_MONITOR_TARGET_ASSET_TYPES = [
   'host',
   'ip',
   'service',
+  'api',
 ]
 
 export const normalizeMonitorPluginId = (value: unknown) =>
@@ -131,6 +132,8 @@ export const inferDefaultTargetAssetTypes = (pluginId: string): string[] => {
     case 'js_link_finder':
     case 'risk_scanner':
       return ['web']
+    case 'actuator_scanner':
+      return ['web', 'api']
     case 'http_prober':
       return ['web', 'domain', 'service']
     case 'fofa_asset_monitor':
@@ -176,8 +179,9 @@ export const inferAllowedTargetAssetTypes = (monitorType: string, pluginId: stri
       return ['service']
     case 'content':
     case 'api':
-    case 'risk':
       return ['web']
+    case 'risk':
+      return ['web', 'api']
     default:
       return ALL_MONITOR_TARGET_ASSET_TYPES
   }
