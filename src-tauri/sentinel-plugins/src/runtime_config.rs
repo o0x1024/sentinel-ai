@@ -2,19 +2,19 @@ use serde::{Deserialize, Serialize};
 use std::sync::{OnceLock, RwLock};
 
 const FETCH_QUEUE_DEPTH_MIN: u64 = 1;
-const FETCH_QUEUE_DEPTH_MAX: u64 = 5_000;
+const FETCH_QUEUE_DEPTH_MAX: u64 = 10_000;
 const FETCH_PENDING_PER_RUN_MIN: u64 = 1;
-const FETCH_PENDING_PER_RUN_MAX: u64 = 2_000;
+const FETCH_PENDING_PER_RUN_MAX: u64 = 5_000;
 const FETCH_PENDING_PER_PLUGIN_MIN: u64 = 1;
-const FETCH_PENDING_PER_PLUGIN_MAX: u64 = 5_000;
+const FETCH_PENDING_PER_PLUGIN_MAX: u64 = 10_000;
 const FETCH_GLOBAL_CONCURRENT_MIN: u64 = 1;
-const FETCH_GLOBAL_CONCURRENT_MAX: u64 = 128;
+const FETCH_GLOBAL_CONCURRENT_MAX: u64 = 1000;
 const FETCH_CONCURRENT_PER_HOST_MIN: u64 = 1;
-const FETCH_CONCURRENT_PER_HOST_MAX: u64 = 32;
+const FETCH_CONCURRENT_PER_HOST_MAX: u64 = 1000;
 const FETCH_CONCURRENT_PER_RUN_MIN: u64 = 1;
-const FETCH_CONCURRENT_PER_RUN_MAX: u64 = 128;
+const FETCH_CONCURRENT_PER_RUN_MAX: u64 = 1000;
 const FETCH_CONCURRENT_PER_PLUGIN_MIN: u64 = 1;
-const FETCH_CONCURRENT_PER_PLUGIN_MAX: u64 = 128;
+const FETCH_CONCURRENT_PER_PLUGIN_MAX: u64 = 1000;
 const FETCH_JITTER_MIN_MS: u64 = 0;
 const FETCH_JITTER_MAX_MS: u64 = 30_000;
 const FETCH_DELAY_MIN_MS: u64 = 0;
@@ -231,16 +231,16 @@ fn default_bounty_fetch_runtime_settings() -> PluginFetchRuntimeSettings {
 
 fn default_monitor_fetch_runtime_settings() -> PluginFetchRuntimeSettings {
     PluginFetchRuntimeSettings {
-        max_queue_depth: 1_000,
-        max_pending_per_run: 250,
-        max_pending_per_plugin: 500,
-        max_global_concurrent: 16,
-        max_concurrent_per_host: 2,
-        max_concurrent_per_run: 16,
-        max_concurrent_per_plugin: 16,
-        min_host_delay_ms: 500,
-        jitter_range: [50, 250],
-        timeout_ms: 3_000,
+        max_queue_depth: 5_000,
+        max_pending_per_run: 1_000,
+        max_pending_per_plugin: 2_000,
+        max_global_concurrent: 200,
+        max_concurrent_per_host: 20,
+        max_concurrent_per_run: 200,
+        max_concurrent_per_plugin: 200,
+        min_host_delay_ms: 50,
+        jitter_range: [0, 50],
+        timeout_ms: 8_000,
     }
 }
 

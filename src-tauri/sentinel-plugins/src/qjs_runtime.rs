@@ -616,6 +616,62 @@ fn register_core_functions(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
+fn host_fetch_batch<'js>(ctx: Ctx<'js>, val: Value<'js>) -> rquickjs::Result<Value<'js>> {
+    #[derive(serde::Deserialize)]
+    struct BatchEntry {
+        url: String,
+        #[serde(default)]
+        options: crate::plugin_fetch_types::FetchOptions,
+    }
+
+    let json = qjs_value_to_json(&ctx, val).unwrap_or(serde_json::Value::Null);
+    let entries: Vec<BatchEntry> =
+        serde_json::from_value(json).unwrap_or_default();
+
+    if entries.is_empty() {
+        return json_to_qjs(&ctx, &serde_json::json!([]));
+    }
+
+    let plugin_ctx = with_plugin_ctx(|pctx| pctx.clone());
+
+    let results = block_on_async(async {
+        let mut handles = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let ctx = plugin_ctx.clone();
+            handles.push(tokio::spawn(async move {
+                QJS_PLUGIN_CTX.with(|cell| {
+                    *cell.borrow_mut() = Some(ctx);
+                });
+                let mut resp =
+                    crate::plugin_engine::plugin_fetch(entry.url, entry.options).await;
+                resp.body_bytes = Vec::new();
+                resp
+            }));
+        }
+        let mut results = Vec::with_capacity(handles.len());
+        for handle in handles {
+            match handle.await {
+                Ok(resp) => results.push(resp),
+                Err(_) => results.push(crate::plugin_fetch_types::FetchResponse {
+                    success: false,
+                    status: 0,
+                    headers: std::collections::HashMap::new(),
+                    body: String::new(),
+                    body_bytes: Vec::new(),
+                    ok: false,
+                    redirected: false,
+                    final_url: String::new(),
+                    error: Some("batch fetch task panicked".to_string()),
+                }),
+            }
+        }
+        results
+    });
+
+    let json = serde_json::to_value(&results).unwrap_or(serde_json::Value::Null);
+    json_to_qjs(&ctx, &json)
+}
+
 fn register_fetch_functions(ctx: &Ctx) -> Result<()> {
     let globals = ctx.globals();
 
@@ -632,6 +688,13 @@ fn register_fetch_functions(ctx: &Ctx) -> Result<()> {
             Function::new(ctx.clone(), || -> bool { false }),
         )
         .map_err(|e| PluginError::Load(format!("register __sentinel_abort_fetch: {e}")))?;
+
+    globals
+        .set(
+            "__sentinel_fetch_batch",
+            Function::new(ctx.clone(), host_fetch_batch),
+        )
+        .map_err(|e| PluginError::Load(format!("register __sentinel_fetch_batch: {e}")))?;
 
     Ok(())
 }

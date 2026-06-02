@@ -420,7 +420,8 @@ impl PluginManager {
 
         // 使用 PluginEngine 执行
         let findings = tokio::task::spawn_blocking(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
                 .enable_all()
                 .build()
                 .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;
@@ -489,7 +490,8 @@ impl PluginManager {
         let execution_context = execution_context.to_string();
         let run_id = run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let result_pair = tokio::task::spawn_blocking(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
                 .enable_all()
                 .build()
                 .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;
@@ -538,7 +540,8 @@ impl PluginManager {
 
         // 在独立线程中运行（因为 JsRuntime 不是 Send）
         let schema = tokio::task::spawn_blocking(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
                 .enable_all()
                 .build()
                 .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;
@@ -566,7 +569,8 @@ pub async fn get_input_schema_from_code(
     let code = code.to_string();
 
     let schema = tokio::task::spawn_blocking(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
             .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;
@@ -593,7 +597,8 @@ pub async fn get_output_schema_from_code(
     let code = code.to_string();
 
     let schema = tokio::task::spawn_blocking(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
             .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;

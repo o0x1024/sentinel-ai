@@ -1,5 +1,7 @@
 pub mod agent_control_tool;
 pub mod ask_user_question;
+pub mod browser_automation;
+pub mod browser_automation_handler;
 pub mod browser_shell;
 mod file_context;
 pub mod file_edit;
@@ -39,6 +41,8 @@ pub mod web_search;
 
 pub use agent_control_tool::{CloseAgentTool, ListAgentsTool, SpawnAgentTool, WaitAgentsTool};
 pub use ask_user_question::AskUserQuestionTool;
+pub use browser_automation::{set_browser_automation_handler, BrowserAutomationTool};
+pub use browser_automation_handler::BrowserAutomationState;
 pub use browser_shell::{set_browser_shell_handler, BrowserShellTool};
 pub use file_edit::FileEditTool;
 pub use file_read::FileReadTool;
@@ -78,6 +82,7 @@ use rig::tool::ToolSet;
 /// Create a ToolSet with all builtin security tools
 pub fn create_buildin_toolset() -> ToolSet {
     let mut toolset = ToolSet::default();
+    toolset.add_tool(BrowserAutomationTool::default());
     toolset.add_tool(BrowserShellTool::default());
     toolset.add_tool(HttpRequestTool::default());
     toolset.add_tool(AskUserQuestionTool::new());

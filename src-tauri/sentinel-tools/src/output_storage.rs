@@ -18,6 +18,35 @@ use std::sync::RwLock;
 static STORAGE_THRESHOLD: Lazy<RwLock<usize>> =
     Lazy::new(|| RwLock::new(DEFAULT_STORAGE_THRESHOLD));
 
+/// Maps execution_id → conversation_id so that all executions within the
+/// same conversation share a single session directory.
+static SESSION_SCOPE_MAP: Lazy<RwLock<std::collections::HashMap<String, String>>> =
+    Lazy::new(|| RwLock::new(std::collections::HashMap::new()));
+
+/// Register that `execution_id` belongs to `conversation_id`.
+/// Subsequent calls to `get_execution_context_dir` with this execution_id
+/// will resolve to the conversation-scoped directory.
+pub fn register_session_scope(execution_id: &str, conversation_id: &str) {
+    let eid = execution_id.trim();
+    let cid = conversation_id.trim();
+    if eid.is_empty() || cid.is_empty() || eid == cid {
+        return;
+    }
+    if let Ok(mut map) = SESSION_SCOPE_MAP.write() {
+        map.insert(eid.to_string(), cid.to_string());
+    }
+}
+
+fn resolve_session_scope(execution_id: &str) -> String {
+    match SESSION_SCOPE_MAP.read() {
+        Ok(map) => map
+            .get(execution_id.trim())
+            .cloned()
+            .unwrap_or_else(|| execution_id.to_string()),
+        Err(_) => execution_id.to_string(),
+    }
+}
+
 /// Set storage threshold
 pub fn set_storage_threshold(threshold: usize) {
     if let Ok(mut t) = STORAGE_THRESHOLD.write() {
@@ -86,7 +115,8 @@ fn execution_dir_name(execution_id: Option<&str>) -> Option<String> {
 }
 
 pub fn get_execution_context_dir(context_dir: &str, execution_id: Option<&str>) -> String {
-    match execution_dir_name(execution_id) {
+    let scope_id = execution_id.map(|id| resolve_session_scope(id));
+    match execution_dir_name(scope_id.as_deref()) {
         Some(dir_name) => format!("{}/{}", context_dir, dir_name),
         None => context_dir.to_string(),
     }
@@ -94,7 +124,8 @@ pub fn get_execution_context_dir(context_dir: &str, execution_id: Option<&str>) 
 
 pub fn get_host_execution_context_dir(execution_id: Option<&str>) -> std::path::PathBuf {
     let base_dir = get_host_context_dir();
-    match execution_dir_name(execution_id) {
+    let scope_id = execution_id.map(|id| resolve_session_scope(id));
+    match execution_dir_name(scope_id.as_deref()) {
         Some(dir_name) => base_dir.join(dir_name),
         None => base_dir,
     }

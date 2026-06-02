@@ -472,7 +472,12 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     if policy.include_working_dir {
         let working_dir = match execution_context.env {
-            ExecutionEnvironment::Docker => execution_context.context_dir.clone(),
+            ExecutionEnvironment::Docker => {
+                get_execution_context_dir(
+                    &execution_context.context_dir,
+                    Some(&input.execution_id),
+                )
+            }
             ExecutionEnvironment::Host => input
                 .working_directory
                 .clone()

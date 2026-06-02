@@ -239,7 +239,15 @@ pub async fn launch_background_shell_task(
     session_config.docker_image = request
         .docker_image
         .unwrap_or_else(|| DEFAULT_DOCKER_IMAGE.to_string());
-    session_config.working_dir = request.cwd;
+    session_config.working_dir = request.cwd.or_else(|| {
+        if terminal_execution_mode == ExecutionMode::Docker {
+            Some(crate::buildin_tools::file_runtime::docker_session_working_dir(
+                request.execution_id.as_deref(),
+            ))
+        } else {
+            None
+        }
+    });
     session_config.shell = shell_for_execution_mode(&shell_config, request.execution_mode.clone());
     session_config.initial_command = Some(wrapped_command.clone());
     session_config.reuse_container = true;

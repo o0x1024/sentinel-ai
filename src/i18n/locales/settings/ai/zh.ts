@@ -66,7 +66,7 @@ export default {
   advancedOptions: '高级选项',
   extraHeaders: '额外请求头 (JSON)',
   extraBody: 'extra_body (JSON)',
-  extraBodyPlaceholder: '{"enable_thinking": false}',
+  extraBodyPlaceholder: '例如供应商私有参数的 JSON 对象',
   extraBodyDescription: '填写要合并到模型请求 JSON body 的额外字段，例如供应商私有参数',
   extraBodyInvalidJson: 'extra_body JSON 格式无效',
   extraBodyMustBeObject: 'extra_body 必须是 JSON 对象',

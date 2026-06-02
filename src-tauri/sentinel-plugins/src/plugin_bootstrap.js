@@ -174,51 +174,16 @@ globalThis.Deno = {
 };
 
 // ============================================================
-// fetch polyfill (simplified)
+// fetch polyfill with microtask batching
 // ============================================================
+// Queues fetch requests and flushes them concurrently via
+// __sentinel_fetch_batch on the next microtask tick.
 
-globalThis.fetch = function(url, init) {
-    if (!init) {
-        init = {};
-    }
-    var method = "GET";
-    if (init.method) {
-        method = init.method;
-    }
-    var headers = {};
-    if (init.headers) {
-        if (typeof init.headers === "object") {
-            var keys = Object.keys(init.headers);
-            for (var hi = 0; hi < keys.length; hi++) {
-                headers[keys[hi]] = init.headers[keys[hi]];
-            }
-        }
-    }
-    var body = null;
-    if (init.body) {
-        if (typeof init.body === "string") {
-            body = { kind: "text", text: init.body };
-        }
-    }
-    var redirect = "follow";
-    if (init.redirect) {
-        redirect = init.redirect;
-    }
-    var result = __sentinel_fetch(url, {
-        method: method,
-        headers: headers,
-        body: body,
-        redirect: redirect,
-        max_redirects: init.maxRedirects,
-        max_body_bytes: init.maxBodyBytes,
-        request_id: null,
-        active_probe: null
-    });
-    if (!result.success) {
-        throw new Error(result.error || "Fetch failed");
-    }
-    var rawHeaders = result.headers || {};
-    var headerObj = {
+var __fetchQueue = [];
+var __fetchFlushScheduled = false;
+
+function __buildHeaderObj(rawHeaders) {
+    return {
         _raw: rawHeaders,
         get: function(name) {
             var lower = name.toLowerCase();
@@ -248,20 +213,128 @@ globalThis.fetch = function(url, init) {
             }
         }
     };
-    return {
-        ok: result.ok,
-        status: result.status,
-        statusText: result.ok ? "OK" : "Error",
-        headers: headerObj,
-        url: result.final_url || url,
-        redirected: result.redirected || false,
+}
+
+function __settleHostResult(hostResult, url, resolve, reject) {
+    if (!hostResult || !hostResult.success) {
+        reject(new Error((hostResult && hostResult.error) || "Fetch failed"));
+        return;
+    }
+    var rawHeaders = hostResult.headers || {};
+    resolve({
+        ok: hostResult.ok,
+        status: hostResult.status,
+        statusText: hostResult.ok ? "OK" : "Error",
+        headers: __buildHeaderObj(rawHeaders),
+        url: hostResult.final_url || url,
+        redirected: hostResult.redirected || false,
         text: function() {
-            return result.body;
+            return hostResult.body;
         },
         json: function() {
-            return JSON.parse(result.body);
+            return JSON.parse(hostResult.body);
         }
+    });
+}
+
+function __flushFetchQueue() {
+    var batch = __fetchQueue;
+    __fetchQueue = [];
+    __fetchFlushScheduled = false;
+    if (batch.length === 0) return;
+
+    if (typeof __sentinel_fetch_batch === "function" && batch.length > 1) {
+        var requests = [];
+        for (var bi = 0; bi < batch.length; bi++) {
+            requests.push(batch[bi].request);
+        }
+        try {
+            var results = __sentinel_fetch_batch(requests);
+            for (var ri = 0; ri < batch.length; ri++) {
+                __settleHostResult(results[ri], batch[ri].request.url, batch[ri].resolve, batch[ri].reject);
+            }
+        } catch (e) {
+            for (var ei = 0; ei < batch.length; ei++) {
+                batch[ei].reject(new Error("fetch batch failed: " + (e.message || e)));
+            }
+        }
+    } else {
+        for (var si = 0; si < batch.length; si++) {
+            var entry = batch[si];
+            try {
+                var hostResult = __sentinel_fetch(entry.request.url, entry.request.options);
+                __settleHostResult(hostResult, entry.request.url, entry.resolve, entry.reject);
+            } catch (e) {
+                entry.reject(new Error("fetch failed: " + (e.message || e)));
+            }
+        }
+    }
+}
+
+globalThis.AbortSignal = {
+    timeout: function(ms) {
+        return { _timeout_ms: ms };
+    }
+};
+
+globalThis.fetch = function(url, init) {
+    if (!init) {
+        init = {};
+    }
+    var method = "GET";
+    if (init.method) {
+        method = init.method;
+    }
+    var headers = {};
+    if (init.headers) {
+        if (typeof init.headers === "object") {
+            var keys = Object.keys(init.headers);
+            for (var hi = 0; hi < keys.length; hi++) {
+                headers[keys[hi]] = init.headers[keys[hi]];
+            }
+        }
+    }
+    var body = null;
+    if (init.body) {
+        if (typeof init.body === "string") {
+            body = { kind: "text", text: init.body };
+        }
+    }
+    var redirect = "follow";
+    if (init.redirect) {
+        redirect = init.redirect;
+    }
+
+    var timeout_ms = null;
+    if (init.timeout && typeof init.timeout === "number" && init.timeout > 0) {
+        timeout_ms = init.timeout;
+    } else if (init.signal && typeof init.signal === "object" && init.signal._timeout_ms) {
+        timeout_ms = init.signal._timeout_ms;
+    }
+
+    var requestOptions = {
+        method: method,
+        headers: headers,
+        body: body,
+        redirect: redirect,
+        max_redirects: init.maxRedirects,
+        max_body_bytes: init.maxBodyBytes,
+        timeout: timeout_ms,
+        request_id: null,
+        active_probe: null
     };
+
+    return new Promise(function(resolve, reject) {
+        __fetchQueue.push({
+            request: { url: url, options: requestOptions },
+            resolve: resolve,
+            reject: reject
+        });
+        if (!__fetchFlushScheduled) {
+            __fetchFlushScheduled = true;
+            Promise.resolve().then(__flushFetchQueue);
+        }
+    });
 };
 
 // ============================================================

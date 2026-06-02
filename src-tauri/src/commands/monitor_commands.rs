@@ -609,6 +609,7 @@ pub async fn monitor_start_scheduler(
                             )
                             .await;
                             heartbeat.stop().await;
+                            sentinel_plugins::clear_plugin_progress(&task_id);
 
                             if cancel_requested_task_ids.read().await.contains(&task_id) {
                                 tracing::info!(

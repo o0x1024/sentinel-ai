@@ -2,8 +2,6 @@
 import { onMounted, ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import TopNavbar from './components/Layout/TopNavbar.vue'
 import GlobalSearchPalette from './components/Layout/GlobalSearchPalette.vue'
@@ -11,7 +9,6 @@ import ImmersiveDrillDock from './components/Layout/ImmersiveDrillDock.vue'
 import ImmersiveMinimizedToolTray from './components/Layout/ImmersiveMinimizedToolTray.vue'
 import ImmersiveSecurityCenterOverlay from './components/Layout/ImmersiveSecurityCenterOverlay.vue'
 import Sidebar from './components/Layout/Sidebar.vue'
-import LicenseActivation from './components/LicenseActivation.vue'
 import AppDialog from './components/AppDialog.vue'
 import GlobalPluginEditor from './components/PluginManagement/GlobalPluginEditor.vue'
 import AskUserQuestionModal from './components/Agent/AskUserQuestionModal.vue'
@@ -19,39 +16,17 @@ import AskUserQuestionModal from './components/Agent/AskUserQuestionModal.vue'
 import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
 import { isGlobalSearchShortcut, requestGlobalSearchOpen } from './services/globalSearchFocus'
-import {
-  refreshFeatureEntitlements,
-  useFeatureEntitlementsState,
-} from './services/featureEntitlements'
-import {
-  useFeatureAccessStatusState,
-  refreshFeatureAccessStatus,
-} from './services/featureAccessStatus'
-import { attemptEntitlementAutoRefresh } from './services/entitlementAutoRefresh'
-import {
-  getFeatureAccessAutoRefreshFailureMessage,
-  getFeatureAccessReminderMessage,
-  shouldResetFeatureAccessReminder,
-} from './services/featureAccessAttention'
-import {
-  getEntitlementRefreshCooldownSeconds,
-  useEntitlementRefreshRuntimeState,
-} from './services/entitlementRefreshState'
+import { refreshFeatureEntitlements } from './services/featureEntitlements'
 import {
   immersiveDrillModeEnabled,
   toggleImmersiveDrillMode,
 } from './services/immersiveDrillMode'
 import { closeTrafficAssistant } from './services/trafficAssistantWorkspace'
 import { applyTheme } from './views/settingsUiSupport'
-import { useToast } from './composables/useToast'
 import { isEditableKeyboardEvent, isEditableKeyboardTarget } from './utils/editableKeyboardTarget'
 
 const router = useRouter()
 const route = useRoute()
-const toast = useToast()
-const entitlements = useFeatureEntitlementsState()
-const featureAccessStatus = useFeatureAccessStatusState()
-const entitlementRefreshRuntime = useEntitlementRefreshRuntimeState()
 const isStandaloneRoute = computed(() => Boolean(route.meta?.standalone))
 const routeKeepAliveIncludes = [
   'CyberChefView',
@@ -63,12 +38,8 @@ const routeKeepAliveIncludes = [
   'AIAssistant',
 ]
 const mainContentRef = ref<HTMLElement | null>(null)
-const licenseActivationRef = ref<InstanceType<typeof LicenseActivation> | null>(null)
 const SECURITY_DISCLAIMER_STORAGE_KEY = 'sentinel:security-disclaimer:accepted:v1'
 const routeScrollPositions = new Map<string, number>()
-let featureAccessReminderTimer: number | null = null
-let featureAccessPollTimer: number | null = null
-let hasShownFeatureAccessReminder = false
 const NAVBAR_VISIBILITY_STORAGE_KEY = 'sentinel:navbar:visible:v1'
 
 // 初始化i18n
@@ -188,81 +159,6 @@ const setupAIChatShortcut = () => {
 
 
 
-async function onLicenseActivated() {
-  await refreshFeatureEntitlements()
-  await refreshFeatureAccessStatus()
-  hasShownFeatureAccessReminder = false
-  notifyFeatureAccessAttention()
-}
-
-const notifyFeatureAccessAttention = () => {
-  const reminder = getFeatureAccessReminderMessage({
-    hasLocalLicense: entitlements.value.has_local_license,
-    isDebugAccess: entitlements.value.access_source === 'debug',
-    hasShownReminder: hasShownFeatureAccessReminder,
-    featureAccessStatus: featureAccessStatus.value,
-    cooldownSeconds: getEntitlementRefreshCooldownSeconds(),
-  })
-
-  if (!reminder) {
-    return
-  }
-
-  hasShownFeatureAccessReminder = true
-
-  if (reminder.level === 'warning') {
-    toast.warning(reminder.message, 4200)
-    return
-  }
-
-  toast.info(reminder.message, 4200)
-}
-
-const maybeAutoRefreshFeatureAccess = async () => {
-  const outcome = await attemptEntitlementAutoRefresh({
-    expiringSoonThresholdSeconds: 6 * 60 * 60,
-  })
-
-  if (outcome.status === 'success') {
-    hasShownFeatureAccessReminder = false
-    return
-  }
-
-  const message = getFeatureAccessAutoRefreshFailureMessage({
-    outcome,
-    consecutiveFailures: entitlementRefreshRuntime.value.consecutive_failures,
-    cooldownSeconds: getEntitlementRefreshCooldownSeconds(),
-  })
-
-  if (!message) {
-    return
-  }
-
-  toast.warning(message, 4200)
-}
-
-const scheduleFeatureAccessReminder = () => {
-  if (featureAccessReminderTimer) {
-    window.clearTimeout(featureAccessReminderTimer)
-  }
-
-  featureAccessReminderTimer = window.setTimeout(() => {
-    notifyFeatureAccessAttention()
-  }, 1200)
-}
-
-const scheduleFeatureAccessPolling = () => {
-  if (featureAccessPollTimer) {
-    window.clearInterval(featureAccessPollTimer)
-  }
-
-  featureAccessPollTimer = window.setInterval(async () => {
-    await maybeAutoRefreshFeatureAccess()
-    await refreshFeatureEntitlements()
-    await refreshFeatureAccessStatus()
-  }, 5 * 60 * 1000)
-}
-
 // Shell Permission Handling is now done inline in ShellToolResult component
 
 // 在组件挂载时导航到Dashboard (如果当前在根路径)
@@ -271,10 +167,6 @@ onMounted(async () => {
   void setLanguage((locale.value.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en')
 
   await refreshFeatureEntitlements()
-  await refreshFeatureAccessStatus()
-  await maybeAutoRefreshFeatureAccess()
-  scheduleFeatureAccessReminder()
-  scheduleFeatureAccessPolling()
 
   // 只有在根路径时才重定向，避免路由冲突
   if (router.currentRoute.value.path === '/' && !isStandaloneRoute.value) {
@@ -302,14 +194,6 @@ onUnmounted(() => {
   saveMainScrollPosition(route.fullPath)
   window.removeEventListener('keydown', handleKeyDown)
   document.removeEventListener('click', handleClickOutside)
-  if (featureAccessReminderTimer) {
-    window.clearTimeout(featureAccessReminderTimer)
-    featureAccessReminderTimer = null
-  }
-  if (featureAccessPollTimer) {
-    window.clearInterval(featureAccessPollTimer)
-    featureAccessPollTimer = null
-  }
 })
 
 watch(
@@ -323,28 +207,6 @@ watch(
     requestAnimationFrame(() => {
       restoreMainScrollPosition(newRouteKey)
     })
-  },
-)
-
-watch(
-  () => [
-    entitlements.value.has_local_license,
-    entitlements.value.access_source,
-    featureAccessStatus.value.ready,
-    featureAccessStatus.value.expiresAt,
-    entitlementRefreshRuntime.value.last_error_code,
-    entitlementRefreshRuntime.value.next_retry_at,
-  ],
-  () => {
-    if (shouldResetFeatureAccessReminder({
-      hasLocalLicense: entitlements.value.has_local_license,
-      isDebugAccess: entitlements.value.access_source === 'debug',
-      featureAccessReady: featureAccessStatus.value.ready,
-    })) {
-      hasShownFeatureAccessReminder = false
-    }
-
-    scheduleFeatureAccessReminder()
   },
 )
 
@@ -445,7 +307,6 @@ watch(
 
 <template>
   <div id="app" class="h-screen bg-base-100 overflow-hidden" :style="appShellStyle">
-    <LicenseActivation ref="licenseActivationRef" @activated="onLicenseActivated" />
     <AppDialog :open="securityDisclaimerOpen" @cancel.prevent>
       <div class="modal-box max-w-2xl">
         <div class="flex items-start gap-4">

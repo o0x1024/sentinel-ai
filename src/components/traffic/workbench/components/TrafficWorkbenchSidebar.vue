@@ -140,6 +140,15 @@
                 {{ t('trafficAnalysis.tabs.intruder', '爆破器') }}
               </button>
             </div>
+            <button type="button" class="btn btn-sm btn-outline rounded-2xl" @click="$emit('toggleIntercept')">
+              <i class="fas fa-sliders-h mr-1"></i>
+              {{ t('trafficAnalysis.workbench.actions.control', '代理控制') }}
+              <span v-if="controlInterceptCount > 0" class="badge badge-xs badge-warning">{{ controlInterceptCount }}</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline rounded-2xl" @click="$emit('openSettings')">
+              <i class="fas fa-cog mr-1"></i>
+              {{ t('trafficAnalysis.workbench.actions.settings', '代理设置') }}
+            </button>
             <button
               type="button"
               class="btn btn-sm btn-error btn-outline rounded-2xl"

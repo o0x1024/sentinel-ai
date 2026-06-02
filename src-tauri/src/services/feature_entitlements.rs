@@ -44,12 +44,13 @@ pub fn get_free_tier_allowed_plugin_ids() -> Vec<String> {
 pub fn build_app_entitlements() -> AppEntitlements {
     let allowed_plugin_ids = get_free_tier_allowed_plugin_ids();
 
-    if cfg!(debug_assertions) {
+    // Debug builds and enforcement-disabled builds both get full pro access.
+    if cfg!(debug_assertions) || !sentinel_license::is_enforcement_enabled() {
         return AppEntitlements {
             tier: "pro".to_string(),
             is_licensed: true,
             has_local_license: true,
-            access_source: "debug".to_string(),
+            access_source: if cfg!(debug_assertions) { "debug" } else { "open" }.to_string(),
             trial_active: false,
             trial_started_at: None,
             trial_expires_at: None,

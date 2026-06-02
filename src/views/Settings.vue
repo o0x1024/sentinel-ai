@@ -46,8 +46,18 @@
 
       <!-- 右侧内容区域 -->
       <div class="settings-content flex-1 min-w-0">
+        <!-- 子组件错误提示 -->
+        <div v-if="componentError" class="alert alert-error mb-4">
+          <i class="fas fa-exclamation-triangle"></i>
+          <div>
+            <div class="font-bold">{{ componentError.component }} 加载失败</div>
+            <div class="text-sm">{{ componentError.message }}</div>
+          </div>
+          <button class="btn btn-sm btn-ghost" @click="componentError = null">重试</button>
+        </div>
+
         <!-- AI服务配置 -->
-        <AISettings v-if="activeCategory === 'ai'" 
+        <AISettings v-if="activeCategory === 'ai' && !componentError" 
                     :ai-service-status="aiServiceStatus"
                     v-model:ai-config="aiConfig"
                     v-model:selected-ai-provider="selectedAiProvider"
@@ -130,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, defineAsyncComponent, onMounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, defineAsyncComponent, onMounted, onErrorCaptured, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { appDataDir, homeDir, join } from '@tauri-apps/api/path'
@@ -177,6 +187,14 @@ const SecuritySettings = defineAsyncComponent(() => import('@/components/Setting
 // 响应式数据
 const activeCategory = ref('ai')
 const saving = ref(false)
+const componentError = ref<{ message: string; component: string } | null>(null)
+
+onErrorCaptured((err, instance, info) => {
+  const componentName = instance?.$options?.name || instance?.$options?.__name || 'Unknown'
+  const message = err instanceof Error ? err.message : String(err)
+  componentError.value = { message, component: componentName }
+  return false
+})
 
 defineOptions({
   name: 'Settings'
@@ -189,7 +207,7 @@ const categories = settingsCategories
 const settings = ref(createDefaultSettings())
 
 // AI相关数据
-const selectedAiProvider = ref('OpenAI')
+const selectedAiProvider = ref('')
 const aiServiceStatus = ref([])
 const aiConfig = ref<any>({ providers: {}, default_llm_provider: 'openai' })
 const aiUsageStats = ref({})
@@ -200,6 +218,25 @@ const ragConfig = ref(createDefaultRagConfig())
 const notifyAiConfigUpdated = () => {
   emitAiConfigUpdated(aiConfig.value)
 }
+
+// Auto-select a valid provider whenever aiConfig loads or changes.
+// This ensures the right panel always shows content without requiring
+// the user to manually click a provider entry.
+watch(
+  () => aiConfig.value,
+  (config) => {
+    if (!config?.providers) return
+    const providerKeys = Object.keys(config.providers)
+    if (providerKeys.length === 0) return
+    if (config.providers[selectedAiProvider.value]) return
+
+    // Prefer the configured default provider; fall back to the first key.
+    const defaultLower = String(config.default_llm_provider || '').toLowerCase()
+    const matched = providerKeys.find((k) => k.toLowerCase() === defaultLower)
+    selectedAiProvider.value = matched ?? providerKeys[0]
+  },
+  { immediate: true },
+)
 
 const loadAiUsageStats = async () => {
   try {

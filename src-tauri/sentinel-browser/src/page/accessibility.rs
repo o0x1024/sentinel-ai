@@ -36,6 +36,41 @@ pub struct AccessibilityTree {
 }
 
 impl AccessibilityTree {
+    /// Create an empty tree
+    pub fn new() -> Self {
+        Self {
+            url: String::new(),
+            title: String::new(),
+            root: A11yNode {
+                ref_id: "root".to_string(),
+                role: "RootWebArea".to_string(),
+                name: String::new(),
+                value: None,
+                state: vec![],
+                bounds: None,
+                level: None,
+                children: vec![],
+                is_new: false,
+            },
+            snapshot_id: 0,
+        }
+    }
+
+    /// Add a node as a child of the root (flat structure for protocol parsing)
+    pub fn add_node(&mut self, ref_id: String, role: String, name: String, value: Option<String>) {
+        self.root.children.push(A11yNode {
+            ref_id,
+            role,
+            name,
+            value,
+            state: vec![],
+            bounds: None,
+            level: None,
+            children: vec![],
+            is_new: false,
+        });
+    }
+
     /// Render the tree as a token-efficient text representation for LLM consumption
     pub fn to_text(&self) -> String {
         let mut output = format!("Page: {} ({})\n\n", self.title, self.url);

@@ -106,9 +106,8 @@ impl BrowserActions {
                     button: MouseButton::Left,
                 }).await?;
 
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    rand::Rng::gen_range(&mut rand::thread_rng(), 50..120),
-                )).await;
+                let hold_ms: u64 = rand::Rng::gen_range(&mut rand::thread_rng(), 50..120);
+                tokio::time::sleep(tokio::time::Duration::from_millis(hold_ms)).await;
 
                 backend.dispatch_mouse_event(tab, MouseEvent {
                     kind: MouseEventKind::Released,

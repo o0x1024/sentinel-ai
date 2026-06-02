@@ -949,6 +949,7 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
         cmd: &str,
         timeout_secs: u64,
         cancellation_token: Option<CancellationToken>,
+        working_dir: Option<&str>,
     ) -> Result<(String, String, i32, Arc<DockerSandbox>), ShellError> {
         // Check Docker availability first
         if !DockerSandbox::is_docker_available().await {
@@ -963,7 +964,7 @@ processes, or fully detach the command, for example: `nohup <command> >/tmp/sent
 
         let sandbox = Arc::new(DockerSandbox::new(docker_config));
         let (stdout, stderr, exit_code) = sandbox
-            .execute_with_cancellation(cmd, timeout_secs, cancellation_token)
+            .execute_in_dir(cmd, timeout_secs, cancellation_token, working_dir)
             .await
             .map_err(|e| match e {
                 crate::docker_sandbox::DockerError::Timeout(secs) => ShellError::Timeout(secs),
@@ -1311,8 +1312,15 @@ impl Tool for ShellTool {
             ShellExecutionMode::Docker => {
                 tracing::info!("Attempting to execute command in Docker sandbox: {}", args.command);
 
+                // Resolve Docker working directory: explicit cwd > session dir > container default
+                let docker_working_dir = args.cwd.clone().or_else(|| {
+                    execution_id.as_deref().map(|id| {
+                        crate::buildin_tools::file_runtime::docker_session_working_dir(Some(id))
+                    })
+                });
+
                 // Try Docker execution, fallback to host if Docker is unavailable
-                match self.execute_in_docker(&args.command, effective_timeout_secs, cancellation_token.clone()).await {
+                match self.execute_in_docker(&args.command, effective_timeout_secs, cancellation_token.clone(), docker_working_dir.as_deref()).await {
                     Ok((stdout, stderr, exit_code, sandbox)) => {
                         // Docker execution successful
                         tracing::info!("Command executed successfully in Docker sandbox");

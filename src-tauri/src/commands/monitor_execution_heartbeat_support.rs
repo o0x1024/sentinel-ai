@@ -57,12 +57,35 @@ pub(crate) fn start_monitor_execution_heartbeat(
                         Some(build_heartbeat_message(&plugin_id, target_count, elapsed_secs)),
                         &execution_started_at,
                     );
-                    payload.indeterminate = true;
-                    payload.progress = if total_steps == 0 {
-                        0
+                    if let Some(latest) = sentinel_plugins::get_latest_plugin_progress(&task.id) {
+                        payload.plugin_completed_units = latest.plugin_completed_units;
+                        payload.plugin_total_units = latest.plugin_total_units;
+                        payload.plugin_phase = latest.plugin_phase;
+                        payload.plugin_phase_label = latest.plugin_phase_label;
+                        payload.current_target = latest.current_target;
+
+                        let fraction = match (payload.plugin_completed_units, payload.plugin_total_units) {
+                            (Some(current), Some(total)) if total > 0 => {
+                                current.min(total) as f64 / total as f64
+                            }
+                            _ => 0.0,
+                        };
+                        payload.indeterminate = false;
+                        payload.progress = if total_steps == 0 {
+                            (fraction * 100.0).round().min(99.0) as u32
+                        } else {
+                            (((completed_steps as f64 + fraction) / total_steps as f64) * 100.0)
+                                .round()
+                                .min(99.0) as u32
+                        };
                     } else {
-                        ((completed_steps as f64 / total_steps as f64) * 100.0).round() as u32
-                    };
+                        payload.indeterminate = true;
+                        payload.progress = if total_steps == 0 {
+                            0
+                        } else {
+                            ((completed_steps as f64 / total_steps as f64) * 100.0).round() as u32
+                        };
+                    }
                     emit_monitor_task_progress(&app, &payload);
 
                     if heartbeat_count % 6 == 0 {

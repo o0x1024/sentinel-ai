@@ -125,10 +125,13 @@ pub(crate) async fn plugin_fetch(url: String, options: FetchOptions) -> FetchRes
     let active_probe = options.active_probe.clone();
     let runtime_settings = get_plugin_runtime_settings();
     let active_probe_defaults = runtime_settings.active_probe.clone();
+    let plugin_requested_timeout = options.timeout.unwrap_or(0);
     let timeout_ms = if active_probe.is_some() {
         active_probe_defaults.timeout_ms
+    } else if plugin_requested_timeout > 0 {
+        plugin_requested_timeout.clamp(1_000, 120_000)
     } else {
-        options.timeout.unwrap_or(3000)
+        8_000
     };
 
     let plugin_ctx = with_plugin_ctx(|ctx| ctx.clone());
@@ -337,7 +340,7 @@ pub(crate) async fn plugin_fetch(url: String, options: FetchOptions) -> FetchRes
                 };
             }
         };
-        effective_timeout_ms = grant.timeout_ms;
+        effective_timeout_ms = effective_timeout_ms.max(grant.timeout_ms);
         if grant.total_wait_ms > 0 {
             tokio::time::sleep(Duration::from_millis(grant.total_wait_ms)).await;
         }

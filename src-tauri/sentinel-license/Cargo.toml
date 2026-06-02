@@ -69,3 +69,6 @@ windows = { version = "0.58", features = ["Win32_System_Diagnostics_Debug", "Win
 default = []
 # Skip license check in debug builds
 skip-in-debug = []
+# Enable license enforcement in release builds.
+# Off by default — add this feature to re-enable server-activation checks.
+enforce-license = []

@@ -1264,6 +1264,10 @@ impl HttpHandler for TrafficProxyHandler {
                             let intercept_enabled = *intercept_state.enabled.read().await;
                             let request_intercept_enabled =
                                 *intercept_state.request_enabled.read().await;
+                            info!(
+                                "Intercept check: url={}, master={}, request_enabled={}",
+                                req_ctx.url, intercept_enabled, request_intercept_enabled
+                            );
                             if intercept_enabled && request_intercept_enabled {
                                 // Check filter rules before intercepting
                                 let should_intercept = Self::should_intercept_request(

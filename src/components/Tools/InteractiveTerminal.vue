@@ -93,6 +93,7 @@ interface Props {
   dockerImage?: string
   shell?: string
   workingDirectory?: string | null
+  executionId?: string | null
 }
 
 type ExecutionMode = 'docker' | 'host'
@@ -131,6 +132,11 @@ const normalizeExecutionMode = (value: unknown): ExecutionMode => {
 
 const resolveTerminalWorkingDirectory = (executionMode: ExecutionMode): string => {
   if (executionMode === 'docker') {
+    const raw = (props.executionId || '').trim()
+    if (raw) {
+      const sanitized = raw.replace(/[^a-zA-Z0-9\-_]/g, '').slice(0, 12)
+      if (sanitized) return `/workspace/context/session_${sanitized}`
+    }
     return '/workspace'
   }
   return String(actualWorkingDirectory.value || '').trim()

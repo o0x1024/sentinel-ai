@@ -495,7 +495,9 @@ async fn resolve_terminal_session(
         },
     );
     let working_dir = match execution_mode {
-        ExecutionMode::Docker => "/workspace".to_string(),
+        ExecutionMode::Docker => requested_working_dir.unwrap_or_else(|| {
+            crate::buildin_tools::file_runtime::docker_session_working_dir(execution_id)
+        }),
         ExecutionMode::Host => requested_working_dir
             .or_else(|| {
                 std::env::current_dir()

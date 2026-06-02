@@ -64,10 +64,14 @@ const extensionMimeMap: Record<string, string> = {
 const buildDerivedSignature = (request: ProxyRequest) => [
   request.url,
   request.host,
+  request.method,
+  request.status_code,
+  request.request_headers || '',
   request.response_headers || '',
   request.mime_type || '',
   request.extension || '',
   request.listener || '',
+  request.title || '',
   request.timestamp,
 ].join('\u0000')
 
@@ -140,7 +144,13 @@ export const getProxyHistoryDerived = (request: ProxyRequest): ProxyHistoryDeriv
   const contentType = parseContentType(request.response_headers)
   const mimeType = request.mime_type || getMimeTypeLabelFromContentType(contentType) || extensionMimeMap[extension] || ''
   const mimeTypeCategory = getMimeTypeCategoryFromContentType(contentType) || extensionCategoryMap[extension] || 'unknown'
-  const searchText = `${request.url} ${request.host}`
+  const searchParts = [request.url, request.host, request.method]
+  if (request.status_code) searchParts.push(String(request.status_code))
+  if (request.title) searchParts.push(request.title)
+  if (request.mime_type) searchParts.push(request.mime_type)
+  if (request.request_headers) searchParts.push(request.request_headers)
+  if (request.response_headers) searchParts.push(request.response_headers)
+  const searchText = searchParts.join(' ')
   const timestampMs = new Date(request.timestamp).getTime()
 
   const value: ProxyHistoryDerived = {

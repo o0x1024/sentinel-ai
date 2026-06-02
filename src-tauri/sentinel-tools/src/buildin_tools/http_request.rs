@@ -39,6 +39,9 @@ pub struct HttpRequestArgs {
     /// Whether to store oversized response body into context files (agent-only)
     #[serde(default)]
     pub enable_large_output_storage: bool,
+    /// Internal execution id for scoping output storage
+    #[serde(default)]
+    pub execution_id: Option<String>,
 }
 
 fn default_method() -> String {
@@ -258,7 +261,7 @@ impl Tool for HttpRequestTool {
 
         // Store large response only for agent-invoked calls
         let body = if args.enable_large_output_storage {
-            match crate::output_storage::store_output_unified("http_response", &body, None, None)
+            match crate::output_storage::store_output_unified("http_response", &body, None, args.execution_id.as_deref())
                 .await
             {
                 Ok(storage_result) => {

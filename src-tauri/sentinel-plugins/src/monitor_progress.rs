@@ -1,6 +1,8 @@
 use crate::runtime_events::emit_monitor_task_progress;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitorProgressContext {
@@ -79,6 +81,36 @@ struct MonitorTaskPluginProgressEvent {
     plugin_phase_label: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct LatestPluginProgress {
+    pub plugin_completed_units: Option<u32>,
+    pub plugin_total_units: Option<u32>,
+    pub plugin_phase: Option<String>,
+    pub plugin_phase_label: Option<String>,
+    pub current_target: Option<String>,
+}
+
+static PLUGIN_PROGRESS_CACHE: OnceLock<Mutex<HashMap<String, LatestPluginProgress>>> =
+    OnceLock::new();
+
+fn plugin_progress_cache() -> &'static Mutex<HashMap<String, LatestPluginProgress>> {
+    PLUGIN_PROGRESS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn get_latest_plugin_progress(task_id: &str) -> Option<LatestPluginProgress> {
+    plugin_progress_cache()
+        .lock()
+        .ok()?
+        .get(task_id)
+        .cloned()
+}
+
+pub fn clear_plugin_progress(task_id: &str) {
+    if let Ok(mut cache) = plugin_progress_cache().lock() {
+        cache.remove(task_id);
+    }
+}
+
 pub fn emit_plugin_monitor_progress(
     context: &MonitorProgressContext,
     update: PluginMonitorProgressUpdate,
@@ -92,6 +124,27 @@ pub fn emit_plugin_monitor_progress(
     let overall_progress = (((completed_steps as f64 + progress_fraction) / total_steps as f64)
         * 100.0)
         .round() as u32;
+
+    if let Ok(mut cache) = plugin_progress_cache().lock() {
+        let entry = cache
+            .entry(context.task_id.clone())
+            .or_insert_with(LatestPluginProgress::default);
+        if update.current.is_some() {
+            entry.plugin_completed_units = update.current;
+        }
+        if update.total.is_some() {
+            entry.plugin_total_units = update.total;
+        }
+        if update.phase.is_some() {
+            entry.plugin_phase = update.phase.clone();
+        }
+        if update.phase_label.is_some() {
+            entry.plugin_phase_label = update.phase_label.clone();
+        }
+        if update.current_target.is_some() {
+            entry.current_target = update.current_target.clone();
+        }
+    }
 
     emit_monitor_task_progress(&MonitorTaskPluginProgressEvent {
         task_id: context.task_id.clone(),

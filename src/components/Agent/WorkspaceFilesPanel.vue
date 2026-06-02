@@ -313,6 +313,7 @@ const props = defineProps<{
   conversationId: string | null
   workingDirectory: string
   displayWorkingDirectory?: string
+  initialRelativePath?: string
 }>()
 
 defineEmits<{
@@ -1026,7 +1027,7 @@ watch(
   () => {
     void stopDirectoryWatcher()
     void stopFileWatcher()
-    void loadDirectory('')
+    void loadDirectory(props.initialRelativePath || '')
   },
   { immediate: true },
 )

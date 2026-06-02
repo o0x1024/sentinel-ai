@@ -80,6 +80,9 @@
               <i class="fas fa-history mr-2"></i>
               {{ t('bugBounty.monitor.runHistory') }}
             </button>
+            <button type="button" class="btn btn-sm btn-outline" :disabled="loading" @click="loadTasks({ showLoading: true })">
+              <i class="fas fa-rotate-right" :class="{ 'fa-spin': loading }"></i>
+            </button>
           </div>
         </div>
 
@@ -574,6 +577,7 @@ import {
   normalizePluginConfig,
   normalizePluginConfigList,
   normalizeMonitorPluginId,
+  normalizePluginInputMode,
   sanitizeMonitorPluginParamsBySchema,
 } from './monitorPluginConfigSupport'
 import { PARAM_EDITOR_ERROR_KEY, PARAM_EDITOR_INVALID_KEY } from './monitorPluginParamsSupport'
@@ -917,6 +921,10 @@ const collectSeedValidationErrors = (config: any) => {
       const pluginMeta = availablePlugins.value.find(item => item.id === plugin?.plugin_id)
       const declaredBindings = Array.isArray(pluginMeta?.seed_bindings) ? pluginMeta.seed_bindings : []
       if (declaredBindings.length === 0) {
+        return
+      }
+
+      if (normalizePluginInputMode(pluginMeta?.input_mode) === 'hybrid') {
         return
       }
 

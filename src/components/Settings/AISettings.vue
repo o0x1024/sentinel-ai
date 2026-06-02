@@ -457,7 +457,7 @@
                 </label>
                 <textarea
                   class="textarea textarea-bordered font-mono text-sm min-h-28"
-                  :placeholder="t('settings.ai.extraBodyPlaceholder')"
+                  placeholder='{"enable_thinking": false}'
                   v-model="extraBodyJson"
                   @blur="saveExtraBody"
                   spellcheck="false"
@@ -651,7 +651,7 @@
                     <span class="label-text">{{ t('settings.ai.extraBody') }}</span>
                   </label>
                   <textarea class="textarea textarea-bordered font-mono text-sm h-24"
-                    :placeholder="t('settings.ai.extraBodyPlaceholder')" v-model="customProvider.extra_body_json"></textarea>
+                    placeholder='{"enable_thinking": false}' v-model="customProvider.extra_body_json"></textarea>
                 </div>
 
                 <!-- 超时设置 -->
@@ -1195,7 +1195,7 @@ const customProviderValidationError = computed(() => {
 })
 
 const selectedProviderConfig = computed(() => {
-  return props.aiConfig.providers[props.selectedAiProvider]
+  return props.aiConfig?.providers?.[props.selectedAiProvider]
 })
 
 const getModelVisionCapabilityState = (provider: string, model: any): ModelVisionCapability => {

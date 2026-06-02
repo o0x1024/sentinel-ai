@@ -109,6 +109,7 @@ RUN set -eux; \
       apt-get install -y --no-install-recommends --fix-missing \
         default-jre-headless \
         nodejs npm \
+        chromium chromium-driver \
         php-cli php-curl php-mbstring php-xml php-zip php-mysql php-sqlite3 php-bcmath; \
     fi; \
     if [ "$ENABLE_FORENSICS_STACK" = "1" ]; then \
@@ -286,6 +287,9 @@ RUN find /usr/lib/python* /usr/local/lib/python* -name "*.py[co]" -delete 2>/dev
 RUN mkdir -p /workspace /workspace/script
 
 ENV TERM=xterm-256color
+# Chromium in Docker requires --no-sandbox; set env for sentinel-browser to detect
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROME_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu"
 
 WORKDIR /workspace
 USER root

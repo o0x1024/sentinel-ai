@@ -307,6 +307,20 @@ app.use(i18n) // 使用i18n
 app.use(DialogPlugin) // 注册对话框插件
 app.use(ToastPlugin) // 注册Toast插件
 
+app.config.errorHandler = (err, instance, info) => {
+  const componentName = instance?.$options?.name || instance?.$options?.__name || 'Unknown'
+  const message = err instanceof Error ? err.message : String(err)
+  const stack = err instanceof Error ? err.stack : ''
+  // Use alert as a last resort since drop_console removes console.* in production
+  if (typeof window !== 'undefined') {
+    window.__VUE_LAST_ERROR__ = { message, componentName, info, stack, timestamp: Date.now() }
+  }
+  // Re-throw in dev for better DX; silently log in production
+  if (import.meta.env.DEV) {
+    throw err
+  }
+}
+
 // 全局外链拦截：所有外部链接用系统默认浏览器打开
 const isExternalHref = (href: string) => {
   const h = href.trim()

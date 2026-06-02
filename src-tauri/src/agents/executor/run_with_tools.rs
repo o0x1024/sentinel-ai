@@ -72,6 +72,9 @@ pub async fn execute_agent_with_tools(
 ) -> Result<AgentTurnOutcome> {
     let execution_started_at_ms = chrono::Utc::now().timestamp_millis();
     let storage_conversation_id = params.storage_conversation_id().to_string();
+    if let Some(conv_id) = params.conversation_id.as_deref() {
+        sentinel_tools::output_storage::register_session_scope(&params.execution_id, conv_id);
+    }
     clear_execution_tool_trace(&params.execution_id);
     let _active_terminal_session_guard = scope_active_terminal_session(
         &params.execution_id,

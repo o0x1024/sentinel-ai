@@ -443,10 +443,11 @@ pub async fn start_traffic_analysis_internal(
     let db_for_history_hook = db_service.clone();
     let cache_for_history_hook = history_cache.clone();
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
-            .expect("Failed to build current_thread runtime for ScanPipeline");
+            .expect("Failed to build runtime for ScanPipeline");
         rt.block_on(async move {
             // 使用 LocalSet 确保所有 !Send 任务固定在该线程执行
             let local = tokio::task::LocalSet::new();

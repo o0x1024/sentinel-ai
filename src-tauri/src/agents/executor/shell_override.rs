@@ -321,6 +321,27 @@ pub(super) async fn build_shell_override_def(
                 return Ok(output);
             }
 
+            if let Some(ref wd) = working_directory {
+                use sentinel_tools::buildin_tools::shell::{get_shell_config, ShellExecutionMode};
+                let is_docker =
+                    get_shell_config().await.default_execution_mode == ShellExecutionMode::Docker;
+                if !is_docker {
+                    let has_cwd = patched_args
+                        .get("cwd")
+                        .and_then(|v| v.as_str())
+                        .map(|s| !s.trim().is_empty())
+                        .unwrap_or(false);
+                    if !has_cwd {
+                        if let Some(obj) = patched_args.as_object_mut() {
+                            obj.insert(
+                                "cwd".to_string(),
+                                serde_json::Value::String(wd.clone()),
+                            );
+                        }
+                    }
+                }
+            }
+
             let raw_command = patched_args
                 .get("command")
                 .and_then(|value| value.as_str())

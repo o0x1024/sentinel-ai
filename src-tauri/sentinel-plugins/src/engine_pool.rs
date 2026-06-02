@@ -87,7 +87,8 @@ impl EnginePool {
             std::thread::Builder::new()
                 .name(format!("engine-pool-worker-{worker_id}"))
                 .spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread()
+                    let rt = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(2)
                         .enable_all()
                         .build()
                         .expect("Failed to build tokio runtime for engine pool worker");

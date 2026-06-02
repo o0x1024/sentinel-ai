@@ -423,6 +423,7 @@ pub async fn monitor_trigger_task(
                 )
                 .await;
                 heartbeat.stop().await;
+                sentinel_plugins::clear_plugin_progress(&task_id_clone);
 
                 if cancel_requested_task_ids
                     .read()

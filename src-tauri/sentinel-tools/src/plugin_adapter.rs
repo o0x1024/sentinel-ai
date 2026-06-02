@@ -105,13 +105,12 @@ fn create_plugin_executor(plugin_id: String) -> ToolExecutor {
             // Run plugin execution in a blocking thread since JsRuntime is not Send+Sync
             // We use spawn_blocking + LocalSet to handle non-Send futures
             let result = tokio::task::spawn_blocking(move || {
-                // Create a new tokio runtime inside the blocking thread
-                let rt = tokio::runtime::Builder::new_current_thread()
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
                     .enable_all()
                     .build()
                     .map_err(|e| format!("Failed to create runtime: {}", e))?;
 
-                // Use LocalSet to run non-Send futures
                 let local = tokio::task::LocalSet::new();
                 local.block_on(
                     &rt,
@@ -137,7 +136,8 @@ fn create_plugin_executor_with_context(ctx: PluginContext) -> ToolExecutor {
             let merged_args = merge_plugin_input_defaults(&default_input, &args);
 
             let result = tokio::task::spawn_blocking(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
                     .enable_all()
                     .build()
                     .map_err(|e| format!("Failed to create runtime: {}", e))?;

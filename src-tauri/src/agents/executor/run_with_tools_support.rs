@@ -1182,16 +1182,19 @@ fn replace_dynamic_tool(dynamic_tools: Vec<DynamicTool>, def: DynamicToolDef) ->
 
 async fn build_glob_override_def(
     tool_server: &ToolServer,
+    execution_id: &str,
     active_terminal_session_id: Option<&str>,
     host_working_directory: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(GlobTool::NAME).await?;
+    let execution_id_for_glob = execution_id.to_string();
     let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
     let host_working_directory = host_working_directory.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id_for_glob = execution_id_for_glob.clone();
         let active_terminal_session_id = active_terminal_session_id.clone();
         let host_working_directory = host_working_directory.clone();
         Box::pin(async move {
@@ -1206,6 +1209,7 @@ async fn build_glob_override_def(
             let runtime_context = build_file_runtime_context(
                 active_terminal_session_id.as_deref(),
                 host_working_directory.as_deref(),
+                Some(&execution_id_for_glob),
             )
             .await;
             let result = with_file_runtime_context(runtime_context, GlobTool.call(tool_args))
@@ -1234,16 +1238,19 @@ async fn build_glob_override_def(
 
 async fn build_grep_override_def(
     tool_server: &ToolServer,
+    execution_id: &str,
     active_terminal_session_id: Option<&str>,
     host_working_directory: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(GrepTool::NAME).await?;
+    let execution_id_for_grep = execution_id.to_string();
     let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
     let host_working_directory = host_working_directory.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id_for_grep = execution_id_for_grep.clone();
         let active_terminal_session_id = active_terminal_session_id.clone();
         let host_working_directory = host_working_directory.clone();
         Box::pin(async move {
@@ -1258,6 +1265,7 @@ async fn build_grep_override_def(
             let runtime_context = build_file_runtime_context(
                 active_terminal_session_id.as_deref(),
                 host_working_directory.as_deref(),
+                Some(&execution_id_for_grep),
             )
             .await;
             let result = with_file_runtime_context(runtime_context, GrepTool.call(tool_args))
@@ -1286,16 +1294,19 @@ async fn build_grep_override_def(
 
 async fn build_lsp_override_def(
     tool_server: &ToolServer,
+    execution_id: &str,
     active_terminal_session_id: Option<&str>,
     host_working_directory: Option<&str>,
 ) -> Option<DynamicToolDef> {
     let info = tool_server.get_tool(LspTool::NAME).await?;
+    let execution_id_for_lsp = execution_id.to_string();
     let active_terminal_session_id = active_terminal_session_id.map(str::to_string);
     let host_working_directory = host_working_directory.map(str::to_string);
     let input_schema = info.input_schema.clone();
     let description = info.description.clone();
     let execution_policy = info.execution_policy.clone();
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let execution_id_for_lsp = execution_id_for_lsp.clone();
         let active_terminal_session_id = active_terminal_session_id.clone();
         let host_working_directory = host_working_directory.clone();
         Box::pin(async move {
@@ -1310,6 +1321,7 @@ async fn build_lsp_override_def(
             let runtime_context = build_file_runtime_context(
                 active_terminal_session_id.as_deref(),
                 host_working_directory.as_deref(),
+                Some(&execution_id_for_lsp),
             )
             .await;
             let result = with_file_runtime_context(runtime_context, LspTool.call(tool_args))
@@ -1365,6 +1377,7 @@ async fn build_file_read_override_def(
             let runtime_context = build_file_runtime_context(
                 active_terminal_session_id.as_deref(),
                 host_working_directory.as_deref(),
+                Some(&execution_id_for_file_read),
             )
             .await;
             let result = with_file_runtime_context(
@@ -1438,6 +1451,7 @@ async fn build_file_edit_override_def(
             let runtime_context = build_file_runtime_context(
                 active_terminal_session_id.as_deref(),
                 host_working_directory.as_deref(),
+                Some(&execution_id_for_file_edit),
             )
             .await;
             with_file_runtime_context(
@@ -1513,6 +1527,7 @@ async fn build_file_write_override_def(
             let runtime_context = build_file_runtime_context(
                 active_terminal_session_id.as_deref(),
                 host_working_directory.as_deref(),
+                Some(&execution_id_for_file_write),
             )
             .await;
             let exists = with_file_runtime_context(
@@ -1662,7 +1677,7 @@ pub(super) async fn patch_builtin_dynamic_tools(
         .iter()
         .any(|id| id == HttpRequestTool::NAME)
     {
-        if let Some(def) = build_http_override_def(tool_server, referenced_traffic).await {
+        if let Some(def) = build_http_override_def(tool_server, execution_id, referenced_traffic).await {
             dynamic_tools = replace_dynamic_tool(dynamic_tools, def);
         }
     }
@@ -1670,6 +1685,7 @@ pub(super) async fn patch_builtin_dynamic_tools(
     if current_tool_ids.iter().any(|id| id == GlobTool::NAME) {
         if let Some(def) = build_glob_override_def(
             tool_server,
+            execution_id,
             active_terminal_session_id,
             host_working_directory,
         )
@@ -1682,6 +1698,7 @@ pub(super) async fn patch_builtin_dynamic_tools(
     if current_tool_ids.iter().any(|id| id == GrepTool::NAME) {
         if let Some(def) = build_grep_override_def(
             tool_server,
+            execution_id,
             active_terminal_session_id,
             host_working_directory,
         )
@@ -1694,6 +1711,7 @@ pub(super) async fn patch_builtin_dynamic_tools(
     if current_tool_ids.iter().any(|id| id == LspTool::NAME) {
         if let Some(def) = build_lsp_override_def(
             tool_server,
+            execution_id,
             active_terminal_session_id,
             host_working_directory,
         )

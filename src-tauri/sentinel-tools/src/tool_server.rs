@@ -9,10 +9,10 @@ use crate::buildin_tools::tool_search::set_tool_search_executor;
 #[cfg(feature = "ocr")]
 use crate::buildin_tools::OcrTool;
 use crate::buildin_tools::{
-    AskUserQuestionTool, BrowserShellTool, FileEditTool, FileReadTool, FileWriteTool, GlobTool,
-    GrepTool, HttpRequestTool, LspTool, MemoryManagerTool, MissionSchedulerTool,
-    RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool, TenthManTool, ToolSearchArgs,
-    ToolSearchOutput, ToolSearchTool, WebSearchTool,
+    AskUserQuestionTool, BrowserAutomationTool, BrowserShellTool, FileEditTool, FileReadTool,
+    FileWriteTool, GlobTool, GrepTool, HttpRequestTool, LspTool, MemoryManagerTool,
+    MissionSchedulerTool, RouteDiscoveryTool, SearchExploitTool, ShellTool, SkillsTool,
+    TenthManTool, ToolSearchArgs, ToolSearchOutput, ToolSearchTool, WebSearchTool,
 };
 #[cfg(feature = "plugins")]
 use crate::buildin_tools::{PortScanTool, SubdomainBruteTool};
@@ -297,6 +297,57 @@ impl ToolServer {
 
         self.registry.register(browser_shell_def).await;
 
+        // Browser automation tool (humanized CDP/Juggler control)
+        let browser_automation_def =
+            DynamicToolBuilder::new(BrowserAutomationTool::NAME.to_string())
+                .description(BrowserAutomationTool::DESCRIPTION.to_string())
+                .input_schema(
+                    serde_json::to_value(schemars::schema_for!(
+                        crate::buildin_tools::browser_automation::BrowserAutomationArgs
+                    ))
+                    .unwrap_or_default(),
+                )
+                .source(ToolSource::Builtin)
+                .category(ToolCategory::WebNetwork)
+                .tags(vec![
+                    "browser".to_string(),
+                    "automation".to_string(),
+                    "click".to_string(),
+                    "navigate".to_string(),
+                    "screenshot".to_string(),
+                    "scraping".to_string(),
+                    "testing".to_string(),
+                ])
+                .execution_policy(ToolExecutionPolicy {
+                    read_only: false,
+                    mutating: true,
+                    concurrency_safe: false,
+                    requires_permission: false,
+                    supports_background: true,
+                })
+                .executor(|args| async move {
+                    use crate::buildin_tools::browser_automation::{
+                        BrowserAutomationArgs, BrowserAutomationTool,
+                    };
+                    use rig::tool::Tool;
+
+                    let tool_args: BrowserAutomationArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                    let tool = BrowserAutomationTool;
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("Browser automation failed: {}", e))?;
+
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build browser tool");
+
+        self.registry.register(browser_automation_def).await;
+
         let glob_def = DynamicToolBuilder::new(GlobTool::NAME.to_string())
             .description(GlobTool::DESCRIPTION.to_string())
             .input_schema(
@@ -330,7 +381,7 @@ impl ToolServer {
 
                 let tool_args: GlobArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let runtime_context = build_default_file_runtime_context(None).await;
+                let runtime_context = build_default_file_runtime_context(None, None).await;
                 let result = with_file_runtime_context(runtime_context, GlobTool.call(tool_args))
                     .await
                     .map_err(|e| format!("Glob failed: {}", e))?;
@@ -376,7 +427,7 @@ impl ToolServer {
 
                 let tool_args: GrepArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let runtime_context = build_default_file_runtime_context(None).await;
+                let runtime_context = build_default_file_runtime_context(None, None).await;
                 let result = with_file_runtime_context(runtime_context, GrepTool.call(tool_args))
                     .await
                     .map_err(|e| format!("Grep failed: {}", e))?;
@@ -424,7 +475,7 @@ impl ToolServer {
 
                 let tool_args: FileReadArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let runtime_context = build_default_file_runtime_context(None).await;
+                let runtime_context = build_default_file_runtime_context(None, None).await;
                 let result =
                     with_file_runtime_context(runtime_context, FileReadTool.call(tool_args))
                         .await
@@ -473,7 +524,7 @@ impl ToolServer {
 
                 let tool_args: FileEditArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let runtime_context = build_default_file_runtime_context(None).await;
+                let runtime_context = build_default_file_runtime_context(None, None).await;
                 let result =
                     with_file_runtime_context(runtime_context, FileEditTool.call(tool_args))
                         .await
@@ -521,7 +572,7 @@ impl ToolServer {
 
                 let tool_args: FileWriteArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let runtime_context = build_default_file_runtime_context(None).await;
+                let runtime_context = build_default_file_runtime_context(None, None).await;
                 let result =
                     with_file_runtime_context(runtime_context, FileWriteTool.call(tool_args))
                         .await
@@ -568,7 +619,7 @@ impl ToolServer {
 
                 let tool_args: LspArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                let runtime_context = build_default_file_runtime_context(None).await;
+                let runtime_context = build_default_file_runtime_context(None, None).await;
                 let result = with_file_runtime_context(runtime_context, LspTool.call(tool_args))
                     .await
                     .map_err(|e| format!("LSP navigation failed: {}", e))?;

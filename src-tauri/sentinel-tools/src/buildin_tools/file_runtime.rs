@@ -1,6 +1,7 @@
 use crate::buildin_tools::file_context::hash_bytes;
 use crate::buildin_tools::shell::{get_shell_config, ShellExecutionMode};
 use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
+use crate::output_storage::{get_execution_context_dir, CONTAINER_CONTEXT_DIR};
 use crate::terminal::{ExecutionMode as TerminalExecutionMode, TERMINAL_MANAGER};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -100,8 +101,19 @@ where
     FILE_RUNTIME_CONTEXT.scope(context, future).await
 }
 
+/// Resolve Docker working directory for a given execution.
+/// If an execution_id is provided, returns the per-session directory
+/// (`/workspace/context/session_<id>`); otherwise falls back to `/workspace`.
+pub fn docker_session_working_dir(execution_id: Option<&str>) -> String {
+    match execution_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => get_execution_context_dir(CONTAINER_CONTEXT_DIR, Some(id)),
+        None => DEFAULT_DOCKER_WORKDIR.to_string(),
+    }
+}
+
 pub async fn build_default_file_runtime_context(
     host_working_directory: Option<&str>,
+    execution_id: Option<&str>,
 ) -> FileRuntimeContext {
     let config = get_shell_config().await;
     match config.default_execution_mode {
@@ -115,7 +127,7 @@ pub async fn build_default_file_runtime_context(
             }
             FileRuntimeContext::docker(
                 docker_config.clone(),
-                Some(DEFAULT_DOCKER_WORKDIR.to_string()),
+                Some(docker_session_working_dir(execution_id)),
                 docker_config.container_name.clone(),
             )
         }
@@ -125,16 +137,17 @@ pub async fn build_default_file_runtime_context(
 pub async fn build_file_runtime_context(
     active_terminal_session_id: Option<&str>,
     host_working_directory: Option<&str>,
+    execution_id: Option<&str>,
 ) -> FileRuntimeContext {
     let Some(session_id) = active_terminal_session_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return build_default_file_runtime_context(host_working_directory).await;
+        return build_default_file_runtime_context(host_working_directory, execution_id).await;
     };
 
     let Some(session_lock) = TERMINAL_MANAGER.get_session(session_id).await else {
-        return build_default_file_runtime_context(host_working_directory).await;
+        return build_default_file_runtime_context(host_working_directory, execution_id).await;
     };
 
     let session = session_lock.read().await;

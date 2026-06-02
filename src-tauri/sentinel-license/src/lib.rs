@@ -99,9 +99,12 @@ impl LicensedFeature {
     }
 }
 
-/// Hardcoded switch: controls whether release builds require server activation.
-/// Debug builds still bypass enforcement via `debug_assertions`.
-pub const LICENSE_ENFORCEMENT_ENABLED: bool = true;
+/// Controls whether release builds require server activation.
+///
+/// Driven by the `enforce-license` Cargo feature (off by default).
+/// To re-enable: add `enforce-license` to the crate's active features.
+/// Debug builds always bypass enforcement regardless of this flag.
+pub const LICENSE_ENFORCEMENT_ENABLED: bool = cfg!(feature = "enforce-license");
 
 /// Whether license enforcement is enabled.
 #[inline]

@@ -200,6 +200,14 @@ export function useTrafficWorkbenchLayout(options: {
     workbenchGridMode.value === 'split' || workbenchGridMode.value === 'top-bottom',
   )
   const workbenchGridStyle = computed(() => {
+    // In stacked mode (< xl breakpoint), divide the height explicitly:
+    // left column (history + sidebar) takes 2 shares, main stage takes 3 shares.
+    if (workbenchGridMode.value === 'stacked') {
+      return {
+        gridTemplateRows: 'minmax(0, 2fr) minmax(0, 3fr)',
+      }
+    }
+
     const templateColumns = buildTrafficWorkbenchGridTemplate({
       mode: workbenchGridMode.value,
       historyWidth: historyPanelWidth.value,
@@ -240,7 +248,10 @@ export function useTrafficWorkbenchLayout(options: {
         columnGap: '0px',
       }
     }
+    // stacked mode: split the left column evenly between history list and sidebar controls.
+    // Both have overflow-auto so they scroll when content exceeds their allocated space.
     return {
+      gridTemplateRows: 'minmax(0, 1fr) minmax(0, 1fr)',
       rowGap: `${TRAFFIC_WORKBENCH_COLUMN_GAP}px`,
     }
   })

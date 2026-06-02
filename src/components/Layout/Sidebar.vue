@@ -220,10 +220,7 @@ import { useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useNotificationCenter } from '@/composables/useNotificationCenter'
 import { useSecurityCenterActivity } from '@/composables/useSecurityCenterActivity'
-import {
-  getFeatureEntitlements,
-  useFeatureEntitlementsState,
-} from '@/services/featureEntitlements'
+import { getFeatureEntitlements } from '@/services/featureEntitlements'
 
 interface SidebarBadgeItem {
   key: string
@@ -261,7 +258,6 @@ const {
   unreadWorkbenchCaseCount,
   unreadSecurityCenterCount,
 } = useSecurityCenterActivity()
-const entitlements = useFeatureEntitlementsState()
 const unreadActivityCount = computed(() => unreadMessageCount.value + unreadNotificationCount.value)
 const isSecurityCenterRoute = computed(() => {
   if (route.path.startsWith('/security-center')) {
@@ -318,9 +314,6 @@ const securityCenterBadgeClass = computed(() => {
   return ''
 })
 
-const activationBadgeIcon = 'fas fa-crown'
-const activationBadgeTitle = computed(() => t('sidebar.activateWithLicenseCard', '输入卡密激活'))
-
 // 主要功能菜单项
 const mainMenuItems = computed<SidebarMenuItem[]>(() => {
   const items: SidebarMenuItem[] = [
@@ -358,9 +351,7 @@ const mainMenuItems = computed<SidebarMenuItem[]>(() => {
       name: t('sidebar.botConsole', 'Bot Console'),
       icon: 'fas fa-comments',
       badge: null,
-      badgeClass: entitlements.value.can_access_bot_console ? '' : 'badge-warning',
-      badgeIcon: entitlements.value.can_access_bot_console ? null : activationBadgeIcon,
-      badgeTitle: activationBadgeTitle.value,
+      badgeClass: '',
     },
     {
       path: '/workflow-studio',
@@ -376,9 +367,7 @@ const mainMenuItems = computed<SidebarMenuItem[]>(() => {
     name: t('sidebar.bugBounty', '漏洞赏金'),
     icon: 'fas fa-trophy',
     badge: null,
-    badgeClass: entitlements.value.can_access_bug_bounty ? '' : 'badge-warning',
-    badgeIcon: entitlements.value.can_access_bug_bounty ? null : activationBadgeIcon,
-    badgeTitle: activationBadgeTitle.value,
+    badgeClass: '',
   })
 
   return items

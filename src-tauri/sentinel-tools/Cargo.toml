@@ -33,6 +33,7 @@ db-mysql = [
 
 [dependencies]
 sentinel-core = { path = "../sentinel-core", default-features = false }
+sentinel-browser = { path = "../sentinel-browser" }
 sentinel-db = { path = "../sentinel-db", default-features = false, optional = true }
 sentinel-plugins = { path = "../sentinel-plugins", default-features = false, optional = true }
 anyhow = "1.0"
@@ -56,6 +57,7 @@ regex = "1"
 once_cell = "1.19"
 thiserror = "1.0"
 base64 = "0.22"
+rand = "0.8"
 sha2 = "0.10"
 dirs = "5.0"
 toml = "0.8"

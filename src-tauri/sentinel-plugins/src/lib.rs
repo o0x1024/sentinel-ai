@@ -64,7 +64,8 @@ pub use error::{PluginError, Result};
 pub use executor::{ExecutorStats, PluginExecutor};
 pub use permissions::{FsPermission, NetworkPermission, PluginPermissions, ResourceLimits};
 pub use monitor_progress::{
-    emit_plugin_monitor_progress, MonitorProgressContext, PluginMonitorProgressUpdate,
+    clear_plugin_progress, emit_plugin_monitor_progress, get_latest_plugin_progress,
+    LatestPluginProgress, MonitorProgressContext, PluginMonitorProgressUpdate,
 };
 pub use plugin::{
     get_input_schema_from_code, get_output_schema_from_code, terminate_plugin_executions_by_run,

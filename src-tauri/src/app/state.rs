@@ -381,6 +381,12 @@ pub fn setup_app(app: &mut tauri::App<tauri::Wry>) -> Result<(), Box<dyn std::er
         )
         .await;
 
+        // Register browser automation handler (CDP-based humanized browser control)
+        sentinel_tools::buildin_tools::set_browser_automation_handler(
+            std::sync::Arc::new(sentinel_tools::buildin_tools::BrowserAutomationState::new()),
+        )
+        .await;
+
         sentinel_tools::buildin_tools::plugin_authoring::register_plugin_authoring_executor(
             std::sync::Arc::new({
                 let app_handle = handle.clone();

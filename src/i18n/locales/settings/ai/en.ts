@@ -66,7 +66,7 @@ export default {
   advancedOptions: 'Advanced Options',
   extraHeaders: 'Extra Request Headers (JSON)',
   extraBody: 'extra_body (JSON)',
-  extraBodyPlaceholder: '{"enable_thinking": false}',
+  extraBodyPlaceholder: 'JSON object with provider-specific parameters',
   extraBodyDescription: 'Extra fields merged into the model request JSON body, such as provider-specific parameters',
   extraBodyInvalidJson: 'extra_body JSON format is invalid',
   extraBodyMustBeObject: 'extra_body must be a JSON object',

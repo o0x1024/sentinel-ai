@@ -7,7 +7,7 @@ pub enum FetchBody {
     Bytes { bytes: Vec<u8> },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FetchOptions {
     #[serde(default)]
     pub method: String,

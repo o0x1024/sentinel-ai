@@ -453,12 +453,14 @@
             :conversation-id="conversationId"
             :working-directory="workspaceFilesStorageDirectory"
             :display-working-directory="displayedConversationWorkingDirectory"
+            :initial-relative-path="workspaceFilesInitialRelativePath"
             @close="deactivateRightPanel('workspace-files')"
           />
           <InteractiveTerminal
             v-else-if="isViewActive && activeRightPanel === 'terminal'"
             class="h-full border-0 rounded-none bg-transparent"
             :working-directory="effectiveConversationWorkingDirectory || undefined"
+            :execution-id="conversationId"
             @close="handleCloseTerminal"
           />
           <BrowserShellBridgePanel
@@ -571,6 +573,16 @@ interface AgentRuntimeSettings {
 }
 
 const DEFAULT_DOCKER_WORKING_DIRECTORY = '/workspace'
+const CONTAINER_CONTEXT_DIR = '/workspace/context'
+const EXECUTION_DIR_PREFIX = 'session_'
+
+function dockerSessionWorkingDir(executionId?: string | null): string {
+  const raw = (executionId || '').trim()
+  if (!raw) return DEFAULT_DOCKER_WORKING_DIRECTORY
+  const sanitized = raw.replace(/[^a-zA-Z0-9\-_]/g, '').slice(0, 12)
+  if (!sanitized) return DEFAULT_DOCKER_WORKING_DIRECTORY
+  return `${CONTAINER_CONTEXT_DIR}/${EXECUTION_DIR_PREFIX}${sanitized}`
+}
 
 const props = withDefaults(
   defineProps<{
@@ -737,6 +749,8 @@ const effectiveConversationWorkingDirectory = computed(() => {
 })
 const displayedConversationWorkingDirectory = computed(() => {
   if (agentExecutionMode.value === 'docker') {
+    const convId = conversationId.value
+    if (convId) return dockerSessionWorkingDir(convId)
     return agentDockerWorkingDirectory.value.trim()
   }
   return effectiveConversationWorkingDirectory.value.trim()
@@ -752,6 +766,13 @@ const workspaceFilesStorageDirectory = computed(() => {
     return agentDockerStorageDirectory.value.trim()
   }
   return effectiveConversationWorkingDirectory.value.trim()
+})
+const workspaceFilesInitialRelativePath = computed(() => {
+  if (agentExecutionMode.value !== 'docker') return ''
+  const convId = conversationId.value
+  if (!convId) return ''
+  const sanitized = convId.replace(/[^a-zA-Z0-9\-_]/g, '').slice(0, 12)
+  return sanitized ? `context/${EXECUTION_DIR_PREFIX}${sanitized}` : ''
 })
 const conversationWorkingDirectoryPlaceholder = computed(() => {
   const inherited = displayedConversationWorkingDirectory.value.trim()

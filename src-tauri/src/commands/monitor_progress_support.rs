@@ -26,6 +26,16 @@ pub struct MonitorTaskProgressEvent {
     pub message: Option<String>,
     pub started_at: String,
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_completed_units: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_total_units: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_phase_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -120,6 +130,11 @@ pub fn build_monitor_task_progress_event(
         message,
         started_at: started_at.to_string(),
         updated_at: Utc::now().to_rfc3339(),
+        plugin_completed_units: None,
+        plugin_total_units: None,
+        plugin_phase: None,
+        plugin_phase_label: None,
+        current_target: None,
     }
 }
 

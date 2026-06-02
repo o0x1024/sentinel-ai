@@ -125,6 +125,53 @@ impl SentinelJsRuntime {
                     resolve: function(result) { if (typeof __sentinel_return === "function") __sentinel_return(result); },
                 };
             }
+            if (!globalThis.Sentinel.Monitor) {
+                globalThis.Sentinel.Monitor = {
+                    reportProgress: function(request) {
+                        if (typeof __sentinel_report_monitor_progress === "function") {
+                            return __sentinel_report_monitor_progress(request);
+                        }
+                        return false;
+                    }
+                };
+            }
+            if (!globalThis.Sentinel.TLS) {
+                globalThis.Sentinel.TLS = {
+                    getCertificate: function(hostname, options) {
+                        if (typeof __sentinel_get_tls_certificate !== "function") return null;
+                        var port = 443;
+                        if (options && options.port) port = options.port;
+                        return __sentinel_get_tls_certificate(hostname, port, 3000);
+                    }
+                };
+            }
+            if (!globalThis.Sentinel.Network) {
+                globalThis.Sentinel.Network = {
+                    scanPorts: function(request) {
+                        return (typeof __sentinel_scan_ports === "function") ? __sentinel_scan_ports(request) : null;
+                    },
+                    probeServices: function(request) {
+                        return (typeof __sentinel_probe_services === "function") ? __sentinel_probe_services(request) : null;
+                    },
+                    getServiceProbeCapabilities: function() {
+                        return (typeof __sentinel_get_service_probe_capabilities === "function") ? __sentinel_get_service_probe_capabilities() : null;
+                    }
+                };
+            }
+            if (!globalThis.Sentinel.Runtime) {
+                globalThis.Sentinel.Runtime = {
+                    getSettings: function() {
+                        return (typeof __sentinel_get_plugin_runtime_settings === "function") ? __sentinel_get_plugin_runtime_settings() : {};
+                    }
+                };
+            }
+            if (!globalThis.Sentinel.AST) {
+                globalThis.Sentinel.AST = {
+                    parse: function(code, filename) {
+                        return (typeof __sentinel_parse_js === "function") ? __sentinel_parse_js(code, filename) : null;
+                    }
+                };
+            }
             if (!globalThis.Sentinel.Dictionary) {
                 globalThis.Sentinel.Dictionary = {
                     get: function(idOrName) {
@@ -328,6 +375,64 @@ fn register_fetch_bindings(bindings: &mut HostBindingsExt) {
     });
 
     bindings.register_fn0("__sentinel_abort_fetch", || "false".to_string());
+
+    // __sentinel_fetch_batch(requests_json) -> results_json
+    // Executes multiple fetch requests concurrently via tokio, bypassing the
+    // single-threaded JS limitation that forces serial execution.
+    // Called internally by the fetch polyfill's microtask flush.
+    bindings.register_fn1("__sentinel_fetch_batch", |requests_json| {
+        #[derive(serde::Deserialize)]
+        struct BatchEntry {
+            url: String,
+            #[serde(default)]
+            options: crate::plugin_fetch_types::FetchOptions,
+        }
+
+        let entries: Vec<BatchEntry> =
+            serde_json::from_str(requests_json).unwrap_or_default();
+
+        if entries.is_empty() {
+            return "[]".to_string();
+        }
+
+        let plugin_ctx = with_plugin_ctx(|ctx| ctx.clone());
+
+        let results = block_on_async(async {
+            let mut handles = Vec::with_capacity(entries.len());
+            for entry in entries {
+                let ctx = plugin_ctx.clone();
+                handles.push(tokio::spawn(async move {
+                    PLUGIN_CTX.with(|cell| {
+                        *cell.borrow_mut() = Some(ctx);
+                    });
+                    let mut resp =
+                        crate::plugin_engine::plugin_fetch(entry.url, entry.options).await;
+                    resp.body_bytes = Vec::new();
+                    resp
+                }));
+            }
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                match handle.await {
+                    Ok(resp) => results.push(resp),
+                    Err(_) => results.push(crate::plugin_fetch_types::FetchResponse {
+                        success: false,
+                        status: 0,
+                        headers: std::collections::HashMap::new(),
+                        body: String::new(),
+                        body_bytes: Vec::new(),
+                        ok: false,
+                        redirected: false,
+                        final_url: String::new(),
+                        error: Some("batch fetch task panicked".to_string()),
+                    }),
+                }
+            }
+            results
+        });
+
+        serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string())
+    });
 }
 
 fn register_network_bindings(bindings: &mut HostBindingsExt) {

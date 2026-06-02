@@ -17,6 +17,7 @@ struct ReferencedTrafficRequest {
 
 pub(super) async fn build_http_override_def(
     tool_server: &ToolServer,
+    execution_id: &str,
     referenced_traffic: &[serde_json::Value],
 ) -> Option<DynamicToolDef> {
     let http_info = tool_server.get_tool(HttpRequestTool::NAME).await?;
@@ -27,9 +28,11 @@ pub(super) async fn build_http_override_def(
         .enumerate()
         .filter_map(|(index, value)| ReferencedTrafficRequest::from_value(index + 1, value))
         .collect::<Vec<_>>();
+    let execution_id_for_http = execution_id.to_string();
 
     let http_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let replay_context = replay_context.clone();
+        let execution_id_for_http = execution_id_for_http.clone();
         Box::pin(async move {
             use rig::tool::Tool;
             use sentinel_tools::buildin_tools::http_request::{HttpRequestArgs, HttpRequestTool};
@@ -41,6 +44,10 @@ pub(super) async fn build_http_override_def(
                 obj.insert(
                     "enable_large_output_storage".to_string(),
                     serde_json::Value::Bool(true),
+                );
+                obj.insert(
+                    "execution_id".to_string(),
+                    serde_json::Value::String(execution_id_for_http.clone()),
                 );
             }
 

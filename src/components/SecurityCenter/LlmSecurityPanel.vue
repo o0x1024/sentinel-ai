@@ -199,7 +199,7 @@
             <textarea
               v-model="createForm.adapter.custom_headers_json"
               class="textarea textarea-bordered text-sm h-16"
-              :placeholder="$t('llmSecurity.configure.customHeadersPlaceholder')"
+              placeholder='{"X-Custom-Header": "value"}'
             />
           </div>
           <div class="form-control">
@@ -214,7 +214,7 @@
             <textarea
               v-model="createForm.adapter.message_template"
               class="textarea textarea-bordered text-sm h-16 font-mono"
-              :placeholder="$t('llmSecurity.configure.messageTemplatePlaceholder')"
+              placeholder='{"model": "gpt-4", "messages": {{messages_json}}}'
             />
           </div>
           <div class="form-control">

@@ -281,6 +281,9 @@ impl ContainerPool {
             &config.network_mode,
         ]);
 
+        // Publish CDP port for browser automation (host connects to container's chromium)
+        args.extend_from_slice(&["-p", "127.0.0.1:9222:9222"]);
+
         // Relax sandbox permissions for security tools that require raw sockets / capabilities.
         // This is needed for tools like nmap (e.g. ping scan) inside hardened runtimes.
         args.extend_from_slice(&[
@@ -533,8 +536,7 @@ impl DockerSandbox {
         command: &str,
         timeout_secs: u64,
     ) -> Result<(String, String, i32), DockerError> {
-        self.execute_with_cancellation(command, timeout_secs, None)
-            .await
+        self.execute_in_dir(command, timeout_secs, None, None).await
     }
 
     /// Execute command in Docker sandbox with cancellation support
@@ -544,6 +546,18 @@ impl DockerSandbox {
         timeout_secs: u64,
         cancellation_token: Option<CancellationToken>,
     ) -> Result<(String, String, i32), DockerError> {
+        self.execute_in_dir(command, timeout_secs, cancellation_token, None)
+            .await
+    }
+
+    /// Execute command in Docker sandbox with optional working directory and cancellation
+    pub async fn execute_in_dir(
+        &self,
+        command: &str,
+        timeout_secs: u64,
+        cancellation_token: Option<CancellationToken>,
+        working_dir: Option<&str>,
+    ) -> Result<(String, String, i32), DockerError> {
         // Get or create container
         let container_id = {
             let mut pool = CONTAINER_POOL.write().await;
@@ -551,21 +565,21 @@ impl DockerSandbox {
         };
 
         debug!(
-            "Executing command in container {}: {}",
-            container_id, command
+            "Executing command in container {} (cwd={:?}): {}",
+            container_id, working_dir, command
         );
 
         // Execute command in container as root (for tools like nmap -sS that require privileges)
+        let mut args = vec!["exec", "--user", "root"];
+        let working_dir_owned;
+        if let Some(wd) = working_dir {
+            args.push("-w");
+            working_dir_owned = wd.to_string();
+            args.push(&working_dir_owned);
+        }
+        args.extend_from_slice(&[&container_id, "bash", "-c", command]);
         let mut child = Command::new("docker")
-            .args([
-                "exec",
-                "--user",
-                "root",
-                &container_id,
-                "bash",
-                "-c",
-                command,
-            ])
+            .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

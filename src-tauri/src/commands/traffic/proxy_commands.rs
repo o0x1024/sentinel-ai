@@ -140,7 +140,10 @@ pub async fn save_proxy_config(
     tracing::info!("Saving proxy configuration: {:?}", config);
 
     let db = state.get_db_service();
-    let config_json = serde_json::to_string(&config).map_err(|e| {
+    let mut config_to_persist = config.clone();
+    config_to_persist.scope_include_rules = Vec::new();
+    config_to_persist.scope_exclude_rules = Vec::new();
+    let config_json = serde_json::to_string(&config_to_persist).map_err(|e| {
         tracing::error!("Failed to serialize config: {}", e);
         format!("Failed to serialize config: {}", e)
     })?;
