@@ -136,15 +136,6 @@ AI 助手不止用于问答，而是通过工具调用执行真实动作：
 - 统一管理 AI、数据库、代理、RAG、安全、授权等配置
 - 便于团队部署、环境迁移和策略治理
 
-## 技术栈
-
-- **Desktop**：Tauri v2
-- **Frontend**：Vue 3 + Vite + TypeScript + Pinia + Vue Router + Tailwind/daisyUI
-- **Backend**：Rust workspace
-- **Storage**：SQLite
-
-关键后端模块：sentinel-traffic（流量管线）、sentinel-plugins（插件运行时）、sentinel-tools（工具系统）、sentinel-workflow（工作流引擎）、sentinel-rag（检索增强）、sentinel-llm（LLM 桥接）、sentinel-db（持久化）。
-
 ## 快速开始
 
 ### 环境要求

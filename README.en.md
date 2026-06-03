@@ -135,15 +135,6 @@ Together this upgrades the manual chain of discover → assess → execute → r
 - Central AI, database, proxy, RAG, security, and licensing configuration
 - Supports team deployment, migration, and policy governance
 
-## Tech Stack
-
-- **Desktop**: Tauri v2
-- **Frontend**: Vue 3 + Vite + TypeScript + Pinia + Vue Router + Tailwind/daisyUI
-- **Backend**: Rust workspace
-- **Storage**: SQLite
-
-Key backend crates: sentinel-traffic, sentinel-plugins, sentinel-tools, sentinel-workflow, sentinel-rag, sentinel-llm, sentinel-db.
-
 ## Quick Start
 
 ### Requirements
