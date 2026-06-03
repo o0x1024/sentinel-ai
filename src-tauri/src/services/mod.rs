@@ -27,6 +27,7 @@ pub mod mission_stateful_runtime;
 pub mod mission_success_criteria;
 pub mod model_capabilities;
 pub mod system_agents;
+pub mod traffic_codec;
 pub mod traffic_oast;
 pub mod vulnerability;
 pub mod weixin_gateway;
