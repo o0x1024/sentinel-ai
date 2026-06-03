@@ -26,6 +26,12 @@
           <span v-if="!immersiveDrillModeEnabled && !isRequestPaneCompact" class="badge badge-xs badge-outline" :title="$t('trafficAnalysis.history.detailsPanel.httpVersion')">{{ requestHttpVersion }}</span>
         </div>
         <div class="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto">
+          <TrafficCodecBadge
+            :active="isCodecActive"
+            :codec-view-enabled="isCodecViewEnabled"
+            :rule-names="codecRuleNames"
+            @toggle="toggleCodecView"
+          />
           <TrafficMessageViewTabs
             :model-value="requestTab"
             :tabs="requestViewTabs"
@@ -317,8 +323,18 @@ import {
 } from './trafficMessagePresentationSupport'
 import type { ProxyHistoryRequestTab, ProxyHistoryResponseTab, ProxyHistoryViewMode, ProxyRequest } from './proxyHistoryTypes'
 import { useTrafficPaneCompactMode } from './useTrafficPaneCompactMode'
+import { useTrafficCodec } from './codec/useTrafficCodec'
+import { extractCodecMetaFromUrl } from './codec/trafficCodecContextMenuSupport'
+import TrafficCodecBadge from './codec/TrafficCodecBadge.vue'
 const { t, locale } = useI18n()
 const { settings } = useTrafficDisplaySettings()
+const codec = useTrafficCodec()
+const decodedRequestBody = ref<string | null>(null)
+const decodedResponseBody = ref<string | null>(null)
+const codecActive = ref(false)
+const codecRuleNames = ref<string[]>([])
+const isCodecActive = computed(() => codecActive.value)
+const isCodecViewEnabled = computed(() => codec.codecViewEnabled.value)
 const {
   panelRef: requestPanelRef,
   isCompact: isRequestPaneCompact,
@@ -403,24 +419,29 @@ const isStagingDetailContent = computed(() =>
   || (props.responseTab === 'hex' && responseHexPending.value),
 )
 
-const requestRawContent = computed(() =>
-  props.selectedRequest && (!requestUsesPlainTextReader.value || requestLargeContentReady.value)
-    ? formatRequestRaw(props.selectedRequest, props.requestViewMode)
-    : '',
+function getOriginalRequestBody(): string {
+  if (!props.selectedRequest) return ''
+  const useEdited = props.requestViewMode === 'edited' && hasEditedRequest(props.selectedRequest)
+  return (useEdited && props.selectedRequest.edited_request_body
+    ? props.selectedRequest.edited_request_body
+    : props.selectedRequest.request_body) ?? ''
+}
+
+function getOriginalResponseBodyRaw(): string {
+  if (!props.selectedRequest) return ''
+  const useEdited = props.responseViewMode === 'edited' && hasEditedResponse(props.selectedRequest)
+  return (useEdited && props.selectedRequest.edited_response_body
+    ? props.selectedRequest.edited_response_body
+    : props.selectedRequest.response_body) ?? ''
+}
+
+const displayRequestBody = computed(() =>
+  codec.codecViewEnabled.value && decodedRequestBody.value
+    ? decodedRequestBody.value
+    : getOriginalRequestBody(),
 )
-const requestContent = computed(() =>
-  props.selectedRequest && (!requestUsesPlainTextReader.value || requestLargeContentReady.value)
-    ? (
-        effectiveRequestTab.value === 'raw'
-          ? requestRawContent.value
-          : formatRequest(props.selectedRequest, props.requestTab, props.requestViewMode)
-      )
-    : '',
-)
-const requestDisplayContent = computed(() =>
-  effectiveRequestTab.value === 'raw' ? requestRawContent.value : requestContent.value,
-)
-const responseBodyText = computed(() => {
+
+const rawResponseBodyText = computed(() => {
   if (responseUsesPlainTextReader.value || !responseLargeContentReady.value) return ''
   if (!props.selectedRequest) return ''
 
@@ -428,12 +449,48 @@ const responseBodyText = computed(() => {
   const headers = useEdited && props.selectedRequest.edited_response_headers
     ? props.selectedRequest.edited_response_headers
     : props.selectedRequest.response_headers
-  const body = useEdited && props.selectedRequest.edited_response_body
-    ? props.selectedRequest.edited_response_body
-    : props.selectedRequest.response_body
+  const body = getOriginalResponseBodyRaw()
 
   return resolveStoredTrafficResponseBodyText(body || '', headers, settings.value)
 })
+
+const displayResponseBody = computed(() =>
+  codec.codecViewEnabled.value && decodedResponseBody.value
+    ? decodedResponseBody.value
+    : rawResponseBodyText.value,
+)
+
+const requestForFormatting = computed(() => {
+  if (!props.selectedRequest) return null
+  if (!codec.codecViewEnabled.value || !decodedRequestBody.value) {
+    return props.selectedRequest
+  }
+
+  const useEdited = props.requestViewMode === 'edited' && hasEditedRequest(props.selectedRequest)
+  if (useEdited) {
+    return { ...props.selectedRequest, edited_request_body: displayRequestBody.value }
+  }
+  return { ...props.selectedRequest, request_body: displayRequestBody.value }
+})
+
+const requestRawContent = computed(() =>
+  requestForFormatting.value && (!requestUsesPlainTextReader.value || requestLargeContentReady.value)
+    ? formatRequestRaw(requestForFormatting.value, props.requestViewMode)
+    : '',
+)
+const requestContent = computed(() =>
+  requestForFormatting.value && (!requestUsesPlainTextReader.value || requestLargeContentReady.value)
+    ? (
+        effectiveRequestTab.value === 'raw'
+          ? requestRawContent.value
+          : formatRequest(requestForFormatting.value, props.requestTab, props.requestViewMode)
+      )
+    : '',
+)
+const requestDisplayContent = computed(() =>
+  effectiveRequestTab.value === 'raw' ? requestRawContent.value : requestContent.value,
+)
+const responseBodyText = computed(() => displayResponseBody.value)
 const responseRawContent = computed(() =>
   props.selectedRequest
     ? (
@@ -705,6 +762,74 @@ function applyPendingEvidenceSelection() {
   }
   pendingEvidenceSearchTerm.value = null
 }
+
+async function refreshCodecDecoding() {
+  decodedRequestBody.value = null
+  decodedResponseBody.value = null
+  codecActive.value = false
+  codecRuleNames.value = []
+
+  const request = props.selectedRequest
+  if (!request) return
+
+  const meta = extractCodecMetaFromUrl(request.url, request.method, {
+    'content-type': request.mime_type ?? '',
+  })
+
+  if (!codec.hasActiveCodec(meta)) return
+  codecActive.value = true
+
+  if (!codec.codecViewEnabled.value) return
+
+  const appliedRuleIds = new Set<string>()
+  const reqBody = getOriginalRequestBody()
+  if (reqBody) {
+    const result = await codec.decode(reqBody, meta)
+    if (result.success && result.appliedRuleIds.length > 0) {
+      decodedRequestBody.value = result.content
+      result.appliedRuleIds.forEach(id => appliedRuleIds.add(id))
+    }
+  }
+
+  const respBodyRaw = getOriginalResponseBodyRaw()
+  if (respBodyRaw) {
+    const useEdited = props.responseViewMode === 'edited' && hasEditedResponse(request)
+    const headers = useEdited && request.edited_response_headers
+      ? request.edited_response_headers
+      : request.response_headers
+    const respBody = resolveStoredTrafficResponseBodyText(respBodyRaw || '', headers, settings.value)
+    if (respBody) {
+      const result = await codec.decode(respBody, meta)
+      if (result.success && result.appliedRuleIds.length > 0) {
+        decodedResponseBody.value = result.content
+        result.appliedRuleIds.forEach(id => appliedRuleIds.add(id))
+      }
+    }
+  }
+
+  codecRuleNames.value = codec.rules.rules.value
+    .filter(rule => appliedRuleIds.has(rule.id))
+    .map(rule => rule.name)
+}
+
+function toggleCodecView() {
+  codec.codecViewEnabled.value = !codec.codecViewEnabled.value
+  codec.invalidateCache()
+  void refreshCodecDecoding()
+}
+
+watch(
+  () => [
+    props.selectedRequest?.id ?? null,
+    props.requestViewMode,
+    props.responseViewMode,
+    codec.codecViewEnabled.value,
+  ] as const,
+  () => {
+    void refreshCodecDecoding()
+  },
+  { immediate: true },
+)
 
 watch(
   () => [

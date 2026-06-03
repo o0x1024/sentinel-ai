@@ -337,6 +337,8 @@ import {
 } from './trafficComparerDraftSupport'
 import type { HttpExchangeRequest } from './http/model'
 import { useTrafficPaneCompactMode } from './useTrafficPaneCompactMode'
+import { useTrafficCodec } from './codec/useTrafficCodec'
+import { extractCodecMetaFromRawRequest } from './codec/trafficCodecContextMenuSupport'
 
 interface CompareItem extends TrafficComparePayload {
   id: string
@@ -356,6 +358,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
+const codec = useTrafficCodec()
 const { enabledTargets } = useTrafficSendTargets()
 const {
   panelRef: compareToolbarRef,
@@ -408,8 +411,47 @@ const compareRawTabShortLabel = computed(() => locale.value.startsWith('zh') ? '
 const compareDiffModeShortLabel = computed(() => locale.value.startsWith('zh') ? '差异' : 'Diff')
 const comparePlainModeShortLabel = computed(() => 'Plain')
 const pinnedBaselineLabel = computed(() => pinnedBaseline.value?.label ?? '')
-const displayedLeftText = computed(() => formatComparerText(currentItem.value?.leftText ?? '', viewMode.value))
-const displayedRightText = computed(() => formatComparerText(currentItem.value?.rightText ?? '', viewMode.value))
+const decodedLeftText = ref('')
+const decodedRightText = ref('')
+
+async function decodeComparerSideText(text: string): Promise<string> {
+  if (!text || !codec.codecViewEnabled.value) {
+    return text
+  }
+
+  const meta = extractCodecMetaFromRawRequest(text, '')
+  if (!codec.hasActiveCodec(meta)) {
+    return text
+  }
+
+  const result = await codec.decode(text, meta)
+  return result.success ? result.content : text
+}
+
+watch(
+  [() => currentItem.value?.leftText, () => codec.codecViewEnabled.value],
+  async ([text]) => {
+    decodedLeftText.value = await decodeComparerSideText(text ?? '')
+  },
+  { immediate: true },
+)
+
+watch(
+  [() => currentItem.value?.rightText, () => codec.codecViewEnabled.value],
+  async ([text]) => {
+    decodedRightText.value = await decodeComparerSideText(text ?? '')
+  },
+  { immediate: true },
+)
+
+const compareLeftSourceText = computed(() =>
+  codec.codecViewEnabled.value ? decodedLeftText.value : (currentItem.value?.leftText ?? ''),
+)
+const compareRightSourceText = computed(() =>
+  codec.codecViewEnabled.value ? decodedRightText.value : (currentItem.value?.rightText ?? ''),
+)
+const displayedLeftText = computed(() => formatComparerText(compareLeftSourceText.value, viewMode.value))
+const displayedRightText = computed(() => formatComparerText(compareRightSourceText.value, viewMode.value))
 const canSendLeftToRepeater = computed(() => leftMeta.value.messageType === 'request' && !!leftMeta.value.repeaterRequest)
 const canSendRightToRepeater = computed(() => rightMeta.value.messageType === 'request' && !!rightMeta.value.repeaterRequest)
 const canCreateDraftComparison = computed(() => canBuildComparerDraftPayload(draft.value))
