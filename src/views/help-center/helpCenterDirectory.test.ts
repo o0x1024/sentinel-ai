@@ -17,6 +17,9 @@ describe('helpCenterDirectory', () => {
     expect(directory.documents['feature-mcp-servers'].detailSections?.length).toBe(3)
     expect(directory.documents['feature-plugin-lifecycle'].detailSections?.length).toBe(3)
     expect(directory.documents['feature-rag-collections'].detailSections?.length).toBe(3)
+    expect(directory.documents['feature-bug-bounty-pro'].detailSections?.[0]?.imageSrc).toBe(
+      '/community/wechat-qrcode.png',
+    )
     expect(directory.documents['faq-traffic-before-ai'].kind).toBe('faq-entry')
   })
 
@@ -27,6 +30,7 @@ describe('helpCenterDirectory', () => {
     expect(directory.parentById['feature-traffic-oast']).toBe('core-features')
     expect(directory.parentById['feature-security-findings']).toBe('core-features')
     expect(directory.parentById['feature-workflow-canvas']).toBe('core-features')
+    expect(directory.parentById['feature-bug-bounty-pro']).toBe('core-features')
     expect(directory.parentById['feature-ai-assistant-governance']).toBe('core-features')
     expect(directory.parentById['feature-plugin-store-review']).toBe('tools-and-content')
     expect(directory.parentById['feature-rag-ingest-query']).toBe('tools-and-content')

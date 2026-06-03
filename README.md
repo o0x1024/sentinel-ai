@@ -7,6 +7,16 @@
 
 **Community Edition** 包含流量分析、AI 助手、工作流、RAG 知识库、插件系统与工具生态。**漏洞赏金（Bug Bounty）模块不包含在本版本**，该功能仅在 [Sentinel AI Pro](https://github.com/o0x1024/sentinel-ai-pro) 商业版中提供。
 
+## 联系与 Pro 版咨询
+
+如需开通 **Sentinel AI Pro** 或咨询漏洞赏金模块，请微信扫码添加：
+
+<p align="center">
+  <img src="public/community/wechat-qrcode.png" alt="微信二维码" width="220" />
+</p>
+
+应用内也可在侧边栏灰色 **漏洞赏金 / PRO** 入口，或 **帮助中心 → 漏洞赏金（Pro 专属）** 查看同一二维码。
+
 Sentinel AI 面向安全研究与攻防工程团队，目标不是单点工具，而是把 **流量分析**、**AI 助手**、**工作流自动化**、**知识库（RAG）**、**插件系统** 和 **工具生态（MCP/内置工具）** 连接成一个可持续迭代的分析闭环。
 ![Sentinel AI 应用运行截图](public/image.png)
 

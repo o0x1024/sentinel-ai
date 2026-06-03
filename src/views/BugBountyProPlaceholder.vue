@@ -1,6 +1,6 @@
 <template>
-  <div class="p-8 h-full flex items-center justify-center">
-    <div class="max-w-2xl w-full text-center space-y-6">
+  <div class="p-8 h-full flex items-center justify-center overflow-y-auto">
+    <div class="max-w-2xl w-full text-center space-y-6 py-4">
       <div class="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-base-200 opacity-60">
         <i class="fas fa-trophy text-4xl text-base-content/40"></i>
       </div>
@@ -18,20 +18,29 @@
       </div>
 
       <p class="text-base-content/40 leading-relaxed">
-        {{
-          t(
-            'bugBountyPro.description',
-            'Program 管理、资产发现、Finding 运营、Submission 跟踪、监控调度与知识库等功能仅在 Sentinel AI Pro 中提供。Community 版不包含此模块。'
-          )
-        }}
+        {{ t('bugBountyPro.description') }}
       </p>
 
       <ul class="text-left text-sm text-base-content/40 space-y-2 max-w-md mx-auto">
-        <li><i class="fas fa-check mr-2 opacity-50"></i>{{ t('bugBountyPro.feature1', 'Program 与 Scope 管理') }}</li>
-        <li><i class="fas fa-check mr-2 opacity-50"></i>{{ t('bugBountyPro.feature2', '资产面发现与拓扑分析') }}</li>
-        <li><i class="fas fa-check mr-2 opacity-50"></i>{{ t('bugBountyPro.feature3', 'Finding / Submission 全流程') }}</li>
-        <li><i class="fas fa-check mr-2 opacity-50"></i>{{ t('bugBountyPro.feature4', '监控任务与 Workflow 编排') }}</li>
+        <li><i class="fas fa-check mr-2 opacity-50"></i>{{ t('bugBountyPro.feature1') }}</li>
+        <li><i class="fas fa-check mr-2 opacity-50"></i>{{ t('bugBountyPro.feature2') }}</li>
+        <li><i class="fas fa-check mr-2 opacity-50"></i>{{ t('bugBountyPro.feature3') }}</li>
+        <li><i class="fas fa-check mr-2 opacity-50"></i>{{ t('bugBountyPro.feature4') }}</li>
       </ul>
+
+      <div class="rounded-2xl border border-base-300 bg-base-200/40 p-6 space-y-4 max-w-sm mx-auto">
+        <p class="text-sm text-base-content/50">
+          {{ t('bugBountyPro.contactHint') }}
+        </p>
+        <img
+          :src="wechatQrPath"
+          :alt="t('bugBountyPro.wechatQrAlt')"
+          class="w-44 h-44 mx-auto rounded-xl border border-base-300 bg-base-100 object-contain"
+        />
+        <p class="text-xs text-base-content/40">
+          {{ t('bugBountyPro.contactNote') }}
+        </p>
+      </div>
 
       <div class="flex items-center justify-center gap-3 pt-2">
         <a
@@ -49,6 +58,8 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { COMMUNITY_WECHAT_QR_PATH } from '@/views/help-center/helpCenterBugBountyProContent'
 
 const { t } = useI18n()
+const wechatQrPath = COMMUNITY_WECHAT_QR_PATH
 </script>

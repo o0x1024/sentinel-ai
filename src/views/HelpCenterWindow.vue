@@ -358,6 +358,14 @@
                   </li>
                 </ul>
 
+                <div v-if="section.imageSrc" class="mt-4 flex flex-col items-start gap-2">
+                  <img
+                    :src="section.imageSrc"
+                    :alt="section.imageAlt || ''"
+                    class="w-44 h-44 rounded-xl border border-base-300 bg-base-100 object-contain"
+                  />
+                </div>
+
                 <div v-if="section.codeBlocks?.length" class="mt-4 space-y-4">
                   <div
                     v-for="block in section.codeBlocks"

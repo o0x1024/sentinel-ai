@@ -29,6 +29,7 @@ import {
   zhWorkflowExecutionEntry,
 } from './helpCenterSecurityWorkflowContent'
 import { enTrafficOastEntry, zhTrafficOastEntry } from './helpCenterOastContent'
+import { enBugBountyProEntry, zhBugBountyProEntry } from './helpCenterBugBountyProContent'
 
 export interface HelpCenterStat {
   label: string
@@ -65,6 +66,8 @@ export interface HelpCenterFeatureDetailSection {
   description?: string
   items?: string[]
   ordered?: boolean
+  imageSrc?: string
+  imageAlt?: string
   codeBlocks?: HelpCenterFeatureDetailCodeBlock[]
 }
 
@@ -350,6 +353,7 @@ const zhContent: HelpCenterContent = {
         },
         zhWorkflowCanvasEntry,
         zhWorkflowExecutionEntry,
+        zhBugBountyProEntry,
       ],
     },
     {
@@ -855,6 +859,7 @@ const enContent: HelpCenterContent = {
         },
         enWorkflowCanvasEntry,
         enWorkflowExecutionEntry,
+        enBugBountyProEntry,
       ],
     },
     {

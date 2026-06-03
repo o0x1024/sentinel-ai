@@ -6,5 +6,8 @@ export default {
   feature2: '资产面发现与拓扑分析',
   feature3: 'Finding / Submission 全流程',
   feature4: '监控任务与 Workflow 编排',
+  contactHint: '如需开通 Pro 或咨询漏洞赏金模块，请微信扫码添加：',
+  wechatQrAlt: '微信二维码',
+  contactNote: '也可在应用内帮助中心「漏洞赏金（Pro 专属）」或 GitHub README 中查看此二维码。',
   learnPro: '了解 Pro 版',
 }
