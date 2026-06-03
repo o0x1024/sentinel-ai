@@ -224,6 +224,34 @@ cd src-tauri && cargo check
 └─ scripts/                  # 开发脚本
 ```
 
+## 发布（Maintainers）
+
+Community 版通过 GitHub Actions 构建与发布：
+
+| Workflow | 触发条件 | 说明 |
+| --- | --- | --- |
+| [CI](.github/workflows/ci.yml) | push/PR 到 `main` | `npm run type-check` + `cargo check` |
+| [Build and Release](.github/workflows/build-and-release.yml) | 推送 tag `v*` | 构建 macOS / Windows 安装包并上传 Release |
+
+**创建 Release：**
+
+```bash
+git tag v0.1.0
+git push community v0.1.0
+```
+
+**可选 Secrets（用于自动更新签名与 macOS 公证）：**
+
+| Secret | 用途 |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater 签名私钥 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 私钥密码 |
+| `TAURI_UPDATER_PUBLIC_KEY` | Updater 公钥（也可放在 Repository Variable） |
+| `MACOS_CERTIFICATE` | Apple 代码签名证书（base64） |
+| `MACOS_CERTIFICATE_PASSWORD` | 证书密码 |
+
+未配置签名 Secrets 时，Release 仍会构建并上传 **未签名** 的 `.dmg` / `.exe` 安装包；配置后才会生成 updater 产物与 `latest.json`。
+
 ## 适用场景
 
 - 安全团队的日常流量研判与漏洞验证

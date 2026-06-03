@@ -1,4 +1,4 @@
-name: Build and Release Sentinel AI
+name: Build and Release Sentinel AI Community
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  ASSET_PREFIX: sentinel-ai-community
 
 jobs:
   create_release:
@@ -24,15 +25,19 @@ jobs:
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
       - name: Create Release
-        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           tag_name: ${{ github.ref_name }}
-          name: 'Sentinel AI v${{ steps.get_version.outputs.VERSION }}'
+          name: 'Sentinel AI Community v${{ steps.get_version.outputs.VERSION }}'
           body: |
-            ## Sentinel AI v${{ steps.get_version.outputs.VERSION }}
-            
+            ## Sentinel AI Community v${{ steps.get_version.outputs.VERSION }}
+
+            Open-source edition (AGPL-3.0). Bug Bounty is available in [Sentinel AI Pro](https://github.com/o0x1024/sentinel-ai-pro) only.
+
+            ### Downloads
+            - **macOS (Apple Silicon)**: `sentinel-ai-community-*-aarch64.dmg`
+            - **Windows (x64)**: `sentinel-ai-community-*-x64-setup.exe`
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
 
@@ -47,19 +52,18 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            platform: 'darwin-aarch64'
-            rust_target: 'aarch64-apple-darwin'
-            arch_label: 'aarch64'
+            platform: darwin-aarch64
+            rust_target: aarch64-apple-darwin
           - os: windows-latest
-            platform: 'windows-x86_64'
-            rust_target: 'x86_64-pc-windows-msvc'
-            arch_label: 'x64'
+            platform: windows-x86_64
+            rust_target: x86_64-pc-windows-msvc
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY != '' && secrets.TAURI_UPDATER_PUBLIC_KEY || vars.TAURI_UPDATER_PUBLIC_KEY }}
+      RELEASE_SIGNING_ENABLED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && (secrets.TAURI_UPDATER_PUBLIC_KEY != '' || vars.TAURI_UPDATER_PUBLIC_KEY != '') }}
 
     steps:
       - name: Checkout Repository
@@ -68,13 +72,13 @@ jobs:
       - name: Cache Rust Dependencies
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: 'src-tauri -> target'
+          workspaces: src-tauri -> target
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          cache: npm
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -140,57 +144,47 @@ jobs:
       - name: Install Frontend Dependencies
         run: npm ci
 
-      - name: Validate updater signing secrets for tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Configure release signing mode
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const configPath = 'src-tauri/tauri.conf.json';
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          const signingEnabled = process.env.RELEASE_SIGNING_ENABLED === 'true';
+          const pubkey = process.env.TAURI_UPDATER_PUBLIC_KEY;
+
+          config.plugins = config.plugins || {};
+          config.plugins.updater = config.plugins.updater || {};
+          config.plugins.updater.endpoints = [
+            `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/latest/download/latest.json`,
+          ];
+
+          if (signingEnabled && pubkey) {
+            config.bundle = config.bundle || {};
+            config.bundle.createUpdaterArtifacts = 'v1Compatible';
+            config.plugins.updater.pubkey = pubkey;
+            console.log('Release signing enabled: updater artifacts ON');
+          } else {
+            config.bundle = config.bundle || {};
+            config.bundle.createUpdaterArtifacts = false;
+            delete config.plugins.updater.pubkey;
+            console.log('Release signing disabled: building unsigned installers only');
+          }
+
+          fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+
+      - name: Validate updater signing secrets
+        if: env.RELEASE_SIGNING_ENABLED == 'true'
         shell: bash
         run: |
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "::error::Missing TAURI_SIGNING_PRIVATE_KEY for tagged release."
+            echo "::error::Missing TAURI_SIGNING_PRIVATE_KEY."
             exit 1
           fi
-
           if [ -z "$TAURI_UPDATER_PUBLIC_KEY" ]; then
-            echo "::error::Missing TAURI_UPDATER_PUBLIC_KEY for tagged release."
-            exit 1
-          fi
-
-      - name: Inject Tauri updater public key
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          node -e '
-            const fs = require("fs");
-            const configPath = "src-tauri/tauri.conf.json";
-            const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-            config.plugins = config.plugins || {};
-            config.plugins.updater = config.plugins.updater || {};
-            config.plugins.updater.pubkey = process.env.TAURI_UPDATER_PUBLIC_KEY;
-            fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-          '
-
-      - name: Validate injected updater config
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          node -e '
-            const fs = require("fs");
-            const config = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
-            const pubkey = config?.plugins?.updater?.pubkey;
-            const endpoints = config?.plugins?.updater?.endpoints;
-            if (!pubkey || pubkey === "__TAURI_UPDATER_PUBLIC_KEY__") {
-              throw new Error("plugins.updater.pubkey was not injected");
-            }
-            if (!Array.isArray(endpoints) || endpoints.length === 0) {
-              throw new Error("plugins.updater.endpoints is missing");
-            }
-          '
-
-      - name: Validate macOS signing secrets for tagged release
-        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          if [ -z "$MACOS_CERTIFICATE" ] || [ -z "$MACOS_CERTIFICATE_PASSWORD" ]; then
-            echo "::error::Missing MACOS_CERTIFICATE or MACOS_CERTIFICATE_PASSWORD for tagged release."
+            echo "::error::Missing TAURI_UPDATER_PUBLIC_KEY."
             exit 1
           fi
 
@@ -205,33 +199,23 @@ jobs:
         if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
         shell: bash
         run: |
-          security find-identity -v -p codesigning
-
           IDENTITY=$(security find-identity -v -p codesigning | awk '/Developer ID Application:/ {print $2; exit}')
           if [ -z "$IDENTITY" ]; then
             IDENTITY=$(security find-identity -v -p codesigning | awk '/valid identities found/ {next} /[0-9]+\) / {print $2; exit}')
           fi
-
           if [ -z "$IDENTITY" ]; then
-            echo "::error::No valid Apple code-signing identity found after importing certificate."
+            echo "::error::No valid Apple code-signing identity found."
             exit 1
           fi
-
           echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> $GITHUB_ENV
-          echo "Resolved Apple signing identity: $IDENTITY"
 
       - name: Build Tauri App
         shell: bash
         run: |
           if [ "${{ runner.os }}" == "macOS" ]; then
             if [ -z "$MACOS_CERTIFICATE" ]; then
-              echo "Building without code signing (no MACOS_CERTIFICATE configured)."
+              echo "Building without Apple code signing."
               export APPLE_SIGNING_IDENTITY="-"
-            elif [ -z "$APPLE_SIGNING_IDENTITY" ]; then
-              echo "::error::MACOS_CERTIFICATE is configured but APPLE_SIGNING_IDENTITY is empty."
-              exit 1
-            else
-              echo "Building with Apple signing identity: $APPLE_SIGNING_IDENTITY"
             fi
           fi
           npm run tauri -- build --target ${{ matrix.rust_target }}
@@ -243,29 +227,16 @@ jobs:
           OPENSSL_LIB_DIR: ${{ env.OPENSSL_LIB_DIR }}
           OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR }}
           OPENSSL_STATIC: ${{ env.OPENSSL_STATIC }}
-          OPENSSL_NO_VENDOR: ${{ env.OPENSSL_NO_VENDOR }}
           VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
           LIB: ${{ env.LIB }}
-          CFLAGS: ${{ env.CFLAGS }}
-          LDFLAGS: ${{ env.LDFLAGS }}
-          CPPFLAGS: ${{ env.CPPFLAGS }}
-          PKG_CONFIG_PATH: ${{ env.PKG_CONFIG_PATH }}
-          RUSTFLAGS: ${{ env.RUSTFLAGS }}
 
       - name: Verify macOS app code signature
         if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
         shell: bash
         run: |
           APP_BUNDLE=$(find "src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -type d -name "*.app" -print -quit || true)
-          if [ -z "$APP_BUNDLE" ]; then
-            echo "::error::Unable to find .app bundle for signature verification."
-            find "src-tauri/target/${{ matrix.rust_target }}/release/bundle" -maxdepth 3 -print
-            exit 1
-          fi
-
-          echo "Verifying signature for: $APP_BUNDLE"
+          test -n "$APP_BUNDLE"
           codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
-          codesign --display --verbose=4 "$APP_BUNDLE" | sed -n '1,30p'
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/v')
@@ -276,14 +247,15 @@ jobs:
           set -euxo pipefail
 
           VERSION="${{ needs.create_release.outputs.version }}"
+          PREFIX="${ASSET_PREFIX}"
           BUNDLE_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle"
           UPLOAD_DIR=$(mktemp -d)
+          SIGNING="${RELEASE_SIGNING_ENABLED}"
 
           copy_if_found() {
             local pattern="$1"
             local target_name="$2"
             local source
-
             source=$(find "$BUNDLE_DIR" -type f -name "$pattern" -print -quit || true)
             if [ -n "$source" ]; then
               cp "$source" "$UPLOAD_DIR/$target_name"
@@ -291,12 +263,8 @@ jobs:
           }
 
           require_file() {
-            local path="$1"
-            local hint="$2"
-
-            if [ ! -f "$path" ]; then
-              echo "::error::Missing required release asset: $(basename "$path"). $hint"
-              echo "Bundle directory contents:"
+            if [ ! -f "$1" ]; then
+              echo "::error::Missing required release asset: $(basename "$1")"
               find "$BUNDLE_DIR" -maxdepth 3 -type f -print | sort || true
               exit 1
             fi
@@ -304,67 +272,55 @@ jobs:
 
           case "${{ matrix.platform }}" in
             darwin-aarch64)
-              copy_if_found "*.app.tar.gz" "sentinel-ai-${VERSION}-aarch64.app.tar.gz"
-              copy_if_found "*.app.tar.gz.sig" "sentinel-ai-${VERSION}-aarch64.app.tar.gz.sig"
-              copy_if_found "*.dmg" "sentinel-ai-${VERSION}-aarch64.dmg"
-              copy_if_found "*.dmg.sig" "sentinel-ai-${VERSION}-aarch64.dmg.sig"
-              require_file \
-                "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.app.tar.gz" \
-                "Ensure src-tauri/tauri.conf.json sets bundle.createUpdaterArtifacts and TAURI_SIGNING_PRIVATE_KEY is configured."
-              require_file \
-                "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.app.tar.gz.sig" \
-                "Ensure TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD are valid for tagged builds."
+              copy_if_found "*.dmg" "${PREFIX}-${VERSION}-aarch64.dmg"
+              require_file "$UPLOAD_DIR/${PREFIX}-${VERSION}-aarch64.dmg"
+              if [ "$SIGNING" = "true" ]; then
+                copy_if_found "*.app.tar.gz" "${PREFIX}-${VERSION}-aarch64.app.tar.gz"
+                copy_if_found "*.app.tar.gz.sig" "${PREFIX}-${VERSION}-aarch64.app.tar.gz.sig"
+                copy_if_found "*.dmg.sig" "${PREFIX}-${VERSION}-aarch64.dmg.sig"
+                require_file "$UPLOAD_DIR/${PREFIX}-${VERSION}-aarch64.app.tar.gz"
+                require_file "$UPLOAD_DIR/${PREFIX}-${VERSION}-aarch64.app.tar.gz.sig"
+              fi
               ;;
             windows-x86_64)
-              copy_if_found "*_x64-setup.exe" "sentinel-ai-${VERSION}-x64-setup.exe"
-              copy_if_found "*_x64-setup.exe.sig" "sentinel-ai-${VERSION}-x64-setup.exe.sig"
-              copy_if_found "*_x64-setup.nsis.zip" "sentinel-ai-${VERSION}-x64-setup.nsis.zip"
-              copy_if_found "*_x64-setup.nsis.zip.sig" "sentinel-ai-${VERSION}-x64-setup.nsis.zip.sig"
-              require_file \
-                "$UPLOAD_DIR/sentinel-ai-${VERSION}-x64-setup.nsis.zip" \
-                "Tauri v2 only creates the .nsis.zip updater bundle when bundle.createUpdaterArtifacts is set to v1Compatible."
-              require_file \
-                "$UPLOAD_DIR/sentinel-ai-${VERSION}-x64-setup.nsis.zip.sig" \
-                "Ensure updater signing is enabled and TAURI_SIGNING_PRIVATE_KEY is available in GitHub Actions secrets."
-              ;;
-            *)
-              echo "::error::Unsupported platform: ${{ matrix.platform }}"
-              exit 1
+              copy_if_found "*_x64-setup.exe" "${PREFIX}-${VERSION}-x64-setup.exe"
+              require_file "$UPLOAD_DIR/${PREFIX}-${VERSION}-x64-setup.exe"
+              if [ "$SIGNING" = "true" ]; then
+                copy_if_found "*_x64-setup.exe.sig" "${PREFIX}-${VERSION}-x64-setup.exe.sig"
+                copy_if_found "*_x64-setup.nsis.zip" "${PREFIX}-${VERSION}-x64-setup.nsis.zip"
+                copy_if_found "*_x64-setup.nsis.zip.sig" "${PREFIX}-${VERSION}-x64-setup.nsis.zip.sig"
+                require_file "$UPLOAD_DIR/${PREFIX}-${VERSION}-x64-setup.nsis.zip"
+                require_file "$UPLOAD_DIR/${PREFIX}-${VERSION}-x64-setup.nsis.zip.sig"
+              fi
               ;;
           esac
-
-          if [ -z "$(ls -A "$UPLOAD_DIR")" ]; then
-            echo "::error::No release assets found in $BUNDLE_DIR"
-            find "$BUNDLE_DIR" -maxdepth 3 -type f -print || true
-            exit 1
-          fi
 
           ls -la "$UPLOAD_DIR"
           gh release upload "${{ github.ref_name }}" "$UPLOAD_DIR"/* --clobber
 
       - name: Publish Update Manifests
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-x86_64'
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-x86_64' && env.RELEASE_SIGNING_ENABLED == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          RELEASE_NOTES: "See the release notes for details."
+          RELEASE_NOTES: 'See the release notes for details.'
           npm_package_version: ${{ needs.create_release.outputs.version }}
+          ASSET_PREFIX: ${{ env.ASSET_PREFIX }}
         shell: bash
         run: |
           set -euxo pipefail
-
           VERSION="${{ needs.create_release.outputs.version }}"
+          PREFIX="${ASSET_PREFIX}"
           UPLOAD_DIR=$(mktemp -d)
           EXPECTED_SIGS=(
-            "sentinel-ai-${VERSION}-aarch64.app.tar.gz.sig"
-            "sentinel-ai-${VERSION}-x64-setup.nsis.zip.sig"
+            "${PREFIX}-${VERSION}-aarch64.app.tar.gz.sig"
+            "${PREFIX}-${VERSION}-x64-setup.nsis.zip.sig"
           )
           DEADLINE=$((SECONDS + 900))
 
           while :; do
             find "$UPLOAD_DIR" -mindepth 1 -maxdepth 1 -type f -delete || true
             gh release download "${{ github.ref_name }}" --dir "$UPLOAD_DIR" --pattern "*.sig" || true
-
             MISSING=0
             for SIG in "${EXPECTED_SIGS[@]}"; do
               if [ ! -f "$UPLOAD_DIR/$SIG" ]; then
@@ -372,28 +328,15 @@ jobs:
                 echo "Waiting for release signature: $SIG"
               fi
             done
-
-            if [ "$MISSING" -eq 0 ]; then
-              break
-            fi
-
+            if [ "$MISSING" -eq 0 ]; then break; fi
             if [ "$SECONDS" -ge "$DEADLINE" ]; then
-              echo "::error::Timed out waiting for all updater signature files to be uploaded."
-              ls -la "$UPLOAD_DIR" || true
+              echo "::error::Timed out waiting for updater signature files."
               exit 1
             fi
-
             sleep 15
           done
 
-          ls -la "$UPLOAD_DIR"
-          find "$UPLOAD_DIR" -name "*.sig" -ls
-
-          chmod +x scripts/generate-update-manifest.cjs
-          UPLOAD_DIR="$UPLOAD_DIR" node scripts/generate-update-manifest.cjs
-
-          if [ -d "dist/update-manifests" ] && [ -n "$(find dist/update-manifests -maxdepth 1 -name '*.json' -print -quit)" ]; then
+          UPLOAD_DIR="$UPLOAD_DIR" ASSET_PREFIX="$PREFIX" node scripts/generate-update-manifest.cjs
+          if [ -d dist/update-manifests ]; then
             gh release upload "${{ github.ref_name }}" dist/update-manifests/*.json --clobber
-          else
-            echo "No manifest files to upload."
           fi

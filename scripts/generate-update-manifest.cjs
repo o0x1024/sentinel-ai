@@ -8,23 +8,24 @@ const path = require('path');
 const crypto = require('crypto');
 
 const VERSION = process.env.npm_package_version || '0.1.0';
-const REPO = process.env.GITHUB_REPOSITORY || 'owner/sentinel-ai';
+const REPO = process.env.GITHUB_REPOSITORY || 'owner/sentinel-ai-community';
 const RELEASE_NOTES = process.env.RELEASE_NOTES || 'See the release notes for details.';
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '';
+const ASSET_PREFIX = process.env.ASSET_PREFIX || 'sentinel-ai-community';
 
 // Platform configurations
 const PLATFORMS = {
   'darwin-x86_64': {
-    url: `https://github.com/${REPO}/releases/download/v${VERSION}/sentinel-ai-${VERSION}-x86_64.app.tar.gz`,
-    sigFile: `sentinel-ai-${VERSION}-x86_64.app.tar.gz.sig`
+    url: `https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET_PREFIX}-${VERSION}-x86_64.app.tar.gz`,
+    sigFile: `${ASSET_PREFIX}-${VERSION}-x86_64.app.tar.gz.sig`
   },
   'darwin-aarch64': {
-    url: `https://github.com/${REPO}/releases/download/v${VERSION}/sentinel-ai-${VERSION}-aarch64.app.tar.gz`,
-    sigFile: `sentinel-ai-${VERSION}-aarch64.app.tar.gz.sig`
+    url: `https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET_PREFIX}-${VERSION}-aarch64.app.tar.gz`,
+    sigFile: `${ASSET_PREFIX}-${VERSION}-aarch64.app.tar.gz.sig`
   },
   'windows-x86_64': {
-    url: `https://github.com/${REPO}/releases/download/v${VERSION}/sentinel-ai-${VERSION}-x64-setup.nsis.zip`,
-    sigFile: `sentinel-ai-${VERSION}-x64-setup.nsis.zip.sig`
+    url: `https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET_PREFIX}-${VERSION}-x64-setup.nsis.zip`,
+    sigFile: `${ASSET_PREFIX}-${VERSION}-x64-setup.nsis.zip.sig`
   }
 };
 
