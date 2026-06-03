@@ -332,6 +332,11 @@
             :show-analysis="true"
             :show-advanced="false"
           />
+          <div class="proxy-settings-card card bg-base-100 shadow-xl mt-4">
+            <div class="card-body">
+              <TrafficCodecRulesPanel />
+            </div>
+          </div>
         </div>
 
         <!-- Request Interception Rules -->
@@ -1329,6 +1334,7 @@
 
 <script setup lang="ts">
 import ProxyMonitorSettingsPanel from './ProxyMonitorSettingsPanel.vue'
+import TrafficCodecRulesPanel from './codec/TrafficCodecRulesPanel.vue'
 import TrafficDisplaySettingsPanel from './TrafficDisplaySettingsPanel.vue'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
