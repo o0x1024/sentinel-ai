@@ -3,7 +3,7 @@ export interface TrafficCodecRule {
   name: string
   enabled: boolean
   order: number
-  match: CodecMatchRule
+  matchRule: CodecMatchRule
   scope: CodecScope
   pipeline: CodecPipeline
   reversible: boolean

@@ -63,8 +63,8 @@ export function useTrafficCodec() {
 
   function hasActiveCodec(meta: CodecRequestMeta): boolean {
     return enabledRules.value.some(rule => {
-      const hostOk = rule.match.hosts.length === 0 || rule.match.hosts.some(h => globMatch(h, meta.host))
-      const pathOk = rule.match.paths.length === 0 || rule.match.paths.some(p => globMatch(p, meta.path))
+      const hostOk = rule.matchRule.hosts.length === 0 || rule.matchRule.hosts.some(h => globMatch(h, meta.host))
+      const pathOk = rule.matchRule.paths.length === 0 || rule.matchRule.paths.some(p => globMatch(p, meta.path))
       return hostOk && pathOk
     })
   }
