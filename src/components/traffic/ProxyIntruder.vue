@@ -71,6 +71,8 @@
       <div ref="workspaceLayoutRef" class="flex min-h-0 flex-1">
         <div class="min-w-0 flex-1">
           <IntruderRequestEditor
+            :workspace-id="currentWorkspace.id"
+            :request-load-generation="requestLoadGenerationByWorkspace[currentWorkspace.id] ?? 0"
             :request-text="currentWorkspace.requestText"
             :request-view-tab="currentWorkspace.requestViewTab"
             :target-url="buildTargetUrl(currentWorkspace.target)"
@@ -81,6 +83,7 @@
             @update:request-view-tab="updateRequestViewTab(currentWorkspace.id, $event)"
             @update:target-url="updateTargetUrl(currentWorkspace.id, $event)"
             @update:update-host-header="updateAttackOption(currentWorkspace.id, 'updateHostHeader', $event)"
+            @codec-session-changed="handleCodecSessionChanged(currentWorkspace.id, $event)"
             @auto-mark="autoMarkPositions(currentWorkspace.id)"
             @clear-markers="clearMarkers(currentWorkspace.id)"
             @create-draft="sendWorkspaceRequestToRepeater(currentWorkspace.id)"
@@ -181,6 +184,8 @@ import {
 } from './intruder/results'
 import { buildIntruderResourcePoolAutoName, createBuiltInResourcePools, createIntruderAttackTemplate, exportIntruderResultsCsv, loadIntruderAttackTemplates, loadIntruderResourcePools, normalizeVisibleColumns, persistIntruderAttackTemplates, persistIntruderResourcePools, type IntruderAttackTemplate, upsertIntruderResourcePoolEntry } from './intruder/storage'
 import { generateIntruderPluginPayloads, processIntruderPayloadWithPlugin, transformIntruderRequestWithPlugin, type IntruderRequestProcessorTrace } from './intruder/plugins'
+import { encodeIntruderRequestText, type IntruderCodecSession } from './intruder/intruderCodecSupport'
+import { useTrafficCodec } from './codec/useTrafficCodec'
 import { getIntruderAutoThrottleStepMs, getIntruderRuntimeDelayMs, shouldIntruderThrottleForStatus, waitForIntruderDelay } from './intruder/runtimeSupport'
 import { createDefaultIntruderDictionaryPayloadConfig, resolveIntruderDictionaryPayloads } from './intruder/intruderAppDictionaryPayloads'
 import { useTrafficWorkbenchStore } from './workbench/stores/useTrafficWorkbenchStore'
@@ -224,8 +229,11 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const workbenchState = useTrafficWorkbenchStore()
+const codec = useTrafficCodec()
 const workspaces = ref<IntruderWorkspace[]>([])
 const activeWorkspaceId = ref<string | null>(null)
+const requestLoadGenerationByWorkspace = ref<Record<string, number>>({})
+const intruderCodecSessions = new Map<string, IntruderCodecSession>()
 const activeSidebarTab = ref<'payloads' | 'resourcePool' | 'settings'>('payloads')
 const attackControllers = new Map<string, { cancelled: boolean }>()
 const resourcePools = ref<IntruderResourcePool[]>(loadIntruderResourcePools(createBuiltInResourcePools()))
@@ -524,7 +532,7 @@ function createWorkspace(
   source?: IntruderRequestInput,
   overrides?: { id?: string; name?: string },
 ): IntruderWorkspace {
-  return createIntruderWorkspace({
+  const workspace = createIntruderWorkspace({
     source,
     id: overrides?.id,
     name: overrides?.name,
@@ -532,6 +540,10 @@ function createWorkspace(
     attackLabel: t('trafficAnalysis.intruder.labels.attack'),
     payloadLabel: t('trafficAnalysis.intruder.labels.payloadSet'),
   })
+  if (source) {
+    bumpRequestLoadGeneration(workspace.id)
+  }
+  return workspace
 }
 
 function findWorkbenchWorkspace(workspaceId: string | null | undefined) {
@@ -541,9 +553,28 @@ function findWorkbenchWorkspace(workspaceId: string | null | undefined) {
   return workbenchState.attack.workspaces.value.find(workspace => workspace.id === workspaceId) ?? null
 }
 
+function bumpRequestLoadGeneration(workspaceId: string) {
+  requestLoadGenerationByWorkspace.value = {
+    ...requestLoadGenerationByWorkspace.value,
+    [workspaceId]: (requestLoadGenerationByWorkspace.value[workspaceId] ?? 0) + 1,
+  }
+}
+
+function handleCodecSessionChanged(workspaceId: string, session: IntruderCodecSession | null) {
+  if (session) {
+    intruderCodecSessions.set(workspaceId, session)
+    return
+  }
+  intruderCodecSessions.delete(workspaceId)
+}
+
 function syncLocalWorkspaceFromWorkbench(workspace: IntruderWorkspace, source: WorkbenchAttackWorkspace) {
+  const nextSourceRequestId = source.source?.requestId ?? workspace.sourceRequestId
+  const requestChanged = workspace.requestText !== source.requestText
+    || workspace.sourceRequestId !== nextSourceRequestId
+
   workspace.name = source.title
-  workspace.sourceRequestId = source.source?.requestId ?? workspace.sourceRequestId
+  workspace.sourceRequestId = nextSourceRequestId
   workspace.requestText = source.requestText
   workspace.requestViewTab = 'raw'
   workspace.target = { ...source.target }
@@ -553,6 +584,9 @@ function syncLocalWorkspaceFromWorkbench(workspace: IntruderWorkspace, source: W
   if (!workspace.isRunning && source.resultCount === 0) {
     workspace.results = []
     workspace.selectedResultId = null
+  }
+  if (requestChanged) {
+    bumpRequestLoadGeneration(workspace.id)
   }
   syncPayloadSets(workspace.id, false)
 }
@@ -713,6 +747,7 @@ function closeWorkspace(workspaceId: string) {
     controller.cancelled = true
   }
   attackControllers.delete(workspaceId)
+  intruderCodecSessions.delete(workspaceId)
   workspaces.value = workspaces.value.filter((workspace) => workspace.id !== workspaceId)
   workbenchState.attack.removeWorkspace(workspaceId)
   ensureWorkspaceSelection()
@@ -1033,6 +1068,8 @@ async function buildRequestProcessingPreview(workspace: IntruderWorkspace): Prom
   payloadSummary: string
   traces: IntruderRequestProcessorTrace[]
 }> {
+  const codecSession = intruderCodecSessions.get(workspace.id)
+
   if (workspace.positions.length === 0) {
     const originalRequestText = clearIntruderMarkers(workspace.requestText)
     const transformed = await applyRequestProcessorPlugins(
@@ -1043,9 +1080,12 @@ async function buildRequestProcessingPreview(workspace: IntruderWorkspace): Prom
       0,
     )
 
+    const preparedRequest = applyIntruderRequestSettings(transformed.requestText, workspace.target, workspace.attackOptions)
+    const finalRequestText = await encodeIntruderRequestText(preparedRequest, codecSession, codec)
+
     return {
       originalRequestText,
-      finalRequestText: applyIntruderRequestSettings(transformed.requestText, workspace.target, workspace.attackOptions),
+      finalRequestText,
       payloadSummary: t('trafficAnalysis.intruder.labels.baseline'),
       traces: transformed.traces,
     }
@@ -1079,9 +1119,12 @@ async function buildRequestProcessingPreview(workspace: IntruderWorkspace): Prom
     0,
   )
 
+  const preparedRequest = applyIntruderRequestSettings(transformed.requestText, workspace.target, workspace.attackOptions)
+  const finalRequestText = await encodeIntruderRequestText(preparedRequest, codecSession, codec)
+
   return {
     originalRequestText: candidate.requestText,
-    finalRequestText: applyIntruderRequestSettings(transformed.requestText, workspace.target, workspace.attackOptions),
+    finalRequestText,
     payloadSummary: candidate.payloadSummary,
     traces: transformed.traces,
   }
@@ -1422,6 +1465,7 @@ function loadAttackTemplate(templateId = selectedAttackTemplateId.value) {
   workspace.selectedResultId = null
   workspace.progress = createDefaultProgress()
   workspace.isRunning = false
+  intruderCodecSessions.delete(workspace.id)
   applyDerivedWorkspaceState(workspace)
   syncWorkbenchWorkspaceDefinition(workspace)
   syncWorkbenchWorkspaceRuntime(workspace, 'idle')
@@ -1559,6 +1603,8 @@ async function executeAttackRequest(
     workspace.target,
     workspace.attackOptions,
   )
+  const codecSession = intruderCodecSessions.get(workspace.id)
+  const wireRequest = await encodeIntruderRequestText(preparedRequest, codecSession, codec)
 
   let attempt = 0
   while (true) {
@@ -1567,7 +1613,7 @@ async function executeAttackRequest(
         throw new Error('Attack cancelled')
       }
 
-      const exchangeRequest = buildSourceRequestFromRawRequest(preparedRequest, workspace.target)
+      const exchangeRequest = buildSourceRequestFromRawRequest(wireRequest, workspace.target)
       if (!exchangeRequest) {
         throw new Error('Invalid request')
       }
@@ -1614,7 +1660,7 @@ async function executeAttackRequest(
         wordCount: countWords(responseText),
         lineCount: countLines(responseText),
         responseTimeMs: response.data.response_time_ms,
-        rawRequest: workspace.attackOptions.storeRequests ? preparedRequest : '',
+        rawRequest: workspace.attackOptions.storeRequests ? wireRequest : '',
         rawResponse: workspace.attackOptions.storeResponses ? response.data.raw_response : '',
         responseVersionObserved: replayResponse.versionObserved,
         responseStatusText: replayResponse.statusText,

@@ -118,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
 import { createTrafficOastToken } from '@/api/trafficOast'
@@ -131,14 +131,18 @@ import { buildTrafficRequestSendMenuItems } from '@/components/traffic/trafficSe
 import { useTrafficSendTargets } from '@/components/traffic/trafficSendTargets'
 import { buildTrafficTextCodecSubmenu, getTrafficTextCodecErrorMessage, hasNonEmptyTextSelection, replaceTrafficTextSelection, transformTrafficTextCodec, type TrafficTextCodecAction } from '@/components/traffic/trafficTextCodecSupport'
 import { convertRepeaterPrettyRequestToRaw, formatRepeaterPrettyRequest } from '@/components/traffic/trafficRepeaterPrettyRequestSupport'
+import { useTrafficCodec } from '../codec/useTrafficCodec'
 import type { IntruderPosition, IntruderRequestViewTab } from './types'
 import { buildFullUrl, buildSourceRequestFromRawRequest, extractTargetFromRequest } from './http'
+import { decodeIntruderRequestTemplate, type IntruderCodecSession } from './intruderCodecSupport'
 import { wrapSelectionWithMarkers } from './intruderMarkers'
 
 const { t } = useI18n()
 const { enabledTargets } = useTrafficSendTargets()
 
 const props = defineProps<{
+  workspaceId: string
+  requestLoadGeneration: number
   requestText: string
   requestViewTab: IntruderRequestViewTab
   targetUrl: string
@@ -152,11 +156,15 @@ const emit = defineEmits<{
   (e: 'update:requestViewTab', value: IntruderRequestViewTab): void
   (e: 'update:targetUrl', value: string): void
   (e: 'update:updateHostHeader', value: boolean): void
+  (e: 'codecSessionChanged', value: IntruderCodecSession | null): void
   (e: 'autoMark'): void
   (e: 'clearMarkers'): void
   (e: 'createDraft'): void
   (e: 'openDraftCompare'): void
 }>()
+
+const codec = useTrafficCodec()
+const decodedLoadKey = ref('')
 
 const requestEditor = ref<InstanceType<typeof HttpMessageSurface> | null>(null)
 const creatingOastPayload = ref(false)
@@ -231,6 +239,42 @@ function handleRequestEditorUpdate(value: string) {
     props.requestViewTab === 'pretty' ? convertRepeaterPrettyRequestToRaw(value) : value,
   )
 }
+
+watch(
+  () => `${props.workspaceId}:${props.requestLoadGeneration}:${props.sourceRequestId ?? ''}`,
+  async (loadKey) => {
+    if (loadKey === decodedLoadKey.value) {
+      return
+    }
+
+    decodedLoadKey.value = loadKey
+
+    if (props.requestLoadGeneration === 0) {
+      emit('codecSessionChanged', null)
+      return
+    }
+
+    const requestText = props.requestText
+    if (!requestText.trim()) {
+      emit('codecSessionChanged', null)
+      return
+    }
+
+    const host = extractTargetFromRequest(requestText, props.targetUrl).host
+    const { requestText: decodedText, session } = await decodeIntruderRequestTemplate(
+      requestText,
+      host,
+      codec,
+    )
+
+    emit('codecSessionChanged', session)
+
+    if (session && decodedText !== requestText) {
+      emit('update:requestText', decodedText)
+    }
+  },
+  { immediate: true },
+)
 
 function normalizeLineEndings(value: string): string {
   return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
