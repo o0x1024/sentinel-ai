@@ -2,6 +2,8 @@
 
 # Sentinel AI Community Edition
 
+**中文** | [English](./README.en.md)
+
 > AI 驱动的桌面安全分析平台 — 开源 Community 版
 
 **Community Edition** 包含流量分析、AI 助手、工作流、RAG 知识库、插件系统与工具生态。**漏洞赏金（Bug Bounty）模块不包含在本版本**，该功能仅在 [Sentinel AI Pro](https://github.com/o0x1024/sentinel-ai-pro) 商业版中提供。
