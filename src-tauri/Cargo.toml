@@ -128,6 +128,15 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.9"
 cron = "0.15"
 
+# Crypto codecs (traffic_codec)
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+ecb = { version = "0.1", features = ["alloc"] }
+cipher = { version = "0.4", features = ["block-padding"] }
+hex = "0.4"
+sm4 = "0.5"
+des = "0.8"
+
 # 额外的 AI 相关依赖
 base64 = "0.22"
 url = "2.4"
