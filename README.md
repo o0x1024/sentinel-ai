@@ -10,16 +10,6 @@ Sentinel AI 面向安全研究与攻防工程团队，目标不是单点工具�
 
 ![Sentinel AI 应用运行截图](public/image.png)
 
-## 联系与 Pro 版咨询
-
-如需开通 **Sentinel AI Pro** 或咨询漏洞赏金模块，请微信扫码添加：
-
-<p align="center">
-  <img src="public/community/wechat-qrcode.png" alt="微信二维码" width="220" />
-</p>
-
-应用内也可在侧边栏灰色 **漏洞赏金 / PRO** 入口，或 **帮助中心 → 漏洞赏金（Pro 专属）** 查看同一二维码。
-
 ## 为什么是 Sentinel AI
 
 传统安全工具链常见问题：
@@ -203,6 +193,16 @@ Community 版通过 GitHub Actions 构建与发布：
 - 红蓝对抗中的自动化资产与风险分析
 - 漏洞运营中的复测、通知、归档自动化
 - 将团队经验沉淀为插件与知识库，持续复用
+
+## 联系与 Pro 版咨询
+
+如需开通 **Sentinel AI Pro** 或咨询漏洞赏金模块，请微信扫码添加：
+
+<p align="center">
+  <img src="public/community/wechat-qrcode.png" alt="微信二维码" width="220" />
+</p>
+
+应用内也可在侧边栏灰色 **漏洞赏金 / PRO** 入口，或 **帮助中心 → 漏洞赏金（Pro 专属）** 查看同一二维码。
 
 ## 开源协议
 
